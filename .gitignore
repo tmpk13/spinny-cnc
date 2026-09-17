@@ -1,0 +1,11 @@
+NOTES.md
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+out/
+*.egg-info/
+sim/target/
+*.kicad_prl
