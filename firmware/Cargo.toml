@@ -1,0 +1,6 @@
+# Host-buildable crates. The RP2040 firmware is excluded on purpose: it pins
+# its target in its own .cargo/config.toml, which must not capture these.
+[workspace]
+resolver = "2"
+members = ["core", "virtual"]
+exclude = ["rp2040"]

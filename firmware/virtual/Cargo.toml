@@ -1,0 +1,12 @@
+[package]
+name = "spinny-virtual"
+version = "0.1.0"
+edition = "2021"
+description = "The control core running against a virtual machine, reachable over TCP like the real firmware"
+
+[[bin]]
+name = "spinny-virtual"
+path = "src/main.rs"
+
+[dependencies]
+spinny-core = { path = "../core", features = ["std"] }

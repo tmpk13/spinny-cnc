@@ -9,3 +9,10 @@ out/
 *.egg-info/
 sim/target/
 *.kicad_prl
+firmware/target/
+firmware/rp2040/target/
+*.uf2
+web/frontend/node_modules/
+web/frontend/dist/
+web/backend/.venv/
+web/backend/jobs/

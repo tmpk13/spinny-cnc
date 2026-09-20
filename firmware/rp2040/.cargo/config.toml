@@ -1,0 +1,7 @@
+[build]
+target = "thumbv6m-none-eabi"
+
+# `cargo run --release` converts the ELF to UF2 and copies it onto a Pico
+# that is mounted in BOOTSEL mode.
+[target.thumbv6m-none-eabi]
+runner = "elf2uf2-rs -d"

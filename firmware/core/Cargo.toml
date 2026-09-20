@@ -1,0 +1,13 @@
+[package]
+name = "spinny-core"
+version = "0.1.0"
+edition = "2021"
+description = "Joint-space motion control core for the spinny laser: planner, stepper, laser, line protocol"
+
+[dependencies]
+heapless = "0.9"
+libm = "0.2"
+
+[features]
+default = []
+std = []

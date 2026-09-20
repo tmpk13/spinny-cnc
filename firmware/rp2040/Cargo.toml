@@ -1,0 +1,37 @@
+[package]
+name = "spinny-fw"
+version = "0.1.0"
+edition = "2021"
+description = "SKR Pico (RP2040) firmware for the spinny laser: radius axis, rotary table, laser PWM, USB CDC line protocol"
+
+[dependencies]
+spinny-core = { path = "../core", default-features = false }
+
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "executor-interrupt"] }
+embassy-time = { version = "0.5" }
+embassy-rp = { version = "0.10", features = ["unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
+embassy-usb = { version = "0.6" }
+embassy-sync = { version = "0.8" }
+embassy-futures = { version = "0.1" }
+
+cortex-m = { version = "0.7.6", features = ["inline-asm"] }
+cortex-m-rt = "0.7"
+critical-section = "1.1"
+panic-halt = "1"
+heapless = "0.9"
+static_cell = "2.1"
+portable-atomic = { version = "1.13", features = ["critical-section"] }
+tmc2209 = { version = "0.3", default-features = false }
+embedded-io-async = "0.7"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = false
