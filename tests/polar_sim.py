@@ -8,6 +8,100 @@ import re
 WORD = re.compile(r"([A-Za-z])(-?\d*\.?\d+)")
 
 
+# grblHAL's polar kinematics splits cuts into pieces this long.
+GRBLHAL_SEGMENT = 0.5
+
+
+def grblhal_joint(point, last_angle: float) -> tuple[float, float]:
+    """grblHAL's transform_from_cartesian: radius, and the angle unwrapped."""
+    radius = math.hypot(point[0], point[1])
+    if radius == 0.0:
+        return (0.0, last_angle)
+    angle = math.degrees(math.atan2(point[1], point[0])) % 360.0
+    delta = angle - (last_angle % 360.0)
+    if abs(delta) <= 180.0:
+        return (radius, last_angle + delta)
+    return (radius, last_angle + (delta - 360.0 if delta > 0 else delta + 360.0))
+
+
+def replay_grblhal(text: str):
+    """What grblHAL polar mode does with board X/Y: the marks it leaves.
+
+    Cuts longer than the piece length are split evenly and each piece is
+    one joint move; rapids are a single joint move. Every joint move is
+    sampled and mapped back to the board, like `replay`.
+    """
+    position = (0.0, 0.0)
+    joint = (0.0, 0.0)
+    power = 0.0
+    mode = None
+    paths: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] = []
+
+    def board(r: float, a: float) -> tuple[float, float]:
+        theta = math.radians(a)
+        return (r * math.cos(theta), r * math.sin(theta))
+
+    def joint_move(target_joint):
+        nonlocal joint
+        if current == []:
+            current.append(board(*joint))
+        steps = max(1, int(abs(target_joint[1] - joint[1]) / 0.5) + 1)
+        for i in range(1, steps + 1):
+            t = i / steps
+            current.append(
+                board(
+                    joint[0] + (target_joint[0] - joint[0]) * t,
+                    joint[1] + (target_joint[1] - joint[1]) * t,
+                )
+            )
+        joint = target_joint
+
+    for raw in text.splitlines():
+        line = raw.split(";")[0].strip()
+        if not line:
+            continue
+        words = dict((k.upper(), float(v)) for k, v in WORD.findall(line))
+        if "M" in words:
+            power = 0.0 if words["M"] == 5 else words.get("S", power)
+            continue
+        if "S" in words:
+            power = words["S"]
+        if "G" in words:
+            code = words["G"]
+            assert code != 93, "grblHAL polar mode must not be fed G93"
+            if code in (0, 1):
+                mode = int(code)
+            elif code in (2, 3):
+                raise AssertionError("arcs are not expected")
+            elif code not in (21, 90, 94):
+                continue
+        if "X" not in words and "Y" not in words:
+            continue
+        target = (words.get("X", position[0]), words.get("Y", position[1]))
+        if mode == 1 and power > 0:
+            distance = math.dist(position, target)
+            pieces = 1
+            if distance > GRBLHAL_SEGMENT and target != position:
+                pieces = math.ceil(distance / GRBLHAL_SEGMENT)
+            for i in range(1, pieces + 1):
+                t = i / pieces
+                piece = (
+                    position[0] + (target[0] - position[0]) * t,
+                    position[1] + (target[1] - position[1]) * t,
+                )
+                joint_move(grblhal_joint(piece, joint[1]))
+        else:
+            if current:
+                paths.append(current)
+                current = []
+            joint = grblhal_joint(target, joint[1])
+        position = target
+    if current:
+        paths.append(current)
+    return paths
+
+
 def replay(text: str, rotary: str = "A", axis_x: float = 0.0, invert: bool = False):
     """Board-coordinate cut paths, sampled finely along each joint move.
 

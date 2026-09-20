@@ -7,9 +7,9 @@ import re
 
 import pytest
 
-from polar_sim import deviation, replay
+from polar_sim import deviation, replay, replay_grblhal
 from spinny_laser import gcode
-from spinny_laser.gcode import INVERSE, SCALED, PathGroup, PolarOptions
+from spinny_laser.gcode import GRBLHAL, INVERSE, JOINT, SCALED, PathGroup, PolarOptions
 
 WORD = re.compile(r"([A-Z])(-?\d*\.?\d+)")
 
@@ -19,7 +19,15 @@ def square(x: float, y: float, size: float):
 
 
 def emit(paths, **kwargs):
+    """A joint-controller job, the mode every option below applies to."""
+    kwargs.setdefault("controller", JOINT)
     options = PolarOptions(**kwargs)
+    group = PathGroup("test", paths, power=500.0, speed=400.0)
+    return gcode.generate([group], options, ["test"])
+
+
+def emit_grblhal(paths, **kwargs):
+    options = PolarOptions(controller=GRBLHAL, **kwargs)
     group = PathGroup("test", paths, power=500.0, speed=400.0)
     return gcode.generate([group], options, ["test"])
 
@@ -167,3 +175,84 @@ def test_near_axis_paths_are_counted():
 def test_rejects_x_as_the_rotary_letter():
     with pytest.raises(ValueError):
         PolarOptions(rotary_axis="X")
+
+
+# --- grblHAL polar kinematics: the controller transforms, the file is X/Y ---
+
+
+def test_grblhal_is_the_default_and_writes_board_xy_in_g94():
+    job = gcode.generate(
+        [PathGroup("t", [square(5.0, 5.0, 2.0)], 500.0, 400.0)], PolarOptions(), ["t"]
+    )
+    assert job.options.controller == GRBLHAL
+    assert "G93" not in job.text
+    cuts = cut_lines(job.text)
+    assert all(re.fullmatch(r"G1 X-?\d+\.\d{3} Y-?\d+\.\d{3}( S[\d.]+ F\d+)?", c) for c in cuts)
+    assert cuts[0].endswith(" S500.00 F400")
+    assert all(" F" not in c for c in cuts[1:])
+    motion = [l for l in job.text.splitlines() if l.startswith("G0 ") or l.startswith("G1 X")]
+    assert all(" A" not in l for l in motion)
+    assert job.text.strip().endswith("G0 X0.000 Y0.000")
+
+
+def test_grblhal_presplits_where_the_controllers_pieces_would_stray():
+    # At 1 mm radius a 0.5 mm piece strays 30 microns; at 40 mm it is fine.
+    near = emit_grblhal([[(1.0, -0.5), (1.0, 0.5)]])
+    far = emit_grblhal([[(40.0, -0.5), (40.0, 0.5)]])
+    assert len(cut_lines(near.text)) >= 4
+    assert len(cut_lines(far.text)) == 1
+    lengths = []
+    x, y = 1.0, -0.5
+    for line in cut_lines(near.text):
+        words = dict(WORD.findall(line))
+        nx, ny = float(words["X"]), float(words["Y"])
+        lengths.append(math.dist((x, y), (nx, ny)))
+        x, y = nx, ny
+    assert max(lengths) < 0.5
+
+
+def test_grblhal_leaves_the_axis_through_a_tiny_hop():
+    job = emit_grblhal([[(-2.0, 0.0), (2.0, 0.0)]])
+    body = [l for l in job.text.splitlines() if l and not l.startswith(";")]
+    assert "G0 X0.002 Y0.000" in body
+    hop = body.index("G0 X0.002 Y0.000")
+    assert body[hop - 1] == "M4 S0"
+    assert body[hop + 2].startswith("G1 X2.000 Y0.000 S500.00 F400")
+    assert job.path_count == 2
+
+
+def test_grblhal_hop_direction_survives_rounding():
+    # Leaving the axis at 11 degrees: the hop rounds to a point at some other
+    # angle, and the cut has to be re-split from there to stay on the line.
+    path = [(0.0, 0.0), (5.0, 1.0)]
+    job = emit_grblhal([path])
+    marks = replay_grblhal(job.text)
+    assert len(marks) == 1
+    assert deviation(marks[0], path) <= 0.005 + 0.002
+
+
+def test_grblhal_refuses_an_axis_offset():
+    with pytest.raises(ValueError):
+        PolarOptions(controller=GRBLHAL, axis_x=5.0)
+
+
+def test_grblhal_replay_follows_the_board_geometry():
+    paths = [
+        square(3.0, 3.0, 4.0),
+        square(-8.0, 1.0, 2.0),
+        square(0.4, -0.6, 1.2),
+        [(6.0, -6.0), (-6.0, 6.0)],
+        [(0.0, 0.0), (5.0, 1.0)],
+    ]
+    job = emit_grblhal(paths, tolerance=0.005)
+    marks = replay_grblhal(job.text)
+    assert len(marks) == len(paths) + 1
+    for mark in marks:
+        assert min(deviation(mark, path) for path in paths) <= 0.005 + 0.002
+
+
+def test_without_presplitting_the_controller_would_miss():
+    # The same near-axis square through grblHAL's own 0.5 mm pieces alone.
+    raw = "G94\nM4 S0\nG0 X0.400 Y-0.600\nG1 X1.600 Y-0.600 S500 F400\nG1 X1.600 Y0.600\nG1 X0.400 Y0.600\nG1 X0.400 Y-0.600\nM4 S0\nM5\n"
+    mark = replay_grblhal(raw)[0]
+    assert deviation(mark, square(0.4, -0.6, 1.2)) > 0.01

@@ -1,20 +1,24 @@
 """Gcode emitter for the radius-and-angle machine.
 
 Same dialect as the Cartesian tool (`G21`/`G90`, `M4` dynamic power, `S` on
-the first cut move of each path, `M4 S0` at the end of each path), with two
-changes forced by the kinematics:
+the first cut move of each path, `M4 S0` at the end of each path). Two
+controllers are served:
 
-- Every cut segment carries its own feed word, because the joint-space
-  distance of a segment has nothing to do with its length on the board. The
-  default is inverse time (`G93`): `F` is the number of such segments the
-  controller may run per minute, so the surface speed comes out right no
-  matter how the controller measures distance across a linear and a rotary
-  axis. `scaled` stays in `G94` and scales `F` by the ratio of joint length
-  to board length instead, for a controller whose rotary axis is set up as
-  a linear one counting degrees.
-- A segment that only turns the table (which only happens on the axis) is
-  crossed with the beam off, since under `M4` the spot would otherwise dwell
-  at full power on one point of the board.
+- `grblhal`: grblHAL with polar kinematics does the transform itself, so the
+  file holds board X/Y in `G94` with `F` as the surface speed. The controller
+  splits cuts into 0.5 mm pieces and runs each as a joint move, which strays
+  from a straight line near the axis, so segments are pre-split here to the
+  tolerance. A cut leaving the axis first hops two coordinate quanta out
+  along its new direction with the beam off, since the controller would
+  otherwise spiral out of the center.
+- `joint`: the file carries the radius on X and the angle on another axis,
+  and every cut segment has its own feed word. Inverse time (`G93`) makes
+  the surface speed independent of how the controller sums a linear and a
+  rotary axis; `scaled` stays in `G94` and scales `F` per segment instead.
+
+In both a segment that only turns the table, which only happens on the
+axis, is crossed with the beam off: under `M4` the spot would otherwise
+dwell at full power on one point of the board.
 """
 
 from __future__ import annotations
@@ -30,10 +34,19 @@ from .polar import Joint, Kinematics, Point
 M4_DYNAMIC = "M4"
 M3_CONSTANT = "M3"
 INVERSE, SCALED = "inverse", "scaled"
+GRBLHAL, JOINT = "grblhal", "joint"
+# grblHAL splits every cut into pieces this long and runs each as one joint move.
+GRBLHAL_SEGMENT = 0.5
+# How far a cut leaving the axis hops out before running radially, in
+# coordinate quanta. The controller reads the new angle from this point
+# instead of spiralling; the point is rounded first and its real angle used,
+# since at this radius rounding turns the direction by tens of degrees.
+EXIT_QUANTA = 2
 
 
 @dataclass(frozen=True)
 class PolarOptions:
+    controller: str = GRBLHAL
     rotary_axis: str = "A"
     invert_rotary: bool = False
     # Machine X reading when the beam is over the rotation axis.
@@ -59,12 +72,28 @@ class PolarOptions:
     postamble: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.controller not in (GRBLHAL, JOINT):
+            raise ValueError(f"controller must be {GRBLHAL} or {JOINT}")
         if self.feed_mode not in (INVERSE, SCALED):
             raise ValueError(f"feed mode must be {INVERSE} or {SCALED}")
         if len(self.rotary_axis) != 1 or not self.rotary_axis.isalpha():
             raise ValueError("rotary axis must be one letter")
         if self.rotary_axis.upper() == "X":
             raise ValueError("X is the radius, the rotary axis needs another letter")
+        if self.controller == GRBLHAL and self.axis_x != 0.0:
+            raise ValueError(
+                "grblHAL polar mode transforms around machine X 0, so the axis"
+                " cannot be offset; set the machine up with the beam over the axis"
+            )
+
+    @property
+    def cartesian(self) -> bool:
+        """The controller does the kinematics and the file holds board X/Y."""
+        return self.controller == GRBLHAL
+
+    @property
+    def units_per_minute(self) -> bool:
+        return self.cartesian or self.feed_mode == SCALED
 
 
 @dataclass(frozen=True)
@@ -122,6 +151,7 @@ class _Writer:
         self.total_rotation = 0.0
         self.min_radius: float | None = None
         self.near_axis_paths = 0
+        self.hopped = False
 
     # --- text ---------------------------------------------------------------
 
@@ -134,10 +164,13 @@ class _Writer:
     def raw(self, text: str) -> None:
         self.lines.append(text)
 
-    def words(self, joint: Joint) -> str:
+    def words(self, joint: Joint, point: Point) -> str:
+        decimals = self.options.decimals
+        if self.options.cartesian:
+            return f"X{format_coord(point[0], decimals)} Y{format_coord(point[1], decimals)}"
         radius, angle = joint
         sign = -1.0 if self.options.invert_rotary else 1.0
-        x = format_coord(self.options.axis_x + radius, self.options.decimals)
+        x = format_coord(self.options.axis_x + radius, decimals)
         a = format_coord(sign * angle, self.options.angle_decimals)
         return f"X{x} {self.options.rotary_axis}{a}"
 
@@ -160,7 +193,7 @@ class _Writer:
                 times.append(da / self.options.rotary_rapid)
             self.travel_seconds += max(times) * 60.0
             self.total_rotation += da
-        self.raw(f"G0 {self.words(joint)}")
+        self.raw(f"G0 {self.words(joint, point)}")
         self.joint = joint
         self.point = point
 
@@ -175,9 +208,17 @@ class _Writer:
         self.rapid_to(points[0])
         first = True
         for target in points[1:]:
-            here, joint = self._here()
-            for point, next_joint in polar.subdivide(here, target, joint, self.kinematics):
-                first = self._segment(point, next_joint, power, speed, first)
+            # A turn on the axis moves the start of what is left, so the
+            # remainder is subdivided again from where the head really is.
+            while True:
+                here, joint = self._here()
+                self.hopped = False
+                for point, next_joint in polar.subdivide(here, target, joint, self.kinematics):
+                    first = self._segment(point, next_joint, power, speed, first)
+                    if self.hopped:
+                        break
+                if not self.hopped:
+                    break
         self._close()
 
     def _here(self) -> tuple[Point, Joint]:
@@ -194,11 +235,21 @@ class _Writer:
         if length < polar.AXIS_EPSILON:
             # Only the table moves: cross it dark rather than dwell the spot.
             self._close()
+            if self.options.cartesian:
+                # Board X/Y cannot say "turn on the spot"; a point just off the
+                # axis along the new direction reads as that angle instead.
+                decimals = self.options.decimals
+                hop = polar.cartesian((EXIT_QUANTA * 10.0 ** -decimals, joint[1]))
+                point = (round(hop[0], decimals), round(hop[1], decimals))
+                joint = polar.joint_of(point, joint[1])
             self._rapid(joint, point)
+            self.hopped = True
             return True
 
         minutes = length / speed
-        if self.options.feed_mode == INVERSE:
+        if self.options.cartesian:
+            feed = speed
+        elif self.options.feed_mode == INVERSE:
             feed = 1.0 / minutes
         else:
             joint_length = math.hypot(dr, da * self.options.rotary_scale)
@@ -207,10 +258,10 @@ class _Writer:
         if not self.open:
             self._open()
             first = True
-        words = f"G1 {self.words(joint)}"
+        words = f"G1 {self.words(joint, point)}"
         if first:
             words += f" S{power:.2f}"
-        if first or self.options.feed_mode == INVERSE:
+        if first or not self.options.units_per_minute:
             words += f" F{_feed(feed)}"
         self.raw(words)
 
@@ -238,7 +289,7 @@ class _Writer:
         self.cut_seconds += actual * 60.0
 
     def _open(self) -> None:
-        if self.options.feed_mode == SCALED:
+        if self.options.units_per_minute:
             # Feed 1 mm/min keeps dynamic power near zero until the cut sets F.
             self.raw("G1F1")
         self.open = True
@@ -246,7 +297,7 @@ class _Writer:
     def _close(self) -> None:
         if not self.open:
             return
-        if self.options.feed_mode == SCALED:
+        if self.options.units_per_minute:
             self.raw("G1F1")
         self.raw(f"{self.options.laser_mode} S0")
         self.open = False
@@ -274,7 +325,7 @@ def generate(groups: list[PathGroup], options: PolarOptions, header: list[str]) 
     writer.blank()
     for line in header:
         writer.comment(line)
-    if options.feed_mode == INVERSE:
+    if not options.units_per_minute:
         writer.blank()
         writer.raw("G93         ; Inverse time feed: F is segments per minute")
 
@@ -308,7 +359,7 @@ def generate(groups: list[PathGroup], options: PolarOptions, header: list[str]) 
     for line in options.postamble:
         writer.raw(line)
     writer.raw("M5          ; Switch tool off")
-    if options.feed_mode == INVERSE:
+    if not options.units_per_minute:
         writer.raw("G94         ; Back to units per minute")
         writer.raw("G1F1")
     if options.return_home and writer.joint is not None:

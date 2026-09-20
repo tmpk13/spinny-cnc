@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from .gcode import INVERSE, Job
+from .gcode import GRBLHAL_SEGMENT, INVERSE, Job
 
 
 def render(job: Job, gcode_name: str, source: str, notes: list[str] | None = None) -> str:
@@ -19,10 +19,21 @@ def render(job: Job, gcode_name: str, source: str, notes: list[str] | None = Non
         "",
         "| Setting | Value |",
         "| --- | --- |",
-        f"| Radius axis | X, {options.axis_x:g} at the rotation axis |",
-        f"| Rotary axis | {options.rotary_axis}, degrees,"
-        f" {'inverted' if options.invert_rotary else 'positive with the board angle'} |",
-        f"| Feed mode | {'G93 inverse time' if options.feed_mode == INVERSE else 'G94, F scaled per segment'} |",
+    ]
+    if options.cartesian:
+        lines += [
+            "| Controller | grblHAL polar kinematics: board X/Y in, X motor radius, Y motor angle |",
+            "| Rotation axis | machine X 0, no X work offset |",
+            f"| Feed mode | G94 surface speed, scaled by the controller per {GRBLHAL_SEGMENT:g} mm piece |",
+        ]
+    else:
+        lines += [
+            f"| Radius axis | X, {options.axis_x:g} at the rotation axis |",
+            f"| Rotary axis | {options.rotary_axis}, degrees,"
+            f" {'inverted' if options.invert_rotary else 'positive with the board angle'} |",
+            f"| Feed mode | {'G93 inverse time' if options.feed_mode == INVERSE else 'G94, F scaled per segment'} |",
+        ]
+    lines += [
         f"| Chord tolerance | {options.tolerance:g} mm |",
         f"| Laser | {options.laser_mode}, S max {options.s_max:g} |",
     ]

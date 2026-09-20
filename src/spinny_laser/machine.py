@@ -7,33 +7,41 @@ import json
 from pathlib import Path
 
 from . import gcode, report
-from .gcode import INVERSE, SCALED, Job, PolarOptions
+from .gcode import GRBLHAL, INVERSE, JOINT, SCALED, Job, PolarOptions
 
 
 def add_machine_arguments(parser: argparse.ArgumentParser) -> None:
     machine = parser.add_argument_group("machine")
     machine.add_argument(
+        "--controller",
+        choices=(GRBLHAL, JOINT),
+        default=GRBLHAL,
+        help="grblhal writes board X/Y for grblHAL polar kinematics to transform;"
+        " joint writes the radius on X and the angle on --rotary-axis itself",
+    )
+    joint = parser.add_argument_group("joint controller", "only with --controller joint")
+    joint.add_argument(
         "--rotary-axis", default="A", help="gcode letter of the table axis, in degrees"
     )
-    machine.add_argument(
+    joint.add_argument(
         "--invert-rotary",
         action="store_true",
         help="negate the angle word, for a table that turns the other way",
     )
-    machine.add_argument(
+    joint.add_argument(
         "--axis-x",
         type=float,
         default=0.0,
         help="machine X reading with the beam over the rotation axis",
     )
-    machine.add_argument(
+    joint.add_argument(
         "--feed-mode",
         choices=(INVERSE, SCALED),
         default=INVERSE,
         help="inverse emits G93 with F per segment; scaled stays in G94 and"
         " scales F by joint length over board length",
     )
-    machine.add_argument(
+    joint.add_argument(
         "--rotary-scale",
         type=float,
         default=1.0,
@@ -97,6 +105,7 @@ def add_output_arguments(parser: argparse.ArgumentParser, default: str) -> None:
 
 def options_from(args) -> PolarOptions:
     return PolarOptions(
+        controller=args.controller,
         rotary_axis=args.rotary_axis.upper(),
         invert_rotary=args.invert_rotary,
         axis_x=args.axis_x,
@@ -119,13 +128,23 @@ def options_from(args) -> PolarOptions:
 
 
 def header_lines(options: PolarOptions) -> list[str]:
-    lines = [
-        f"Axes:         X is the radius ({options.axis_x:g} over the axis),"
-        f" {options.rotary_axis} is the table angle in degrees"
-        + (", inverted" if options.invert_rotary else ""),
-        f"Feed:         {'G93 inverse time, F per segment' if options.feed_mode == INVERSE else 'G94, F scaled per segment'}",
-        f"Tolerance:    {options.tolerance:g} mm chord error",
-    ]
+    if options.cartesian:
+        lines = [
+            "Controller:   grblHAL polar kinematics, board X/Y with the rotation"
+            " axis at machine X 0",
+            "Feed:         G94, F is the surface speed; the controller scales it"
+            f" per {gcode.GRBLHAL_SEGMENT:g} mm piece",
+            f"Tolerance:    {options.tolerance:g} mm chord error, segments pre-split"
+            " so the controller's pieces hold it",
+        ]
+    else:
+        lines = [
+            f"Axes:         X is the radius ({options.axis_x:g} over the axis),"
+            f" {options.rotary_axis} is the table angle in degrees"
+            + (", inverted" if options.invert_rotary else ""),
+            f"Feed:         {'G93 inverse time, F per segment' if options.feed_mode == INVERSE else 'G94, F scaled per segment'}",
+            f"Tolerance:    {options.tolerance:g} mm chord error",
+        ]
     if options.rotary_max_rate:
         lines.append(f"Rotary limit: {options.rotary_max_rate:g} deg/min")
     return lines
@@ -181,6 +200,7 @@ def sim_document(
         for path in group.paths:
             reach = max(reach, max((x * x + y * y) ** 0.5 for x, y in path))
     return {
+        "controller": options.controller,
         "rotary_axis": options.rotary_axis,
         "invert_rotary": options.invert_rotary,
         "axis_x": options.axis_x,

@@ -16,3 +16,8 @@
   scrubbing, screenshot mode.
 - Tests: kinematics, emitter, replay of the emitted gcode back onto the board
   geometry, both commands end to end, simulator parser and timing.
+- grblHAL polar kinematics as the default target (2026-09-19): board X/Y
+  in G94, pre-split to tolerance, axis exit through a rounded two-quanta hop
+  with re-subdivision; the joint emitter kept behind `--controller joint`;
+  simulator and test replay model the controller's 0.5 mm pieces, feed
+  floor and unsplit rapids.

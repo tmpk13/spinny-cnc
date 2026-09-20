@@ -9,12 +9,13 @@ mod gcode;
 
 use std::path::{Path, PathBuf};
 
-use gcode::{board_point, lerp, Kind, Limits, Program};
+use gcode::{board_point, lerp, Controller, Kind, Limits, Program};
 use macroquad::prelude::*;
 use serde::Deserialize;
 
 #[derive(Deserialize, Default)]
 struct Sidecar {
+    controller: Option<String>,
     rotary_axis: Option<String>,
     invert_rotary: Option<bool>,
     axis_x: Option<f64>,
@@ -42,10 +43,12 @@ fn usage() -> ! {
     eprintln!(
         "usage: spinny-sim <job.gcode> [options]\n\
          \n\
-         A <job.gcode>.sim.json next to the file supplies the board, axis letter and\n\
-         direction; the options below override it.\n\
+         A <job.gcode>.sim.json next to the file supplies the board, controller,\n\
+         axis letter and direction; the options below override it.\n\
          \n\
-         --rotary-axis L      gcode letter of the table axis (default A)\n\
+         --controller grblhal|joint  grblhal: board X/Y, the controller transforms and\n\
+                              splits cuts at 0.5 mm; joint: radius on X, angle on a letter\n\
+         --rotary-axis L      joint: gcode letter of the table axis (default A)\n\
          --invert-rotary      table turns the other way\n\
          --axis-x MM          machine X over the rotation axis (default 0)\n\
          --x-rapid MM/MIN     G0 speed of X (default 3000)\n\
@@ -72,8 +75,8 @@ fn parse_args() -> Options {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--invert-rotary" => overrides.push((arg, String::new())),
-            "--rotary-axis" | "--axis-x" | "--x-rapid" | "--rotary-rapid" | "--x-max"
-            | "--rotary-max" | "--s-max" => {
+            "--controller" | "--rotary-axis" | "--axis-x" | "--x-rapid" | "--rotary-rapid"
+            | "--x-max" | "--rotary-max" | "--s-max" => {
                 let value = args.next().unwrap_or_else(|| usage());
                 overrides.push((arg, value));
             }
@@ -86,6 +89,9 @@ fn parse_args() -> Options {
     }
     let file = file.unwrap_or_else(|| usage());
     let sidecar = load_sidecar(&file);
+    if let Some(name) = &sidecar.controller {
+        limits.controller = controller_named(name);
+    }
     if let Some(letter) = sidecar.rotary_axis.as_ref().and_then(|s| s.chars().next()) {
         limits.rotary_axis = letter;
     }
@@ -114,6 +120,7 @@ fn parse_args() -> Options {
     for (key, value) in overrides {
         let number = || value.parse::<f64>().unwrap_or_else(|_| usage());
         match key.as_str() {
+            "--controller" => limits.controller = controller_named(&value),
             "--rotary-axis" => limits.rotary_axis = value.chars().next().unwrap_or('A'),
             "--invert-rotary" => limits.invert_rotary = true,
             "--axis-x" => limits.axis_x = number(),
@@ -126,6 +133,14 @@ fn parse_args() -> Options {
         }
     }
     Options { file, limits, screenshot, at }
+}
+
+fn controller_named(name: &str) -> Controller {
+    match name {
+        "grblhal" => Controller::Grblhal,
+        "joint" => Controller::Joint,
+        _ => usage(),
+    }
 }
 
 fn sidecar_path(file: &Path) -> PathBuf {
@@ -432,12 +447,15 @@ async fn main() {
                 current.text
             ),
             format!(
-                "X {:>8.3}  {} {:>10.4}   board ({:.3}, {:.3})",
-                joint.0 + options.limits.axis_x,
-                options.limits.rotary_axis,
-                if options.limits.invert_rotary { -joint.1 } else { joint.1 },
+                "radius {:>8.3}  angle {:>10.4}   board ({:.3}, {:.3})   {}",
+                joint.0,
+                joint.1,
                 bx,
-                by
+                by,
+                match options.limits.controller {
+                    Controller::Grblhal => "grblHAL polar",
+                    Controller::Joint => "joint file",
+                }
             ),
             format!(
                 "{}  S {:.0} -> {:.0} effective{}",

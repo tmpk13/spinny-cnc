@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from polar_sim import deviation, replay
+from polar_sim import deviation, replay_grblhal
 from spinny_laser import convert
 from spinny_laser.convert import ConvertError, main, read_paths
 
@@ -58,7 +58,7 @@ def test_the_rewrite_marks_the_same_geometry(tmp_path):
     source.write_text(SAMPLE)
     out = tmp_path / "job.polar.gcode"
     assert main([str(source), "-o", str(out), "--anchor", "keep"]) == 0
-    marks = replay(out.read_text())
+    marks = replay_grblhal(out.read_text())
     originals = [path.points for path in read_paths(SAMPLE)]
     assert len(marks) == 2
     for mark, original in zip(marks, originals):
@@ -71,7 +71,7 @@ def test_center_anchor_moves_the_extent_onto_the_axis(tmp_path):
     source.write_text(SAMPLE)
     out = tmp_path / "job.polar.gcode"
     main([str(source), "-o", str(out)])
-    marks = replay(out.read_text())
+    marks = replay_grblhal(out.read_text())
     xs = [x for mark in marks for x, _ in mark]
     ys = [y for mark in marks for _, y in mark]
     # Extent 10..22 in X and 10..21 in Y, centered on the axis.
