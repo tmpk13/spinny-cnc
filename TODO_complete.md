@@ -21,3 +21,5 @@
   with re-subdivision; the joint emitter kept behind `--controller joint`;
   simulator and test replay model the controller's 0.5 mm pieces, feed
   floor and unsplit rapids.
+- `spinny-jog`: setup rapids from the DRO position, radial moves and table
+  turns split into quarter-turn steps, with what each motor does.

@@ -17,6 +17,7 @@ in as a path dependency.
 | --- | --- |
 | `spinny-iso` | KiCad board or gerber to isolation gcode placed on the axis |
 | `spinny-polar` | re-place and pre-split an existing X/Y laser job |
+| `spinny-jog` | MDI rapids for setup: move radially or turn the table |
 | `spinny-sim` | play a job back on a model of the machine |
 
 ## Usage
@@ -63,6 +64,22 @@ motor is the table angle, in degrees:
 The controller transforms around machine `X = 0`, so the beam must be over
 the rotation axis when the controller is powered or reset, and the X work
 offset must stay zero. Polar mode has no homing.
+
+Jog buttons send board X/Y, so a jog through the center sends the radius
+motor back out with a half turn of the table, and from the center every
+direction is "out". For setup, `spinny-jog` prints rapids that move one
+thing at a time from the position the DRO shows:
+
+```sh
+uv run spinny-jog radius 10 --angle 0          # from the axis, out along the rail
+uv run spinny-jog --from 10,0 turn 90          # table a quarter turn, head still
+uv run spinny-jog --from 0,10 center           # back over the axis
+```
+
+Turns come out in steps of at most a quarter turn so the controller's
+nearest-angle rule cannot send the table the other way. Seen from above the
+point under the beam must swing clockwise on a positive turn; if not, flip
+the Y bit in `$3` or the board comes out mirrored.
 
 Pass `$111` as `--rotary-max-rate`: the estimate then slows down where the
 table cannot keep up and the summary says how much of the cut that is. Under
@@ -111,6 +128,11 @@ classDiagram
     class convert {
         main(argv)  spinny-polar
         read_paths(text)
+    }
+    class jog {
+        main(argv)  spinny-jog
+        radial(start, radius)
+        turn(start, degrees, step)
     }
     class machine {
         add_machine_arguments(parser)
@@ -161,6 +183,7 @@ classDiagram
     cli --> preview
     convert --> preview
     gcode --> polar
+    jog --> polar
     gcode --> Job
     sim_main --> sim_gcode
     sim_gcode ..> gcode : reads its output
