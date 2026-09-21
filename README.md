@@ -5,13 +5,16 @@ Isolation gcode for a two axis laser PCB machine: the laser rides a linear
 The rail passes over the rotation axis, so a board point is reached by its
 polar radius on `X` and its polar angle on the table.
 
-The controller is grblHAL with polar kinematics, which takes ordinary board
-X/Y gcode and does the transform itself. This tool places the board on the
-axis, pre-splits the toolpath where the controller's own segmentation would
-stray, handles cuts through the axis, estimates the time with the table's
-speed limit, and plays the job back in 3D. The copper reading and the
-isolation loops come from the Cartesian tool in `../kicad-to-gcode`, pulled
-in as a path dependency.
+The machine runs its own firmware on a BTT SKR Pico and is driven from a
+browser; see [Controller and web interface](#controller-and-web-interface).
+The commands below are the gcode toolchain for a grblHAL controller with
+polar kinematics, which takes board X/Y gcode and does the transform
+itself; their output is also what the web interface imports. They place the
+board on the axis, pre-split the toolpath where a controller's own
+segmentation would stray, handle cuts through the axis, estimate the time
+with the table's speed limit, and play the job back in 3D. The copper
+reading and the isolation loops come from the Cartesian tool in
+`../kicad-to-gcode`, pulled in as a path dependency.
 
 | Command | Job |
 | --- | --- |
@@ -48,7 +51,51 @@ The table has to turn fastest for cuts close to the axis. A path that passes
 inside `--min-radius` (0.5 mm) is warned about; shift the board so nothing
 does. The preview marks the axis, that radius, and the rail.
 
+## Controller and web interface
+
+`firmware/` is the SKR Pico firmware and `web/` the browser interface. The
+firmware is a joint-space controller: it moves the radius (`R`, mm) and the
+table angle (`A`, degrees) as straight lines with a lookahead planner and
+ties the laser power to the speed it reaches. Board geometry never reaches
+it; the backend turns gerber, KiCad, SVG and gcode jobs into short joint
+moves with the same kinematics module the commands above use, so board
+jogs, independent radius and turn jogs, and whole jobs all arrive as the
+same few line commands.
+
+| Part | What | Build, test, run |
+| --- | --- | --- |
+| `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
+| `firmware/rp2040` | the SKR Pico firmware | `cd firmware/rp2040 && cargo build --release && elf2uf2-rs target/thumbv6m-none-eabi/release/spinny-fw spinny-fw.uf2` |
+| `firmware/virtual` | the core on a TCP socket with a virtual clock | `cd firmware && cargo run -p spinny-virtual -- --listen 127.0.0.1:2323` |
+| `web/backend` | serial link, job import, streaming, API, serves the page | `cd web/backend && uv sync && uv run spinny-web` |
+| `web/frontend` | the page | `cd web/frontend && bun install && bun run build` |
+
+The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
+Open `http://localhost:8000`, connect to the board (or to
+`socket://127.0.0.1:2323` for the virtual firmware), jog the beam over the
+axis with the radius buttons, press "Set R=0 here", then turn the table
+with the turn buttons: a positive turn must swing the point under the beam
+counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
+per unit at low speed before the first job.
+
+```mermaid
+flowchart LR
+    subgraph web
+        FE[frontend, TypeScript] <-->|REST, WebSocket| BE[backend, FastAPI]
+        BE --> KIN[spinny_laser.polar]
+        BE --> LS[laser_sweep: gerber, isolation]
+    end
+    BE <-->|USB CDC or TCP, line protocol| CORE
+    subgraph firmware
+        RP[rp2040: embassy, USB, step timer, laser PWM, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper, machine]
+        VIRT[virtual: TCP server, virtual clock] --> CORE
+    end
+```
+
 ## Machine setup (grblHAL polar mode)
+
+This section is for running the gcode toolchain against grblHAL instead of
+the firmware above.
 
 grblHAL is built with `POLAR_ROBOT` on. The X motor is the radius and the Y
 motor is the table angle, in degrees:

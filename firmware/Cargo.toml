@@ -2,5 +2,5 @@
 # its target in its own .cargo/config.toml, which must not capture these.
 [workspace]
 resolver = "2"
-members = ["core", "virtual"]
+members = ["core", "rp2040-logic", "virtual"]
 exclude = ["rp2040"]

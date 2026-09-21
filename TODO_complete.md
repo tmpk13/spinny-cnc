@@ -23,3 +23,8 @@
   floor and unsplit rapids.
 - `spinny-jog`: setup rapids from the DRO position, radial moves and table
   turns split into quarter-turn steps, with what each motor does.
+- Web backend (2026-09-20): `web/backend` uv project with the serial link
+  (credits, realtime bytes, status poll), the joint-space streamer, SVG,
+  gcode, gerber, KiCad and JSON job importers, the job runner and the
+  FastAPI routes plus WebSocket fan-out of `docs/WEB_API.md`; host tests
+  on a byte-at-a-time fake port, e2e test gated on `SPINNY_VIRTUAL`.

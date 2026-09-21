@@ -1,0 +1,835 @@
+"""The HTTP and WebSocket API, and the static frontend.
+
+Routes are plain functions so the blocking link calls run in the thread
+pool. Events from the link and the runner reach the WebSocket clients
+through a broadcast with one queue per client; a client that cannot keep
+up loses events rather than slowing the others.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import threading
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Callable
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from . import __version__
+from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
+from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, num
+from .link import (
+    REALTIME_HOLD,
+    REALTIME_JOG_CANCEL,
+    REALTIME_RESUME,
+    CommandError,
+    Event,
+    Link,
+    LinkError,
+)
+from .runner import Runner, RunnerError
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
+SETTINGS_CACHE_SECONDS = 1.0
+CLIENT_QUEUE = 256
+
+SETTINGS_SCHEMA = [
+    {"name": "r_steps", "unit": "steps/mm", "help": "radius motor"},
+    {"name": "a_steps", "unit": "steps/deg", "help": "table motor: 200 steps * 16 microsteps * 100:1 / 360"},
+    {"name": "r_rate", "unit": "mm/min", "help": "max radius rate"},
+    {"name": "a_rate", "unit": "deg/min", "help": "max table rate"},
+    {"name": "r_accel", "unit": "mm/s^2", "help": "radius acceleration"},
+    {"name": "a_accel", "unit": "deg/s^2", "help": "table acceleration"},
+    {"name": "r_jerk", "unit": "mm/s", "help": "allowed speed change at a corner"},
+    {"name": "a_jerk", "unit": "deg/s", "help": "allowed speed change at a corner"},
+    {"name": "r_max", "unit": "mm", "help": "soft limit, 0 = off"},
+    {"name": "jog_r", "unit": "mm/min", "help": "jog rate without F"},
+    {"name": "jog_a", "unit": "deg/min", "help": "jog rate without F"},
+    {"name": "dir_invert", "unit": "mask", "help": "bit 0 radius, bit 1 table"},
+    {"name": "en_invert", "unit": "0/1", "help": "1 = enable pin active high"},
+    {"name": "idle_ms", "unit": "ms", "help": "disable motors after idle, 0 = never"},
+    {"name": "step_us", "unit": "us", "help": "step pulse width"},
+    {"name": "laser_hz", "unit": "Hz", "help": "PWM frequency"},
+    {"name": "s_max", "unit": "", "help": "S for full duty"},
+    {"name": "s_min", "unit": "", "help": "dyn mode: below this the beam is off"},
+    {"name": "laser_invert", "unit": "0/1", "help": "1 = active low output"},
+    {"name": "laser_ms", "unit": "ms", "help": "default T for laser"},
+    {"name": "tmc_r_ma", "unit": "mA", "help": "run current, 0 leaves the driver untouched"},
+    {"name": "tmc_a_ma", "unit": "mA", "help": "run current, 0 leaves the driver untouched"},
+    {"name": "tmc_hold_pct", "unit": "%", "help": "hold current as a share of run"},
+    {"name": "tmc_r_micro", "unit": "", "help": "microsteps"},
+    {"name": "tmc_a_micro", "unit": "", "help": "microsteps"},
+    {"name": "tmc_stealth", "unit": "0/1", "help": "stealthChop, else spreadCycle"},
+]
+
+NO_FRONTEND = """<!doctype html>
+<html><head><meta charset="utf-8"><title>spinny</title></head>
+<body style="font-family: sans-serif; margin: 2em">
+<h1>spinny-web</h1>
+<p>The frontend is not built. Run the build in <code>web/frontend</code>,
+then reload; the API is up at <code>/api</code>.</p>
+</body></html>
+"""
+
+
+# --- request bodies -----------------------------------------------------------
+
+
+class ConnectBody(BaseModel):
+    url: str
+
+
+class JogBody(BaseModel):
+    kind: str = "joint"
+    dr: float | None = None
+    da: float | None = None
+    dx: float | None = None
+    dy: float | None = None
+    feed: float | None = None
+
+
+class GotoBody(BaseModel):
+    kind: str = "joint"
+    r: float | None = None
+    a: float | None = None
+    x: float | None = None
+    y: float | None = None
+    feed: float | None = None
+
+
+class PositionBody(BaseModel):
+    r: float | None = None
+    a: float | None = None
+
+
+class MotorsBody(BaseModel):
+    enabled: bool
+
+
+class RealtimeBody(BaseModel):
+    action: str
+
+
+class CommandBody(BaseModel):
+    line: str
+
+
+class LaserBody(BaseModel):
+    power: float
+    ms: int | None = None
+
+
+class ModeBody(BaseModel):
+    mode: str
+
+
+class SettingsBody(BaseModel):
+    values: dict[str, Any] | None = None
+    host: dict[str, Any] | None = None
+
+
+# --- fan-out ------------------------------------------------------------------
+
+
+class Broadcast:
+    """One asyncio queue per WebSocket client; slow clients drop events."""
+
+    def __init__(self) -> None:
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self._queues: set[asyncio.Queue] = set()
+        self.dropped = 0
+
+    def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=CLIENT_QUEUE)
+        self._queues.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self._queues.discard(queue)
+
+    @property
+    def clients(self) -> int:
+        return len(self._queues)
+
+    def publish(self, event: dict) -> None:
+        for queue in list(self._queues):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                self.dropped += 1
+
+    def publish_threadsafe(self, event: dict) -> None:
+        loop = self.loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self.publish, event)
+        except RuntimeError:
+            pass
+
+
+# --- the backend --------------------------------------------------------------
+
+
+class Backend:
+    def __init__(
+        self,
+        root: Path = BACKEND_ROOT,
+        link_factory: Callable[[str], Link] | None = None,
+        jobs_dir: Path | None = None,
+        config_path: Path | None = None,
+    ) -> None:
+        self.root = root
+        self.config_path = config_path or root / "config.json"
+        self.config = self._load_config()
+        self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
+        self.link_factory = link_factory or (lambda url: Link(url))
+        self.link: Link | None = None
+        self.url: str | None = self.config.get("last_url")
+        self.broadcast = Broadcast()
+        self.runner = Runner(publish=self._publish_progress, message=self.publish_message)
+        self.rates = Rates()
+        self._settings_cache: tuple[float, dict] | None = None
+        self._lock = threading.Lock()
+        # Where the jog in progress ends, so the next board move starts from
+        # there rather than from a position the machine has already left.
+        self._jog_target: tuple[float, float] | None = None
+
+    # --- config -------------------------------------------------------------
+
+    def _load_config(self) -> dict:
+        try:
+            data = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data.setdefault("tolerance", DEFAULT_TOLERANCE)
+        return data
+
+    def _save_config(self) -> None:
+        try:
+            self.config_path.write_text(json.dumps(self.config, indent=4) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    @property
+    def tolerance(self) -> float:
+        try:
+            value = float(self.config.get("tolerance", DEFAULT_TOLERANCE))
+        except (TypeError, ValueError):
+            value = DEFAULT_TOLERANCE
+        return value if value > 0 else DEFAULT_TOLERANCE
+
+    def streamer(self) -> Streamer:
+        return Streamer(tolerance=self.tolerance, rates=self.rates)
+
+    # --- connection -----------------------------------------------------------
+
+    def connect(self, url: str) -> dict:
+        url = url.strip()
+        if not url:
+            raise ValueError("url is empty")
+        with self._lock:
+            if self.link is not None and self.link.is_open and self.link.url == url:
+                return self.snapshot()
+            self._close_link()
+            link = self.link_factory(url)
+            link.subscribe(self._on_link_event)
+            self.link = link
+            try:
+                link.open()
+            except LinkError:
+                self.link = None
+                raise
+            self.url = url
+            self.config["last_url"] = url
+            self._save_config()
+            self._settings_cache = None
+        if link.banner is None:
+            self.publish_message("error", f"no banner from {url}: is that the firmware?")
+        else:
+            self.publish_message("info", f"connected to {url}, firmware v{link.banner.version}")
+        try:
+            link.status_now(1.0)
+            self.read_settings(force=True)
+        except (LinkError, HTTPException):
+            pass
+        return self.snapshot()
+
+    def disconnect(self) -> dict:
+        with self._lock:
+            self._close_link()
+        return self.snapshot()
+
+    def _close_link(self) -> None:
+        link = self.link
+        if link is None:
+            return
+        if self.runner.active:
+            try:
+                self.runner.stop()
+            except RunnerError:
+                pass
+        link.close("disconnected")
+        self.link = None
+        self._jog_target = None
+
+    def shutdown(self) -> None:
+        self.disconnect()
+
+    def require_link(self) -> Link:
+        link = self.link
+        if link is None or not link.is_open:
+            raise HTTPException(status_code=409, detail="not connected")
+        return link
+
+    def move_start(self, link: Link) -> tuple[tuple[float, float], bool]:
+        """Where the next jog starts, and whether the machine is idle there.
+
+        While a jog is still running the reported position is on its way
+        somewhere, so the end of that jog is the start of the next one.
+        """
+        status = link.status_now(1.0)
+        if status.state == "Jog" and self._jog_target is not None:
+            return self._jog_target, False
+        self._jog_target = None
+        return status.joint, status.state == "Idle"
+
+    def _send_jog(self, link: Link, lines: list[str], end: tuple[float, float] | None) -> None:
+        try:
+            for line in lines:
+                link.request_ok(line)
+        except LinkError:
+            self._jog_target = None
+            raise
+        self._jog_target = end
+
+    def snapshot(self) -> dict:
+        link = self.link
+        connected = link is not None and link.is_open
+        firmware = None
+        machine = None
+        if connected and link is not None:
+            if link.banner is not None:
+                firmware = {
+                    "version": link.banner.version,
+                    "lines": link.banner.lines,
+                    "blocks": link.banner.blocks,
+                }
+            status = link.status
+            if status is not None:
+                x, y = board_of(status.joint)
+                machine = {
+                    "state": status.state,
+                    "alarm": status.alarm,
+                    "joint": {"r": status.r, "a": status.a},
+                    "board": {"x": round(x, 4), "y": round(y, 4)},
+                    "rate": status.rate,
+                    "laser": status.laser,
+                    "mode": status.mode,
+                    "enabled": status.enabled,
+                    "queue": {"planner": status.planner, "lines": status.lines},
+                }
+        return {
+            "connected": connected,
+            "url": self.url,
+            "firmware": firmware,
+            "machine": machine,
+            "run": self.runner.snapshot(),
+        }
+
+    # --- events ---------------------------------------------------------------
+
+    def _on_link_event(self, event: Event) -> None:
+        if event.kind == "status":
+            self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
+        elif event.kind == "console":
+            self.broadcast.publish_threadsafe({"type": "console", **event.data})
+        elif event.kind == "message":
+            self.broadcast.publish_threadsafe({"type": "message", **event.data})
+        elif event.kind == "banner":
+            self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
+        elif event.kind == "disconnect":
+            reason = event.data.get("reason", "")
+            # A close the user asked for is news, not a fault.
+            self.publish_message("info" if reason == "disconnected" else "error", f"link closed: {reason}")
+            self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
+
+    def _publish_progress(self, progress: dict) -> None:
+        self.broadcast.publish_threadsafe({"type": "progress", **progress})
+
+    def publish_message(self, level: str, text: str) -> None:
+        self.broadcast.publish_threadsafe({"type": "message", "level": level, "text": text})
+
+    # --- moving -----------------------------------------------------------------
+
+    def jog(self, body: JogBody) -> dict:
+        link = self.require_link()
+        streamer = self.streamer()
+        if body.kind == "joint":
+            lines = [streamer.joint_jog(body.dr, body.da, body.feed)]
+            start, idle = self.move_start(link)
+            # A relative jog's end is only known when it starts from rest.
+            end = (start[0] + (body.dr or 0.0), start[1] + (body.da or 0.0)) if idle else None
+        elif body.kind == "board":
+            start, _ = self.move_start(link)
+            here = board_of(start)
+            targets = streamer.board_targets(start, (here[0] + (body.dx or 0.0), here[1] + (body.dy or 0.0)))
+            lines = streamer.jog_lines(targets, body.feed)
+            end = targets[-1][0] if targets else start
+        else:
+            raise ValueError("kind must be joint or board")
+        self._send_jog(link, lines, end)
+        return {"lines": lines}
+
+    def goto(self, body: GotoBody) -> dict:
+        link = self.require_link()
+        streamer = self.streamer()
+        if body.kind == "joint":
+            lines = [streamer.joint_goto(body.r, body.a, body.feed)]
+            start, _ = self.move_start(link)
+            end = (start[0] if body.r is None else body.r, start[1] if body.a is None else body.a)
+        elif body.kind == "board":
+            if body.x is None or body.y is None:
+                raise ValueError("a board goto needs x and y")
+            start, _ = self.move_start(link)
+            targets = streamer.board_targets(start, (body.x, body.y))
+            lines = streamer.jog_lines(targets, body.feed)
+            end = targets[-1][0] if targets else start
+        else:
+            raise ValueError("kind must be joint or board")
+        self._send_jog(link, lines, end)
+        return {"lines": lines}
+
+    def set_position(self, body: PositionBody) -> dict:
+        link = self.require_link()
+        words = []
+        if body.r is not None:
+            if body.r < 0:
+                raise ValueError("a radius cannot be negative")
+            words.append(f"R{num(body.r)}")
+        if body.a is not None:
+            words.append(f"A{num(body.a, 4)}")
+        if not words:
+            raise ValueError("give r and/or a")
+        self._jog_target = None
+        link.request_ok("set " + " ".join(words))
+        link.status_now(1.0)
+        return self.snapshot()
+
+    def realtime(self, action: str) -> dict:
+        link = self.require_link()
+        if action == "hold":
+            link.realtime(REALTIME_HOLD)
+        elif action == "resume":
+            link.realtime(REALTIME_RESUME)
+        elif action == "reset":
+            self._jog_target = None
+            link.reset(timeout=1.0)
+        elif action == "cancel":
+            self._jog_target = None
+            link.realtime(REALTIME_JOG_CANCEL)
+        elif action == "status":
+            link.status_now(1.0)
+        else:
+            raise ValueError("action must be hold, resume, reset, cancel or status")
+        return self.snapshot()
+
+    def command(self, line: str) -> dict:
+        link = self.require_link()
+        return {"lines": link.request(line)}
+
+    def laser(self, power: float, ms: int | None) -> dict:
+        link = self.require_link()
+        if power < 0:
+            raise ValueError("power must be >= 0")
+        line = f"laser S{num(power)}"
+        if ms is not None:
+            if ms <= 0:
+                raise ValueError("ms must be > 0")
+            line += f" T{int(ms)}"
+        link.request_ok(line)
+        return self.snapshot()
+
+    def laser_off(self) -> dict:
+        self.require_link().request_ok("laser off")
+        return self.snapshot()
+
+    def mode(self, mode: str) -> dict:
+        if mode not in ("dyn", "const"):
+            raise ValueError("mode must be dyn or const")
+        link = self.require_link()
+        link.request_ok(f"mode {mode}")
+        link.status_now(1.0)
+        return self.snapshot()
+
+    def motors(self, enabled: bool) -> dict:
+        link = self.require_link()
+        link.request_ok("enable" if enabled else "disable")
+        link.status_now(1.0)
+        return self.snapshot()
+
+    def unlock(self) -> dict:
+        link = self.require_link()
+        link.request_ok("unlock")
+        link.status_now(1.0)
+        return self.snapshot()
+
+    # --- settings -----------------------------------------------------------------
+
+    def read_settings(self, force: bool = False) -> dict:
+        link = self.require_link()
+        now = time.monotonic()
+        cached = self._settings_cache
+        if not force and cached is not None and now - cached[0] < SETTINGS_CACHE_SECONDS:
+            values = cached[1]
+        else:
+            values = {}
+            for line in link.request_ok("$"):
+                name, sep, text = line.partition("=")
+                if sep:
+                    values[name.strip()] = _number(text.strip())
+            self._settings_cache = (now, values)
+            self.rates = Rates.from_settings(values)
+        return {"values": values, "schema": SETTINGS_SCHEMA, "host": {"tolerance": self.tolerance}}
+
+    def write_settings(self, values: dict | None, host: dict | None) -> dict:
+        if host and "tolerance" in host:
+            try:
+                tolerance = float(host["tolerance"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("tolerance must be a number") from exc
+            if tolerance <= 0:
+                raise ValueError("tolerance must be > 0")
+            self.config["tolerance"] = tolerance
+            self._save_config()
+        if values:
+            link = self.require_link()
+            current = self.read_settings(force=True)["values"]
+            for name, value in values.items():
+                if name not in current:
+                    raise ValueError(f"unknown setting {name!r}")
+                if _number(str(value)) == current[name]:
+                    continue
+                link.request_ok(f"${name}={_setting_text(value)}")
+            self._settings_cache = None
+        if self.link is not None and self.link.is_open:
+            return self.read_settings(force=True)
+        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": {"tolerance": self.tolerance}}
+
+    def save_settings(self) -> dict:
+        self.require_link().request_ok("$save")
+        return {"saved": True}
+
+    # --- ports and jobs --------------------------------------------------------------
+
+    def ports(self) -> dict:
+        from serial.tools import list_ports
+
+        found = []
+        try:
+            for port in list_ports.comports():
+                found.append({"url": port.device, "description": port.description or ""})
+        except Exception:
+            pass
+        last = self.config.get("last_url")
+        if last and last not in [entry["url"] for entry in found]:
+            found.append({"url": last, "description": "last used"})
+        return {"ports": found}
+
+    def import_upload(self, filename: str, data: bytes, options: ImportOptions) -> Job:
+        import tempfile
+
+        name = Path(filename or "upload").name
+        if not name or name.startswith("."):
+            raise JobImportError("the upload needs a file name with a suffix")
+        with tempfile.TemporaryDirectory(prefix="spinny-upload-") as folder:
+            path = Path(folder) / name
+            path.write_bytes(data)
+            job = import_file(path, path.stem, options, self.streamer())
+        return self.store.add(job)
+
+    def patch_job(self, job_id: str, patch: JobPatch) -> Job:
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        if self.runner.active and self.runner.progress.job == job_id:
+            raise HTTPException(status_code=409, detail="the job is running")
+        apply_patch(job, patch, self.streamer())
+        self.store.save(job)
+        return job
+
+    def run_job(self, job_id: str) -> dict:
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return self.runner.start(job, self.link, self.streamer())
+
+
+def _number(text: str):
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def _setting_text(value) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        text = f"{value:.6f}".rstrip("0").rstrip(".")
+        return text or "0"
+    return str(value).strip()
+
+
+# --- the app ---------------------------------------------------------------------
+
+
+def create_app(backend: Backend | None = None, frontend: Path | None = None) -> FastAPI:
+    backend = backend or Backend()
+    frontend = FRONTEND_DIST if frontend is None else frontend
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        backend.broadcast.loop = asyncio.get_running_loop()
+        try:
+            yield
+        finally:
+            await run_in_threadpool(backend.shutdown)
+
+    app = FastAPI(title="spinny-web", version=__version__, lifespan=lifespan)
+    app.state.backend = backend
+
+    def guarded(call: Callable[[], Any]) -> Any:
+        try:
+            return call()
+        except CommandError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RunnerError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (JobImportError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except LinkError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # --- connection ---
+
+    @app.get("/api/ports")
+    def ports():
+        return backend.ports()
+
+    @app.post("/api/connect")
+    def connect(body: ConnectBody):
+        return guarded(lambda: backend.connect(body.url))
+
+    @app.post("/api/disconnect")
+    def disconnect():
+        return backend.disconnect()
+
+    @app.get("/api/state")
+    def state():
+        return backend.snapshot()
+
+    # --- moving ---
+
+    @app.post("/api/jog")
+    def jog(body: JogBody):
+        return guarded(lambda: backend.jog(body))
+
+    @app.post("/api/goto")
+    def goto(body: GotoBody):
+        return guarded(lambda: backend.goto(body))
+
+    @app.post("/api/jog/cancel")
+    def jog_cancel():
+        return guarded(lambda: backend.realtime("cancel"))
+
+    @app.post("/api/position")
+    def position(body: PositionBody):
+        return guarded(lambda: backend.set_position(body))
+
+    @app.post("/api/motors")
+    def motors(body: MotorsBody):
+        return guarded(lambda: backend.motors(body.enabled))
+
+    @app.post("/api/unlock")
+    def unlock():
+        return guarded(backend.unlock)
+
+    @app.post("/api/realtime")
+    def realtime(body: RealtimeBody):
+        return guarded(lambda: backend.realtime(body.action))
+
+    @app.post("/api/command")
+    def command(body: CommandBody):
+        return guarded(lambda: backend.command(body.line))
+
+    # --- laser ---
+
+    @app.post("/api/laser")
+    def laser(body: LaserBody):
+        return guarded(lambda: backend.laser(body.power, body.ms))
+
+    @app.post("/api/laser/off")
+    def laser_off():
+        return guarded(backend.laser_off)
+
+    @app.post("/api/mode")
+    def mode(body: ModeBody):
+        return guarded(lambda: backend.mode(body.mode))
+
+    # --- settings ---
+
+    @app.get("/api/settings")
+    def settings():
+        return guarded(backend.read_settings)
+
+    @app.put("/api/settings")
+    def put_settings(body: SettingsBody):
+        return guarded(lambda: backend.write_settings(body.values, body.host))
+
+    @app.post("/api/settings/save")
+    def save_settings():
+        return guarded(backend.save_settings)
+
+    # --- jobs ---
+
+    @app.post("/api/jobs")
+    async def upload_job(
+        file: UploadFile = File(...),
+        power: float | None = Form(None),
+        speed: float | None = Form(None),
+        spot: float | None = Form(None),
+        anchor: str | None = Form(None),
+        offset_x: float | None = Form(None),
+        offset_y: float | None = Form(None),
+        passes: int | None = Form(None),
+    ):
+        options = ImportOptions(tolerance=backend.tolerance)
+        if power is not None:
+            options.power = power
+        if speed is not None:
+            options.speed = speed
+        if spot is not None:
+            options.spot = spot
+        if anchor:
+            options.anchor = anchor.strip().lower()
+        if offset_x is not None or offset_y is not None:
+            options.offset = (offset_x or 0.0, offset_y or 0.0)
+        if passes is not None:
+            options.passes = passes
+        data = await file.read()
+        try:
+            job = await run_in_threadpool(backend.import_upload, file.filename or "", data, options)
+        except (JobImportError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return job.model_dump()
+
+    @app.get("/api/jobs")
+    def list_jobs():
+        return {"jobs": [job.summary() for job in backend.store.list()]}
+
+    @app.get("/api/jobs/{job_id}")
+    def get_job(job_id: str):
+        job = backend.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return job.model_dump()
+
+    @app.patch("/api/jobs/{job_id}")
+    def patch_job(job_id: str, patch: JobPatch):
+        return guarded(lambda: backend.patch_job(job_id, patch)).model_dump()
+
+    @app.delete("/api/jobs/{job_id}")
+    def delete_job(job_id: str):
+        if backend.runner.active and backend.runner.progress.job == job_id:
+            raise HTTPException(status_code=409, detail="the job is running")
+        if not backend.store.remove(job_id):
+            raise HTTPException(status_code=404, detail="no such job")
+        return {"deleted": job_id}
+
+    @app.post("/api/jobs/{job_id}/run")
+    def run_job(job_id: str):
+        return guarded(lambda: backend.run_job(job_id))
+
+    @app.post("/api/run/hold")
+    def run_hold():
+        return guarded(backend.runner.hold)
+
+    @app.post("/api/run/resume")
+    def run_resume():
+        return guarded(backend.runner.resume)
+
+    @app.post("/api/run/stop")
+    def run_stop():
+        return guarded(backend.runner.stop)
+
+    @app.get("/api/run")
+    def run_progress():
+        # Null until a job has run, like the snapshot's `run`.
+        return backend.runner.snapshot()
+
+    # --- events ---
+
+    @app.websocket("/ws")
+    async def events(websocket: WebSocket):
+        await websocket.accept()
+        queue = backend.broadcast.subscribe()
+        try:
+            await websocket.send_json({"type": "state", **backend.snapshot()})
+            gone = asyncio.ensure_future(websocket.receive())
+            while True:
+                getter = asyncio.ensure_future(queue.get())
+                done, _ = await asyncio.wait({getter, gone}, return_when=asyncio.FIRST_COMPLETED)
+                if gone in done:
+                    getter.cancel()
+                    break
+                await websocket.send_json(getter.result())
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            backend.broadcast.unsubscribe(queue)
+
+    # --- the frontend ---
+
+    if frontend.is_dir():
+        app.mount("/", StaticFiles(directory=str(frontend), html=True), name="frontend")
+    else:
+
+        @app.get("/", response_class=HTMLResponse)
+        def index():
+            return HTMLResponse(NO_FRONTEND)
+
+    return app
+
+
+def main(argv: list[str] | None = None) -> int:
+    import uvicorn
+
+    parser = argparse.ArgumentParser(prog="spinny-web", description="Web backend for the rotary table laser.")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--version", action="version", version=__version__)
+    args = parser.parse_args(argv)
+    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

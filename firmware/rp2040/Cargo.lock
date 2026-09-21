@@ -1334,7 +1334,17 @@ dependencies = [
  "panic-halt",
  "portable-atomic",
  "spinny-core",
+ "spinny-fw-logic",
  "static_cell",
+ "tmc2209",
+]
+
+[[package]]
+name = "spinny-fw-logic"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.9.3",
+ "spinny-core",
  "tmc2209",
 ]
 

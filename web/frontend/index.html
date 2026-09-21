@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Spinny laser</title>
+    <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+    <div id="app">
+        <header id="status" class="statusbar"></header>
+        <main class="grid">
+            <section id="dro" class="panel dro" aria-label="Position"></section>
+            <section id="preview" class="panel preview-panel" aria-label="Preview"></section>
+            <section id="jog" class="panel" aria-label="Jog"></section>
+            <section id="laser" class="panel" aria-label="Laser"></section>
+            <section id="jobs" class="panel" aria-label="Jobs"></section>
+            <section id="console" class="panel console" aria-label="Console"></section>
+            <section id="settings" class="panel" aria-label="Settings"></section>
+        </main>
+        <div id="toasts" class="toasts" aria-live="polite"></div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

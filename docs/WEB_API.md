@@ -74,14 +74,14 @@ control.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y` |
-| `GET /api/jobs` | `{"jobs": [summary]}` |
+| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` |
+| `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` being the count |
 | `GET /api/jobs/{id}` | the job |
 | `PATCH /api/jobs/{id}` | `{"groups": [{"index": 0, "power": 500, "speed": 400, "enabled": true}], "offset": {"x": 0, "y": 14}}` |
 | `DELETE /api/jobs/{id}` | |
 | `POST /api/jobs/{id}/run` | starts streaming |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | |
-| `GET /api/run` | progress |
+| `GET /api/run` | progress, or `null` before any job has run |
 
 Accepted uploads: `.svg` (paths, lines, polylines, polygons, rects,
 circles; curves flattened; mm from the viewBox), `.gcode`/`.nc` (absolute
@@ -109,14 +109,18 @@ offset is already applied. Progress:
 
 ```json
 {"job": "a1b2", "state": "running", "sent": 120, "acked": 118, "total": 900,
- "seconds": 12.5, "estimate": 95.0, "group": 0}
+ "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null}
 ```
 
-`state` is `running`, `hold`, `done`, `stopped`, or `error`.
+`state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
+the reason when it is `error`. `acked` counts lines the firmware answered;
+lines a stop flushed are not answered.
 
 ## Events
 
-`WS /ws` sends JSON events; the client sends nothing.
+`WS /ws` sends JSON events; the client sends nothing. The payload's fields
+sit next to `type` in one flat object: `{"type": "console", "dir": "rx",
+"text": "ok"}`.
 
 | `type` | Payload |
 | --- | --- |

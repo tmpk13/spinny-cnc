@@ -16,3 +16,5 @@ web/frontend/node_modules/
 web/frontend/dist/
 web/backend/.venv/
 web/backend/jobs/
+web/backend/config.json
+.claude/

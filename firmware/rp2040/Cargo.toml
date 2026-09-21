@@ -6,6 +6,7 @@ description = "SKR Pico (RP2040) firmware for the spinny laser: radius axis, rot
 
 [dependencies]
 spinny-core = { path = "../core", default-features = false }
+spinny-fw-logic = { path = "../rp2040-logic" }
 
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread", "executor-interrupt"] }
 embassy-time = { version = "0.5" }

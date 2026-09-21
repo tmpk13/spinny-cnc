@@ -1,0 +1,10 @@
+[package]
+name = "spinny-fw-logic"
+version = "0.1.0"
+edition = "2021"
+description = "Host-testable logic of the RP2040 firmware: PWM arithmetic, step timer arithmetic, USB line assembly and output framing, TMC2209 datagrams, settings sector handling"
+
+[dependencies]
+spinny-core = { path = "../core", default-features = false }
+heapless = "0.9"
+tmc2209 = { version = "0.3", default-features = false }

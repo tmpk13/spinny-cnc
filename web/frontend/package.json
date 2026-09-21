@@ -1,0 +1,17 @@
+{
+    "name": "spinny-laser-web",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "bun build index.html --outdir dist --minify",
+        "dev": "bun index.html",
+        "check": "bunx tsc --noEmit",
+        "test": "bun test"
+    },
+    "devDependencies": {
+        "@happy-dom/global-registrator": "^17.4.4",
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.7.0"
+    }
+}
