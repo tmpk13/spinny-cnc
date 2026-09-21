@@ -11,12 +11,12 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::gpio::{Level, Output, Pin};
 use embassy_rp::pac::{PWM, SIO};
-use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_12, PIN_29, PIN_5, PIN_6, PIN_7, PWM_SLICE6};
+use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_12, PIN_20, PIN_5, PIN_6, PIN_7, PWM_SLICE2};
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::Peri;
 use spinny_core::hal::{LaserPort, StepPort};
 use spinny_core::settings::Settings;
-use spinny_fw_logic::laser::{compare, compare_before_top, pwm_params};
+use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_params, pwm_slice};
 use spinny_fw_logic::pins::{level_masks, mask_of};
 use spinny_fw_logic::step::pulse_loops;
 
@@ -25,8 +25,12 @@ pub const STEP_PINS: [u8; 2] = [11, 6];
 pub const DIR_PINS: [u8; 2] = [10, 5];
 /// Driver enable pins, active low on the TMC2209 sockets.
 pub const EN_PINS: [u8; 2] = [12, 7];
-/// Laser TTL output, GP29 on the SERVOS header: PWM slice 6 channel B.
-pub const LASER_SLICE: usize = 6;
+/// Laser output, GP20 on the FAN3 header: PWM slice 2 channel A. The
+/// slice and channel follow from the pin, `(gpio / 2) % 8` and even for A.
+pub const LASER_PIN: u8 = 20;
+pub const LASER_SLICE: usize = pwm_slice(LASER_PIN);
+// The channel follows from the pin, and the code below writes channel A.
+const _: () = assert!(pwm_is_channel_a(LASER_PIN));
 
 /// Busy-wait iterations after a DIR change: about 50 cycles, well over
 /// the 20 ns the TMC2209 asks for.
@@ -42,8 +46,8 @@ static LASER_TOP: AtomicU32 = AtomicU32::new(0);
 static LASER_DUTY: AtomicU32 = AtomicU32::new(0);
 
 pub struct Pins {
-    pub pwm6: Peri<'static, PWM_SLICE6>,
-    pub laser: Peri<'static, PIN_29>,
+    pub pwm: Peri<'static, PWM_SLICE2>,
+    pub laser: Peri<'static, PIN_20>,
     pub r_step: Peri<'static, PIN_11>,
     pub r_dir: Peri<'static, PIN_10>,
     pub r_en: Peri<'static, PIN_12>,
@@ -61,10 +65,10 @@ pub fn init(pins: Pins) -> (StepPins, LaserPwm) {
     let mut cfg = PwmConfig::default();
     cfg.divider = params.div.into();
     cfg.top = params.top;
-    cfg.compare_b = 0;
+    cfg.compare_a = 0;
     cfg.enable = true;
     LASER_TOP.store(params.top as u32, Ordering::Relaxed);
-    forget(Pwm::new_output_b(pins.pwm6, pins.laser, cfg));
+    forget(Pwm::new_output_a(pins.pwm, pins.laser, cfg));
 
     let step = [pins.r_step.pin(), pins.a_step.pin()];
     let dir = [pins.r_dir.pin(), pins.a_dir.pin()];
@@ -136,8 +140,9 @@ impl LaserPort for LaserPwm {
     fn set_duty(&mut self, permille: u16) {
         LASER_DUTY.store(permille as u32, Ordering::Relaxed);
         let top = LASER_TOP.load(Ordering::Relaxed) as u16;
-        // A plain write, not a read-modify-write: channel A of the slice is unused.
-        PWM.ch(LASER_SLICE).cc().write(|w| w.set_b(compare(top, permille)));
+        // A plain write, not a read-modify-write: channel B of the slice
+        // is GP21, which this firmware never puts in its PWM function.
+        PWM.ch(LASER_SLICE).cc().write(|w| w.set_a(compare(top, permille)));
     }
 
     /// Reprograms the slice in one go. The interrupt's `set_duty` computes
@@ -157,11 +162,11 @@ impl LaserPort for LaserPwm {
             // new value; this order never leaves a compare above the wrap,
             // which would hold the output high.
             if compare_before_top(old_top, params.top) {
-                ch.cc().write(|w| w.set_b(cc));
+                ch.cc().write(|w| w.set_a(cc));
                 ch.top().write(|w| w.set_top(params.top));
             } else {
                 ch.top().write(|w| w.set_top(params.top));
-                ch.cc().write(|w| w.set_b(cc));
+                ch.cc().write(|w| w.set_a(cc));
             }
             // A counter past a shorter wrap would run on to 0xFFFF first.
             ch.ctr().write(|w| w.set_ctr(0));

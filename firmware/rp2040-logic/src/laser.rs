@@ -1,6 +1,18 @@
 //! Laser PWM arithmetic for an RP2040 PWM slice: an integer clock divider
 //! and a 16-bit wrap value per frequency, and a compare value per duty.
 
+/// PWM slice a pin belongs to. The RP2040 wires GPIO `n` to slice
+/// `(n / 2) % 8`, channel A when `n` is even and channel B when it is odd,
+/// so the slice and the channel are not free choices once the pin is known.
+pub const fn pwm_slice(gpio: u8) -> usize {
+    (gpio as usize / 2) % 8
+}
+
+/// Whether a pin drives channel A of its slice; channel B otherwise.
+pub const fn pwm_is_channel_a(gpio: u8) -> bool {
+    gpio % 2 == 0
+}
+
 /// Divider and wrap value for one PWM frequency.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PwmParams {
@@ -52,6 +64,23 @@ mod tests {
 
     fn frequency(p: PwmParams) -> f64 {
         SYSCLK as f64 / (p.div as f64 * (p.top as f64 + 1.0))
+    }
+
+    #[test]
+    fn a_pins_slice_and_channel_follow_from_its_number() {
+        // The laser sits on GP20, the SKR Pico's FAN3 output.
+        assert_eq!(pwm_slice(20), 2);
+        assert!(pwm_is_channel_a(20));
+        // Pins that have been considered for it, and the ends of the range.
+        assert_eq!((pwm_slice(29), pwm_is_channel_a(29)), (6, false));
+        assert_eq!((pwm_slice(25), pwm_is_channel_a(25)), (4, false));
+        assert_eq!((pwm_slice(0), pwm_is_channel_a(0)), (0, true));
+        assert_eq!((pwm_slice(16), pwm_is_channel_a(16)), (0, true));
+        // Neighbouring pins share a slice and split its two channels.
+        for gpio in 0..30u8 {
+            assert_eq!(pwm_slice(gpio), pwm_slice(gpio ^ 1));
+            assert_ne!(pwm_is_channel_a(gpio), pwm_is_channel_a(gpio ^ 1));
+        }
     }
 
     #[test]

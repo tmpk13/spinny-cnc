@@ -12,7 +12,7 @@ of `docs/PROTOCOL.md` over USB CDC. No endstops, no homing.
 | Radius STEP / DIR / EN | GP11 / GP10 / GP12 | X driver socket, EN active low |
 | Table STEP / DIR / EN | GP6 / GP5 / GP7 | Y driver socket, EN active low |
 | TMC2209 UART | GP8 TX, GP9 RX | one wire, 115200 baud, addresses X=0 Y=2, 110 mOhm sense |
-| Laser TTL / PWM | GP29 | SERVOS header signal pin; 5V and GND beside it |
+| Laser | GP20 | FAN3 header, a low side MOSFET switching the fan rail |
 
 USB: VID 0x2E8A PID 0x000A, product "spinny laser controller", serial from
 the flash unique id.
@@ -71,16 +71,25 @@ disconnected until the last step.
    steps, then back off well clear of it. `$a_rate` is what decides how close
    to the axis the machine can still cut at speed.
 7. `$save`, then power cycle and check `$` still reads back what you set.
-8. Laser last, on a scrap board: `laser S50 T500` to see it strike, then a
-   single `cut` line at the speed and power you intend before any job.
+8. Laser last, on a scrap board. Prove the wiring at full duty first,
+   where the output is simply on: `laser S1000 T2000`, measuring at the
+   header if it does not strike. Then `laser S500 T2000` and `laser S100
+   T2000` to find where it stops firing, which is the bottom of the usable
+   power range. Only then a single `cut` line at the speed and power you
+   intend.
+9. If the beam follows `S` poorly, the fan output's own smoothing is the
+   first suspect: try `$laser_hz=200` and work up.
 
 ## Safety
 
 - Verify direction and steps per unit at low speed first: `jog R1 F60`,
   `jog A5 F60`, then `$dir_invert`, `$r_steps` and `$a_steps` as needed.
-- GP29 is an input from power-on until the firmware starts and again after
-  a watchdog reset. Fit a pull-down on the laser TTL line, or use a module
-  that stays off while its input floats.
+- GP20 is an input from power-on until the firmware starts and again after
+  a watchdog reset. The pad's own pull-down holds the MOSFET off, but a
+  module driven from a TTL line of its own needs a pull-down there too.
+- The FAN3 output switches the board's fan rail, which is 12 V or 24 V
+  depending on how the board is powered. Check what reaches the laser
+  before connecting it to anything expecting 5 V logic.
 - The EN lines are pulled low by the pads at reset, so the drivers are
   energized at their own default current until the firmware disables them
   a few milliseconds later.
