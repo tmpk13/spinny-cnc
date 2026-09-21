@@ -29,6 +29,12 @@ POLL_MOVING = 0.1
 MOVING_STATES = ("Run", "Jog", "Hold")
 MAX_LINE = 96
 
+# What a port raises once it is gone. pyserial does not settle on one
+# exception: a closed socket url leaves its handler reading from None, and
+# a closed file object raises ValueError, so both reach the caller as
+# something other than SerialException.
+PORT_ERRORS = (serial.SerialException, OSError, TypeError, AttributeError, ValueError)
+
 REALTIME_STATUS = b"?"
 REALTIME_HOLD = b"!"
 REALTIME_RESUME = b"~"
@@ -402,7 +408,7 @@ class Link:
         try:
             with self._write_lock:
                 self._port.write(data)
-        except (serial.SerialException, OSError) as exc:
+        except PORT_ERRORS as exc:
             self._fail(f"write failed: {exc}")
             raise LinkClosed(str(exc)) from exc
 
@@ -419,7 +425,7 @@ class Link:
                     while waiting:
                         chunk += port.read(waiting)
                         waiting = port.in_waiting
-            except (serial.SerialException, OSError, TypeError) as exc:
+            except PORT_ERRORS as exc:
                 if not self._closed.is_set():
                     self._fail(f"port error: {exc}")
                 return

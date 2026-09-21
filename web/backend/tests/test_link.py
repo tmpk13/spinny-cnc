@@ -221,3 +221,35 @@ def test_send_refuses_bad_lines():
             lk.send("x" * 120)
     finally:
         lk.close()
+
+
+def test_a_port_that_breaks_on_close_does_not_kill_the_reader():
+    """Closing the link races the reader thread's own read.
+
+    pyserial raises whatever the handler happens to hit once the port is
+    gone: a socket url leaves its handler reading from None and a closed
+    file object raises ValueError, neither of which is a SerialException.
+    An unhandled one kills the reader thread and prints a traceback under
+    every disconnect.
+    """
+    fake = FakeSerial()
+    errors: list[BaseException] = []
+    original = threading.excepthook
+    threading.excepthook = lambda args: errors.append(args.exc_value)
+    try:
+        lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+        lk.open()
+        fake.break_with(AttributeError("'NoneType' object has no attribute 'recv'"))
+        lk.close()
+        assert wait_for(lambda: not lk.is_open, 2.0)
+    finally:
+        threading.excepthook = original
+    assert errors == [], f"the reader thread died: {errors}"
+
+    fake = FakeSerial()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    lk.open()
+    fake.break_with(ValueError("I/O operation on closed file"))
+    assert wait_for(lambda: not lk.is_open, 2.0)
+    assert "port error" in (lk.close_reason or "")
+    lk.close()

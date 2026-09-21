@@ -142,6 +142,17 @@ mod tests {
     }
 
     #[test]
+    fn settings_sector_is_the_last_and_kept_out_of_the_image() {
+        assert_eq!(SETTINGS_OFFSET as usize + SECTOR_SIZE, FLASH_SIZE);
+        assert_eq!(SETTINGS_OFFSET % SECTOR_SIZE as u32, 0);
+        // The firmware's linker script leaves the sector out of its FLASH region.
+        let memory_x = include_str!("../../rp2040/memory.x");
+        let flash = memory_x.lines().find(|line| line.trim_start().starts_with("FLASH")).unwrap();
+        let reserved = format!("- {}K", SECTOR_SIZE / 1024);
+        assert!(flash.contains("2048K") && flash.contains(&reserved), "{flash}");
+    }
+
+    #[test]
     fn hex_is_upper_case_and_bounded() {
         let mut out = [0u8; 16];
         hex_upper(&[0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67], &mut out);

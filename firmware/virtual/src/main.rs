@@ -1,8 +1,24 @@
-//! Virtual firmware: the control core with in-memory ports and a virtual
-//! clock, served on a TCP socket with the same line protocol as the board.
-//! Placeholder until the machine module lands.
+use std::process::ExitCode;
 
-fn main() {
-    eprintln!("spinny-virtual: not implemented yet (core {})", spinny_core::VERSION);
-    std::process::exit(2);
+use spinny_virtual::args;
+
+fn main() -> ExitCode {
+    let options = match args::parse(std::env::args().skip(1)) {
+        Ok(Some(options)) => options,
+        Ok(None) => {
+            print!("{}", args::USAGE);
+            return ExitCode::SUCCESS;
+        }
+        Err(message) => {
+            eprintln!("{message}\n\n{}", args::USAGE);
+            return ExitCode::from(2);
+        }
+    };
+    match spinny_virtual::run(&options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("spinny-virtual: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }

@@ -93,6 +93,12 @@ pub fn start(spawner: &Spawner, usb: Peri<'static, USB>, serial: &'static str) {
     config.serial_number = Some(serial);
     config.max_power = 100;
     config.max_packet_size_0 = 64;
+    // A composite device with an interface association: Windows binds its
+    // serial driver to the CDC function only when the device says so.
+    config.device_class = 0xEF;
+    config.device_sub_class = 0x02;
+    config.device_protocol = 0x01;
+    config.composite_with_iads = true;
 
     static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
@@ -141,8 +147,10 @@ async fn reader_task(mut receiver: Receiver<'static, UsbDrv>) {
                 }
             }
         }
-        // Lines the old host left behind must not run for the next one.
+        // Lines and realtime bytes the old host left behind must not act
+        // for the next one, nor after the reset the event causes.
         LINES.clear();
+        REALTIME.clear();
         EVENTS.send(Event::Disconnected).await;
     }
 }

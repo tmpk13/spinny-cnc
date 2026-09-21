@@ -105,6 +105,7 @@ name = "spinny-virtual"
 version = "0.1.0"
 dependencies = [
  "spinny-core",
+ "spinny-fw-logic",
 ]
 
 [[package]]

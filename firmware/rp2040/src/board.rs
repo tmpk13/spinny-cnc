@@ -9,16 +9,16 @@ use core::mem::forget;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_rp::clocks::clk_sys_freq;
-use embassy_rp::gpio::{Level, Output};
+use embassy_rp::gpio::{Level, Output, Pin};
 use embassy_rp::pac::{PWM, SIO};
 use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_12, PIN_29, PIN_5, PIN_6, PIN_7, PWM_SLICE6};
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::Peri;
 use spinny_core::hal::{LaserPort, StepPort};
 use spinny_core::settings::Settings;
-use spinny_fw_logic::laser::{compare, pwm_params};
+use spinny_fw_logic::laser::{compare, compare_before_top, pwm_params};
 use spinny_fw_logic::pins::{level_masks, mask_of};
-use spinny_fw_logic::step::pulse_cycles;
+use spinny_fw_logic::step::pulse_loops;
 
 /// STEP pins: radius on the X driver, table on the Y driver.
 pub const STEP_PINS: [u8; 2] = [11, 6];
@@ -28,12 +28,14 @@ pub const EN_PINS: [u8; 2] = [12, 7];
 /// Laser TTL output, GP29 on the SERVOS header: PWM slice 6 channel B.
 pub const LASER_SLICE: usize = 6;
 
-/// Settling time after a DIR change, well over the 20 ns the TMC2209 asks for.
-const DIR_SETUP_CYCLES: u32 = 16;
+/// Busy-wait iterations after a DIR change: about 50 cycles, well over
+/// the 20 ns the TMC2209 asks for.
+const DIR_SETUP_LOOPS: u32 = 16;
 
 static SYSCLK_HZ: AtomicU32 = AtomicU32::new(125_000_000);
-/// Busy-wait after raising STEP; the main loop keeps it in step with `step_us`.
-static PULSE_CYCLES: AtomicU32 = AtomicU32::new(250);
+/// Busy-wait iterations after raising STEP; the main loop keeps it in
+/// step with `step_us`.
+static PULSE_LOOPS: AtomicU32 = AtomicU32::new(125);
 /// Wrap value of the laser PWM, set by `set_frequency`.
 static LASER_TOP: AtomicU32 = AtomicU32::new(0);
 /// Last duty asked for, reapplied when the frequency changes.
@@ -64,12 +66,19 @@ pub fn init(pins: Pins) -> (StepPins, LaserPwm) {
     LASER_TOP.store(params.top as u32, Ordering::Relaxed);
     forget(Pwm::new_output_b(pins.pwm6, pins.laser, cfg));
 
+    let step = [pins.r_step.pin(), pins.a_step.pin()];
+    let dir = [pins.r_dir.pin(), pins.a_dir.pin()];
+    let en = [pins.r_en.pin(), pins.a_en.pin()];
     forget(Output::new(pins.r_en, Level::High));
     forget(Output::new(pins.a_en, Level::High));
     forget(Output::new(pins.r_step, Level::Low));
     forget(Output::new(pins.a_step, Level::Low));
     forget(Output::new(pins.r_dir, Level::Low));
     forget(Output::new(pins.a_dir, Level::Low));
+    // The SIO masks come from the tables above, which must name the pins
+    // the outputs were just made on. Checked with every line at its safe
+    // level, so a halt here leaves the drivers off and the laser low.
+    assert!(step == STEP_PINS && dir == DIR_PINS && en == EN_PINS);
 
     set_step_width(Settings::default().step_us);
     (StepPins, LaserPwm)
@@ -81,7 +90,7 @@ fn sysclk() -> u32 {
 
 /// Step pulse width for the interrupt, from the `step_us` setting.
 pub fn set_step_width(step_us: u32) {
-    PULSE_CYCLES.store(pulse_cycles(sysclk(), step_us), Ordering::Relaxed);
+    PULSE_LOOPS.store(pulse_loops(sysclk(), step_us), Ordering::Relaxed);
 }
 
 /// Step, direction and enable lines through the SIO set/clear registers.
@@ -94,7 +103,7 @@ impl StepPort for StepPins {
         let out = SIO.gpio_out(0);
         out.value_set().write_value(set);
         out.value_clr().write_value(clr);
-        cortex_m::asm::delay(DIR_SETUP_CYCLES);
+        cortex_m::asm::delay(DIR_SETUP_LOOPS);
     }
 
     fn step(&mut self, mask: u8) {
@@ -104,7 +113,7 @@ impl StepPort for StepPins {
         }
         let out = SIO.gpio_out(0);
         out.value_set().write_value(bits);
-        cortex_m::asm::delay(PULSE_CYCLES.load(Ordering::Relaxed));
+        cortex_m::asm::delay(PULSE_LOOPS.load(Ordering::Relaxed));
         out.value_clr().write_value(bits);
     }
 
@@ -131,16 +140,32 @@ impl LaserPort for LaserPwm {
         PWM.ch(LASER_SLICE).cc().write(|w| w.set_b(compare(top, permille)));
     }
 
+    /// Reprograms the slice in one go. The interrupt's `set_duty` computes
+    /// its compare from the wrap value published here, so the block keeps
+    /// it from running between the register writes and the store.
     fn set_frequency(&mut self, hz: u32) {
         let params = pwm_params(sysclk(), hz);
-        let ch = PWM.ch(LASER_SLICE);
-        ch.div().write(|w| {
-            w.set_int(params.div);
-            w.set_frac(0);
+        critical_section::with(|_| {
+            let ch = PWM.ch(LASER_SLICE);
+            let old_top = LASER_TOP.load(Ordering::Relaxed) as u16;
+            let cc = compare(params.top, LASER_DUTY.load(Ordering::Relaxed) as u16);
+            ch.div().write(|w| {
+                w.set_int(params.div);
+                w.set_frac(0);
+            });
+            // Between the two writes the slice runs on one old and one
+            // new value; this order never leaves a compare above the wrap,
+            // which would hold the output high.
+            if compare_before_top(old_top, params.top) {
+                ch.cc().write(|w| w.set_b(cc));
+                ch.top().write(|w| w.set_top(params.top));
+            } else {
+                ch.top().write(|w| w.set_top(params.top));
+                ch.cc().write(|w| w.set_b(cc));
+            }
+            // A counter past a shorter wrap would run on to 0xFFFF first.
+            ch.ctr().write(|w| w.set_ctr(0));
+            LASER_TOP.store(params.top as u32, Ordering::Relaxed);
         });
-        ch.top().write(|w| w.set_top(params.top));
-        LASER_TOP.store(params.top as u32, Ordering::Relaxed);
-        let duty = LASER_DUTY.load(Ordering::Relaxed) as u16;
-        ch.cc().write(|w| w.set_b(compare(params.top, duty)));
     }
 }

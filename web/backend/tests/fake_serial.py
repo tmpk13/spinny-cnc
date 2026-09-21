@@ -90,6 +90,7 @@ class FakeSerial:
         self._out: queue.Queue[str | None] = queue.Queue()
         self._answers: queue.Queue[str | None] = queue.Queue()
         self._vanished = False
+        self._broken: BaseException | None = None
         self._feeder = threading.Thread(target=self._feed, daemon=True)
         self._worker = threading.Thread(target=self._answer, daemon=True)
         self._feeder.start()
@@ -142,7 +143,16 @@ class FakeSerial:
         with self._rx_cond:
             self._rx_cond.notify_all()
 
+    def break_with(self, error: BaseException) -> None:
+        """Every call raises this instead, for the errors a closed port
+        raises that are not SerialException."""
+        self._broken = error
+        with self._rx_cond:
+            self._rx_cond.notify_all()
+
     def _check(self) -> None:
+        if self._broken is not None:
+            raise self._broken
         if self._vanished:
             raise serial.SerialException("device reports readiness to read but returned no data")
         if not self.is_open:

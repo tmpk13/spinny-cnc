@@ -28,3 +28,15 @@
   gcode, gerber, KiCad and JSON job importers, the job runner and the
   FastAPI routes plus WebSocket fan-out of `docs/WEB_API.md`; host tests
   on a byte-at-a-time fake port, e2e test gated on `SPINNY_VIRTUAL`.
+- Own firmware for the machine (2026-09-20): `firmware/core`, a portable
+  control core with the line protocol, settings in a CRC blob, a lookahead
+  planner over joint moves and a two-half stepper whose interrupt ties the
+  laser duty to the speed reached; `firmware/rp2040`, the SKR Pico port on
+  embassy (USB CDC with realtime bytes and credits, TIMER alarm 1 step
+  interrupt, laser PWM, TMC2209 UART, settings sector, watchdog);
+  `firmware/virtual`, the same core on TCP with a virtual clock and a beam
+  trace, which the web tests run against.
+- Web interface (2026-09-20): `web/backend` owns the serial link and turns
+  gerber, KiCad, SVG, gcode and JSON into joint moves; `web/frontend` is
+  the page, with board and independent axis jogging, a laser test, jobs
+  with a live preview, a console and the settings table.

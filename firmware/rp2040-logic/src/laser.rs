@@ -35,6 +35,15 @@ pub fn compare(top: u16, permille: u16) -> u16 {
     ((top as u32 + 1) * permille / 1000) as u16
 }
 
+/// Whether the compare goes before the wrap value when the period changes
+/// from `old_top` to `new_top`. Between the two writes the slice runs on
+/// one old and one new value; this order keeps that compare at or below
+/// what the duty asks for at that wrap, so a compare above the wrap never
+/// holds the output high in between.
+pub fn compare_before_top(old_top: u16, new_top: u16) -> bool {
+    new_top < old_top
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +90,30 @@ mod tests {
         assert_eq!(compare(65534, 1000), 65535);
         assert_eq!(compare(9, 1), 0);
         assert_eq!(compare(9, 100), 1);
+    }
+
+    #[test]
+    fn reprogramming_never_raises_the_duty_in_between() {
+        let pairs = [(24999u16, 1249u16), (1249, 24999), (62499, 62499), (1, 65534), (65534, 1)];
+        for (old_top, new_top) in pairs {
+            for permille in [0u16, 1, 250, 500, 999, 1000] {
+                let old_cc = compare(old_top, permille);
+                let new_cc = compare(new_top, permille);
+                // The slice between the first write and the second.
+                let (cc, top) = if compare_before_top(old_top, new_top) {
+                    (new_cc, old_top)
+                } else {
+                    (old_cc, new_top)
+                };
+                assert!(cc <= compare(top, permille), "{old_top}->{new_top} at {permille}: {cc} on top {top}");
+                assert!(cc as u32 <= top as u32 + 1);
+                if permille == 0 {
+                    assert_eq!(cc, 0);
+                }
+            }
+        }
+        assert!(compare_before_top(24999, 1249));
+        assert!(!compare_before_top(1249, 24999));
+        assert!(!compare_before_top(100, 100));
     }
 }

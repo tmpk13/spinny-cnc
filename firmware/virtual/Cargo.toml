@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 description = "The control core running against a virtual machine, reachable over TCP like the real firmware"
 
+[lib]
+name = "spinny_virtual"
+path = "src/lib.rs"
+
 [[bin]]
 name = "spinny-virtual"
 path = "src/main.rs"
 
 [dependencies]
 spinny-core = { path = "../core", features = ["std"] }
+spinny-fw-logic = { path = "../rp2040-logic" }

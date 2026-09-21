@@ -2,7 +2,7 @@
 //! core driving the radius and table steppers, the laser PWM and the USB
 //! CDC line protocol.
 //!
-//! Tasks: the main loop below runs the core at about 1 kHz; `usb` owns the
+//! Tasks: the main loop below polls the core every 500 us; `usb` owns the
 //! CDC device, one task reading bytes into lines and one draining the
 //! output ring; `tmc` owns the driver UART; `step_timer` runs the stepper
 //! from TIMER alarm 1 at the highest interrupt priority.
