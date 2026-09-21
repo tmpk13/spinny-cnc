@@ -48,6 +48,12 @@ use crate::{AXES, MIN_TICK_US, SEGMENTS, SEGMENT_MS};
 pub const STEP_BLOCKS: usize = 4;
 /// Largest tick subdivision: up to `1 << MAX_AMASS` ticks per step event.
 pub const MAX_AMASS: u8 = 3;
+/// Most Bresenham events one block may hold. The interrupt shifts the
+/// event count left by `MAX_AMASS` and adds an axis's shifted step count
+/// (at most the same) to a counter kept below it, so twice the shifted
+/// event count must still fit a u32. A longer block would wrap the
+/// counters and lose the position; the caller refuses such a move.
+pub const MAX_EVENTS: u32 = 1 << (31 - MAX_AMASS as u32);
 /// Tick rate the subdivision aims for when the event rate is below it.
 pub const AMASS_TARGET_HZ: f32 = 4000.0;
 /// Slowest event rate a segment is written with, so its period stays
@@ -108,6 +114,11 @@ pub struct Shared {
     pub done: AtomicU32,
     /// The laser output is active low: off is full duty.
     pub laser_invert: AtomicBool,
+    /// A hold is in force: every segment the interrupt loads runs with the
+    /// beam off, whatever duty it was written with. Segments queued before
+    /// the hold carry their own duty, so without this the beam would come
+    /// back at the next segment boundary and burn through the whole ramp.
+    pub laser_off: AtomicBool,
     /// Slot of the segment in progress, `NO_SLOT` when none; kept for the
     /// slot reuse check in the tests.
     #[cfg(test)]
@@ -139,6 +150,7 @@ impl Shared {
             abort: AtomicBool::new(false),
             done: AtomicU32::new(0),
             laser_invert: AtomicBool::new(false),
+            laser_off: AtomicBool::new(false),
             #[cfg(test)]
             executing: core::sync::atomic::AtomicU8::new(NO_SLOT),
         }
@@ -389,6 +401,12 @@ impl<'a> Front<'a> {
             }
             self.finish_resume(planner);
         }
+        if self.hold == Hold::None {
+            // The hold, cancel or abort is over: segments carry their own
+            // duty again. Done here rather than where the hold ends so an
+            // abort still runs dark until the interrupt has emptied the ring.
+            self.shared.laser_off.store(false, Ordering::Relaxed);
+        }
         let mut kick = false;
         while self.producer.ready() {
             if self.slice.is_none() && !self.load_block(planner, settings) {
@@ -536,9 +554,11 @@ impl<'a> Front<'a> {
     }
 
     /// Decelerate to a stop at the block's acceleration; further `prep`
-    /// calls produce the ramp and then nothing.
+    /// calls produce the ramp and then nothing. The beam is off from here
+    /// until the hold ends, segments already queued included.
     pub fn request_hold(&mut self) {
         self.resume_pending = false;
+        self.shared.laser_off.store(true, Ordering::Relaxed);
         if self.hold == Hold::None {
             self.hold = if self.speed > 0.0 { Hold::Decel } else { Hold::Stopped };
         }
@@ -653,7 +673,7 @@ impl<'a> Front<'a> {
 
     /// Laser duty of the segment in progress, permille.
     pub fn duty(&self) -> u16 {
-        if self.busy() {
+        if self.busy() && !self.shared.laser_off.load(Ordering::Relaxed) {
             self.last_duty
         } else {
             self.shared.off_duty()
@@ -748,7 +768,8 @@ impl<'a> Isr<'a> {
             port.set_dir(block.dir_levels);
             self.loaded = Some(segment.block);
         }
-        laser.set_duty(segment.duty);
+        let held = shared.laser_off.load(Ordering::Relaxed);
+        laser.set_duty(if held { shared.off_duty() } else { segment.duty });
         self.segment = Some(segment);
         self.ticks_left = segment.ticks;
         #[cfg(test)]
@@ -1583,5 +1604,26 @@ mod tests {
         assert_eq!(rig.front.position(), [1280, -44444]);
         assert_eq!(rig.port.count, [1280, 88889 + 44444]);
         assert_eq!(rig.port.dirs, std::vec![0]);
+    }
+
+    #[test]
+    fn the_longest_allowed_block_keeps_the_counters_in_range() {
+        let mut rig = Rig::new(settings());
+        // `MAX_EVENTS` events with a minor axis almost as long: the shifted
+        // counter peaks just short of a full u32 here, so one event more
+        // would wrap it.
+        let a = MAX_EVENTS as f32 / settings().steps[A];
+        let r = 0.99 * MAX_EVENTS as f32 / settings().steps[R];
+        rig.go(r, a);
+        let block = *rig.planner.current().unwrap();
+        assert!(block.step_event_count <= MAX_EVENTS, "{}", block.step_event_count);
+        assert!(block.step_event_count > MAX_EVENTS - 1024, "{}", block.step_event_count);
+        assert!(block.steps[R] > block.steps[A] / 2);
+        // A couple of seconds of the block is enough to reach full speed,
+        // where the subdivision is off and the counter increments are largest.
+        rig.advance(2_000_000);
+        assert!(rig.port.count[R] > 0 && rig.port.count[A] > 0);
+        assert_eq!(rig.front.position()[A] as u64, rig.port.count[A]);
+        rig.check_axis_rates();
     }
 }

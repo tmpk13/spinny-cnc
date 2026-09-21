@@ -31,7 +31,7 @@ part of the line.
 | Byte | Action |
 | --- | --- |
 | `?` | one status line |
-| `!` | hold: decelerate to a stop, laser off, state `Hold` |
+| `!` | hold: decelerate to a stop, laser off, state `Hold`; a beam lit by `laser` is closed from any state |
 | `~` | resume from `Hold` |
 | `0x18` | reset: stop at once, flush everything, laser off; `Alarm:1` if it was moving, else `Idle` |
 | `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle` |
@@ -47,7 +47,7 @@ keeps that axis where it is.
 | `cut [R<mm>] [A<deg>] [F<mm/min>] [S<power>]` | line at surface speed `F` with laser power `S`; `F` and `S` are modal for later `cut` lines |
 | `jog [R<mm>] [A<deg>] [F<mm/min>]` | relative move, laser off, cancelable; without `F` at the `jog_r`/`jog_a` rates |
 | `jogto [R<mm>] [A<deg>] [F<mm/min>]` | absolute jog |
-| `dwell T<ms> [S<power>]` | wait after motion; with `S` the laser is on at constant `S` for the dwell (a spot burn) |
+| `dwell T<ms> [S<power>]` | wait after motion (`T` at most 600000); with `S` the laser is on at constant `S` for the dwell (a spot burn) |
 
 Surface speed: the length of a joint move on the board is taken as
 `hypot(dr, r_mean * da_rad)` with `r_mean = (r0 + r1) / 2`. A move whose
@@ -57,7 +57,9 @@ the laser power follows the achieved speed so the dose per mm holds.
 
 Jogs are accepted in `Idle` and `Jog` only. `R` under 0 is refused
 (`error:4`); with `r_max` set, `R` over it is refused too. The angle is not
-limited and keeps counting.
+limited and keeps counting, but one move may not cover more than 2^28 steps
+on an axis (`error:4`): about 302000 degrees or 1048576 mm at the default
+scales, past which the step generator's counters would wrap.
 
 ## Laser
 
@@ -93,8 +95,8 @@ is set to 0.
 | `$<name>` | one setting |
 | `$<name>=<value>` | set in RAM (`Idle` only) |
 | `$save` | write to flash (`Idle` only) |
-| `$load` | reload from flash |
-| `$defaults` | factory values in RAM |
+| `$load` | reload from flash (`Idle` only) |
+| `$defaults` | factory values in RAM (`Idle` only) |
 | `$tmc` | driver status lines from the TMC2209 UART |
 
 | Name | Unit | Default | Meaning |

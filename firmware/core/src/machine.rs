@@ -32,7 +32,7 @@ use crate::parser::{self, Command, Error, PowerMode, Realtime};
 use crate::planner::{Feed, MoveKind, PlanError, Planner};
 use crate::report::{self, State, Status};
 use crate::settings::{Changed, SetError, Settings, BLOB_LEN};
-use crate::stepper::Front;
+use crate::stepper::{self, Front};
 use crate::{AXES, LINE_MAX, LINE_SLOTS, R};
 
 /// Things the port loop must act on after a `poll`. Taken with `take_events`.
@@ -367,6 +367,16 @@ impl<'a> Machine<'a> {
         if r_steps < 0 || (self.settings.r_max > 0.0 && r_units > self.settings.r_max) {
             return Err(Error::OutOfRange);
         }
+        // A move longer than the stepper's Bresenham counters can carry
+        // would wrap them and lose the position; refuse it instead. The
+        // step count is saturated, so the difference is taken in i64.
+        let here_steps = self.planner.position();
+        for i in 0..AXES {
+            let steps = math::units_to_steps(target[i], self.settings.steps[i]);
+            if (steps as i64 - here_steps[i] as i64).unsigned_abs() > stepper::MAX_EVENTS as u64 {
+                return Err(Error::OutOfRange);
+            }
+        }
         self.pending = Pending::Motion { target, kind, feed, power };
         Ok(())
     }
@@ -393,15 +403,19 @@ impl<'a> Machine<'a> {
         match action {
             Realtime::Status => report::status(&self.status(), out),
             Realtime::Hold => {
+                // A beam lit by `laser` is closed whatever the state, and
+                // does not come back with the resume: an operator reaching
+                // for hold as a stop expects the beam out. A dwell's beam
+                // does come back, with the time it had left.
+                if self.beam.take().is_some() {
+                    laser.set_duty(self.off_duty());
+                }
                 if !matches!(self.state, State::Run | State::Jog) {
                     return;
                 }
                 self.held = self.state;
                 self.state = State::Hold;
                 self.front.request_hold();
-                // The constant beam does not come back with the resume; a
-                // dwell's does, with the time it had left.
-                self.beam = None;
                 if let Some(until) = self.dwell_until.take() {
                     self.dwell_left_us = until.saturating_sub(self.now);
                 }
@@ -474,6 +488,14 @@ impl<'a> Machine<'a> {
         out: &mut impl Sink,
     ) -> bool {
         self.now = now_us;
+        let mut kick = self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
+        if self.progress(port, laser, store, out) {
+            kick |= self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
+        }
+        // After `progress`, so a `$load` that changes a polarity reaches the
+        // ports in the same poll that answers it: an output left one poll
+        // behind the settings it belongs to is a lit beam or a dropped
+        // driver enable for as long as that takes.
         if self.apply_enable {
             self.apply_enable = false;
             port.set_enable(self.enable_level(self.enabled));
@@ -484,10 +506,6 @@ impl<'a> Machine<'a> {
             if !self.front.busy() {
                 self.drive_beam(laser);
             }
-        }
-        let mut kick = self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
-        if self.progress(port, laser, store, out) {
-            kick |= self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
         }
         if self.dwell_until.is_some_and(|until| now_us >= until) {
             self.dwell_until = None;
@@ -564,6 +582,13 @@ impl<'a> Machine<'a> {
         }
         match pending {
             Pending::Dwell { ms, power } => {
+                // A dwell is motion time. Starting one during a hold would
+                // light the beam the hold turned off and leave the state at
+                // `Run` with the stepper still holding, which no later
+                // resume would clear.
+                if self.state == State::Hold {
+                    return false;
+                }
                 self.pending = Pending::Dwelling;
                 self.state = State::Run;
                 self.dwell_power = power;
@@ -674,6 +699,14 @@ impl<'a> Machine<'a> {
     /// stepper drives it.
     fn drive_beam(&self, laser: &mut impl LaserPort) {
         laser.set_duty(self.constant_duty().unwrap_or_else(|| self.off_duty()));
+    }
+
+    /// Writes what the beam should be right now to the laser port, without
+    /// waiting for a `poll`. Called as soon as the stored settings are
+    /// known, so an output with `laser_invert` set is not left lit through
+    /// the rest of the boot.
+    pub fn drive_laser(&self, laser: &mut impl LaserPort) {
+        self.drive_beam(laser);
     }
 
     /// The USB host went away: like a reset without the output, and the
@@ -1246,6 +1279,31 @@ mod tests {
     }
 
     #[test]
+    fn hold_closes_a_beam_lit_while_idle() {
+        // Hold is the key an operator reaches for to stop everything. The
+        // state machine has no Idle to Hold step, but the beam still goes
+        // out, and stays out.
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("laser S800 T60000"), "ok\n");
+        assert_eq!(rig.laser.duty, 800);
+
+        rig.realtime(Realtime::Hold);
+        assert_eq!(rig.laser.duty, 0, "hold left the beam lit");
+        assert_eq!(rig.state(), State::Idle, "hold invented a state");
+        rig.advance(1_000_000);
+        assert_eq!(rig.laser.duty, 0, "the beam came back on its own");
+
+        // Resume does not relight it, and the machine still works.
+        rig.realtime(Realtime::Resume);
+        assert_eq!(rig.laser.duty, 0, "resume relit a beam hold had closed");
+        assert_eq!(rig.line("go R1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.laser.duty, 0);
+        assert!((rig.machine.joint()[R] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
     fn laser_command_times_out() {
         let mut rig = Rig::new();
         rig.take_out();
@@ -1528,5 +1586,187 @@ mod tests {
         assert_eq!(rig.max_duty_while_stepping, 600);
         assert_eq!(rig.laser.duty, 1000);
         assert!(rig.status_line().contains("|M:const|"));
+    }
+
+    /// Duties the laser was driven with from `from` on.
+    fn duties_since(rig: &Rig, from: usize) -> Vec<u16> {
+        rig.laser.duties[from..].iter().map(|&(_, duty)| duty).collect()
+    }
+
+    #[test]
+    fn a_hold_keeps_the_beam_off_through_the_whole_ramp() {
+        for mode in ["mode const", "mode dyn"] {
+            let mut rig = Rig::new();
+            rig.take_out();
+            assert_eq!(rig.line(mode), "ok\n");
+            assert_eq!(rig.line("cut R40 F600 S1000"), "ok\n");
+            rig.advance(1_000_000);
+            assert!(rig.laser.duty > 0, "{mode}: the cut should be burning");
+            rig.realtime(Realtime::Hold);
+            assert_eq!(rig.laser.duty, 0, "{mode}");
+            // The segments the hold catches in the ring, and the ramp the
+            // front writes after it, must all run dark.
+            let from = rig.laser.duties.len();
+            rig.advance(2_000_000);
+            assert_eq!(rig.state(), State::Hold, "{mode}");
+            assert_eq!(duties_since(&rig, from), Vec::<u16>::new(), "{mode}: beam lit during the hold");
+            // The resume cuts again and the job finishes.
+            rig.realtime(Realtime::Resume);
+            rig.advance(1_000_000);
+            assert!(rig.laser.duty > 0, "{mode}: the resume should cut again");
+            rig.run();
+            assert_eq!(rig.laser.duty, 0, "{mode}");
+            assert_eq!(rig.machine.joint(), [40.0, 0.0], "{mode}");
+        }
+    }
+
+    #[test]
+    fn a_dwell_waiting_behind_a_cut_does_not_fire_during_a_hold() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        // A cut short enough that its whole profile fits the segment ring:
+        // the planner is empty while the stepper is still running it.
+        assert_eq!(rig.line("cut R0.1 F600 S500"), "ok\n");
+        rig.submit("dwell T2000 S1000");
+        rig.advance(POLL_US);
+        assert!(!rig.machine.ready_for_line());
+        assert_eq!(rig.state(), State::Run);
+        rig.realtime(Realtime::Hold);
+        assert_eq!(rig.state(), State::Hold);
+        assert_eq!(rig.laser.duty, 0);
+        rig.advance(1_000_000);
+        assert_eq!(rig.state(), State::Hold, "the dwell took the machine out of the hold");
+        assert_eq!(rig.laser.duty, 0, "the dwell burnt a spot during the hold");
+        assert_eq!(rig.take_out(), "");
+        // The resume runs it, and the stepper was not left holding.
+        rig.realtime(Realtime::Resume);
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 1000);
+        rig.advance(2_100_000);
+        assert_eq!(rig.laser.duty, 0);
+        assert_eq!(rig.take_out(), "ok\n");
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.line("go R1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[R], 1.0);
+    }
+
+    #[test]
+    fn a_load_reaches_the_ports_in_the_poll_that_answers_it() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("$laser_invert=1"), "ok\n");
+        assert_eq!(rig.line("$en_invert=1"), "ok\n");
+        assert_eq!(rig.line("$save"), "ok\n");
+        assert_eq!(rig.line("$defaults"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 0);
+        assert_eq!(rig.port.enable_level, Some(true));
+        // The stored settings drive both outputs the other way round. A
+        // poll of lag here is a poll of full beam on an active low output.
+        assert_eq!(rig.line("$load"), "ok\n");
+        assert!(rig.machine.settings().laser_invert);
+        assert_eq!(rig.laser.duty, 1000, "the load left the beam lit");
+        assert_eq!(rig.port.enable_level, Some(false), "the load left the enable pin inverted");
+    }
+
+    #[test]
+    fn a_move_past_the_step_counter_range_is_refused() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        let steps = rig.machine.settings().steps;
+        let over_a = 1.5 * stepper::MAX_EVENTS as f32 / steps[A];
+        let over_r = 1.5 * stepper::MAX_EVENTS as f32 / steps[R];
+        assert_eq!(rig.line(&std::format!("go A{over_a:.0}")), "error:4 out of range\n");
+        assert_eq!(rig.line(&std::format!("jog A-{over_a:.0}")), "error:4 out of range\n");
+        assert_eq!(rig.line(&std::format!("go R{over_r:.0}")), "error:4 out of range\n");
+        assert_eq!(rig.line(&std::format!("cut A{over_a:.0} F600")), "error:4 out of range\n");
+        assert_eq!(rig.machine.planned_position(), [0, 0]);
+        assert!(rig.machine.ready_for_line());
+        // What fits is still taken, and the limit is on the move, not on
+        // the angle reached: another one of the same size follows it.
+        let long = 0.9 * stepper::MAX_EVENTS as f32 / steps[A];
+        assert_eq!(rig.line(&std::format!("go A{long:.0}")), "ok\n");
+        let first = rig.machine.planned_position()[A];
+        assert!(first > 0 && (first as u32) < stepper::MAX_EVENTS);
+        assert_eq!(rig.line(&std::format!("go A{:.0}", 2.0 * long)), "ok\n");
+        assert_eq!(rig.machine.planned_position()[A], 2 * first);
+    }
+
+    #[test]
+    fn the_stored_polarity_reaches_the_port_before_the_first_poll() {
+        let mut settings = Settings::default();
+        settings.laser_invert = true;
+        let mut rig = Rig::with(settings);
+        // The board claims the pin low, reads the stored settings and then
+        // calls this; nothing has polled yet.
+        assert_eq!(rig.laser.duty, 0);
+        rig.machine.drive_laser(&mut rig.laser);
+        assert_eq!(rig.laser.duty, 1000, "an active low output must read off at boot");
+    }
+
+    #[test]
+    fn a_planner_that_runs_dry_mid_job_drops_the_beam() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("mode const"), "ok\n");
+        assert_eq!(rig.line("cut R5 F600 S800"), "ok\n");
+        rig.advance(200_000);
+        assert_eq!(rig.laser.duty, 800);
+        // Nothing follows it: the stepper drains and the beam goes out.
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.laser.duty, 0);
+        rig.advance(2_000_000);
+        assert_eq!(rig.laser.duty, 0, "lit while the host was late");
+        // The next cut starts it again.
+        assert_eq!(rig.line("cut R10 F600"), "ok\n");
+        rig.advance(200_000);
+        assert_eq!(rig.laser.duty, 800);
+        rig.run();
+        assert_eq!(rig.laser.duty, 0);
+    }
+
+    #[test]
+    fn a_rapid_after_a_cut_runs_dark() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("mode const"), "ok\n");
+        assert_eq!(rig.line("cut R20 F600 S700"), "ok\n");
+        assert_eq!(rig.line("go R40"), "ok\n");
+        rig.advance(500_000);
+        assert_eq!(rig.laser.duty, 700, "the cut should be burning");
+        let from = rig.laser.duties.len();
+        rig.run();
+        // One change, to off, at the block boundary; nothing lights again.
+        assert_eq!(duties_since(&rig, from), std::vec![0u16]);
+        assert_eq!(rig.machine.joint(), [40.0, 0.0]);
+    }
+
+    #[test]
+    fn a_settings_change_redrives_a_lit_beam() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("laser S250 T60000"), "ok\n");
+        assert_eq!(rig.laser.duty, 250);
+        // `s_max` rescales the same S, and S over it is full duty, not more.
+        assert_eq!(rig.line("$s_max=500"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 500);
+        assert_eq!(rig.line("$s_max=200"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 1000);
+        // The polarity flips the driven level, not the power.
+        assert_eq!(rig.line("$s_max=1000"), "ok\n");
+        assert_eq!(rig.line("$laser_invert=1"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 750);
+        assert_eq!(rig.line("laser off"), "ok\n");
+        assert_eq!(rig.laser.duty, 1000, "off on an active low output is full duty");
+        // `s_min` is a dynamic mode rule; it does not touch a constant beam.
+        assert_eq!(rig.line("$s_min=900"), "ok\n");
+        assert_eq!(rig.line("laser S100 T60000"), "ok\n");
+        assert_eq!(rig.laser.duty, 900);
     }
 }

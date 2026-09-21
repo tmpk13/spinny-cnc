@@ -49,6 +49,31 @@ with Ctrl-A Ctrl-X.
 `$tmc` prints one `[MSG:tmc ...]` line per driver with its IFCNT (the
 number of UART writes it accepted) and DRV_STATUS, or `no reply`.
 
+## First bring-up
+
+Nothing here has run on a machine yet. Do it in this order, with the laser
+disconnected until the last step.
+
+1. Flash the board with no motor power. Open the port, check the banner and
+   `$` lists the settings. `$tmc` should report a driver per axis with a
+   rising `ifcnt`; `no reply` means the UART wiring or the addresses are
+   wrong, and the drivers are running on their own defaults.
+2. Set the currents low for the first moves: `$tmc_r_ma=400`, `$tmc_a_ma=400`.
+3. Motor power on, nothing coupled if you can help it. `set R0 A0`, then
+   `jog R1 F60`: the head must move away from the axis. If it goes the wrong
+   way, `$dir_invert=1` (bit 0 is the radius, bit 1 the table).
+4. `jog A5 F60`: seen from above the point under the beam must swing
+   counterclockwise. If not, add 2 to `$dir_invert`.
+5. Check the scales over a long move rather than a short one: `jog R50 F300`,
+   measure, and scale `$r_steps` by what you asked over what you got. Same for
+   the table with `jog A360 F600` and `$a_steps`.
+6. `$r_rate`, `$a_rate`, `$r_accel` and `$a_accel` up until a move misses
+   steps, then back off well clear of it. `$a_rate` is what decides how close
+   to the axis the machine can still cut at speed.
+7. `$save`, then power cycle and check `$` still reads back what you set.
+8. Laser last, on a scrap board: `laser S50 T500` to see it strike, then a
+   single `cut` line at the speed and power you intend before any job.
+
 ## Safety
 
 - Verify direction and steps per unit at low speed first: `jog R1 F60`,

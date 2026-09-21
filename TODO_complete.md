@@ -40,3 +40,11 @@
   gerber, KiCad, SVG, gcode and JSON into joint moves; `web/frontend` is
   the page, with board and independent axis jogging, a laser test, jobs
   with a live preview, a console and the settings table.
+- Firmware safety review (2026-09-20): every path that can leave the beam
+  lit or lose the position walked and tested. Fixed a hold that let the
+  queued segments and the whole deceleration ramp keep burning, a `dwell`
+  that fired during a hold and left the stepper wedged, a `$load` that
+  applied a changed laser or enable polarity a loop pass late, and moves
+  long enough to wrap the step interrupt's Bresenham counters; the laser
+  port is now driven from the stored polarity before the board's other
+  tasks start.
