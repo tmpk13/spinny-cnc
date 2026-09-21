@@ -155,6 +155,16 @@ pub fn parse_reply(bytes: &[u8], register: Address) -> Option<u32> {
     None
 }
 
+/// Body of the `[MSG:...]` line for an axis whose driver did not take its
+/// configuration.
+pub fn refused_text(axis: usize) -> String<48> {
+    let mut text = String::new();
+    let letter = AXIS_LETTER[axis];
+    let addr = ADDR[axis];
+    let _ = write!(text, "tmc {letter} addr{addr} refused config, check wiring");
+    text
+}
+
 /// Body of the `[MSG:...]` line for one axis.
 pub fn report_text(axis: usize, reply: Option<(u8, u32)>) -> String<48> {
     let mut text = String::new();
@@ -255,6 +265,32 @@ mod tests {
         let ch = CHOPCONF::from(data(&chop));
         assert!(!ch.vsense());
         assert_eq!(ch.mres().number_of_microsteps(), 32);
+    }
+
+    #[test]
+    fn fields_the_configuration_never_sets_stay_off() {
+        // These decide whether a step is one edge or two, whether the
+        // sense resistors are the board's, and whether the short
+        // protection runs. None is ours to set, and all of them ride on
+        // the register defaults, so a change of those must fail here
+        // rather than on the machine.
+        let cfg = DriverConfig { ma: [800, 800], hold_pct: 50, micro: [256, 256], stealth: true };
+        let [gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
+        let g = GCONF::from(data(&gconf));
+        assert!(!g.internal_rsense(), "the driver would ignore the sense resistors");
+        assert!(!g.shaft());
+        assert!(!g.test_mode());
+        let ch = CHOPCONF::from(data(&chop));
+        assert!(!ch.dedge(), "both edges would step, doubling every move");
+        assert!(!ch.diss2g());
+        assert!(!ch.diss2vs());
+        assert_eq!(ch.mres().number_of_microsteps(), 256);
+    }
+
+    #[test]
+    fn a_refused_axis_says_which_one() {
+        assert_eq!(refused_text(0).as_str(), "tmc R addr0 refused config, check wiring");
+        assert_eq!(refused_text(1).as_str(), "tmc A addr2 refused config, check wiring");
     }
 
     #[test]

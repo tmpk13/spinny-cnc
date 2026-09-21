@@ -790,7 +790,7 @@ mod tests {
 
     use super::*;
     use crate::planner::Feed;
-    use crate::{A, R};
+    use crate::{A, MAX_EVENT_RATE_HZ, R};
 
     /// Polls per virtual second of the main loop in the rig.
     const POLL_US: u64 = 500;
@@ -1105,7 +1105,17 @@ mod tests {
     }
 
     fn settings() -> Settings {
-        Settings::default()
+        Settings {
+            // Fixed here so these tests measure the code and not the
+            // machine's defaults: 256 steps/mm on the radius, 888.889
+            // steps/deg on the table, neither near the step generator's
+            // ceiling.
+            steps: [256.0, 888.889],
+            max_rate: [1000.0, 1080.0],
+            jog_rate: [600.0, 720.0],
+            jerk: [3.0, 10.0],
+            ..Settings::default()
+        }
     }
 
     #[test]
@@ -1214,6 +1224,39 @@ mod tests {
         assert!((rig.max_duty() as i32 - duty as i32).abs() <= 2, "{} vs {duty}", rig.max_duty());
         assert!((rig.max_segment_speed() - 18.0).abs() < 0.01);
         rig.check_axis_rates();
+    }
+
+    #[test]
+    fn the_step_generators_ceiling_limits_the_speed_and_the_power_with_it() {
+        // Fine microstepping runs the generator out before the axis rate
+        // does: 10240 steps/mm can only be pulsed at 586 mm/min. Without
+        // the planner knowing that, a segment would be planned at the
+        // commanded speed, the interrupt would fall behind it, and the
+        // beam would burn at a power meant for a speed never reached.
+        let fine = Settings {
+            steps: [10240.0, 14222.222],
+            max_rate: [5000.0, 5000.0],
+            accel: [500.0, 500.0],
+            ..settings()
+        };
+        let ceiling = MAX_EVENT_RATE_HZ / 10240.0;
+        let ceiling64 = ceiling as f64;
+        assert!((crate::planner::effective_max_rate(&fine)[R] / 60.0 - ceiling).abs() < 0.01);
+
+        let mut rig = Rig::new(fine);
+        rig.cut(2.0, 0.0, 3000.0, 500.0);
+        let seconds = rig.run();
+        // A radial cut of 2 mm: the feed asks 50 mm/s, the axis gives 9.77.
+        let expected = 2.0 / ceiling64 + ceiling64 / 500.0;
+        assert!((seconds - expected).abs() < 0.05 * expected, "{seconds} vs {expected}");
+        // The power follows the speed down, as it does for any axis limit.
+        let duty = (500.0 * ceiling / 50.0) as u16;
+        assert!((rig.max_duty() as i32 - duty as i32).abs() <= 3, "{} vs {duty}", rig.max_duty());
+        // And every tick the interrupt was asked for was one it could make.
+        rig.check_axis_rates();
+        for segment in &rig.loads {
+            assert!(segment.segment.period_us >= MIN_TICK_US, "a segment asked for a tick too soon");
+        }
     }
 
     #[test]

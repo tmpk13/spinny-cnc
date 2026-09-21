@@ -19,7 +19,7 @@
 
 use crate::math;
 use crate::settings::Settings;
-use crate::{AXES, BLOCKS, SURFACE_EPSILON_MM};
+use crate::{AXES, BLOCKS, MAX_EVENT_RATE_HZ, SURFACE_EPSILON_MM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -125,6 +125,30 @@ impl Default for Planner {
 
 /// Speed along a block with direction cosines `unit` at which the first
 /// axis reaches its rate in `rates` (units per minute).
+/// Rate limit per axis: the setting, or the fastest the step generator can
+/// pulse that many steps per unit, whichever is lower. At 256 microsteps
+/// on a 5 mm screw the second one binds well below the first.
+pub fn effective_max_rate(settings: &Settings) -> [f32; AXES] {
+    let mut rates = settings.max_rate;
+    for i in 0..AXES {
+        if settings.steps[i] > 0.0 {
+            rates[i] = rates[i].min(MAX_EVENT_RATE_HZ * 60.0 / settings.steps[i]);
+        }
+    }
+    rates
+}
+
+/// The same ceiling for the jog rates.
+fn effective_jog_rate(settings: &Settings) -> [f32; AXES] {
+    let mut rates = settings.jog_rate;
+    for i in 0..AXES {
+        if settings.steps[i] > 0.0 {
+            rates[i] = rates[i].min(MAX_EVENT_RATE_HZ * 60.0 / settings.steps[i]);
+        }
+    }
+    rates
+}
+
 fn paced_speed(unit: &[f32; AXES], rates: &[f32; AXES]) -> f32 {
     let mut speed = f32::INFINITY;
     for i in 0..AXES {
@@ -210,7 +234,7 @@ impl Planner {
         for i in 0..AXES {
             unit[i] = delta_units[i] / length;
         }
-        let axis_limit = paced_speed(&unit, &settings.max_rate);
+        let axis_limit = paced_speed(&unit, &effective_max_rate(settings));
         let start = self.position_units(settings);
         let mut end = [0f32; AXES];
         for i in 0..AXES {
@@ -219,7 +243,7 @@ impl Planner {
         let surface_mm = math::surface_length(start[0], start[1], end[0], end[1]);
         let requested_speed = match feed {
             Feed::Max => axis_limit,
-            Feed::Jog => paced_speed(&unit, &settings.jog_rate),
+            Feed::Jog => paced_speed(&unit, &effective_jog_rate(settings)),
             Feed::Surface(mm_per_min) => {
                 if surface_mm < SURFACE_EPSILON_MM || mm_per_min.is_nan() || mm_per_min <= 0.0 {
                     axis_limit
@@ -413,7 +437,17 @@ mod tests {
     use crate::{A, R};
 
     fn settings() -> Settings {
-        Settings::default()
+        Settings {
+            // Fixed here so these tests measure the code and not the
+            // machine's defaults: 256 steps/mm on the radius, 888.889
+            // steps/deg on the table, neither near the step generator's
+            // ceiling.
+            steps: [256.0, 888.889],
+            max_rate: [1000.0, 1080.0],
+            jog_rate: [600.0, 720.0],
+            jerk: [3.0, 10.0],
+            ..Settings::default()
+        }
     }
 
     fn push(planner: &mut Planner, r: f32, a: f32, kind: MoveKind, feed: Feed, power: f32) -> bool {

@@ -40,5 +40,10 @@ pub const SEGMENTS: usize = 16;
 pub const SEGMENT_MS: u32 = 10;
 /// Shortest tick period the step timer is asked for, in microseconds.
 pub const MIN_TICK_US: u32 = 10;
+/// Most step events a second the generator can produce, from that tick.
+/// An axis with many steps per unit runs into this before it runs into
+/// its own `max_rate`, so the planner caps the speed by it and the laser
+/// power follows the speed actually reached.
+pub const MAX_EVENT_RATE_HZ: f32 = 1_000_000.0 / MIN_TICK_US as f32;
 /// A move shorter than this on the board is a turn on the axis.
 pub const SURFACE_EPSILON_MM: f32 = 0.001;

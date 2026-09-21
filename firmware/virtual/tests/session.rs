@@ -178,8 +178,8 @@ fn a_quarter_circle_cut_runs_and_lands_where_it_was_asked_to() {
 
     let idle = client.wait_for("Idle");
     let (r, a) = joint(&idle);
-    // One step is 1/256 mm and 1/888.889 deg; the angle at the axis keeps
-    // the value it reached.
+    // A step is well under a micron and a thousandth of a degree at the
+    // default scales; the angle at the axis keeps the value it reached.
     assert!(r.abs() <= 0.004, "ended at radius {r}, expected the axis");
     assert!((a - 90.0).abs() <= 0.002, "ended at angle {a}, expected 90");
     assert_eq!(status_fields(&idle)[3], "L:0", "the beam is off when the job ends");
@@ -257,7 +257,10 @@ fn settings_round_trip_and_a_long_line_is_refused() {
     let listing = client.send("$");
     assert_eq!(listing.last().map(String::as_str), Some("ok"));
     assert!(listing.iter().any(|l| l.starts_with("r_steps=")), "{listing:?}");
-    assert!(listing.iter().any(|l| l == "a_steps=888.889"), "{listing:?}");
+    // 200 steps at 256 microsteps through 100:1, over 360 degrees.
+    assert!(listing.iter().any(|l| l == "a_steps=14222.222"), "{listing:?}");
+    // 200 steps at 256 microsteps over a 5 mm screw.
+    assert!(listing.iter().any(|l| l == "r_steps=10240"), "{listing:?}");
 
     assert_eq!(client.send("$a_rate=600").last().map(String::as_str), Some("ok"));
     assert_eq!(client.send("$a_rate"), vec!["a_rate=600".to_string(), "ok".to_string()]);

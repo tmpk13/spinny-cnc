@@ -852,9 +852,23 @@ mod tests {
         max_duty_while_stepping: u16,
     }
 
+    /// Fixed settings so these tests measure the machine and not its
+    /// defaults, which follow the mechanics and move with them: 256
+    /// steps/mm on the radius, 888.889 steps/deg on the table, neither
+    /// near the step generator's ceiling.
+    fn bench_settings() -> Settings {
+        Settings {
+            steps: [256.0, 888.889],
+            max_rate: [1000.0, 1080.0],
+            jog_rate: [600.0, 720.0],
+            jerk: [3.0, 10.0],
+            ..Settings::default()
+        }
+    }
+
     impl Rig {
         fn new() -> Rig {
-            Rig::with(Settings::default())
+            Rig::with(bench_settings())
         }
 
         fn with(settings: Settings) -> Rig {
@@ -1474,7 +1488,7 @@ mod tests {
         assert!(empty.machine.take_events().driver_config);
         empty.store.blob = Some(std::vec![0xAA; BLOB_LEN]);
         assert!(!empty.machine.load_settings(&mut empty.store));
-        assert_eq!(*empty.machine.settings(), Settings::default());
+        assert_eq!(*empty.machine.settings(), bench_settings(), "a bad blob changed the settings");
         empty.take_out();
         assert_eq!(empty.line("$load"), "error:9 flash failed\n");
         // A failing write answers error 9.

@@ -50,12 +50,17 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            steps: [256.0, 888.889],
-            max_rate: [1000.0, 1080.0],
+            // Both motors are 200 step at 256 microsteps. The radius rides
+            // a 5 mm per turn screw, the table a 100:1 drive.
+            steps: [10240.0, 14222.222],
+            // The step generator runs out before the motors do at this
+            // resolution: 586 mm/min on the radius and 422 deg/min on the
+            // table. Asking for more only moves slower than commanded.
+            max_rate: [560.0, 400.0],
             accel: [50.0, 50.0],
-            jerk: [3.0, 10.0],
+            jerk: [3.0, 2.0],
             r_max: 0.0,
-            jog_rate: [600.0, 720.0],
+            jog_rate: [300.0, 200.0],
             dir_invert: 0,
             en_invert: false,
             idle_ms: 0,
@@ -67,7 +72,7 @@ impl Default for Settings {
             laser_ms: 5000,
             tmc_ma: [800, 800],
             tmc_hold_pct: 50,
-            tmc_micro: [16, 16],
+            tmc_micro: [256, 256],
             tmc_stealth: true,
         }
     }
@@ -463,17 +468,17 @@ mod tests {
         out
     }
 
-    const DEFAULT_LISTING: &str = "r_steps=256\n\
-        a_steps=888.889\n\
-        r_rate=1000\n\
-        a_rate=1080\n\
+    const DEFAULT_LISTING: &str = "r_steps=10240\n\
+        a_steps=14222.222\n\
+        r_rate=560\n\
+        a_rate=400\n\
         r_accel=50\n\
         a_accel=50\n\
         r_jerk=3\n\
-        a_jerk=10\n\
+        a_jerk=2\n\
         r_max=0\n\
-        jog_r=600\n\
-        jog_a=720\n\
+        jog_r=300\n\
+        jog_a=200\n\
         dir_invert=0\n\
         en_invert=0\n\
         idle_ms=0\n\
@@ -486,8 +491,8 @@ mod tests {
         tmc_r_ma=800\n\
         tmc_a_ma=800\n\
         tmc_hold_pct=50\n\
-        tmc_r_micro=16\n\
-        tmc_a_micro=16\n\
+        tmc_r_micro=256\n\
+        tmc_a_micro=256\n\
         tmc_stealth=1\n";
 
     #[test]
@@ -504,8 +509,8 @@ mod tests {
     #[test]
     fn format_one_and_unknown() {
         let settings = Settings::default();
-        assert_eq!(line(&settings, "a_steps").as_str(), "a_steps=888.889\n");
-        assert_eq!(line(&settings, "A_STEPS").as_str(), "a_steps=888.889\n");
+        assert_eq!(line(&settings, "a_steps").as_str(), "a_steps=14222.222\n");
+        assert_eq!(line(&settings, "A_STEPS").as_str(), "a_steps=14222.222\n");
         assert_eq!(line(&settings, "tmc_stealth").as_str(), "tmc_stealth=1\n");
         let mut out = Out::new();
         assert!(!settings.format("nope", &mut out));
@@ -720,7 +725,7 @@ mod tests {
         let mut blob = [0u8; BLOB_LEN];
         settings.to_blob(&mut blob);
         let r_steps = f32::from_le_bytes(blob[HEADER_LEN..HEADER_LEN + 4].try_into().unwrap());
-        assert_eq!(r_steps, 256.0);
+        assert_eq!(r_steps, 10240.0);
         let crc = u32::from_le_bytes(blob[CRC_OFFSET..].try_into().unwrap());
         assert_eq!(crc, crc32(&blob[..CRC_OFFSET]));
     }

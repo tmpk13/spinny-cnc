@@ -13,7 +13,9 @@ use embassy_time::{with_timeout, Duration, Instant};
 use embedded_io_async::{Read, ReadReady, Write};
 use spinny_core::report;
 use spinny_core::settings::Settings;
-use spinny_fw_logic::tmc::{config_datagrams, parse_reply, read_request, report_text, DriverConfig, ADDR};
+use spinny_fw_logic::tmc::{
+    config_datagrams, parse_reply, read_request, refused_text, report_text, Datagram, DriverConfig, ADDR,
+};
 use static_cell::StaticCell;
 use tmc2209::reg::Address;
 
@@ -33,6 +35,9 @@ const ECHO_TIMEOUT: Duration = Duration::from_millis(20);
 const REPLY_TIMEOUT: Duration = Duration::from_millis(20);
 /// Echoed request plus the reply.
 const READ_EXCHANGE_LEN: usize = 12;
+/// A driver picks its baud rate from the first datagram it sees, which can
+/// cost that datagram, so a refused configuration is tried again.
+const CONFIG_TRIES: usize = 2;
 
 pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PIN_8>, rx: Peri<'static, PIN_9>) {
     static TX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
@@ -68,11 +73,37 @@ async fn tmc_task(mut uart: BufferedUart) {
     }
 }
 
+/// Writes one axis and checks the driver took it, by the count of write
+/// datagrams it has accepted. A driver that answers nothing, or whose
+/// count does not move, keeps whatever MS1 and MS2 strap it to, which on
+/// this board is 8 microsteps on the radius and 64 on the table: the
+/// machine would then move a fraction or a multiple of every distance
+/// asked for, so the failure is said out loud rather than left to show up
+/// as a wrong-sized board.
+async fn apply(uart: &mut BufferedUart, axis: usize, datagrams: &[Datagram]) -> bool {
+    let addr = ADDR[axis];
+    for _ in 0..CONFIG_TRIES {
+        let before = read_register(uart, addr, Address::IFCNT).await;
+        for datagram in datagrams {
+            write(uart, datagram).await;
+        }
+        let after = read_register(uart, addr, Address::IFCNT).await;
+        if let (Some(before), Some(after)) = (before, after) {
+            // The count is eight bits and wraps.
+            let written = (after as u8).wrapping_sub(before as u8);
+            if written as usize >= datagrams.len() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 async fn configure(uart: &mut BufferedUart, cfg: &DriverConfig) {
     for axis in 0..ADDR.len() {
         if let Some(datagrams) = config_datagrams(axis, cfg) {
-            for datagram in datagrams.iter() {
-                write(uart, datagram).await;
+            if !apply(uart, axis, &datagrams).await {
+                report::message(refused_text(axis).as_str(), &mut UsbSink);
             }
         }
     }

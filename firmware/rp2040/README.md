@@ -54,31 +54,74 @@ number of UART writes it accepted) and DRV_STATUS, or `no reply`.
 Nothing here has run on a machine yet. Do it in this order, with the laser
 disconnected until the last step.
 
-1. Flash the board with no motor power. Open the port, check the banner and
-   `$` lists the settings. `$tmc` should report a driver per axis with a
-   rising `ifcnt`; `no reply` means the UART wiring or the addresses are
-   wrong, and the drivers are running on their own defaults.
-2. Set the currents low for the first moves: `$tmc_r_ma=400`, `$tmc_a_ma=400`.
-3. Motor power on, nothing coupled if you can help it. `set R0 A0`, then
-   `jog R1 F60`: the head must move away from the axis. If it goes the wrong
-   way, `$dir_invert=1` (bit 0 is the radius, bit 1 the table).
-4. `jog A5 F60`: seen from above the point under the beam must swing
+1. Flash the board and open the port: the banner should arrive and `$`
+   should list the settings.
+2. Motor power on, nothing coupled if you can help it. The drivers run
+   from it, so they cannot answer without it. `$tmc` should now report a
+   driver per axis with `ifcnt` at 3 or more, which counts the register
+   writes it accepted. `no reply` means the UART wiring or the addresses
+   are wrong. `refused config` on the console means the writes did not
+   take, and the driver is then running at whatever MS1 and MS2 strap it
+   to, which is 8 microsteps on the radius socket and 64 on the table.
+3. Set the currents low for the first moves: `$tmc_r_ma=400`,
+   `$tmc_a_ma=400`.
+4. `set R0 A0`, then `jog R1 F60`: the head must move away from the axis.
+   If it goes the wrong way, `$dir_invert=1` (bit 0 is the radius, bit 1
+   the table).
+5. `jog A5 F60`: seen from above the point under the beam must swing
    counterclockwise. If not, add 2 to `$dir_invert`.
-5. Check the scales over a long move rather than a short one: `jog R50 F300`,
+6. Check the scales over a long move rather than a short one: `jog R50 F300`,
    measure, and scale `$r_steps` by what you asked over what you got. Same for
    the table with `jog A360 F600` and `$a_steps`.
-6. `$r_rate`, `$a_rate`, `$r_accel` and `$a_accel` up until a move misses
+7. `$r_rate`, `$a_rate`, `$r_accel` and `$a_accel` up until a move misses
    steps, then back off well clear of it. `$a_rate` is what decides how close
    to the axis the machine can still cut at speed.
-7. `$save`, then power cycle and check `$` still reads back what you set.
-8. Laser last, on a scrap board. Prove the wiring at full duty first,
+8. `$save`, then power cycle and check `$` still reads back what you set.
+9. Laser last, on a scrap board. Prove the wiring at full duty first,
    where the output is simply on: `laser S1000 T2000`, measuring at the
    header if it does not strike. Then `laser S500 T2000` and `laser S100
    T2000` to find where it stops firing, which is the bottom of the usable
    power range. Only then a single `cut` line at the speed and power you
    intend.
-9. If the beam follows `S` poorly, the fan output's own smoothing is the
+10. If the beam follows `S` poorly, the fan output's own smoothing is the
    first suspect: try `$laser_hz=200` and work up.
+
+## Microstepping and speed
+
+The drivers default to 256 microsteps, which fixes `r_steps` at 10240 per
+mm and `a_steps` at 14222.222 per degree. The step generator tops out at
+100000 steps a second, so that resolution caps the radius at 586 mm/min
+and the table at 422 deg/min, whatever `$r_rate` and `$a_rate` say.
+
+The table's rate is what decides how close to the axis a cut can still run
+at speed: 400 mm/min of surface speed needs 54 mm of radius at 422
+deg/min, against 21 mm at the 1080 deg/min the motor itself can do.
+
+Coarser microstepping buys that back, 16 at a time, and costs nothing in
+smoothness: `intpol` is on, so the driver interpolates whatever it is given
+to 256 microsteps internally. What it does cost is positioning resolution,
+which at 256 microsteps is 0.1 um on the radius and a quarter of an arc
+second on the table, both far under what the mechanics can hold.
+
+| `tmc_*_micro` | `r_steps` | radius ceiling | `a_steps` | table ceiling |
+| --- | --- | --- | --- | --- |
+| 16 | 640 | 9375 mm/min | 888.889 | 6750 deg/min |
+| 32 | 1280 | 4688 mm/min | 1777.778 | 3375 deg/min |
+| 64 | 2560 | 2344 mm/min | 3555.556 | 1688 deg/min |
+| 256 | 10240 | 586 mm/min | 14222.222 | 422 deg/min |
+
+Changing it means changing the scales with it, since the same distance is
+then a different number of steps:
+
+```
+$tmc_r_micro=32
+$tmc_a_micro=32
+$r_steps=1280
+$a_steps=1777.778
+$r_rate=1000
+$a_rate=1080
+$save
+```
 
 ## Safety
 

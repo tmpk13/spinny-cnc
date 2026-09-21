@@ -58,8 +58,15 @@ the laser power follows the achieved speed so the dose per mm holds.
 Jogs are accepted in `Idle` and `Jog` only. `R` under 0 is refused
 (`error:4`); with `r_max` set, `R` over it is refused too. The angle is not
 limited and keeps counting, but one move may not cover more than 2^28 steps
-on an axis (`error:4`): about 302000 degrees or 1048576 mm at the default
+on an axis (`error:4`): about 18878 degrees or 26214 mm at the default
 scales, past which the step generator's counters would wrap.
+
+The step generator emits at most 100000 steps a second, which at a fine
+enough `r_steps` or `a_steps` binds before `r_rate` or `a_rate` do. The
+planner caps the speed by whichever comes first, so a move commanded
+faster simply runs at the rate the axis can be stepped at, and under `mode
+dyn` the laser power follows it down. The ceiling in units per minute is
+`6000000 / steps`: at the defaults that is 586 mm/min and 422 deg/min.
 
 ## Laser
 
@@ -101,17 +108,17 @@ is set to 0.
 
 | Name | Unit | Default | Meaning |
 | --- | --- | --- | --- |
-| `r_steps` | steps/mm | 256 | radius motor |
-| `a_steps` | steps/deg | 888.889 | 200 steps * 16 microsteps * 100:1 / 360 |
-| `r_rate` | mm/min | 1000 | max radius rate |
-| `a_rate` | deg/min | 1080 | max table rate |
+| `r_steps` | steps/mm | 10240 | 200 steps * 256 microsteps over a 5 mm screw |
+| `a_steps` | steps/deg | 14222.222 | 200 steps * 256 microsteps * 100:1 / 360 |
+| `r_rate` | mm/min | 560 | max radius rate |
+| `a_rate` | deg/min | 400 | max table rate |
 | `r_accel` | mm/s^2 | 50 | |
 | `a_accel` | deg/s^2 | 50 | |
 | `r_jerk` | mm/s | 3 | allowed speed change at a corner |
-| `a_jerk` | deg/s | 10 | |
+| `a_jerk` | deg/s | 2 | |
 | `r_max` | mm | 0 | soft limit, 0 = off |
-| `jog_r` | mm/min | 600 | jog rate without `F` |
-| `jog_a` | deg/min | 720 | |
+| `jog_r` | mm/min | 300 | jog rate without `F` |
+| `jog_a` | deg/min | 200 | |
 | `dir_invert` | mask | 0 | bit 0 radius, bit 1 table |
 | `en_invert` | 0/1 | 0 | 1 = enable pin active high |
 | `idle_ms` | ms | 0 | disable motors after idle, 0 = never |
@@ -124,8 +131,8 @@ is set to 0.
 | `tmc_r_ma` | mA | 800 | run current, 0 leaves the driver untouched |
 | `tmc_a_ma` | mA | 800 | |
 | `tmc_hold_pct` | % | 50 | hold current as a share of run |
-| `tmc_r_micro` | | 16 | microsteps |
-| `tmc_a_micro` | | 16 | |
+| `tmc_r_micro` | | 256 | microsteps |
+| `tmc_a_micro` | | 256 | |
 | `tmc_stealth` | 0/1 | 1 | stealthChop, else spreadCycle |
 
 Changing a `tmc_*` setting re-sends the driver configuration.
