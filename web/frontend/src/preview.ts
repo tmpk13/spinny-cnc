@@ -13,6 +13,8 @@ export interface View {
     scale: number;
 }
 
+/** Screen room a ring label needs before the next one is drawn. */
+export const LABEL_GAP_PX = 44;
 export const MIN_SCALE = 0.05;
 export const MAX_SCALE = 400;
 const FIT_MARGIN = 1.15;
@@ -68,6 +70,15 @@ export function jobReach(job: Job | null, rMax: number): number {
     return reach > 0 ? reach : 10;
 }
 
+/** How many rings to skip between labels so they stay readable. */
+export function labelEvery(stepMm: number, scale: number): number {
+    const apart = stepMm * scale;
+    if (apart >= LABEL_GAP_PX) {
+        return 1;
+    }
+    return apart * 2 >= LABEL_GAP_PX ? 2 : 4;
+}
+
 /** Ring spacing in a 1-2-5 series that puts a handful of rings inside `reach`. */
 export function ringStep(reach: number): number {
     const candidates = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
@@ -100,6 +111,8 @@ export class Preview {
     private width = 0;
     private height = 0;
     private dpr = 1;
+    /** The view was fitted against a canvas that had a size. */
+    private fitted = false;
     private job: Job | null = null;
     private rMax = 0;
     private head: Joint | null = null;
@@ -164,8 +177,16 @@ export class Preview {
         return this.view;
     }
 
+    setView(view: View): void {
+        this.view = view;
+        this.requestDraw();
+    }
+
     resetView(): void {
         this.view = fitView(jobReach(this.job, this.rMax), this.width || 1, this.height || 1);
+        // A canvas measures 0 by 0 until it is laid out, so a fit before
+        // that is against nothing and the next real size has to redo it.
+        this.fitted = this.width > 1 && this.height > 1;
         this.requestDraw();
     }
 
@@ -174,14 +195,14 @@ export class Preview {
         const width = Math.max(1, Math.round(rect.width));
         const height = Math.max(1, Math.round(rect.height));
         const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
-        const first = this.width === 0;
+        const refit = !this.fitted;
         if (width !== this.width || height !== this.height || dpr !== this.dpr) {
             this.width = width;
             this.height = height;
             this.dpr = dpr;
             this.canvas.width = Math.round(width * dpr);
             this.canvas.height = Math.round(height * dpr);
-            if (first) {
+            if (refit) {
                 this.resetView();
             } else {
                 this.requestDraw();
@@ -337,7 +358,15 @@ export class Preview {
         ctx.font = "0.75rem system-ui, sans-serif";
         ctx.textBaseline = "top";
         ctx.textAlign = "left";
+        // Every ring gets a label only while they are far enough apart to
+        // read; closer than that, every second or fourth one is labelled.
+        const every = labelEvery(step, view.scale);
+        let index = 0;
         for (let ring = step; ring <= reach * 1.5; ring += step) {
+            index += 1;
+            if (index % every !== 0) {
+                continue;
+            }
             const [sx, sy] = worldToScreen(view, width, height, ring, 0);
             if (sx > 0 && sx < width && sy > 0 && sy < height) {
                 ctx.fillText(`${ring} mm`, sx + 3, sy + 3);

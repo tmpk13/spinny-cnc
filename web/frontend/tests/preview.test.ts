@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { Preview, fitView, jobReach, panBy, ringStep, screenToWorld, worldToScreen, zoomAt } from "../src/preview.ts";
+import { LABEL_GAP_PX, MIN_SCALE, Preview, labelEvery, fitView, jobReach, panBy, ringStep, screenToWorld, worldToScreen, zoomAt } from "../src/preview.ts";
 import type { Job } from "../src/types.ts";
 
 const job: Job = {
@@ -87,5 +87,44 @@ describe("Preview", () => {
         expect(preview.getView().cx).toBe(0);
         preview.dispose();
         canvas.remove();
+    });
+
+    test("fits once the canvas has a size, not while it is still unlaid", () => {
+        // A canvas is measured as 0 by 0 until it is laid out, so the fit
+        // the constructor does is against nothing. The first real size has
+        // to refit, or the view stays at the smallest scale there is.
+        const canvas = document.createElement("canvas");
+        let rect = { width: 0, height: 0 };
+        canvas.getBoundingClientRect = (() => ({ ...rect, x: 0, y: 0, top: 0, left: 0, right: rect.width, bottom: rect.height, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
+        document.body.appendChild(canvas);
+        const preview = new Preview(canvas);
+        preview.setJob(job);
+        expect(preview.getView().scale).toBe(MIN_SCALE);
+
+        rect = { width: 400, height: 300 };
+        preview.resize();
+        expect(preview.getView().scale).toBeCloseTo(fitView(jobReach(job, 0), 400, 300).scale, 9);
+
+        // A later resize keeps whatever the operator zoomed to.
+        preview.setView({ cx: 1, cy: 2, scale: 33 });
+        rect = { width: 500, height: 300 };
+        preview.resize();
+        expect(preview.getView().scale).toBe(33);
+        expect(preview.getView().cx).toBe(1);
+        preview.dispose();
+        canvas.remove();
+    });
+});
+
+describe("ring labels", () => {
+    test("thin out when the rings are too close to read", () => {
+        // Roomy: every 2 mm ring at 25 px per mm is 50 px apart.
+        expect(labelEvery(2, 25)).toBe(1);
+        // The phone view of a 14 mm reach: 2 mm rings about 30 px apart.
+        expect(labelEvery(2, 15)).toBe(2);
+        // Zoomed out far enough that only every fourth is worth a label.
+        expect(labelEvery(2, 4)).toBe(4);
+        // The boundary belongs to the roomier case.
+        expect(labelEvery(1, LABEL_GAP_PX)).toBe(1);
     });
 });

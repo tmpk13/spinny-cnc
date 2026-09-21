@@ -439,9 +439,11 @@ input[type="number"].field {
 }
 
 .dro-small {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
-    gap: 0.4rem;
+    /* Flex rather than a grid: a cell sized to a guess lets a wider unit
+       run into the next one at narrow widths. */
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.2rem;
 }
 
 .dro-small > div {
