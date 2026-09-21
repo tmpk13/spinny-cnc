@@ -253,3 +253,49 @@ def test_a_port_that_breaks_on_close_does_not_kill_the_reader():
     assert wait_for(lambda: not lk.is_open, 2.0)
     assert "port error" in (lk.close_reason or "")
     lk.close()
+
+
+def test_the_links_own_status_polls_are_marked_and_a_users_are_not():
+    """The poll runs several times a second forever.
+
+    A console that shows it buries every line an operator or a job sent, so
+    the poll and the report it brings back carry a flag the page can filter
+    on. A status an operator asked for carries none.
+    """
+    fake = FakeSerial()
+    events = Collector()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=True)
+    lk.subscribe(events)
+    lk.open()
+    try:
+        assert wait_for(lambda: len(events.of("status")) >= 2, 3.0)
+        console = events.of("console")
+        polls_out = [e for e in console if e["dir"] == "tx" and e["text"] == "?"]
+        reports = [e for e in console if e["dir"] == "rx" and e["text"].startswith("<")]
+        assert polls_out and reports
+        assert all(e["poll"] for e in polls_out), "a poll was not marked"
+        assert all(e["poll"] for e in reports), "a poll's report was not marked"
+
+        # A line an operator sent is never a poll.
+        events.events.clear()
+        lk.request("$r_rate")
+        sent = [e for e in events.of("console") if e["dir"] == "tx" and e["text"] == "$r_rate"]
+        assert sent and not any(e["poll"] for e in sent)
+
+    finally:
+        lk.close()
+
+    # A status an operator asked for is not a poll. On its own link, so a
+    # poll firing in between cannot claim the report.
+    quiet = FakeSerial()
+    asked_events = Collector()
+    lk2 = Link("fake://", open_port=fake_opener(quiet), poll=False)
+    lk2.subscribe(asked_events)
+    lk2.open()
+    try:
+        lk2.realtime(b"?")
+        assert wait_for(lambda: any(e["dir"] == "rx" and e["text"].startswith("<") for e in asked_events.of("console")), 2.0)
+        asked = [e for e in asked_events.of("console") if e["text"] == "?" or e["text"].startswith("<")]
+        assert asked and not any(e["poll"] for e in asked), asked
+    finally:
+        lk2.close()

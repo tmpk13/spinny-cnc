@@ -125,6 +125,6 @@ sit next to `type` in one flat object: `{"type": "console", "dir": "rx",
 | `type` | Payload |
 | --- | --- |
 | `state` | the state snapshot, at 5 Hz idle and 10 Hz while moving |
-| `console` | `{"dir": "rx" \| "tx", "text": "..."}` every line either way |
+| `console` | `{"dir": "rx" \| "tx", "text": "...", "poll": false}` every line either way; `poll` marks the status poll the backend sends several times a second and the report it brings back, which a console should hide by default or it buries everything else |
 | `progress` | the progress object |
 | `message` | `{"level": "info" \| "error", "text": "..."}` |

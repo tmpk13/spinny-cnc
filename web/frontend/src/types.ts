@@ -205,6 +205,8 @@ export type ConsoleDir = "rx" | "tx";
 export interface ConsoleLine {
     dir: ConsoleDir;
     text: string;
+    /** The link's own status poll, or its report: heartbeat, not traffic. */
+    poll?: boolean;
 }
 
 export type MessageLevel = "info" | "error";

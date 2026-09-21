@@ -11,12 +11,17 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
     const log = el("div", { class: "console-log", role: "log", "aria-live": "off" });
     const input = el("input", { type: "text", class: "field mono", placeholder: "command, e.g. ? or $ or jog R1", "aria-label": "Command line", autocomplete: "off" });
     const send = button("Send", () => submit(), "btn btn-quiet");
+    // The link polls for status several times a second; showing that by
+    // default buries everything an operator or a job did.
+    const polls = el("input", { type: "checkbox", id: "show-polls" });
+    polls.addEventListener("change", () => ctx.store.set({ showPolls: polls.checked }));
     const realtime = el("div", { class: "button-row" },
         button("Status ?", () => ctx.call(ctx.api.realtime("status")), "btn btn-quiet btn-small"),
         button("Hold !", () => ctx.call(ctx.api.realtime("hold")), "btn btn-quiet btn-small"),
         button("Resume ~", () => ctx.call(ctx.api.realtime("resume")), "btn btn-quiet btn-small"),
         button("Reset", () => ctx.call(ctx.api.realtime("reset")), "btn btn-danger btn-small"),
         button("Clear", () => { ctx.store.set({ console: [] }); }, "btn btn-quiet btn-small"),
+        el("label", { class: "check", for: "show-polls", title: "Show the status polls the link sends on its own" }, polls, "polls"),
     );
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Console"), realtime),
@@ -56,7 +61,8 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
     ctx.store.subscribe((state) => render(state), ["console"]);
 
     function lineNode(line: ConsoleLine): HTMLElement {
-        return el("div", { class: `console-line ${line.dir}` }, el("span", { class: "dir" }, line.dir === "tx" ? ">" : "<"), line.text);
+        const dir = el("span", { class: "dir" }, line.dir === "tx" ? "> " : "< ");
+        return el("div", { class: `console-line ${line.dir}${line.poll ? " poll" : ""}` }, dir, el("span", { class: "text" }, line.text));
     }
 
     function render(state: AppState): void {

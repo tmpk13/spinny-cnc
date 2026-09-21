@@ -757,6 +757,18 @@ canvas.preview {
     color: var(--accent);
 }
 
+.console-line.poll {
+    opacity: 0.55;
+}
+
+.check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--muted);
+    font-size: 0.85em;
+}
+
 .console-input {
     display: flex;
     gap: 0.5rem;

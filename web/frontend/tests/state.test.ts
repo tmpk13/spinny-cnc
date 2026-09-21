@@ -66,3 +66,34 @@ describe("app state helpers", () => {
         expect(store.get().mock).toBe(true);
     });
 });
+
+describe("console polls", () => {
+    test("the link's own polls stay out of the buffer unless asked for", () => {
+        // The poll runs several times a second; keeping it would push every
+        // real line out of a 400 line buffer in well under a minute.
+        const store = new Store<AppState>(initialState(false));
+        appendConsole(store, { dir: "tx", text: "?", poll: true });
+        appendConsole(store, { dir: "rx", text: "<Idle|J:0.000,0.0000>", poll: true });
+        appendConsole(store, { dir: "tx", text: "jog R1" });
+        appendConsole(store, { dir: "rx", text: "ok" });
+        expect(store.get().console.map((l) => l.text)).toEqual(["jog R1", "ok"]);
+
+        store.set({ showPolls: true });
+        appendConsole(store, { dir: "tx", text: "?", poll: true });
+        expect(store.get().console.length).toBe(3);
+
+        store.set({ showPolls: false });
+        appendConsole(store, { dir: "tx", text: "?", poll: true });
+        expect(store.get().console.length).toBe(3);
+    });
+
+    test("a real line is never dropped, whatever the toggle says", () => {
+        const store = new Store<AppState>(initialState(false));
+        for (let i = 0; i < 20; i += 1) {
+            appendConsole(store, { dir: "tx", text: "?", poll: true });
+            appendConsole(store, { dir: "rx", text: `report ${i}`, poll: true });
+        }
+        appendConsole(store, { dir: "rx", text: "ALARM:1" });
+        expect(store.get().console.map((l) => l.text)).toEqual(["ALARM:1"]);
+    });
+});

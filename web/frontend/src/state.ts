@@ -78,6 +78,8 @@ export interface AppState {
     progress: Progress | null;
     settings: SettingsResponse | null;
     console: ConsoleLine[];
+    /** Show the link's status polls in the console. */
+    showPolls: boolean;
     toasts: Toast[];
     mock: boolean;
 }
@@ -98,12 +100,19 @@ export function initialState(mock: boolean): AppState {
         progress: null,
         settings: null,
         console: [],
+        showPolls: false,
         toasts: [],
         mock,
     };
 }
 
 export function appendConsole(store: Store<AppState>, line: ConsoleLine): void {
+    // The link polls for status several times a second. Keeping those would
+    // push every real line out of the buffer within a minute, so they are
+    // dropped unless someone asked to watch them.
+    if (line.poll && !store.get().showPolls) {
+        return;
+    }
     const lines = store.get().console;
     const next = lines.length >= CONSOLE_LIMIT ? lines.slice(lines.length - CONSOLE_LIMIT + 1) : lines.slice();
     next.push(line);

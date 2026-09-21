@@ -236,6 +236,9 @@ class Link:
         self._banner_cond = threading.Condition()
         self._banner_seq = 0
         self._expected_banners = 0
+        # Status polls sent by this link and not yet answered, so their
+        # reports can be told from one an operator asked for.
+        self._polls_out = 0
 
     # --- lifecycle ------------------------------------------------------
 
@@ -270,6 +273,8 @@ class Link:
             return
         self.close_reason = reason
         self._closed.set()
+        with self._status_cond:
+            self._polls_out = 0
         with self._credit:
             self._credit.notify_all()
         with self._banner_cond:
@@ -345,7 +350,7 @@ class Link:
                         self._pending.remove(pending)
                     self._credit.notify_all()
                 raise
-        self._publish(Event("console", {"dir": "tx", "text": line}))
+        self._publish(Event("console", {"dir": "tx", "text": line, "poll": False}))
         return pending
 
     def request(self, line: str, timeout: float = 5.0) -> list[str]:
@@ -364,8 +369,13 @@ class Link:
             raise CommandError(line, lines[-1])
         return lines[:-1]
 
-    def realtime(self, byte: bytes | int) -> None:
-        """One realtime byte, outside the credits."""
+    def realtime(self, byte: bytes | int, routine: bool = False) -> None:
+        """One realtime byte, outside the credits.
+
+        `routine` marks the status poll this link sends on its own, so a
+        console can tell the machine's heartbeat from what an operator or a
+        job asked for.
+        """
         data = bytes([byte]) if isinstance(byte, int) else bytes(byte)
         if len(data) != 1:
             raise ValueError("a realtime command is one byte")
@@ -375,8 +385,11 @@ class Link:
             with self._banner_cond:
                 self._expected_banners += 1
             self._fail_pending("reset")
+        if routine:
+            with self._status_cond:
+                self._polls_out += 1
         self._write(data)
-        self._publish(Event("console", {"dir": "tx", "text": _show_byte(data)}))
+        self._publish(Event("console", {"dir": "tx", "text": _show_byte(data), "poll": routine}))
 
     def reset(self, timeout: float = 1.0) -> bool:
         """Send the reset byte and wait for the banner that follows it."""
@@ -443,7 +456,13 @@ class Link:
                     self._handle_line(text)
 
     def _handle_line(self, text: str) -> None:
-        self._publish(Event("console", {"dir": "rx", "text": text}))
+        routine = False
+        if text.startswith("<") and text.endswith(">"):
+            with self._status_cond:
+                routine = self._polls_out > 0
+                if routine:
+                    self._polls_out -= 1
+        self._publish(Event("console", {"dir": "rx", "text": text, "poll": routine}))
         if text == "ok" or text.startswith("error:"):
             self._complete(text)
         elif text.startswith("<") and text.endswith(">"):
@@ -520,7 +539,7 @@ class Link:
     def _poll_loop(self) -> None:
         while not self._closed.wait(self._poll_interval()):
             try:
-                self.realtime(REALTIME_STATUS)
+                self.realtime(REALTIME_STATUS, routine=True)
             except LinkError:
                 return
 
