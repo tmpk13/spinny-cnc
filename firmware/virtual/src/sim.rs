@@ -99,6 +99,15 @@ impl Sim {
     /// Runs one client to its end. Returns when the client has gone and
     /// the machine has come to rest.
     pub fn session(&mut self, inbox: &Inbox, socket: &mut impl Write) -> io::Result<()> {
+        // A write that fails is the client going away mid-sentence, so the
+        // machine has to be stopped on that path as much as on a clean
+        // hang up: an early return here would leave it cutting.
+        let result = self.serve(inbox, socket);
+        self.disconnect();
+        result
+    }
+
+    fn serve(&mut self, inbox: &Inbox, socket: &mut impl Write) -> io::Result<()> {
         report::banner(&mut self.out);
         self.flush(socket)?;
         loop {
@@ -119,7 +128,6 @@ impl Sim {
             }
             self.advance(Some(inbox));
         }
-        self.disconnect();
         Ok(())
     }
 
@@ -265,6 +273,65 @@ impl Drop for Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::clock::Clock;
+    use crate::ports::FileStore;
+    use crate::trace::Trace;
+    use spinny_fw_logic::line::{Event, Line};
+
+    fn sim() -> Sim {
+        Sim::new(Setup {
+            settings: Settings::default(),
+            store: FileStore::default(),
+            clock: Clock::fast(),
+            trace: Trace::new(None),
+            quiet: true,
+        })
+    }
+
+    fn line(text: &str) -> Event {
+        Event::Line(text.parse::<Line>().expect("line fits"))
+    }
+
+    /// A socket that dies after a few writes, like a client that is killed.
+    struct Dying {
+        left: usize,
+    }
+
+    impl Write for Dying {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.left == 0 {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "gone"));
+            }
+            self.left -= 1;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_client_that_dies_mid_write_still_stops_the_machine() {
+        let mut sim = sim();
+        let inbox = Inbox::new();
+        inbox.push(line("set R0 A0"));
+        inbox.push(line("cut R20 F400 S800"));
+        // Closed as well, so the session cannot sit waiting for a client
+        // that is not coming if the write somehow succeeds.
+        inbox.close();
+        // The banner and the first answer get through; the answer to the
+        // cut, by which time the machine is moving with the beam on, does
+        // not.
+        let mut socket = Dying { left: 2 };
+        let result = sim.session(&inbox, &mut socket);
+        assert!(result.is_err(), "the write error should reach the caller");
+        // Stopping a moving machine is a reset while moving, so the next
+        // client finds the alarm and has to unlock before it can move.
+        assert_eq!(sim.state(), report::State::Alarm(1), "the machine kept running");
+        assert_eq!(sim.laser_duty(), 0, "the beam was left on");
+    }
 
     #[test]
     fn answers_are_counted_per_line() {
