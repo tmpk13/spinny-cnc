@@ -79,14 +79,17 @@ disconnected until the last step.
 7. `$r_rate`, `$a_rate`, `$r_accel` and `$a_accel` up until a move misses
    steps, then back off well clear of it. `$a_rate` is what decides how close
    to the axis the machine can still cut at speed.
-8. `$save`, then power cycle and check `$` still reads back what you set.
-9. Laser last, on a scrap board. Prove the wiring at full duty first,
+8. Find the axis before any real job: `spinny-center` burns a pattern
+   whose square gives the cross slide error and whose closing gap gives
+   the radius zero error. Run it in `mode const`.
+9. `$save`, then power cycle and check `$` still reads back what you set.
+10. Laser last, on a scrap board. Prove the wiring at full duty first,
    where the output is simply on: `laser S1000 T2000`, measuring at the
    header if it does not strike. Then `laser S500 T2000` and `laser S100
    T2000` to find where it stops firing, which is the bottom of the usable
    power range. Only then a single `cut` line at the speed and power you
    intend.
-10. If the beam follows `S` poorly, the fan output's own smoothing is the
+11. If the beam follows `S` poorly, the fan output's own smoothing is the
    first suspect: try `$laser_hz=200` and work up.
 
 ## Microstepping and speed

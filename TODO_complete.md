@@ -48,3 +48,6 @@
   long enough to wrap the step interrupt's Bresenham counters; the laser
   port is now driven from the stored polarity before the board's other
   tasks start.
+- `spinny-center` (2026-09-21): a burn that separates the radius zero
+  error from the rail's miss distance, four radial lines bounding a square
+  of twice the latter around a ring centered on the axis.

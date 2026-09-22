@@ -21,6 +21,7 @@ reading and the isolation loops come from the Cartesian tool in
 | `spinny-iso` | KiCad board or gerber to isolation gcode placed on the axis |
 | `spinny-polar` | re-place and pre-split an existing X/Y laser job |
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
+| `spinny-center` | a burn that shows where the rotation axis really is |
 | `spinny-sim` | play a job back on a model of the machine |
 
 ## Usage
@@ -35,6 +36,41 @@ cargo run --manifest-path sim/Cargo.toml -- out/board.gcode
 Each command writes the job plus a markdown map, an SVG preview drawn around
 the rotation axis, and a `.sim.json` sidecar the simulator draws the board
 from. `--dry-run` prints the summary only.
+
+## Finding the axis
+
+Two things can be out, and neither shows up in a cut until it is drawn.
+The radius zero may sit short of or past the axis, and the rail may pass
+to one side of it, which no radius offset can correct: that is what the
+cross slide is for. `spinny-center` burns a pattern that separates them.
+
+```sh
+uv run spinny-center --rotary-max-rate 400
+```
+
+A radial cut holds the table still and runs the head along the rail, so
+what it burns is the rail itself: a straight line lying the rail's own
+miss distance from the axis. Four of them a quarter turn apart land on the
+four sides of a square centered on the axis, and that square's side is
+twice the miss distance. A full turn with the head still burns a ring
+centered on the axis exactly, however far out everything else is, which is
+the reference the rest is measured from.
+
+So on the coupon:
+
+| What you see | What it means |
+| --- | --- |
+| the ring | its center is the rotation axis |
+| the square the lines bound | side is twice the cross slide error |
+| the gap between opposing lines, once the square has closed | twice the radius zero error |
+
+Halve the square's side and take it out on the cross slide, then re-burn.
+When the lines meet at a point the rail is over the axis; move the head
+half of whatever gap is left and set the radius zero there.
+
+Cut it in constant power mode. The inner end of each line is what gets
+measured, and under dynamic power the beam fades exactly where a move
+begins.
 
 ## Placing the board
 
