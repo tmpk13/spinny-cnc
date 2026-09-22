@@ -150,6 +150,12 @@ def notes_for() -> list[str]:
         " point, the gap left between opposing lines is twice the radius"
         " zero error. Move the head half the gap and set the radius zero"
         " there.",
+        "The line ends carry the same error, and are on the coupon even when"
+        " the ring is not. They lie on a circle of their own at the reach"
+        " plus the radius zero error, so the longest distance across the"
+        " pattern from one end to another is twice that: longer than twice"
+        " the reach means the head at radius zero sits outside the axis,"
+        " shorter means short of it.",
         "The ring measures that error with its sign, which the lines cannot:"
         " it is burnt at a known radius, so half its diameter less that"
         " radius is how far past the axis the head sits at radius zero."
@@ -185,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     ]
     job = gcode.generate(groups, options, header)
     notes = notes_for()
+    if args.ring > 0:
+        notes.append(
+            f"The ring lands at the radius zero error away from {args.ring:g} mm,"
+            f" so give it a coupon comfortably wider than {2 * args.ring:g} mm"
+            " or it will run off the edge before it has been measured."
+        )
     around = ring_speed(args.ring, args.speed, args.rotary_max_rate)
     if args.ring > 0 and around < args.speed:
         notes.append(

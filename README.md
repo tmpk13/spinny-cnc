@@ -65,6 +65,12 @@ So on the coupon:
 | the square the lines bound | side is twice the cross slide error |
 | the gap between opposing lines, once the square has closed | twice the radius zero error |
 
+The line ends carry the same reading and are on the coupon even when the
+ring is not: they lie on a circle at the reach plus the radius zero error,
+so the longest distance across the pattern from one end to another is
+twice that. Longer than twice the reach means the head at radius zero
+sits outside the axis, shorter means short of it.
+
 The ring carries the sign the lines cannot. It is burnt at a known
 radius, so half its measured diameter less that radius is how far past
 the axis the head sits at radius zero: wider than asked for means the head
