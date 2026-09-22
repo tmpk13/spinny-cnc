@@ -24,6 +24,11 @@ So the burn reads as:
 Cut it in constant power mode: the dose at the start of a line matters
 here, and under dynamic power the beam fades where the move begins, which
 is the end being measured.
+
+This reads the errors to within the width of a burnt line. `--fine` burns
+the pattern in `fine.py` instead, which crosses marks burnt from the two
+sides of the axis at a shallow angle so that what is left moves a crossing
+by many times itself.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ import math
 import sys
 from pathlib import Path
 
-from . import __version__, gcode, machine, preview
+from . import __version__, fine, gcode, machine, preview
 from .polar import Point
 
 # Angle between samples around the reference ring. At the default radius
@@ -139,16 +144,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="radial lines, spread evenly; 0 burns the ring alone, which is"
         " the reading a wrong table scale cannot distort",
     )
-    pattern.add_argument("--reach", type=float, default=6.0, help="how far the lines run, mm")
     pattern.add_argument(
-        "--ring", type=float, default=8.0, help="reference ring radius, mm; 0 leaves it out"
+        "--reach", type=float, default=None,
+        help="how far the lines run, mm (default 6, or 7 with --fine)",
+    )
+    pattern.add_argument(
+        "--ring", type=float, default=None,
+        help="reference ring radius, mm; 0 leaves it out (default 8, or none with --fine)",
     )
     pattern.add_argument("--spot", type=float, default=0.1, help="beam diameter, for the preview")
+    fine_pattern = parser.add_argument_group(
+        "fine pattern",
+        "with --fine: marks burnt from both sides of the axis cross at a shallow"
+        " angle, so what is left moves a crossing by 2 / tan(angle) times itself;"
+        " written as a job for the web interface, since the head runs past the axis",
+    )
+    fine_pattern.add_argument("--fine", action="store_true", help="burn the fine pattern")
+    fine_pattern.add_argument(
+        "--angle", type=float, default=fine.Design.angle, help="crossing angle, degrees"
+    )
+    fine_pattern.add_argument(
+        "--cross", type=float, default=fine.Design.cross,
+        help="where the arms cross the rail line, mm either side of the axis",
+    )
+    fine_pattern.add_argument(
+        "--arm", type=float, default=fine.Design.arm, help="half the length of an arm, mm"
+    )
+    fine_pattern.add_argument(
+        "--spiral", type=float, default=fine.Design.spiral,
+        help="mean radius of the spirals, mm; 0 leaves them out",
+    )
+    fine_pattern.add_argument(
+        "--show-error", metavar="E,Z",
+        help="draw the preview as a machine burns it with the radius zero E mm out"
+        " along the rail and the rail Z mm off the axis, and print what it would read",
+    )
     burn = parser.add_argument_group("burn settings")
     burn.add_argument("--power", type=float, default=400.0, help="S for the pattern")
     burn.add_argument("--speed", type=float, default=200.0, help="surface speed, mm/min")
     machine.add_machine_arguments(parser)
-    machine.add_output_arguments(parser, "out/center.gcode")
+    machine.add_output_arguments(parser, "out/center.gcode, or out/center-fine.json with --fine")
     return parser
 
 
@@ -191,6 +226,12 @@ def notes_for(lines: int) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.reach is None:
+        args.reach = fine.Design.reach if args.fine else 6.0
+    if args.ring is None:
+        args.ring = 0.0 if args.fine else 8.0
+    if args.fine:
+        return fine.run(args, parser)
     try:
         if args.lines == 0 and args.ring <= 0:
             raise ValueError("--lines 0 needs a --ring to measure")

@@ -236,7 +236,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             speed.addEventListener("change", () => void patch());
             enabled.addEventListener("change", () => void patch());
             return el("tr", { class: group.enabled ? "" : "disabled" },
-                el("td", {}, el("span", { class: "swatch", "data-group": String(index % 4) }), group.label, el("span", { class: "muted" }, ` (${group.paths.length})`)),
+                el("td", {}, el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
+                    el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`)),
                 el("td", {}, power),
                 el("td", {}, speed),
                 el("td", {}, enabled),

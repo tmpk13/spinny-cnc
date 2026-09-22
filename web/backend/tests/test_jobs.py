@@ -257,3 +257,48 @@ def test_marks_of_an_imported_drawing_follow_it():
     assert len(marks) == len(paths)
     for mark, path in zip(marks, paths):
         assert deviation(mark, path) <= 0.0075
+
+
+def test_a_json_job_with_joints_gets_drawn_paths_and_stays_on_the_axis():
+    streamer = Streamer()
+    text = json.dumps(
+        {"name": "fine", "groups": [{"label": "rail", "power": 400, "speed": 200, "joints": [[[-6, 0], [6, 0]]]}]}
+    )
+    job = from_json(text, "fine")
+    group = job.groups[0]
+    assert group.joints == [[(-6.0, 0.0), (6.0, 0.0)]]
+    assert group.has_cuts
+    # The drawn path is filled in from the joints for the preview.
+    assert group.paths and len(group.paths[0]) > 100
+    job.refresh_stats(streamer)
+    assert job.stats.moves == 2 and job.stats.min_radius == 0.0
+    assert job.summary()["groups"][0]["joints"] == 1
+    # It is written about the axis: no offset, but the burn settings change.
+    with pytest.raises(ValueError):
+        apply_patch(job, JobPatch(offset={"x": 0.0, "y": 14.0}), streamer)
+    apply_patch(job, JobPatch(groups=[{"index": 0, "speed": 100}]), streamer)
+    assert job.groups[0].speed == 100
+    with pytest.raises(JobImportError):
+        from_json(json.dumps({"groups": [{"label": "x", "joints": [[[1, 0]]]}]}), "bad")
+    kept = from_json(
+        json.dumps({"groups": [{"label": "x", "paths": [[[0, 0], [1, 1]]], "joints": [[[-6, 0], [6, 0]]]}]}),
+        "kept",
+    )
+    assert kept.groups[0].paths == [[(0.0, 0.0), (1.0, 1.0)]]
+
+
+def test_the_fine_centering_pattern_imports_and_streams_past_the_axis():
+    from replay import replay
+    from spinny_laser import fine
+
+    groups = fine.build(fine.Design(), 400.0, 200.0, rotary_max_rate=400.0)
+    job = from_json(json.dumps(fine.job_document(groups, "center-fine", 0.1)), "center-fine")
+    assert [g.label for g in job.groups] == [g.label for g in groups]
+    streamer = Streamer()
+    lines = [piece.line for piece in streamer.job_pieces(job, (0.0, 0.0))]
+    assert any(line.startswith("cut R-") for line in lines)
+    marks, _ = replay(lines)
+    drawn = [path for _, paths in fine.drawn(groups) for path in paths]
+    assert len(marks) == len(drawn) == 6
+    for mark, path in zip(marks, drawn):
+        assert deviation(mark, path) <= 0.01

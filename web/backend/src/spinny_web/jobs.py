@@ -49,6 +49,16 @@ class Group(BaseModel):
     speed: float = DEFAULT_SPEED
     enabled: bool = True
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
+    # Joint-space polylines, radius mm and angle degrees, streamed as they
+    # are with no kinematics in between: a negative radius is the far side
+    # of the axis, which is how a calibration burn lands on a board point
+    # from both directions. With these present, `paths` is only what the
+    # preview draws.
+    joints: list[list[tuple[float, float]]] = Field(default_factory=list)
+
+    @property
+    def has_cuts(self) -> bool:
+        return bool(self.joints) or bool(self.paths)
 
 
 class Offset(BaseModel):
@@ -90,6 +100,7 @@ class Job(BaseModel):
                     "speed": group.speed,
                     "enabled": group.enabled,
                     "paths": len(group.paths),
+                    "joints": len(group.joints),
                 }
                 for group in self.groups
             ],
@@ -100,6 +111,10 @@ class Job(BaseModel):
         """Move everything on the board, offset included."""
         if dx == 0.0 and dy == 0.0:
             return
+        if any(group.joints for group in self.groups):
+            # A joint-space group is written about the axis itself; there
+            # is no board drawing to move.
+            raise ValueError("a joint-space group is fixed to the axis and cannot be moved")
         for group in self.groups:
             group.paths = [_shifted(path, dx, dy) for path in group.paths]
         self.outline = [_shifted(path, dx, dy) for path in self.outline]
@@ -208,6 +223,11 @@ def from_json(text: str, name: str) -> Job:
     if not job.name or job.name == "job":
         job.name = name
     job.source = "json"
+    for group in job.groups:
+        if any(len(poly) < 2 for poly in group.joints):
+            raise JobImportError("a joint-space path needs at least two points")
+        if group.joints and not group.paths:
+            group.paths = [kinematics.joint_preview(poly) for poly in group.joints]
     return job
 
 

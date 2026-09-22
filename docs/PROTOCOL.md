@@ -55,15 +55,17 @@ surface length is under 1 um (a turn on the axis) runs at the max rates with
 the laser off. Speed is capped by `r_rate` and `a_rate`; under `mode dyn`
 the laser power follows the achieved speed so the dose per mm holds.
 
-Jogs are accepted in `Idle` and `Jog` only. A jog may take `R` past the
-axis and out the far side, and `set R<negative>` declares it parked there:
-lining the head up with the axis means stepping through zero, and that is
-the only way to say which side it is on. `go` and `cut` still refuse a
-negative `R` (`error:4`), because past the axis is the same board point
-half a turn away and the polar words a job is written in cannot say which
-was meant. With `r_max` set, a move further out than it is refused on
-either side. The angle is not
-limited and keeps counting, but one move may not cover more than 2^28 steps
+Jogs are accepted in `Idle` and `Jog` only. Any move may take `R` past
+the axis and out the far side, and `set R<negative>` declares the head
+parked there. A jog goes there to be lined up with the axis, stepping
+through zero. A `go` or `cut` goes there to reach a board point from the
+far side: it is the same board point half a turn away, but the head's
+offset from the axis is mirrored there, which is what a calibration burn
+compares. A job written in board coordinates never asks for it; the host
+sends a negative radius only for a joint-space group that says so. With
+`r_max` set, a move further out than it is refused on either side. The
+angle is not limited and keeps counting, but one move may not cover more
+than 2^28 steps
 on an axis (`error:4`): about 18878 degrees or 26214 mm at the default
 scales, past which the step generator's counters would wrap.
 

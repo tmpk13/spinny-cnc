@@ -21,7 +21,7 @@ reading and the isolation loops come from the Cartesian tool in
 | `spinny-iso` | KiCad board or gerber to isolation gcode placed on the axis |
 | `spinny-polar` | re-place and pre-split an existing X/Y laser job |
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
-| `spinny-center` | a burn that shows where the rotation axis really is |
+| `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
 | `spinny-sim` | play a job back on a model of the machine |
 
 ## Usage
@@ -84,6 +84,35 @@ half of whatever gap is left and set the radius zero there.
 Cut it in constant power mode. The inner end of each line is what gets
 measured, and under dynamic power the beam fades exactly where a move
 begins.
+
+### Amplifying what is left
+
+Once the square has closed, what remains is under the width of a burnt
+line, and no pattern burnt from one side of the axis can show more than
+that: every mark is displaced by the same two errors, turned to the table
+angle. Burnt from the far side, with the head run past the axis and the
+table half a turn on, the same board point is displaced the other way.
+`--fine` uses that. It crosses marks burnt from the two sides at a shallow
+angle, and a crossing moves by 2 / tan(angle) times the error: 38 times at
+the default 3 degrees.
+
+```sh
+uv run spinny-center --fine --rotary-max-rate 400
+uv run spinny-center --fine --show-error 0.02,0.01   # the coupon a machine that is out would burn
+```
+
+The head runs to R -7 for it, so the job is written for the web interface
+(`out/center-fine.json`) rather than as gcode. Import it and run it in
+`mode const`.
+
+| What you see | What it means |
+| --- | --- |
+| the rail line burnt with the table at 0, crossing the two arms | the crossings sit 8 mm apart when the rail passes over the axis; each 0.01 mm it misses by moves them 0.76 mm apart or together |
+| the two spirals, crossing the rail line burnt with the table at 90 | they cross on that line when the radius zero is right; each 0.01 mm of error moves the crossing 0.38 mm along them, toward the short spiral's inner end when the head sits past the axis |
+
+The map written next to the job turns each distance into a correction.
+Two lines meeting at 3 degrees merge for about 2 mm either side of their
+crossing: read the middle of the merged stretch, not its ends.
 
 ## Placing the board
 
@@ -230,6 +259,18 @@ classDiagram
         radial(start, radius)
         turn(start, degrees, step)
     }
+    class center {
+        main(argv)  spinny-center
+        spokes(count, inner, outer)
+        ring(radius)
+    }
+    class fine {
+        Design  reach, angle, cross, arm, spiral
+        build(design, ...) JointGroup[]
+        burnt(groups, along, across)
+        readings(design, groups, along, across)
+        job_document(groups, name, spot)
+    }
     class machine {
         add_machine_arguments(parser)
         options_from(args)
@@ -240,6 +281,9 @@ classDiagram
         joint_of(point, previous)
         subdivide(start, end, joint, kin)
         unwrap(angle, previous)
+        far_side(joint)
+        displaced(joint, along, across)
+        sample_joints(poly)
     }
     class gcode {
         PolarOptions  controller grblhal|joint
@@ -280,6 +324,12 @@ classDiagram
     convert --> preview
     gcode --> polar
     jog --> polar
+    center --> machine
+    center --> preview
+    center --> fine : --fine
+    fine --> polar
+    fine --> preview
+    fine ..> web_backend : job json with joints
     gcode --> Job
     sim_main --> sim_gcode
     sim_gcode ..> gcode : reads its output

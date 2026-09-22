@@ -115,7 +115,12 @@ def test_jogs_gotos_and_position(client, fake):
     assert response.status_code == 200
     assert fake.joint[0] == pytest.approx(3.0) and fake.joint[1] % 360.0 == pytest.approx(90.0)
     assert client.post("/api/jog", json={"kind": "sideways"}).status_code == 400
-    assert client.post("/api/goto", json={"kind": "joint", "r": -1}).status_code == 400
+    # The far side of the axis is open to a goto; the soft limit is not.
+    assert client.post("/api/goto", json={"kind": "joint", "r": -1}).status_code == 200
+    assert fake.joint[0] == pytest.approx(-1.0)
+    fake.settings["r_max"] = 50
+    assert client.post("/api/goto", json={"kind": "joint", "r": -60}).status_code == 400
+    fake.settings["r_max"] = 0
     assert client.post("/api/goto", json={"kind": "board", "x": 1}).status_code == 400
     state = client.post("/api/position", json={"r": 0, "a": 0}).json()
     assert "set R0 A0" in fake.received_lines

@@ -9,7 +9,16 @@ from polar_sim import deviation
 from replay import board, parse, replay
 
 from spinny_web.jobs import Group, Job
-from spinny_web.kinematics import Rates, Streamer, coord, num, split_at_axis
+from spinny_web.kinematics import (
+    Rates,
+    Streamer,
+    coord,
+    joint_min_radius,
+    joint_preview,
+    num,
+    split_at_axis,
+    turned_toward,
+)
 
 TOLERANCE = 0.005
 # Chord tolerance, two coordinate quanta, and the snap onto the axis.
@@ -229,3 +238,76 @@ def test_rates_from_settings():
     assert Rates.from_settings({"r_rate": 800, "a_rate": "720"}) == Rates(800.0, 720.0)
     assert Rates.from_settings({}) == Rates()
     assert Rates.from_settings({"r_rate": 0}) == Rates()
+
+
+# --- joint-space groups ------------------------------------------------------
+
+
+def test_joint_paths_are_streamed_as_they_are_across_the_axis():
+    streamer = Streamer()
+    job = Job(name="t", groups=[Group(label="rail", power=400, speed=200, joints=[[(-6.0, 0.0), (6.0, 0.0)]])])
+    lines = lines_of(streamer, job)
+    # One rapid to the far end and one cut straight through the axis: no
+    # kinematics, no turn on the spot, the table still throughout.
+    assert lines == ["go R-6.000 A0.0000", "cut R6.000 A0.0000 F200 S400"]
+    marks, final = replay(lines)
+    assert final == (6.0, 0.0)
+    assert len(marks) == 1
+    xs = [x for x, _ in marks[0]]
+    assert min(xs) == pytest.approx(-6.0) and max(xs) == pytest.approx(6.0)
+    assert all(abs(y) < 1e-9 for _, y in marks[0])
+
+
+def test_a_far_side_path_lands_where_the_near_one_would():
+    streamer = Streamer()
+    near = [(4.5, -90.0), (5.5, 270.0)]
+    far = [(-r, a + 180.0) for r, a in near]
+    lines_near = lines_of(streamer, Job(name="n", groups=[Group(label="s", joints=[near])]))
+    lines_far = lines_of(streamer, Job(name="f", groups=[Group(label="s", joints=[far])]))
+    assert lines_far[0] == "go R-4.500 A90.0000"
+    (mark_near,), _ = replay(lines_near)
+    (mark_far,), _ = replay(lines_far)
+    assert len(mark_near) == len(mark_far) > 100
+    for p, q in zip(mark_near, mark_far):
+        assert p == pytest.approx(q, abs=1e-9)
+
+
+def test_a_joint_path_starts_the_nearest_turn_away():
+    streamer = Streamer()
+    job = Job(name="t", groups=[Group(label="ring", joints=[[(8.0, 0.0), (8.0, 360.0)]])])
+    lines = lines_of(streamer, job, start=(8.0, 350.0))
+    assert lines == ["go R8.000 A360.0000", "cut R8.000 A720.0000 F400 S500"]
+    assert turned_toward([(1.0, 10.0), (2.0, 20.0)], -700.0) == [(1.0, -710.0), (2.0, -700.0)]
+    assert turned_toward([(1.0, 10.0)], 100.0) == [(1.0, 10.0)]
+    assert turned_toward([], 100.0) == []
+
+
+def test_joint_groups_are_priced_and_a_crossing_counts_as_radius_zero():
+    streamer = Streamer(rates=Rates(r_rate=600.0, a_rate=400.0))
+    job = Job(
+        name="t",
+        groups=[
+            Group(label="rail", power=400, speed=200, joints=[[(-6.0, 0.0), (6.0, 0.0)]]),
+            Group(label="ring", power=400, speed=200, joints=[[(8.0, 0.0), (8.0, 360.0)]]),
+            Group(label="off", power=400, speed=200, enabled=False, joints=[[(20.0, 0.0), (21.0, 0.0)]]),
+        ],
+    )
+    stats = streamer.estimate(job)
+    assert stats.moves == 4
+    ring = 2 * math.pi * 8.0
+    assert stats.length_mm == pytest.approx(12.0 + ring, abs=0.01)
+    assert stats.min_radius == 0.0 and stats.max_radius == 8.0
+    # The ring at 200 mm/min would need the table at over 1400 deg/min.
+    assert stats.limited_fraction == pytest.approx(ring / (12.0 + ring), abs=1e-6)
+    assert stats.seconds == pytest.approx(0.6 + 3.6 + 0.2 + 54.0, abs=0.05)
+    assert joint_min_radius([(3.0, 0.0), (1.0, 90.0)]) == 1.0
+    assert joint_min_radius([(3.0, 0.0), (-1.0, 0.0)]) == 0.0
+    assert joint_min_radius([(-3.0, 0.0), (-2.0, 10.0)]) == 2.0
+
+
+def test_joint_preview_draws_the_path_the_move_traces():
+    points = joint_preview([(-6.0, 0.0), (6.0, 0.0)])
+    assert len(points) >= 121
+    assert points[0] == pytest.approx((-6.0, 0.0)) and points[-1] == pytest.approx((6.0, 0.0))
+    assert all(abs(y) < 1e-9 for _, y in points)
+    assert joint_preview([]) == []

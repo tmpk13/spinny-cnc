@@ -406,17 +406,17 @@ impl<'a> Machine<'a> {
                 target[i] = if relative { here[i] + word } else { word };
             }
         }
-        // Checked on the step the target rounds to, so a relative jog back
-        // to the axis is not refused for a rounding hair below zero. A jog
-        // may cross the axis and come out the far side: that is how the
-        // head is lined up with it. A cut may not, because a negative
-        // radius is the same board point half a turn away and the job's
-        // polar words cannot say which was meant.
+        // Any move may cross the axis and come out the far side. A jog goes
+        // there to be lined up with the axis; a cut goes there to land on a
+        // board point from the other direction, the same point half a turn
+        // away but with the head's offset from the axis mirrored, which is
+        // what a calibration burn compares. The soft limit is on the
+        // distance from the axis, either side, checked on the step the
+        // target rounds to so a move back onto the axis is not refused for
+        // a rounding hair.
         let r_steps = math::units_to_steps(target[R], self.settings.steps[R]);
         let r_units = math::steps_to_units(r_steps, self.settings.steps[R]);
-        let crosses = r_steps < 0 && kind != MoveKind::Jog;
-        let beyond = self.settings.r_max > 0.0 && libm::fabsf(r_units) > self.settings.r_max;
-        if crosses || beyond {
+        if self.settings.r_max > 0.0 && libm::fabsf(r_units) > self.settings.r_max {
             return Err(Error::OutOfRange);
         }
         // A move longer than the stepper's Bresenham counters can carry
@@ -1213,10 +1213,14 @@ mod tests {
         assert_eq!(rig.line("jog R-41"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.joint(), [-1.0, 0.0]);
-        // A cutting move may not be sent there, where a polar radius has
-        // no way to say which side of the axis was meant.
-        assert_eq!(rig.line("go R-1"), "error:4 out of range\n");
-        assert_eq!(rig.line("cut R-1 F100"), "error:4 out of range\n");
+        // A cutting move may go there too: a calibration burn lands on the
+        // same board point from both sides of the axis.
+        assert_eq!(rig.line("go R-3"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint(), [-3.0, 0.0]);
+        assert_eq!(rig.line("cut R-1 F100"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint(), [-1.0, 0.0]);
         assert_eq!(rig.line("jog R1"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.joint(), [0.0, 0.0]);

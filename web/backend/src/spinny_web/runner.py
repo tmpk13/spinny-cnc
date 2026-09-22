@@ -114,7 +114,7 @@ class Runner:
             raise RunnerError(f"no status from the machine: {exc}") from exc
         if status.state != "Idle":
             raise RunnerError(f"the machine is {status.raw or status.state}, not Idle")
-        if not any(group.enabled and group.paths for group in job.groups):
+        if not any(group.enabled and group.has_cuts for group in job.groups):
             raise RunnerError("the job has nothing enabled to cut")
         start = status.joint
         stats = streamer.estimate(job, start)
@@ -254,11 +254,19 @@ class Runner:
         while not self._abort.is_set() and time.monotonic() < deadline:
             with self._lock:
                 acked = self.progress.acked >= self.progress.sent
-            status = link.status
-            if acked and status is not None and not status.moving:
-                if status.state == "Alarm":
-                    self._error = f"the machine raised {status.raw}"
-                return
+            if acked:
+                # Only a status asked for now can say the machine has come
+                # to rest: the polled one may be from before the last lines
+                # were even sent, and a short job is acked in full before
+                # the poll comes round again.
+                try:
+                    status = link.status_now(1.0)
+                except LinkError:
+                    status = None
+                if status is not None and not status.moving:
+                    if status.state == "Alarm":
+                        self._error = f"the machine raised {status.raw}"
+                    return
             if not link.is_open:
                 self._error = link.close_reason or "disconnected"
                 return

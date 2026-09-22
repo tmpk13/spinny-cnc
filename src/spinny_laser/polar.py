@@ -70,6 +70,51 @@ def cartesian(joint: Joint) -> Point:
     return (radius * math.cos(theta), radius * math.sin(theta))
 
 
+def far_side(joint: Joint) -> Joint:
+    """The same board point reached with the head past the axis.
+
+    The radius is negated and the table is half a turn on. A machine that
+    is out displaces the beam the opposite way there, which is what a
+    calibration burn compares.
+    """
+    return (-joint[0], joint[1] + 180.0)
+
+
+def displaced(joint: Joint, along: float, across: float) -> Point:
+    """Where the beam lands on a machine that is out.
+
+    The head at commanded radius r sits `along` further out on the rail and
+    `across` off it, and the board sees that turned to the table angle.
+    """
+    theta = math.radians(joint[1])
+    radius = joint[0] + along
+    return (
+        radius * math.cos(theta) - across * math.sin(theta),
+        radius * math.sin(theta) + across * math.cos(theta),
+    )
+
+
+def interpolate_joints(
+    poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0
+) -> list[Joint]:
+    """Joints along a polyline as the firmware runs it: linear between its points."""
+    if not poly:
+        return []
+    out = [poly[0]]
+    for a, b in zip(poly, poly[1:]):
+        dr, da = b[0] - a[0], b[1] - a[1]
+        steps = max(1, int(math.ceil(max(abs(dr) / step_mm, abs(da) / step_deg))))
+        for i in range(1, steps + 1):
+            t = i / steps
+            out.append((a[0] + dr * t, a[1] + da * t))
+    return out
+
+
+def sample_joints(poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0) -> list[Point]:
+    """Board points along a joint polyline, close enough to draw it."""
+    return [cartesian(joint) for joint in interpolate_joints(poly, step_mm, step_deg)]
+
+
 def on_axis(joint: Joint) -> bool:
     return joint[0] < AXIS_EPSILON
 

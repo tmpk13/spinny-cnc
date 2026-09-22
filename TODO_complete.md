@@ -62,3 +62,19 @@
   beside `R` or `A`, a `slide` module with its own polled trapezoid, `Jog`
   state and `|Z:` in the status, the SKR Pico Z socket wired up and its
   driver in the `$tmc` report, and a counting port in the simulator.
+- Far side cuts (2026-09-22): `go` and `cut` take a negative radius, as
+  jogs already did; `r_max` alone bounds the head. Past the axis is the
+  same board point half a turn on with the head's offset reversed, which
+  is what a calibration burn compares.
+- Joint-space job groups (2026-09-22): a group may carry `joints`,
+  streamed as they are with whole turns added toward the machine's angle,
+  priced, drawn from a sampled path, and refused an offset; the runner
+  accepts a job made only of them. The drain asks for a fresh status
+  instead of trusting the polled one, which could predate the run.
+- `spinny-center --fine` (2026-09-22): the amplifying pattern, written as
+  a web job: a rail line through the axis crossing two arms burnt from
+  either side at three degrees, whose crossings move apart by 76 times the
+  cross slide error, and two spirals burnt from either side whose crossing
+  moves 38 times the radius zero error along a second rail line; the arms
+  subdivided to a tolerance scaled by the angle; `--show-error` draws the
+  coupon a machine that is out would burn and prints what it reads.

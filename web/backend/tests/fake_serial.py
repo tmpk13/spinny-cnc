@@ -251,9 +251,9 @@ class FakeSerial:
             if keyword == "jog":
                 r = self.joint[0] + r if r is not None else None
                 a = self.joint[1] + a if a is not None else None
-            if r is not None and r < 0:
-                return ["error:4 out of range"]
-            if r is not None and self.settings["r_max"] and r > self.settings["r_max"]:
+            # A negative radius is the far side of the axis, open to every
+            # move; the soft limit is on the distance from the axis.
+            if r is not None and self.settings["r_max"] and abs(r) > self.settings["r_max"]:
                 return ["error:4 out of range"]
             if r is not None:
                 self.joint[0] = r

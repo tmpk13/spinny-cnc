@@ -86,3 +86,36 @@ def test_small_job_runs_on_the_virtual_firmware(firmware):
         assert status.a == pytest.approx(words["A"], abs=0.01)
     finally:
         link.close()
+
+
+def test_a_far_side_cut_runs_on_the_virtual_firmware(firmware):
+    link = Link(f"socket://127.0.0.1:{firmware}")
+    link.open()
+    try:
+        assert link.request_ok("set R0 A0") == []
+        job = Job(
+            id="e2e-fine",
+            name="fine",
+            groups=[
+                Group(label="rail", power=400, speed=4000, joints=[[(-6.0, 0.0), (6.0, 0.0)]]),
+                Group(label="far arc", power=400, speed=4000, joints=[[(-5.5, 90.0), (-4.5, 110.0)]]),
+            ],
+        )
+        streamer = Streamer()
+        expected = [piece for piece in streamer.job_pieces(job, (0.0, 0.0))]
+        assert expected[-1].line == "cut R-4.500 A110.0000 F4000 S400"
+        runner = Runner()
+        runner.start(job, link, streamer)
+        deadline = time.monotonic() + 120.0
+        while runner.progress.state != DONE and time.monotonic() < deadline:
+            assert runner.progress.state in ("running", "done"), runner.snapshot()
+            time.sleep(0.05)
+        final = runner.snapshot()
+        assert final["state"] == DONE, final
+        assert final["sent"] == final["acked"] == len(expected)
+        status = link.status_now(1.0)
+        assert status.state == "Idle"
+        assert status.r == pytest.approx(-4.5, abs=0.01)
+        assert status.a == pytest.approx(110.0, abs=0.01)
+    finally:
+        link.close()

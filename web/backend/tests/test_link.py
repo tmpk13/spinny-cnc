@@ -159,7 +159,8 @@ def test_request_returns_content_lines_and_errors():
         assert lk.request("nonsense") == ["error:1 unknown command"]
         with pytest.raises(CommandError):
             lk.request_ok("$nope=1")
-        pending = lk.send("go R-1")
+        fake.settings["r_max"] = 50
+        pending = lk.send("go R60")
         assert pending.wait(2.0) and pending.failed and pending.response.startswith("error:4")
         assert pending.answered
     finally:

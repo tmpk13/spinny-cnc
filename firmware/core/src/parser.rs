@@ -1,8 +1,8 @@
 //! Line and realtime-byte parsing, following docs/PROTOCOL.md.
 //!
 //! Parsing is pure: no state, no ranges beyond what a single line can
-//! check (`R` under 0, `S` negative). State-dependent checks are the
-//! machine's job.
+//! check (`F` not above zero, `S` negative). State-dependent checks are
+//! the machine's job.
 
 use crate::{A, AXES, LINE_MAX, R};
 
@@ -208,16 +208,6 @@ impl Words {
         Ok(())
     }
 
-    /// A cutting move may not be given a negative radius: past the axis
-    /// is the same board point at half a turn more, and the polar words a
-    /// job is written in have no way to mean anything else there.
-    fn check_radius(&self) -> Result<(), Error> {
-        if self.r.is_some_and(|r| r < 0.0) {
-            return Err(Error::OutOfRange);
-        }
-        Ok(())
-    }
-
     fn check_feed(&self) -> Result<(), Error> {
         if self.f.is_some_and(|f| f <= 0.0) {
             return Err(Error::OutOfRange);
@@ -301,16 +291,18 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
         *dst = src.to_ascii_lowercase();
     }
     match &lower[..keyword.len()] {
+        // A negative radius on any move is the far side of the axis. A
+        // cutting move goes there to burn a board point from the other
+        // direction, where the head's offset from the axis is mirrored;
+        // the machine holds it to the soft limit, not to zero.
         b"go" => {
             let words = Words::read(tokens, b"RA")?;
             words.need_axis()?;
-            words.check_radius()?;
             Ok(Command::Go { target: words.target() })
         }
         b"cut" => {
             let words = Words::read(tokens, b"RAFS")?;
             words.need_axis()?;
-            words.check_radius()?;
             words.check_feed()?;
             words.check_power()?;
             Ok(Command::Cut { target: words.target(), feed: words.f, power: words.s })
@@ -464,14 +456,15 @@ mod tests {
         assert_eq!(parse("go\tR10"), Ok(go(Some(10.0), None)));
         assert_eq!(parse("go R+5"), Ok(go(Some(5.0), None)));
         assert_eq!(parse("go R-0"), Ok(go(Some(-0.0), None)));
+        // The far side of the axis is a place like any other.
+        assert_eq!(parse("go R-1"), Ok(go(Some(-1.0), None)));
+        assert_eq!(parse("go R-0.001 A5"), Ok(go(Some(-0.001), Some(5.0))));
     }
 
     #[test]
     fn go_errors() {
         assert_eq!(parse("go"), Err(Error::MissingWord));
         assert_eq!(parse("go ; nothing"), Err(Error::MissingWord));
-        assert_eq!(parse("go R-1"), Err(Error::OutOfRange));
-        assert_eq!(parse("go R-0.001 A5"), Err(Error::OutOfRange));
         assert_eq!(parse("go F100"), Err(Error::BadWord));
         assert_eq!(parse("go R10 S5"), Err(Error::BadWord));
         assert_eq!(parse("go R10 R20"), Err(Error::BadWord));
@@ -499,6 +492,12 @@ mod tests {
             parse("CUT s0 f0.5 r1.5 a-2"),
             Ok(Command::Cut { target: [Some(1.5), Some(-2.0)], feed: Some(0.5), power: Some(0.0) })
         );
+        // A cut on the far side of the axis: the same board point half a
+        // turn away, reached with the head's offset mirrored.
+        assert_eq!(
+            parse("cut R-1 A90"),
+            Ok(Command::Cut { target: [Some(-1.0), Some(90.0)], feed: None, power: None })
+        );
     }
 
     #[test]
@@ -508,7 +507,6 @@ mod tests {
         assert_eq!(parse("cut A90 F0"), Err(Error::OutOfRange));
         assert_eq!(parse("cut A90 F-5"), Err(Error::OutOfRange));
         assert_eq!(parse("cut A90 S-1"), Err(Error::OutOfRange));
-        assert_eq!(parse("cut R-1 A90"), Err(Error::OutOfRange));
         assert_eq!(parse("cut A90 T5"), Err(Error::BadWord));
         assert_eq!(parse("cut A90 F300 F300"), Err(Error::BadWord));
         assert_eq!(parse("cut A90 Fx"), Err(Error::BadWord));
@@ -538,13 +536,17 @@ mod tests {
         assert_eq!(parse("jogto"), Err(Error::MissingWord));
         assert_eq!(parse("jogto F100"), Err(Error::MissingWord));
         // A jog may be sent past the axis: that is how the head is lined
-        // up with it. Only a cutting move is held to a polar radius.
+        // up with it. A cutting move may go there too, to burn a board
+        // point from the far side.
         assert_eq!(
             parse("jogto R-1"),
             Ok(Command::Jog { target: [Some(-1.0), None], feed: None, absolute: true })
         );
-        assert_eq!(parse("go R-1"), Err(Error::OutOfRange));
-        assert_eq!(parse("cut R-1 F60"), Err(Error::OutOfRange));
+        assert_eq!(parse("go R-1"), Ok(go(Some(-1.0), None)));
+        assert_eq!(
+            parse("cut R-1 F60"),
+            Ok(Command::Cut { target: [Some(-1.0), None], feed: Some(60.0), power: None })
+        );
         assert_eq!(parse("jog R5 F0"), Err(Error::OutOfRange));
         assert_eq!(parse("jogto A5 F-1"), Err(Error::OutOfRange));
         assert_eq!(parse("jog R5 S1"), Err(Error::BadWord));

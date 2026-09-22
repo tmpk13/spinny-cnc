@@ -125,6 +125,12 @@ export interface Group {
     speed: number;
     enabled: boolean;
     paths: Path[];
+    /**
+     * Joint-space polylines, radius mm and angle degrees, streamed as they
+     * are; a negative radius is the far side of the axis. When present,
+     * `paths` is only what is drawn.
+     */
+    joints?: [number, number][][];
 }
 
 export interface Stats {
@@ -158,6 +164,7 @@ export interface GroupSummary {
     speed: number;
     enabled: boolean;
     paths: number;
+    joints?: number;
 }
 
 /** The list entry: the job without its coordinates. */

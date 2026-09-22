@@ -316,3 +316,22 @@ def test_a_machine_that_resets_mid_run_stops_the_run_and_says_so():
         assert runner.progress.sent < runner.progress.total, "it kept streaming into a reset machine"
     finally:
         link.close()
+
+
+def test_a_job_of_joint_paths_runs_through_the_axis():
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        job = Job(
+            id="j2",
+            name="fine",
+            groups=[Group(label="rail", power=400, speed=200, joints=[[(-6.0, 0.0), (6.0, 0.0)]])],
+        )
+        runner.start(job, link, Streamer())
+        assert wait_for(lambda: runner.progress.state == DONE, 10.0)
+        lines = [line for line in fake.received_lines if line.split()[0] in ("go", "cut")]
+        assert lines == ["go R-6.000 A0.0000", "cut R6.000 A0.0000 F200 S400"]
+        assert fake.joint[0] == pytest.approx(6.0)
+        with pytest.raises(RunnerError):
+            runner.start(Job(id="j3", name="empty", groups=[Group(label="off", enabled=False, joints=[[(-6.0, 0.0), (6.0, 0.0)]])]), link, Streamer())
+    finally:
+        link.close()

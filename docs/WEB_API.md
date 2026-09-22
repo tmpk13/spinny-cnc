@@ -96,7 +96,9 @@ Job:
   "spot": 0.1, "offset": {"x": 0, "y": 14},
   "groups": [
     {"label": "isolation loop 1", "power": 500, "speed": 400, "enabled": true,
-     "paths": [[[x, y], ...], ...]}
+     "paths": [[[x, y], ...], ...]},
+    {"label": "rail line through the axis", "power": 400, "speed": 200, "enabled": true,
+     "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]}
   ],
   "outline": [[[x, y], ...]], "copper": [[[x, y], ...]],
   "stats": {"length_mm": 0, "seconds": 0, "max_radius": 0, "min_radius": 0,
@@ -105,7 +107,13 @@ Job:
 ```
 
 Path coordinates are board mm with the rotation axis at the origin; the
-offset is already applied. Progress:
+offset is already applied. A group may instead carry `joints`: polylines
+in joint space, radius mm and angle degrees, each pair of points streamed
+as one `cut` with no kinematics in between, and a negative radius meaning
+the far side of the axis. Such a group is written about the axis, so a
+job holding one cannot be given an offset; its `paths` are only what the
+preview draws, and the importer fills them in from the joints when they
+are left out. Progress:
 
 ```json
 {"job": "a1b2", "state": "running", "sent": 120, "acked": 118, "total": 900,

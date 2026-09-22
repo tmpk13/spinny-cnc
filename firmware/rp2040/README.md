@@ -97,7 +97,10 @@ disconnected until the last step.
 9. Find the axis before any real job: `spinny-center` burns a pattern
    whose square gives the cross slide error and whose closing gap gives
    the radius zero error. Run it in `mode const`, then move the slide by
-   the error it reports and burn it again.
+   the error it reports and burn it again. Once the square has closed,
+   `spinny-center --fine` burns the amplifying pattern: the head runs
+   past the axis for it, to R -7, so check the rail allows that (or set
+   `$r_max`), import its job in the web interface, and read the map.
 10. `$save`, then power cycle and check `$` still reads back what you set.
     The stored blob carries a version byte, so a settings sector written by
     an earlier firmware is discarded rather than misread and the defaults

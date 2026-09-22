@@ -262,9 +262,13 @@ fn the_cross_slide_jogs_on_its_own_and_lands_where_it_was_asked_to() {
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
-    // The slide is coarse, so a whole millimetre of it is quick.
+    // The slide is coarse, and the jog is paced so that it lasts long
+    // enough to be seen in flight even when the machine is loaded: the
+    // status is polled every few milliseconds, and a jog over in a tenth
+    // of a second was missed now and then, leaving the wait for Jog to
+    // time out on a slide that had long since arrived.
     assert_eq!(client.send("$z_steps=256").last().map(String::as_str), Some("ok"));
-    assert_eq!(client.send("$jog_z=600").last().map(String::as_str), Some("ok"));
+    assert_eq!(client.send("$jog_z=60").last().map(String::as_str), Some("ok"));
     assert_eq!(client.send("set Z0").last().map(String::as_str), Some("ok"));
     assert_eq!(slide(&client.status()), 0.0);
 

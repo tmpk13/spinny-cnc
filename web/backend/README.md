@@ -19,8 +19,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | Module | Job |
 | --- | --- |
 | `link.py` | `serial_for_url` port (`/dev/ttyACM0` or `socket://host:port`), reader thread, line classification, credit flow control, realtime bytes, status poll |
-| `kinematics.py` | board polylines to `cut`/`go`/`jogto` lines through `spinny_laser.polar`, time estimate against the axis limits, the cross slide's own `Z` lines |
-| `jobs.py` | the job model, importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
+| `kinematics.py` | board polylines to `cut`/`go`/`jogto` lines through `spinny_laser.polar`, joint-space polylines streamed as they are (a negative radius is the far side of the axis), time estimate against the axis limits, the cross slide's own `Z` lines |
+| `jobs.py` | the job model (board `paths`, or `joints` for a group written in joint space), importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `app.py` | FastAPI routes, the `/ws` fan-out, settings, the frontend |
 

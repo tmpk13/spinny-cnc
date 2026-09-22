@@ -105,6 +105,39 @@ def coord(value: float, decimals: int) -> str:
     return text
 
 
+def surface_length(a: Joint, b: Joint) -> float:
+    """Board length of one joint move, as the firmware reckons it."""
+    arc = (a[0] + b[0]) / 2.0 * math.radians(b[1] - a[1])
+    return math.hypot(b[0] - a[0], arc)
+
+
+def turned_toward(poly: list[Joint], angle: float) -> list[Joint]:
+    """The polyline with whole turns added so that it starts near `angle`.
+
+    A joint-space path gives absolute angles, and its start is the same
+    place any number of turns away; the nearest one is the one to go to.
+    """
+    if not poly:
+        return poly
+    turns = round((angle - poly[0][1]) / 360.0)
+    if turns == 0:
+        return poly
+    return [(r, a + 360.0 * turns) for r, a in poly]
+
+
+def joint_min_radius(poly: list[Joint]) -> float:
+    """Nearest a joint polyline comes to the axis; zero when a move crosses it."""
+    for a, b in zip(poly, poly[1:]):
+        if (a[0] < 0.0) != (b[0] < 0.0):
+            return 0.0
+    return min(abs(r) for r, _ in poly)
+
+
+def joint_preview(poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0) -> list[Point]:
+    """Board points along a joint polyline, close enough to draw it."""
+    return polar.sample_joints([(float(r), float(a)) for r, a in poly], step_mm, step_deg)
+
+
 def split_at_axis(start: Point, end: Point, snap: float) -> list[Point]:
     """The points after `start` on its way to `end`, cut at the axis.
 
@@ -182,7 +215,7 @@ class Streamer:
     def _cut_cost(self, a: Joint, b: Joint, feed: float) -> tuple[float, bool]:
         dr = abs(b[0] - a[0])
         da = abs(b[1] - a[1])
-        surface = math.hypot(dr, (a[0] + b[0]) / 2.0 * math.radians(da))
+        surface = surface_length(a, b)
         minutes = surface / feed if feed > 0 else 0.0
         actual = max(minutes, dr / self.rates.r_rate, da / self.rates.a_rate)
         limited = actual > minutes * (1.0 + 1e-9) and surface > 0.0
@@ -198,6 +231,41 @@ class Streamer:
                 continue
             feed = float(group.speed)
             power = float(group.power)
+            if group.joints:
+                # Joint-space paths go out as they are: each pair of points
+                # is one move, and a negative radius is the far side of the
+                # axis. Only whole turns are added, so the table does not
+                # swing the long way round to a start that is the same
+                # place a turn away.
+                for poly in group.joints:
+                    joints = turned_toward([(float(r), float(a)) for r, a in poly], joint[1])
+                    if len(joints) < 2:
+                        continue
+                    first = joints[0]
+                    if not self._same(joint, first):
+                        yield Piece(
+                            line=f"go {self.words(first)}",
+                            kind="go",
+                            joint=first,
+                            seconds=self._rapid_seconds(joint, first),
+                            group=index,
+                        )
+                        joint = first
+                    for target in joints[1:]:
+                        if self._same(joint, target):
+                            continue
+                        seconds, limited = self._cut_cost(joint, target, feed)
+                        yield Piece(
+                            line=f"cut {self.words(target)} F{num(feed)} S{num(power)}",
+                            kind="cut",
+                            joint=target,
+                            seconds=seconds,
+                            length=surface_length(joint, target),
+                            limited=limited,
+                            group=index,
+                        )
+                        joint = target
+                continue
             for path in group.paths:
                 points = [tuple(p) for p in path]
                 if len(points) < 2:
@@ -251,6 +319,14 @@ class Streamer:
         lows: list[float] = []
         for group in job.groups:
             if not group.enabled:
+                continue
+            if group.joints:
+                for poly in group.joints:
+                    joints = [(float(r), float(a)) for r, a in poly]
+                    if not joints:
+                        continue
+                    radii.append(max(abs(r) for r, _ in joints))
+                    lows.append(joint_min_radius(joints))
                 continue
             for path in group.paths:
                 points = [tuple(p) for p in path]
