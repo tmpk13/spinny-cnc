@@ -352,6 +352,15 @@ class Streamer:
         out: list[tuple[Joint, bool]] = []
         point = board_of(start)
         joint = start
+        if joint[0] < 0.0:
+            # The head is past the axis, where lining it up leaves it. A
+            # board line from there is no joint line: the angle of every
+            # point on the near side is half a turn from the one the head
+            # is at. It comes back to the axis along the rail first, and
+            # leaves it the usual way, with a turn on the spot.
+            joint = (0.0, joint[1])
+            point = (0.0, 0.0)
+            out.append((joint, False))
         for next_point, next_joint, turn in self._moves(point, target, joint):
             out.append((next_joint, turn))
             point, joint = next_point, next_joint

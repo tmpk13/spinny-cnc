@@ -35,7 +35,7 @@ from .link import (
     Link,
     LinkError,
 )
-from .runner import Runner, RunnerError
+from .runner import HOLD, RUNNING, Runner, RunnerError
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
@@ -458,11 +458,25 @@ class Backend:
     def realtime(self, action: str) -> dict:
         link = self.require_link()
         if action == "hold":
-            link.realtime(REALTIME_HOLD)
+            # A running job's hold goes through the runner so the run's own
+            # state follows the machine's.
+            if self.runner.progress.state == RUNNING:
+                self.runner.hold()
+            else:
+                link.realtime(REALTIME_HOLD)
         elif action == "resume":
-            link.realtime(REALTIME_RESUME)
+            if self.runner.progress.state == HOLD:
+                self.runner.resume()
+            else:
+                link.realtime(REALTIME_RESUME)
         elif action == "reset":
             self._jog_target = None
+            # The reset empties the machine and frees every credit at once.
+            # A run in progress is told first, so its thread stops
+            # streaming before the byte goes out rather than sending the
+            # next lines into a machine that is Idle again and would run
+            # them.
+            self.runner.abort("reset by the operator")
             link.reset(timeout=1.0)
         elif action == "cancel":
             self._jog_target = None

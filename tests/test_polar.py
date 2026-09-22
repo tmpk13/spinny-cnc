@@ -104,3 +104,13 @@ def test_linear_resolution():
     # 200 steps, 16 microsteps, 100:1 gives 320000 steps a turn.
     steps_per_degree = 320000 / 360.0
     assert polar.linear_resolution(steps_per_degree, 50.0) == pytest.approx(0.00098, rel=0.01)
+
+
+def test_the_far_side_of_the_axis_is_not_on_it():
+    assert not polar.on_axis((-5.0, 0.0))
+    assert not polar.on_axis((5.0, 0.0))
+    assert polar.on_axis((0.0, 30.0))
+    assert polar.on_axis((-1e-9, 30.0))
+    # A move from the far side to the axis is one radial move, not a turn.
+    out = polar.subdivide((-5.0, 0.0), (0.0, 0.0), (-5.0, 0.0), Kinematics(0.005))
+    assert [joint for _, joint in out] == [(0.0, 0.0)]

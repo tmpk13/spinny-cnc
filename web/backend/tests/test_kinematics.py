@@ -311,3 +311,17 @@ def test_joint_preview_draws_the_path_the_move_traces():
     assert points[0] == pytest.approx((-6.0, 0.0)) and points[-1] == pytest.approx((6.0, 0.0))
     assert all(abs(y) < 1e-9 for _, y in points)
     assert joint_preview([]) == []
+
+
+def test_a_board_move_from_the_far_side_comes_back_through_the_axis():
+    """Lining the head up leaves it past the axis at a negative radius. A
+    board move from there returns along the rail to the axis and leaves it
+    the usual way, rather than turning the table with the head out on the
+    far side and calling that the axis."""
+    lines = Streamer().board_goto((-5.0, 0.0), 0.0, 3.0)
+    assert lines == ["jogto R0.000 A0.0000", "jogto A90.0000", "jogto R3.000 A90.0000"]
+    # A jog by a board step from there does the same.
+    lines = Streamer().board_jog((-5.0, 0.0), 1.0, 0.0)
+    assert lines[0] == "jogto R0.000 A0.0000"
+    # An exact half turn may unwrap either way.
+    assert lines[-1] in ("jogto R4.000 A180.0000", "jogto R4.000 A-180.0000")

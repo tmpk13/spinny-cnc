@@ -77,6 +77,9 @@ class FakeSerial:
         # Lines that got an answer; a reset flushes the rest unanswered.
         self.answered_lines: list[str] = []
         self.realtime_bytes: list[int] = []
+        # How many lines had been received when each reset byte arrived,
+        # so a test can tell the lines that came after one.
+        self.received_at_reset: list[int] = []
         self.max_outstanding = 0
         self.joint = [0.0, 0.0]
         # The cross slide, which moves on its own and never with R or A.
@@ -338,6 +341,7 @@ class FakeSerial:
                 self.busy_until += time.monotonic() - self._held_at
         elif byte == 0x18:
             moving = self.state() in ("Run", "Jog", "Hold")
+            self.received_at_reset.append(len(self.received_lines))
             with self._lock:
                 self._outstanding.clear()
             self.hold = False

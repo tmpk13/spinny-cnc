@@ -83,6 +83,9 @@ class Runner:
         self._link: Link | None = None
         self._last_publish = 0.0
         self._error: str | None = None
+        # What a run that ends with `_error` set is reported as: an error,
+        # unless `abort` asked for something milder.
+        self._end_state = ERROR
         self.progress = Progress()
 
     # --- state ------------------------------------------------------------
@@ -130,6 +133,7 @@ class Runner:
             )
             self._link = link
             self._error = None
+            self._end_state = ERROR
             self._abort.clear()
             self._last_publish = 0.0
             self._thread = threading.Thread(
@@ -171,6 +175,20 @@ class Runner:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
         return self.progress.to_dict()
+
+    def abort(self, reason: str, state: str = STOPPED) -> None:
+        """Ends the run from outside, before another line goes out.
+
+        The streaming thread halts the machine and reports the run as
+        `state` with `reason`. Nothing happens when no run is active.
+        """
+        with self._lock:
+            if not self.active:
+                return
+            if self._error is None:
+                self._error = reason
+            self._end_state = state
+        self._abort.set()
 
     def _require(self, state: str) -> Link:
         with self._lock:
@@ -218,7 +236,7 @@ class Runner:
                     self.progress.group = piece.group
                 self._emit()
             else:
-                self._drain(link)
+                self._drain(link, restarts)
         except LinkError as exc:
             if not self._abort.is_set():
                 self._fail(str(exc))
@@ -230,6 +248,7 @@ class Runner:
                 self._error = f"streaming failed: {exc!r}"
             self._abort.set()
         if self._error is not None:
+            self._abort.set()
             self._halt(link)
             self._fail(self._error)
         elif not self._abort.is_set():
@@ -237,7 +256,17 @@ class Runner:
 
     def _on_ack(self, pending: Pending) -> None:
         if not pending.answered:
-            # Dropped by the stop sequence or a lost port; the thread reports those.
+            # Dropped without an answer. The stop sequence sets the abort
+            # flag before it resets, so a drop while the flag is clear is a
+            # reset from elsewhere: the console's reset byte, or the
+            # firmware restarting. The run ends here, in the link's own
+            # callback, before the credit the drop freed can let another
+            # line into a machine that has just been emptied and would run
+            # it. A lost port is reported by the thread.
+            if pending.response == "reset" and not self._abort.is_set():
+                if self._error is None:
+                    self._error = "the machine was reset during the run"
+                self._abort.set()
             return
         with self._lock:
             self.progress.acked += 1
@@ -248,10 +277,15 @@ class Runner:
             self._error = f"{pending.line!r}: {pending.response}"
         self._abort.set()
 
-    def _drain(self, link: Link) -> None:
+    def _drain(self, link: Link, restarts: int) -> None:
         """Wait for the last ack and for the machine to come to rest."""
         deadline = time.monotonic() + DRAIN_TIMEOUT
         while not self._abort.is_set() and time.monotonic() < deadline:
+            if link.restarts != restarts:
+                # Reset with the tail of the job still queued: those lines
+                # were flushed, not run, however idle the machine now is.
+                self._error = "the machine reset during the run"
+                return
             with self._lock:
                 acked = self.progress.acked >= self.progress.sent
             if acked:
@@ -278,8 +312,12 @@ class Runner:
             if self.progress.state not in (RUNNING, HOLD):
                 return
             self.progress.error = reason
-        self._message("error", f"run failed: {reason}")
-        self._finish(ERROR)
+            state = self._end_state
+        if state == ERROR:
+            self._message("error", f"run failed: {reason}")
+        else:
+            self._message("info", f"run {state}: {reason}")
+        self._finish(state)
 
     def _finish(self, state: str) -> None:
         with self._lock:

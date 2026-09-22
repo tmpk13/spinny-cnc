@@ -371,3 +371,25 @@ def test_disconnect_is_news_and_a_lost_port_is_an_error(tmp_path):
         closed = [e for e in drain(queue) if e["type"] == "message" and "link closed" in e["text"]]
         assert closed and closed[-1]["level"] == "error"
         backend.broadcast.unsubscribe(queue)
+
+
+def test_hold_and_reset_from_the_console_go_through_the_run(client, fake):
+    connect(client)
+    fake.ok_delay = 0.3
+    paths = [[[10.0 + i * 0.1, -3.0], [10.0 + i * 0.1, 3.0]] for i in range(40)]
+    job = {"name": "many", "groups": [{"label": "one", "power": 500, "speed": 400, "paths": paths}]}
+    uploaded = client.post("/api/jobs", files={"file": ("many.json", json.dumps(job).encode(), "application/json")}).json()
+    assert client.post(f"/api/jobs/{uploaded['id']}/run").status_code == 200
+    assert wait_for(lambda: (client.get("/api/run").json() or {}).get("sent", 0) >= 16, 5.0)
+    # A hold from the console is the run's hold, and a resume its resume.
+    assert client.post("/api/realtime", json={"action": "hold"}).status_code == 200
+    assert client.get("/api/run").json()["state"] == "hold"
+    assert client.post("/api/realtime", json={"action": "resume"}).status_code == 200
+    assert client.get("/api/run").json()["state"] == "running"
+    # A reset ends the run before it can send another line.
+    assert client.post("/api/realtime", json={"action": "reset"}).status_code == 200
+    assert wait_for(lambda: client.get("/api/run").json()["state"] in ("stopped", "error"), 5.0)
+    progress = client.get("/api/run").json()
+    assert progress["state"] == "stopped" and "reset" in progress["error"], progress
+    after = fake.received_lines[fake.received_at_reset[0]:]
+    assert not [line for line in after if line.split()[0] in ("go", "cut")], after

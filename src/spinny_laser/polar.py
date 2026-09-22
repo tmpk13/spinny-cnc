@@ -116,7 +116,9 @@ def sample_joints(poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0
 
 
 def on_axis(joint: Joint) -> bool:
-    return joint[0] < AXIS_EPSILON
+    # A negative radius is the far side of the axis, as far from it as the
+    # positive one.
+    return abs(joint[0]) < AXIS_EPSILON
 
 
 def _lerp(a: Point, b: Point, t: float) -> Point:

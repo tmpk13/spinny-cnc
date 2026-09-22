@@ -11,7 +11,7 @@ from replay import parse
 
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
-from spinny_web.link import Link
+from spinny_web.link import REALTIME_RESET, Link
 from spinny_web.runner import DONE, ERROR, HOLD, RUNNING, STOPPED, Runner, RunnerError
 
 
@@ -333,5 +333,37 @@ def test_a_job_of_joint_paths_runs_through_the_axis():
         assert fake.joint[0] == pytest.approx(6.0)
         with pytest.raises(RunnerError):
             runner.start(Job(id="j3", name="empty", groups=[Group(label="off", enabled=False, joints=[[(-6.0, 0.0), (6.0, 0.0)]])]), link, Streamer())
+    finally:
+        link.close()
+
+
+def test_a_reset_from_outside_the_run_stops_it_before_another_line_goes_out():
+    """The console's reset byte, like the firmware restarting, empties the
+    machine's queue and frees every credit at once. The run must not spend
+    them: the machine is Idle again and would run whatever came next."""
+    # Acks trail so every credit is in use and the sender is waiting; moves
+    # are instant so the reset finds the machine at rest and raises no
+    # alarm, which is what would otherwise refuse the stray lines.
+    fake, link, sink, runner = setup(move_time=0.001, ok_delay=0.3)
+    big = Job(
+        id="big",
+        name="many",
+        groups=[Group(
+            label="one", power=500, speed=400,
+            paths=[[(10.0 + i * 0.1, -3.0), (10.0 + i * 0.1, 3.0)] for i in range(40)],
+        )],
+    )
+    try:
+        runner.start(big, link, Streamer())
+        assert wait_for(lambda: runner.progress.sent >= 16, 5.0)
+        assert wait_for(lambda: fake.state() == "Idle", 1.0)
+        link.realtime(REALTIME_RESET)
+        assert wait_for(lambda: runner.progress.state in (ERROR, STOPPED, DONE), 10.0)
+        snapshot = runner.snapshot()
+        assert snapshot["state"] == ERROR, snapshot
+        assert "reset" in (snapshot["error"] or ""), snapshot
+        after = fake.received_lines[fake.received_at_reset[0]:]
+        assert not [line for line in after if line.split()[0] in ("go", "cut")], after
+        assert not runner.active
     finally:
         link.close()

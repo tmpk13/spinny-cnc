@@ -227,7 +227,13 @@ class Link:
         self._pending: deque[Pending] = deque()
         self._credit = threading.Condition()
         self._send_lock = threading.Lock()
-        self._write_lock = threading.Lock()
+        # Held around a line's bookkeeping and its bytes, and around a
+        # reset's flush and its byte, so the two cannot interleave: a line
+        # written between a reset dropping the outstanding lines and the
+        # reset byte itself is flushed by the firmware yet kept here, and
+        # every answer after it would go to the wrong line. Reentrant, as
+        # the reset takes it and then writes through the same lock.
+        self._write_lock = threading.RLock()
         self._subscribers: list[Callable[[Event], None]] = []
         self._closed = threading.Event()
         self._opened = False
@@ -355,24 +361,32 @@ class Link:
                             raise LinkTimeout(f"no credit for {line!r}")
                         wait = min(wait, left)
                     self._credit.wait(wait)
-                if self._closed.is_set():
-                    raise LinkClosed(self.close_reason or "closed")
-                if abort is not None and abort.is_set():
-                    # Checked again here, not only while waiting: the
-                    # credit that just came free may have been freed by a
-                    # reset failing everything outstanding, and writing now
-                    # would put a line into a machine that was just
-                    # stopped, which would take it and move.
-                    raise LinkError("aborted")
-                self._pending.append(pending)
-            try:
-                self._write(data)
-            except LinkError:
+            # The credit found above stays free: senders are serialized by
+            # the send lock, and nothing else appends. The line is queued
+            # and written under the write lock, so a reset either goes out
+            # before the whole of it or after the whole of it.
+            with self._write_lock:
                 with self._credit:
-                    if pending in self._pending:
-                        self._pending.remove(pending)
-                    self._credit.notify_all()
-                raise
+                    if self._closed.is_set():
+                        raise LinkClosed(self.close_reason or "closed")
+                    if abort is not None and abort.is_set():
+                        # Checked again here, not only while waiting: the
+                        # credit that came free may have been freed by a
+                        # reset failing everything outstanding, and its
+                        # callbacks (which is where a run learns of the
+                        # reset) have run by the time the lock is free.
+                        # Writing now would put a line into a machine that
+                        # was just stopped, which would take it and move.
+                        raise LinkError("aborted")
+                    self._pending.append(pending)
+                try:
+                    self._write(data)
+                except LinkError:
+                    with self._credit:
+                        if pending in self._pending:
+                            self._pending.remove(pending)
+                        self._credit.notify_all()
+                    raise
         self._publish(Event("console", {"dir": "tx", "text": line, "poll": False}))
         return pending
 
@@ -405,13 +419,18 @@ class Link:
         if data == REALTIME_RESET:
             # The firmware flushes what was waiting, so nothing gets an
             # answer, and the banner it prints next is not a second restart.
-            with self._banner_cond:
-                self._expected_banners += 1
-            self._fail_pending("reset")
-        if routine:
-            with self._status_cond:
-                self._polls_out += 1
-        self._write(data)
+            # The flush and the byte go together under the write lock, so
+            # no line can be sent between them.
+            with self._write_lock:
+                with self._banner_cond:
+                    self._expected_banners += 1
+                self._fail_pending("reset")
+                self._write(data)
+        else:
+            if routine:
+                with self._status_cond:
+                    self._polls_out += 1
+            self._write(data)
         self._publish(Event("console", {"dir": "tx", "text": _show_byte(data), "poll": routine}))
 
     def reset(self, timeout: float = 1.0) -> bool:
@@ -544,15 +563,21 @@ class Link:
             pending.callback(pending)
 
     def _fail_pending(self, reason: str) -> None:
-        with self._credit:
-            dropped = list(self._pending)
-            self._pending.clear()
-            self._credit.notify_all()
-        for pending in dropped:
-            pending.response = reason
-            pending.done.set()
-            if pending.callback is not None:
-                pending.callback(pending)
+        # Under the write lock, so a sender that has found a credit waits
+        # until every dropped line has been told; the callbacks are where
+        # a run learns that the machine was emptied, and the credit is
+        # only announced after they have run.
+        with self._write_lock:
+            with self._credit:
+                dropped = list(self._pending)
+                self._pending.clear()
+            for pending in dropped:
+                pending.response = reason
+                pending.done.set()
+                if pending.callback is not None:
+                    pending.callback(pending)
+            with self._credit:
+                self._credit.notify_all()
 
     def _fail(self, reason: str) -> None:
         self.close(reason)

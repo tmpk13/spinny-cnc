@@ -355,3 +355,44 @@ def test_a_sender_waiting_for_credit_does_not_write_once_it_is_aborted():
         assert not any("R99" in line for line in fake.received_lines[sent_before:]), fake.received_lines[sent_before:]
     finally:
         lk.close()
+
+
+def test_a_reset_settles_the_dropped_lines_before_a_sender_can_write():
+    """A run learns of a reset through the callbacks on the lines it
+    dropped, and stops sending. A sender woken by the credit the reset
+    freed, before those callbacks had run, would write its line into the
+    machine the reset just emptied; the callbacks are slow here so that
+    order would be caught every time."""
+    fake = FakeSerial(credits=4, ok_delay=5.0)
+    lk = make_link(fake, poll=False)
+    abort = threading.Event()
+
+    def on_drop(pending):
+        if not pending.answered:
+            time.sleep(0.05)
+            abort.set()
+
+    result: dict[str, object] = {}
+
+    def sender() -> None:
+        try:
+            lk.send("go R9", abort=abort, timeout=5.0)
+            result["sent"] = True
+        except LinkError as exc:
+            result["error"] = str(exc)
+
+    try:
+        for i in range(4):
+            lk.send(f"go R{i}", callback=on_drop)
+        thread = threading.Thread(target=sender)
+        thread.start()
+        time.sleep(0.15)
+        assert thread.is_alive() and "go R9" not in fake.received_lines
+        lk.realtime(REALTIME_RESET)
+        thread.join(3.0)
+        assert not thread.is_alive()
+        assert result == {"error": "aborted"}
+        assert "go R9" not in fake.received_lines
+        assert lk.outstanding == 0
+    finally:
+        lk.close()

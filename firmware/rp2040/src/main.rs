@@ -71,18 +71,24 @@ async fn main(spawner: Spawner) {
 
     let mut store = flash::FlashStore::new(p.FLASH);
     let serial = store.serial_number();
-    usb::start(&spawner, p.USB, serial);
-    tmc::start(&spawner, p.UART1, p.PIN_8, p.PIN_9);
 
     static SHARED: StaticCell<Shared> = StaticCell::new();
     let (front, isr) = stepper::split(SHARED.init(Shared::new()));
     step_timer::install(isr);
     step_timer::start();
 
+    // The stored settings decide the laser output's resting level: the pin
+    // was claimed low, which is the lit level once `laser_invert` is set.
+    // They are read and the output driven before the USB and driver tasks
+    // start, not left to the first poll.
     let mut sink = usb::UsbSink;
     let mut machine = Machine::new(front, Settings::default());
     machine.load_settings(&mut store);
     laser.set_frequency(machine.settings().laser_hz);
+    machine.drive_laser(&mut laser);
+
+    usb::start(&spawner, p.USB, serial);
+    tmc::start(&spawner, p.UART1, p.PIN_8, p.PIN_9);
     tmc::configure_from(machine.settings());
     let _ = machine.take_events();
 
