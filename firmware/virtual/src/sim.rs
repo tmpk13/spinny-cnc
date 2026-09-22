@@ -123,6 +123,12 @@ impl Sim {
             }
             self.poll();
             self.flush(socket)?;
+            // On disk as soon as the machine comes to rest, not only when
+            // the client goes: a trace from the run before is worse than
+            // no trace at all, because it reads exactly like this one.
+            if self.trace.has_fresh() && self.machine.is_quiet() {
+                let _ = self.trace.flush();
+            }
             if inbox.is_closed() && inbox.is_empty() {
                 break;
             }
