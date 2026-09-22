@@ -357,6 +357,13 @@ class Link:
                     self._credit.wait(wait)
                 if self._closed.is_set():
                     raise LinkClosed(self.close_reason or "closed")
+                if abort is not None and abort.is_set():
+                    # Checked again here, not only while waiting: the
+                    # credit that just came free may have been freed by a
+                    # reset failing everything outstanding, and writing now
+                    # would put a line into a machine that was just
+                    # stopped, which would take it and move.
+                    raise LinkError("aborted")
                 self._pending.append(pending)
             try:
                 self._write(data)

@@ -139,6 +139,16 @@ async fn reader_task(mut receiver: Receiver<'static, UsbDrv>) {
             for &byte in &buf[..n] {
                 match assembler.push(byte) {
                     Some(LineEvent::Realtime(action)) => {
+                        if action == Realtime::Reset {
+                            // A reset throws away everything the host had
+                            // already sent, and those lines are sitting
+                            // here, parsed but not yet run. Dropping them
+                            // where the byte stream is still in order
+                            // keeps the ones that arrive afterwards: the
+                            // machine must not carry on cutting the job
+                            // the operator just stopped.
+                            LINES.clear();
+                        }
                         let _ = REALTIME.try_send(action);
                     }
                     Some(LineEvent::Line(line)) => LINES.send(Inbound::Line(line)).await,

@@ -53,6 +53,13 @@ impl Inbox {
         let mut state = self.state.lock().unwrap();
         match event {
             Event::Realtime(action) => {
+                if action == Realtime::Reset {
+                    // A reset throws away what the host has already sent,
+                    // and those lines are queued here. Dropping them while
+                    // the byte stream is still in order keeps the ones
+                    // that come after it.
+                    state.lines.clear();
+                }
                 if state.realtime.len() < REALTIME_CAP {
                     state.realtime.push_back(action);
                 }

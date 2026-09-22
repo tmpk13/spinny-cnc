@@ -322,3 +322,62 @@ fn settings_round_trip_and_a_long_line_is_refused() {
     // The link still works after it.
     assert_eq!(client.send("version").len(), 2);
 }
+
+#[test]
+fn a_reset_throws_away_the_lines_the_host_had_already_sent() {
+    // Stopping a run sends the reset byte, but the lines behind it are
+    // already on the machine, parsed and waiting. If they survive, the
+    // machine carries on cutting the job the operator just stopped, with
+    // the beam on, which is the one thing a stop has to prevent.
+    let server = start("flush");
+    let mut client = Client::connect(&server);
+    assert!(client.line().starts_with("[spinny v"));
+
+    client.send("set R0 A0");
+    client.send("go R10");
+    // Send more cuts than the planner holds, slowly enough that it stays
+    // full: the ones that do not fit are the ones left waiting in the
+    // port's own queue, which is what a reset has to throw away. A host
+    // keeping its credit has up to sixteen sitting there.
+    for step in 1..=48 {
+        writeln!(client.stream, "cut A{step} F60 S800").expect("write");
+    }
+    client.stream.flush().expect("flush");
+    thread::sleep(Duration::from_millis(100));
+
+    // Hold first and let it come to rest, then reset: that is what a stop
+    // does, and it is the case the machine cannot lean on an alarm to
+    // save it. A reset while still moving raises one, and an alarm
+    // refuses whatever was queued; a reset from rest does not.
+    client.stream.write_all(b"!").expect("hold");
+    let held = client.wait_for("Hold");
+    thread::sleep(Duration::from_millis(50));
+    // Where it came to rest. Nothing after this may move the table: in
+    // free-running time the queue would run out in microseconds, so the
+    // angle either side of the stop is the only honest witness.
+    let (_, stopped_at) = joint(&client.status());
+    let _ = held;
+    client.stream.write_all(&[0x18]).expect("reset");
+    let mut settled = String::new();
+    for _ in 0..200 {
+        settled = client.status();
+        if settled.starts_with("<Idle") || settled.starts_with("<Alarm") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(settled.starts_with("<Idle"), "a stop from rest should not alarm: {settled}");
+
+    // Nothing may move or light up after the stop.
+    for _ in 0..20 {
+        let status = client.status();
+        assert!(status.starts_with("<Idle"), "it started again: {status}");
+        assert_eq!(status_fields(&status)[3], "L:0", "the beam came back on");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let (_, after) = joint(&client.status());
+    assert!(
+        (after - stopped_at).abs() < 0.01,
+        "the table carried on turning after the stop: {stopped_at} to {after}"
+    );
+}

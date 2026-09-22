@@ -15,6 +15,7 @@ from spinny_web.link import (
     Event,
     Link,
     LinkClosed,
+    LinkError,
     parse_banner,
     parse_status,
 )
@@ -309,3 +310,47 @@ def test_the_links_own_status_polls_are_marked_and_a_users_are_not():
         assert asked and not any(e["poll"] for e in asked), asked
     finally:
         lk2.close()
+
+
+def test_a_sender_waiting_for_credit_does_not_write_once_it_is_aborted():
+    """Stopping a run frees the credit the next line was waiting for.
+
+    The reset fails everything outstanding, which wakes whoever is queued
+    behind the credit limit. If it writes its line then, a machine that
+    has just been stopped and gone back to idle takes it and moves, with
+    the beam on, which is what a stop exists to prevent.
+    """
+    # Answers held back, so the credits fill and the next line has to wait.
+    fake = FakeSerial(ok_delay=10.0)
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    lk.open()
+    try:
+        # Fill the credits, so nothing more can be written.
+        for i in range(lk.credits):
+            lk.send(f"cut R{i + 1} F60 S400")
+        assert wait_for(lambda: lk.outstanding == lk.credits, 2.0)
+        sent_before = len(fake.received_lines)
+
+        abort = threading.Event()
+        failed: list[BaseException] = []
+
+        def queued():
+            try:
+                lk.send("cut R99 A402 F60 S400", abort=abort)
+            except BaseException as exc:
+                failed.append(exc)
+
+        waiter = threading.Thread(target=queued, daemon=True)
+        waiter.start()
+        time.sleep(0.2)
+        assert not failed, "it should still be waiting for a credit"
+
+        # The stop: abort first, then the reset frees every credit.
+        abort.set()
+        lk.realtime(b"\x18")
+        waiter.join(timeout=2.0)
+        assert not waiter.is_alive()
+        assert failed and isinstance(failed[0], LinkError), failed
+        assert not any("R99" in line for line in fake.received_lines[sent_before:]), fake.received_lines[sent_before:]
+    finally:
+        lk.close()
