@@ -146,3 +146,13 @@ describe("segmentation", () => {
         expect(previous).toBeCloseTo(45 + 360, 6);
     });
 });
+
+test("a board move from the far side comes back through the axis first", () => {
+    const out = segmentBoardMove({ r: -5, a: 0 }, { x: 0, y: 3 }, 0.005);
+    expect(out[0]).toEqual({ r: 0, a: 0 });
+    expect(out[1]).toEqual({ r: 0, a: 90 });
+    const last = out[out.length - 1];
+    expect(last?.r).toBeCloseTo(3);
+    expect(last?.a).toBeCloseTo(90);
+    expect(out.length).toBe(3);
+});

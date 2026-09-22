@@ -325,3 +325,12 @@ def test_a_board_move_from_the_far_side_comes_back_through_the_axis():
     assert lines[0] == "jogto R0.000 A0.0000"
     # An exact half turn may unwrap either way.
     assert lines[-1] in ("jogto R4.000 A180.0000", "jogto R4.000 A-180.0000")
+
+
+def test_rates_follow_the_step_generator_ceiling():
+    # 10240 steps/mm at 100000 steps a second is 586 mm/min, under the rate.
+    rates = Rates.from_settings({"r_rate": 1000, "a_rate": 1080, "r_steps": 10240, "a_steps": 14222.222})
+    assert rates.r_rate == pytest.approx(585.9375)
+    assert rates.a_rate == pytest.approx(421.875, rel=1e-4)
+    # A coarser scale leaves the rate setting in charge.
+    assert Rates.from_settings({"r_rate": 1000, "a_rate": 1080, "r_steps": 256, "a_steps": 888.889}) == Rates(1000.0, 1080.0)

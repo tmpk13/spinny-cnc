@@ -223,7 +223,15 @@ def from_json(text: str, name: str) -> Job:
     if not job.name or job.name == "job":
         job.name = name
     job.source = "json"
+    if job.spot <= 0:
+        raise JobImportError("spot must be > 0")
     for group in job.groups:
+        # The firmware refuses a cut with F at or below zero, so a group
+        # that carries one would end its run on the first line.
+        if group.speed <= 0:
+            raise JobImportError(f"group {group.label!r}: speed must be > 0")
+        if group.power < 0:
+            raise JobImportError(f"group {group.label!r}: power must be >= 0")
         if any(len(poly) < 2 for poly in group.joints):
             raise JobImportError("a joint-space path needs at least two points")
         if group.joints and not group.paths:

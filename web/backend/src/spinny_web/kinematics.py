@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 DECIMALS = 3
 ANGLE_DECIMALS = 4
 DEFAULT_TOLERANCE = 0.005
+# Most step events a second the firmware's step generator produces; an
+# axis with many steps per unit runs into this before its own rate.
+STEP_CEILING_HZ = 100_000.0
 
 
 @dataclass(frozen=True)
@@ -39,9 +42,19 @@ class Rates:
         try:
             r_rate = float(values.get("r_rate", rates.r_rate))
             a_rate = float(values.get("a_rate", rates.a_rate))
+            r_steps = float(values.get("r_steps", 0.0))
+            a_steps = float(values.get("a_steps", 0.0))
         except (TypeError, ValueError):
             return rates
-        return cls(r_rate if r_rate > 0 else rates.r_rate, a_rate if a_rate > 0 else rates.a_rate)
+        r_rate = r_rate if r_rate > 0 else rates.r_rate
+        a_rate = a_rate if a_rate > 0 else rates.a_rate
+        # The planner caps each axis by the step generator as well as by
+        # its rate setting, and the estimate follows the lower of the two.
+        if r_steps > 0:
+            r_rate = min(r_rate, STEP_CEILING_HZ * 60.0 / r_steps)
+        if a_steps > 0:
+            a_rate = min(a_rate, STEP_CEILING_HZ * 60.0 / a_steps)
+        return cls(r_rate, a_rate)
 
 
 @dataclass

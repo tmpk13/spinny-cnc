@@ -302,3 +302,15 @@ def test_the_fine_centering_pattern_imports_and_streams_past_the_axis():
     assert len(marks) == len(drawn) == 6
     for mark, path in zip(marks, drawn):
         assert deviation(mark, path) <= 0.01
+
+
+def test_a_json_job_with_a_bad_speed_or_power_is_refused():
+    text = json.dumps({"name": "x", "groups": [{"label": "g", "speed": 0, "paths": [[[1, 1], [2, 2]]]}]})
+    with pytest.raises(jobs.JobImportError, match="speed"):
+        from_json(text, "x")
+    text = json.dumps({"name": "x", "groups": [{"label": "g", "power": -1, "paths": [[[1, 1], [2, 2]]]}]})
+    with pytest.raises(jobs.JobImportError, match="power"):
+        from_json(text, "x")
+    text = json.dumps({"name": "x", "spot": 0, "groups": [{"label": "g", "paths": [[[1, 1], [2, 2]]]}]})
+    with pytest.raises(jobs.JobImportError, match="spot"):
+        from_json(text, "x")

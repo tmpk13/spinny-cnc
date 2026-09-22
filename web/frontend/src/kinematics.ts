@@ -105,6 +105,15 @@ function distanceToSegment(px: number, py: number, a: Board, b: Board): { distan
  */
 export function segmentBoardMove(from: Joint, to: Board, tolerance: number): Joint[] {
     const out: Joint[] = [];
+    if (from.r < 0) {
+        // The head is past the axis, where lining it up leaves it. A board
+        // line from there is no joint line: it comes back to the axis along
+        // the rail first, and leaves it the usual way.
+        const axis: Joint = { r: 0, a: from.a };
+        out.push(axis);
+        bisect(axis, to, tolerance, 0, out);
+        return out;
+    }
     const start = boardOfJoint(from);
     const hit = distanceToSegment(0, 0, start, to);
     if (hit.distance < AXIS_EPSILON && from.r >= AXIS_EPSILON && Math.hypot(to.x, to.y) >= AXIS_EPSILON) {
@@ -120,7 +129,7 @@ export function segmentBoardMove(from: Joint, to: Board, tolerance: number): Joi
 
 function bisect(from: Joint, to: Board, tolerance: number, depth: number, out: Joint[]): void {
     const target = jointOfBoard(to, from);
-    if (from.r < AXIS_EPSILON) {
+    if (Math.abs(from.r) < AXIS_EPSILON) {
         // Leaving the axis: turn first, then move out radially.
         if (Math.abs(target.a - from.a) > AXIS_EPSILON) {
             out.push({ r: 0, a: target.a });
