@@ -129,6 +129,17 @@ pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 3]
     Some([datagram(addr, gconf), datagram(addr, currents), datagram(addr, chop)])
 }
 
+/// What the driver task keeps after an attempt: the configuration when it
+/// did not land, so it is tried again once the drivers have power, and
+/// nothing when it did.
+pub fn unfinished_after(done: bool, cfg: DriverConfig) -> Option<DriverConfig> {
+    if done {
+        None
+    } else {
+        Some(cfg)
+    }
+}
+
 /// The 4-byte read request for one register.
 pub fn read_request(addr: u8, register: Address) -> [u8; ReadRequest::LEN_BYTES] {
     let mut out = [0u8; ReadRequest::LEN_BYTES];
@@ -336,6 +347,13 @@ mod tests {
         let cfg = DriverConfig { micro: [16, 16, 16], ..cfg };
         let [gconf, ..] = config_datagrams(1, &cfg).unwrap();
         assert!(GCONF::from(data(&gconf)).en_spread_cycle());
+    }
+
+    #[test]
+    fn a_configuration_is_kept_only_while_it_has_not_landed() {
+        let cfg = DriverConfig { ma: [800; 3], hold_pct: 50, micro: [256; 3], stealth: true };
+        assert_eq!(unfinished_after(true, cfg), None, "a landed configuration is not retried");
+        assert_eq!(unfinished_after(false, cfg), Some(cfg), "a refused one is");
     }
 
     #[test]

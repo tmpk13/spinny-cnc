@@ -122,6 +122,7 @@ async fn main(spawner: Spawner) {
         }
 
         let now_us = Instant::now().as_micros();
+        machine.note_lines_waiting(usb::LINES.len());
         // The cross slide steps from here rather than from the step
         // timer: nothing is tied to its timing, and it is capped at a
         // rate this loop carries. Before the poll that ends its jog.

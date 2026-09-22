@@ -49,5 +49,28 @@ pub const MIN_TICK_US: u32 = 10;
 /// its own `max_rate`, so the planner caps the speed by it and the laser
 /// power follows the speed actually reached.
 pub const MAX_EVENT_RATE_HZ: f32 = 1_000_000.0 / MIN_TICK_US as f32;
+/// Microseconds a tick spends beyond the step pulse: the interrupt's own
+/// work, on the RP2040 a few microseconds.
+pub const TICK_OVERHEAD_US: u32 = 3;
+
+/// Shortest tick the step timer can hold at a step pulse width. The pulse
+/// is busy-waited inside the tick and comes out about 1.5 times its
+/// setting on the RP2040, so above a few microseconds it no longer fits
+/// `MIN_TICK_US`; a tick asked for sooner than the interrupt can finish
+/// slips, and the move runs slower than its segment and laser duty were
+/// planned for.
+pub const fn min_tick_us(step_us: u32) -> u32 {
+    let needed = (3 * step_us + 1) / 2 + TICK_OVERHEAD_US;
+    if needed > MIN_TICK_US {
+        needed
+    } else {
+        MIN_TICK_US
+    }
+}
+
+/// Most step events a second the generator can produce at that pulse width.
+pub fn max_event_rate_hz(step_us: u32) -> f32 {
+    1_000_000.0 / min_tick_us(step_us) as f32
+}
 /// A move shorter than this on the board is a turn on the axis.
 pub const SURFACE_EPSILON_MM: f32 = 0.001;

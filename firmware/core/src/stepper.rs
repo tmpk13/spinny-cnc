@@ -42,7 +42,7 @@ use crate::math;
 use crate::parser::PowerMode;
 use crate::planner::{Block, MoveKind, Planner};
 use crate::settings::Settings;
-use crate::{AXES, MIN_TICK_US, SEGMENTS, SEGMENT_MS};
+use crate::{AXES, SEGMENTS, SEGMENT_MS};
 
 /// Block ring size on the stepper side.
 pub const STEP_BLOCKS: usize = 4;
@@ -70,6 +70,8 @@ pub struct StepBlock {
     pub dir_levels: u8,
     /// Bit i set when axis i counts up; the position follows this.
     pub dir_forward: u8,
+    /// Board mm per metric unit, for the rate report.
+    pub surface_scale: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -119,6 +121,12 @@ pub struct Shared {
     /// the hold carry their own duty, so without this the beam would come
     /// back at the next segment boundary and burn through the whole ramp.
     pub laser_off: AtomicBool,
+    /// Board speed of the segment being executed, mm/min as f32 bits, and
+    /// the laser duty the interrupt applied for it. Written at every
+    /// segment load, so a report shows the motion under way rather than
+    /// the segment last written to the ring, up to 150 ms ahead of it.
+    pub surface_rate: AtomicU32,
+    pub duty: AtomicU32,
     /// Slot of the segment in progress, `NO_SLOT` when none; kept for the
     /// slot reuse check in the tests.
     #[cfg(test)]
@@ -144,13 +152,15 @@ impl Shared {
     pub const fn new() -> Self {
         Shared {
             ring: UnsafeCell::new(Queue::new()),
-            blocks: UnsafeCell::new([StepBlock { steps: [0; AXES], event_count: 0, dir_levels: 0, dir_forward: 0 }; STEP_BLOCKS]),
+            blocks: UnsafeCell::new([StepBlock { steps: [0; AXES], event_count: 0, dir_levels: 0, dir_forward: 0, surface_scale: 0.0 }; STEP_BLOCKS]),
             position: [AtomicI32::new(0), AtomicI32::new(0)],
             idle: AtomicBool::new(true),
             abort: AtomicBool::new(false),
             done: AtomicU32::new(0),
             laser_invert: AtomicBool::new(false),
             laser_off: AtomicBool::new(false),
+            surface_rate: AtomicU32::new(0),
+            duty: AtomicU32::new(0),
             #[cfg(test)]
             executing: core::sync::atomic::AtomicU8::new(NO_SLOT),
         }
@@ -216,10 +226,6 @@ pub struct Front<'a> {
     /// The planner position must be copied from the executed position once
     /// the interrupt has processed an abort.
     resync: bool,
-    last_speed: f32,
-    /// Board mm per metric unit of the block last sliced.
-    last_surface_scale: f32,
-    last_duty: u16,
 }
 
 /// Interrupt half.
@@ -234,6 +240,8 @@ pub struct Isr<'a> {
     steps_shifted: [u32; AXES],
     event_shifted: u32,
     forward: u8,
+    /// Board mm per metric unit of the loaded block.
+    surface_scale: f32,
     /// Local copy of `Shared::done`.
     done: u32,
     /// Fraction of a microsecond owed to the timer, in 1/256 us.
@@ -264,9 +272,6 @@ pub fn split(shared: &'static mut Shared) -> (Front<'static>, Isr<'static>) {
         hold: Hold::None,
         resume_pending: false,
         resync: false,
-        last_speed: 0.0,
-        last_surface_scale: 0.0,
-        last_duty: 0,
     };
     let isr = Isr {
         shared,
@@ -278,6 +283,7 @@ pub fn split(shared: &'static mut Shared) -> (Front<'static>, Isr<'static>) {
         steps_shifted: [0; AXES],
         event_shifted: 0,
         forward: 0,
+        surface_scale: 0.0,
         done: 0,
         frac_acc: 0,
         #[cfg(test)]
@@ -336,9 +342,11 @@ struct Timing {
 
 /// Tick subdivision, tick period and event count for `events` events at
 /// `rate` events per second. The events are cut down when the ticks would
-/// not fit the segment's u16. A period under `MIN_TICK_US` is held there,
-/// which makes such a segment slower than planned.
-fn timing(rate: f32, events: u32) -> Timing {
+/// not fit the segment's u16. A period under `floor_us` (the shortest tick
+/// the interrupt can hold at the current step pulse width, see
+/// `crate::min_tick_us`) is held there, which makes such a segment slower
+/// than planned; the planner's rate cap keeps that from happening.
+fn timing(rate: f32, events: u32, floor_us: u32) -> Timing {
     let rate = rate.max(MIN_EVENT_RATE_HZ);
     let mut amass = 0u8;
     while amass < MAX_AMASS && (rate * (1u32 << amass) as f32) < AMASS_TARGET_HZ {
@@ -346,8 +354,8 @@ fn timing(rate: f32, events: u32) -> Timing {
     }
     let tick_rate = rate * (1u32 << amass) as f32;
     let period_q8 = libm::ceilf(256.0e6 / tick_rate) as u32;
-    let (period_us, period_frac) = if period_q8 >> 8 < MIN_TICK_US {
-        (MIN_TICK_US, 0)
+    let (period_us, period_frac) = if period_q8 >> 8 < floor_us {
+        (floor_us, 0)
     } else {
         (period_q8 >> 8, (period_q8 & 0xFF) as u8)
     };
@@ -449,6 +457,7 @@ impl<'a> Front<'a> {
             event_count: block.step_event_count,
             dir_levels: block.dir_forward ^ settings.dir_invert,
             dir_forward: block.dir_forward,
+            surface_scale: if block.length > 0.0 { block.surface_mm / block.length } else { 0.0 },
         };
         #[cfg(test)]
         self.check_slot_unreferenced(slot as u8);
@@ -464,7 +473,6 @@ impl<'a> Front<'a> {
             events_left: block.step_event_count,
             per_event: block.length / block.step_event_count as f32,
         });
-        self.last_surface_scale = if block.length > 0.0 { block.surface_mm / block.length } else { 0.0 };
         self.next_slot = (slot + 1) % STEP_BLOCKS;
         if let Some(block) = planner.current_mut() {
             block.progress = 0.0;
@@ -504,12 +512,13 @@ impl<'a> Front<'a> {
         };
         v_end = bound_end_speed(v0, v_end, events, slice.events_left, slice.per_event, block.acceleration, exit);
         let mut speed = 0.5 * (v0 + v_end);
-        let mut timing = timing(speed / slice.per_event, events);
+        let floor_us = crate::min_tick_us(settings.step_us);
+        let mut timing = timing(speed / slice.per_event, events, floor_us);
         if timing.events < events {
             events = timing.events;
             v_end = bound_end_speed(v0, v_end, events, slice.events_left, slice.per_event, block.acceleration, exit);
             speed = 0.5 * (v0 + v_end);
-            timing = self::timing(speed / slice.per_event, events);
+            timing = self::timing(speed / slice.per_event, events, floor_us);
         }
         let duty = segment_duty(&block, speed, settings, mode);
         let segment = Segment {
@@ -526,8 +535,6 @@ impl<'a> Front<'a> {
         }
         self.enqueued = self.enqueued.wrapping_add(1);
         self.slot_seq[slice.slot as usize] = self.enqueued;
-        self.last_speed = speed;
-        self.last_duty = duty;
         slice.events_left -= events;
         self.speed = v_end;
         if slice.events_left == 0 {
@@ -620,8 +627,6 @@ impl<'a> Front<'a> {
         self.hold = Hold::None;
         self.resume_pending = false;
         self.speed = 0.0;
-        self.last_speed = 0.0;
-        self.last_duty = 0;
     }
 
     /// After a hold has stopped: discard what was queued (a jog cancel) and
@@ -662,19 +667,20 @@ impl<'a> Front<'a> {
         !self.producer.is_empty() || !self.shared.idle.load(Ordering::SeqCst) || self.shared.abort.load(Ordering::SeqCst)
     }
 
-    /// Board speed of the segment in progress, mm/min.
+    /// Board speed of the segment the interrupt is executing, mm/min.
     pub fn surface_rate(&self) -> f32 {
         if self.busy() {
-            self.last_speed * self.last_surface_scale * 60.0
+            f32::from_bits(self.shared.surface_rate.load(Ordering::Relaxed))
         } else {
             0.0
         }
     }
 
-    /// Laser duty of the segment in progress, permille.
+    /// Laser duty the interrupt applied for the segment it is executing,
+    /// permille; off once a hold has closed the beam.
     pub fn duty(&self) -> u16 {
         if self.busy() && !self.shared.laser_off.load(Ordering::Relaxed) {
-            self.last_duty
+            self.shared.duty.load(Ordering::Relaxed) as u16
         } else {
             self.shared.off_duty()
         }
@@ -696,6 +702,7 @@ impl<'a> Isr<'a> {
             self.ticks_left = 0;
             self.finish_segments(dropped);
             laser.set_duty(shared.off_duty());
+            self.publish(0.0, shared.off_duty());
             shared.idle.store(true, Ordering::SeqCst);
             shared.abort.store(false, Ordering::SeqCst);
             return None;
@@ -715,6 +722,7 @@ impl<'a> Isr<'a> {
                 Some(segment) => self.load(segment, port, laser),
                 None => {
                     laser.set_duty(shared.off_duty());
+                    self.publish(0.0, shared.off_duty());
                     return None;
                 }
             }
@@ -745,6 +753,12 @@ impl<'a> Isr<'a> {
         Some(segment.period_us + carry)
     }
 
+    /// Publishes what the executing segment does, for the status report.
+    fn publish(&self, surface_rate: f32, duty: u16) {
+        self.shared.surface_rate.store(surface_rate.to_bits(), Ordering::Relaxed);
+        self.shared.duty.store(duty as u32, Ordering::Relaxed);
+    }
+
     fn finish_segments(&mut self, count: u32) {
         self.done = self.done.wrapping_add(count);
         self.shared.done.store(self.done, Ordering::Release);
@@ -765,11 +779,14 @@ impl<'a> Isr<'a> {
                 self.counter[i] = self.event_shifted >> 1;
             }
             self.forward = block.dir_forward;
+            self.surface_scale = block.surface_scale;
             port.set_dir(block.dir_levels);
             self.loaded = Some(segment.block);
         }
         let held = shared.laser_off.load(Ordering::Relaxed);
-        laser.set_duty(if held { shared.off_duty() } else { segment.duty });
+        let duty = if held { shared.off_duty() } else { segment.duty };
+        laser.set_duty(duty);
+        self.publish(segment.speed * self.surface_scale * 60.0, duty);
         self.segment = Some(segment);
         self.ticks_left = segment.ticks;
         #[cfg(test)]
@@ -790,7 +807,7 @@ mod tests {
 
     use super::*;
     use crate::planner::Feed;
-    use crate::{A, MAX_EVENT_RATE_HZ, R};
+    use crate::{A, MAX_EVENT_RATE_HZ, MIN_TICK_US, R};
 
     /// Polls per virtual second of the main loop in the rig.
     const POLL_US: u64 = 500;
@@ -902,6 +919,8 @@ mod tests {
         /// Blocks pushed, as (steps, dir_forward), to compare with what ran.
         pushed: Vec<([u32; AXES], u8)>,
         idle_at: u64,
+        /// Executed position when the rig was built or last declared.
+        start: [i32; AXES],
     }
 
     impl Rig {
@@ -922,6 +941,7 @@ mod tests {
                 seen_loads: 0,
                 pushed: Vec::new(),
                 idle_at: 0,
+                start: [0; AXES],
             }
         }
 
@@ -1022,21 +1042,31 @@ mod tests {
             }
         }
 
+        /// The executed position agrees with the planner, and the steps the
+        /// loaded segments carried per direction add up to the pulses the
+        /// port counted and to the net position from where the rig started.
         fn position_matches(&self) {
             assert_eq!(self.front.position(), self.planner.position(), "executed vs planned position");
-            let mut forward = [0u64; AXES];
-            let mut backward = [0u64; AXES];
+            let mut forward = [0f64; AXES];
+            let mut backward = [0f64; AXES];
             for load in &self.loads {
                 for i in 0..AXES {
                     let steps = load.axis_steps(i);
                     if load.block.dir_forward & (1 << i) != 0 {
-                        forward[i] += steps as u64;
+                        forward[i] += steps;
                     } else {
-                        backward[i] += steps as u64;
+                        backward[i] += steps;
                     }
                 }
             }
-            let _ = (forward, backward);
+            let position = self.front.position();
+            for i in 0..AXES {
+                let net = forward[i] - backward[i];
+                let moved = (position[i] - self.start[i]) as f64;
+                assert!((net - moved).abs() < 1.5, "axis {i}: segments net {net} steps, position moved {moved}");
+                let pulses = forward[i] + backward[i];
+                assert!((pulses - self.port.count[i] as f64).abs() < 1.5, "axis {i}: segments {pulses} steps, port {}", self.port.count[i]);
+            }
         }
 
         /// Steps per axis the pushed blocks add up to.
@@ -1562,15 +1592,47 @@ mod tests {
     #[test]
     fn amass_levels_follow_the_rate() {
         let t = |amass, period_us, period_frac, events| Timing { amass, period_us, period_frac, events };
-        assert_eq!(timing(16000.0, 160), t(0, 62, 128, 160));
-        assert_eq!(timing(3000.0, 30), t(1, 166, 171, 30));
-        assert_eq!(timing(1500.0, 15), t(2, 166, 171, 15));
-        assert_eq!(timing(100.0, 1), t(3, 1250, 0, 1));
-        assert_eq!(timing(0.0, 1), t(3, 62500, 0, 1));
+        assert_eq!(timing(16000.0, 160, MIN_TICK_US), t(0, 62, 128, 160));
+        assert_eq!(timing(3000.0, 30, MIN_TICK_US), t(1, 166, 171, 30));
+        assert_eq!(timing(1500.0, 15, MIN_TICK_US), t(2, 166, 171, 15));
+        assert_eq!(timing(100.0, 1, MIN_TICK_US), t(3, 1250, 0, 1));
+        assert_eq!(timing(0.0, 1, MIN_TICK_US), t(3, 62500, 0, 1));
         // A tick rate above the timer's floor is held at the floor.
-        assert_eq!(timing(200_000.0, 2000), t(0, MIN_TICK_US, 0, 2000));
+        assert_eq!(timing(200_000.0, 2000, MIN_TICK_US), t(0, MIN_TICK_US, 0, 2000));
+        assert_eq!(timing(200_000.0, 2000, 33), t(0, 33, 0, 2000));
         // Too many ticks for a segment cut the events down.
-        assert_eq!(timing(50.0, 100_000), t(3, 2500, 0, 8191));
+        assert_eq!(timing(50.0, 100_000, MIN_TICK_US), t(3, 2500, 0, 8191));
+    }
+
+    #[test]
+    fn the_tick_floor_follows_the_step_pulse_width() {
+        // A pulse of up to 4 us fits the 10 us tick; longer ones stretch it.
+        assert_eq!(crate::min_tick_us(1), MIN_TICK_US);
+        assert_eq!(crate::min_tick_us(2), MIN_TICK_US);
+        assert_eq!(crate::min_tick_us(4), MIN_TICK_US);
+        assert_eq!(crate::min_tick_us(5), 11);
+        assert_eq!(crate::min_tick_us(10), 18);
+        assert_eq!(crate::min_tick_us(20), 33);
+        assert!((crate::max_event_rate_hz(2) - MAX_EVENT_RATE_HZ).abs() < 1e-3);
+        // The planner's ceiling follows it, so a wide pulse slows the
+        // plan rather than the interrupt: the duty then matches the speed.
+        let wide = Settings {
+            steps: [10240.0, 14222.222],
+            max_rate: [5000.0, 5000.0],
+            accel: [500.0, 500.0],
+            step_us: 20,
+            ..settings()
+        };
+        let ceiling = crate::max_event_rate_hz(20) * 60.0 / 10240.0;
+        assert!((crate::planner::effective_max_rate(&wide)[R] - ceiling).abs() < 0.01, "{ceiling}");
+        let mut rig = Rig::new(wide);
+        rig.cut(2.0, 0.0, 3000.0, 500.0);
+        rig.run();
+        rig.check_axis_rates();
+        for segment in &rig.loads {
+            assert!(segment.segment.period_us >= 33, "a tick of {} us at a 20 us pulse", segment.segment.period_us);
+        }
+        rig.position_matches();
     }
 
     #[test]

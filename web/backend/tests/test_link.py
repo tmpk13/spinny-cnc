@@ -396,3 +396,20 @@ def test_a_reset_settles_the_dropped_lines_before_a_sender_can_write():
         assert lk.outstanding == 0
     finally:
         lk.close()
+
+
+def test_the_banner_that_answers_version_is_not_a_restart():
+    fake = FakeSerial()
+    lk = make_link(fake, poll=False)
+    try:
+        before = lk.restarts
+        lines = lk.request("version")
+        assert lines[0].startswith("[spinny v") and lines[-1] == "ok"
+        assert lk.restarts == before
+        # An unasked banner still counts, and so does the one a reset brings.
+        fake._emit(fake.banner())
+        assert wait_for(lambda: lk.restarts == before + 1)
+        lk.realtime(REALTIME_RESET)
+        assert wait_for(lambda: lk.restarts == before + 2)
+    finally:
+        lk.close()

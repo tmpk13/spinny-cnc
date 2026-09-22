@@ -107,6 +107,11 @@ impl Inbox {
         self.state.lock().unwrap().closed
     }
 
+    /// Lines received and not yet taken by the loop.
+    pub fn lines_waiting(&self) -> usize {
+        self.state.lock().unwrap().lines.len()
+    }
+
     pub fn is_empty(&self) -> bool {
         let state = self.state.lock().unwrap();
         state.realtime.is_empty() && state.lines.is_empty()

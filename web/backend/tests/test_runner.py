@@ -367,3 +367,24 @@ def test_a_reset_from_outside_the_run_stops_it_before_another_line_goes_out():
         assert not runner.active
     finally:
         link.close()
+
+
+def test_a_version_asked_from_the_console_does_not_end_the_run():
+    fake, link, sink, runner = setup(move_time=0.02)
+    big = Job(
+        id="big",
+        name="many",
+        groups=[Group(
+            label="one", power=500, speed=400,
+            paths=[[(10.0 + i * 0.1, -3.0), (10.0 + i * 0.1, 3.0)] for i in range(40)],
+        )],
+    )
+    try:
+        runner.start(big, link, Streamer())
+        assert wait_for(lambda: runner.progress.sent > 5, 5.0)
+        # The answer to `version` is the banner line: an answer, not a restart.
+        assert link.request("version")[-1] == "ok"
+        assert wait_for(lambda: runner.progress.state != RUNNING, 30.0)
+        assert runner.snapshot()["state"] == DONE, runner.snapshot()
+    finally:
+        link.close()

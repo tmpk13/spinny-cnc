@@ -19,7 +19,7 @@
 
 use crate::math;
 use crate::settings::Settings;
-use crate::{AXES, BLOCKS, MAX_EVENT_RATE_HZ, SURFACE_EPSILON_MM};
+use crate::{max_event_rate_hz, AXES, BLOCKS, SURFACE_EPSILON_MM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -105,6 +105,8 @@ impl Block {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanError {
     Full,
+    /// The feed gives the move no speed at all; nothing was queued.
+    Feed,
 }
 
 /// Ring of blocks plus the planned end position in steps.
@@ -130,9 +132,10 @@ impl Default for Planner {
 /// on a 5 mm screw the second one binds well below the first.
 pub fn effective_max_rate(settings: &Settings) -> [f32; AXES] {
     let mut rates = settings.max_rate;
+    let ceiling = max_event_rate_hz(settings.step_us);
     for i in 0..AXES {
         if settings.steps[i] > 0.0 {
-            rates[i] = rates[i].min(MAX_EVENT_RATE_HZ * 60.0 / settings.steps[i]);
+            rates[i] = rates[i].min(ceiling * 60.0 / settings.steps[i]);
         }
     }
     rates
@@ -141,9 +144,10 @@ pub fn effective_max_rate(settings: &Settings) -> [f32; AXES] {
 /// The same ceiling for the jog rates.
 fn effective_jog_rate(settings: &Settings) -> [f32; AXES] {
     let mut rates = settings.jog_rate;
+    let ceiling = max_event_rate_hz(settings.step_us);
     for i in 0..AXES {
         if settings.steps[i] > 0.0 {
-            rates[i] = rates[i].min(MAX_EVENT_RATE_HZ * 60.0 / settings.steps[i]);
+            rates[i] = rates[i].min(ceiling * 60.0 / settings.steps[i]);
         }
     }
     rates
@@ -252,6 +256,9 @@ impl Planner {
                 }
             }
         };
+        if !(requested_speed.is_finite() && requested_speed > 0.0) {
+            return Err(PlanError::Feed);
+        }
         let nominal_speed = requested_speed.min(axis_limit);
         let mut acceleration = f32::INFINITY;
         for i in 0..AXES {

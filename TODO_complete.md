@@ -78,3 +78,17 @@
   moves 38 times the radius zero error along a second rail line; the arms
   subdivided to a tolerance scaled by the angle; `--show-error` draws the
   coupon a machine that is out would burn and prints what it reads.
+- Firmware and host review (2026-09-22): every module read against its
+  contracts, with a multi-agent pass over the core and the port. Fixed on
+  the host a reset that could let one more line into the emptied machine
+  and a console reset that restarted a held run, the `version` answer read
+  as a firmware restart, a board jog from a head parked past the axis, JSON
+  jobs with a zero speed, and the estimate ignoring the step ceiling. Fixed
+  in the firmware the inverted driver configuration retry and its queue
+  that dropped the newest snapshot, the USB disconnect path that could
+  never run, a cross slide move under a constant beam, a jog taken during
+  a cancel brake, the tick floor ignoring the step pulse width, the laser
+  resting level driven only at the first poll, a position past the 32-bit
+  step range, a reset standing in for `unlock`, a feed with no speed, and
+  the status line's constant credit count and ahead-of-time rate and duty.
+  Every suite passes, the end-to-end tests included.

@@ -110,6 +110,11 @@ pub const DWELL_MAX_MS: u32 = 600_000;
 /// Longest `T` the `laser` command takes, ms.
 pub const LASER_MAX_MS: u32 = 60_000;
 
+/// Slowest `F` accepted, units per minute. Below it a move's planned speed
+/// would round to nothing and the stepper would wait for a speed that never
+/// comes.
+pub const MIN_FEED: f32 = 0.001;
+
 /// Longest keyword, bytes.
 const KEYWORD_MAX: usize = 8;
 
@@ -209,7 +214,7 @@ impl Words {
     }
 
     fn check_feed(&self) -> Result<(), Error> {
-        if self.f.is_some_and(|f| f <= 0.0) {
+        if self.f.is_some_and(|f| !(f >= MIN_FEED)) {
             return Err(Error::OutOfRange);
         }
         Ok(())

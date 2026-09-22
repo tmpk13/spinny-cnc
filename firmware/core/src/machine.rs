@@ -109,6 +109,9 @@ pub struct Machine<'a> {
     idle_since: u64,
     /// Time of the last `poll`.
     now: u64,
+    /// Lines the port holds behind the one pending here, for the status
+    /// line's count of free line slots.
+    lines_waiting: usize,
     events: Events,
 }
 
@@ -136,8 +139,16 @@ impl<'a> Machine<'a> {
             apply_enable: true,
             idle_since: 0,
             now: 0,
+            lines_waiting: 0,
             events: Events::default(),
         }
+    }
+
+    /// How many lines the port holds that it has not yet handed over; the
+    /// status line reports the credits left to the host from it. Called by
+    /// the port loop before each `poll`.
+    pub fn note_lines_waiting(&mut self, count: usize) {
+        self.lines_waiting = count;
     }
 
     pub fn settings(&self) -> &Settings {
@@ -257,11 +268,17 @@ impl<'a> Machine<'a> {
                 // rail with a cut in progress and would move it.
                 self.require_idle()?;
                 let target = if absolute { target } else { self.slide.position() + target };
+                if !math::fits_steps(target, self.settings.z_steps) {
+                    return Err(Error::OutOfRange);
+                }
                 self.pending = Pending::SlideMove { target, feed };
                 Ok(false)
             }
             Command::SetSlide { value } => {
                 self.require_idle()?;
+                if !math::fits_steps(value, self.settings.z_steps) {
+                    return Err(Error::OutOfRange);
+                }
                 self.pending = Pending::SetSlide(value);
                 Ok(false)
             }
@@ -285,6 +302,11 @@ impl<'a> Machine<'a> {
             }
             Command::SetPosition { value } => {
                 self.require_idle()?;
+                for i in 0..AXES {
+                    if value[i].is_some_and(|units| !math::fits_steps(units, self.settings.steps[i])) {
+                        return Err(Error::OutOfRange);
+                    }
+                }
                 self.pending = Pending::SetPosition(value);
                 Ok(false)
             }
@@ -377,6 +399,12 @@ impl<'a> Machine<'a> {
         if self.slide.busy() {
             return Err(Error::State);
         }
+        // While a jog cancel brakes, the state is still `Jog` but whatever
+        // is queued is about to be thrown away, a new jog with it; it
+        // would be answered `ok` and never run.
+        if self.jog_cancel {
+            return Err(Error::State);
+        }
         let allowed = if jog {
             matches!(self.state, State::Idle | State::Jog)
         } else {
@@ -404,6 +432,11 @@ impl<'a> Machine<'a> {
         for i in 0..AXES {
             if let Some(word) = words[i] {
                 target[i] = if relative { here[i] + word } else { word };
+                // The step count is an i32: a target past its range would
+                // be moved to short of where it says, with an `ok`.
+                if !math::fits_steps(target[i], self.settings.steps[i]) {
+                    return Err(Error::OutOfRange);
+                }
             }
         }
         // Any move may cross the axis and come out the far side. A jog goes
@@ -445,7 +478,7 @@ impl<'a> Machine<'a> {
             rate: self.front.surface_rate(),
             duty,
             planner_free: self.planner.free(),
-            line_free: LINE_SLOTS,
+            line_free: LINE_SLOTS.saturating_sub(self.lines_waiting + usize::from(self.pending != Pending::None)),
             mode: self.mode,
             enabled: self.enabled,
             slide: self.slide.position(),
@@ -539,7 +572,10 @@ impl<'a> Machine<'a> {
         self.mode = PowerMode::Dynamic;
         if moving {
             self.state = State::Alarm(1);
-        } else {
+        } else if !matches!(self.state, State::Alarm(_)) {
+            // An alarm already raised stays: it is the operator's
+            // acknowledgment that the position may be off, and another
+            // reset is not that.
             self.state = State::Idle;
             self.idle_since = self.now;
         }
@@ -644,6 +680,11 @@ impl<'a> Machine<'a> {
                     return true;
                 }
                 Err(PlanError::Full) => return false,
+                Err(PlanError::Feed) => {
+                    self.pending = Pending::None;
+                    report::error(Error::OutOfRange, out);
+                    return false;
+                }
             }
         }
         if matches!(pending, Pending::None | Pending::Dwelling) {
@@ -691,6 +732,11 @@ impl<'a> Machine<'a> {
             Pending::SetSlide(value) => self.slide.set_position(value, &self.settings),
             Pending::SlideMove { target, feed } => {
                 self.set_enabled(true, port);
+                // A constant beam lit by `laser` goes out before the rail
+                // moves, as it does before a joint move.
+                if self.beam.take().is_some() {
+                    laser.set_duty(self.off_duty());
+                }
                 self.slide.start(self.slide.position(), target, feed, &self.settings);
                 if self.slide.busy() {
                     self.state = State::Jog;
@@ -1504,7 +1550,8 @@ mod tests {
         rig.advance(100_000);
         assert_eq!(rig.state(), State::Run);
         assert_eq!(rig.laser.duty, 500);
-        assert_eq!(rig.status_line(), "<Run|J:10.000,0.0000|V:0|L:500|Q:32,16|M:dyn|E:1|Z:0.000>\n");
+        // The dwell's own line is unanswered while it runs: one credit in use.
+        assert_eq!(rig.status_line(), "<Run|J:10.000,0.0000|V:0|L:500|Q:32,15|M:dyn|E:1|Z:0.000>\n");
         rig.realtime(Realtime::Hold);
         assert_eq!(rig.laser.duty, 0);
         rig.advance(1_000_000);
@@ -2088,5 +2135,112 @@ mod tests {
         assert_eq!(rig.line("$s_min=900"), "ok\n");
         assert_eq!(rig.line("laser S100 T60000"), "ok\n");
         assert_eq!(rig.laser.duty, 900);
+    }
+
+    #[test]
+    fn a_cross_slide_jog_closes_a_constant_beam() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("set Z0"), "ok\n");
+        assert_eq!(rig.line("laser S800 T60000"), "ok\n");
+        assert_eq!(rig.laser.duty, 800);
+        assert_eq!(rig.line("jog Z2"), "ok\n");
+        assert_eq!(rig.laser.duty, 0, "the beam goes out before the slide moves");
+        rig.advance(POLL_US);
+        assert_eq!(rig.state(), State::Jog);
+        assert_eq!(rig.laser.duty, 0);
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.laser.duty, 0, "and does not come back with the idle");
+        assert_eq!(rig.machine.slide_position(), 2.0);
+    }
+
+    #[test]
+    fn a_jog_during_a_cancel_brake_is_refused() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("jog R50"), "ok\n");
+        rig.advance(1_000_000);
+        rig.realtime(Realtime::JogCancel);
+        rig.advance(POLL_US);
+        assert_eq!(rig.state(), State::Jog, "still braking");
+        assert_eq!(rig.line("jog R-10"), "error:5 not now\n");
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        let braked = rig.machine.joint()[R];
+        // Once it has stopped a jog is taken again, and runs.
+        assert_eq!(rig.line("jog R-1"), "ok\n");
+        rig.run();
+        assert!((rig.machine.joint()[R] - (braked - 1.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_status_counts_the_lines_the_port_holds() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(field(&rig.status_line(), "Q:"), "32,16");
+        rig.machine.note_lines_waiting(5);
+        assert_eq!(field(&rig.status_line(), "Q:"), "32,11");
+        // A line pending in the machine is unanswered too.
+        for i in 1..=BLOCKS {
+            assert_eq!(rig.line(&std::format!("cut R{i} F60")), "ok\n");
+        }
+        rig.submit("go R0");
+        rig.advance(POLL_US);
+        assert!(!rig.machine.ready_for_line());
+        let status = rig.status_line();
+        assert_eq!(field(&status, "Q:").split_once(',').unwrap().1, "10", "{status}");
+        rig.realtime(Realtime::Reset);
+        rig.take_out();
+        rig.machine.note_lines_waiting(0);
+        rig.run();
+        assert_eq!(field(&rig.status_line(), "Q:"), "32,16");
+    }
+
+    #[test]
+    fn a_position_past_the_step_range_is_refused() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        // At 888.889 steps per degree the i32 range ends near 2415919 degrees.
+        assert_eq!(rig.line("set A2400000"), "ok\n");
+        assert!((rig.machine.joint()[A] - 2_400_000.0).abs() < 1.0);
+        assert_eq!(rig.line("set A2500000"), "error:4 out of range\n");
+        assert_eq!(rig.line("go A2500000"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog A-5000000"), "error:4 out of range\n");
+        assert_eq!(rig.line("set R9000000"), "error:4 out of range\n");
+        assert_eq!(rig.line("set Z9000000"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog Z9000000"), "error:4 out of range\n");
+        assert!((rig.machine.joint()[A] - 2_400_000.0).abs() < 1.0);
+        assert_eq!(rig.state(), State::Idle);
+    }
+
+    #[test]
+    fn a_reset_in_alarm_keeps_the_alarm_until_unlock() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("go R50"), "ok\n");
+        rig.advance(500_000);
+        rig.realtime(Realtime::Reset);
+        rig.run();
+        assert_eq!(rig.state(), State::Alarm(1));
+        rig.take_out();
+        rig.realtime(Realtime::Reset);
+        assert_eq!(rig.take_out(), "[MSG:reset]\n[spinny v0.1.0 lines:16 blocks:32]\n");
+        assert_eq!(rig.state(), State::Alarm(1), "a reset does not stand in for unlock");
+        rig.machine.disconnected(&mut rig.laser, &mut rig.port);
+        assert_eq!(rig.state(), State::Alarm(1));
+        assert_eq!(rig.line("unlock"), "ok\n");
+        assert_eq!(rig.state(), State::Idle);
+    }
+
+    #[test]
+    fn a_feed_below_the_floor_is_refused() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("cut R1 F0.0001 S500"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog R1 F0"), "error:4 out of range\n");
+        assert_eq!(rig.line("cut R0.001 F0.001 S500"), "ok\n");
+        rig.realtime(Realtime::Reset);
+        rig.run();
     }
 }

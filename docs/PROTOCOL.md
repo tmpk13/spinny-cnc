@@ -33,7 +33,7 @@ part of the line.
 | `?` | one status line |
 | `!` | hold: decelerate to a stop, laser off, state `Hold`; a beam lit by `laser` is closed from any state |
 | `~` | resume from `Hold` |
-| `0x18` | reset: stop at once, flush everything, laser off; `Alarm:1` if it was moving, else `Idle` |
+| `0x18` | reset: stop at once, flush everything, laser off; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
 | `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle` |
 
 ## Motion commands
@@ -67,7 +67,10 @@ sends a negative radius only for a joint-space group that says so. With
 angle is not limited and keeps counting, but one move may not cover more
 than 2^28 steps
 on an axis (`error:4`): about 18878 degrees or 26214 mm at the default
-scales, past which the step generator's counters would wrap.
+scales, past which the step generator's counters would wrap. A position
+is counted in 32-bit steps, so a target or a `set` past 2^31 steps from
+zero (about 150995 degrees or 209715 mm at the default scales) is refused
+the same way rather than moved to short of where it says.
 
 The step generator emits at most 100000 steps a second, which at a fine
 enough `r_steps` or `a_steps` binds before `r_rate` or `a_rate` do. The
@@ -75,6 +78,10 @@ planner caps the speed by whichever comes first, so a move commanded
 faster simply runs at the rate the axis can be stepped at, and under `mode
 dyn` the laser power follows it down. The ceiling in units per minute is
 `6000000 / steps`: at the defaults that is 586 mm/min and 422 deg/min.
+The step pulse is held inside that tick, so a `step_us` above 4 stretches
+the tick to about `1.5 * step_us + 3` microseconds and lowers the ceiling
+with it: at `step_us` 10 to 55000 steps a second, at 20 to 30000. `F`
+below 0.001 is refused (`error:4`).
 
 ## The cross slide
 
@@ -90,7 +97,10 @@ state is `Jog` until it stops.
 | `set Z<mm>` | declare the position, as for `R` and `A` |
 
 `Z` cannot be combined with `R` or `A` on one line (`error:2`): the three
-are not interpolated together. `0x85` cancels a `Z` jog like any other.
+are not interpolated together. The slide is stepped from the main loop at
+most 20000 steps a second, so its rate ceiling is `1200000 / z_steps`,
+117 mm/min at the default scale, and a `z_rate` or `jog_z` above that is
+held to it. `0x85` cancels a `Z` jog like any other.
 `!` also brakes it to a stop, but the state goes to `Idle` rather than
 `Hold`: a setup move has no queue behind it for `~` to take up. A reset
 stops it on the spot, and raises no alarm, because the slide counts its
@@ -183,7 +193,7 @@ Changing a `tmc_*` setting re-sends the driver configuration.
 | `J` | joint position from the executed steps: radius mm, angle deg |
 | `V` | surface speed of the move in progress, mm/min |
 | `L` | laser duty in permille, as driven |
-| `Q` | free planner blocks, free line slots |
+| `Q` | free planner blocks, free line slots (the 16 credits less the lines received and not yet answered) |
 | `M` | power mode |
 | `E` | motors enabled |
 | `Z` | cross slide position, mm |
@@ -200,7 +210,7 @@ Changing a `tmc_*` setting re-sends the driver configuration.
 | `error:6` | unknown setting |
 | `error:7` | bad setting value |
 | `error:8` | line too long |
-| `error:9` | flash write failed |
+| `error:9` | flash failed: `$save` could not write, or `$load` found nothing valid stored |
 | `ALARM:1` | reset while moving, the position may be off; `unlock` clears it |
 
 ## Example session

@@ -32,6 +32,12 @@ pub fn units_to_steps(units: f32, steps_per_unit: f32) -> i32 {
     }
 }
 
+/// Whether `units` at `steps_per_unit` rounds to a step count inside the
+/// i32 range, so `units_to_steps` would not saturate.
+pub fn fits_steps(units: f32, steps_per_unit: f32) -> bool {
+    libm::fabs(libm::round(units as f64 * steps_per_unit as f64)) < i32::MAX as f64
+}
+
 /// Units for a step position; the division is done in f64 for the same
 /// reason as `units_to_steps`.
 pub fn steps_to_units(steps: i32, steps_per_unit: f32) -> f32 {
@@ -70,6 +76,9 @@ mod tests {
         assert_eq!(units_to_steps(3600.0, 888.889), 3_200_000);
         assert_eq!(units_to_steps(1.0e9, 888.889), i32::MAX);
         assert_eq!(units_to_steps(-1.0e9, 888.889), i32::MIN);
+        assert!(fits_steps(2_400_000.0, 888.889));
+        assert!(!fits_steps(2_500_000.0, 888.889));
+        assert!(!fits_steps(-2_500_000.0, 888.889));
         assert!((steps_to_units(3_200_000, 888.889) - 3600.0).abs() < 1e-3);
         assert_eq!(steps_to_units(-128, 256.0), -0.5);
     }

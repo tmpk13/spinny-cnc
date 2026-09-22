@@ -1,12 +1,19 @@
 //! USB CDC ACM transport. One task runs the device, one turns received
 //! packets into realtime actions and lines, one drains the output ring
 //! into packets. The core writes through `UsbSink`, which never blocks.
+//!
+//! The endpoint reads and writes of this driver never fail, so a host
+//! going away is only ever seen through the device's state: a bus reset,
+//! a suspend or the configuration being dropped. Those come through the
+//! `Handler` callbacks, which report the disconnect to the main loop and
+//! make the reader and the writer start over.
 
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use critical_section::Mutex;
 use embassy_executor::Spawner;
+use embassy_futures::select::{select, Either};
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::Driver;
 use embassy_rp::Peri;
@@ -14,7 +21,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, Receiver, Sender, State};
-use embassy_usb::{Builder, Config, UsbDevice};
+use embassy_usb::{Builder, Config, Handler, UsbDevice};
 use spinny_core::hal::Sink;
 use spinny_core::parser::Realtime;
 use spinny_fw_logic::line::{Event as LineEvent, Line, LineAssembler};
@@ -41,7 +48,49 @@ pub enum Event {
 pub static REALTIME: Channel<CriticalSectionRawMutex, Realtime, 8> = Channel::new();
 /// Lines waiting for the main loop; more than the 16 credits the protocol gives the host.
 pub static LINES: Channel<CriticalSectionRawMutex, Inbound, 24> = Channel::new();
-pub static EVENTS: Channel<CriticalSectionRawMutex, Event, 4> = Channel::new();
+pub static EVENTS: Channel<CriticalSectionRawMutex, Event, 8> = Channel::new();
+/// The device lost its host: the reader drops the line it was assembling
+/// and the writer the packet it was sending, and both wait for the next
+/// configuration. One signal each, since a signal has one waiter.
+static READER_RESTART: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static WRITER_RESTART: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Device state changes, called from the device task.
+struct DeviceEvents;
+
+impl Handler for DeviceEvents {
+    fn enabled(&mut self, enabled: bool) {
+        if !enabled {
+            disconnected();
+        }
+    }
+
+    fn reset(&mut self) {
+        disconnected();
+    }
+
+    fn configured(&mut self, configured: bool) {
+        if configured {
+            let _ = EVENTS.try_send(Event::Connected);
+        } else {
+            disconnected();
+        }
+    }
+
+    fn suspended(&mut self, suspended: bool) {
+        // With no VBUS sense on this board an unplug only ever shows as a
+        // suspend, so a suspend is taken as the host going away.
+        if suspended {
+            disconnected();
+        }
+    }
+}
+
+fn disconnected() {
+    let _ = EVENTS.try_send(Event::Disconnected);
+    READER_RESTART.signal(());
+    WRITER_RESTART.signal(());
+}
 
 const OUT_CAPACITY: usize = 4096;
 static OUT: Mutex<RefCell<OutRing<OUT_CAPACITY>>> = Mutex::new(RefCell::new(OutRing::new()));
@@ -104,6 +153,7 @@ pub fn start(spawner: &Spawner, usb: Peri<'static, USB>, serial: &'static str) {
     static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
     static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
     static STATE: StaticCell<State> = StaticCell::new();
+    static HANDLER: StaticCell<DeviceEvents> = StaticCell::new();
 
     let mut builder = Builder::new(
         driver,
@@ -113,6 +163,7 @@ pub fn start(spawner: &Spawner, usb: Peri<'static, USB>, serial: &'static str) {
         &mut [],
         CONTROL_BUF.init([0; 64]),
     );
+    builder.handler(HANDLER.init(DeviceEvents));
     let class = CdcAcmClass::new(&mut builder, STATE.init(State::new()), PACKET as u16);
     let (sender, receiver) = class.split();
     let device = builder.build();
@@ -133,9 +184,14 @@ async fn reader_task(mut receiver: Receiver<'static, UsbDrv>) {
     let mut buf = [0u8; PACKET];
     loop {
         receiver.wait_connection().await;
+        // A restart raised before this configuration was for the one before.
+        READER_RESTART.reset();
         assembler.reset();
-        EVENTS.send(Event::Connected).await;
-        while let Ok(n) = receiver.read_packet(&mut buf).await {
+        loop {
+            let n = match select(receiver.read_packet(&mut buf), READER_RESTART.wait()).await {
+                Either::First(Ok(n)) => n,
+                Either::First(Err(_)) | Either::Second(()) => break,
+            };
             for &byte in &buf[..n] {
                 match assembler.push(byte) {
                     Some(LineEvent::Realtime(action)) => {
@@ -158,10 +214,9 @@ async fn reader_task(mut receiver: Receiver<'static, UsbDrv>) {
             }
         }
         // Lines and realtime bytes the old host left behind must not act
-        // for the next one, nor after the reset the event causes.
+        // for the next one, nor after the reset the disconnect causes.
         LINES.clear();
         REALTIME.clear();
-        EVENTS.send(Event::Disconnected).await;
     }
 }
 
@@ -170,17 +225,24 @@ async fn writer_task(mut sender: Sender<'static, UsbDrv>) {
     let mut buf = [0u8; PACKET];
     loop {
         sender.wait_connection().await;
+        WRITER_RESTART.reset();
         loop {
             let (n, remaining) = take_packet(&mut buf);
             if n == 0 {
-                OUT_READY.wait().await;
-                continue;
+                match select(OUT_READY.wait(), WRITER_RESTART.wait()).await {
+                    Either::First(()) => continue,
+                    Either::Second(()) => break,
+                }
             }
-            if sender.write_packet(&buf[..n]).await.is_err() {
-                break;
+            match select(sender.write_packet(&buf[..n]), WRITER_RESTART.wait()).await {
+                Either::First(Ok(())) => {}
+                Either::First(Err(_)) | Either::Second(()) => break,
             }
-            if zlp_after(n, remaining) && sender.write_packet(&[]).await.is_err() {
-                break;
+            if zlp_after(n, remaining) {
+                match select(sender.write_packet(&[]), WRITER_RESTART.wait()).await {
+                    Either::First(Ok(())) => {}
+                    Either::First(Err(_)) | Either::Second(()) => break,
+                }
             }
         }
     }

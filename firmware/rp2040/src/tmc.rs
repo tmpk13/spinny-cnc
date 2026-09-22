@@ -8,16 +8,16 @@ use embassy_rp::peripherals::{PIN_8, PIN_9, UART1};
 use embassy_rp::uart::{BufferedUart, Config as UartConfig};
 use embassy_rp::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
-use embassy_futures::select::{select, Either};
+use embassy_sync::signal::Signal;
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async::{Read, ReadReady, Write};
 use spinny_core::report;
 use spinny_core::settings::Settings;
 use spinny_core::{A, R};
 use spinny_fw_logic::tmc::{
-    config_datagrams, micro_of, parse_reply, read_request, refused_text, report_text, Datagram, DriverConfig,
-    Reply, ADDR,
+    config_datagrams, micro_of, parse_reply, read_request, refused_text, report_text, unfinished_after, Datagram,
+    DriverConfig, Reply, ADDR,
 };
 use static_cell::StaticCell;
 use tmc2209::reg::Address;
@@ -25,12 +25,18 @@ use tmc2209::reg::Address;
 use crate::usb::UsbSink;
 use crate::Irqs;
 
-pub enum Request {
+/// The newest configuration asked for. A burst of `tmc_*` changes, as the
+/// settings page sends, keeps only the last snapshot, which is the one the
+/// settings hold; a queue would drop the newest once it filled.
+static CONFIG: Signal<CriticalSectionRawMutex, DriverConfig> = Signal::new();
+/// `$tmc` was asked for.
+static REPORT: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+enum Action {
     Configure(DriverConfig),
     Report,
+    Retry,
 }
-
-static REQUESTS: Channel<CriticalSectionRawMutex, Request, 4> = Channel::new();
 
 /// The echo of a datagram is back within a byte time; the drivers answer a
 /// read within a few. Both wait far longer to ride out interrupt latency.
@@ -62,11 +68,11 @@ pub fn configure_from(settings: &Settings) {
         micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_z_micro],
         stealth: settings.tmc_stealth,
     };
-    let _ = REQUESTS.try_send(Request::Configure(cfg));
+    CONFIG.signal(cfg);
 }
 
 pub fn request_report() {
-    let _ = REQUESTS.try_send(Request::Report);
+    REPORT.signal(());
 }
 
 /// Drivers run from the motor supply, so a board brought up on USB alone
@@ -77,26 +83,26 @@ async fn tmc_task(mut uart: BufferedUart) {
     let mut unfinished: Option<DriverConfig> = None;
     let mut told = false;
     loop {
-        let request = match unfinished {
-            Some(_) => match select(REQUESTS.receive(), Timer::after(RETRY_EVERY)).await {
-                Either::First(request) => Some(request),
-                Either::Second(()) => None,
+        let action = match unfinished {
+            Some(_) => match select3(CONFIG.wait(), REPORT.wait(), Timer::after(RETRY_EVERY)).await {
+                Either3::First(cfg) => Action::Configure(cfg),
+                Either3::Second(()) => Action::Report,
+                Either3::Third(()) => Action::Retry,
             },
-            None => Some(REQUESTS.receive().await),
+            None => match select(CONFIG.wait(), REPORT.wait()).await {
+                Either::First(cfg) => Action::Configure(cfg),
+                Either::Second(()) => Action::Report,
+            },
         };
-        match request {
-            Some(Request::Report) => report(&mut uart).await,
-            Some(Request::Configure(cfg)) => {
+        match action {
+            Action::Report => report(&mut uart).await,
+            Action::Configure(cfg) => {
                 told = false;
-                unfinished = configure(&mut uart, &cfg, &mut told).await.then_some(cfg);
+                unfinished = unfinished_after(configure(&mut uart, &cfg, &mut told).await, cfg);
             }
-            None => {
-                let cfg = unfinished.expect("a retry needs a configuration");
-                if configure(&mut uart, &cfg, &mut told).await {
-                    unfinished = None;
-                } else {
-                    unfinished = Some(cfg);
-                }
+            Action::Retry => {
+                let cfg = unfinished.take().expect("a retry needs a configuration");
+                unfinished = unfinished_after(configure(&mut uart, &cfg, &mut told).await, cfg);
             }
         }
         if unfinished.is_none() && told {

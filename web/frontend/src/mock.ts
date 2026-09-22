@@ -71,7 +71,7 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
 
 export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "r_steps", unit: "steps/mm", help: "radius motor" },
-    { name: "a_steps", unit: "steps/deg", help: "table motor: 200 steps * 16 microsteps * 100:1 / 360" },
+    { name: "a_steps", unit: "steps/deg", help: "table motor: 200 steps * tmc_a_micro microsteps * 100:1 / 360" },
     { name: "r_rate", unit: "mm/min", help: "max radius rate" },
     { name: "a_rate", unit: "deg/min", help: "max table rate" },
     { name: "r_accel", unit: "mm/s^2", help: "radius acceleration" },

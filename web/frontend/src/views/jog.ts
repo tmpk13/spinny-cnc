@@ -118,7 +118,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
 
     const gotoX = numberField({ placeholder: "x" });
     const gotoY = numberField({ placeholder: "y" });
-    const gotoR = numberField({ placeholder: "r", min: 0 });
+    // A negative radius is the far side of the axis, which the machine
+    // takes on a jog: it is how the head is lined up with the axis.
+    const gotoR = numberField({ placeholder: "r" });
     const gotoA = numberField({ placeholder: "a" });
     const gotoBoard = async (): Promise<void> => {
         let x = parseNumber(gotoX.value);

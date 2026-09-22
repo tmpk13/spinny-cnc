@@ -123,6 +123,7 @@ impl Sim {
                     None => {}
                 }
             }
+            self.machine.note_lines_waiting(inbox.lines_waiting());
             self.poll();
             self.flush(socket)?;
             // On disk as soon as the machine comes to rest, not only when

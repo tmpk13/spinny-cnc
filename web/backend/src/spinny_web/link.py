@@ -529,11 +529,16 @@ class Link:
     def _handle_banner(self, text: str) -> None:
         with self._credit:
             oldest = self._pending[0] if self._pending else None
-        with self._banner_cond:
-            expected = self._expected_banners > 0
-            if expected:
-                self._expected_banners -= 1
-        if oldest is not None and oldest.line.lower() == "version":
+        answer = oldest is not None and oldest.line.lower() == "version"
+        expected = False
+        if not answer:
+            with self._banner_cond:
+                expected = self._expected_banners > 0
+                if expected:
+                    self._expected_banners -= 1
+        if answer:
+            # The same line answers `version`: that is an answer, not a
+            # restart, and a run in progress must not be told otherwise.
             oldest.lines.append(text)
         elif not expected:
             # An unasked banner means the firmware restarted and dropped
@@ -547,9 +552,10 @@ class Link:
                     self.credits = banner.lines
                     self._credit.notify_all()
             self._publish(Event("banner", banner))
-        with self._banner_cond:
-            self._banner_seq += 1
-            self._banner_cond.notify_all()
+        if not answer:
+            with self._banner_cond:
+                self._banner_seq += 1
+                self._banner_cond.notify_all()
 
     def _complete(self, response: str) -> None:
         with self._credit:
