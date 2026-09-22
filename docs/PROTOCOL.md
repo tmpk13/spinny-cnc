@@ -55,8 +55,14 @@ surface length is under 1 um (a turn on the axis) runs at the max rates with
 the laser off. Speed is capped by `r_rate` and `a_rate`; under `mode dyn`
 the laser power follows the achieved speed so the dose per mm holds.
 
-Jogs are accepted in `Idle` and `Jog` only. `R` under 0 is refused
-(`error:4`); with `r_max` set, `R` over it is refused too. The angle is not
+Jogs are accepted in `Idle` and `Jog` only. A jog may take `R` past the
+axis and out the far side, and `set R<negative>` declares it parked there:
+lining the head up with the axis means stepping through zero, and that is
+the only way to say which side it is on. `go` and `cut` still refuse a
+negative `R` (`error:4`), because past the axis is the same board point
+half a turn away and the polar words a job is written in cannot say which
+was meant. With `r_max` set, a move further out than it is refused on
+either side. The angle is not
 limited and keeps counting, but one move may not cover more than 2^28 steps
 on an axis (`error:4`): about 18878 degrees or 26214 mm at the default
 scales, past which the step generator's counters would wrap.
@@ -136,7 +142,7 @@ is set to 0.
 | `a_accel` | deg/s^2 | 50 | |
 | `r_jerk` | mm/s | 3 | allowed speed change at a corner |
 | `a_jerk` | deg/s | 2 | |
-| `r_max` | mm | 0 | soft limit, 0 = off |
+| `r_max` | mm | 0 | soft limit on the distance from the axis, either side; 0 = off |
 | `z_steps` | steps/mm | 10240 | cross slide |
 | `z_rate` | mm/min | 560 | max cross slide rate |
 | `z_accel` | mm/s^2 | 50 | |

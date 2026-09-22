@@ -439,8 +439,8 @@ class Backend:
         link = self.require_link()
         words = []
         if body.r is not None:
-            if body.r < 0:
-                raise ValueError("a radius cannot be negative")
+            # Negative is allowed here: it declares the head parked on the
+            # far side of the axis, which is where lining up leaves it.
             words.append(f"R{num(body.r)}")
         if body.a is not None:
             words.append(f"A{num(body.a, 4)}")

@@ -301,8 +301,9 @@ class Streamer:
         return self._joint_line("jog", dr, da, feed)
 
     def joint_goto(self, r: float | None, a: float | None, feed: float | None = None) -> str:
-        if r is not None and r < 0:
-            raise ValueError("a radius cannot be negative")
+        # A negative radius is the far side of the axis. A job can never
+        # ask for one, but lining the head up with the axis means stepping
+        # through zero, so a jog may.
         return self._joint_line("jogto", r, a, feed)
 
     def slide_jog(self, dz: float, feed: float | None = None) -> str:

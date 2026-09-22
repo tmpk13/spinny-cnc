@@ -198,8 +198,9 @@ def test_joint_jogs_pass_straight_through():
     assert streamer.joint_goto(None, 45.0, 300.0) == "jogto A45 F300"
     with pytest.raises(ValueError):
         streamer.joint_jog(None, None)
-    with pytest.raises(ValueError):
-        streamer.joint_goto(-1.0, 0.0)
+    # Past the axis is where lining up goes, so a jog may be sent there.
+    assert streamer.joint_goto(-1.0, 0.0) == "jogto R-1 A0"
+    assert streamer.joint_jog(-2.5, None) == "jog R-2.5"
 
 
 def test_cross_slide_lines_carry_z_alone():

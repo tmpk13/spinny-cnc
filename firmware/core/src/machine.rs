@@ -407,10 +407,16 @@ impl<'a> Machine<'a> {
             }
         }
         // Checked on the step the target rounds to, so a relative jog back
-        // to the axis is not refused for a rounding hair below zero.
+        // to the axis is not refused for a rounding hair below zero. A jog
+        // may cross the axis and come out the far side: that is how the
+        // head is lined up with it. A cut may not, because a negative
+        // radius is the same board point half a turn away and the job's
+        // polar words cannot say which was meant.
         let r_steps = math::units_to_steps(target[R], self.settings.steps[R]);
         let r_units = math::steps_to_units(r_steps, self.settings.steps[R]);
-        if r_steps < 0 || (self.settings.r_max > 0.0 && r_units > self.settings.r_max) {
+        let crosses = r_steps < 0 && kind != MoveKind::Jog;
+        let beyond = self.settings.r_max > 0.0 && libm::fabsf(r_units) > self.settings.r_max;
+        if crosses || beyond {
             return Err(Error::OutOfRange);
         }
         // A move longer than the stepper's Bresenham counters can carry
@@ -1202,8 +1208,16 @@ mod tests {
         assert_eq!(rig.line("jog R-10"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.joint(), [40.0, 0.0]);
-        assert_eq!(rig.line("jog R-41"), "error:4 out of range\n");
-        assert_eq!(rig.line("jog R-40"), "ok\n");
+        // A jog may cross the axis and come out the far side: lining the
+        // head up with it needs both directions through zero.
+        assert_eq!(rig.line("jog R-41"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint(), [-1.0, 0.0]);
+        // A cutting move may not be sent there, where a polar radius has
+        // no way to say which side of the axis was meant.
+        assert_eq!(rig.line("go R-1"), "error:4 out of range\n");
+        assert_eq!(rig.line("cut R-1 F100"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog R1"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.joint(), [0.0, 0.0]);
         assert_eq!(rig.line("go A1"), "ok\n");
@@ -1503,6 +1517,38 @@ mod tests {
         assert_eq!(rig.state(), State::Idle);
         // A zero dwell without power answers at once.
         assert_eq!(rig.line("dwell T0"), "ok\n");
+    }
+
+    #[test]
+    fn lining_up_can_step_through_the_axis_and_back() {
+        // The head at radius zero is rarely over the axis to begin with.
+        // Finding it means stepping past zero and back, and declaring the
+        // position once the beam is on it, so both have to be allowed.
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("set R0 A0"), "ok\n");
+        for _ in 0..4 {
+            assert_eq!(rig.line("jog R-0.5"), "ok\n");
+            rig.run();
+        }
+        assert_eq!(rig.machine.joint()[R], -2.0, "the head could not cross the axis");
+        let status = rig.status_line();
+        assert_eq!(field(&status, "J:").split(',').next().unwrap(), "-2.000");
+
+        // Declared where it really is: the axis is now two out.
+        assert_eq!(rig.line("set R-2"), "ok\n");
+        assert_eq!(rig.machine.joint()[R], -2.0);
+        assert_eq!(rig.line("jogto R0"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[R], 0.0);
+
+        // A soft limit still holds, on either side of the axis.
+        assert_eq!(rig.line("$r_max=5"), "ok\n");
+        assert_eq!(rig.line("jog R-6"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog R6"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog R-5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[R], -5.0);
     }
 
     #[test]

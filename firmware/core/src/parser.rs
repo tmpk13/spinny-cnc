@@ -208,7 +208,9 @@ impl Words {
         Ok(())
     }
 
-    /// An absolute radius may not be negative.
+    /// A cutting move may not be given a negative radius: past the axis
+    /// is the same board point at half a turn more, and the polar words a
+    /// job is written in have no way to mean anything else there.
     fn check_radius(&self) -> Result<(), Error> {
         if self.r.is_some_and(|r| r < 0.0) {
             return Err(Error::OutOfRange);
@@ -324,10 +326,9 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
                 // absolute Z is as free as a relative one.
                 return Ok(Command::JogZ { target, feed: words.f, absolute });
             }
-            // A relative jog may carry a negative R: it is a distance.
-            if absolute {
-                words.check_radius()?;
-            }
+            // A jog may carry a negative R either way: relative it is a
+            // distance, absolute it is the far side of the axis, which is
+            // where the head has to go to be lined up with it.
             Ok(Command::Jog { target: words.target(), feed: words.f, absolute })
         }
         b"dwell" => {
@@ -370,7 +371,8 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             if let Some(value) = words.z {
                 return Ok(Command::SetSlide { value });
             }
-            words.check_radius()?;
+            // A negative radius declares the head on the far side of the
+            // axis, which is the only way to say so while lining up.
             Ok(Command::SetPosition { value: words.target() })
         }
         b"enable" => bare(tokens, Command::Enable(true)),
@@ -535,7 +537,14 @@ mod tests {
         assert_eq!(parse("jog F100"), Err(Error::MissingWord));
         assert_eq!(parse("jogto"), Err(Error::MissingWord));
         assert_eq!(parse("jogto F100"), Err(Error::MissingWord));
-        assert_eq!(parse("jogto R-1"), Err(Error::OutOfRange));
+        // A jog may be sent past the axis: that is how the head is lined
+        // up with it. Only a cutting move is held to a polar radius.
+        assert_eq!(
+            parse("jogto R-1"),
+            Ok(Command::Jog { target: [Some(-1.0), None], feed: None, absolute: true })
+        );
+        assert_eq!(parse("go R-1"), Err(Error::OutOfRange));
+        assert_eq!(parse("cut R-1 F60"), Err(Error::OutOfRange));
         assert_eq!(parse("jog R5 F0"), Err(Error::OutOfRange));
         assert_eq!(parse("jogto A5 F-1"), Err(Error::OutOfRange));
         assert_eq!(parse("jog R5 S1"), Err(Error::BadWord));
@@ -651,7 +660,8 @@ mod tests {
         assert_eq!(parse("set R0 A0"), Ok(Command::SetPosition { value: [Some(0.0), Some(0.0)] }));
         assert_eq!(parse("SET a-90"), Ok(Command::SetPosition { value: [None, Some(-90.0)] }));
         assert_eq!(parse("set"), Err(Error::MissingWord));
-        assert_eq!(parse("set R-1"), Err(Error::OutOfRange));
+        // The head can be parked past the axis, so it can be declared there.
+        assert_eq!(parse("set R-1"), Ok(Command::SetPosition { value: [Some(-1.0), None] }));
         assert_eq!(parse("set F1"), Err(Error::BadWord));
         assert_eq!(parse("set R1 A2 A3"), Err(Error::BadWord));
     }
