@@ -1,9 +1,10 @@
-//! TMC2209 register values and UART datagrams for the two drivers, and the
-//! reply parsing behind the status report.
+//! TMC2209 register values and UART datagrams for the three drivers, and
+//! the reply parsing behind the status report.
 //!
-//! The SKR Pico straps the X socket to UART address 0 and the Y socket to
-//! address 2 and fits 110 mOhm sense resistors. Both drivers share one
-//! wire, so every byte sent comes back on RX before any reply.
+//! The SKR Pico straps the X socket to UART address 0, the Y socket to
+//! address 2 and the Z socket to address 1, and fits 110 mOhm sense
+//! resistors. Every driver shares one wire, so every byte sent comes back
+//! on RX before any reply.
 
 use core::fmt::Write;
 
@@ -14,9 +15,10 @@ use tmc2209::{ReadRequest, Reader, WriteRequest};
 
 /// Sense resistor on the SKR Pico, milliohms.
 pub const RSENSE_MOHM: u64 = 110;
-/// UART address per axis: radius on the X socket, table on the Y socket.
-pub const ADDR: [u8; 2] = [0, 2];
-pub const AXIS_LETTER: [char; 2] = ['R', 'A'];
+/// UART address per axis: radius on the X socket, table on the Y socket,
+/// cross slide on the Z socket.
+pub const ADDR: [u8; 3] = [0, 2, 1];
+pub const AXIS_LETTER: [char; 3] = ['R', 'A', 'Z'];
 /// IHOLD_IRUN.IHOLDDELAY: power-down ramp in units of 2^18 clocks.
 pub const IHOLD_DELAY: u8 = 10;
 /// CHOPCONF chopper fields: the datasheet's reset values with TBL=2.
@@ -33,9 +35,9 @@ const VFS_LOW_SENS_MV: u64 = 325;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DriverConfig {
     /// Run current per axis, mA; 0 leaves that driver untouched.
-    pub ma: [u32; 2],
+    pub ma: [u32; 3],
     pub hold_pct: u32,
-    pub micro: [u32; 2],
+    pub micro: [u32; 3],
     pub stealth: bool,
 }
 
@@ -243,9 +245,9 @@ mod tests {
     #[test]
     fn datagrams_carry_the_register_fields() {
         let cfg = DriverConfig {
-            ma: [800, 1500],
+            ma: [800, 1500, 600],
             hold_pct: 50,
-            micro: [16, 32],
+            micro: [16, 32, 128],
             stealth: true,
         };
         let [gconf, currents, chop] = config_datagrams(0, &cfg).unwrap();
@@ -287,6 +289,11 @@ mod tests {
         let ch = CHOPCONF::from(data(&chop));
         assert!(!ch.vsense());
         assert_eq!(ch.mres().number_of_microsteps(), 32);
+
+        // The cross slide is the Z socket, which straps to address 1.
+        let [gconf, _, chop] = config_datagrams(2, &cfg).unwrap();
+        assert_eq!(gconf[1], 1);
+        assert_eq!(CHOPCONF::from(data(&chop)).mres().number_of_microsteps(), 128);
     }
 
     #[test]
@@ -296,7 +303,7 @@ mod tests {
         // protection runs. None is ours to set, and all of them ride on
         // the register defaults, so a change of those must fail here
         // rather than on the machine.
-        let cfg = DriverConfig { ma: [800, 800], hold_pct: 50, micro: [256, 256], stealth: true };
+        let cfg = DriverConfig { ma: [800, 800, 800], hold_pct: 50, micro: [256, 256, 256], stealth: true };
         let [gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
         let g = GCONF::from(data(&gconf));
         assert!(!g.internal_rsense(), "the driver would ignore the sense resistors");
@@ -313,19 +320,20 @@ mod tests {
     fn a_refused_axis_says_which_one() {
         assert_eq!(refused_text(0).as_str(), "tmc R addr0 refused config, retrying");
         assert_eq!(refused_text(1).as_str(), "tmc A addr2 refused config, retrying");
+        assert_eq!(refused_text(2).as_str(), "tmc Z addr1 refused config, retrying");
     }
 
     #[test]
     fn spread_cycle_and_untouched_axes() {
         let cfg = DriverConfig {
-            ma: [0, 600],
+            ma: [0, 600, 600],
             hold_pct: 30,
-            micro: [16, 12],
+            micro: [16, 12, 16],
             stealth: false,
         };
         assert!(config_datagrams(0, &cfg).is_none());
         assert!(config_datagrams(1, &cfg).is_none());
-        let cfg = DriverConfig { micro: [16, 16], ..cfg };
+        let cfg = DriverConfig { micro: [16, 16, 16], ..cfg };
         let [gconf, ..] = config_datagrams(1, &cfg).unwrap();
         assert!(GCONF::from(data(&gconf)).en_spread_cycle());
     }
@@ -371,6 +379,7 @@ mod tests {
         let reply = Reply { ifcnt: 3, micro: 256, status: 0x8000_0000 };
         assert_eq!(report_text(0, Some(reply)).as_str(), "tmc R addr0 ifcnt=3 micro=256 status=0x80000000");
         assert_eq!(report_text(1, None).as_str(), "tmc A addr2 no reply, is motor power on");
+        assert_eq!(report_text(2, Some(reply)).as_str(), "tmc Z addr1 ifcnt=3 micro=256 status=0x80000000");
         let strapped = Reply { ifcnt: 0, micro: 8, status: 0 };
         assert_eq!(report_text(0, Some(strapped)).as_str(), "tmc R addr0 ifcnt=0 micro=8 status=0x00000000");
     }
@@ -380,7 +389,7 @@ mod tests {
         // What each axis reports when its configuration landed, and what
         // the sockets strap to when it did not.
         let asked = |micro: u32| {
-            let cfg = DriverConfig { ma: [800, 800], hold_pct: 50, micro: [micro, micro], stealth: true };
+            let cfg = DriverConfig { ma: [800; 3], hold_pct: 50, micro: [micro; 3], stealth: true };
             let [_, _, chop] = config_datagrams(0, &cfg).unwrap();
             micro_of(data(&chop))
         };

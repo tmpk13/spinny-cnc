@@ -59,6 +59,24 @@ describe("event parsing", () => {
         expect(parseEvent(JSON.stringify({ type: "message", level: "info", text: "hi" }))).toEqual({ type: "message", data: { level: "info", text: "hi" } });
     });
 
+    test("a flattened state frame keeps the cross slide", () => {
+        const machine = {
+            state: "Jog",
+            alarm: null,
+            joint: { r: 1, a: 2, z: 0.25 },
+            board: { x: 1, y: 0 },
+            rate: 0,
+            laser: 0,
+            mode: "dyn",
+            enabled: true,
+            queue: { planner: 32, lines: 16 },
+        };
+        const frame = JSON.stringify({ type: "state", connected: true, url: null, firmware: null, machine, run: null });
+        const event = parseEvent(frame);
+        expect(event?.type).toBe("state");
+        expect(event?.type === "state" ? event.data.machine?.joint : null).toEqual({ r: 1, a: 2, z: 0.25 });
+    });
+
     test("junk is ignored", () => {
         expect(parseEvent("not json")).toBeNull();
         expect(parseEvent(JSON.stringify({ nope: 1 }))).toBeNull();

@@ -105,7 +105,7 @@ impl Client {
     }
 }
 
-/// Fields of `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1>`.
+/// Fields of `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>`.
 fn status_fields(status: &str) -> Vec<String> {
     assert!(status.starts_with('<') && status.ends_with('>'), "{status}");
     status[1..status.len() - 1].split('|').map(|s| s.to_string()).collect()
@@ -116,6 +116,13 @@ fn joint(status: &str) -> (f64, f64) {
     let joint = fields[1].strip_prefix("J:").expect("J field");
     let (r, a) = joint.split_once(',').expect("two numbers");
     (r.parse().expect("radius"), a.parse().expect("angle"))
+}
+
+/// The cross slide position, from the last field.
+fn slide(status: &str) -> f64 {
+    let fields = status_fields(status);
+    let z = fields.last().expect("a field").strip_prefix("Z:").expect("Z field");
+    z.parse().expect("cross slide")
 }
 
 #[derive(Debug)]
@@ -171,10 +178,11 @@ fn a_quarter_circle_cut_runs_and_lands_where_it_was_asked_to() {
     // The status line carries every documented field while the job runs.
     let running = client.status();
     let fields = status_fields(&running);
-    assert_eq!(fields.len(), 7, "{running}");
+    assert_eq!(fields.len(), 8, "{running}");
     assert!(fields[2].starts_with("V:") && fields[3].starts_with("L:"), "{running}");
     assert!(fields[4].starts_with("Q:") && fields[5].starts_with("M:"), "{running}");
     assert_eq!(fields[6], "E:1", "the motors are on while it cuts");
+    assert_eq!(fields[7], "Z:0.000", "the cross slide is the last field");
 
     let idle = client.wait_for("Idle");
     let (r, a) = joint(&idle);
@@ -246,6 +254,37 @@ fn realtime_bytes_stop_the_machine_and_a_reset_raises_an_alarm() {
     assert_eq!(client.send("unlock").last().map(String::as_str), Some("ok"));
     client.wait_for("Idle");
     assert_eq!(client.send("go R1").last().map(String::as_str), Some("ok"));
+}
+
+#[test]
+fn the_cross_slide_jogs_on_its_own_and_lands_where_it_was_asked_to() {
+    let server = start("slide");
+    let mut client = Client::connect(&server);
+    assert!(client.line().starts_with("[spinny v"));
+
+    // The slide is coarse, so a whole millimetre of it is quick.
+    assert_eq!(client.send("$z_steps=256").last().map(String::as_str), Some("ok"));
+    assert_eq!(client.send("$jog_z=600").last().map(String::as_str), Some("ok"));
+    assert_eq!(client.send("set Z0").last().map(String::as_str), Some("ok"));
+    assert_eq!(slide(&client.status()), 0.0);
+
+    assert_eq!(client.send("jog Z1.5").last().map(String::as_str), Some("ok"));
+    let moving = client.wait_for("Jog");
+    assert_eq!(status_fields(&moving)[3], "L:0", "the beam is off for a Z jog");
+    let idle = client.wait_for("Idle");
+    assert_eq!(slide(&idle), 1.5, "{idle}");
+    // The joints stayed where they were.
+    assert_eq!(joint(&idle), (0.0, 0.0));
+
+    // Absolute, then back, and a line that mixes Z with a joint.
+    assert_eq!(client.send("jogto Z-0.5").last().map(String::as_str), Some("ok"));
+    assert_eq!(slide(&client.wait_for("Idle")), -0.5);
+    assert_eq!(
+        client.send("jog Z1 R1").last().map(String::as_str),
+        Some("error:2 bad word"),
+        "the cross slide is never interpolated with a joint"
+    );
+    assert_eq!(slide(&client.status()), -0.5);
 }
 
 #[test]

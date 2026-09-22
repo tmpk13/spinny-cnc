@@ -130,6 +130,57 @@ describe("mock machine motion", () => {
         expect(machine.laser).toBe(0);
     });
 
+    test("the cross slide runs at jog_z with nothing else moving", () => {
+        const machine = new MockMachine();
+        machine.slideJog(0.5, null);
+        expect(machine.state).toBe("Jog");
+        // 0.5 mm at jog_z, 120 mm/min, is a quarter second.
+        stepped(machine, 0.125);
+        expect(machine.z).toBeCloseTo(0.25, 6);
+        expect(machine.joint).toEqual({ r: 0, a: 0 });
+        expect(machine.laser).toBe(0);
+        // Nothing joins it while it runs.
+        expect(() => machine.jog(1, 0, null)).toThrow();
+        stepped(machine, 0.125);
+        machine.advance(0.01);
+        expect(machine.z).toBeCloseTo(0.5, 9);
+        expect(machine.state).toBe("Idle");
+        expect(machine.enabled).toBe(true);
+        // A feed is capped by z_rate; half a mm at 60 mm/min is half a second.
+        machine.slideTo(0, 60);
+        stepped(machine, 0.25);
+        expect(machine.z).toBeCloseTo(0.25, 6);
+        stepped(machine, 0.26);
+        expect(machine.z).toBeCloseTo(0, 9);
+        // And it is taken in Idle only.
+        machine.jog(10, 0, null);
+        expect(() => machine.slideJog(0.5, null)).toThrow();
+    });
+
+    test("a slide jog is cancelable and the status carries Z", () => {
+        const machine = new MockMachine();
+        machine.slideJog(1, null);
+        stepped(machine, 0.25);
+        machine.hold();
+        expect(machine.state).toBe("Hold");
+        stepped(machine, 1);
+        expect(machine.z).toBeCloseTo(0.5, 6);
+        machine.resume();
+        expect(machine.state).toBe("Jog");
+        machine.jogCancel();
+        expect(machine.state).toBe("Idle");
+        expect(machine.z).toBeCloseTo(0.5, 6);
+        expect(statusLine(machine)).toBe("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.500>");
+        machine.setPosition({ z: 0 });
+        expect(machine.z).toBe(0);
+        expect(machine.status().joint).toEqual({ r: 0, a: 0, z: 0 });
+        // A reset while the slide runs alarms like any other motion.
+        machine.slideJog(1, null);
+        machine.reset();
+        expect(machine.state).toBe("Alarm");
+        expect(machine.slide).toBeNull();
+    });
+
     test("queue accounting matches the status line", () => {
         const machine = new MockMachine();
         for (let i = 0; i < 40; i++) {
@@ -137,7 +188,7 @@ describe("mock machine motion", () => {
         }
         expect(machine.queueFree()).toEqual({ planner: 0, lines: 8 });
         expect(machine.waitingLines()).toBe(8);
-        expect(statusLine(machine)).toBe("<Run|J:0.000,0.0000|V:0|L:0|Q:0,8|M:dyn|E:1>");
+        expect(statusLine(machine)).toBe("<Run|J:0.000,0.0000|V:0|L:0|Q:0,8|M:dyn|E:1|Z:0.000>");
         for (let i = 0; i < 8; i++) {
             machine.cut(50 + i, 0, 100, 10);
         }
@@ -174,6 +225,29 @@ describe("mock backend", () => {
         expect(consoleLines().slice(-2)).toEqual(["tx jog R1.000", "rx ok"]);
         await backend.jog({ kind: "joint", da: 90, feed: 100 });
         expect(consoleLines().slice(-2)).toEqual(["tx jog A90.0000 F100", "rx ok"]);
+    });
+
+    test("a cross slide move is one line of its own", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.jog({ kind: "joint", dz: 0.05 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jog Z0.050", "rx ok"]);
+        backend.step(0.1);
+        expect(backend.machine.z).toBeCloseTo(0.05, 9);
+        expect(backend.snapshot().machine?.joint.z).toBeCloseTo(0.05, 9);
+        await backend.goto({ kind: "joint", z: -0.2 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto Z-0.200", "rx ok"]);
+        backend.step(0.5);
+        expect(backend.machine.z).toBeCloseTo(-0.2, 9);
+        // R and A still go together; Z is declared on a line of its own.
+        await backend.setPosition({ r: 0, a: 0, z: 0 });
+        expect(consoleLines().slice(-4)).toEqual(["tx set R0 A0", "rx ok", "tx set Z0", "rx ok"]);
+        expect(backend.machine.z).toBe(0);
+        // The command line refuses the axes on one line, as the firmware does.
+        expect(await backend.command("jog Z1 R1")).toEqual(["error:2 bad word or number"]);
+        expect(await backend.command("jog Z1")).toEqual(["ok"]);
+        await backend.jogCancel();
+        expect(backend.machine.state).toBe("Idle");
     });
 
     test("a board jog through the axis is radial in, turn, radial out", async () => {

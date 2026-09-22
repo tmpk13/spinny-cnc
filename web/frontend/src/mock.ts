@@ -44,6 +44,10 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     r_jerk: 3,
     a_jerk: 10,
     r_max: 0,
+    z_steps: 256,
+    z_rate: 1000,
+    z_accel: 50,
+    jog_z: 120,
     jog_r: 600,
     jog_a: 720,
     dir_invert: 0,
@@ -60,6 +64,8 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     tmc_hold_pct: 50,
     tmc_r_micro: 16,
     tmc_a_micro: 16,
+    tmc_z_ma: 800,
+    tmc_z_micro: 16,
     tmc_stealth: 1,
 };
 
@@ -73,9 +79,13 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "r_jerk", unit: "mm/s", help: "allowed speed change at a corner" },
     { name: "a_jerk", unit: "deg/s", help: "allowed speed change at a corner" },
     { name: "r_max", unit: "mm", help: "soft limit, 0 = off" },
+    { name: "z_steps", unit: "steps/mm", help: "cross slide motor" },
+    { name: "z_rate", unit: "mm/min", help: "max cross slide rate" },
+    { name: "z_accel", unit: "mm/s^2", help: "cross slide acceleration" },
+    { name: "jog_z", unit: "mm/min", help: "jog rate without F" },
     { name: "jog_r", unit: "mm/min", help: "jog rate without F" },
     { name: "jog_a", unit: "deg/min", help: "jog rate without F" },
-    { name: "dir_invert", unit: "mask", help: "bit 0 radius, bit 1 table" },
+    { name: "dir_invert", unit: "mask", help: "bit 0 radius, bit 1 table, bit 2 cross slide" },
     { name: "en_invert", unit: "0/1", help: "1 = enable pin active high" },
     { name: "idle_ms", unit: "ms", help: "disable motors after idle, 0 = never" },
     { name: "step_us", unit: "us", help: "step pulse width" },
@@ -89,6 +99,8 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tmc_hold_pct", unit: "%", help: "hold current as a share of run" },
     { name: "tmc_r_micro", unit: "", help: "microsteps" },
     { name: "tmc_a_micro", unit: "", help: "microsteps" },
+    { name: "tmc_z_ma", unit: "mA", help: "cross slide run current" },
+    { name: "tmc_z_micro", unit: "", help: "microsteps" },
     { name: "tmc_stealth", unit: "0/1", help: "stealthChop, else spreadCycle" },
 ];
 
@@ -112,6 +124,14 @@ interface Active {
     elapsed: number;
 }
 
+/** A cross slide move: it owns the machine on its own until it ends. */
+interface Slide {
+    from: number;
+    to: number;
+    seconds: number;
+    elapsed: number;
+}
+
 export class MachineError extends Error {
     readonly code: number;
 
@@ -126,6 +146,8 @@ export class MachineError extends Error {
 export class MockMachine {
     settings: Record<string, number> = { ...DEFAULT_SETTINGS };
     joint: Joint = { r: 0, a: 0 };
+    /** Cross slide position in mm. */
+    z = 0;
     state: MachineState = "Idle";
     alarm: number | null = null;
     mode: Mode = "dyn";
@@ -136,6 +158,8 @@ export class MockMachine {
     rate = 0;
     queue: Move[] = [];
     active: Active | null = null;
+    /** The cross slide move in progress; nothing else runs beside it. */
+    slide: Slide | null = null;
     /** Seconds left on a constant beam; 0 when off. */
     beamSeconds = 0;
 
@@ -172,7 +196,7 @@ export class MockMachine {
         return {
             state: this.state,
             alarm: this.alarm,
-            joint: { ...this.joint },
+            joint: { ...this.joint, z: this.z },
             board: boardOfJoint(this.joint),
             rate: this.rate,
             laser: this.laser,
@@ -195,6 +219,10 @@ export class MockMachine {
     /** Queues a move; the firmware refuses motion in Hold and Alarm, and jogs outside Idle/Jog. */
     push(move: Move): void {
         if (this.state === "Alarm" || this.state === "Hold") {
+            throw new MachineError(5, "not allowed in this state");
+        }
+        if (this.slide !== null) {
+            // The cross slide moves on its own; nothing joins it.
             throw new MachineError(5, "not allowed in this state");
         }
         if (move.kind === "jog" && this.state === "Run") {
@@ -233,6 +261,24 @@ export class MockMachine {
     cut(r: number | null, a: number | null, feed: number, power: number): void {
         const from = this.endpoint();
         this.push({ kind: "cut", target: { r: r ?? from.r, a: a ?? from.a }, feed, power, group: -1 });
+    }
+
+    /** Sends the cross slide to `z`; the firmware takes it in Idle only. */
+    slideTo(z: number, feed: number | null): void {
+        this.requireIdle();
+        const limit = this.settings["z_rate"] ?? 560;
+        const rate = feed !== null && feed > 0 ? Math.min(feed, limit) : this.settings["jog_z"] ?? 120;
+        this.slide = { from: this.z, to: z, seconds: (Math.abs(z - this.z) / rate) * 60, elapsed: 0 };
+        this.state = "Jog";
+        this.enabled = true;
+        // The beam is off throughout, and a board move has no speed here.
+        this.laser = 0;
+        this.beamSeconds = 0;
+        this.rate = 0;
+    }
+
+    slideJog(dz: number, feed: number | null): void {
+        this.slideTo(this.z + dz, feed);
     }
 
     private secondsFor(move: Move, from: Joint): number {
@@ -280,6 +326,10 @@ export class MockMachine {
         if (this.state === "Hold" || this.state === "Alarm") {
             return;
         }
+        if (this.slide) {
+            this.advanceSlide(this.slide, dt);
+            return;
+        }
         let remaining = dt;
         while (remaining > 0) {
             if (!this.active) {
@@ -317,6 +367,17 @@ export class MockMachine {
         }
     }
 
+    private advanceSlide(slide: Slide, dt: number): void {
+        slide.elapsed = Math.min(slide.seconds, slide.elapsed + dt);
+        const t = slide.seconds <= 1e-9 ? 1 : slide.elapsed / slide.seconds;
+        this.z = slide.from + (slide.to - slide.from) * t;
+        if (slide.elapsed >= slide.seconds - 1e-9) {
+            this.z = slide.to;
+            this.slide = null;
+            this.state = "Idle";
+        }
+    }
+
     hold(): void {
         if (this.moving()) {
             this.state = "Hold";
@@ -329,6 +390,10 @@ export class MockMachine {
         if (this.state !== "Hold") {
             return;
         }
+        if (this.slide) {
+            this.state = "Jog";
+            return;
+        }
         const next = this.active?.move ?? this.queue[0];
         this.state = next ? (next.kind === "jog" ? "Jog" : "Run") : "Idle";
     }
@@ -338,6 +403,7 @@ export class MockMachine {
         const wasMoving = this.moving();
         this.queue = [];
         this.active = null;
+        this.slide = null;
         this.laser = 0;
         this.beamSeconds = 0;
         this.rate = 0;
@@ -351,6 +417,12 @@ export class MockMachine {
 
     jogCancel(): void {
         if (this.state !== "Jog") {
+            return;
+        }
+        if (this.slide) {
+            // The slide stops where it has got to, like any other jog.
+            this.slide = null;
+            this.state = "Idle";
             return;
         }
         this.queue = this.queue.filter((move) => move.kind !== "jog");
@@ -378,6 +450,7 @@ export class MockMachine {
             this.checkRadius(request.r);
         }
         this.joint = { r: request.r ?? this.joint.r, a: request.a ?? this.joint.a };
+        this.z = request.z ?? this.z;
     }
 
     beam(power: number, ms: number): void {
@@ -730,6 +803,11 @@ export class MockBackend implements Api, EventFeed {
         const feed = request.feed ?? null;
         const feedWord = feed !== null ? ` F${feed}` : "";
         if (request.kind === "joint") {
+            const dz = request.dz;
+            if (dz !== undefined) {
+                this.exchange(`jog Z${dz.toFixed(3)}${feedWord}`, () => this.machine.slideJog(dz, feed));
+                return;
+            }
             const dr = request.dr ?? 0;
             const da = request.da ?? 0;
             const words = [dr !== 0 ? `R${dr.toFixed(3)}` : "", da !== 0 ? `A${da.toFixed(4)}` : ""].filter((w) => w !== "");
@@ -754,6 +832,11 @@ export class MockBackend implements Api, EventFeed {
         const feed = request.feed ?? null;
         const feedWord = feed !== null ? ` F${feed}` : "";
         if (request.kind === "joint") {
+            const z = request.z;
+            if (z !== undefined) {
+                this.exchange(`jogto Z${z.toFixed(3)}${feedWord}`, () => this.machine.slideTo(z, feed));
+                return;
+            }
             const r = request.r ?? null;
             const a = request.a ?? null;
             const words = [r !== null ? `R${r.toFixed(3)}` : "", a !== null ? `A${a.toFixed(4)}` : ""].filter((w) => w !== "");
@@ -781,7 +864,15 @@ export class MockBackend implements Api, EventFeed {
             request.r !== undefined ? `R${request.r}` : "",
             request.a !== undefined ? `A${request.a}` : "",
         ].filter((w) => w !== "");
-        this.exchange(`set ${words.join(" ")}`.trim(), () => this.machine.setPosition(request));
+        if (words.length > 0) {
+            const { r, a } = request;
+            this.exchange(`set ${words.join(" ")}`, () => this.machine.setPosition({ r, a }));
+        }
+        if (request.z !== undefined) {
+            // Z is declared on a line of its own, as the firmware wants it.
+            const z = request.z;
+            this.exchange(`set Z${z}`, () => this.machine.setPosition({ z }));
+        }
     }
 
     async motors(enabled: boolean): Promise<void> {
@@ -877,11 +968,25 @@ export class MockBackend implements Api, EventFeed {
                     return ["ok"];
                 }
                 case "jog":
-                    machine.jog(get("R") ?? 0, get("A") ?? 0, get("F"));
+                case "jogto": {
+                    const z = get("Z");
+                    const absolute = keyword.toLowerCase() === "jogto";
+                    if (z !== null) {
+                        if (get("R") !== null || get("A") !== null) {
+                            return ["error:2 bad word or number"];
+                        }
+                        if (absolute) {
+                            machine.slideTo(z, get("F"));
+                        } else {
+                            machine.slideJog(z, get("F"));
+                        }
+                    } else if (absolute) {
+                        machine.jogTo(get("R"), get("A"), get("F"));
+                    } else {
+                        machine.jog(get("R") ?? 0, get("A") ?? 0, get("F"));
+                    }
                     return ["ok"];
-                case "jogto":
-                    machine.jogTo(get("R"), get("A"), get("F"));
-                    return ["ok"];
+                }
                 case "dwell":
                     return get("T") === null ? ["error:3 missing word"] : ["ok"];
                 case "mode": {
@@ -906,11 +1011,18 @@ export class MockBackend implements Api, EventFeed {
                     const position: PositionRequest = {};
                     const r = get("R");
                     const a = get("A");
+                    const z = get("Z");
+                    if (z !== null && (r !== null || a !== null)) {
+                        return ["error:2 bad word or number"];
+                    }
                     if (r !== null) {
                         position.r = r;
                     }
                     if (a !== null) {
                         position.a = a;
+                    }
+                    if (z !== null) {
+                        position.z = z;
                     }
                     machine.setPosition(position);
                     return ["ok"];
@@ -1244,5 +1356,5 @@ export function formatMove(move: Move): string {
 export function statusLine(machine: MockMachine): string {
     const free = machine.queueFree();
     const state = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? 1}` : machine.state;
-    return `<${state}|J:${machine.joint.r.toFixed(3)},${machine.joint.a.toFixed(4)}|V:${Math.round(machine.rate)}|L:${Math.round(machine.laser)}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}>`;
+    return `<${state}|J:${machine.joint.r.toFixed(3)},${machine.joint.a.toFixed(4)}|V:${Math.round(machine.rate)}|L:${Math.round(machine.laser)}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${machine.z.toFixed(3)}>`;
 }

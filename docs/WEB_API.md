@@ -40,7 +40,7 @@ State snapshot:
 | Method and path | Body |
 | --- | --- |
 | `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `{"kind": "joint", "dz": 0.5}` moves the cross slide, which cannot be combined with `dr` or `da` |
-| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute |
+| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r` or `a` |
 | `POST /api/jog/cancel` | |
 | `POST /api/position` | `{"r": 0}`, `{"a": 0}` and/or `{"z": 0}`: declare the current position |
 | `POST /api/motors` | `{"enabled": false}` |

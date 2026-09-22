@@ -51,3 +51,14 @@
 - `spinny-center` (2026-09-21): a burn that separates the radius zero
   error from the rail's miss distance, four radial lines bounding a square
   of twice the latter around a ring centered on the axis.
+- Cross slide in the web interface (2026-09-21): `Z` parsed from the status
+  line (zero on a firmware without the field), `jog`/`jogto Z` lines that
+  never carry `R` or `A`, `dz`/`z` on the jog, goto and position routes, and
+  a setup control in the jog panel with its own small steps, a zeroing
+  confirm and the position in the readout. The firmware side lands
+  separately.
+- Cross slide in the firmware (2026-09-21): `z_*`, `jog_z` and `tmc_z_*`
+  settings with a blob version bump, `Z` on `jog`/`jogto`/`set` and refused
+  beside `R` or `A`, a `slide` module with its own polled trapezoid, `Jog`
+  state and `|Z:` in the status, the SKR Pico Z socket wired up and its
+  driver in the `$tmc` report, and a counting port in the simulator.

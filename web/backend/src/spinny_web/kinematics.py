@@ -305,6 +305,23 @@ class Streamer:
             raise ValueError("a radius cannot be negative")
         return self._joint_line("jogto", r, a, feed)
 
+    def slide_jog(self, dz: float, feed: float | None = None) -> str:
+        """`jog Z<mm>`: the cross slide is a setup axis and moves on its own."""
+        if dz == 0.0:
+            raise ValueError("a cross slide jog needs a distance")
+        return self._slide_line("jog", dz, feed)
+
+    def slide_goto(self, z: float, feed: float | None = None) -> str:
+        return self._slide_line("jogto", z, feed)
+
+    def _slide_line(self, keyword: str, z: float, feed: float | None) -> str:
+        # Z is never put on a line with R or A: the three are not
+        # interpolated together, so the firmware refuses the combination.
+        words = [f"Z{num(z, self.decimals)}"]
+        if feed:
+            words.append(f"F{num(feed)}")
+        return f"{keyword} {' '.join(words)}"
+
     def _joint_line(self, keyword: str, r: float | None, a: float | None, feed: float | None) -> str:
         words = []
         if r is not None and (keyword == "jogto" or r != 0.0):

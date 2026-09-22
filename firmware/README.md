@@ -6,11 +6,15 @@ and drives the laser so the power follows the speed actually reached. It
 knows nothing about boards: the web backend turns board geometry into
 short joint moves and streams them.
 
+A third axis, the cross slide `Z`, carries the rail across the table's
+rotation axis. It is a setup axis: it moves on its own, only from `Idle`,
+with the beam off, and it is never interpolated with `R` or `A`.
+
 The line protocol is [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
 | Crate | What |
 | --- | --- |
-| `core` | the controller: parser, settings, planner, stepper, machine state |
+| `core` | the controller: parser, settings, planner, stepper, cross slide, machine state |
 | `rp2040` | the BTT SKR Pico port: USB, step timer, laser PWM, TMC2209, flash |
 | `rp2040-logic` | the port's hardware-free arithmetic, so it tests on the host |
 | `virtual` | the core on a TCP socket with a virtual clock |
@@ -71,12 +75,15 @@ flowchart TB
         MACHINE --> PARSER[parser and settings]
         MACHINE --> PLANNER[planner: blocks, junctions, lookahead]
         MACHINE --> FRONT[stepper front: prep segments]
+        MACHINE --> SLIDE[slide: one trapezoid, cross slide only]
         PLANNER --> FRONT
         FRONT --> RING[(segment ring)]
         RING --> ISR[stepper isr: bresenham, duty]
         TIMER --> ISR
     end
     ISR --> PINS[step, dir, enable]
+    LOOP --> SLIDE
+    SLIDE --> ZPINS[cross slide step, dir]
     ISR --> PWM[laser duty]
     MACHINE --> REPORT[status, errors, banner] --> IO
 ```
@@ -85,3 +92,7 @@ The main loop fills the segment ring tens of milliseconds ahead, so a slow
 USB packet or a flash write cannot stretch a step. The interrupt only
 consumes the ring: it advances the Bresenham counters, pulses the pins and
 sets the duty for the segment it starts.
+
+The cross slide is deliberately outside all of that. It runs from the main
+loop, capped at 20 kHz, because it only ever moves alone, from rest, with
+the beam off, so nothing depends on when its pulses land.

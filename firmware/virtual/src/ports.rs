@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use spinny_core::hal::{LaserPort, Sink, StepPort, Store};
+use spinny_core::hal::{LaserPort, Sink, SlidePort, StepPort, Store};
 use spinny_core::AXES;
 
 /// Step and direction pins as counters. The position the machine reports
@@ -38,6 +38,25 @@ impl StepPort for Steppers {
 
     fn set_enable(&mut self, high: bool) {
         self.enable_level = Some(high);
+    }
+}
+
+/// The cross slide's step and direction pins as counters. Its motor
+/// enable is the one the `Steppers` port drives, as on the board.
+#[derive(Default)]
+pub struct Slide {
+    pub pulses: u64,
+    /// Direction pin level, `None` until it is first driven.
+    pub dir_level: Option<bool>,
+}
+
+impl SlidePort for Slide {
+    fn set_dir(&mut self, high: bool) {
+        self.dir_level = Some(high);
+    }
+
+    fn step(&mut self) {
+        self.pulses += 1;
     }
 }
 

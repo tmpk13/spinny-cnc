@@ -28,6 +28,10 @@ DEFAULT_SETTINGS = {
     "r_jerk": 3,
     "a_jerk": 10,
     "r_max": 0,
+    "z_steps": 256,
+    "z_rate": 1000,
+    "z_accel": 50,
+    "jog_z": 120,
     "jog_r": 600,
     "jog_a": 720,
     "dir_invert": 0,
@@ -44,6 +48,8 @@ DEFAULT_SETTINGS = {
     "tmc_hold_pct": 50,
     "tmc_r_micro": 16,
     "tmc_a_micro": 16,
+    "tmc_z_ma": 800,
+    "tmc_z_micro": 16,
     "tmc_stealth": 1,
 }
 
@@ -73,6 +79,8 @@ class FakeSerial:
         self.realtime_bytes: list[int] = []
         self.max_outstanding = 0
         self.joint = [0.0, 0.0]
+        # The cross slide, which moves on its own and never with R or A.
+        self.z = 0.0
         self.mode = "dyn"
         self.enabled = False
         self.laser = 0
@@ -178,7 +186,8 @@ class FakeSerial:
         laser = self.laser if moving else 0
         return (
             f"<{self.state()}|J:{r:.3f},{a:.4f}|V:{rate}|L:{laser}"
-            f"|Q:{self.blocks},{self.credits - waiting}|M:{self.mode}|E:{int(self.enabled)}>"
+            f"|Q:{self.blocks},{self.credits - waiting}|M:{self.mode}|E:{int(self.enabled)}"
+            f"|Z:{self.z:.3f}>"
         )
 
     def banner(self) -> str:
@@ -230,6 +239,15 @@ class FakeSerial:
                 return ["error:5 not now"]
             r = values.get("R")
             a = values.get("A")
+            z = values.get("Z")
+            if z is not None:
+                if keyword not in ("jog", "jogto") or r is not None or a is not None:
+                    return ["error:2 bad word"]
+                self.z = self.z + z if keyword == "jog" else z
+                self.jogging = True
+                self.enabled = True
+                self.busy_until = max(self.busy_until, time.monotonic()) + self.move_time
+                return ["ok"]
             if keyword == "jog":
                 r = self.joint[0] + r if r is not None else None
                 a = self.joint[1] + a if a is not None else None
@@ -264,10 +282,14 @@ class FakeSerial:
             self.laser = int(values["S"])
             return ["ok"]
         if keyword == "set":
+            if "Z" in values and ("R" in values or "A" in values):
+                return ["error:2 bad word"]
             if "R" in values:
                 self.joint[0] = values["R"]
             if "A" in values:
                 self.joint[1] = values["A"]
+            if "Z" in values:
+                self.z = values["Z"]
             return ["ok"]
         if keyword in ("enable", "disable"):
             self.enabled = keyword == "enable"

@@ -25,6 +25,12 @@ export interface Joint {
     a: number;
 }
 
+/** What the machine reports: the joint pair and the cross slide. */
+export interface JointPosition extends Joint {
+    /** Cross slide in mm: the setup axis that carries the rail across the rotation axis. */
+    z: number;
+}
+
 /** Board position in mm with the rotation axis at the origin. */
 export interface Board {
     x: number;
@@ -39,7 +45,7 @@ export interface Queue {
 export interface Machine {
     state: MachineState;
     alarm: number | null;
-    joint: Joint;
+    joint: JointPosition;
     board: Board;
     /** Surface speed of the move in progress, mm/min. */
     rate: number;
@@ -58,17 +64,23 @@ export interface Snapshot {
     run: Progress | null;
 }
 
+// The cross slide is a setup axis: it moves alone, so `dz` and `z` are their
+// own shape and the never members keep them off a request that carries the
+// radius or the angle.
 export type JogRequest =
-    | { kind: "joint"; dr?: number; da?: number; feed?: number | null }
+    | { kind: "joint"; dr?: number; da?: number; dz?: never; feed?: number | null }
+    | { kind: "joint"; dz: number; dr?: never; da?: never; feed?: number | null }
     | { kind: "board"; dx?: number; dy?: number; feed?: number | null };
 
 export type GotoRequest =
-    | { kind: "joint"; r?: number; a?: number; feed?: number | null }
+    | { kind: "joint"; r?: number; a?: number; z?: never; feed?: number | null }
+    | { kind: "joint"; z: number; r?: never; a?: never; feed?: number | null }
     | { kind: "board"; x?: number; y?: number; feed?: number | null };
 
 export interface PositionRequest {
     r?: number;
     a?: number;
+    z?: number;
 }
 
 export type RealtimeAction = "hold" | "resume" | "reset" | "cancel" | "status";

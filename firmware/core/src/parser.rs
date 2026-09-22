@@ -39,11 +39,14 @@ pub enum Command<'a> {
     Cut { target: [Option<f32>; AXES], feed: Option<f32>, power: Option<f32> },
     /// `absolute` for `jogto`.
     Jog { target: [Option<f32>; AXES], feed: Option<f32>, absolute: bool },
+    /// The cross slide on its own; it is never interpolated with `R` or `A`.
+    JogZ { target: f32, feed: Option<f32>, absolute: bool },
     Dwell { ms: u32, power: Option<f32> },
     Mode(PowerMode),
     LaserOn { power: f32, ms: Option<u32> },
     LaserOff,
     SetPosition { value: [Option<f32>; AXES] },
+    SetSlide { value: f32 },
     Enable(bool),
     Unlock,
     Version,
@@ -143,6 +146,7 @@ pub fn number(text: &str) -> Option<f32> {
 struct Words {
     r: Option<f32>,
     a: Option<f32>,
+    z: Option<f32>,
     f: Option<f32>,
     s: Option<f32>,
     t: Option<f32>,
@@ -166,6 +170,7 @@ impl Words {
             let slot = match letter {
                 b'R' => &mut words.r,
                 b'A' => &mut words.a,
+                b'Z' => &mut words.z,
                 b'F' => &mut words.f,
                 b'S' => &mut words.s,
                 b'T' => &mut words.t,
@@ -188,8 +193,17 @@ impl Words {
 
     /// At least one axis word.
     fn need_axis(&self) -> Result<(), Error> {
-        if self.r.is_none() && self.a.is_none() {
+        if self.r.is_none() && self.a.is_none() && self.z.is_none() {
             return Err(Error::MissingWord);
+        }
+        Ok(())
+    }
+
+    /// The cross slide takes a line to itself: it is a separate mechanism
+    /// and is never interpolated with the joints.
+    fn check_slide_alone(&self) -> Result<(), Error> {
+        if self.z.is_some() && (self.r.is_some() || self.a.is_some()) {
+            return Err(Error::BadWord);
         }
         Ok(())
     }
@@ -301,13 +315,19 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
         }
         key @ (b"jog" | b"jogto") => {
             let absolute = key == b"jogto";
-            let words = Words::read(tokens, b"RAF")?;
+            let words = Words::read(tokens, b"RAZF")?;
             words.need_axis()?;
+            words.check_slide_alone()?;
+            words.check_feed()?;
+            if let Some(target) = words.z {
+                // The slide has no zero to stay on the far side of, so an
+                // absolute Z is as free as a relative one.
+                return Ok(Command::JogZ { target, feed: words.f, absolute });
+            }
             // A relative jog may carry a negative R: it is a distance.
             if absolute {
                 words.check_radius()?;
             }
-            words.check_feed()?;
             Ok(Command::Jog { target: words.target(), feed: words.f, absolute })
         }
         b"dwell" => {
@@ -344,8 +364,12 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             Ok(Command::LaserOn { power, ms })
         }
         b"set" => {
-            let words = Words::read(tokens, b"RA")?;
+            let words = Words::read(tokens, b"RAZ")?;
             words.need_axis()?;
+            words.check_slide_alone()?;
+            if let Some(value) = words.z {
+                return Ok(Command::SetSlide { value });
+            }
             words.check_radius()?;
             Ok(Command::SetPosition { value: words.target() })
         }
@@ -517,6 +541,48 @@ mod tests {
         assert_eq!(parse("jog R5 S1"), Err(Error::BadWord));
         assert_eq!(parse("jog R5 R6"), Err(Error::BadWord));
         assert_eq!(parse("jog R5 T6"), Err(Error::BadWord));
+    }
+
+    #[test]
+    fn slide_jog_forms() {
+        assert_eq!(parse("jog Z1"), Ok(Command::JogZ { target: 1.0, feed: None, absolute: false }));
+        assert_eq!(parse("jog Z-0.5"), Ok(Command::JogZ { target: -0.5, feed: None, absolute: false }));
+        assert_eq!(
+            parse("jog Z2 F60"),
+            Ok(Command::JogZ { target: 2.0, feed: Some(60.0), absolute: false })
+        );
+        assert_eq!(parse("jogto Z0"), Ok(Command::JogZ { target: 0.0, feed: None, absolute: true }));
+        // The slide crosses the rotation axis, so an absolute Z may be
+        // negative where an absolute R may not.
+        assert_eq!(
+            parse("JOGTO z-3.25 f120"),
+            Ok(Command::JogZ { target: -3.25, feed: Some(120.0), absolute: true })
+        );
+        assert_eq!(parse("set Z0"), Ok(Command::SetSlide { value: 0.0 }));
+        assert_eq!(parse("SET z-1.5 ; found it"), Ok(Command::SetSlide { value: -1.5 }));
+    }
+
+    #[test]
+    fn the_slide_is_never_on_a_line_with_r_or_a() {
+        for line in [
+            "jog Z1 R1",
+            "jog R1 Z1",
+            "jog Z1 A90",
+            "jogto Z1 R2 A3",
+            "set Z0 R0",
+            "set R0 A0 Z0",
+        ] {
+            assert_eq!(parse(line), Err(Error::BadWord), "{line}");
+        }
+        // Everything else a Z line can get wrong answers as it did before.
+        assert_eq!(parse("jog Z1 Z2"), Err(Error::BadWord));
+        assert_eq!(parse("jog Z1 S100"), Err(Error::BadWord));
+        assert_eq!(parse("jog Z"), Err(Error::BadWord));
+        assert_eq!(parse("jog Z1 F0"), Err(Error::OutOfRange));
+        assert_eq!(parse("go Z1"), Err(Error::BadWord));
+        assert_eq!(parse("cut Z1 F100"), Err(Error::BadWord));
+        assert_eq!(parse("dwell T10 Z1"), Err(Error::BadWord));
+        assert_eq!(parse("laser S100 Z1"), Err(Error::BadWord));
     }
 
     #[test]

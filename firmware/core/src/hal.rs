@@ -11,6 +11,16 @@ pub trait StepPort {
     fn set_enable(&mut self, high: bool);
 }
 
+/// Step and direction pins for the cross slide. It moves alone and never
+/// under the beam, so it has no laser and no shared timing; the motor
+/// enable is `StepPort::set_enable`, which drives every driver together.
+pub trait SlidePort {
+    /// Pin level. Settled before the next pulse.
+    fn set_dir(&mut self, high: bool);
+    /// One pulse on the step pin, at least `step_us` wide.
+    fn step(&mut self);
+}
+
 /// The laser PWM output. Implementations may be shared between the step
 /// interrupt and the main loop, so a single register write per call.
 pub trait LaserPort {

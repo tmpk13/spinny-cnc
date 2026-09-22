@@ -19,7 +19,7 @@ use spinny_core::AXES;
 
 use crate::clock::Clock;
 use crate::inbox::{Inbound, Inbox};
-use crate::ports::{FileStore, Laser, OutBuf, Steppers};
+use crate::ports::{FileStore, Laser, OutBuf, Slide, Steppers};
 use crate::trace::{Command, Trace};
 
 /// Main loop period, as on the board.
@@ -35,6 +35,7 @@ pub struct Sim {
     machine: Machine<'static>,
     isr: Isr<'static>,
     port: Steppers,
+    slide: Slide,
     laser: Laser,
     store: FileStore,
     out: OutBuf,
@@ -64,6 +65,7 @@ impl Sim {
             machine: Machine::new(front, setup.settings),
             isr,
             port: Steppers::default(),
+            slide: Slide::default(),
             laser: Laser::default(),
             store: setup.store,
             out: OutBuf::default(),
@@ -169,6 +171,9 @@ impl Sim {
 
     fn poll(&mut self) {
         let now = self.clock.now();
+        // The cross slide is stepped from the main loop, as on the board,
+        // and before the poll that ends its jog.
+        self.machine.poll_slide(now, &mut self.slide);
         let kick = self.machine.poll(
             now,
             &mut self.port,
@@ -254,8 +259,14 @@ impl Sim {
             report::State::Alarm(code) => format!("Alarm:{code}"),
         };
         format!(
-            "{state} R{:.3} A{:.4} laser {} pulses {}/{}",
-            joint[0], joint[1], self.laser.duty, self.port.pulses[0], self.port.pulses[1],
+            "{state} R{:.3} A{:.4} Z{:.3} laser {} pulses {}/{}/{}",
+            joint[0],
+            joint[1],
+            self.machine.slide_position(),
+            self.laser.duty,
+            self.port.pulses[0],
+            self.port.pulses[1],
+            self.slide.pulses,
         )
     }
 }
@@ -344,7 +355,7 @@ mod tests {
         assert_eq!(count_answers(b"ok\n"), 1);
         assert_eq!(count_answers(b"ok\nok\nerror:4 out of range\n"), 3);
         assert_eq!(count_answers(b"[MSG:reset]\n[spinny v0.1.0 lines:16 blocks:32]\n"), 0);
-        assert_eq!(count_answers(b"<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0>\n"), 0);
+        assert_eq!(count_answers(b"<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>\n"), 0);
         // A settings listing answers once, after its value lines.
         assert_eq!(count_answers(b"r_steps=256\na_steps=888.889\nok\n"), 1);
     }

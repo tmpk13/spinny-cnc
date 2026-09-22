@@ -195,6 +195,20 @@ def test_joint_jogs_pass_straight_through():
         streamer.joint_goto(-1.0, 0.0)
 
 
+def test_cross_slide_lines_carry_z_alone():
+    streamer = Streamer()
+    assert streamer.slide_jog(0.05) == "jog Z0.05"
+    assert streamer.slide_jog(-0.5, 60.0) == "jog Z-0.5 F60"
+    assert streamer.slide_goto(0.0) == "jogto Z0"
+    assert streamer.slide_goto(1.25, 120.0) == "jogto Z1.25 F120"
+    # Rounded to the same resolution as a radius, and never a word beside R or A.
+    assert streamer.slide_jog(0.1234) == "jog Z0.123"
+    for line in (streamer.slide_jog(1.0), streamer.slide_goto(1.0)):
+        assert "R" not in line and "A" not in line
+    with pytest.raises(ValueError):
+        streamer.slide_jog(0.0)
+
+
 def test_split_at_axis():
     snap = 0.0005
     assert split_at_axis((1.0, 0.0), (2.0, 0.0), snap) == [(2.0, 0.0)]

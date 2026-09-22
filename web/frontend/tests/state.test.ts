@@ -57,6 +57,31 @@ describe("app state helpers", () => {
         expect(lines[lines.length - 1]?.text).toBe(`line ${CONSOLE_LIMIT + 9}`);
     });
 
+    test("a snapshot carries the cross slide with the other axes", () => {
+        const store = new Store<AppState>(initialState(false));
+        expect(store.get().snapshot.machine).toBeNull();
+        store.set({
+            snapshot: {
+                connected: true,
+                url: "/dev/ttyACM0",
+                firmware: { version: "0.1.0", lines: 16, blocks: 32 },
+                machine: {
+                    state: "Jog",
+                    alarm: null,
+                    joint: { r: 12.345, a: 90, z: -0.125 },
+                    board: { x: 0, y: 12.345 },
+                    rate: 0,
+                    laser: 0,
+                    mode: "dyn",
+                    enabled: true,
+                    queue: { planner: 32, lines: 16 },
+                },
+                run: null,
+            },
+        });
+        expect(store.get().snapshot.machine?.joint).toEqual({ r: 12.345, a: 90, z: -0.125 });
+    });
+
     test("toasts come and go", () => {
         const store = new Store<AppState>(initialState(true));
         const toast = pushToast(store, "error", "bad");

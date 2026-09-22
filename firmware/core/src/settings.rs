@@ -22,9 +22,17 @@ pub struct Settings {
     pub jerk: [f32; AXES],
     /// Radius soft limit, mm; 0 = off.
     pub r_max: f32,
+    /// Cross slide steps per mm.
+    pub z_steps: f32,
+    /// Cross slide rate, mm per minute.
+    pub z_rate: f32,
+    /// Cross slide acceleration, mm per second squared.
+    pub z_accel: f32,
+    /// Cross slide jog rate without an F word, mm per minute.
+    pub jog_z: f32,
     /// Jog rates without an F word, units per minute.
     pub jog_rate: [f32; AXES],
-    /// Bit i inverts axis i.
+    /// Bit 0 inverts the radius, bit 1 the table, bit 2 the cross slide.
     pub dir_invert: u8,
     /// Enable pin is active high.
     pub en_invert: bool,
@@ -44,6 +52,9 @@ pub struct Settings {
     pub tmc_ma: [u32; AXES],
     pub tmc_hold_pct: u32,
     pub tmc_micro: [u32; AXES],
+    /// Cross slide run current, mA; 0 leaves its driver untouched.
+    pub tmc_z_ma: u32,
+    pub tmc_z_micro: u32,
     pub tmc_stealth: bool,
 }
 
@@ -60,6 +71,12 @@ impl Default for Settings {
             accel: [50.0, 50.0],
             jerk: [3.0, 2.0],
             r_max: 0.0,
+            // The cross slide rides the same screw and driver as the
+            // radius, so it keeps the radius scale and rate.
+            z_steps: 10240.0,
+            z_rate: 560.0,
+            z_accel: 50.0,
+            jog_z: 120.0,
             jog_rate: [300.0, 200.0],
             dir_invert: 0,
             en_invert: false,
@@ -73,17 +90,21 @@ impl Default for Settings {
             tmc_ma: [800, 800],
             tmc_hold_pct: 50,
             tmc_micro: [256, 256],
+            tmc_z_ma: 800,
+            tmc_z_micro: 256,
             tmc_stealth: true,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 26] = [
+pub const NAMES: [&str; 32] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
-    "r_max", "jog_r", "jog_a", "dir_invert", "en_invert", "idle_ms", "step_us",
+    "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
+    "dir_invert", "en_invert", "idle_ms", "step_us",
     "laser_hz", "s_max", "s_min", "laser_invert", "laser_ms",
-    "tmc_r_ma", "tmc_a_ma", "tmc_hold_pct", "tmc_r_micro", "tmc_a_micro", "tmc_stealth",
+    "tmc_r_ma", "tmc_a_ma", "tmc_hold_pct", "tmc_r_micro", "tmc_a_micro",
+    "tmc_z_ma", "tmc_z_micro", "tmc_stealth",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,11 +130,14 @@ pub const BLOB_LEN: usize = 128;
 pub const FLOAT_MAX: f32 = 1.0e7;
 
 const MAGIC: [u8; 4] = *b"SPNY";
-const BLOB_VERSION: u8 = 1;
+/// Bumped whenever the field layout changes, so a blob written by an
+/// older firmware is thrown away rather than read as this layout.
+const BLOB_VERSION: u8 = 2;
 /// Bytes before the first field: magic and version.
 const HEADER_LEN: usize = MAGIC.len() + 1;
 /// Serialized size of the fields, in blob order.
-const FIELDS_LEN: usize = 4 * (2 + 2 + 2 + 2 + 1 + 2) + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4 * 2 + 4 + 4 * 2 + 1;
+const FIELDS_LEN: usize =
+    4 * (2 + 2 + 2 + 2 + 1 + 4 + 2) + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4 * 2 + 4 + 4 * 2 + 4 + 4 + 1;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -134,8 +158,8 @@ fn index_of(name: &str) -> Option<usize> {
 
 fn group(index: usize) -> Changed {
     match index {
-        0..=14 => Changed::Motion,
-        15..=19 => Changed::Laser,
+        0..=18 => Changed::Motion,
+        19..=23 => Changed::Laser,
         _ => Changed::Driver,
     }
 }
@@ -245,22 +269,28 @@ impl Settings {
             6 => Slot::Float(&mut self.jerk[R]),
             7 => Slot::Float(&mut self.jerk[A]),
             8 => Slot::Float(&mut self.r_max),
-            9 => Slot::Float(&mut self.jog_rate[R]),
-            10 => Slot::Float(&mut self.jog_rate[A]),
-            11 => Slot::Byte(&mut self.dir_invert),
-            12 => Slot::Flag(&mut self.en_invert),
-            13 => Slot::Int(&mut self.idle_ms),
-            14 => Slot::Int(&mut self.step_us),
-            15 => Slot::Int(&mut self.laser_hz),
-            16 => Slot::Float(&mut self.s_max),
-            17 => Slot::Float(&mut self.s_min),
-            18 => Slot::Flag(&mut self.laser_invert),
-            19 => Slot::Int(&mut self.laser_ms),
-            20 => Slot::Int(&mut self.tmc_ma[R]),
-            21 => Slot::Int(&mut self.tmc_ma[A]),
-            22 => Slot::Int(&mut self.tmc_hold_pct),
-            23 => Slot::Int(&mut self.tmc_micro[R]),
-            24 => Slot::Int(&mut self.tmc_micro[A]),
+            9 => Slot::Float(&mut self.z_steps),
+            10 => Slot::Float(&mut self.z_rate),
+            11 => Slot::Float(&mut self.z_accel),
+            12 => Slot::Float(&mut self.jog_z),
+            13 => Slot::Float(&mut self.jog_rate[R]),
+            14 => Slot::Float(&mut self.jog_rate[A]),
+            15 => Slot::Byte(&mut self.dir_invert),
+            16 => Slot::Flag(&mut self.en_invert),
+            17 => Slot::Int(&mut self.idle_ms),
+            18 => Slot::Int(&mut self.step_us),
+            19 => Slot::Int(&mut self.laser_hz),
+            20 => Slot::Float(&mut self.s_max),
+            21 => Slot::Float(&mut self.s_min),
+            22 => Slot::Flag(&mut self.laser_invert),
+            23 => Slot::Int(&mut self.laser_ms),
+            24 => Slot::Int(&mut self.tmc_ma[R]),
+            25 => Slot::Int(&mut self.tmc_ma[A]),
+            26 => Slot::Int(&mut self.tmc_hold_pct),
+            27 => Slot::Int(&mut self.tmc_micro[R]),
+            28 => Slot::Int(&mut self.tmc_micro[A]),
+            29 => Slot::Int(&mut self.tmc_z_ma),
+            30 => Slot::Int(&mut self.tmc_z_micro),
             _ => Slot::Flag(&mut self.tmc_stealth),
         }
     }
@@ -275,8 +305,12 @@ impl Settings {
             && self.accel.iter().all(|&v| positive(v))
             && self.jerk.iter().all(|&v| positive(v))
             && non_negative(self.r_max)
+            && positive(self.z_steps)
+            && positive(self.z_rate)
+            && positive(self.z_accel)
+            && positive(self.jog_z)
             && self.jog_rate.iter().all(|&v| positive(v))
-            && self.dir_invert <= 3
+            && self.dir_invert <= 7
             && (1..=20).contains(&self.step_us)
             && (100..=100_000).contains(&self.laser_hz)
             && positive(self.s_max)
@@ -284,8 +318,10 @@ impl Settings {
             && self.s_min <= self.s_max
             && (1..=60_000).contains(&self.laser_ms)
             && self.tmc_ma.iter().all(|&ma| ma <= 2000)
+            && self.tmc_z_ma <= 2000
             && self.tmc_hold_pct <= 100
             && self.tmc_micro.iter().all(|&m| microsteps(m))
+            && microsteps(self.tmc_z_micro)
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -362,6 +398,10 @@ impl Settings {
             w.f32(v);
         }
         w.f32(self.r_max);
+        w.f32(self.z_steps);
+        w.f32(self.z_rate);
+        w.f32(self.z_accel);
+        w.f32(self.jog_z);
         for v in self.jog_rate {
             w.f32(v);
         }
@@ -381,6 +421,8 @@ impl Settings {
         for v in self.tmc_micro {
             w.u32(v);
         }
+        w.u32(self.tmc_z_ma);
+        w.u32(self.tmc_z_micro);
         w.flag(self.tmc_stealth);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -413,6 +455,10 @@ impl Settings {
             *v = r.f32();
         }
         s.r_max = r.f32();
+        s.z_steps = r.f32();
+        s.z_rate = r.f32();
+        s.z_accel = r.f32();
+        s.jog_z = r.f32();
         for v in s.jog_rate.iter_mut() {
             *v = r.f32();
         }
@@ -432,6 +478,8 @@ impl Settings {
         for v in s.tmc_micro.iter_mut() {
             *v = r.u32();
         }
+        s.tmc_z_ma = r.u32();
+        s.tmc_z_micro = r.u32();
         s.tmc_stealth = r.flag()?;
         if !s.is_valid() {
             return None;
@@ -477,6 +525,10 @@ mod tests {
         r_jerk=3\n\
         a_jerk=2\n\
         r_max=0\n\
+        z_steps=10240\n\
+        z_rate=560\n\
+        z_accel=50\n\
+        jog_z=120\n\
         jog_r=300\n\
         jog_a=200\n\
         dir_invert=0\n\
@@ -493,6 +545,8 @@ mod tests {
         tmc_hold_pct=50\n\
         tmc_r_micro=256\n\
         tmc_a_micro=256\n\
+        tmc_z_ma=800\n\
+        tmc_z_micro=256\n\
         tmc_stealth=1\n";
 
     #[test]
@@ -502,7 +556,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 26> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 32> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -521,7 +575,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 26] = [
+        let table: [(&str, &str, &str, Changed); 32] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -531,9 +585,13 @@ mod tests {
             ("r_jerk", "2", "2", Changed::Motion),
             ("a_jerk", "12.125", "12.125", Changed::Motion),
             ("r_max", "60", "60", Changed::Motion),
+            ("z_steps", "640", "640", Changed::Motion),
+            ("z_rate", "900", "900", Changed::Motion),
+            ("z_accel", "25.5", "25.5", Changed::Motion),
+            ("jog_z", "60", "60", Changed::Motion),
             ("jog_r", "300", "300", Changed::Motion),
             ("jog_a", "360", "360", Changed::Motion),
-            ("dir_invert", "3", "3", Changed::Motion),
+            ("dir_invert", "7", "7", Changed::Motion),
             ("en_invert", "1", "1", Changed::Motion),
             ("idle_ms", "30000", "30000", Changed::Motion),
             ("step_us", "5", "5", Changed::Motion),
@@ -547,6 +605,8 @@ mod tests {
             ("tmc_hold_pct", "100", "100", Changed::Driver),
             ("tmc_r_micro", "256", "256", Changed::Driver),
             ("tmc_a_micro", "1", "1", Changed::Driver),
+            ("tmc_z_ma", "600", "600", Changed::Driver),
+            ("tmc_z_micro", "16", "16", Changed::Driver),
             ("tmc_stealth", "0", "0", Changed::Driver),
         ];
         let mut settings = Settings::default();
@@ -562,9 +622,13 @@ mod tests {
         }
         assert!(settings.is_valid());
         assert_eq!(settings.steps, [200.5, 888.8889]);
-        assert_eq!(settings.dir_invert, 3);
+        assert_eq!(settings.dir_invert, 7);
         assert!(settings.en_invert);
         assert_eq!(settings.tmc_micro, [256, 1]);
+        assert_eq!(settings.z_steps, 640.0);
+        assert_eq!(settings.jog_z, 60.0);
+        assert_eq!(settings.tmc_z_ma, 600);
+        assert_eq!(settings.tmc_z_micro, 16);
         assert!(!settings.tmc_stealth);
     }
 
@@ -622,7 +686,10 @@ mod tests {
 
     #[test]
     fn ranges_are_enforced() {
-        for name in ["r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk", "jog_r", "jog_a", "s_max"] {
+        for name in [
+            "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
+            "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a", "s_max",
+        ] {
             rejects(name, "0");
             rejects(name, "-1");
             rejects(name, "10000001");
@@ -632,9 +699,9 @@ mod tests {
         rejects("r_max", "-0.5");
         accepts("r_max", "0");
         accepts("r_max", "0.0");
-        rejects("dir_invert", "4");
+        rejects("dir_invert", "8");
         accepts("dir_invert", "0");
-        accepts("dir_invert", "3");
+        accepts("dir_invert", "7");
         accepts("idle_ms", "0");
         accepts("idle_ms", "4294967295");
         rejects("step_us", "0");
@@ -652,14 +719,14 @@ mod tests {
         rejects("laser_ms", "0");
         rejects("laser_ms", "60001");
         accepts("laser_ms", "1");
-        for name in ["tmc_r_ma", "tmc_a_ma"] {
+        for name in ["tmc_r_ma", "tmc_a_ma", "tmc_z_ma"] {
             rejects(name, "2001");
             accepts(name, "0");
             accepts(name, "2000");
         }
         rejects("tmc_hold_pct", "101");
         accepts("tmc_hold_pct", "0");
-        for name in ["tmc_r_micro", "tmc_a_micro"] {
+        for name in ["tmc_r_micro", "tmc_a_micro", "tmc_z_micro"] {
             for bad in ["0", "3", "12", "512", "255"] {
                 rejects(name, bad);
             }
@@ -692,7 +759,13 @@ mod tests {
         let mut settings = Settings::default();
         settings.set("a_steps", "888.8889").unwrap();
         settings.set("r_max", "55.5").unwrap();
-        settings.set("dir_invert", "2").unwrap();
+        settings.set("z_steps", "1280").unwrap();
+        settings.set("z_rate", "240").unwrap();
+        settings.set("z_accel", "12.5").unwrap();
+        settings.set("jog_z", "90").unwrap();
+        settings.set("tmc_z_ma", "450").unwrap();
+        settings.set("tmc_z_micro", "64").unwrap();
+        settings.set("dir_invert", "6").unwrap();
         settings.set("en_invert", "1").unwrap();
         settings.set("idle_ms", "120000").unwrap();
         settings.set("laser_hz", "20000").unwrap();
@@ -777,10 +850,35 @@ mod tests {
         // A flag byte that is neither 0 nor 1, behind a matching CRC.
         let mut blob = [0u8; BLOB_LEN];
         Settings::default().to_blob(&mut blob);
-        let en_invert_at = HEADER_LEN + 4 * 11 + 1;
+        let en_invert_at = HEADER_LEN + 4 * 15 + 1;
         blob[en_invert_at] = 2;
         let crc = crc32(&blob[..CRC_OFFSET]);
         blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), None);
+    }
+
+    #[test]
+    fn a_blob_from_an_older_layout_is_not_read_as_this_one() {
+        // Version 1 had no cross slide fields, so every field after the
+        // radius limit sat four words earlier. Read as this layout it
+        // would pass its CRC and hand back rates and currents that were
+        // never stored.
+        let mut blob = [0u8; BLOB_LEN];
+        Settings::default().to_blob(&mut blob);
+        blob[MAGIC.len()] = 1;
+        let crc = crc32(&blob[..CRC_OFFSET]);
+        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        assert_eq!(Settings::from_blob(&blob), None);
+    }
+
+    #[test]
+    fn the_cross_slide_fields_fit_the_blob() {
+        assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET, "{FIELDS_LEN} bytes of fields");
+        let mut blob = [0u8; BLOB_LEN];
+        Settings::default().to_blob(&mut blob);
+        // Every field lands where the writer says it does: the last one
+        // written is the stealth flag, just before the padding.
+        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - 1], 1);
+        assert!(blob[HEADER_LEN + FIELDS_LEN..CRC_OFFSET].iter().all(|&b| b == 0));
     }
 }

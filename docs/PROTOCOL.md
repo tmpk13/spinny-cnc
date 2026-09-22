@@ -49,23 +49,6 @@ keeps that axis where it is.
 | `jogto [R<mm>] [A<deg>] [F<mm/min>]` | absolute jog |
 | `dwell T<ms> [S<power>]` | wait after motion (`T` at most 600000); with `S` the laser is on at constant `S` for the dwell (a spot burn) |
 
-## The cross slide
-
-`Z` is the cross slide that carries the rail across the rotation axis. It
-is a setup axis: it never takes part in a cut, it moves on its own, and it
-is accepted only in `Idle`. Nothing else moves while it does, and the
-state is `Jog` until it stops.
-
-| Command | Effect |
-| --- | --- |
-| `jog Z<mm> [F<mm/min>]` | relative, at `jog_z` without `F` |
-| `jogto Z<mm> [F<mm/min>]` | absolute |
-| `set Z<mm>` | declare the position, as for `R` and `A` |
-
-`Z` cannot be combined with `R` or `A` on one line (`error:2`): the three
-are not interpolated together. `0x85` cancels a `Z` jog like any other.
-The beam is off throughout.
-
 Surface speed: the length of a joint move on the board is taken as
 `hypot(dr, r_mean * da_rad)` with `r_mean = (r0 + r1) / 2`. A move whose
 surface length is under 1 um (a turn on the axis) runs at the max rates with
@@ -84,6 +67,26 @@ planner caps the speed by whichever comes first, so a move commanded
 faster simply runs at the rate the axis can be stepped at, and under `mode
 dyn` the laser power follows it down. The ceiling in units per minute is
 `6000000 / steps`: at the defaults that is 586 mm/min and 422 deg/min.
+
+## The cross slide
+
+`Z` is the cross slide that carries the rail across the rotation axis. It
+is a setup axis: it never takes part in a cut, it moves on its own, and it
+is accepted only in `Idle`. Nothing else moves while it does, and the
+state is `Jog` until it stops.
+
+| Command | Effect |
+| --- | --- |
+| `jog Z<mm> [F<mm/min>]` | relative, at `jog_z` without `F` |
+| `jogto Z<mm> [F<mm/min>]` | absolute |
+| `set Z<mm>` | declare the position, as for `R` and `A` |
+
+`Z` cannot be combined with `R` or `A` on one line (`error:2`): the three
+are not interpolated together. `0x85` cancels a `Z` jog like any other.
+`!` also brakes it to a stop, but the state goes to `Idle` rather than
+`Hold`: a setup move has no queue behind it for `~` to take up. A reset
+stops it on the spot, and raises no alarm, because the slide counts its
+own steps and its position is still good. The beam is off throughout.
 
 ## Laser
 
@@ -207,5 +210,5 @@ ok
 go R0 A0
 ok
 ?
-<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1>
+<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:0.000>
 ```

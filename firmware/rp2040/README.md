@@ -2,8 +2,9 @@
 
 RP2040 firmware for the spinny laser. It runs the `spinny-core` control
 core on a BTT SKR Pico: the radius motor on the X socket, the rotary table
-on the Y socket, the laser TTL input from a PWM pin, and the line protocol
-of `docs/PROTOCOL.md` over USB CDC. No endstops, no homing.
+on the Y socket, the cross slide on the Z socket, the laser TTL input from
+a PWM pin, and the line protocol of `docs/PROTOCOL.md` over USB CDC. No
+endstops, no homing.
 
 ## Pins
 
@@ -11,8 +12,17 @@ of `docs/PROTOCOL.md` over USB CDC. No endstops, no homing.
 | --- | --- | --- |
 | Radius STEP / DIR / EN | GP11 / GP10 / GP12 | X driver socket, EN active low |
 | Table STEP / DIR / EN | GP6 / GP5 / GP7 | Y driver socket, EN active low |
-| TMC2209 UART | GP8 TX, GP9 RX | one wire, 115200 baud, addresses X=0 Y=2, 110 mOhm sense |
+| Cross slide STEP / DIR / EN | GP19 / GP28 / GP2 | Z driver socket, EN active low |
+| TMC2209 UART | GP8 TX, GP9 RX | one wire, 115200 baud, addresses X=0 Y=2 Z=1, 110 mOhm sense |
 | Laser | GP20 | FAN3 header, a low side MOSFET switching the fan rail |
+
+The cross slide is assumed to be plugged into the **Z** socket. If it is
+on the E socket instead, change `Z_STEP_PINS`, `Z_DIR_PINS` and the third
+entry of `EN_PINS` in `src/board.rs` to GP14, GP13 and GP15, the pin types
+in `board::Pins` and the peripherals passed in `main.rs` to match, and the
+third entry of `ADDR` in `../rp2040-logic/src/tmc.rs` from 1 to 3. The
+three enable pins are driven together, so whichever socket is used is
+energized with the other two.
 
 USB: VID 0x2E8A PID 0x000A, product "spinny laser controller", serial from
 the flash unique id.
@@ -59,18 +69,18 @@ disconnected until the last step.
 2. Motor power on, nothing coupled if you can help it. The drivers run
    from it, so they cannot answer without it; a configuration pushed
    while they were dark is retried every two seconds until it lands.
-   `$tmc` should now report `micro=256` on both axes, read back from the
-   driver itself. Anything else means the configuration has not taken and
-   the driver is on its MS1 and MS2 straps, which is 8 microsteps on the
-   radius socket and 64 on the table: the radius would then be asked for
-   thirty-two times the speed and distance and would sit and whine, while
-   the table would turn four times too far and look like it worked.
+   `$tmc` should now report `micro=256` on all three axes, read back from
+   the driver itself. Anything else means the configuration has not taken
+   and the driver is on its MS1 and MS2 straps, which is 8 microsteps on
+   the radius socket and 64 on the table: the radius would then be asked
+   for thirty-two times the speed and distance and would sit and whine,
+   while the table would turn four times too far and look like it worked.
    `no reply` means motor power or the UART wiring.
 3. Set the currents low for the first moves: `$tmc_r_ma=400`,
-   `$tmc_a_ma=400`.
+   `$tmc_a_ma=400`, `$tmc_z_ma=400`.
 4. `set R0 A0`, then `jog R1 F60`: the head must move away from the axis.
    If it goes the wrong way, `$dir_invert=1` (bit 0 is the radius, bit 1
-   the table).
+   the table, bit 2 the cross slide).
 5. `jog A5 F60`: seen from above the point under the beam must swing
    counterclockwise. If not, add 2 to `$dir_invert`.
 6. Check the scales over a long move rather than a short one: `jog R50 F300`,
@@ -79,18 +89,27 @@ disconnected until the last step.
 7. `$r_rate`, `$a_rate`, `$r_accel` and `$a_accel` up until a move misses
    steps, then back off well clear of it. `$a_rate` is what decides how close
    to the axis the machine can still cut at speed.
-8. Find the axis before any real job: `spinny-center` burns a pattern
+8. The cross slide: `set Z0`, then `jog Z1 F60`. It must move the rail
+   across the table, not along it; if it goes the wrong way, add 4 to
+   `$dir_invert`. Check the scale the same way as the radius, over a long
+   move, and set `$z_steps`. `Z` is a setup axis: it is taken only from
+   `Idle`, it never moves with `R` or `A`, and the beam stays off.
+9. Find the axis before any real job: `spinny-center` burns a pattern
    whose square gives the cross slide error and whose closing gap gives
-   the radius zero error. Run it in `mode const`.
-9. `$save`, then power cycle and check `$` still reads back what you set.
-10. Laser last, on a scrap board. Prove the wiring at full duty first,
-   where the output is simply on: `laser S1000 T2000`, measuring at the
-   header if it does not strike. Then `laser S500 T2000` and `laser S100
-   T2000` to find where it stops firing, which is the bottom of the usable
-   power range. Only then a single `cut` line at the speed and power you
-   intend.
-11. If the beam follows `S` poorly, the fan output's own smoothing is the
-   first suspect: try `$laser_hz=200` and work up.
+   the radius zero error. Run it in `mode const`, then move the slide by
+   the error it reports and burn it again.
+10. `$save`, then power cycle and check `$` still reads back what you set.
+    The stored blob carries a version byte, so a settings sector written by
+    an earlier firmware is discarded rather than misread and the defaults
+    come back.
+11. Laser last, on a scrap board. Prove the wiring at full duty first,
+    where the output is simply on: `laser S1000 T2000`, measuring at the
+    header if it does not strike. Then `laser S500 T2000` and `laser S100
+    T2000` to find where it stops firing, which is the bottom of the
+    usable power range. Only then a single `cut` line at the speed and
+    power you intend.
+12. If the beam follows `S` poorly, the fan output's own smoothing is the
+    first suspect: try `$laser_hz=200` and work up.
 
 ## Microstepping and speed
 
@@ -132,16 +151,26 @@ $save
 ## Safety
 
 - Verify direction and steps per unit at low speed first: `jog R1 F60`,
-  `jog A5 F60`, then `$dir_invert`, `$r_steps` and `$a_steps` as needed.
+  `jog A5 F60`, `jog Z1 F60`, then `$dir_invert` (bit 0 radius, bit 1
+  table, bit 2 cross slide), `$r_steps`, `$a_steps` and `$z_steps` as
+  needed.
+- The cross slide has no limit switches and no soft limit. It is a setup
+  axis with a short travel, so drive it in small steps and watch it; a
+  `jogto Z` to a position declared before the slide was moved by hand
+  will run into the end of its travel and stall.
+- The cross slide is stepped from the main loop, at up to 20 kHz. It only
+  ever moves alone, from rest, with the beam off, so its timing matters to
+  nothing; a jog cancel brakes it and a reset or a USB disconnect stops
+  it, in both cases keeping the steps it actually took.
 - GP20 is an input from power-on until the firmware starts and again after
   a watchdog reset. The pad's own pull-down holds the MOSFET off, but a
   module driven from a TTL line of its own needs a pull-down there too.
 - The FAN3 output switches the board's fan rail, which is 12 V or 24 V
   depending on how the board is powered. Check what reaches the laser
   before connecting it to anything expecting 5 V logic.
-- The EN lines are pulled low by the pads at reset, so the drivers are
-  energized at their own default current until the firmware disables them
-  a few milliseconds later.
+- The EN lines are pulled low by the pads at reset, so all three drivers
+  are energized at their own default current until the firmware disables
+  them a few milliseconds later.
 - Nothing drives the laser until a command asks for it. Hold, reset, a USB
   disconnect and an empty planner all turn it off, and a stalled main loop
   resets the chip within 1.5 s.

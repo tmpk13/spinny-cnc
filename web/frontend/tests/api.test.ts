@@ -127,6 +127,22 @@ describe("HttpApi", () => {
         expect(calls[16]?.body).toEqual({ values: { r_rate: 800 }, host: { tolerance: 0.005 } });
     });
 
+    test("the cross slide goes out through jog, goto and position", async () => {
+        const { calls, fetchFn } = fakeFetch(() => ({ status: 200, body: {} }));
+        const api = new HttpApi("", fetchFn);
+        await api.jog({ kind: "joint", dz: 0.05, feed: null });
+        await api.goto({ kind: "joint", z: 1.25 });
+        await api.setPosition({ z: 0 });
+        expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+            "POST /api/jog",
+            "POST /api/goto",
+            "POST /api/position",
+        ]);
+        expect(calls[0]?.body).toEqual({ kind: "joint", dz: 0.05, feed: null });
+        expect(calls[1]?.body).toEqual({ kind: "joint", z: 1.25 });
+        expect(calls[2]?.body).toEqual({ z: 0 });
+    });
+
     test("upload is multipart with the option fields", async () => {
         const { calls, fetchFn } = fakeFetch(() => ({ status: 200, body: { id: "b2", name: "board", source: "svg" } }));
         const api = new HttpApi("", fetchFn);

@@ -1,4 +1,5 @@
-// Digital readout: joint R and A, board X and Y, laser duty, speed and mode.
+// Digital readout: joint R, A and the cross slide Z, board X and Y, laser
+// duty, speed and mode.
 
 import { el } from "../dom.ts";
 import { formatDeg, formatDuty, formatMm, formatRate } from "../format.ts";
@@ -8,6 +9,7 @@ import type { Ctx } from "./context.ts";
 export interface DroText {
     r: string;
     a: string;
+    z: string;
     x: string;
     y: string;
     laser: string;
@@ -19,11 +21,12 @@ export interface DroText {
 
 export function droText(machine: Machine | null): DroText {
     if (!machine) {
-        return { r: formatMm(null), a: formatDeg(null), x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-" };
+        return { r: formatMm(null), a: formatDeg(null), z: formatMm(null), x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-" };
     }
     return {
         r: formatMm(machine.joint.r),
         a: formatDeg(machine.joint.a),
+        z: formatMm(machine.joint.z),
         x: formatMm(machine.board.x),
         y: formatMm(machine.board.y),
         laser: formatDuty(machine.laser),
@@ -35,12 +38,13 @@ export function droText(machine: Machine | null): DroText {
 }
 
 export function mountDro(root: HTMLElement, ctx: Ctx): void {
-    const joint = el("div", { class: "dro-row" });
+    const joint = el("div", { class: "dro-row dro-row-joint" });
     const board = el("div", { class: "dro-row" });
     root.append(el("h2", {}, "Position"), joint, board);
     const cells = {
         r: bigIn(joint, "R", "mm", "r"),
         a: bigIn(joint, "A", "deg", "a"),
+        z: bigIn(joint, "Z", "mm", "z"),
         x: bigIn(board, "X", "mm", "x"),
         y: bigIn(board, "Y", "mm", "y"),
     };
@@ -58,6 +62,7 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         const text = droText(state.snapshot.machine);
         setText(cells.r, text.r);
         setText(cells.a, text.a);
+        setText(cells.z, text.z);
         setText(cells.x, text.x);
         setText(cells.y, text.y);
         setText(smalls.laser, text.laser);

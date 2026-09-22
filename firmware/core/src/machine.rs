@@ -25,13 +25,20 @@
 //! S T`, `dwell` with `S`) and to force it off on hold, reset, disconnect
 //! and at the end of motion; during motion the step interrupt drives it
 //! per segment.
+//!
+//! The cross slide is a pending command like any other, but it runs on
+//! its own `Slide` rather than through the planner: it is taken only from
+//! `Idle`, holds the state at `Jog` until it stops, and is stepped by
+//! `poll_slide` from the main loop. A jog cancel brakes it, a reset or a
+//! disconnect drops it.
 
-use crate::hal::{LaserPort, Sink, StepPort, Store};
+use crate::hal::{LaserPort, Sink, SlidePort, StepPort, Store};
 use crate::math;
 use crate::parser::{self, Command, Error, PowerMode, Realtime};
 use crate::planner::{Feed, MoveKind, PlanError, Planner};
 use crate::report::{self, State, Status};
 use crate::settings::{Changed, SetError, Settings, BLOB_LEN};
+use crate::slide::Slide;
 use crate::stepper::{self, Front};
 use crate::{AXES, LINE_MAX, LINE_SLOTS, R};
 
@@ -50,6 +57,8 @@ enum Pending {
     None,
     /// Waits for planner room, and for a hold to end.
     Motion { target: [f32; AXES], kind: MoveKind, feed: Feed, power: f32 },
+    /// A cross slide move, started once the joints have come to rest.
+    SlideMove { target: f32, feed: Option<f32> },
     /// The sync commands below wait for queued motion to finish.
     Dwell { ms: u32, power: Option<f32> },
     /// A dwell in progress; answered when its time is up.
@@ -58,6 +67,7 @@ enum Pending {
     LaserOn { power: f32, ms: Option<u32> },
     LaserOff,
     SetPosition([Option<f32>; AXES]),
+    SetSlide(f32),
     Enable(bool),
     /// Store access happens in `poll`, where the store is.
     Save,
@@ -67,6 +77,8 @@ enum Pending {
 pub struct Machine<'a> {
     front: Front<'a>,
     planner: Planner,
+    /// The cross slide, which only ever moves on its own.
+    slide: Slide,
     settings: Settings,
     state: State,
     mode: PowerMode,
@@ -105,6 +117,7 @@ impl<'a> Machine<'a> {
         Machine {
             front,
             planner: Planner::new(),
+            slide: Slide::new(),
             settings,
             state: State::Idle,
             mode: PowerMode::Dynamic,
@@ -154,6 +167,20 @@ impl<'a> Machine<'a> {
         self.planner.position()
     }
 
+    /// Cross slide position in mm.
+    pub fn slide_position(&self) -> f32 {
+        self.slide.position()
+    }
+
+    /// Steps the cross slide. It is driven from the main loop rather than
+    /// from the step interrupt, because nothing is tied to its timing;
+    /// the returned time is when it would like the next call, and a
+    /// caller on a fixed period may simply ignore it. Call it before
+    /// `poll`, which ends the jog once the slide has stopped.
+    pub fn poll_slide(&mut self, now_us: u64, port: &mut impl SlidePort) -> Option<u64> {
+        self.slide.poll(now_us, port)
+    }
+
     /// No line is waiting for planner space; `submit` may be called.
     pub fn ready_for_line(&self) -> bool {
         self.pending == Pending::None
@@ -168,6 +195,7 @@ impl<'a> Machine<'a> {
             && self.pending == Pending::None
             && !self.front.busy()
             && !self.front.resync_pending()
+            && !self.slide.busy()
             && self.beam.is_none()
             && !(self.enabled && self.settings.idle_ms > 0)
     }
@@ -222,6 +250,19 @@ impl<'a> Machine<'a> {
                 self.check_motion_state(true)?;
                 let feed = feed.map_or(Feed::Jog, Feed::Surface);
                 self.queue_motion(target, !absolute, MoveKind::Jog, feed, 0.0)?;
+                Ok(false)
+            }
+            Command::JogZ { target, feed, absolute } => {
+                // The slide moves alone and only from rest: it shares the
+                // rail with a cut in progress and would move it.
+                self.require_idle()?;
+                let target = if absolute { target } else { self.slide.position() + target };
+                self.pending = Pending::SlideMove { target, feed };
+                Ok(false)
+            }
+            Command::SetSlide { value } => {
+                self.require_idle()?;
+                self.pending = Pending::SetSlide(value);
                 Ok(false)
             }
             Command::Dwell { ms, power } => {
@@ -331,6 +372,11 @@ impl<'a> Machine<'a> {
     /// Jogs are accepted in `Idle` and `Jog`, everything else that moves
     /// in `Idle` and `Run`.
     fn check_motion_state(&self, jog: bool) -> Result<(), Error> {
+        // A cross slide move carries the rail the radius rides on, so
+        // nothing joins it, not even the jog its own state looks like.
+        if self.slide.busy() {
+            return Err(Error::State);
+        }
         let allowed = if jog {
             matches!(self.state, State::Idle | State::Jog)
         } else {
@@ -396,6 +442,7 @@ impl<'a> Machine<'a> {
             line_free: LINE_SLOTS,
             mode: self.mode,
             enabled: self.enabled,
+            slide: self.slide.position(),
         }
     }
 
@@ -409,6 +456,15 @@ impl<'a> Machine<'a> {
                 // does come back, with the time it had left.
                 if self.beam.take().is_some() {
                     laser.set_duty(self.off_duty());
+                }
+                // The cross slide has nothing to resume into: it is one
+                // setup move with no queue behind it. A hold reached for
+                // as a stop brakes it and ends it where it is, and the
+                // state falls back to `Idle` rather than waiting on a
+                // resume that would have nothing to do.
+                if self.slide.busy() {
+                    self.slide.cancel();
+                    return;
                 }
                 if !matches!(self.state, State::Run | State::Jog) {
                     return;
@@ -441,6 +497,12 @@ impl<'a> Machine<'a> {
                 report::banner(out);
             }
             Realtime::JogCancel => {
+                // The slide only ever moves on its own, so at most one of
+                // the two is running.
+                if self.slide.busy() {
+                    self.slide.cancel();
+                    return;
+                }
                 let jogging = self.state == State::Jog || (self.state == State::Hold && self.held == State::Jog);
                 if jogging {
                     self.front.request_hold();
@@ -456,6 +518,9 @@ impl<'a> Machine<'a> {
         let moving = matches!(self.state, State::Run | State::Jog | State::Hold) && self.front.busy();
         self.front.abort(&mut self.planner);
         self.planner.clear();
+        // The slide counts its own steps, so stopping it mid-move costs
+        // no position and raises no alarm.
+        self.slide.stop();
         self.pending = Pending::None;
         self.jog_cancel = false;
         self.dwell_until = None;
@@ -519,6 +584,7 @@ impl<'a> Machine<'a> {
         let motion_done = matches!(self.state, State::Run | State::Jog)
             && self.planner.is_empty()
             && !self.front.busy()
+            && !self.slide.busy()
             && !self.jog_cancel
             && !matches!(self.pending, Pending::Motion { .. } | Pending::Dwelling);
         if motion_done {
@@ -615,6 +681,14 @@ impl<'a> Machine<'a> {
                 }
                 self.planner.set_position(steps);
                 self.front.set_position(steps);
+            }
+            Pending::SetSlide(value) => self.slide.set_position(value, &self.settings),
+            Pending::SlideMove { target, feed } => {
+                self.set_enabled(true, port);
+                self.slide.start(self.slide.position(), target, feed, &self.settings);
+                if self.slide.busy() {
+                    self.state = State::Jog;
+                }
             }
             Pending::Enable(on) => self.set_enabled(on, port),
             Pending::Save => {
@@ -739,6 +813,7 @@ impl<'a> Machine<'a> {
 }
 
 const HELP: &str = "go [R] [A] | cut [R] [A] [F] [S] | jog [R] [A] [F] | jogto [R] [A] [F]\n\
+cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z\n\
 dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A]\n\
 enable | disable | unlock | version | status | help\n\
 $ | $name | $name=value | $save | $load | $defaults | $tmc\n\
@@ -778,6 +853,23 @@ mod tests {
         fn set_enable(&mut self, high: bool) {
             self.enable_level = Some(high);
             self.enable_writes += 1;
+        }
+    }
+
+    /// The cross slide's pins as counters.
+    #[derive(Default)]
+    struct SlidePins {
+        pulses: u64,
+        dir: Option<bool>,
+    }
+
+    impl SlidePort for SlidePins {
+        fn set_dir(&mut self, high: bool) {
+            self.dir = Some(high);
+        }
+
+        fn step(&mut self) {
+            self.pulses += 1;
         }
     }
 
@@ -842,6 +934,7 @@ mod tests {
         machine: Machine<'static>,
         isr: Isr<'static>,
         port: Port,
+        slide: SlidePins,
         laser: Laser,
         store: FakeStore,
         out: Out,
@@ -862,6 +955,11 @@ mod tests {
             max_rate: [1000.0, 1080.0],
             jog_rate: [600.0, 720.0],
             jerk: [3.0, 10.0],
+            // The same for the cross slide: a coarse scale and a rate
+            // that keep a jog a readable number of steps.
+            z_steps: 256.0,
+            z_rate: 1200.0,
+            jog_z: 600.0,
             ..Settings::default()
         }
     }
@@ -878,6 +976,7 @@ mod tests {
                 machine: Machine::new(front, settings),
                 isr,
                 port: Port { count: [0; AXES], enable_level: None, enable_writes: 0 },
+                slide: SlidePins::default(),
                 laser: Laser { now: 0, duty: 0, hz: 0, duties: Vec::new() },
                 store: FakeStore::default(),
                 out: Out::default(),
@@ -896,6 +995,9 @@ mod tests {
 
         fn poll(&mut self) {
             self.laser.now = self.now;
+            // As on the board: the slide is stepped from the main loop,
+            // before the poll that ends its jog.
+            self.machine.poll_slide(self.now, &mut self.slide);
             let kick = self.machine.poll(self.now, &mut self.port, &mut self.laser, &mut self.store, &mut self.out);
             if kick {
                 self.next_tick = Some(self.now);
@@ -1041,7 +1143,7 @@ mod tests {
         assert_eq!(rig.port.count, [2 * 2560, 2 * 160_000]);
         assert_eq!(rig.laser.duty, 0);
         let status = rig.status_line();
-        assert_eq!(status, "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1>\n");
+        assert_eq!(status, "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
     }
 
     #[test]
@@ -1384,7 +1486,7 @@ mod tests {
         rig.advance(100_000);
         assert_eq!(rig.state(), State::Run);
         assert_eq!(rig.laser.duty, 500);
-        assert_eq!(rig.status_line(), "<Run|J:10.000,0.0000|V:0|L:500|Q:32,16|M:dyn|E:1>\n");
+        assert_eq!(rig.status_line(), "<Run|J:10.000,0.0000|V:0|L:500|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         rig.realtime(Realtime::Hold);
         assert_eq!(rig.laser.duty, 0);
         rig.advance(1_000_000);
@@ -1409,11 +1511,11 @@ mod tests {
         rig.take_out();
         assert_eq!(rig.line("go R10 A45"), "ok\n");
         rig.run();
-        assert_eq!(rig.status_line(), "<Idle|J:10.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1>\n");
+        assert_eq!(rig.status_line(), "<Idle|J:10.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         assert_eq!(rig.line("set R0"), "ok\n");
         assert_eq!(rig.executed_steps(), [0, 40000]);
         assert_eq!(rig.machine.planned_position(), [0, 40000]);
-        assert_eq!(rig.status_line(), "<Idle|J:0.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1>\n");
+        assert_eq!(rig.status_line(), "<Idle|J:0.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         let before = rig.port.count;
         assert_eq!(rig.line("go R5 A0"), "ok\n");
         rig.run();
@@ -1421,7 +1523,161 @@ mod tests {
         assert_eq!(rig.machine.joint(), [5.0, 0.0]);
         assert_eq!(rig.line("set A-90 R1"), "ok\n");
         assert_eq!(rig.executed_steps(), [256, -80000]);
-        assert_eq!(rig.status_line(), "<Idle|J:1.000,-90.0000|V:0|L:0|Q:32,16|M:dyn|E:1>\n");
+        assert_eq!(rig.status_line(), "<Idle|J:1.000,-90.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
+    }
+
+    #[test]
+    fn the_cross_slide_jogs_and_lands_where_it_was_asked() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("set Z0"), "ok\n");
+        assert!(rig.status_line().ends_with("|Z:0.000>\n"));
+        assert_eq!(rig.line("jog Z2"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.state(), State::Jog, "the state is Jog while the slide moves");
+        assert_eq!(rig.laser.duty, 0, "the beam is off throughout");
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.machine.slide_position(), 2.0);
+        assert_eq!(rig.slide.pulses, 512, "2 mm at 256 steps per mm");
+        assert_eq!(rig.slide.dir, Some(true));
+        assert!(rig.status_line().ends_with("|Z:2.000>\n"));
+        // The joints did not move with it.
+        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
+        assert_eq!(rig.port.count, [0, 0]);
+
+        // Relative jogs add up; an absolute one goes where it says.
+        assert_eq!(rig.line("jog Z-0.5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.slide_position(), 1.5);
+        assert_eq!(rig.slide.dir, Some(false));
+        assert_eq!(rig.line("jogto Z-1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.slide_position(), -1.0);
+        assert_eq!(rig.slide.pulses, 512 + 128 + 640);
+        assert!(rig.status_line().ends_with("|Z:-1.000>\n"));
+
+        // `set Z` declares the position without moving anything.
+        assert_eq!(rig.line("set Z0"), "ok\n");
+        assert_eq!(rig.machine.slide_position(), 0.0);
+        assert_eq!(rig.slide.pulses, 512 + 128 + 640);
+        // A move under one step answers and moves nothing.
+        assert_eq!(rig.line("jog Z0.001"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.slide.pulses, 512 + 128 + 640);
+    }
+
+    #[test]
+    fn the_cross_slide_moves_only_from_idle() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("go R50"), "ok\n");
+        rig.advance(200_000);
+        assert_eq!(rig.state(), State::Run);
+        assert_eq!(rig.line("jog Z1"), "error:5 not now\n");
+        assert_eq!(rig.line("jogto Z1"), "error:5 not now\n");
+        assert_eq!(rig.line("set Z1"), "error:5 not now\n");
+        rig.run();
+
+        // Nor while a joint jog is running, which shares the rail.
+        assert_eq!(rig.line("jog R-10"), "ok\n");
+        rig.advance(50_000);
+        assert_eq!(rig.state(), State::Jog);
+        assert_eq!(rig.line("jog Z1"), "error:5 not now\n");
+        rig.run();
+
+        // And nothing else moves while the slide does.
+        assert_eq!(rig.line("jog Z5"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.state(), State::Jog);
+        assert_eq!(rig.line("go R1"), "error:5 not now\n");
+        assert_eq!(rig.line("jog R1"), "error:5 not now\n");
+        assert_eq!(rig.line("set R0"), "error:5 not now\n");
+        assert_eq!(rig.line("jog Z1"), "error:5 not now\n");
+        rig.run();
+        assert_eq!(rig.machine.slide_position(), 5.0);
+
+        // The two are never on one line.
+        assert_eq!(rig.line("jog Z1 R1"), "error:2 bad word\n");
+        assert_eq!(rig.line("set R0 Z0"), "error:2 bad word\n");
+        assert_eq!(rig.machine.slide_position(), 5.0);
+    }
+
+    #[test]
+    fn a_cross_slide_jog_is_cancelled_and_stopped_by_the_realtime_bytes() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("set Z0"), "ok\n");
+        assert_eq!(rig.line("jog Z20"), "ok\n");
+        rig.advance(200_000);
+        assert_eq!(rig.state(), State::Jog);
+        // A hold brakes it too, and ends it: there is no queue behind a
+        // setup move for a resume to pick up.
+        rig.realtime(Realtime::Hold);
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        let held = rig.machine.slide_position();
+        assert!(held > 0.0 && held < 20.0, "stopped at {held}");
+        rig.realtime(Realtime::Resume);
+        rig.advance(1_000_000);
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.machine.slide_position(), held, "a resume has nothing to take up");
+        assert_eq!(rig.line("jogto Z0"), "ok\n");
+        rig.run();
+
+        let before = rig.slide.pulses;
+        assert_eq!(rig.line("jog Z20"), "ok\n");
+        rig.advance(200_000);
+        assert_eq!(rig.state(), State::Jog);
+        rig.realtime(Realtime::JogCancel);
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.take_out(), "");
+        let cancelled = rig.machine.slide_position();
+        assert!(cancelled > 0.1 && cancelled < 20.0, "stopped at {cancelled}");
+        // Every pulse is in the position it reports.
+        assert_eq!(rig.slide.pulses - before, (cancelled * 256.0) as u64);
+        // It stays stopped, and takes the next move from where it is.
+        rig.advance(1_000_000);
+        assert_eq!(rig.slide.pulses - before, (cancelled * 256.0) as u64);
+        assert_eq!(rig.line("jogto Z0"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.slide_position(), 0.0);
+
+        // A reset drops the move where it stands, with no alarm: the
+        // slide counts its own steps, so its position is still good.
+        let before = rig.slide.pulses;
+        assert_eq!(rig.line("jog Z20"), "ok\n");
+        rig.advance(200_000);
+        let moving = rig.machine.slide_position();
+        rig.realtime(Realtime::Reset);
+        rig.take_out();
+        rig.advance(1_000_000);
+        assert_eq!(rig.state(), State::Idle);
+        let stopped = rig.machine.slide_position();
+        assert!(stopped >= moving && stopped < 20.0, "{moving} then {stopped}");
+        assert_eq!(rig.slide.pulses - before, (stopped * 256.0) as u64);
+        rig.advance(1_000_000);
+        assert_eq!(rig.machine.slide_position(), stopped, "a reset slide steps no more");
+    }
+
+    #[test]
+    fn a_disconnect_stops_the_cross_slide() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("set Z0"), "ok\n");
+        assert_eq!(rig.line("jog Z20"), "ok\n");
+        rig.advance(200_000);
+        assert_eq!(rig.state(), State::Jog);
+        rig.laser.now = rig.now;
+        rig.machine.disconnected(&mut rig.laser, &mut rig.port);
+        let at = rig.machine.slide_position();
+        assert!(at > 0.0 && at < 20.0, "stopped at {at}");
+        rig.advance(1_000_000);
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.machine.slide_position(), at);
+        assert!(rig.machine.is_quiet());
     }
 
     #[test]
@@ -1456,7 +1712,7 @@ mod tests {
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
         assert!(listing.ends_with("tmc_stealth=1\nok\n"));
-        assert_eq!(listing.lines().count(), 27);
+        assert_eq!(listing.lines().count(), 33);
     }
 
     #[test]
@@ -1535,10 +1791,10 @@ mod tests {
         let mut rig = Rig::new();
         rig.take_out();
         assert_eq!(rig.line("version"), "[spinny v0.1.0 lines:16 blocks:32]\nok\n");
-        assert_eq!(rig.line("status"), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0>\nok\n");
+        assert_eq!(rig.line("status"), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>\nok\n");
         let help = rig.line("help");
         assert!(help.ends_with("ok\n"));
-        assert!(help.contains("jogto"));
+        assert!(help.contains("jogto") && help.contains("jog Z"));
         assert!(help.lines().all(|l| !l.starts_with('<') && !l.starts_with('[')));
     }
 
@@ -1550,10 +1806,10 @@ mod tests {
         rig.take_out();
         assert_eq!(rig.line("enable"), "ok\n");
         assert_eq!(rig.port.enable_level, Some(false));
-        assert!(rig.status_line().ends_with("|E:1>\n"));
+        assert!(rig.status_line().contains("|E:1|"));
         assert_eq!(rig.line("disable"), "ok\n");
         assert_eq!(rig.port.enable_level, Some(true));
-        assert!(rig.status_line().ends_with("|E:0>\n"));
+        assert!(rig.status_line().contains("|E:0|"));
         assert_eq!(rig.line("$en_invert=1"), "ok\n");
         rig.advance(POLL_US);
         assert_eq!(rig.port.enable_level, Some(false));
@@ -1564,9 +1820,9 @@ mod tests {
         assert_eq!(rig.line("$idle_ms=100"), "ok\n");
         assert_eq!(rig.line("$en_invert=0"), "ok\n");
         rig.advance(50_000);
-        assert!(rig.status_line().ends_with("|E:1>\n"));
+        assert!(rig.status_line().contains("|E:1|"));
         rig.advance(60_000);
-        assert!(rig.status_line().ends_with("|E:0>\n"));
+        assert!(rig.status_line().contains("|E:0|"));
         assert_eq!(rig.port.enable_level, Some(true));
         assert_eq!(rig.line("go R2"), "ok\n");
         assert_eq!(rig.port.enable_level, Some(false));
@@ -1576,7 +1832,7 @@ mod tests {
         rig.run();
         assert_eq!(rig.take_out(), "ok\n");
         rig.advance(200_000);
-        assert!(rig.status_line().ends_with("|E:0>\n"));
+        assert!(rig.status_line().contains("|E:0|"));
     }
 
     #[test]

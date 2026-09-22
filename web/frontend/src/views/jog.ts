@@ -1,5 +1,6 @@
-// Jog pad for board X/Y, radius and turn buttons, go-to fields, position
-// declaration, motors and unlock. Arrow keys jog when no input has focus.
+// Jog pad for board X/Y, radius and turn buttons, the cross slide setup
+// control, go-to fields, position declaration, motors and unlock. Arrow keys
+// jog when no input has focus.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, inputHasFocus, labeled, modalOpen, numberField } from "../dom.ts";
@@ -8,13 +9,18 @@ import { choiceRow, type Ctx } from "./context.ts";
 
 export const STEPS_MM = [0.1, 1, 10];
 export const STEPS_DEG = [1, 10, 90];
+// The cross slide is set from a measured centering burn, so its steps are the
+// small corrections that reading calls for.
+export const STEPS_Z = [0.05, 0.1, 0.5];
 
 export interface JogControls {
     jogBoard(dx: number, dy: number): Promise<void>;
     jogJoint(dr: number, da: number): Promise<void>;
+    jogSlide(dz: number): Promise<void>;
     cancel(): Promise<void>;
     stepMm(): number;
     stepDeg(): number;
+    stepZ(): number;
 }
 
 /** Maps a key to a board jog in step units, or a cancel; null when the key is not bound. */
@@ -38,6 +44,7 @@ export function keyAction(key: string): { dx: number; dy: number } | "cancel" | 
 export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     let stepMm = 1;
     let stepDeg = 10;
+    let stepZ = 0.1;
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
 
@@ -53,11 +60,17 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
                     : { kind: "joint" as const, da, feed: feed() };
             await ctx.call(ctx.api.jog(request));
         },
+        async jogSlide(dz) {
+            // The slide keeps the firmware's own jog rate: the feed field
+            // belongs to the moves that carry the beam over the board.
+            await ctx.call(ctx.api.jog({ kind: "joint", dz, feed: null }));
+        },
         async cancel() {
             await ctx.call(ctx.api.jogCancel());
         },
         stepMm: () => stepMm,
         stepDeg: () => stepDeg,
+        stepZ: () => stepZ,
     };
 
     const body = el("fieldset", { class: "panel-body" });
@@ -89,7 +102,19 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         button("Turn -", () => controls.jogJoint(0, -stepDeg), "btn btn-axis"),
         button("Turn +", () => controls.jogJoint(0, stepDeg), "btn btn-axis"),
     );
-    body.append(el("div", { class: "jog-main" }, pad, axes));
+    // The cross slide is not a board move: it is kept in its own frame so it
+    // reads as the setup control it is.
+    const slide = el("div", { class: "slide" },
+        el("span", { class: "slide-title" }, "Cross slide"),
+        el("span", { class: "slide-note" }, "Setup only: carries the rail across the rotation axis"),
+        choiceRow(STEPS_Z, stepZ, (value) => { stepZ = value; }, (value) => `${value} mm`, "Step"),
+        el("div", { class: "slide-buttons" },
+            button("Z-", () => controls.jogSlide(-stepZ), "btn btn-slide"),
+            button("Z+", () => controls.jogSlide(stepZ), "btn btn-slide"),
+        ),
+        button("Set Z=0 here", () => declare("z"), "btn btn-quiet"),
+    );
+    body.append(el("div", { class: "jog-main" }, pad, axes, slide));
 
     const gotoX = numberField({ placeholder: "x" });
     const gotoY = numberField({ placeholder: "y" });
@@ -165,12 +190,17 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         ),
     );
 
-    async function declare(axis: "r" | "a"): Promise<void> {
-        const what = axis === "r" ? "the radius" : "the table angle";
-        const hint = axis === "r" ? "The beam must be over the rotation axis." : "";
+    async function declare(axis: "r" | "a" | "z"): Promise<void> {
+        const what = { r: "the radius", a: "the table angle", z: "the cross slide" }[axis];
+        const hint = {
+            r: "The beam must be over the rotation axis.",
+            a: "",
+            z: "The rail is over the axis when the centering lines meet at a point.",
+        }[axis];
         const ok = await askConfirm(`Declare ${what} to be 0 at the current position? ${hint}`.trim(), "Set 0");
         if (ok) {
-            await ctx.call(ctx.api.setPosition(axis === "r" ? { r: 0 } : { a: 0 }));
+            const request = axis === "r" ? { r: 0 } : axis === "a" ? { a: 0 } : { z: 0 };
+            await ctx.call(ctx.api.setPosition(request));
         }
     }
 

@@ -67,7 +67,7 @@ def test_connect_disconnect_and_last_url(client, fake, tmp_path):
     assert state["connected"] and state["url"] == "socket://127.0.0.1:9999"
     assert state["firmware"] == {"version": "0.1.0", "lines": 16, "blocks": 32}
     assert state["machine"]["state"] == "Idle"
-    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0}
+    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0}
     assert state["machine"]["board"] == {"x": 0.0, "y": 0.0}
     assert state["machine"]["queue"] == {"planner": 32, "lines": 16}
     ports = client.get("/api/ports").json()["ports"]
@@ -119,10 +119,37 @@ def test_jogs_gotos_and_position(client, fake):
     assert client.post("/api/goto", json={"kind": "board", "x": 1}).status_code == 400
     state = client.post("/api/position", json={"r": 0, "a": 0}).json()
     assert "set R0 A0" in fake.received_lines
-    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0}
+    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0}
     assert client.post("/api/position", json={}).status_code == 400
     assert client.post("/api/jog/cancel").status_code == 200
     assert 0x85 in fake.realtime_bytes
+
+
+def test_the_cross_slide_moves_on_its_own(client, fake):
+    connect(client)
+    assert client.post("/api/jog", json={"kind": "joint", "dz": 0.5}).json() == {"lines": ["jog Z0.5"]}
+    assert client.post("/api/jog", json={"kind": "joint", "dz": -0.05, "feed": 60}).json() == {
+        "lines": ["jog Z-0.05 F60"]
+    }
+    assert fake.z == pytest.approx(0.45)
+    assert client.post("/api/goto", json={"kind": "joint", "z": 1.25}).json() == {"lines": ["jogto Z1.25"]}
+    assert fake.z == pytest.approx(1.25)
+    state = client.post("/api/realtime", json={"action": "status"}).json()
+    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 1.25}
+    # A body that mixes the axes is refused before anything goes out.
+    sent = len(fake.received_lines)
+    assert client.post("/api/jog", json={"kind": "joint", "dz": 0.5, "dr": 1.0}).status_code == 400
+    assert client.post("/api/jog", json={"kind": "joint", "dz": 0.5, "da": 0.0}).status_code == 400
+    assert client.post("/api/goto", json={"kind": "joint", "z": 0.5, "r": 1.0}).status_code == 400
+    assert client.post("/api/goto", json={"kind": "joint", "z": 0.5, "a": 90.0}).status_code == 400
+    assert len(fake.received_lines) == sent
+    state = client.post("/api/position", json={"z": 0}).json()
+    assert fake.received_lines[-1] == "set Z0"
+    assert state["machine"]["joint"]["z"] == 0.0
+    # All three at once still leave Z on a line of its own.
+    client.post("/api/position", json={"r": 1, "a": 2, "z": 3})
+    assert fake.received_lines[-2:] == ["set R1 A2", "set Z3"]
+    assert fake.joint == [1.0, 2.0] and fake.z == pytest.approx(3.0)
 
 
 def test_realtime_command_laser_mode_motors_unlock(client, fake):

@@ -19,7 +19,7 @@ function machine(overrides: Partial<Machine> = {}): Machine {
     return {
         state: "Idle",
         alarm: null,
-        joint: { r: 12.345, a: 90 },
+        joint: { r: 12.345, a: 90, z: 0 },
         board: { x: 0, y: 12.345 },
         rate: 0,
         laser: 0,
@@ -35,7 +35,7 @@ function connected(overrides: Partial<Machine> = {}): Snapshot {
 }
 
 /** An API that records calls and answers with empty results. */
-function recordingApi(): { api: Api; calls: { name: string; args: unknown[] }[] } {
+function recordingApi(): { api: Api; calls: { name: string; args: unknown[] }[]; backend: MockBackend } {
     const calls: { name: string; args: unknown[] }[] = [];
     const backend = new MockBackend({ timers: false });
     const api = new Proxy(backend, {
@@ -50,16 +50,16 @@ function recordingApi(): { api: Api; calls: { name: string; args: unknown[] }[] 
             };
         },
     }) as unknown as Api;
-    return { api, calls };
+    return { api, calls, backend };
 }
 
 function setup() {
     const store = new Store<AppState>(initialState(true));
-    const { api, calls } = recordingApi();
+    const { api, calls, backend } = recordingApi();
     const ctx = createContext(api, store);
     const root = document.createElement("section");
     document.body.appendChild(root);
-    return { store, api, calls, ctx, root };
+    return { store, api, calls, ctx, root, backend };
 }
 
 function click(root: ParentNode, label: string): void {
@@ -118,16 +118,19 @@ describe("buttons", () => {
 
 describe("dro", () => {
     test("text for a machine and for none", () => {
-        expect(droText(machine())).toEqual({ r: "12.345", a: "90.0000", x: "0.000", y: "12.345", laser: "0.0%", rate: "0", mode: "dyn", queue: "32/16", motors: "on" });
+        expect(droText(machine())).toEqual({ r: "12.345", a: "90.0000", z: "0.000", x: "0.000", y: "12.345", laser: "0.0%", rate: "0", mode: "dyn", queue: "32/16", motors: "on" });
+        expect(droText(machine({ joint: { r: 1, a: 2, z: -0.125 } })).z).toBe("-0.125");
         expect(droText(null).r).toBe("-.---");
+        expect(droText(null).z).toBe("-.---");
     });
 
     test("renders the snapshot", () => {
         const { store, ctx, root } = setup();
         mountDro(root, ctx);
-        store.set({ snapshot: connected({ laser: 500, rate: 399.6 }) });
+        store.set({ snapshot: connected({ laser: 500, rate: 399.6, joint: { r: 12.345, a: 90, z: 0.5 } }) });
         expect(root.querySelector('[data-dro="r"]')?.textContent).toBe("12.345");
         expect(root.querySelector('[data-dro="a"]')?.textContent).toBe("90.0000");
+        expect(root.querySelector('[data-dro="z"]')?.textContent).toBe("0.500");
         expect(root.querySelector('[data-dro="laser"]')?.textContent).toBe("50.0%");
         expect(root.querySelector('[data-dro="rate"]')?.textContent).toBe("400");
         expect(root.classList.contains("laser-on")).toBe(true);
@@ -173,6 +176,59 @@ describe("jog", () => {
         expect(root.querySelector("fieldset")?.disabled).toBe(true);
     });
 
+    test("the cross slide moves on its own step and can be zeroed", async () => {
+        const { store, ctx, root, calls, api, backend } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const slide = root.querySelector(".slide")!;
+        expect(slide.textContent).toContain("Cross slide");
+
+        click(slide, "Set Z=0 here");
+        await settle();
+        click(document.querySelector("dialog[open]")!, "Set 0");
+        await settle();
+        expect(calls.find((c) => c.name === "setPosition")?.args[0]).toEqual({ z: 0 });
+        calls.length = 0;
+
+        // The step is the slide's own: the board step stays at 1 mm.
+        click(slide, "0.05 mm");
+        click(slide, "Z+");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dz: 0.05, feed: null });
+        calls.length = 0;
+        backend.step(1);
+        expect(backend.machine.z).toBeCloseTo(0.05, 9);
+        click(slide, "Z-");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dz: -0.05, feed: null });
+        backend.step(1);
+        expect(backend.machine.z).toBeCloseTo(0, 9);
+        calls.length = 0;
+        click(root, "X+");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 1, dy: 0, feed: null });
+    });
+
+    test("a cross slide button stays disabled until its request returns", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        const open = gate<void>();
+        const slow = api as unknown as { jog: () => Promise<void> };
+        const real = slow.jog;
+        slow.jog = () => open.promise;
+        mountJog(root, ctx);
+        const plus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Z+")!;
+        plus.click();
+        plus.click();
+        expect(plus.disabled).toBe(true);
+        open.resolve();
+        await settle();
+        expect(plus.disabled).toBe(false);
+        slow.jog = real;
+    });
+
     test("fast clicks on the pad send one jog until the first returns", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
@@ -198,7 +254,7 @@ describe("jog", () => {
     test("a board goto fills the blank axis from the readout", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
-        store.set({ snapshot: connected({ joint: { r: 5, a: 90 }, board: { x: 0, y: 5 } }) });
+        store.set({ snapshot: connected({ joint: { r: 5, a: 90, z: 0 }, board: { x: 0, y: 5 } }) });
         mountJog(root, ctx);
         const fields = Array.from(root.querySelectorAll("input[placeholder]")) as HTMLInputElement[];
         const x = fields.find((f) => f.placeholder === "x")!;

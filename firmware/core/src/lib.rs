@@ -10,6 +10,9 @@
 //! pushing moves into `planner`; `stepper::Front::prep` turns planned blocks
 //! into timed segments; `stepper::Isr::tick` runs from the step timer
 //! interrupt and pulses the pins.
+//!
+//! The cross slide `Z` in `slide` stands apart from all of that: it is a
+//! setup axis that moves alone, from the main loop, with the beam off.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod hal;
@@ -19,6 +22,7 @@ pub mod parser;
 pub mod planner;
 pub mod report;
 pub mod settings;
+pub mod slide;
 pub mod stepper;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

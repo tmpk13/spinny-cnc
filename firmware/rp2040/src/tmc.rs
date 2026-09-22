@@ -14,6 +14,7 @@ use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async::{Read, ReadReady, Write};
 use spinny_core::report;
 use spinny_core::settings::Settings;
+use spinny_core::{A, R};
 use spinny_fw_logic::tmc::{
     config_datagrams, micro_of, parse_reply, read_request, refused_text, report_text, Datagram, DriverConfig,
     Reply, ADDR,
@@ -52,12 +53,13 @@ pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PI
     spawner.spawn(tmc_task(uart).expect("tmc task"));
 }
 
-/// Queues a reconfiguration from the current settings.
+/// Queues a reconfiguration from the current settings. The axis order is
+/// the one `ADDR` and `AXIS_LETTER` use: radius, table, cross slide.
 pub fn configure_from(settings: &Settings) {
     let cfg = DriverConfig {
-        ma: settings.tmc_ma,
+        ma: [settings.tmc_ma[R], settings.tmc_ma[A], settings.tmc_z_ma],
         hold_pct: settings.tmc_hold_pct,
-        micro: settings.tmc_micro,
+        micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_z_micro],
         stealth: settings.tmc_stealth,
     };
     let _ = REQUESTS.try_send(Request::Configure(cfg));

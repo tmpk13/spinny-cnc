@@ -15,8 +15,10 @@ bun run dev            # serves index.html with the sources
 points the page at a backend elsewhere.
 
 Board coordinates are mm with the rotation axis at the origin: `x = r cos a`,
-`y = r sin a`, y up in the preview. The DRO shows the joint (`R` mm, `A` deg)
-and the board position the backend derives from it.
+`y = r sin a`, y up in the preview. The DRO shows the joint (`R` mm, `A` deg),
+the cross slide (`Z` mm) and the board position the backend derives from the
+joint. The cross slide is a setup axis: the jog panel moves it on its own,
+in the small steps a centering burn is measured into.
 
 ## Architecture
 
@@ -48,7 +50,7 @@ classDiagram
     }
     class mock {
         MockBackend  Api and EventFeed in one
-        MockMachine  joint motion at the rates
+        MockMachine  joint motion at the rates, cross slide on its own
     }
     class mockjobs {
         parseSvg parseGcode placeJob computeStats

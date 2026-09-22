@@ -6,6 +6,10 @@
 //! CDC device, one task reading bytes into lines and one draining the
 //! output ring; `tmc` owns the driver UART; `step_timer` runs the stepper
 //! from TIMER alarm 1 at the highest interrupt priority.
+//!
+//! The cross slide is the exception: it is stepped straight from the main
+//! loop, because it only ever moves on its own, from rest, with the beam
+//! off, and nothing depends on when its pulses land.
 #![no_std]
 #![no_main]
 
@@ -46,7 +50,7 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
     // Laser output low and motors disabled before anything else runs.
-    let (mut port, mut laser) = board::init(board::Pins {
+    let (mut port, mut laser, mut slide) = board::init(board::Pins {
         pwm: p.PWM_SLICE2,
         laser: p.PIN_20,
         r_step: p.PIN_11,
@@ -55,6 +59,9 @@ async fn main(spawner: Spawner) {
         a_step: p.PIN_6,
         a_dir: p.PIN_5,
         a_en: p.PIN_7,
+        z_step: p.PIN_19,
+        z_dir: p.PIN_28,
+        z_en: p.PIN_2,
     });
 
     // Every other interrupt below the step timer, which `step_timer::start` puts at P0.
@@ -109,6 +116,10 @@ async fn main(spawner: Spawner) {
         }
 
         let now_us = Instant::now().as_micros();
+        // The cross slide steps from here rather than from the step
+        // timer: nothing is tied to its timing, and it is capped at a
+        // rate this loop carries. Before the poll that ends its jog.
+        machine.poll_slide(now_us, &mut slide);
         if machine.poll(now_us, &mut port, &mut laser, &mut store, &mut sink) {
             step_timer::kick();
         }

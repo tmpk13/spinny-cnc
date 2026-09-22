@@ -74,6 +74,9 @@ class Status:
     alarm: int | None = None
     r: float = 0.0
     a: float = 0.0
+    # Cross slide position in mm. A firmware that does not report the field
+    # leaves it at zero, which is what a machine without the axis reads as.
+    z: float = 0.0
     rate: float = 0.0
     laser: int = 0
     planner: int = 0
@@ -136,7 +139,7 @@ class Pending:
 
 
 def parse_status(text: str) -> Status | None:
-    """`<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1>` to a Status."""
+    """`<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:0.000>` to a Status."""
     if len(text) < 2 or text[0] != "<" or text[-1] != ">":
         return None
     parts = text[1:-1].split("|")
@@ -155,6 +158,8 @@ def parse_status(text: str) -> Status | None:
                 r, _, a = value.partition(",")
                 status.r = float(r)
                 status.a = float(a)
+            elif key == "Z":
+                status.z = float(value)
             elif key == "V":
                 status.rate = float(value)
             elif key == "L":

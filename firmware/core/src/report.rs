@@ -32,6 +32,8 @@ pub struct Status {
     pub line_free: usize,
     pub mode: PowerMode,
     pub enabled: bool,
+    /// Cross slide position, mm.
+    pub slide: f32,
 }
 
 /// Most decimal places `float` renders.
@@ -45,7 +47,7 @@ pub fn alarm_text(code: u8) -> &'static str {
     }
 }
 
-/// `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0>` plus newline.
+/// `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>` plus newline.
 pub fn status(status: &Status, out: &mut impl Sink) {
     out.write(b"<");
     match status.state {
@@ -77,6 +79,8 @@ pub fn status(status: &Status, out: &mut impl Sink) {
     });
     out.write(b"|E:");
     out.write(if status.enabled { b"1" } else { b"0" });
+    out.write(b"|Z:");
+    float(status.slide, 3, out);
     out.write(b">\n");
 }
 
@@ -259,6 +263,7 @@ mod tests {
             line_free: 16,
             mode: PowerMode::Dynamic,
             enabled: false,
+            slide: 0.0,
         }
     }
 
@@ -270,7 +275,7 @@ mod tests {
 
     #[test]
     fn status_idle_default() {
-        assert_eq!(status_text(&sample()).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0>\n");
+        assert_eq!(status_text(&sample()).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>\n");
     }
 
     #[test]
@@ -284,8 +289,9 @@ mod tests {
             line_free: 16,
             mode: PowerMode::Dynamic,
             enabled: true,
+            slide: -1.25,
         };
-        assert_eq!(status_text(&status).as_str(), "<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1>\n");
+        assert_eq!(status_text(&status).as_str(), "<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:-1.250>\n");
     }
 
     #[test]
@@ -295,17 +301,29 @@ mod tests {
         status.joint = [2.0625, -45.5];
         status.rate = 299.5;
         status.mode = PowerMode::Constant;
-        assert_eq!(status_text(&status).as_str(), "<Jog|J:2.063,-45.5000|V:300|L:0|Q:32,16|M:const|E:0>\n");
+        assert_eq!(status_text(&status).as_str(), "<Jog|J:2.063,-45.5000|V:300|L:0|Q:32,16|M:const|E:0|Z:0.000>\n");
         status.joint = [0.0, -0.03125];
         status.rate = 299.4;
-        assert_eq!(status_text(&status).as_str(), "<Jog|J:0.000,-0.0313|V:299|L:0|Q:32,16|M:const|E:0>\n");
+        assert_eq!(status_text(&status).as_str(), "<Jog|J:0.000,-0.0313|V:299|L:0|Q:32,16|M:const|E:0|Z:0.000>\n");
     }
 
     #[test]
     fn status_tiny_negative_is_not_minus_zero() {
         let mut status = sample();
         status.joint = [-0.0001, -0.00001];
-        assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0>\n");
+        assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>\n");
+    }
+
+    #[test]
+    fn status_ends_with_the_cross_slide() {
+        let mut status = sample();
+        status.slide = 12.3456;
+        let text = status_text(&status);
+        assert!(text.as_str().ends_with("|Z:12.346>\n"), "{}", text.as_str());
+        status.slide = -0.0005;
+        assert!(status_text(&status).as_str().ends_with("|Z:-0.001>\n"));
+        status.slide = -0.0004;
+        assert!(status_text(&status).as_str().ends_with("|Z:0.000>\n"));
     }
 
     #[test]
@@ -326,7 +344,7 @@ mod tests {
         status.planner_free = 0;
         status.line_free = 3;
         status.enabled = true;
-        assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:1000|Q:0,3|M:dyn|E:1>\n");
+        assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:1000|Q:0,3|M:dyn|E:1|Z:0.000>\n");
     }
 
     #[test]

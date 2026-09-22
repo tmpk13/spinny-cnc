@@ -63,6 +63,16 @@ def test_status_line_parses():
     assert parse_status("<Idle|J:x,y>") is None
 
 
+def test_the_cross_slide_field_is_read_and_optional():
+    status = parse_status("<Jog|J:1.000,2.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:-0.125>")
+    assert status is not None and status.z == -0.125
+    # A firmware without the field reads as a machine with the slide at zero.
+    older = parse_status("<Idle|J:1.000,2.0000|V:0|L:0|Q:32,16|M:dyn|E:1>")
+    assert older is not None and older.z == 0.0
+    assert older.joint == (1.0, 2.0)
+    assert parse_status("<Idle|J:1.000,2.0000|Z:sideways>") is None
+
+
 def test_banner_parses():
     banner = parse_banner("[spinny v0.1.0 lines:16 blocks:32]")
     assert banner.version == "0.1.0" and banner.lines == 16 and banner.blocks == 32

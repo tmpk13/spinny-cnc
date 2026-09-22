@@ -52,9 +52,13 @@ SETTINGS_SCHEMA = [
     {"name": "r_jerk", "unit": "mm/s", "help": "allowed speed change at a corner"},
     {"name": "a_jerk", "unit": "deg/s", "help": "allowed speed change at a corner"},
     {"name": "r_max", "unit": "mm", "help": "soft limit, 0 = off"},
+    {"name": "z_steps", "unit": "steps/mm", "help": "cross slide motor"},
+    {"name": "z_rate", "unit": "mm/min", "help": "max cross slide rate"},
+    {"name": "z_accel", "unit": "mm/s^2", "help": "cross slide acceleration"},
+    {"name": "jog_z", "unit": "mm/min", "help": "jog rate without F"},
     {"name": "jog_r", "unit": "mm/min", "help": "jog rate without F"},
     {"name": "jog_a", "unit": "deg/min", "help": "jog rate without F"},
-    {"name": "dir_invert", "unit": "mask", "help": "bit 0 radius, bit 1 table"},
+    {"name": "dir_invert", "unit": "mask", "help": "bit 0 radius, bit 1 table, bit 2 cross slide"},
     {"name": "en_invert", "unit": "0/1", "help": "1 = enable pin active high"},
     {"name": "idle_ms", "unit": "ms", "help": "disable motors after idle, 0 = never"},
     {"name": "step_us", "unit": "us", "help": "step pulse width"},
@@ -68,6 +72,8 @@ SETTINGS_SCHEMA = [
     {"name": "tmc_hold_pct", "unit": "%", "help": "hold current as a share of run"},
     {"name": "tmc_r_micro", "unit": "", "help": "microsteps"},
     {"name": "tmc_a_micro", "unit": "", "help": "microsteps"},
+    {"name": "tmc_z_ma", "unit": "mA", "help": "cross slide run current"},
+    {"name": "tmc_z_micro", "unit": "", "help": "microsteps"},
     {"name": "tmc_stealth", "unit": "0/1", "help": "stealthChop, else spreadCycle"},
 ]
 
@@ -92,6 +98,8 @@ class JogBody(BaseModel):
     kind: str = "joint"
     dr: float | None = None
     da: float | None = None
+    # The cross slide moves on its own, so dz comes without dr or da.
+    dz: float | None = None
     dx: float | None = None
     dy: float | None = None
     feed: float | None = None
@@ -101,6 +109,7 @@ class GotoBody(BaseModel):
     kind: str = "joint"
     r: float | None = None
     a: float | None = None
+    z: float | None = None
     x: float | None = None
     y: float | None = None
     feed: float | None = None
@@ -109,6 +118,7 @@ class GotoBody(BaseModel):
 class PositionBody(BaseModel):
     r: float | None = None
     a: float | None = None
+    z: float | None = None
 
 
 class MotorsBody(BaseModel):
@@ -332,7 +342,7 @@ class Backend:
                 machine = {
                     "state": status.state,
                     "alarm": status.alarm,
-                    "joint": {"r": status.r, "a": status.a},
+                    "joint": {"r": status.r, "a": status.a, "z": status.z},
                     "board": {"x": round(x, 4), "y": round(y, 4)},
                     "rate": status.rate,
                     "laser": status.laser,
@@ -373,10 +383,20 @@ class Backend:
 
     # --- moving -----------------------------------------------------------------
 
+    def _slide_move(self, link: Link, line: str) -> dict:
+        """One cross slide line. It leaves the beam where it is on the board,
+        so a board jog still ends where the last one was going."""
+        link.request_ok(line)
+        return {"lines": [line]}
+
     def jog(self, body: JogBody) -> dict:
         link = self.require_link()
         streamer = self.streamer()
         if body.kind == "joint":
+            if body.dz is not None:
+                if body.dr is not None or body.da is not None:
+                    raise ValueError("the cross slide moves on its own: dz cannot be sent with dr or da")
+                return self._slide_move(link, streamer.slide_jog(body.dz, body.feed))
             lines = [streamer.joint_jog(body.dr, body.da, body.feed)]
             start, idle = self.move_start(link)
             # A relative jog's end is only known when it starts from rest.
@@ -396,6 +416,10 @@ class Backend:
         link = self.require_link()
         streamer = self.streamer()
         if body.kind == "joint":
+            if body.z is not None:
+                if body.r is not None or body.a is not None:
+                    raise ValueError("the cross slide moves on its own: z cannot be sent with r or a")
+                return self._slide_move(link, streamer.slide_goto(body.z, body.feed))
             lines = [streamer.joint_goto(body.r, body.a, body.feed)]
             start, _ = self.move_start(link)
             end = (start[0] if body.r is None else body.r, start[1] if body.a is None else body.a)
@@ -420,10 +444,14 @@ class Backend:
             words.append(f"R{num(body.r)}")
         if body.a is not None:
             words.append(f"A{num(body.a, 4)}")
-        if not words:
-            raise ValueError("give r and/or a")
+        if not words and body.z is None:
+            raise ValueError("give r, a and/or z")
         self._jog_target = None
-        link.request_ok("set " + " ".join(words))
+        if words:
+            link.request_ok("set " + " ".join(words))
+        if body.z is not None:
+            # Z goes on a line of its own: it is never a word beside R or A.
+            link.request_ok(f"set Z{num(body.z)}")
         link.status_now(1.0)
         return self.snapshot()
 
