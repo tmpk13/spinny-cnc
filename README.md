@@ -60,9 +60,16 @@ So on the coupon:
 
 | What you see | What it means |
 | --- | --- |
-| the ring | its center is the rotation axis |
+| the ring's center | the rotation axis |
+| the ring's diameter, against the one asked for | twice the radius zero error, with its sign |
 | the square the lines bound | side is twice the cross slide error |
 | the gap between opposing lines, once the square has closed | twice the radius zero error |
+
+The ring carries the sign the lines cannot. It is burnt at a known
+radius, so half its measured diameter less that radius is how far past
+the axis the head sits at radius zero: wider than asked for means the head
+is short of the axis there, narrower means it is past it. It is also the
+scale check, being the one feature whose size is known in advance.
 
 Halve the square's side and take it out on the cross slide, then re-burn.
 When the lines meet at a point the rail is over the axis; move the head

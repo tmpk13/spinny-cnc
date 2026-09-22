@@ -150,6 +150,11 @@ def notes_for() -> list[str]:
         " point, the gap left between opposing lines is twice the radius"
         " zero error. Move the head half the gap and set the radius zero"
         " there.",
+        "The ring measures that error with its sign, which the lines cannot:"
+        " it is burnt at a known radius, so half its diameter less that"
+        " radius is how far past the axis the head sits at radius zero."
+        " Larger than asked for means the head is short of the axis there,"
+        " smaller means it is past it.",
     ]
 
 
