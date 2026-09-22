@@ -57,12 +57,15 @@ disconnected until the last step.
 1. Flash the board and open the port: the banner should arrive and `$`
    should list the settings.
 2. Motor power on, nothing coupled if you can help it. The drivers run
-   from it, so they cannot answer without it. `$tmc` should now report a
-   driver per axis with `ifcnt` at 3 or more, which counts the register
-   writes it accepted. `no reply` means the UART wiring or the addresses
-   are wrong. `refused config` on the console means the writes did not
-   take, and the driver is then running at whatever MS1 and MS2 strap it
-   to, which is 8 microsteps on the radius socket and 64 on the table.
+   from it, so they cannot answer without it; a configuration pushed
+   while they were dark is retried every two seconds until it lands.
+   `$tmc` should now report `micro=256` on both axes, read back from the
+   driver itself. Anything else means the configuration has not taken and
+   the driver is on its MS1 and MS2 straps, which is 8 microsteps on the
+   radius socket and 64 on the table: the radius would then be asked for
+   thirty-two times the speed and distance and would sit and whine, while
+   the table would turn four times too far and look like it worked.
+   `no reply` means motor power or the UART wiring.
 3. Set the currents low for the first moves: `$tmc_r_ma=400`,
    `$tmc_a_ma=400`.
 4. `set R0 A0`, then `jog R1 F60`: the head must move away from the axis.

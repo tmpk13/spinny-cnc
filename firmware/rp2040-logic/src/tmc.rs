@@ -157,22 +157,44 @@ pub fn parse_reply(bytes: &[u8], register: Address) -> Option<u32> {
 
 /// Body of the `[MSG:...]` line for an axis whose driver did not take its
 /// configuration.
-pub fn refused_text(axis: usize) -> String<48> {
+pub fn refused_text(axis: usize) -> String<64> {
     let mut text = String::new();
     let letter = AXIS_LETTER[axis];
     let addr = ADDR[axis];
-    let _ = write!(text, "tmc {letter} addr{addr} refused config, check wiring");
+    let _ = write!(text, "tmc {letter} addr{addr} refused config, retrying");
     text
 }
 
-/// Body of the `[MSG:...]` line for one axis.
-pub fn report_text(axis: usize, reply: Option<(u8, u32)>) -> String<48> {
+/// What a driver answered when asked about itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reply {
+    /// Write datagrams the driver has accepted since it powered up.
+    pub ifcnt: u8,
+    /// Microsteps it is actually set to, read back from CHOPCONF.
+    pub micro: u16,
+    pub status: u32,
+}
+
+/// Microsteps a CHOPCONF value is set to, from its MRES field.
+pub fn micro_of(chopconf: u32) -> u16 {
+    reg::CHOPCONF::from(chopconf).mres().number_of_microsteps() as u16
+}
+
+/// Body of the `[MSG:...]` line for one axis. The microstep count is the
+/// one the driver reports, not the one it was asked for: a driver that
+/// never took its configuration answers with whatever MS1 and MS2 strap
+/// it to, and that is the difference between a move and a stall.
+pub fn report_text(axis: usize, reply: Option<Reply>) -> String<64> {
     let mut text = String::new();
     let letter = AXIS_LETTER[axis];
     let addr = ADDR[axis];
     let _ = match reply {
-        Some((ifcnt, status)) => write!(text, "tmc {letter} addr{addr} ifcnt={ifcnt} status=0x{status:08x}"),
-        None => write!(text, "tmc {letter} addr{addr} no reply"),
+        Some(reply) => write!(
+            text,
+            "tmc {letter} addr{addr} ifcnt={} micro={} status=0x{:08x}",
+            reply.ifcnt, reply.micro, reply.status
+        ),
+        None => write!(text, "tmc {letter} addr{addr} no reply, is motor power on"),
     };
     text
 }
@@ -289,8 +311,8 @@ mod tests {
 
     #[test]
     fn a_refused_axis_says_which_one() {
-        assert_eq!(refused_text(0).as_str(), "tmc R addr0 refused config, check wiring");
-        assert_eq!(refused_text(1).as_str(), "tmc A addr2 refused config, check wiring");
+        assert_eq!(refused_text(0).as_str(), "tmc R addr0 refused config, retrying");
+        assert_eq!(refused_text(1).as_str(), "tmc A addr2 refused config, retrying");
     }
 
     #[test]
@@ -346,8 +368,28 @@ mod tests {
 
     #[test]
     fn report_lines() {
-        assert_eq!(report_text(0, Some((3, 0x8000_0000))).as_str(), "tmc R addr0 ifcnt=3 status=0x80000000");
-        assert_eq!(report_text(1, None).as_str(), "tmc A addr2 no reply");
-        assert_eq!(report_text(1, Some((255, 0xffff_ffff))).as_str(), "tmc A addr2 ifcnt=255 status=0xffffffff");
+        let reply = Reply { ifcnt: 3, micro: 256, status: 0x8000_0000 };
+        assert_eq!(report_text(0, Some(reply)).as_str(), "tmc R addr0 ifcnt=3 micro=256 status=0x80000000");
+        assert_eq!(report_text(1, None).as_str(), "tmc A addr2 no reply, is motor power on");
+        let strapped = Reply { ifcnt: 0, micro: 8, status: 0 };
+        assert_eq!(report_text(0, Some(strapped)).as_str(), "tmc R addr0 ifcnt=0 micro=8 status=0x00000000");
+    }
+
+    #[test]
+    fn microsteps_read_back_from_chopconf() {
+        // What each axis reports when its configuration landed, and what
+        // the sockets strap to when it did not.
+        let asked = |micro: u32| {
+            let cfg = DriverConfig { ma: [800, 800], hold_pct: 50, micro: [micro, micro], stealth: true };
+            let [_, _, chop] = config_datagrams(0, &cfg).unwrap();
+            micro_of(data(&chop))
+        };
+        assert_eq!(asked(256), 256);
+        assert_eq!(asked(16), 16);
+        let mut strapped = CHOPCONF::default();
+        strapped.set_mres(MicroStepResolution::from_driver(5));
+        assert_eq!(micro_of(strapped.0), 8, "the radius socket's strap");
+        strapped.set_mres(MicroStepResolution::from_driver(2));
+        assert_eq!(micro_of(strapped.0), 64, "the table socket's strap");
     }
 }

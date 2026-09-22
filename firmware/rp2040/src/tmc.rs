@@ -9,12 +9,14 @@ use embassy_rp::uart::{BufferedUart, Config as UartConfig};
 use embassy_rp::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{with_timeout, Duration, Instant};
+use embassy_futures::select::{select, Either};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async::{Read, ReadReady, Write};
 use spinny_core::report;
 use spinny_core::settings::Settings;
 use spinny_fw_logic::tmc::{
-    config_datagrams, parse_reply, read_request, refused_text, report_text, Datagram, DriverConfig, ADDR,
+    config_datagrams, micro_of, parse_reply, read_request, refused_text, report_text, Datagram, DriverConfig,
+    Reply, ADDR,
 };
 use static_cell::StaticCell;
 use tmc2209::reg::Address;
@@ -38,6 +40,8 @@ const READ_EXCHANGE_LEN: usize = 12;
 /// A driver picks its baud rate from the first datagram it sees, which can
 /// cost that datagram, so a refused configuration is tried again.
 const CONFIG_TRIES: usize = 2;
+/// Gap between retries of a configuration no driver took.
+const RETRY_EVERY: Duration = Duration::from_secs(2);
 
 pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PIN_8>, rx: Peri<'static, PIN_9>) {
     static TX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
@@ -63,12 +67,39 @@ pub fn request_report() {
     let _ = REQUESTS.try_send(Request::Report);
 }
 
+/// Drivers run from the motor supply, so a board brought up on USB alone
+/// cannot configure them. The configuration is kept and retried until it
+/// lands, which is what turning the motor supply on afterwards needs.
 #[embassy_executor::task]
 async fn tmc_task(mut uart: BufferedUart) {
+    let mut unfinished: Option<DriverConfig> = None;
+    let mut told = false;
     loop {
-        match REQUESTS.receive().await {
-            Request::Configure(cfg) => configure(&mut uart, &cfg).await,
-            Request::Report => report(&mut uart).await,
+        let request = match unfinished {
+            Some(_) => match select(REQUESTS.receive(), Timer::after(RETRY_EVERY)).await {
+                Either::First(request) => Some(request),
+                Either::Second(()) => None,
+            },
+            None => Some(REQUESTS.receive().await),
+        };
+        match request {
+            Some(Request::Report) => report(&mut uart).await,
+            Some(Request::Configure(cfg)) => {
+                told = false;
+                unfinished = configure(&mut uart, &cfg, &mut told).await.then_some(cfg);
+            }
+            None => {
+                let cfg = unfinished.expect("a retry needs a configuration");
+                if configure(&mut uart, &cfg, &mut told).await {
+                    unfinished = None;
+                } else {
+                    unfinished = Some(cfg);
+                }
+            }
+        }
+        if unfinished.is_none() && told {
+            told = false;
+            report::message("tmc configured", &mut UsbSink);
         }
     }
 }
@@ -99,14 +130,24 @@ async fn apply(uart: &mut BufferedUart, axis: usize, datagrams: &[Datagram]) -> 
     false
 }
 
-async fn configure(uart: &mut BufferedUart, cfg: &DriverConfig) {
+/// Writes every axis that asks for it. True when they all took it. The
+/// first round that fails says so; later rounds retry in silence.
+async fn configure(uart: &mut BufferedUart, cfg: &DriverConfig, told: &mut bool) -> bool {
+    let mut done = true;
     for axis in 0..ADDR.len() {
         if let Some(datagrams) = config_datagrams(axis, cfg) {
             if !apply(uart, axis, &datagrams).await {
-                report::message(refused_text(axis).as_str(), &mut UsbSink);
+                done = false;
+                if !*told {
+                    report::message(refused_text(axis).as_str(), &mut UsbSink);
+                }
             }
         }
     }
+    if !done {
+        *told = true;
+    }
+    done
 }
 
 /// Drops bytes left over from an exchange that timed out.
@@ -158,9 +199,14 @@ async fn read_register(uart: &mut BufferedUart, addr: u8, register: Address) -> 
 async fn report(uart: &mut BufferedUart) {
     for (axis, &addr) in ADDR.iter().enumerate() {
         let ifcnt = read_register(uart, addr, Address::IFCNT).await;
+        let chopconf = read_register(uart, addr, Address::CHOPCONF).await;
         let status = read_register(uart, addr, Address::DRV_STATUS).await;
-        let reply = match (ifcnt, status) {
-            (Some(ifcnt), Some(status)) => Some((ifcnt as u8, status)),
+        let reply = match (ifcnt, chopconf, status) {
+            (Some(ifcnt), Some(chopconf), Some(status)) => Some(Reply {
+                ifcnt: ifcnt as u8,
+                micro: micro_of(chopconf),
+                status,
+            }),
             _ => None,
         };
         let text = report_text(axis, reply);
