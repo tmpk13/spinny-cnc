@@ -49,6 +49,23 @@ keeps that axis where it is.
 | `jogto [R<mm>] [A<deg>] [F<mm/min>]` | absolute jog |
 | `dwell T<ms> [S<power>]` | wait after motion (`T` at most 600000); with `S` the laser is on at constant `S` for the dwell (a spot burn) |
 
+## The cross slide
+
+`Z` is the cross slide that carries the rail across the rotation axis. It
+is a setup axis: it never takes part in a cut, it moves on its own, and it
+is accepted only in `Idle`. Nothing else moves while it does, and the
+state is `Jog` until it stops.
+
+| Command | Effect |
+| --- | --- |
+| `jog Z<mm> [F<mm/min>]` | relative, at `jog_z` without `F` |
+| `jogto Z<mm> [F<mm/min>]` | absolute |
+| `set Z<mm>` | declare the position, as for `R` and `A` |
+
+`Z` cannot be combined with `R` or `A` on one line (`error:2`): the three
+are not interpolated together. `0x85` cancels a `Z` jog like any other.
+The beam is off throughout.
+
 Surface speed: the length of a joint move on the board is taken as
 `hypot(dr, r_mean * da_rad)` with `r_mean = (r0 + r1) / 2`. A move whose
 surface length is under 1 um (a turn on the axis) runs at the max rates with
@@ -117,9 +134,13 @@ is set to 0.
 | `r_jerk` | mm/s | 3 | allowed speed change at a corner |
 | `a_jerk` | deg/s | 2 | |
 | `r_max` | mm | 0 | soft limit, 0 = off |
+| `z_steps` | steps/mm | 10240 | cross slide |
+| `z_rate` | mm/min | 560 | max cross slide rate |
+| `z_accel` | mm/s^2 | 50 | |
+| `jog_z` | mm/min | 120 | jog rate without `F` |
 | `jog_r` | mm/min | 300 | jog rate without `F` |
 | `jog_a` | deg/min | 200 | |
-| `dir_invert` | mask | 0 | bit 0 radius, bit 1 table |
+| `dir_invert` | mask | 0 | bit 0 radius, bit 1 table, bit 2 cross slide |
 | `en_invert` | 0/1 | 0 | 1 = enable pin active high |
 | `idle_ms` | ms | 0 | disable motors after idle, 0 = never |
 | `step_us` | us | 2 | step pulse width |
@@ -133,6 +154,8 @@ is set to 0.
 | `tmc_hold_pct` | % | 50 | hold current as a share of run |
 | `tmc_r_micro` | | 256 | microsteps |
 | `tmc_a_micro` | | 256 | |
+| `tmc_z_ma` | mA | 800 | cross slide run current |
+| `tmc_z_micro` | | 256 | |
 | `tmc_stealth` | 0/1 | 1 | stealthChop, else spreadCycle |
 
 Changing a `tmc_*` setting re-sends the driver configuration.
@@ -140,7 +163,7 @@ Changing a `tmc_*` setting re-sends the driver configuration.
 ## Status line
 
 ```
-<Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1>
+<Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>
 ```
 
 | Field | Meaning |
@@ -152,6 +175,7 @@ Changing a `tmc_*` setting re-sends the driver configuration.
 | `Q` | free planner blocks, free line slots |
 | `M` | power mode |
 | `E` | motors enabled |
+| `Z` | cross slide position, mm |
 
 ## Errors and alarms
 

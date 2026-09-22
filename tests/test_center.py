@@ -154,3 +154,20 @@ def test_the_map_says_how_to_read_the_burn(tmp_path):
     report = (tmp_path / "center.gcode.map.md").read_text()
     assert "cross slide" in report
     assert "const" in report
+
+
+def test_the_ring_can_be_burnt_on_its_own():
+    # A table scale that is out distorts the line pattern but not a
+    # radius, so the ring alone is worth being able to cut.
+    groups = build(lines=0, reach=6.0, ring_radius=5.0, power=400.0, speed=200.0)
+    assert len(groups) == 1
+    assert "ring" in groups[0].label
+    assert spokes(0, 0.0, 6.0) == []
+
+
+def test_a_ring_only_pattern_says_only_what_applies(tmp_path):
+    out = tmp_path / "ring.gcode"
+    assert main(["-o", str(out), "--lines", "0", "--ring", "5", "--no-preview", "--no-sim"]) == 0
+    report = (tmp_path / "ring.gcode.map.md").read_text()
+    assert "half its diameter" in report
+    assert "square" not in report, "a ring on its own bounds no square"

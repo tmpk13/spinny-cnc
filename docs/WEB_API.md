@@ -24,7 +24,7 @@ State snapshot:
   "firmware": {"version": "0.1.0", "lines": 16, "blocks": 32},
   "machine": {
     "state": "Idle", "alarm": null,
-    "joint": {"r": 12.345, "a": 90.1234},
+    "joint": {"r": 12.345, "a": 90.1234, "z": 0.0},
     "board": {"x": 0.0, "y": 12.345},
     "rate": 0.0, "laser": 0, "mode": "dyn", "enabled": true,
     "queue": {"planner": 32, "lines": 16}
@@ -39,10 +39,10 @@ State snapshot:
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative |
+| `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `{"kind": "joint", "dz": 0.5}` moves the cross slide, which cannot be combined with `dr` or `da` |
 | `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute |
 | `POST /api/jog/cancel` | |
-| `POST /api/position` | `{"r": 0}` and/or `{"a": 0}`: declare the current position |
+| `POST /api/position` | `{"r": 0}`, `{"a": 0}` and/or `{"z": 0}`: declare the current position |
 | `POST /api/motors` | `{"enabled": false}` |
 | `POST /api/unlock` | |
 | `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}` |

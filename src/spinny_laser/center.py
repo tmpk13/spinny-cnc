@@ -56,7 +56,14 @@ def spoke(angle_deg: float, inner: float, outer: float) -> list[Point]:
 
 
 def spokes(count: int, inner: float, outer: float) -> list[list[Point]]:
-    """Radial lines spread evenly around the axis, starting at angle zero."""
+    """Radial lines spread evenly around the axis, starting at angle zero.
+
+    None at all is allowed: the ring alone measures the radius zero error,
+    and it is the only part of the pattern a wrong table scale cannot
+    distort, since sweeping the wrong angle still sweeps one radius.
+    """
+    if count == 0:
+        return []
     if count < 2:
         raise ValueError("a pattern needs at least two lines to bound anything")
     return [spoke(360.0 * i / count, inner, outer) for i in range(count)]
@@ -94,14 +101,17 @@ def build(
     speed: float,
     rotary_max_rate: float | None = None,
 ) -> list[gcode.PathGroup]:
-    groups = [
-        gcode.PathGroup(
-            label=f"{lines} radial lines from the axis to {reach:g} mm",
-            paths=spokes(lines, 0.0, reach),
-            power=power,
-            speed=speed,
+    groups = []
+    drawn = spokes(lines, 0.0, reach)
+    if drawn:
+        groups.append(
+            gcode.PathGroup(
+                label=f"{lines} radial lines from the axis to {reach:g} mm",
+                paths=drawn,
+                power=power,
+                speed=speed,
+            )
         )
-    ]
     if ring_radius > 0:
         around = ring_speed(ring_radius, speed, rotary_max_rate)
         groups.append(
@@ -124,7 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
     pattern = parser.add_argument_group("pattern")
-    pattern.add_argument("--lines", type=int, default=4, help="radial lines, spread evenly")
+    pattern.add_argument(
+        "--lines", type=int, default=4,
+        help="radial lines, spread evenly; 0 burns the ring alone, which is"
+        " the reading a wrong table scale cannot distort",
+    )
     pattern.add_argument("--reach", type=float, default=6.0, help="how far the lines run, mm")
     pattern.add_argument(
         "--ring", type=float, default=8.0, help="reference ring radius, mm; 0 leaves it out"
@@ -138,7 +152,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def notes_for() -> list[str]:
+def notes_for(lines: int) -> list[str]:
+    ring_only = [
+        "The ring alone measures the radius zero error: half its diameter"
+        " less the radius it was cut at is how far past the axis the head"
+        " sits at radius zero, wider meaning short of it and narrower"
+        " meaning past it. Sweeping the wrong angle still sweeps one"
+        " radius, so this is the reading a table scale that is out cannot"
+        " distort.",
+    ]
+    if lines == 0:
+        return ring_only
     return [
         "Cut this in constant power mode (`mode const`): the inner end of"
         " each line is what gets measured, and dynamic power fades where a"
@@ -168,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.lines == 0 and args.ring <= 0:
+            raise ValueError("--lines 0 needs a --ring to measure")
         if args.reach <= 0:
             raise ValueError("--reach must be > 0")
         if args.power > args.s_max:
@@ -190,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
         "",
     ]
     job = gcode.generate(groups, options, header)
-    notes = notes_for()
+    notes = notes_for(args.lines)
     if args.ring > 0:
         notes.append(
             f"The ring lands at the radius zero error away from {args.ring:g} mm,"
