@@ -45,7 +45,7 @@ State snapshot:
 | `POST /api/position` | `{"r": 0}`, `{"a": 0}` and/or `{"z": 0}`: declare the current position |
 | `POST /api/motors` | `{"enabled": false}` |
 | `POST /api/unlock` | |
-| `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}` |
+| `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out |
 | `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}` |
 
 Board jogs and gotos are turned into joint moves on the host with the chord
@@ -121,8 +121,9 @@ are left out. Progress:
 ```
 
 `state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
-the reason when it is `error`. `acked` counts lines the firmware answered;
-lines a stop flushed are not answered.
+the reason when it is `error`, and why a run was stopped from outside (a
+reset from the console). `acked` counts lines the firmware answered; lines
+a stop flushed are not answered.
 
 ## Events
 

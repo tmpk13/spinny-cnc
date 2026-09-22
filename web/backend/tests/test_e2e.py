@@ -13,7 +13,7 @@ from replay import parse
 
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
-from spinny_web.link import Link
+from spinny_web.link import REALTIME_RESET, Link
 from spinny_web.runner import DONE, Runner
 
 BINARY = os.environ.get("SPINNY_VIRTUAL", "")
@@ -117,5 +117,42 @@ def test_a_far_side_cut_runs_on_the_virtual_firmware(firmware):
         assert status.state == "Idle"
         assert status.r == pytest.approx(-4.5, abs=0.01)
         assert status.a == pytest.approx(110.0, abs=0.01)
+    finally:
+        link.close()
+
+
+def test_a_reset_during_a_held_run_ends_it_without_another_line(firmware):
+    """The console's reset while a run is held. The run must end there, and
+    nothing may be streamed into the machine once it is Idle again."""
+    link = Link(f"socket://127.0.0.1:{firmware}")
+    link.open()
+    try:
+        assert link.request_ok("set R0 A0") == []
+        paths = [[(10.0 + i * 0.1, -3.0), (10.0 + i * 0.1, 3.0)] for i in range(60)]
+        job = Job(id="e2e-reset", name="many", groups=[Group(label="one", power=500, speed=200, paths=paths)])
+        runner = Runner()
+        runner.start(job, link, Streamer())
+        deadline = time.monotonic() + 30.0
+        while runner.progress.sent < 16 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert runner.progress.sent >= 16, runner.snapshot()
+        runner.hold()
+        deadline = time.monotonic() + 10.0
+        while link.status_now(1.0).state != "Hold" and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert link.status_now(1.0).state == "Hold"
+        sent = runner.progress.sent
+        link.realtime(REALTIME_RESET)
+        deadline = time.monotonic() + 30.0
+        while runner.active and time.monotonic() < deadline:
+            time.sleep(0.02)
+        final = runner.snapshot()
+        assert final["state"] == "error" and "reset" in final["error"], final
+        assert runner.progress.sent == sent, "a line went out after the reset"
+        status = link.status_now(1.0)
+        assert status.state == "Idle", status.raw
+        time.sleep(0.3)
+        again = link.status_now(1.0)
+        assert again.state == "Idle" and again.joint == status.joint, again.raw
     finally:
         link.close()
