@@ -199,9 +199,18 @@ class Runner:
     # --- the streaming thread ---------------------------------------------
 
     def _run(self, job: Job, link: Link, streamer: Streamer, start: tuple[float, float]) -> None:
+        restarts = link.restarts
         try:
             for piece in streamer.job_pieces(job, start):
                 if self._abort.is_set():
+                    break
+                if link.restarts != restarts:
+                    # The machine announced itself again: it was reset, and
+                    # with it went the queue and the position this run was
+                    # planned from. Nothing after this point would land
+                    # where the job says.
+                    self._error = "the machine reset during the run"
+                    self._abort.set()
                     break
                 link.send(piece.line, abort=self._abort, callback=self._on_ack)
                 with self._lock:

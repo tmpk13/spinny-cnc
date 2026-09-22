@@ -196,7 +196,6 @@ class Streamer:
         for index, group in enumerate(job.groups):
             if not group.enabled:
                 continue
-            need_fs = True
             feed = float(group.speed)
             power = float(group.power)
             for path in group.paths:
@@ -213,7 +212,6 @@ class Streamer:
                         group=index,
                     )
                     joint = first
-                    need_fs = True
                 point = points[0]
                 for target in points[1:]:
                     for next_point, next_joint, turn in self._moves(point, target, joint):
@@ -225,13 +223,15 @@ class Streamer:
                                 seconds=self._rapid_seconds(joint, next_joint),
                                 group=index,
                             )
-                            need_fs = True
                         else:
                             seconds, limited = self._cut_cost(joint, next_joint, feed)
-                            line = f"cut {self.words(next_joint)}"
-                            if need_fs:
-                                line += f" F{num(feed)} S{num(power)}"
-                                need_fs = False
+                            # Every cut carries its own feed and power. The
+                            # firmware keeps them modal, but it forgets them
+                            # on a reset, and a reset part way through a run
+                            # would otherwise leave every line after it
+                            # refused for a missing word rather than simply
+                            # stopping the run.
+                            line = f"cut {self.words(next_joint)} F{num(feed)} S{num(power)}"
                             yield Piece(
                                 line=line,
                                 kind="cut",

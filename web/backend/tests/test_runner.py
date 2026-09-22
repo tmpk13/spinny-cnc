@@ -281,3 +281,38 @@ def test_start_does_not_hold_the_lock_while_asking_the_machine():
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
     finally:
         link.close()
+
+
+def test_a_machine_that_resets_mid_run_stops_the_run_and_says_so():
+    """A reset takes the queue and the modal words with it.
+
+    The firmware announces itself again when it resets, which is the only
+    warning the host gets. Without noticing it the run would keep sending
+    into a machine that has forgotten where it is and what feed to cut at,
+    and every line after it would come back refused.
+    """
+    # Enough lines, and slow enough acks, that the run is still going when
+    # the machine restarts underneath it.
+    fake, link, sink, runner = setup(move_time=0.02)
+    big = Job(
+        id="big",
+        name="many",
+        groups=[Group(
+            label="one", power=500, speed=400,
+            paths=[[(10.0 + i * 0.1, -3.0), (10.0 + i * 0.1, 3.0)] for i in range(40)],
+        )],
+    )
+    try:
+        streamer = Streamer()
+        runner.start(big, link, streamer)
+        assert wait_for(lambda: runner.progress.sent > 5, 5.0)
+        assert runner.progress.sent < runner.progress.total
+        # The machine restarts underneath the run.
+        fake._emit(fake.banner())
+        assert wait_for(lambda: runner.progress.state in (ERROR, STOPPED, DONE), 10.0)
+        snapshot = runner.snapshot()
+        assert snapshot["state"] == ERROR, snapshot
+        assert "reset" in (snapshot.get("error") or ""), snapshot
+        assert runner.progress.sent < runner.progress.total, "it kept streaming into a reset machine"
+    finally:
+        link.close()

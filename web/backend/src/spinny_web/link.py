@@ -270,6 +270,17 @@ class Link:
                 pass
 
     @property
+    def restarts(self) -> int:
+        """How many times the firmware has announced itself.
+
+        It prints its banner at every reset, so a count that moves while
+        something is streaming means the machine went back to the start
+        underneath it, taking the queue and the modal words with it.
+        """
+        with self._banner_cond:
+            return self._banner_seq
+
+    @property
     def is_open(self) -> bool:
         return self._opened and not self._closed.is_set()
 

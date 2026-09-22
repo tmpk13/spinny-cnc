@@ -52,8 +52,11 @@ def test_square_around_the_axis_marks_the_square():
     square = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0), (-5.0, -5.0)]
     lines = lines_of(streamer, job_of(square))
     assert lines[0].startswith("go R")
-    assert lines[1].startswith("cut R") and " F400 S500" in lines[1]
-    assert all(" F" not in line for line in lines[2:])
+    # Every cut carries its own feed and power, so a reset part way
+    # through cannot leave the rest of the run without one.
+    cuts = [line for line in lines if line.startswith("cut ")]
+    assert cuts and all(line.endswith(" F400 S500") for line in cuts)
+    assert all(" F" not in line for line in lines if line.startswith("go "))
     marks, final = replay(lines)
     assert len(marks) == 1
     assert deviation(marks[0], square) <= SLACK
@@ -107,7 +110,7 @@ def test_line_passing_close_but_not_snapped_still_holds_tolerance():
     assert all(deviation(mark, path) <= SLACK for mark in marks)
 
 
-def test_feed_and_power_written_once_per_group_and_after_rapids():
+def test_every_cut_carries_its_group_feed_and_power():
     streamer = Streamer(tolerance=TOLERANCE)
     groups = [
         Group(label="a", power=500, speed=400, paths=[[(10.0, 0.0), (12.0, 0.0)], [(10.0, 5.0), (12.0, 5.0)]]),
@@ -115,8 +118,12 @@ def test_feed_and_power_written_once_per_group_and_after_rapids():
         Group(label="off", power=900, speed=100, enabled=False, paths=[[(1.0, 1.0), (2.0, 2.0)]]),
     ]
     lines = lines_of(streamer, job_of(groups=groups))
-    with_fs = [line for line in lines if " F" in line]
-    assert [line.split(" F")[1] for line in with_fs] == ["400 S500", "400 S500", "200 S300"]
+    # The firmware keeps the feed modal but forgets it on a reset, so a
+    # line that leaned on the one before it would be refused for a missing
+    # word rather than simply stopping with the run.
+    tails = {line.split(" F")[1] for line in lines if line.startswith("cut ")}
+    assert tails == {"400 S500", "200 S300"}
+    assert all(" F" in line for line in lines if line.startswith("cut "))
     kinds = [line.split()[0] for line in lines]
     assert kinds.count("go") == 3
     assert not any("S900" in line for line in lines)
