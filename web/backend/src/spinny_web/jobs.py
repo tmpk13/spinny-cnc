@@ -37,6 +37,8 @@ GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gm1")
 # Largest value a power, a speed or a coordinate may take: far past any
 # machine, and short enough to keep every protocol line under its limit.
 MAX_VALUE = 1.0e6
+# Isolation passes around the copper; each is another offset of every loop.
+MAX_PASSES = 50
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -228,8 +230,8 @@ class ImportOptions:
             raise JobImportError(f"offset must be within {MAX_VALUE:g} mm")
         if not (math.isfinite(self.tolerance) and self.tolerance > 0.0):
             raise JobImportError("tolerance must be > 0")
-        if self.passes < 1:
-            raise JobImportError("passes must be >= 1")
+        if not 1 <= self.passes <= MAX_PASSES:
+            raise JobImportError(f"passes must be between 1 and {MAX_PASSES}")
 
 
 def import_file(path: Path, name: str, options: ImportOptions, streamer: Streamer) -> Job:

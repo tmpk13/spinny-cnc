@@ -1,6 +1,9 @@
 // Constant beam test, laser off, and the power mode.
 
 import { askConfirm } from "../confirm.ts";
+
+/** The longest beam test the firmware accepts, ms. */
+export const MAX_BEAM_MS = 60000;
 import { button, el, labeled, numberField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import type { Mode } from "../types.ts";
@@ -26,11 +29,17 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
     async function test(): Promise<void> {
         const s = parseNumber(power.value);
         const t = parseNumber(ms.value);
-        if (s === null || s < 0 || t === null || t <= 0) {
-            ctx.toast("error", "enter a power and a duration");
+        // What is checked is what is sent: whole milliseconds, at least
+        // one, and no more than the firmware takes.
+        const duration = t === null ? null : Math.round(t);
+        if (s === null || s < 0 || duration === null || duration < 1) {
+            ctx.toast("error", "enter a power and a duration of at least 1 ms");
             return;
         }
-        const duration = Math.round(t);
+        if (duration > MAX_BEAM_MS) {
+            ctx.toast("error", `the beam test runs for at most ${MAX_BEAM_MS} ms`);
+            return;
+        }
         const ok = await askConfirm(`Fire the beam at S${s} for ${duration} ms? Eye protection on.`, "Fire");
         if (ok) {
             await ctx.call(ctx.api.laser(s, duration));

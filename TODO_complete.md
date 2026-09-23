@@ -105,4 +105,18 @@
   documented `?api=` mode has a `--cors-origin` flag; the virtual firmware
   drops a dead client's queue, keeps its trace aligned and reports the
   beam rather than the pin.
-
+- Host-side review (2026-09-23, third pass): the firmware reports `Hold`
+  only once its brake has finished, so the runner's reset lands on a
+  still machine; the runner keeps run identity, refuses a start while the
+  old thread halts, treats the plan window as active, re-checks the
+  start, never unlocks, retries an overtaken hold, and ends a drain that
+  outlasts its hour as an error; the app bounds the tolerance and writes
+  the config without NaN, checks serial urls, refuses board moves past
+  `r_max` whole and moves while a run is active, applies settings all or
+  nothing with a restore, routes a typed `!`/`~` through the run, serves
+  moves one at a time, bounds `passes` and uploads, fills a blank goto
+  axis from the planned end, and refuses cross-origin posts and
+  websockets (`--allowed-host` for the Host header); the page keeps the
+  selection on a refused delete, asks before deleting, updates the groups
+  table in place, shows the run's reason, checks the tolerance and the
+  beam duration as sent, and gives signed fields a keyboard with a minus.

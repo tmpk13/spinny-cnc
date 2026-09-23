@@ -31,7 +31,7 @@ part of the line.
 | Byte | Action |
 | --- | --- |
 | `?` | one status line |
-| `!` | hold: decelerate to a stop, laser off, state `Hold`; a beam lit by `laser` is closed from any state |
+| `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a beam lit by `laser` is closed from any state |
 | `~` | resume from `Hold` |
 | `0x18` | reset: stop at once, flush everything, laser off; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
 | `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle` |

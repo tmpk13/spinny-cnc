@@ -202,8 +202,27 @@ def _keyword(line: str) -> str:
     return body[0].lower() if body else ""
 
 
+# A device path, a Windows COM port, or a TCP socket: the only urls the
+# machine is ever reached through.
+DEVICE_URL = re.compile(r"/dev/[A-Za-z0-9_.:@,+-]+(/[A-Za-z0-9_.:@,+-]+)*|COM[0-9]+")
+SOCKET_URL = re.compile(r"socket://[A-Za-z0-9_.-]+(:[0-9]{1,5})|socket://\[[0-9A-Fa-f:.]+\]:[0-9]{1,5}")
+
+
+def check_url(url: str) -> None:
+    """Refuses anything but a device path or a `socket://host:port` url.
+
+    pyserial resolves other schemes too, and some reach beyond a port: a
+    `spy://` url opens a file of the caller's choosing for writing before
+    the port behind it, so a url from a request is never handed over as is.
+    """
+    if DEVICE_URL.fullmatch(url) or SOCKET_URL.fullmatch(url):
+        return
+    raise LinkError(f"not a serial device path or a socket://host:port url: {url!r}")
+
+
 def open_serial(url: str):
     """A raw pyserial port for a device path or a `socket://host:port` url."""
+    check_url(url)
     port = serial.serial_for_url(
         url,
         baudrate=BAUD,

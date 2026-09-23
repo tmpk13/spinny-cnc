@@ -64,12 +64,17 @@ class FakeSerial:
         move_time: float = 0.02,
         banner_at_open: bool = True,
         version: str = "0.1.0",
+        hold_ramp: float = 0.0,
     ) -> None:
         self.credits = credits
         self.blocks = blocks
         self.ok_delay = ok_delay
         self.byte_delay = byte_delay
         self.move_time = move_time
+        # How long a hold takes to bring the machine to rest. The firmware
+        # reports `Hold` only once the brake has finished; until then a
+        # reset lands on a moving machine and raises the alarm.
+        self.hold_ramp = hold_ramp
         self.version = version
         self.timeout = 0.05
         self.is_open = True
@@ -77,6 +82,9 @@ class FakeSerial:
         # Lines that got an answer; a reset flushes the rest unanswered.
         self.answered_lines: list[str] = []
         self.realtime_bytes: list[int] = []
+        # When each realtime byte arrived, so a test can check that a
+        # reset waited for the hold to finish.
+        self.realtime_at: list[tuple[int, float]] = []
         # How many lines had been received when each reset byte arrived,
         # so a test can tell the lines that came after one.
         self.received_at_reset: list[int] = []
@@ -90,6 +98,8 @@ class FakeSerial:
         self.settings = dict(DEFAULT_SETTINGS)
         self.saved = 0
         self.hold = False
+        self._held_at = 0.0
+        self._hold_done_at = 0.0
         self.alarm: int | None = None
         self.busy_until = 0.0
         self.jogging = False
@@ -131,6 +141,7 @@ class FakeSerial:
         for byte in data:
             if byte in (0x3F, 0x21, 0x7E, 0x18, 0x85):
                 self.realtime_bytes.append(byte)
+                self.realtime_at.append((byte, time.monotonic()))
                 self._realtime(byte)
             elif byte == 0x0A:
                 text = bytes(self._line).decode("ascii", errors="replace").strip("\r").strip()
@@ -175,7 +186,9 @@ class FakeSerial:
         if self.alarm is not None:
             return f"Alarm:{self.alarm}"
         if self.hold:
-            return "Hold"
+            if time.monotonic() >= self._hold_done_at:
+                return "Hold"
+            return "Jog" if self.jogging else "Run"
         if time.monotonic() < self.busy_until:
             return "Jog" if self.jogging else "Run"
         return "Idle"
@@ -331,16 +344,19 @@ class FakeSerial:
         if byte == 0x3F:
             self._emit(self.status())
         elif byte == 0x21:
-            if self.state() in ("Run", "Jog"):
+            if self.state() in ("Run", "Jog") and not self.hold:
                 self.hold = True
                 # Time stands still while held.
                 self._held_at = time.monotonic()
+                self._hold_done_at = self._held_at + self.hold_ramp
         elif byte == 0x7E:
             if self.hold:
                 self.hold = False
                 self.busy_until += time.monotonic() - self._held_at
         elif byte == 0x18:
-            moving = self.state() in ("Run", "Jog", "Hold")
+            # A hold that has come to rest is not moving: the reset that
+            # follows it costs no steps and raises no alarm.
+            moving = self.state() in ("Run", "Jog")
             self.received_at_reset.append(len(self.received_lines))
             with self._lock:
                 self._outstanding.clear()

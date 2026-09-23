@@ -4,11 +4,12 @@ A thread generates the protocol lines lazily and sends them through the
 link, blocking whenever the credits are used up, so the firmware's own
 queue is what paces the job. Progress is published at most five times a
 second and on every state change. A stop, or a line the firmware refuses,
-holds the machine, resets it and clears the alarm that leaves behind.
+holds the machine, waits for it to come to rest and resets it.
 """
 
 from __future__ import annotations
 
+import functools
 import threading
 import time
 from dataclasses import dataclass, field
@@ -26,12 +27,17 @@ from .link import (
 )
 
 PUBLISH_INTERVAL = 0.2
+# How long a hold may take to bring the machine to rest before the stop
+# resets it anyway.
 HOLD_WAIT = 2.0
-# States in which the machine is not moving, so a reset will not lose steps.
+# States in which the machine is not moving, so a reset will not lose
+# steps: the firmware reports `Hold` only once the brake has finished.
 AT_REST = ("Hold", "Idle", "Alarm")
-# How long the machine may stay busy after the last ack before the run is
-# given up as stuck.
+# How long the machine may stay busy after the last ack, or the last
+# answer, before the run is given up as stuck. A hold does not count.
 DRAIN_TIMEOUT = 3600.0
+# How long a stop waits for the streaming thread to wind up.
+JOIN_WAIT = 2.0
 
 RUNNING, HOLD, DONE, STOPPED, ERROR, IDLE = "running", "hold", "done", "stopped", "error", "idle"
 
@@ -86,13 +92,16 @@ class Runner:
         # What a run that ends with `_error` set is reported as: an error,
         # unless `abort` asked for something milder.
         self._end_state = ERROR
+        # A run is being prepared: the plan is made from where the machine
+        # is, and nothing may move it before the first line goes out.
+        self._starting = False
         self.progress = Progress()
 
     # --- state ------------------------------------------------------------
 
     @property
     def active(self) -> bool:
-        return self.progress.state in (RUNNING, HOLD)
+        return self._starting or self.progress.state in (RUNNING, HOLD)
 
     def snapshot(self) -> dict | None:
         with self._lock:
@@ -106,74 +115,113 @@ class Runner:
         with self._lock:
             if self.active:
                 raise RunnerError("a job is already running")
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                # Its halt is still on its way to the machine; a new run
+                # would be streamed into the reset that ends the old one.
+                raise RunnerError("the previous run is still stopping")
+            self._starting = True
+        try:
+            start, stats = self._prepare(job, link, streamer)
+            assert link is not None
+            with self._lock:
+                self.progress = Progress(
+                    job=job.id,
+                    state=RUNNING,
+                    total=stats.moves,
+                    estimate=stats.seconds,
+                    started=time.monotonic(),
+                )
+                progress = self.progress
+                self._link = link
+                self._error = None
+                self._end_state = ERROR
+                self._abort.clear()
+                self._last_publish = 0.0
+                self._thread = threading.Thread(
+                    target=self._run,
+                    args=(job, link, streamer, start, progress),
+                    name="runner",
+                    daemon=True,
+                )
+                self._thread.start()
+        finally:
+            self._starting = False
+        self._emit(force=True)
+        return progress.to_dict()
+
+    def _prepare(self, job: Job, link: Link | None, streamer: Streamer):
         if link is None or not link.is_open:
             raise RunnerError("not connected")
         # The status and the estimate run outside the lock: the reader thread
         # takes it for every snapshot, and the status answer arrives on that
         # thread.
+        status = self._idle_status(link)
+        if not any(group.enabled and group.has_cuts for group in job.groups):
+            raise RunnerError("the job has nothing enabled to cut")
+        start = status.joint
+        stats = streamer.estimate(job, start)
+        # The estimate takes a while on a large job, and the plan is only
+        # good from where the machine was when it was made: a typed line in
+        # the meantime may have moved the head, or declared it elsewhere.
+        if self._idle_status(link).joint != start:
+            raise RunnerError("the machine moved while the run was being prepared")
+        return start, stats
+
+    @staticmethod
+    def _idle_status(link: Link):
         try:
             status = link.status_now(1.0, routine=True)
         except LinkError as exc:
             raise RunnerError(f"no status from the machine: {exc}") from exc
         if status.state != "Idle":
             raise RunnerError(f"the machine is {status.raw or status.state}, not Idle")
-        if not any(group.enabled and group.has_cuts for group in job.groups):
-            raise RunnerError("the job has nothing enabled to cut")
-        start = status.joint
-        stats = streamer.estimate(job, start)
-        with self._lock:
-            if self.active:
-                raise RunnerError("a job is already running")
-            self.progress = Progress(
-                job=job.id,
-                state=RUNNING,
-                total=stats.moves,
-                estimate=stats.seconds,
-                started=time.monotonic(),
-            )
-            self._link = link
-            self._error = None
-            self._end_state = ERROR
-            self._abort.clear()
-            self._last_publish = 0.0
-            self._thread = threading.Thread(
-                target=self._run,
-                args=(job, link, streamer, start),
-                name="runner",
-                daemon=True,
-            )
-            self._thread.start()
-        self._emit(force=True)
-        return self.progress.to_dict()
+        return status
 
     def hold(self) -> dict:
         link = self._require(RUNNING)
         link.realtime(REALTIME_HOLD)
-        with self._lock:
-            self.progress.state = HOLD
+        self._switch(RUNNING, HOLD)
         self._emit(force=True)
         return self.progress.to_dict()
 
     def resume(self) -> dict:
         link = self._require(HOLD)
         link.realtime(REALTIME_RESUME)
-        with self._lock:
-            self.progress.state = RUNNING
+        self._switch(HOLD, RUNNING)
         self._emit(force=True)
         return self.progress.to_dict()
 
+    def _switch(self, before: str, after: str) -> None:
+        """The run from `before` to `after`, unless it ended in between: a
+        finished run stays finished, and the byte just sent found a machine
+        with nothing left to hold or resume."""
+        with self._lock:
+            if self.progress.state != before:
+                raise RunnerError(f"the run is {self.progress.state}, not {before}")
+            self.progress.state = after
+
     def stop(self) -> dict:
         with self._lock:
-            if not self.active:
+            if self.progress.state not in (RUNNING, HOLD):
                 raise RunnerError("nothing is running")
             link = self._link
+            progress = self.progress
         assert link is not None
         self._abort.set()
-        self._halt(link)
-        self._finish(STOPPED)
+        stopped, note = self._halt(link)
+        if not stopped:
+            # The run is over on this side, but the machine is still
+            # cutting what it had: say so rather than report a stop that
+            # did not happen.
+            self._fail(f"the machine could not be stopped: {note}", progress, ERROR)
+        elif note is not None:
+            self._fail(note, progress, STOPPED)
+        else:
+            self._finish(STOPPED, progress)
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
+            thread.join(timeout=JOIN_WAIT)
         return self.progress.to_dict()
 
     def abort(self, reason: str, state: str = STOPPED) -> None:
@@ -183,7 +231,7 @@ class Runner:
         `state` with `reason`. Nothing happens when no run is active.
         """
         with self._lock:
-            if not self.active:
+            if self.progress.state not in (RUNNING, HOLD):
                 return
             if self._error is None:
                 self._error = reason
@@ -199,25 +247,47 @@ class Runner:
             raise RunnerError("not connected")
         return link
 
-    def _halt(self, link: Link) -> None:
-        """Hold, wait for the stop, reset, and clear the alarm that leaves."""
+    def _halt(self, link: Link) -> tuple[bool, str | None]:
+        """Hold, wait for the machine to come to rest, and reset it.
+
+        Returns whether the reset went out, and a note when the stop was
+        not clean: the machine did not come to rest in time, so the reset
+        may have cost steps, or an alarm is up afterwards. The alarm is
+        left for the operator: it says the position may be off, and only
+        they can check that.
+        """
         try:
             link.realtime(REALTIME_HOLD)
-            self._wait_rest(link, HOLD_WAIT)
+            rested = self._wait_rest(link, HOLD_WAIT)
             link.reset(timeout=1.0)
-            try:
-                status = link.status_now(1.0, routine=True)
-            except LinkError:
-                status = link.status
-            if status is not None and status.state == "Alarm":
-                link.request("unlock", timeout=2.0)
         except LinkError as exc:
             self._message("error", f"stop: {exc}")
+            return False, str(exc)
+        note = None
+        if not rested:
+            note = "the machine did not come to rest before the reset: the position may be off"
+        try:
+            status = link.status_now(1.0, routine=True)
+        except LinkError:
+            status = link.status
+        if status is not None and status.state == "Alarm":
+            note = f"the machine is in {status.raw or status.state}: check the position, then unlock"
+        if note is not None:
+            self._message("error", note)
+        return True, note
 
     # --- the streaming thread ---------------------------------------------
 
-    def _run(self, job: Job, link: Link, streamer: Streamer, start: tuple[float, float]) -> None:
+    def _run(
+        self,
+        job: Job,
+        link: Link,
+        streamer: Streamer,
+        start: tuple[float, float],
+        progress: Progress,
+    ) -> None:
         restarts = link.restarts
+        on_ack = functools.partial(self._on_ack, progress)
         try:
             for piece in streamer.job_pieces(job, start):
                 if self._abort.is_set():
@@ -230,16 +300,16 @@ class Runner:
                     self._error = "the machine reset during the run"
                     self._abort.set()
                     break
-                link.send(piece.line, abort=self._abort, callback=self._on_ack)
+                link.send(piece.line, abort=self._abort, callback=on_ack)
                 with self._lock:
-                    self.progress.sent += 1
-                    self.progress.group = piece.group
+                    progress.sent += 1
+                    progress.group = piece.group
                 self._emit()
             else:
-                self._drain(link, restarts)
+                self._drain(link, restarts, progress)
         except LinkError as exc:
             if not self._abort.is_set():
-                self._fail(str(exc))
+                self._fail(str(exc), progress, ERROR)
                 return
         except Exception as exc:
             # A fault in the streamer itself: the run must not stay marked as
@@ -249,12 +319,25 @@ class Runner:
             self._abort.set()
         if self._error is not None:
             self._abort.set()
-            self._halt(link)
-            self._fail(self._error)
+            reason = self._error
+            state = self._end_state
+            # A machine that has announced itself again has nothing queued
+            # and nothing to halt; a second reset would only take an alarm
+            # it raised for the operator as this run's doing.
+            if link.restarts == restarts:
+                stopped, note = self._halt(link)
+                if not stopped:
+                    reason = f"{reason}; the machine could not be stopped: {note}"
+                    state = ERROR
+            self._fail(reason, progress, state)
         elif not self._abort.is_set():
-            self._finish(DONE)
+            self._finish(DONE, progress)
 
-    def _on_ack(self, pending: Pending) -> None:
+    def _on_ack(self, progress: Progress, pending: Pending) -> None:
+        if progress is not self.progress:
+            # An answer to a line of a run that is over. Its bookkeeping is
+            # gone and the flags belong to the run after it.
+            return
         if not pending.answered:
             # Dropped without an answer. The stop sequence sets the abort
             # flag before it resets, so a drop while the flag is clear is a
@@ -269,7 +352,7 @@ class Runner:
                 self._abort.set()
             return
         with self._lock:
-            self.progress.acked += 1
+            progress.acked += 1
         if pending.ok:
             self._emit()
             return
@@ -277,18 +360,26 @@ class Runner:
             self._error = f"{pending.line!r}: {pending.response}"
         self._abort.set()
 
-    def _drain(self, link: Link, restarts: int) -> None:
+    def _drain(self, link: Link, restarts: int, progress: Progress) -> None:
         """Wait for the last ack and for the machine to come to rest."""
+        last_acked = -1
         deadline = time.monotonic() + DRAIN_TIMEOUT
-        while not self._abort.is_set() and time.monotonic() < deadline:
+        while not self._abort.is_set():
             if link.restarts != restarts:
                 # Reset with the tail of the job still queued: those lines
                 # were flushed, not run, however idle the machine now is.
                 self._error = "the machine reset during the run"
                 return
             with self._lock:
-                acked = self.progress.acked >= self.progress.sent
-            if acked:
+                acked, sent = progress.acked, progress.sent
+            now = time.monotonic()
+            if acked != last_acked:
+                # The budget counts from the last answer: a long tail of
+                # slow moves is still going somewhere while acks arrive.
+                last_acked = acked
+                deadline = now + DRAIN_TIMEOUT
+            status = None
+            if acked >= sent:
                 # Only a status asked for now can say the machine has come
                 # to rest: the polled one may be from before the last lines
                 # were even sent, and a short job is acked in full before
@@ -301,47 +392,68 @@ class Runner:
                     if status.state == "Alarm":
                         self._error = f"the machine raised {status.raw}"
                     return
+            # A hold is the operator's and lasts as long as they like.
+            held = status if status is not None else link.status
+            if held is not None and held.state == "Hold":
+                deadline = now + DRAIN_TIMEOUT
+            if now >= deadline:
+                # Reported as an error, not as done: the machine is still
+                # busy with something, and the run's end is the stop that
+                # follows.
+                self._error = "the machine did not come to rest after the last line"
+                return
             if not link.is_open:
                 self._error = link.close_reason or "disconnected"
                 return
             self._emit()
             time.sleep(0.05)
 
-    def _fail(self, reason: str) -> None:
+    def _fail(self, reason: str, progress: Progress, state: str) -> None:
         with self._lock:
-            if self.progress.state not in (RUNNING, HOLD):
+            if progress is not self.progress or progress.state not in (RUNNING, HOLD):
                 return
-            self.progress.error = reason
-            state = self._end_state
+            progress.error = reason
         if state == ERROR:
             self._message("error", f"run failed: {reason}")
         else:
             self._message("info", f"run {state}: {reason}")
-        self._finish(state)
+        self._finish(state, progress)
 
-    def _finish(self, state: str) -> None:
+    def _finish(self, state: str, progress: Progress) -> None:
         with self._lock:
-            if self.progress.state not in (RUNNING, HOLD):
+            if progress is not self.progress or progress.state not in (RUNNING, HOLD):
                 return
-            self.progress.state = state
-            self.progress.finished = time.monotonic()
+            progress.state = state
+            progress.finished = time.monotonic()
         self._emit(force=True)
 
     def _wait_rest(self, link: Link, timeout: float) -> bool:
-        """Fresh status reports until the machine is held, idle or alarmed.
+        """Fresh status reports until the machine is held, idle or alarmed,
+        and, when idle, with no line left waiting that could start it.
 
         Only reports asked for after the hold count: the cached one may
         predate it and still say Idle for a move that has since started.
+        A hold that went out ahead of a line the machine had not taken up
+        yet found nothing to hold, and that line then starts the motion;
+        seeing the machine move, the hold is asked for again. A held or
+        alarmed machine takes up no line, so lines waiting behind those
+        states are at rest too, and the reset flushes them.
         """
         deadline = time.monotonic() + timeout
+        nudged = time.monotonic()
         while time.monotonic() < deadline:
             try:
-                if link.status_now(0.3, routine=True).state in AT_REST:
-                    return True
+                status = link.status_now(0.3, routine=True)
             except LinkClosed:
                 return False
             except LinkError:
-                pass
+                status = None
+            if status is not None:
+                if status.state in AT_REST and not (status.state == "Idle" and _lines_waiting(link, status)):
+                    return True
+                if status.state in ("Run", "Jog") and time.monotonic() - nudged > 0.1:
+                    link.realtime(REALTIME_HOLD)
+                    nudged = time.monotonic()
             time.sleep(0.02)
         return False
 
@@ -353,3 +465,10 @@ class Runner:
             self._last_publish = now
             snapshot = self.progress.to_dict()
         self._publish(snapshot)
+
+
+def _lines_waiting(link: Link, status) -> bool:
+    """Lines the machine has taken in but not yet answered: a report that
+    says Idle with one of those still queued is not a machine at rest."""
+    banner = link.banner
+    return banner is not None and status.lines < banner.lines

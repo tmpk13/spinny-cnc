@@ -99,9 +99,13 @@ export interface NumberFieldOptions {
 }
 
 export function numberField(options: NumberFieldOptions = {}): HTMLInputElement {
+    // The decimal keypad a phone shows for inputmode=decimal has no minus
+    // key, so only a field that cannot go below zero asks for it; the
+    // others get the keyboard that type=number brings, minus included.
+    const unsigned = options.min !== undefined && options.min >= 0;
     const input = el("input", {
         type: "number",
-        inputmode: "decimal",
+        inputmode: unsigned ? "decimal" : undefined,
         step: options.step ?? "any",
         min: options.min,
         max: options.max,

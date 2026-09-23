@@ -123,23 +123,16 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     const gotoR = numberField({ placeholder: "r" });
     const gotoA = numberField({ placeholder: "a" });
     const gotoBoard = async (): Promise<void> => {
-        let x = parseNumber(gotoX.value);
-        let y = parseNumber(gotoY.value);
+        const x = parseNumber(gotoX.value);
+        const y = parseNumber(gotoY.value);
         if (x === null && y === null) {
             ctx.toast("error", "enter x and/or y");
             return;
         }
-        // A board goto is absolute in both axes; a blank one keeps the current coordinate.
-        const here = ctx.store.get().snapshot.machine?.board;
-        if (x === null || y === null) {
-            if (!here) {
-                ctx.toast("error", "enter both x and y: the position is not known");
-                return;
-            }
-            x = x ?? here.x;
-            y = y ?? here.y;
-        }
-        await ctx.call(ctx.api.goto({ kind: "board", x, y, feed: feed() }));
+        // A blank axis is left to the backend, which keeps the coordinate
+        // the head will have once the jog in progress ends; the readout
+        // here is a point it is passing through.
+        await ctx.call(ctx.api.goto({ kind: "board", ...(x !== null ? { x } : {}), ...(y !== null ? { y } : {}), feed: feed() }));
     };
     const gotoJoint = async (): Promise<void> => {
         const r = parseNumber(gotoR.value);

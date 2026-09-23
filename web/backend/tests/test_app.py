@@ -121,7 +121,7 @@ def test_jogs_gotos_and_position(client, fake):
     fake.settings["r_max"] = 50
     assert client.post("/api/goto", json={"kind": "joint", "r": -60}).status_code == 400
     fake.settings["r_max"] = 0
-    assert client.post("/api/goto", json={"kind": "board", "x": 1}).status_code == 400
+    assert client.post("/api/goto", json={"kind": "board"}).status_code == 400
     state = client.post("/api/position", json={"r": 0, "a": 0}).json()
     assert "set R0 A0" in fake.received_lines
     assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0}
@@ -468,3 +468,195 @@ def test_a_body_that_is_not_a_number_is_refused_before_anything_moves(client, fa
     assert client.post("/api/jog", content='{"kind": "joint", "dr": Infinity}', headers=headers).status_code == 422
     assert client.post("/api/laser", content='{"power": NaN, "ms": 100}', headers=headers).status_code == 422
     assert not [line for line in fake.received_lines if line.split()[0] in ("jog", "jogto", "laser")]
+
+
+def slow_run(client, fake) -> str:
+    """A run that stays busy: the fake answers each line after 0.3 s."""
+    fake.ok_delay = 0.3
+    paths = [[[10.0 + i * 0.1, -3.0], [10.0 + i * 0.1, 3.0]] for i in range(40)]
+    job = {"name": "many", "groups": [{"label": "one", "power": 500, "speed": 400, "paths": paths}]}
+    uploaded = client.post("/api/jobs", files={"file": ("many.json", json.dumps(job).encode(), "application/json")}).json()
+    assert client.post(f"/api/jobs/{uploaded['id']}/run").status_code == 200
+    assert wait_for(lambda: (client.get("/api/run").json() or {}).get("sent", 0) >= 16, 5.0)
+    return uploaded["id"]
+
+
+def test_a_tolerance_that_is_not_a_finite_small_number_is_refused_and_not_stored(client, tmp_path):
+    raw = {"content-type": "application/json"}
+    for bad in ('1e999', '"inf"', '"nan"', "0", "-1", "50", '"abc"', "true", "null"):
+        response = client.put("/api/settings", content=('{"host": {"tolerance": %s}}' % bad).encode(), headers=raw)
+        assert response.status_code in (400, 422), (bad, response.text)
+    settings = client.get("/api/settings").json() if client.backend.link else None
+    assert settings is None or settings["host"]["tolerance"] == client.backend.tolerance
+    text = (tmp_path / "config.json").read_text() if (tmp_path / "config.json").exists() else ""
+    assert "Infinity" not in text and "NaN" not in text
+    assert client.put("/api/settings", json={"host": {"tolerance": 0.02}}).status_code == 200
+    assert client.backend.tolerance == 0.02
+    # A bad value that reached the file by other means is not used either.
+    (tmp_path / "config.json").write_text('{"tolerance": Infinity}')
+    from spinny_web.app import Backend, DEFAULT_TOLERANCE
+
+    again = Backend(root=tmp_path, config_path=tmp_path / "config.json", jobs_dir=tmp_path / "jobs")
+    assert again.tolerance == DEFAULT_TOLERANCE
+
+
+def test_a_refused_setting_puts_back_the_ones_already_applied(client, fake):
+    connect(client)
+    response = client.put("/api/settings", json={"values": {"r_rate": 777, "a_rate": -5}})
+    assert response.status_code == 400 and "a_rate" in response.text
+    assert fake.settings["r_rate"] == 1000 and fake.settings["a_rate"] == 1080
+    sent = [line for line in fake.received_lines if line.startswith("$r_rate")]
+    assert sent == ["$r_rate=777", "$r_rate=1000"]
+    # Values the machine would refuse are refused here, before any is sent.
+    before = len(fake.received_lines)
+    raw = {"content-type": "application/json"}
+    for bad in ("null", '"fast"', "[1]", "1e999"):
+        body = ('{"values": {"r_rate": %s}}' % bad).encode()
+        assert client.put("/api/settings", content=body, headers=raw).status_code in (400, 422), bad
+    assert not [line for line in fake.received_lines[before:] if line.startswith("$r_rate")]
+
+
+def test_the_host_tolerance_is_stored_only_when_the_machine_part_went_through(client, fake, tmp_path):
+    connect(client)
+    before = client.backend.tolerance
+    response = client.put("/api/settings", json={"values": {"nope": 1}, "host": {"tolerance": 0.03}})
+    assert response.status_code == 400
+    assert client.backend.tolerance == before
+    assert "0.03" not in (tmp_path / "config.json").read_text()
+    response = client.put("/api/settings", json={"values": {"r_rate": 900}, "host": {"tolerance": 0.03}})
+    assert response.status_code == 200
+    assert client.backend.tolerance == 0.03 and fake.settings["r_rate"] == 900
+
+
+def test_a_url_that_is_not_a_port_is_refused_before_pyserial_sees_it(tmp_path):
+    from spinny_web.app import Backend, create_app
+
+    opened = []
+
+    def opener(url):
+        opened.append(url)
+        raise OSError("no such port")
+
+    backend = Backend(root=tmp_path, link_factory=lambda url: Link(url, open_port=opener))
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        for url in ("spy://loop://?file=/tmp/x", "loop://", "hwgrep://.*", "/etc/passwd", "socket://h:1/../x"):
+            response = client.post("/api/connect", json={"url": url})
+            assert response.status_code == 400, (url, response.text)
+        assert opened == []
+        for url in ("/dev/ttyACM0", "/dev/serial/by-id/usb-Klipper_rp2040-if00", "socket://127.0.0.1:2323", "COM3"):
+            response = client.post("/api/connect", json={"url": url})
+            assert response.status_code == 502, (url, response.text)
+        assert len(opened) == 4
+
+
+def test_a_board_move_past_the_soft_limit_is_refused_whole(client, fake):
+    fake.settings["r_max"] = 50
+    connect(client)
+    before = len(fake.received_lines)
+    response = client.post("/api/goto", json={"kind": "board", "x": 100.0, "y": 100.0})
+    assert response.status_code == 400 and "r_max" in response.text
+    response = client.post("/api/jog", json={"kind": "board", "dx": 60.0, "dy": 0.0})
+    assert response.status_code == 400 and "r_max" in response.text
+    assert not [line for line in fake.received_lines[before:] if line.startswith("jogto")]
+    assert client.post("/api/goto", json={"kind": "board", "x": 30.0, "y": 30.0}).status_code == 200
+    # A limit typed at the console counts from the next move on.
+    assert client.post("/api/command", json={"line": "$r_max=10"}).status_code == 200
+    response = client.post("/api/goto", json={"kind": "board", "x": 20.0, "y": 0.0})
+    assert response.status_code == 400 and "r_max=10" in response.text
+
+
+def test_a_typed_hold_and_resume_are_the_runs(client, fake):
+    connect(client)
+    slow_run(client, fake)
+    assert client.post("/api/command", json={"line": "!"}).status_code == 200
+    assert client.get("/api/run").json()["state"] == "hold"
+    assert client.post("/api/run/resume").status_code == 200
+    assert client.get("/api/run").json()["state"] == "running"
+    assert client.post("/api/run/hold").status_code == 200
+    assert client.post("/api/command", json={"line": "~"}).status_code == 200
+    assert client.get("/api/run").json()["state"] == "running"
+    assert client.post("/api/run/stop").status_code == 200
+
+
+def test_moves_are_refused_while_a_run_owns_the_machine(client, fake):
+    connect(client)
+    slow_run(client, fake)
+    before = len(fake.received_lines)
+    for route, body in (
+        ("/api/jog", {"kind": "joint", "dr": 1.0}),
+        ("/api/goto", {"kind": "board", "x": 1.0, "y": 1.0}),
+        ("/api/position", {"r": 0.0, "a": 0.0}),
+    ):
+        response = client.post(route, json=body)
+        assert response.status_code == 409 and "running" in response.text, (route, response.text)
+    assert not [line for line in fake.received_lines[before:] if line.split()[0] in ("jog", "jogto", "set")]
+    assert client.post("/api/run/stop").status_code == 200
+
+
+def test_passes_and_upload_size_are_bounded(client, monkeypatch):
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0" stroke="#000"/></svg>'
+    response = client.post("/api/jobs", files={"file": ("a.svg", svg, "image/svg+xml")}, data={"passes": "1000"})
+    assert response.status_code == 400 and "passes" in response.text
+    from spinny_web import app as app_module
+
+    monkeypatch.setattr(app_module, "MAX_UPLOAD_BYTES", 1000)
+    big = svg + b" " * 2000
+    response = client.post("/api/jobs", files={"file": ("a.svg", big, "image/svg+xml")})
+    assert response.status_code == 413
+    assert client.post("/api/jobs", files={"file": ("a.svg", svg, "image/svg+xml")}).status_code == 200
+
+
+def test_cross_origin_posts_and_websockets_are_refused(tmp_path, fake):
+    from starlette.websockets import WebSocketDisconnect
+
+    from spinny_web.app import Backend, create_app
+
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    app = create_app(backend, frontend=tmp_path / "no-dist", cors_origins=["http://dev:3000"])
+    with TestClient(app) as client:
+        evil = {"Origin": "http://evil.example"}
+        # A form post from another page: no preflight, so the guard is all there is.
+        assert client.post("/api/unlock", headers=evil).status_code == 403
+        assert client.post("/api/disconnect", headers=evil).status_code == 403
+        form = {"Origin": "http://evil.example", "Content-Type": "application/x-www-form-urlencoded"}
+        assert client.post("/api/run/resume", headers=form, content=b"x=1").status_code == 403
+        files = {"file": ("a.svg", b"<svg/>", "image/svg+xml")}
+        assert client.post("/api/jobs", headers=evil, files=files).status_code == 403
+        assert client.post("/api/unlock", headers={"Origin": "null"}).status_code == 403
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws", headers=evil):
+                pass
+        # Reads are the browser's to refuse, and pass.
+        assert client.get("/api/state", headers=evil).status_code == 200
+        # The page's own origin and the allowed one go through to the route.
+        assert client.post("/api/unlock", headers={"Origin": "http://testserver"}).status_code == 409
+        assert client.post("/api/unlock", headers={"Origin": "http://dev:3000"}).status_code == 409
+        with client.websocket_connect("/ws", headers={"Origin": "http://testserver"}) as socket:
+            assert socket.receive_json()["type"] == "state"
+        # A script with no origin at all is not a page.
+        assert client.post("/api/unlock").status_code == 409
+    app = create_app(backend, frontend=tmp_path / "no-dist", allowed_hosts=["spinny.local"])
+    with TestClient(app) as client:
+        assert client.get("/api/state").status_code == 400
+        assert client.get("/api/state", headers={"Host": "spinny.local"}).status_code == 200
+
+
+def test_a_board_goto_with_one_axis_keeps_the_other_from_the_planned_end(client, fake):
+    connect(client)
+    assert client.post("/api/jog", json={"kind": "board", "dx": 10.0, "dy": 0.0}).status_code == 200
+    assert wait_for(lambda: fake.state() == "Idle", 2.0)
+    response = client.post("/api/goto", json={"kind": "board", "y": 5.0})
+    assert response.status_code == 200, response.text
+    assert response.json()["lines"][-1] == "jogto R11.180 A26.5651"
+    # While the head is on its way somewhere this side did not send it,
+    # where it will stop is not known, and a blank axis has no value.
+    assert client.post("/api/command", json={"line": "jogto R3 A0"}).json()["lines"] == ["ok"]
+    fake.busy_until = time.monotonic() + 5.0
+    response = client.post("/api/goto", json={"kind": "board", "y": 6.0})
+    assert response.status_code == 400 and "both x and y" in response.text
+    assert client.post("/api/goto", json={"kind": "board"}).status_code == 400

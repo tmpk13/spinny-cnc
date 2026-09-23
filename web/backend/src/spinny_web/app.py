@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import math
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -30,20 +31,27 @@ from . import __version__
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
 from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, num
 from .link import (
-    REALTIME_HOLD,
-    REALTIME_JOG_CANCEL,
-    REALTIME_RESUME,
-    REALTIME_STATUS,
+    check_url,
     CommandError,
     Event,
     Link,
     LinkError,
+    REALTIME_HOLD,
+    REALTIME_JOG_CANCEL,
+    REALTIME_RESUME,
+    REALTIME_STATUS,
 )
 from .runner import HOLD, RUNNING, Runner, RunnerError
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
+# The widest chord tolerance a run may be planned with: past this a board
+# line is streamed as one joint line, which is an arc on the board.
+MAX_TOLERANCE = 10.0
+# The largest file an upload may be; a board, a drawing or a gcode file is
+# well under it, and the whole of it is held in memory while it is read.
+MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 CLIENT_QUEUE = 256
 
 SETTINGS_SCHEMA = [
@@ -220,6 +228,9 @@ class Backend:
         self.rates = Rates()
         self._settings_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
+        # One move request at a time: each plans from the end of the last,
+        # and two in flight at once would both start from the same place.
+        self._move_lock = threading.Lock()
         # Where the jog in progress ends, so the next board move starts from
         # there rather than from a position the machine has already left.
         self._jog_target: tuple[float, float] | None = None
@@ -238,8 +249,9 @@ class Backend:
 
     def _save_config(self) -> None:
         try:
-            self.config_path.write_text(json.dumps(self.config, indent=4) + "\n", encoding="utf-8")
-        except OSError as exc:
+            text = json.dumps(self.config, indent=4, allow_nan=False)
+            self.config_path.write_text(text + "\n", encoding="utf-8")
+        except (OSError, ValueError) as exc:
             # The value is in force for this process; say that it will not
             # outlive it rather than lose it in silence.
             self.publish_message("error", f"could not save {self.config_path}: {exc}")
@@ -247,10 +259,9 @@ class Backend:
     @property
     def tolerance(self) -> float:
         try:
-            value = float(self.config.get("tolerance", DEFAULT_TOLERANCE))
-        except (TypeError, ValueError):
-            value = DEFAULT_TOLERANCE
-        return value if value > 0 else DEFAULT_TOLERANCE
+            return _tolerance(self.config.get("tolerance", DEFAULT_TOLERANCE))
+        except ValueError:
+            return DEFAULT_TOLERANCE
 
     def streamer(self) -> Streamer:
         return Streamer(tolerance=self.tolerance, rates=self.rates)
@@ -261,6 +272,10 @@ class Backend:
         url = url.strip()
         if not url:
             raise ValueError("url is empty")
+        try:
+            check_url(url)
+        except LinkError as exc:
+            raise ValueError(str(exc)) from exc
         with self._lock:
             if self.link is not None and self.link.is_open and self.link.url == url:
                 return self.snapshot()
@@ -315,6 +330,15 @@ class Backend:
             raise HTTPException(status_code=409, detail="not connected")
         return link
 
+    def _movable(self) -> Link:
+        """The link, for a request that moves the head or declares where it
+        is: refused while a run owns the machine, from the moment its plan
+        is made from where the head stands."""
+        link = self.require_link()
+        if self.runner.active:
+            raise HTTPException(status_code=409, detail="a job is running")
+        return link
+
     def move_start(self, link: Link) -> tuple[tuple[float, float], bool]:
         """Where the next move starts, and whether that is certain.
 
@@ -338,6 +362,24 @@ class Backend:
             self._jog_target = None
             raise
         self._jog_target = end
+
+    def _check_reach(self, targets: list[tuple[tuple[float, float], bool]]) -> None:
+        """A board move is refused whole when any of its lines would be.
+
+        The firmware checks the soft limit a line at a time, and a move
+        sent as several lines would run the ones inside the limit before
+        the refusal came back, leaving the head at the limit rather than
+        where it was.
+        """
+        try:
+            limit = float(self.read_settings()["values"].get("r_max", 0) or 0)
+        except (TypeError, ValueError):
+            limit = 0.0
+        if limit <= 0:
+            return
+        for joint, _ in targets:
+            if abs(joint[0]) > limit + 1e-9:
+                raise ValueError(f"out of reach: R{joint[0]:.3f} is past the soft limit r_max={limit:g}")
 
     def snapshot(self) -> dict:
         link = self.link
@@ -405,7 +447,11 @@ class Backend:
         return {"lines": [line]}
 
     def jog(self, body: JogBody) -> dict:
-        link = self.require_link()
+        link = self._movable()
+        with self._move_lock:
+            return self._jog(link, body)
+
+    def _jog(self, link: Link, body: JogBody) -> dict:
         streamer = self.streamer()
         if body.kind == "joint":
             if body.dz is not None:
@@ -420,6 +466,7 @@ class Backend:
             start, _ = self.move_start(link)
             here = board_of(start)
             targets = streamer.board_targets(start, (here[0] + (body.dx or 0.0), here[1] + (body.dy or 0.0)))
+            self._check_reach(targets)
             lines = streamer.jog_lines(targets, body.feed)
             end = targets[-1][0] if targets else start
         else:
@@ -428,7 +475,11 @@ class Backend:
         return {"lines": lines}
 
     def goto(self, body: GotoBody) -> dict:
-        link = self.require_link()
+        link = self._movable()
+        with self._move_lock:
+            return self._goto(link, body)
+
+    def _goto(self, link: Link, body: GotoBody) -> dict:
         streamer = self.streamer()
         if body.kind == "joint":
             if body.z is not None:
@@ -446,10 +497,18 @@ class Backend:
             else:
                 end = None
         elif body.kind == "board":
-            if body.x is None or body.y is None:
-                raise ValueError("a board goto needs x and y")
-            start, _ = self.move_start(link)
-            targets = streamer.board_targets(start, (body.x, body.y))
+            if body.x is None and body.y is None:
+                raise ValueError("a board goto needs x and/or y")
+            start, known = self.move_start(link)
+            # An axis left out keeps the coordinate the head will have
+            # once the jog in progress ends, which is only known when the
+            # start is: the reported position is one it is passing through.
+            if (body.x is None or body.y is None) and not known:
+                raise ValueError("give both x and y: where the head will stop is not known")
+            here = board_of(start)
+            target = (here[0] if body.x is None else body.x, here[1] if body.y is None else body.y)
+            targets = streamer.board_targets(start, target)
+            self._check_reach(targets)
             lines = streamer.jog_lines(targets, body.feed)
             end = targets[-1][0] if targets else start
         else:
@@ -458,7 +517,11 @@ class Backend:
         return {"lines": lines}
 
     def set_position(self, body: PositionBody) -> dict:
-        link = self.require_link()
+        link = self._movable()
+        with self._move_lock:
+            return self._set_position(link, body)
+
+    def _set_position(self, link: Link, body: PositionBody) -> dict:
         words = []
         if body.r is not None:
             # Negative is allowed here: it declares the head parked on the
@@ -513,15 +576,23 @@ class Backend:
         link = self.require_link()
         text = line.strip()
         # A realtime byte typed on its own goes out as one, outside the
-        # credits; what it brings back arrives as an event.
-        realtime = {"?": REALTIME_STATUS, "!": REALTIME_HOLD, "~": REALTIME_RESUME}
-        if text in realtime:
-            link.realtime(realtime[text])
+        # credits; what it brings back arrives as an event. A hold or a
+        # resume typed during a run is the run's, the same as the button.
+        if text == "?":
+            link.realtime(REALTIME_STATUS)
+            return {"lines": []}
+        if text in ("!", "~"):
+            self.realtime("hold" if text == "!" else "resume")
             return {"lines": []}
         # A typed line may move the head or declare where it is, which
         # makes the end of the last jog meaningless as a starting point.
         self._jog_target = None
-        return {"lines": link.request(text)}
+        lines = link.request(text)
+        if text.startswith("$") and "=" in text:
+            # A setting typed at the console: what this side remembers of
+            # the machine's settings is stale.
+            self._settings_cache = None
+        return {"lines": lines}
 
     def laser(self, power: float, ms: int | None) -> dict:
         link = self.require_link()
@@ -578,33 +649,48 @@ class Backend:
         return {"values": values, "schema": SETTINGS_SCHEMA, "host": {"tolerance": self.tolerance}}
 
     def write_settings(self, values: dict | None, host: dict | None) -> dict:
-        if host and "tolerance" in host:
-            try:
-                tolerance = float(host["tolerance"])
-            except (TypeError, ValueError) as exc:
-                raise ValueError("tolerance must be a number") from exc
-            if tolerance <= 0:
-                raise ValueError("tolerance must be > 0")
-            self.config["tolerance"] = tolerance
-            self._save_config()
+        """Settings to the machine and the host's own, all or nothing.
+
+        Every entry is checked here before anything goes out; a value the
+        machine still refuses has the ones sent before it put back. The
+        host's tolerance is stored only once the machine's part is done.
+        """
+        tolerance = _tolerance(host["tolerance"]) if host and "tolerance" in host else None
         if values:
             link = self.require_link()
             current = self.read_settings(force=True)["values"]
-            # Every name is checked before any value goes to the machine,
-            # so a refused entry does not leave the ones before it applied.
+            texts = {}
             for name, value in values.items():
                 if name not in current:
                     raise ValueError(f"unknown setting {name!r}")
-                if isinstance(value, float) and not math.isfinite(value):
-                    raise ValueError(f"{name} must be a number")
-            for name, value in values.items():
-                if _number(str(value)) == current[name]:
-                    continue
-                link.request_ok(f"${name}={_setting_text(value)}")
-            self._settings_cache = None
+                texts[name] = _setting_text(name, value)
+            applied: list[str] = []
+            try:
+                for name, text in texts.items():
+                    if _number(text) == current[name]:
+                        continue
+                    link.request_ok(f"${name}={text}")
+                    applied.append(name)
+            except CommandError:
+                self._restore_settings(link, {name: current[name] for name in applied})
+                raise
+            finally:
+                self._settings_cache = None
+        if tolerance is not None:
+            self.config["tolerance"] = tolerance
+            self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
         return {"values": {}, "schema": SETTINGS_SCHEMA, "host": {"tolerance": self.tolerance}}
+
+    def _restore_settings(self, link: Link, previous: dict) -> None:
+        """Put back settings a refused write had already changed."""
+        for name, value in previous.items():
+            try:
+                link.request_ok(f"${name}={_setting_text(name, value)}")
+            except LinkError as exc:
+                self.publish_message("error", f"could not put {name} back to {value}: {exc}")
+                return
 
     def save_settings(self) -> dict:
         self.require_link().request_ok("$save")
@@ -669,15 +755,93 @@ def _number(text: str):
         return text
 
 
-def _setting_text(value) -> str:
+def _setting_text(name: str, value) -> str:
+    """The value of a `$name=value` line: a finite number, or a bool as 0/1.
+
+    Anything else is refused here rather than sent for the machine to
+    refuse after the entries before it have been applied.
+    """
     if isinstance(value, bool):
         return "1" if value else "0"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, str):
+        value = _number(value.strip())
+        if isinstance(value, str):
+            raise ValueError(f"{name} must be a number")
+        if isinstance(value, int):
+            return str(value)
     if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be a number")
         text = f"{value:.6f}".rstrip("0").rstrip(".")
-        return text or "0"
-    return str(value).strip()
+        return text if text not in ("", "-") else "0"
+    raise ValueError(f"{name} must be a number")
+
+
+def _tolerance(value) -> float:
+    """The host's chord tolerance in mm, checked."""
+    if isinstance(value, bool):
+        raise ValueError("tolerance must be a number")
+    try:
+        tolerance = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tolerance must be a number") from exc
+    if not (math.isfinite(tolerance) and 0.0 < tolerance <= MAX_TOLERANCE):
+        raise ValueError(f"tolerance must be above 0 and at most {MAX_TOLERANCE:g} mm")
+    return tolerance
+
+
+class OriginGuard:
+    """Refuses requests a page from another origin can make without a
+    preflight.
+
+    A browser sends a form post, or opens a websocket, to any origin with
+    no CORS check first; CORS only decides whether the page may read the
+    answer. Here the request itself is what matters: a post starts a run
+    or lights the laser. So a request that names an origin (browsers do,
+    on every post and websocket) must name this server's own, or one on
+    the allowed list. Requests with no origin at all, from scripts and
+    command line tools, are not a page's doing and pass.
+    """
+
+    SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+    def __init__(self, app, allowed: list[str] | None = None) -> None:
+        self.app = app
+        self.allowed = set(origin.rstrip("/").lower() for origin in allowed or [])
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket") or self._permitted(scope):
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        body = json.dumps({"detail": "cross-origin request refused"}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    def _permitted(self, scope) -> bool:
+        if scope["type"] == "http" and scope.get("method", "GET").upper() in self.SAFE_METHODS:
+            return True
+        headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
+        origin = headers.get("origin")
+        if origin is None:
+            return True
+        origin = origin.rstrip("/").lower()
+        if origin in self.allowed:
+            return True
+        host = headers.get("host", "").lower()
+        scheme = scope.get("scheme", "http")
+        scheme = {"ws": "http", "wss": "https"}.get(scheme, scheme)
+        return bool(host) and origin == f"{scheme}://{host}"
 
 
 # --- the app ---------------------------------------------------------------------
@@ -687,6 +851,7 @@ def create_app(
     backend: Backend | None = None,
     frontend: Path | None = None,
     cors_origins: list[str] | None = None,
+    allowed_hosts: list[str] | None = None,
 ) -> FastAPI:
     backend = backend or Backend()
     frontend = FRONTEND_DIST if frontend is None else frontend
@@ -708,10 +873,13 @@ def create_app(
         # being NaN cannot be written as JSON: the echo is left out.
         errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+    # A page from another origin may not drive the machine: the guard
+    # refuses its posts and websockets, which a browser sends without a
+    # preflight. CORS on top of it is only for a page served from
+    # elsewhere, such as the frontend's dev server, so its calls can read
+    # their answers.
+    app.add_middleware(OriginGuard, allowed=cors_origins)
     if cors_origins:
-        # Only for a page served from elsewhere, such as the frontend's dev
-        # server: a browser refuses cross-origin calls otherwise, and
-        # nothing else should be allowed to drive the machine from a page.
         from fastapi.middleware.cors import CORSMiddleware
 
         app.add_middleware(
@@ -720,6 +888,13 @@ def create_app(
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
             allow_headers=["content-type"],
         )
+    if allowed_hosts:
+        # The names this server answers to. A page that has pointed its own
+        # name at this address (DNS rebinding) arrives with that name as
+        # the host, and is turned away by it.
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
     def guarded(call: Callable[[], Any]) -> Any:
         try:
@@ -839,7 +1014,14 @@ def create_app(
             options.offset = (offset_x or 0.0, offset_y or 0.0)
         if passes is not None:
             options.passes = passes
-        data = await file.read()
+        chunks: list[bytes] = []
+        size = 0
+        while chunk := await file.read(1 << 20):
+            size += len(chunk)
+            if size > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail=f"the upload is over {MAX_UPLOAD_BYTES >> 20} MB")
+            chunks.append(chunk)
+        data = b"".join(chunks)
         try:
             job = await run_in_threadpool(backend.import_upload, file.filename or "", data, options)
         except (JobImportError, ValueError) as exc:
@@ -937,9 +1119,21 @@ def main(argv: list[str] | None = None) -> int:
         help="an origin allowed to call the API from a page served elsewhere, such as the"
         " frontend dev server: http://localhost:3000; repeatable",
     )
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="a host name this server answers to, such as spinny.local or 192.168.1.20;"
+        " repeatable; any other Host header is refused (default: all)",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
-    uvicorn.run(create_app(cors_origins=args.cors_origin), host=args.host, port=args.port, log_level="info")
+    uvicorn.run(
+        create_app(cors_origins=args.cors_origin, allowed_hosts=args.allowed_host),
+        host=args.host,
+        port=args.port,
+        log_level="info",
+    )
     return 0
 
 

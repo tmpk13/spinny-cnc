@@ -81,6 +81,10 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         }
         const values = changedValues(settings, edits);
         const hostTolerance = parseNumber(tolerance.value);
+        if (hostTolerance !== null && hostTolerance <= 0) {
+            ctx.toast("error", "the chord tolerance must be above 0");
+            return;
+        }
         const patch: { values?: Record<string, number>; host?: { tolerance: number } } = {};
         if (Object.keys(values).length > 0) {
             patch.values = values;

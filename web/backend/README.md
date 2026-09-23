@@ -11,9 +11,14 @@ uv run spinny-web --host 0.0.0.0 --port 8000
 uv run pytest
 ```
 
-`--cors-origin http://localhost:3000` (repeatable) lets a page served from
-elsewhere, such as the frontend's dev server, call the API; by default no
-other origin can.
+A page from another origin cannot drive the machine: its posts and
+websockets are refused (browsers name the origin on both, and CORS alone
+would only stop the page reading the answer). `--cors-origin
+http://localhost:3000` (repeatable) admits a page served from elsewhere,
+such as the frontend's dev server. `--allowed-host spinny.local`
+(repeatable) also pins the `Host` header, against a page that points its
+own name at this address. Anything without an `Origin` header, such as a
+script, is admitted; the backend is meant for a trusted network.
 
 The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `../frontend/dist` is served at `/` when it exists.

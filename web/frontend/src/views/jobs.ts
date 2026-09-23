@@ -1,5 +1,6 @@
 // Upload, job list, the selected job's groups and stats, and the run controls.
 
+import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
@@ -8,9 +9,9 @@ import type { Ctx } from "./context.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.kicad_pcb,.gcode,.nc";
 
-export function progressText(progress: Progress | null): { bar: number; counts: string; time: string; state: string } {
+export function progressText(progress: Progress | null): { bar: number; counts: string; time: string; state: string; reason: string } {
     if (!progress) {
-        return { bar: 0, counts: "", time: "", state: "" };
+        return { bar: 0, counts: "", time: "", state: "", reason: "" };
     }
     const bar = progress.total > 0 ? Math.min(1, progress.acked / progress.total) : 0;
     return {
@@ -18,7 +19,23 @@ export function progressText(progress: Progress | null): { bar: number; counts: 
         counts: `${progress.sent} sent / ${progress.acked} acked / ${progress.total}`,
         time: `${formatDuration(progress.seconds)} / ${formatDuration(progress.estimate)}`,
         state: progress.state,
+        // Why a run ended the way it did stays with the run, after the
+        // toast that announced it is gone.
+        reason: progress.error ?? "",
     };
+}
+
+interface GroupRow {
+    row: HTMLElement;
+    power: HTMLInputElement;
+    speed: HTMLInputElement;
+    enabled: HTMLInputElement;
+}
+
+function setUnlessFocused(input: HTMLInputElement, value: string, focused: Element | null): void {
+    if (input !== focused) {
+        input.value = value;
+    }
 }
 
 export function mountJobs(root: HTMLElement, ctx: Ctx): void {
@@ -132,7 +149,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 el("span", { class: "muted" }, ` ${job.source}`),
                 job.stats ? el("span", { class: "muted job-stat" }, ` ${formatLength(job.stats.length_mm)}, ${formatDuration(job.stats.seconds)}`) : null,
             );
-            const remove = button("Delete", () => removeJob(job.id), "btn btn-quiet btn-small");
+            const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small");
             item.append(pick, remove);
             return item;
         }));
@@ -141,8 +158,17 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         }
     }
 
-    async function removeJob(id: string): Promise<void> {
-        await ctx.call(ctx.api.deleteJob(id));
+    async function removeJob(id: string, name: string): Promise<void> {
+        // The file goes for good, and the button sits beside the one that
+        // selects the job: a mis-tap must not be enough.
+        if (!(await askConfirm(`Delete job ${name}?`, "Delete"))) {
+            return;
+        }
+        const done = await ctx.call(ctx.api.deleteJob(id).then(() => true));
+        if (!done) {
+            // Refused, so the job is still there, and so are its controls.
+            return;
+        }
         if (ctx.store.get().job?.id === id) {
             await ctx.selectJob(null);
         }
@@ -151,10 +177,18 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
 
     let detailsFor: string | null = null;
     let detailsJob: Job | null = null;
+    // The inputs of the groups table and the offset row, kept so that a
+    // fresh copy of the same job updates them in place: rebuilding the
+    // table would tear out the field the operator is typing in, and the
+    // browser fires no change for a field that is gone.
+    let groupRows: GroupRow[] = [];
+    let offsetFields: { x: HTMLInputElement; y: HTMLInputElement } | null = null;
+    let statsEl: HTMLElement | null = null;
     const progressBar = el("div", { class: "progress-fill" });
     const progressCounts = el("span", { class: "progress-counts" });
     const progressTime = el("span", { class: "progress-time" });
     const progressState = el("span", { class: "badge run-state" });
+    const progressReason = el("span", { class: "progress-reason" });
     const runButton = button("Run", () => run(), "btn btn-primary");
     const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
     const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
@@ -162,7 +196,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const runRow = el("div", { class: "run-row" }, runButton, holdButton, resumeButton, stopButton);
     const progressBox = el("div", { class: "progress" },
         el("div", { class: "progress-track" }, progressBar),
-        el("div", { class: "progress-text" }, progressState, progressCounts, progressTime),
+        el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
     );
 
     async function run(): Promise<void> {
@@ -185,19 +219,43 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             renderProgress(state);
             return;
         }
-        if (detailsFor !== job.id || detailsJob !== job) {
+        if (detailsFor !== job.id || detailsJob === null || groupRows.length !== job.groups.length) {
             detailsFor = job.id;
             detailsJob = job;
+            statsEl = statsBlock(job);
             replace(details,
                 el("h3", {}, job.name),
                 groupsTable(job),
-                statsBlock(job),
+                statsEl,
                 offsetRow(job),
                 runRow,
                 progressBox,
             );
+        } else if (detailsJob !== job) {
+            detailsJob = job;
+            refreshDetails(job);
         }
         renderProgress(state);
+    }
+
+    function refreshDetails(job: Job): void {
+        const focused = document.activeElement;
+        job.groups.forEach((group, index) => {
+            const row = groupRows[index]!;
+            setUnlessFocused(row.power, String(group.power), focused);
+            setUnlessFocused(row.speed, String(group.speed), focused);
+            if (row.enabled !== focused) {
+                row.enabled.checked = group.enabled;
+            }
+            row.row.classList.toggle("disabled", !group.enabled);
+        });
+        if (offsetFields) {
+            setUnlessFocused(offsetFields.x, String(job.offset.x), focused);
+            setUnlessFocused(offsetFields.y, String(job.offset.y), focused);
+        }
+        const fresh = statsBlock(job);
+        statsEl?.replaceWith(fresh);
+        statsEl = fresh;
     }
 
     function renderProgress(state: AppState): void {
@@ -208,6 +266,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         progressTime.textContent = text.time;
         progressState.textContent = text.state;
         progressState.setAttribute("data-run", text.state);
+        progressReason.textContent = text.reason;
         progressBox.classList.toggle("hidden", progress === null || (progress.job !== state.job?.id));
         const active = progress !== null && (progress.state === "running" || progress.state === "hold");
         const connected = state.snapshot.connected;
@@ -218,6 +277,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     }
 
     function groupsTable(job: Job): HTMLElement {
+        groupRows = [];
         const rows = job.groups.map((group, index) => {
             const power = numberField({ value: group.power, min: 0, step: 1, width: "5.5rem" });
             const speed = numberField({ value: group.speed, min: 1, step: 1, width: "5.5rem" });
@@ -235,13 +295,15 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             power.addEventListener("change", () => void patch());
             speed.addEventListener("change", () => void patch());
             enabled.addEventListener("change", () => void patch());
-            return el("tr", { class: group.enabled ? "" : "disabled" },
+            const row = el("tr", { class: group.enabled ? "" : "disabled" },
                 el("td", {}, el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
                     el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`)),
                 el("td", {}, power),
                 el("td", {}, speed),
                 el("td", {}, enabled),
             );
+            groupRows.push({ row, power, speed, enabled });
+            return row;
         });
         return el("table", { class: "groups" },
             el("thead", {}, el("tr", {}, el("th", {}, "Group"), el("th", {}, "S"), el("th", {}, "mm/min"), el("th", {}, "On"))),
@@ -265,6 +327,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     function offsetRow(job: Job): HTMLElement {
         const x = numberField({ value: job.offset.x, width: "5.5rem" });
         const y = numberField({ value: job.offset.y, width: "5.5rem" });
+        offsetFields = { x, y };
         const apply = async (): Promise<void> => {
             const ox = parseNumber(x.value);
             const oy = parseNumber(y.value);

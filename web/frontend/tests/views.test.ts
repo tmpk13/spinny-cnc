@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { Api } from "../src/api.ts";
 import { createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock.ts";
-import { button, setLocked } from "../src/dom.ts";
+import { button, numberField, setLocked } from "../src/dom.ts";
 import { Store, appendConsole, initialState, pushToast, type AppState } from "../src/state.ts";
 import type { Machine, Snapshot } from "../src/types.ts";
 import { mountConsole } from "../src/views/console.ts";
@@ -11,7 +11,7 @@ import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs, progressText } from "../src/views/jobs.ts";
 import { keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
-import { mountLaser } from "../src/views/laser.ts";
+import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedValues, mountSettings } from "../src/views/settings.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
 import { mountToasts } from "../src/views/toasts.ts";
@@ -72,6 +72,19 @@ function click(root: ParentNode, label: string): void {
 }
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** A button of the open confirm dialog. */
+function dialogButton(label: string): HTMLButtonElement {
+    const dialog = document.querySelector("dialog[open]");
+    if (!dialog) {
+        throw new Error("no confirm dialog");
+    }
+    const found = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent === label);
+    if (!found) {
+        throw new Error(`no dialog button ${label}`);
+    }
+    return found;
+}
 
 /** A resolvable promise, to hold a request open during a test. */
 function gate<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -271,7 +284,7 @@ describe("jog", () => {
         slow.jog = real;
     });
 
-    test("a board goto fills the blank axis from the readout", async () => {
+    test("a board goto sends only the axes given, and the blank one is the backend's to fill", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected({ joint: { r: 5, a: 90, z: 0 }, board: { x: 0, y: 5 } }) });
@@ -282,7 +295,14 @@ describe("jog", () => {
         const goBoard = Array.from(root.querySelectorAll("button")).filter((b) => b.textContent === "Go")[0]!;
         goBoard.click();
         await settle();
-        expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "board", x: 3, y: 5, feed: null });
+        expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "board", x: 3, feed: null });
+    });
+
+    test("fields that may go below zero do not ask for the keypad without a minus", () => {
+        expect(numberField({ min: 0 }).getAttribute("inputmode")).toBe("decimal");
+        expect(numberField({ min: 1, step: 1 }).getAttribute("inputmode")).toBe("decimal");
+        expect(numberField({ placeholder: "x" }).hasAttribute("inputmode")).toBe(false);
+        expect(numberField({ value: -2 }).hasAttribute("inputmode")).toBe(false);
     });
 
     test("arrow keys jog when no input has focus", async () => {
@@ -337,11 +357,81 @@ describe("status bar", () => {
 
 describe("jobs", () => {
     test("progress text", () => {
-        expect(progressText(null)).toEqual({ bar: 0, counts: "", time: "", state: "" });
+        expect(progressText(null)).toEqual({ bar: 0, counts: "", time: "", state: "", reason: "" });
         const text = progressText({ job: "a", state: "running", sent: 120, acked: 118, total: 900, seconds: 12.5, estimate: 95, group: 0 });
         expect(text.bar).toBeCloseTo(118 / 900, 9);
         expect(text.counts).toBe("120 sent / 118 acked / 900");
         expect(text.time).toBe("0:13 / 1:35");
+        expect(text.reason).toBe("");
+        const failed = progressText({ job: "a", state: "error", sent: 3, acked: 2, total: 9, seconds: 1, estimate: 9, group: 0, error: "'cut R1 A2 F3 S4': error:4 out of range" });
+        expect(failed.reason).toContain("error:4");
+    });
+
+    test("the reason a run ended stays on the panel", async () => {
+        const { store, ctx, root, api } = setup();
+        mountJobs(root, ctx);
+        await ctx.refreshJobs();
+        const jobs = await api.jobs();
+        await ctx.selectJob(jobs[0]!.id);
+        store.set({ progress: { job: jobs[0]!.id, state: "error", sent: 3, acked: 2, total: 9, seconds: 1, estimate: 9, group: 0, error: "the machine reset during the run" } });
+        expect(root.querySelector(".progress-reason")?.textContent).toBe("the machine reset during the run");
+        store.set({ progress: { job: jobs[0]!.id, state: "running", sent: 3, acked: 2, total: 9, seconds: 1, estimate: 9, group: 0 } });
+        expect(root.querySelector(".progress-reason")?.textContent).toBe("");
+    });
+
+    test("delete asks first, and a refused delete keeps the job selected with its controls", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJobs(root, ctx);
+        await ctx.refreshJobs();
+        const jobs = await api.jobs();
+        await ctx.selectJob(jobs[0]!.id);
+        click(root, "Delete");
+        await settle();
+        dialogButton("Cancel").click();
+        await settle();
+        expect(calls.some((c) => c.name === "deleteJob")).toBe(false);
+        expect(store.get().job?.id).toBe(jobs[0]!.id);
+        // The job is running: the backend refuses to delete it, and the
+        // panel with the Stop button must stay where it is.
+        await api.runJob(jobs[0]!.id);
+        await ctx.refreshState();
+        click(root, "Delete");
+        await settle();
+        dialogButton("Delete").click();
+        await settle();
+        await settle();
+        expect(calls.some((c) => c.name === "deleteJob")).toBe(true);
+        expect(store.get().job?.id).toBe(jobs[0]!.id);
+        expect(store.get().toasts.some((t) => t.level === "error")).toBe(true);
+        const stop = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Stop");
+        expect(stop).toBeDefined();
+        expect(root.querySelectorAll("table.groups tbody tr").length).toBeGreaterThan(0);
+    });
+
+    test("a patch of the same job updates the table in place and keeps the field being typed in", async () => {
+        const { ctx, root, api } = setup();
+        mountJobs(root, ctx);
+        await ctx.refreshJobs();
+        const jobs = await api.jobs();
+        await ctx.selectJob(jobs[0]!.id);
+        const table = root.querySelector("table.groups")!;
+        const inputs = Array.from(table.querySelectorAll("tbody tr")[0]!.querySelectorAll("input")) as HTMLInputElement[];
+        const power = inputs[0]!;
+        const speed = inputs[1]!;
+        speed.focus();
+        speed.value = "123";
+        power.value = "321";
+        power.dispatchEvent(new Event("change", { bubbles: true }));
+        await settle();
+        await settle();
+        await settle();
+        expect((await api.job(jobs[0]!.id)).groups[0]!.power).toBe(321);
+        expect(root.querySelector("table.groups")).toBe(table);
+        expect(speed.isConnected).toBe(true);
+        expect(speed.value).toBe("123");
+        expect(power.value).toBe("321");
     });
 
     test("list and groups of the selected job", async () => {
@@ -410,6 +500,43 @@ describe("laser and settings", () => {
         dialogButton("Cancel").click();
         await settle();
         expect(calls.filter((c) => c.name === "laser").length).toBe(1);
+    });
+
+    test("a chord tolerance of zero is refused with a message, not dropped", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        mountSettings(root, ctx);
+        const settings = await api.settings();
+        store.set({ settings });
+        const inputs = Array.from(root.querySelectorAll("input")) as HTMLInputElement[];
+        const tolerance = inputs.find((i) => i.value === String(settings.host.tolerance))!;
+        tolerance.value = "0";
+        click(root, "Apply");
+        await settle();
+        expect(calls.some((c) => c.name === "updateSettings")).toBe(false);
+        expect(store.get().toasts.some((t) => t.level === "error" && t.text.includes("tolerance"))).toBe(true);
+    });
+
+    test("a beam duration is checked as the whole milliseconds that will be sent", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountLaser(root, ctx);
+        const inputs = Array.from(root.querySelectorAll("input")) as HTMLInputElement[];
+        const ms = inputs.find((i) => i.value === "1000")!;
+        for (const bad of ["0.4", String(MAX_BEAM_MS + 1)]) {
+            ms.value = bad;
+            click(root, "Test beam");
+            await settle();
+            expect(document.querySelector("dialog[open]")).toBeNull();
+        }
+        expect(calls.some((c) => c.name === "laser")).toBe(false);
+        expect(store.get().toasts.filter((t) => t.level === "error").length).toBe(2);
+        ms.value = "1.6";
+        click(root, "Test beam");
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("for 2 ms");
+        dialogButton("Cancel").click();
+        await settle();
     });
 
     test("changed values and the settings table", async () => {

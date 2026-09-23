@@ -11,7 +11,8 @@ from replay import parse
 
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
-from spinny_web.link import REALTIME_RESET, Link
+from spinny_web.link import REALTIME_RESET, Link, LinkClosed
+from spinny_web import runner as runner_module
 from spinny_web.runner import DONE, ERROR, HOLD, RUNNING, STOPPED, Runner, RunnerError
 
 
@@ -124,9 +125,11 @@ def test_hold_resume_and_stop():
         assert wait_for(lambda: fake.state() == "Run", 1.0)
         progress = runner.stop()
         assert progress["state"] == STOPPED
-        assert fake.realtime_bytes[-3:-1] == [0x21, 0x18] or 0x18 in fake.realtime_bytes
-        # A reset while moving raises the alarm, which the stop clears.
-        assert "unlock" in fake.received_lines
+        assert progress["error"] is None
+        # The stop holds first and resets once the machine is at rest, so
+        # no alarm is raised and nothing has to be unlocked.
+        assert fake.realtime_bytes.index(0x21) < fake.realtime_bytes.index(0x18)
+        assert "unlock" not in fake.received_lines
         assert fake.alarm is None
         assert not runner.active
         assert sink.states() == [RUNNING, HOLD, RUNNING, STOPPED]
@@ -195,17 +198,19 @@ def test_a_vanishing_port_ends_the_run_with_an_error():
 
 
 def test_stop_does_not_count_flushed_lines_as_acked():
-    # Answers trail by half a second, so the stop lands before any line was
-    # answered and the reset flushes them all.
+    # The fake takes half a second over each line, so the stop lands with
+    # the first line under way and the rest unanswered; the reset flushes
+    # those and they never count.
     fake, link, sink, runner = setup(move_time=0.5, ok_delay=0.5)
     try:
         runner.start(small_job(), link, Streamer())
-        assert wait_for(lambda: runner.progress.sent >= 4, 3.0)
+        assert wait_for(lambda: fake.state() == "Run", 3.0)
+        assert runner.progress.sent >= 4
         progress = runner.stop()
         assert progress["state"] == STOPPED
-        assert progress["acked"] == 0
-        assert progress["sent"] >= 4
-        assert not any(line.split()[0] in ("go", "cut") for line in fake.answered_lines)
+        answered = [line for line in fake.answered_lines if line.split()[0] in ("go", "cut")]
+        assert progress["acked"] == len(answered) <= 2
+        assert progress["acked"] < progress["sent"]
     finally:
         link.close()
 
@@ -216,9 +221,11 @@ def test_stop_returns_quickly_when_the_machine_is_already_at_rest():
         runner.start(small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.sent >= 1, 2.0)
         assert fake.state() == "Idle"
+        # The lines it has taken in are answered at once from here: an
+        # idle machine with nothing left to take up has nothing to wait for.
+        fake.ok_delay = 0.0
         started = time.monotonic()
         progress = runner.stop()
-        # A hold on an idle machine changes nothing to wait for.
         assert time.monotonic() - started < 1.5
         assert progress["state"] == STOPPED
         assert fake.state() == "Idle"
@@ -386,5 +393,156 @@ def test_a_version_asked_from_the_console_does_not_end_the_run():
         assert link.request("version")[-1] == "ok"
         assert wait_for(lambda: runner.progress.state != RUNNING, 30.0)
         assert runner.snapshot()["state"] == DONE, runner.snapshot()
+    finally:
+        link.close()
+
+
+def test_stop_waits_for_the_hold_to_finish_before_the_reset():
+    # The firmware reports `Hold` only once the brake has finished; the
+    # fake's ramp stands in for that. The reset must wait for it.
+    fake, link, sink, runner = setup(move_time=0.5, hold_ramp=0.3)
+    try:
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: fake.state() == "Run", 2.0)
+        progress = runner.stop()
+        assert progress["state"] == STOPPED and progress["error"] is None
+        first_hold = next(at for byte, at in fake.realtime_at if byte == 0x21)
+        reset = next(at for byte, at in fake.realtime_at if byte == 0x18)
+        assert reset - first_hold >= 0.3
+        assert fake.alarm is None
+        assert "unlock" not in fake.received_lines
+        assert not any(level == "error" for level, _ in sink.messages)
+    finally:
+        link.close()
+
+
+def test_a_stop_that_finds_the_machine_still_moving_leaves_the_alarm_up(monkeypatch):
+    monkeypatch.setattr(runner_module, "HOLD_WAIT", 0.2)
+    fake, link, sink, runner = setup(move_time=0.5, hold_ramp=1.0)
+    try:
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: fake.state() == "Run", 2.0)
+        progress = runner.stop()
+        # The reset went out anyway: a stop must stop. What it cost is
+        # reported, and the alarm that says so is left for the operator.
+        assert progress["state"] == STOPPED
+        assert "position" in progress["error"] or "Alarm" in progress["error"]
+        assert fake.alarm == 1
+        assert "unlock" not in fake.received_lines
+        assert any(level == "error" for level, _ in sink.messages)
+    finally:
+        link.close()
+
+
+def test_a_hold_after_the_run_ended_is_refused_and_leaves_it_done():
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: runner.progress.state == RUNNING, 2.0)
+        real = link.realtime
+
+        def slow_hold(byte, routine=False):
+            # The run ends between the check and the byte.
+            if byte in (0x21, b"!"):
+                assert wait_for(lambda: runner.progress.state == DONE, 10.0)
+            real(byte, routine=routine)
+
+        link.realtime = slow_hold
+        with pytest.raises(RunnerError):
+            runner.hold()
+        assert runner.progress.state == DONE
+        assert not runner.active
+        with pytest.raises(RunnerError):
+            runner.resume()
+        assert runner.progress.state == DONE
+    finally:
+        link.close()
+
+
+def test_start_refuses_while_the_previous_thread_is_still_stopping():
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        gate = threading.Event()
+        stale = threading.Thread(target=gate.wait, daemon=True)
+        stale.start()
+        runner._thread = stale
+        with pytest.raises(RunnerError, match="still stopping"):
+            runner.start(small_job(), link, Streamer())
+        gate.set()
+        stale.join(1.0)
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: runner.progress.state == DONE, 10.0)
+    finally:
+        link.close()
+
+
+def test_a_run_being_prepared_counts_as_active_and_checks_the_start_again():
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        seen = []
+
+        class SlowStreamer(Streamer):
+            def estimate(self, job, start):
+                seen.append(runner.active)
+                # A typed line moves the head while the estimate runs.
+                link.request_ok("set R3 A0")
+                return super().estimate(job, start)
+
+        with pytest.raises(RunnerError, match="moved"):
+            runner.start(small_job(), link, SlowStreamer())
+        assert seen == [True]
+        assert not runner.active
+        assert runner.progress.state == "idle"
+    finally:
+        link.close()
+
+
+def test_the_drain_gives_up_as_an_error_not_as_done(monkeypatch):
+    monkeypatch.setattr(runner_module, "DRAIN_TIMEOUT", 0.3)
+    fake, link, sink, runner = setup(move_time=100.0)
+    try:
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: not runner.active, 10.0)
+        final = runner.snapshot()
+        assert final["state"] == ERROR
+        assert "come to rest" in final["error"]
+        assert 0x18 in fake.realtime_bytes
+        assert fake.state() == "Idle"
+    finally:
+        link.close()
+
+
+def test_a_hold_during_the_drain_does_not_count_against_the_budget(monkeypatch):
+    monkeypatch.setattr(runner_module, "DRAIN_TIMEOUT", 0.5)
+    # The fake answers every line on receipt, so the whole job is a tail
+    # after the last ack; keep it well inside the budget.
+    fake, link, sink, runner = setup(move_time=0.005)
+    try:
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: runner.progress.sent == runner.progress.total, 5.0)
+        runner.hold()
+        time.sleep(0.7)
+        assert runner.progress.state == HOLD
+        runner.resume()
+        assert wait_for(lambda: runner.progress.state == DONE, 5.0), runner.snapshot()
+    finally:
+        link.close()
+
+
+def test_stop_reports_an_error_when_the_halt_cannot_reach_the_machine():
+    fake, link, sink, runner = setup(move_time=0.5)
+    try:
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: fake.state() == "Run", 2.0)
+
+        # The port goes away under the stop: the machine keeps cutting
+        # what it has, and the run must not say it was stopped.
+        def gone(byte, routine=False):
+            raise LinkClosed("reader failed")
+
+        link.realtime = gone
+        progress = runner.stop()
+        assert progress["state"] == ERROR
+        assert "could not be stopped" in progress["error"]
     finally:
         link.close()

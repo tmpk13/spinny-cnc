@@ -14,7 +14,7 @@ from replay import parse
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
 from spinny_web.link import REALTIME_RESET, Link
-from spinny_web.runner import DONE, Runner
+from spinny_web.runner import DONE, STOPPED, Runner
 
 BINARY = os.environ.get("SPINNY_VIRTUAL", "")
 
@@ -151,6 +151,37 @@ def test_a_reset_during_a_held_run_ends_it_without_another_line(firmware):
         assert runner.progress.sent == sent, "a line went out after the reset"
         status = link.status_now(1.0)
         assert status.state == "Idle", status.raw
+        time.sleep(0.3)
+        again = link.status_now(1.0)
+        assert again.state == "Idle" and again.joint == status.joint, again.raw
+    finally:
+        link.close()
+
+
+def test_a_stop_from_motion_holds_first_and_resets_at_rest(firmware):
+    """The stop sequence against the real control core: the hold must have
+    brought the machine to rest before the reset, so no alarm is raised and
+    nothing has to be unlocked."""
+    link = Link(f"socket://127.0.0.1:{firmware}")
+    link.open()
+    try:
+        assert link.request_ok("set R0 A0") == []
+        paths = [[(10.0 + i * 0.1, -3.0), (10.0 + i * 0.1, 3.0)] for i in range(60)]
+        job = Job(id="e2e-stop", name="many", groups=[Group(label="one", power=500, speed=200, paths=paths)])
+        seen: list[str] = []
+        link.subscribe(lambda event: seen.append(f"{event.kind}:{event.data}"))
+        runner = Runner()
+        runner.start(job, link, Streamer())
+        deadline = time.monotonic() + 30.0
+        while runner.progress.sent < 16 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert runner.progress.sent >= 16, runner.snapshot()
+        assert link.status_now(1.0).state == "Run"
+        final = runner.stop()
+        assert final["state"] == STOPPED and final["error"] is None, final
+        status = link.status_now(1.0)
+        assert status.state == "Idle", status.raw
+        assert not [text for text in seen if "ALARM" in text], seen
         time.sleep(0.3)
         again = link.status_now(1.0)
         assert again.state == "Idle" and again.joint == status.joint, again.raw

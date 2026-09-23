@@ -478,8 +478,13 @@ impl<'a> Machine<'a> {
         } else {
             self.constant_duty().unwrap_or_else(|| self.off_duty())
         };
+        // A hold is reported once the brake has finished, not when it was
+        // asked for: `Hold` in a report means the steppers are still, so a
+        // host that resets on seeing it loses no steps. Until then the
+        // report keeps the state the hold interrupted.
+        let state = if self.state == State::Hold && self.front.busy() { self.held } else { self.state };
         Status {
-            state: self.state,
+            state,
             joint: self.joint(),
             rate: self.front.surface_rate(),
             duty,
@@ -1386,6 +1391,37 @@ mod tests {
         assert_eq!(rig.state(), State::Idle);
         assert_eq!(rig.machine.mode(), PowerMode::Dynamic);
         assert_eq!(rig.line("unlock"), "error:5 not now\n");
+    }
+
+    #[test]
+    fn hold_is_reported_once_the_brake_has_finished() {
+        // The stop sequence a host runs is hold, wait for `Hold`, reset.
+        // The report must not say `Hold` while the steppers still run
+        // down the ramp, or that reset lands on a moving machine.
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("go R50"), "ok\n");
+        assert_eq!(rig.line("cut A90 F300 S500"), "ok\n");
+        rig.advance(800_000);
+        rig.realtime(Realtime::Hold);
+        assert_eq!(rig.state(), State::Hold);
+        let status = rig.status_line();
+        assert!(status.starts_with("<Run|"), "{status}");
+        let mut waited = 0;
+        while rig.status_line().starts_with("<Run|") {
+            rig.advance(5_000);
+            waited += 5_000;
+            assert!(waited < 2_000_000, "the hold never came to rest");
+        }
+        let stopped = rig.port.count;
+        let status = rig.status_line();
+        assert!(status.starts_with("<Hold|"), "{status}");
+        rig.realtime(Realtime::Reset);
+        assert_eq!(rig.take_out(), "[MSG:reset]\n[spinny v0.1.0 lines:16 blocks:32]\n");
+        assert_eq!(rig.state(), State::Idle);
+        rig.advance(200_000);
+        assert_eq!(rig.port.count, stopped, "stepping after the reset");
+        assert_eq!(rig.machine.planned_position(), rig.executed_steps());
     }
 
     #[test]
