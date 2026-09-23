@@ -196,7 +196,13 @@ class Streamer:
         self.rates = rates or Rates()
         self.decimals = decimals
         self.angle_decimals = angle_decimals
-        self.snap = 0.5 * 10.0 ** -decimals
+        # A segment within this of the axis is cut there and crosses it
+        # with a dark turn. Half a word quantum is the least that makes
+        # the words agree; the chord tolerance is the most the path may
+        # be moved by, and a pass between the two would otherwise be
+        # streamed as chords sweeping half a turn of the table at a radius
+        # of microns, seconds of the beam on one spot under `mode const`.
+        self.snap = max(0.5 * 10.0 ** -decimals, tolerance)
 
     @property
     def tolerance(self) -> float:

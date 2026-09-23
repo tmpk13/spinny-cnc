@@ -609,10 +609,20 @@ class Backend:
         return self.snapshot()
 
     def laser_off(self) -> dict:
+        # During a run the beam is the run's: `laser off` is a sync command
+        # that would stall the cut mid-path, then let it go on. The button
+        # that means "beam off now" is the hold, which the run can resume.
+        if self.runner.progress.state == RUNNING:
+            self.runner.hold()
+            return self.snapshot()
+        if self.runner.active:
+            return self.snapshot()
         self.require_link().request_ok("laser off")
         return self.snapshot()
 
     def mode(self, mode: str) -> dict:
+        if self.runner.active:
+            raise HTTPException(status_code=409, detail="a job is running")
         if mode not in ("dyn", "const"):
             raise ValueError("mode must be dyn or const")
         link = self.require_link()

@@ -132,3 +132,12 @@
   way the backend does, keeps an `F` given on the spindle line, prices the
   table at the simulator's rate by default, keeps the angle on a grblHAL
   return home, and `--fine` refuses the coarse pattern's flags.
+- Safety and concurrency pass (2026-09-23): the firmware takes motion lines
+  during a hold of a run and latches a hold asked for on an idle machine
+  onto the line that is waiting; the runner sends nothing while held,
+  renumbers the table angle within a turn before a job, and reports a
+  reset no banner answered; the link matches each status request to its
+  own report; the axis snap is the chord tolerance on the host and in the
+  emitter; the page's laser-off during a run is the run's hold and `mode`
+  is refused; the laser pin is claimed at its off level after the stored
+  polarity is read.

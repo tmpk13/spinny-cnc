@@ -35,7 +35,7 @@ part of the line.
 | Byte | Action |
 | --- | --- |
 | `?` | one status line |
-| `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a beam lit by `laser` is closed from any state |
+| `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a hold that finds the machine idle with a motion line taken in or waiting is kept for that line and applied as it starts; a beam lit by `laser` is closed from any state |
 | `~` | resume from `Hold` |
 | `0x18` | reset: stop at once, flush everything, laser off, and forget the modal state (`F`, `S`, `mode` back to `dyn`); prints `[MSG:reset]`, then `ALARM:1 reset while moving, position may be off` if it was moving, then the banner; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
 | `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle` |
@@ -66,7 +66,7 @@ Which commands each state takes:
 | `Idle` | everything |
 | `Run` | `go`, `cut`, `dwell`, `mode`, `laser`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
 | `Jog` | jogs, `mode`, `laser`; `go`/`cut`/`dwell`/`set`/`$` are `error:5` |
-| `Hold` | nothing that moves or declares; a pending motion line waits for the resume |
+| `Hold` | `go`, `cut` and `dwell` are taken in and wait for the resume (a hold of a run); jogs, `set`, `$` and the rest are `error:5` |
 | `Alarm` | `unlock`, `$`, queries; motion and `set` are `error:5` |
 
 `unlock` outside `Alarm` is `error:5`, and any move is `error:5` while the

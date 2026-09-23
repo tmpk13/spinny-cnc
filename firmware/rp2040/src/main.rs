@@ -28,9 +28,9 @@ use embassy_rp::usb::InterruptHandler;
 use embassy_rp::watchdog::Watchdog;
 use embassy_time::{Duration, Instant, Ticker};
 use panic_halt as _;
-use spinny_core::hal::LaserPort;
+use spinny_core::hal::{LaserPort, Store};
 use spinny_core::machine::Machine;
-use spinny_core::settings::Settings;
+use spinny_core::settings::{Settings, BLOB_LEN};
 use spinny_core::stepper::{self, Shared};
 use spinny_core::{parser, report};
 use static_cell::StaticCell;
@@ -49,7 +49,21 @@ const WATCHDOG_TIMEOUT: Duration = Duration::from_millis(1500);
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    // Laser output low and motors disabled before anything else runs.
+    // The stored settings decide the laser output's resting level, so
+    // they are read before the pin is claimed: driven low first and
+    // corrected after the flash read, an inverted module would be lit for
+    // that read.
+    let mut store = flash::FlashStore::new(p.FLASH);
+    let laser_invert = {
+        let mut blob = [0u8; BLOB_LEN];
+        store
+            .load(&mut blob)
+            .and_then(|n| Settings::from_blob(&blob[..n]))
+            .map(|settings| settings.laser_invert)
+            .unwrap_or(false)
+    };
+
+    // Laser output at its off level and motors disabled before anything else runs.
     let (mut port, mut laser, mut slide) = board::init(board::Pins {
         pwm: p.PWM_SLICE2,
         laser: p.PIN_20,
@@ -62,14 +76,13 @@ async fn main(spawner: Spawner) {
         z_step: p.PIN_19,
         z_dir: p.PIN_28,
         z_en: p.PIN_2,
-    });
+    }, laser_invert);
 
     // Every other interrupt below the step timer, which `step_timer::start` puts at P0.
     interrupt::USBCTRL_IRQ.set_priority(Priority::P2);
     interrupt::UART1_IRQ.set_priority(Priority::P2);
     interrupt::TIMER_IRQ_0.set_priority(Priority::P1);
 
-    let mut store = flash::FlashStore::new(p.FLASH);
     let serial = store.serial_number();
 
     static SHARED: StaticCell<Shared> = StaticCell::new();

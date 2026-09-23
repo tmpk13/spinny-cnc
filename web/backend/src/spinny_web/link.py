@@ -271,6 +271,10 @@ class Link:
         self._poller: threading.Thread | None = None
         self._status_cond = threading.Condition()
         self._status_seq = 0
+        # Status requests sent so far: the n-th report answers the n-th
+        # `?`, so a request knows which report is its own and never takes
+        # the answer to a poll sent just before it.
+        self._status_asked = 0
         self.status: Status | None = None
         self.banner: Banner | None = None
         self.close_reason: str | None = None
@@ -332,6 +336,7 @@ class Link:
             self._closed.set()
         with self._status_cond:
             self._polls_out = 0
+            self._status_asked = 0
         with self._credit:
             self._credit.notify_all()
         with self._banner_cond:
@@ -473,9 +478,11 @@ class Link:
                 self._fail_pending("reset")
                 self._write(data)
         else:
-            if routine:
+            if data == REALTIME_STATUS:
                 with self._status_cond:
-                    self._polls_out += 1
+                    self._status_asked += 1
+                    if routine:
+                        self._polls_out += 1
             self._write(data)
         self._publish(Event("console", {"dir": "tx", "text": _show_byte(data), "poll": routine}))
 
@@ -497,13 +504,20 @@ class Link:
         operator asked to see, so the console can hide it with the polls.
         """
         with self._status_cond:
-            seq = self._status_seq
+            # The report that answers this request is the one after every
+            # request already out, a poll sent a moment ago included: an
+            # earlier one may show the machine before a hold took.
+            target = self._status_asked + 1
         self.realtime(REALTIME_STATUS, routine=routine)
         with self._status_cond:
-            self._status_cond.wait_for(lambda: self._status_seq != seq or self._closed.is_set(), timeout)
-            fresh = self._status_seq != seq
+            self._status_cond.wait_for(lambda: self._status_seq >= target or self._closed.is_set(), timeout)
+            fresh = self._status_seq >= target
+            if not fresh:
+                # Requests that went unanswered (the machine restarted
+                # under them) would otherwise put every later answer one
+                # report behind for good.
+                self._status_asked = self._status_seq
         if not fresh:
-            # A report from before the request is not an answer to it.
             if self._closed.is_set():
                 raise LinkClosed(self.close_reason or "closed")
             raise LinkTimeout("no status report")

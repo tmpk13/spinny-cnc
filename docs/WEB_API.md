@@ -65,7 +65,7 @@ control.
 | Method and path | Body |
 | --- | --- |
 | `POST /api/laser` | `{"power": 50, "ms": 2000}` constant beam with a timeout; `ms` left out means the firmware's `laser_ms`, `ms` under 1 is 400, and over 60000 the firmware's refusal comes back as 400 |
-| `POST /api/laser/off` | |
+| `POST /api/laser/off` | during a run this is the run's hold, since `laser off` on the wire would stall the cut and let it go on; `POST /api/mode` answers 409 while a run is active |
 | `POST /api/mode` | `{"mode": "dyn" \| "const"}` |
 
 ## Settings

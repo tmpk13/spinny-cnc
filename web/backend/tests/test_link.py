@@ -10,6 +10,7 @@ from fake_serial import FakeSerial, fake_opener
 
 from spinny_web import link as linkmod
 from spinny_web.link import (
+    REALTIME_STATUS,
     REALTIME_RESET,
     CommandError,
     Event,
@@ -548,3 +549,19 @@ def test_open_fails_when_the_port_dies_during_the_banner_wait():
     with pytest.raises(LinkError):
         lk.open()
     assert not lk.is_open
+
+
+def test_a_status_request_waits_for_its_own_report_not_a_polls():
+    # A poll's report may still be on its way when a request is made; the
+    # request must not take that report, which shows the machine before
+    # anything the request was sent to check.
+    fake = FakeSerial(byte_delay=0.001)
+    lk = make_link(fake, poll=False)
+    try:
+        lk.status_now(2.0)
+        lk.realtime(REALTIME_STATUS, routine=True)
+        fake.joint = [7.0, 0.0]
+        status = lk.status_now(2.0)
+        assert status.r == 7.0
+    finally:
+        lk.close()

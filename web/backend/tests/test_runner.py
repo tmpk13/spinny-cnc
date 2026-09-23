@@ -546,3 +546,16 @@ def test_stop_reports_an_error_when_the_halt_cannot_reach_the_machine():
         assert "could not be stopped" in progress["error"]
     finally:
         link.close()
+
+
+def test_a_run_starts_with_the_table_angle_renumbered_within_a_turn():
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        fake.joint = [10.0, 1085.0]
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: runner.progress.state == DONE, 10.0)
+        assert "set A5" in fake.received_lines
+        first = next(line for line in fake.received_lines if line.split()[0] in ("go", "cut"))
+        assert "A" in first and float(first.split("A")[1].split()[0]) < 360.0
+    finally:
+        link.close()

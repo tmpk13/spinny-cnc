@@ -71,13 +71,16 @@ pub struct Pins {
 /// Claims the pins in a safe order: the laser output driven low, the
 /// drivers disabled, then step and direction low. The drivers are
 /// forgotten on purpose so they never release the pins.
-pub fn init(pins: Pins) -> (StepPins, LaserPwm, SlidePins) {
+/// Claims the pins. `laser_invert` is the stored polarity: the laser pin
+/// is driven at its off level from the first instant it is an output, so
+/// an inverted module never sees the lit level while the rest boots.
+pub fn init(pins: Pins, laser_invert: bool) -> (StepPins, LaserPwm, SlidePins) {
     SYSCLK_HZ.store(clk_sys_freq(), Ordering::Relaxed);
     let params = pwm_params(sysclk(), Settings::default().laser_hz);
     let mut cfg = PwmConfig::default();
     cfg.divider = params.div.into();
     cfg.top = params.top;
-    cfg.compare_a = 0;
+    cfg.compare_a = if laser_invert { compare(params.top, 1000) } else { 0 };
     cfg.enable = true;
     LASER_TOP.store(params.top as u32, Ordering::Relaxed);
     forget(Pwm::new_output_a(pins.pwm, pins.laser, cfg));

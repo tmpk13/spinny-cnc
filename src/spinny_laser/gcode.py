@@ -210,7 +210,7 @@ class _Writer:
         # A segment that passes within half a coordinate quantum of the axis
         # is cut there, so the crossing is a radial move in, a dark turn on
         # the spot and a radial move out, never a lit chord spanning it.
-        snap = 0.5 * 10.0 ** -self.options.decimals
+        snap = max(0.5 * 10.0 ** -self.options.decimals, self.kinematics.tolerance)
         for target in points[1:]:
             here, _ = self._here()
             for stop in polar.split_at_axis(here, target, snap):

@@ -675,3 +675,17 @@ def test_a_feed_or_speed_the_firmware_would_read_as_zero_is_refused_here(client,
     assert response.status_code == 400 and "0.001" in response.text
     # A comment-only line typed at the console is answered like any other.
     assert client.post("/api/command", json={"line": "; note"}).json()["lines"] == ["ok"]
+
+
+def test_laser_off_during_a_run_is_the_runs_hold_and_mode_is_refused(client, fake):
+    connect(client)
+    slow_run(client, fake)
+    before = len(fake.received_lines)
+    assert client.post("/api/laser/off").status_code == 200
+    assert client.get("/api/run").json()["state"] == "hold"
+    assert 0x21 in fake.realtime_bytes
+    assert "laser off" not in fake.received_lines[before:]
+    response = client.post("/api/mode", json={"mode": "const"})
+    assert response.status_code == 409
+    assert "mode const" not in fake.received_lines[before:]
+    assert client.post("/api/run/stop").status_code == 200

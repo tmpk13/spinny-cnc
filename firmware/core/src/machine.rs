@@ -101,6 +101,9 @@ pub struct Machine<'a> {
     beam_until: u64,
     /// A jog cancel is waiting for the stepper to stop.
     jog_cancel: bool,
+    /// A hold asked for while idle with a motion line taken in or still
+    /// waiting: it is applied the moment that line starts.
+    hold_latched: bool,
     /// Laser frequency and constant duty to re-apply at the next `poll`.
     apply_laser: bool,
     /// Enable pin level to re-apply at the next `poll`.
@@ -135,6 +138,7 @@ impl<'a> Machine<'a> {
             beam: None,
             beam_until: 0,
             jog_cancel: false,
+            hold_latched: false,
             apply_laser: true,
             apply_enable: true,
             idle_since: 0,
@@ -398,7 +402,10 @@ impl<'a> Machine<'a> {
     }
 
     /// Jogs are accepted in `Idle` and `Jog`, everything else that moves
-    /// in `Idle` and `Run`.
+    /// in `Idle` and `Run`, and during a hold of a run, where it waits for
+    /// the resume like a line taken in before the hold: a host streaming a
+    /// job keeps sending through an operator's pause, and a refusal there
+    /// would end the job.
     fn check_motion_state(&self, jog: bool) -> Result<(), Error> {
         // A cross slide move carries the rail the radius rides on, so
         // nothing joins it, not even the jog its own state looks like.
@@ -414,7 +421,7 @@ impl<'a> Machine<'a> {
         let allowed = if jog {
             matches!(self.state, State::Idle | State::Jog)
         } else {
-            matches!(self.state, State::Idle | State::Run)
+            matches!(self.state, State::Idle | State::Run) || (self.state == State::Hold && self.held == State::Run)
         };
         if allowed {
             Ok(())
@@ -517,17 +524,21 @@ impl<'a> Machine<'a> {
                     return;
                 }
                 if !matches!(self.state, State::Run | State::Jog) {
+                    // Nothing moves yet, but a motion line already taken
+                    // in, or still waiting to be read, starts the moment
+                    // this returns and would run on as if the hold had
+                    // never been asked for. It is kept for that line.
+                    let waiting = matches!(self.pending, Pending::Motion { .. } | Pending::Dwell { .. })
+                        || self.lines_waiting > 0;
+                    if self.state == State::Idle && waiting {
+                        self.hold_latched = true;
+                    }
                     return;
                 }
-                self.held = self.state;
-                self.state = State::Hold;
-                self.front.request_hold();
-                if let Some(until) = self.dwell_until.take() {
-                    self.dwell_left_us = until.saturating_sub(self.now);
-                }
-                laser.set_duty(self.off_duty());
+                self.enter_hold(laser);
             }
             Realtime::Resume => {
+                self.hold_latched = false;
                 if self.state != State::Hold || self.jog_cancel {
                     return;
                 }
@@ -562,6 +573,17 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn enter_hold(&mut self, laser: &mut impl LaserPort) {
+        self.hold_latched = false;
+        self.held = self.state;
+        self.state = State::Hold;
+        self.front.request_hold();
+        if let Some(until) = self.dwell_until.take() {
+            self.dwell_left_us = until.saturating_sub(self.now);
+        }
+        laser.set_duty(self.off_duty());
+    }
+
     /// Stops everything and forgets the modal state. True when it was
     /// moving: the position may be off and the state is `Alarm`.
     fn reset(&mut self, laser: &mut impl LaserPort) -> bool {
@@ -573,6 +595,7 @@ impl<'a> Machine<'a> {
         self.slide.stop();
         self.pending = Pending::None;
         self.jog_cancel = false;
+        self.hold_latched = false;
         self.dwell_until = None;
         self.dwell_left_us = 0;
         self.dwell_power = None;
@@ -609,6 +632,11 @@ impl<'a> Machine<'a> {
         let mut kick = self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
         if self.progress(port, laser, store, out) {
             kick |= self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
+        }
+        // A hold kept for a line that turned out not to be motion (a
+        // setting, a query) has nothing left to wait for.
+        if self.hold_latched && self.state == State::Idle && self.pending == Pending::None && self.lines_waiting == 0 {
+            self.hold_latched = false;
         }
         // After `progress`, so a `$load` that changes a polarity reaches the
         // ports in the same poll that answers it: an output left one poll
@@ -687,6 +715,9 @@ impl<'a> Machine<'a> {
                     }
                     self.pending = Pending::None;
                     self.state = if kind == MoveKind::Jog { State::Jog } else { State::Run };
+                    if self.hold_latched {
+                        self.enter_hold(laser);
+                    }
                     report::ok(out);
                     return true;
                 }
@@ -718,6 +749,9 @@ impl<'a> Machine<'a> {
                 self.dwell_power = power;
                 self.dwell_until = Some(self.now + ms as u64 * 1000);
                 self.drive_beam(laser);
+                if self.hold_latched {
+                    self.enter_hold(laser);
+                }
                 return false;
             }
             Pending::Mode(mode) => self.mode = mode,
@@ -1422,6 +1456,61 @@ mod tests {
         rig.advance(200_000);
         assert_eq!(rig.port.count, stopped, "stepping after the reset");
         assert_eq!(rig.machine.planned_position(), rig.executed_steps());
+    }
+
+    #[test]
+    fn a_motion_line_during_a_hold_waits_for_the_resume() {
+        // A host streams on through an operator's pause whenever it trails
+        // the machine; the line must wait, not end the job with a refusal.
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("go R50"), "ok\n");
+        assert_eq!(rig.line("cut A90 F300 S500"), "ok\n");
+        rig.advance(800_000);
+        rig.realtime(Realtime::Hold);
+        rig.advance(600_000);
+        assert!(rig.status_line().starts_with("<Hold|"));
+        rig.submit("cut R40 A90");
+        rig.advance(POLL_US * 4);
+        assert_eq!(rig.take_out(), "", "answered during the hold");
+        assert_eq!(rig.state(), State::Hold);
+        assert!(!rig.machine.ready_for_line(), "a second line taken in behind the waiting one");
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!(rig.take_out(), "ok\n");
+        let joint = rig.machine.joint();
+        assert!((joint[R] - 40.0).abs() < 1e-3 && (joint[A] - 90.0).abs() < 1e-3, "{joint:?}");
+    }
+
+    #[test]
+    fn a_hold_asked_while_a_line_waits_is_kept_for_that_line() {
+        // The hold byte overtakes the line it was meant for: the machine
+        // is idle when it arrives, and the line would otherwise run on.
+        let mut rig = Rig::new();
+        rig.take_out();
+        rig.submit("go R20");
+        rig.realtime(Realtime::Hold);
+        assert_eq!(rig.state(), State::Idle);
+        rig.advance(POLL_US);
+        assert_eq!(rig.take_out(), "ok\n");
+        assert_eq!(rig.state(), State::Hold);
+        rig.advance(500_000);
+        assert_eq!(rig.port.count, [0, 0], "moved while held");
+        assert_eq!(rig.laser.duty, 0);
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!(rig.machine.joint(), [20.0, 0.0]);
+        // Waiting lines count too, and a hold kept for a line that is not
+        // motion is forgotten once it has been read.
+        rig.machine.note_lines_waiting(1);
+        rig.realtime(Realtime::Hold);
+        assert_eq!(rig.line("$r_max"), "r_max=0\nok\n");
+        rig.machine.note_lines_waiting(0);
+        rig.advance(POLL_US);
+        assert_eq!(rig.line("go R10"), "ok\n");
+        assert_eq!(rig.state(), State::Run);
+        rig.run();
+        assert_eq!(rig.machine.joint(), [10.0, 0.0]);
     }
 
     #[test]

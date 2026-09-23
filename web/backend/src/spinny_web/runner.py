@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .jobs import Job
-from .kinematics import Streamer
+from .kinematics import Streamer, num
 from .link import (
     REALTIME_HOLD,
     REALTIME_RESUME,
@@ -159,6 +159,17 @@ class Runner:
         status = self._idle_status(link)
         if not any(group.enabled and group.has_cuts for group in job.groups):
             raise RunnerError("the job has nothing enabled to cut")
+        if abs(status.a) >= 360.0:
+            # Every pass of an outline around the axis adds a turn to the
+            # angle, and the firmware keeps angles in single precision:
+            # past a few dozen turns the word and the report lose the
+            # step. The same orientation is declared with the turns taken
+            # out before the plan is made from it.
+            try:
+                link.request_ok(f"set A{num(status.a % 360.0, 4)}")
+            except LinkError as exc:
+                raise RunnerError(f"could not renumber the table angle: {exc}") from exc
+            status = self._idle_status(link)
         start = status.joint
         stats = streamer.estimate(job, start)
         # The estimate takes a while on a large job, and the plan is only
@@ -259,7 +270,7 @@ class Runner:
         try:
             link.realtime(REALTIME_HOLD)
             rested = self._wait_rest(link, HOLD_WAIT)
-            link.reset(timeout=1.0)
+            answered = link.reset(timeout=1.0)
         except LinkError as exc:
             self._message("error", f"stop: {exc}")
             return False, str(exc)
@@ -269,7 +280,11 @@ class Runner:
         try:
             status = link.status_now(1.0, routine=True)
         except LinkError:
-            status = link.status
+            status = None
+        if status is None and not answered:
+            # Neither the banner nor a report came back: the reset byte
+            # went out, but nothing says the machine acted on it.
+            note = "the machine did not answer the reset: check that it has stopped"
         if status is not None and status.state == "Alarm":
             note = f"the machine is in {status.raw or status.state}: check the position, then unlock"
         if note is not None:
@@ -299,6 +314,13 @@ class Runner:
                     # where the job says.
                     self._error = "the machine reset during the run"
                     self._abort.set()
+                    break
+                # A held run sends nothing more: what the machine has is
+                # enough to resume with, and lines it has not taken in yet
+                # would only queue behind the hold.
+                while progress.state == HOLD and not self._abort.is_set():
+                    time.sleep(0.02)
+                if self._abort.is_set():
                     break
                 link.send(piece.line, abort=self._abort, callback=on_ack)
                 with self._lock:
