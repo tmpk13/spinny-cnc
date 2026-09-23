@@ -48,6 +48,9 @@ cross slide is for. `spinny-center` burns a pattern that separates them.
 uv run spinny-center --rotary-max-rate 400
 ```
 
+The web page builds the same pattern as a job, options included, from
+*Centering test* in the Jobs panel, pacing it at the table rate it read.
+
 A radial cut holds the table still and runs the head along the rail, so
 what it burns is the rail itself: a straight line lying the rail's own
 miss distance from the axis. Four of them a quarter turn apart land on the

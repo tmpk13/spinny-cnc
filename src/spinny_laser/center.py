@@ -223,6 +223,27 @@ def notes_for(lines: int) -> list[str]:
     ]
 
 
+def all_notes(
+    lines: int, ring_radius: float, speed: float, rotary_max_rate: float | None
+) -> list[str]:
+    """How to read the pattern, and what about this one differs from what was asked."""
+    notes = notes_for(lines)
+    if ring_radius > 0:
+        notes.append(
+            f"The ring lands at the radius zero error away from {ring_radius:g} mm,"
+            f" so give it a coupon comfortably wider than {2 * ring_radius:g} mm"
+            " or it will run off the edge before it has been measured."
+        )
+    around = ring_speed(ring_radius, speed, rotary_max_rate)
+    if ring_radius > 0 and around < speed:
+        notes.append(
+            f"The ring runs at {around:.0f} mm/min, not {speed:g}: that is"
+            f" all the table can turn at {ring_radius:g} mm. The lines are"
+            " unaffected, being radial."
+        )
+    return notes
+
+
 # The arguments the fine pattern reads; the rest belong to the coarse
 # pattern and its gcode output.
 FINE_ARGS = frozenset(
@@ -274,20 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         "",
     ]
     job = gcode.generate(groups, options, header)
-    notes = notes_for(args.lines)
-    if args.ring > 0:
-        notes.append(
-            f"The ring lands at the radius zero error away from {args.ring:g} mm,"
-            f" so give it a coupon comfortably wider than {2 * args.ring:g} mm"
-            " or it will run off the edge before it has been measured."
-        )
-    around = ring_speed(args.ring, args.speed, args.rotary_max_rate)
-    if args.ring > 0 and around < args.speed:
-        notes.append(
-            f"The ring runs at {around:.0f} mm/min, not {args.speed:g}: that is"
-            f" all the table can turn at {args.ring:g} mm. The lines are"
-            " unaffected, being radial."
-        )
+    notes = all_notes(args.lines, args.ring, args.speed, args.rotary_max_rate)
     summary = [
         f"pattern    {args.lines} lines to {args.reach:g} mm"
         + (f", ring at {args.ring:g} mm" if args.ring > 0 else ""),

@@ -3,9 +3,11 @@
 
 import { ApiError, type Api } from "./api.ts";
 import { boardOfJoint, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength } from "./kinematics.ts";
-import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
+import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, centerJob, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
 import type { LinkStatus } from "./state.ts";
 import type {
+    CenterRequest,
+    CenterResponse,
     GotoRequest,
     Job,
     JobPatch,
@@ -1262,6 +1264,18 @@ export class MockBackend implements Api, EventFeed {
             this.message("info", built.note);
         }
         return built.job;
+    }
+
+    async centerJob(request: CenterRequest): Promise<CenterResponse> {
+        let built: CenterResponse;
+        try {
+            built = centerJob(this.newId(), request, this.limits());
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        this.jobStore.set(built.job.id, built.job);
+        this.order.push(built.job.id);
+        return built;
     }
 
     async jobs(): Promise<JobSummary[]> {

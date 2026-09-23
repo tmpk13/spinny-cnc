@@ -569,6 +569,40 @@ input[type="number"].field {
     margin-bottom: 0.5rem;
 }
 
+.center-test {
+    border: 0.0625rem solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.center-test > summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.center-test[open] > summary {
+    margin-bottom: 0.5rem;
+}
+
+.center-test .field:disabled {
+    opacity: 0.45;
+}
+
+.center-test-summary {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 0.8rem;
+    margin: 0.5rem 0;
+}
+
+.center-test-notes {
+    font-size: 0.85rem;
+    color: var(--muted);
+    padding-left: 1.25rem;
+    margin: 0;
+}
+
 .drop.over {
     border-color: var(--accent);
     background: var(--panel-2);
@@ -741,11 +775,11 @@ table.groups input[type="checkbox"] {
 .preview-box {
     width: 100%;
     aspect-ratio: 1;
-    max-height: 70vh;
-    min-height: 16rem;
+    max-height: 10vh;
+    min-height: 10rem;
 }
 
-@media (min-width: 64rem) {
+@media (min-width: 20rem) {
     .preview-panel {
         display: flex;
         flex-direction: column;
@@ -755,7 +789,7 @@ table.groups input[type="checkbox"] {
         flex: 1 1 auto;
         aspect-ratio: auto;
         max-height: none;
-        min-height: clamp(20rem, 60vh, 50rem);
+        min-height: clamp(15rem, 30vh, 25rem);
     }
 }
 

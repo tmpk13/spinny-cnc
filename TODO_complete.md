@@ -141,3 +141,7 @@
   emitter; the page's laser-off during a run is the run's hold and `mode`
   is refused; the laser pin is claimed at its off level after the stored
   polarity is read.
+- Centering test in the web page (2026-09-23): `POST /api/center` builds the
+  `spinny-center` pattern, coarse or fine with its options, as a stored job
+  with its summary and reading notes; the Jobs panel has the form, and the
+  mock builds the coarse one.

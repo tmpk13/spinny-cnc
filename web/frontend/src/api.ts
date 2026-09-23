@@ -1,6 +1,8 @@
 // Typed wrappers over the backend routes.
 
 import type {
+    CenterRequest,
+    CenterResponse,
     CommandResponse,
     GotoRequest,
     Job,
@@ -54,6 +56,8 @@ export interface Api {
     saveSettings(): Promise<void>;
 
     uploadJob(file: File, options: UploadOptions): Promise<Job>;
+    /** Builds and stores the centering test burn. */
+    centerJob(request: CenterRequest): Promise<CenterResponse>;
     jobs(): Promise<JobSummary[]>;
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
@@ -209,6 +213,10 @@ export class HttpApi implements Api {
             }
         }
         return this.request<Job>("POST", "/api/jobs", form);
+    }
+
+    centerJob(request: CenterRequest): Promise<CenterResponse> {
+        return this.request<CenterResponse>("POST", "/api/center", request);
     }
 
     async jobs(): Promise<JobSummary[]> {

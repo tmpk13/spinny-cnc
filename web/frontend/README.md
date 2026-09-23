@@ -41,7 +41,7 @@ classDiagram
         AppState
     }
     class views {
-        statusbar dro jog laser jobs previewpanel console settings toasts
+        statusbar dro jog laser jobs center previewpanel console settings toasts
     }
     class preview {
         Preview  canvas around the axis, y up
@@ -55,7 +55,7 @@ classDiagram
         MockMachine  joint motion at the rates, cross slide on its own
     }
     class mockjobs {
-        parseSvg parseGcode placeJob computeStats
+        parseSvg parseGcode placeJob computeStats centerJob
     }
     main --> api
     main --> ws

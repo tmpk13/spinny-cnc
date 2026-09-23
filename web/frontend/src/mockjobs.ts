@@ -2,7 +2,7 @@
 // coupon for the formats only the real backend can read, placement and stats.
 
 import { boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "./kinematics.ts";
-import type { Anchor, Board, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "./types.ts";
+import type { Anchor, Board, CenterRequest, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "./types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
 type Matrix = [number, number, number, number, number, number];
@@ -1152,4 +1152,68 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         stats: computeStats(groups, limits),
     };
     return { job, note };
+}
+
+/** Share of the table's rate the centering ring is paced at, as the backend leaves headroom. */
+const RING_HEADROOM = 0.95;
+
+/**
+ * The coarse centering pattern: radial lines from the axis and a reference
+ * ring, as the backend builds them. The fine pattern needs the backend's
+ * polar kinematics and is refused here.
+ */
+export function centerJob(id: string, request: CenterRequest, limits: RateLimits): { job: Job; summary: string[]; notes: string[] } {
+    if (request.fine) {
+        throw new Error("the fine pattern is only built by the real backend");
+    }
+    if (request.show_error !== undefined) {
+        throw new Error("show error only applies to the fine pattern");
+    }
+    const lines = request.lines ?? 4;
+    const reach = request.reach ?? 6;
+    const ring = request.ring ?? 8;
+    const power = request.power ?? 400;
+    const speed = request.speed ?? 200;
+    const spot = request.spot ?? DEFAULT_SPOT;
+    checkPower(power);
+    checkSpeed(speed);
+    if (!Number.isInteger(lines) || lines < 0 || lines === 1) {
+        throw new Error("a pattern needs at least two lines to bound anything");
+    }
+    if (lines === 0 && ring <= 0) {
+        throw new Error("0 lines needs a ring to measure");
+    }
+    if (!(reach > 0) || !(ring >= 0) || !(spot > 0)) {
+        throw new Error("reach and spot must be > 0 and ring cannot be negative");
+    }
+    const groups: Group[] = [];
+    if (lines > 0) {
+        const paths: Path[] = [];
+        for (let i = 0; i < lines; i++) {
+            const theta = (2 * Math.PI * i) / lines;
+            paths.push([[0, 0], [reach * Math.cos(theta), reach * Math.sin(theta)]]);
+        }
+        groups.push({ label: `${lines} radial lines from the axis to ${reach} mm`, power, speed, enabled: true, paths });
+    }
+    const notes: string[] = [];
+    if (ring > 0) {
+        const around = Math.min(speed, RING_HEADROOM * (limits.aRate * Math.PI / 180) * ring);
+        groups.push({ label: `reference ring at ${ring} mm`, power, speed: around, enabled: true, paths: [circlePath(0, 0, ring, 360)] });
+        if (around < speed) {
+            notes.push(`The ring runs at ${around.toFixed(0)} mm/min, not ${speed}: that is all the table can turn at ${ring} mm.`);
+        }
+    }
+    const job: Job = {
+        id,
+        name: "center",
+        source: "center",
+        spot,
+        offset: { x: 0, y: 0 },
+        groups,
+        outline: [],
+        copper: [],
+        stats: computeStats(groups, limits),
+    };
+    const summary = [`pattern    ${lines} lines to ${reach} mm${ring > 0 ? `, ring at ${ring} mm` : ""}`];
+    return { job, summary, notes };
 }

@@ -30,6 +30,7 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `link.py` | `serial_for_url` port (`/dev/ttyACM0` or `socket://host:port`), reader thread, line classification, credit flow control, realtime bytes, status poll |
 | `kinematics.py` | board polylines to `cut`/`go`/`jogto` lines through `spinny_laser.polar`, joint-space polylines streamed as they are (a negative radius is the far side of the axis), time estimate against the axis limits, the cross slide's own `Z` lines |
 | `jobs.py` | the job model (board `paths`, or `joints` for a group written in joint space), importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
+| `center.py` | the `spinny-center` test burn built in place as a job, coarse (board paths) or fine (joint space) |
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `app.py` | FastAPI routes, the `/ws` fan-out, settings, the frontend |
 
@@ -78,12 +79,19 @@ classDiagram
         import_file(path, options)
         JobStore
     }
+    class center {
+        CenterRequest
+        build(request, streamer, rate) CenterResult
+    }
     class runner {
         Runner.start(job, link, streamer)
         Runner.hold / resume / stop
     }
     class spinny_laser_polar {
         subdivide(start, end, joint, kin)
+    }
+    class spinny_laser_center {
+        center.build / fine.build
     }
     class laser_sweep {
         gerber, geom, isolate, isocli
@@ -92,6 +100,9 @@ classDiagram
     app --> jobs
     app --> runner
     app --> kinematics
+    app --> center
+    center --> jobs
+    center --> spinny_laser_center
     runner --> link
     runner --> kinematics
     jobs --> kinematics

@@ -27,7 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
-from . import __version__
+from . import __version__, center
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
 from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, check_feed, num
 from .link import (
@@ -739,6 +739,18 @@ class Backend:
             raise JobImportError(f"cannot store the upload {name!r}: {exc}") from exc
         return self.store.add(job)
 
+    def center_job(self, request: center.CenterRequest) -> dict:
+        cached = self._settings_cache
+        s_max = cached[1].get("s_max") if cached is not None else None
+        result = center.build(
+            request,
+            self.streamer(),
+            self.rates.a_rate,
+            s_max if isinstance(s_max, (int, float)) and s_max > 0 else None,
+        )
+        result.job = self.store.add(result.job)
+        return result.model_dump()
+
     def patch_job(self, job_id: str, patch: JobPatch) -> Job:
         job = self.store.get(job_id)
         if job is None:
@@ -1039,6 +1051,10 @@ def create_app(
         except (JobImportError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return job.model_dump()
+
+    @app.post("/api/center")
+    async def center_job(body: center.CenterRequest):
+        return await run_in_threadpool(guarded, lambda: backend.center_job(body))
 
     @app.get("/api/jobs")
     def list_jobs():

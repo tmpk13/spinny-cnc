@@ -5,6 +5,7 @@ import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts"
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, Job, Progress, UploadOptions } from "../types.ts";
+import { centerTest } from "./center.ts";
 import type { Ctx } from "./context.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.kicad_pcb,.gcode,.nc";
@@ -63,7 +64,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     );
     const list = el("ul", { class: "job-list" });
     const details = el("div", { class: "job-details" });
-    root.append(el("h2", {}, "Jobs"), drop, options, list, details);
+    root.append(el("h2", {}, "Jobs"), drop, options, centerTest(ctx), list, details);
 
     const uploadOptions = (): UploadOptions => {
         const out: UploadOptions = { anchor: anchorField.value as Anchor };

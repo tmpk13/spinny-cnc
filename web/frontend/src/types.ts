@@ -205,6 +205,30 @@ export interface UploadOptions {
     offset_y?: number;
 }
 
+/** The options of the centering test burn; a missing reach or ring takes the pattern's default. */
+export interface CenterRequest {
+    fine?: boolean;
+    lines?: number;
+    reach?: number;
+    ring?: number;
+    angle?: number;
+    cross?: number;
+    arm?: number;
+    spiral?: number;
+    /** Fine only: draw the preview as burnt with the radius zero E mm out and the rail Z mm off the axis. */
+    show_error?: [number, number];
+    spot?: number;
+    power?: number;
+    speed?: number;
+}
+
+/** The stored centering job, what the pattern reads as, and how to read it. */
+export interface CenterResponse {
+    job: Job;
+    summary: string[];
+    notes: string[];
+}
+
 export type RunState = "running" | "hold" | "done" | "stopped" | "error";
 
 export interface Progress {
