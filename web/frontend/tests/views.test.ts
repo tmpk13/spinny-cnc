@@ -10,6 +10,7 @@ import { mountConsole } from "../src/views/console.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs, progressText } from "../src/views/jobs.ts";
 import { keyAction, mountJog } from "../src/views/jog.ts";
+import { confirmSettle } from "../src/confirm.ts";
 import { mountLaser } from "../src/views/laser.ts";
 import { changedValues, mountSettings } from "../src/views/settings.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
@@ -134,6 +135,25 @@ describe("dro", () => {
         expect(root.querySelector('[data-dro="laser"]')?.textContent).toBe("50.0%");
         expect(root.querySelector('[data-dro="rate"]')?.textContent).toBe("400");
         expect(root.classList.contains("laser-on")).toBe(true);
+    });
+});
+
+describe("context", () => {
+    test("a backend with no run in it clears a run the page remembered", async () => {
+        const { api, backend } = recordingApi();
+        const store = new Store<AppState>(initialState(false));
+        const ctx = createContext(api, store);
+        store.set({ progress: { job: "j1", state: "running", sent: 3, acked: 1, total: 9, seconds: 1, estimate: 5, group: 0 } });
+        // Before the feed is open the HTTP snapshot is all there is, and its
+        // null run says the backend restarted underneath the page.
+        expect(backend.snapshot().run).toBeNull();
+        await ctx.refreshState();
+        expect(store.get().progress).toBeNull();
+        // Once the feed is open its frames carry the snapshot, and a reply
+        // from before the latest frame must not step it back.
+        store.set({ link: "open", progress: { job: "j2", state: "done", sent: 9, acked: 9, total: 9, seconds: 5, estimate: 5, group: 0 } });
+        await ctx.refreshState();
+        expect(store.get().progress?.job).toBe("j2");
     });
 });
 
@@ -371,6 +391,18 @@ describe("laser and settings", () => {
         await settle();
         expect(calls.filter((c) => c.name === "laser").length).toBe(1);
         expect(calls.find((c) => c.name === "laser")?.args).toEqual([100, 1000]);
+        // A click in the first moments after the dialog opens is not a
+        // confirmation: a held key or a double click must not fire it.
+        confirmSettle.ms = 1000;
+        click(root, "Test beam");
+        await settle();
+        expect(document.activeElement?.textContent).toBe("Cancel");
+        dialogButton("Fire").click();
+        await settle();
+        expect(calls.filter((c) => c.name === "laser").length).toBe(1);
+        dialogButton("Cancel").click();
+        await settle();
+        confirmSettle.ms = 0;
         // The next test asks again rather than remembering the answer.
         click(root, "Test beam");
         await settle();

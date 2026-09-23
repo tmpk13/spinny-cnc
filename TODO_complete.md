@@ -92,3 +92,17 @@
   step range, a reset standing in for `unlock`, a feed with no speed, and
   the status line's constant credit count and ahead-of-time rate and duty.
   Every suite passes, the end-to-end tests included.
+- Host-side review (2026-09-22, second half): the link no longer holds a
+  lock across the credit wait, consumes a reset's banner before a
+  `version` answer, survives a raising callback, refuses realtime bytes
+  in a line and caps a partial one; the runner's own status requests are
+  polls; the jog bookkeeping follows the firmware's planned end; patches,
+  settings writes and uploads fail whole; NaN and infinity are refused
+  everywhere; a first vertex within a quantum of the axis leaves it with
+  a turn; SVG close-then-line and gcode file order are kept; the page
+  drops a run the backend no longer has, stops toasting on load, keeps
+  the feed authoritative and opens the beam confirm on Cancel; the
+  documented `?api=` mode has a `--cors-origin` flag; the virtual firmware
+  drops a dead client's queue, keeps its trace aligned and reports the
+  beam rather than the pin.
+

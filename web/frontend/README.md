@@ -12,7 +12,9 @@ bun run dev            # serves index.html with the sources
 
 `bun run build` writes `dist/`, which the backend serves at `/`. Open
 `?mock=1` for an in-page machine that needs no backend; `?api=http://host:8000`
-points the page at a backend elsewhere.
+points the page at a backend elsewhere, which must have been started with
+that page's origin allowed: `spinny-web --cors-origin http://localhost:3000`
+for the dev server. Without it the browser refuses every call.
 
 Board coordinates are mm with the rotation axis at the origin: `x = r cos a`,
 `y = r sin a`, y up in the preview. The DRO shows the joint (`R` mm, `A` deg),

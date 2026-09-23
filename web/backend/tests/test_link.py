@@ -413,3 +413,138 @@ def test_the_banner_that_answers_version_is_not_a_restart():
         assert wait_for(lambda: lk.restarts == before + 2)
     finally:
         lk.close()
+
+
+def test_a_sender_waiting_for_a_credit_does_not_hold_the_others_up():
+    # Nothing answers, so every credit stays taken; a second sender with
+    # its own timeout must time out on time rather than wait behind the
+    # first one's open-ended wait.
+    fake = FakeSerial(credits=4, ok_delay=30.0)
+    lk = make_link(fake, poll=False)
+    stop = threading.Event()
+    try:
+        for i in range(4):
+            lk.send(f"go R{i}")
+        def hold_a_credit_wait() -> None:
+            try:
+                lk.send("go R9", abort=stop)
+            except LinkError:
+                pass
+
+        blocked = threading.Thread(target=hold_a_credit_wait)
+        blocked.start()
+        time.sleep(0.1)
+        started = time.monotonic()
+        with pytest.raises(linkmod.LinkTimeout):
+            lk.request("laser off", timeout=0.3)
+        assert time.monotonic() - started < 1.0
+    finally:
+        stop.set()
+        blocked.join(2.0)
+        lk.close()
+
+
+def test_a_version_with_a_comment_is_still_an_answer():
+    fake = FakeSerial()
+    lk = make_link(fake, poll=False)
+    try:
+        before = lk.restarts
+        lines = lk.request("version ; check")
+        assert lines[0].startswith("[spinny v") and lines[-1] == "ok"
+        assert lk.restarts == before
+    finally:
+        lk.close()
+
+
+def test_the_resets_banner_is_taken_before_a_version_request_can_claim_it():
+    fake = FakeSerial()
+    lk = make_link(fake, poll=False)
+    try:
+        before = lk.restarts
+        lk.realtime(REALTIME_RESET)
+        pending = lk.send("version")
+        assert pending.wait(2.0) and pending.ok
+        assert pending.lines and pending.lines[0].startswith("[spinny v")
+        assert wait_for(lambda: lk.restarts == before + 1)
+        assert lk._expected_banners == 0
+        # A later reset still finds its banner.
+        assert lk.reset(timeout=1.0)
+    finally:
+        lk.close()
+
+
+def test_a_raising_callback_does_not_end_the_reader():
+    fake = FakeSerial()
+    events = Collector()
+    lk = make_link(fake, poll=False)
+    lk.subscribe(events)
+    try:
+        def boom(pending):
+            raise RuntimeError("boom")
+        pending = lk.send("go R1", callback=boom)
+        assert pending.wait(2.0) and pending.ok
+        assert lk.request_ok("$r_rate") == ["r_rate=1000"]
+        assert lk.is_open and lk._reader is not None and lk._reader.is_alive()
+        assert any("callback failed" in m["text"] for m in events.of("message"))
+    finally:
+        lk.close()
+
+
+def test_a_status_request_on_a_lost_port_raises():
+    fake = FakeSerial()
+    lk = make_link(fake, poll=False)
+    try:
+        fake.vanish()
+        with pytest.raises(LinkError):
+            lk.status_now(0.5)
+        assert not lk.is_open
+    finally:
+        lk.close()
+
+
+def test_realtime_and_control_bytes_are_refused_inside_a_line():
+    fake = FakeSerial()
+    lk = make_link(fake, poll=False)
+    try:
+        for line in ("go R2\x18", "cut R5 F100 S200 ; go!", "go R1 ?", "go R1\x7f"):
+            with pytest.raises(ValueError):
+                lk.send(line)
+        assert fake.received_lines == []
+    finally:
+        lk.close()
+
+
+def test_the_status_command_returns_its_report():
+    fake = FakeSerial()
+    lk = make_link(fake, poll=False)
+    try:
+        lines = lk.request("status")
+        assert lines[0].startswith("<") and lines[0].endswith(">")
+        assert lines[-1] == "ok"
+    finally:
+        lk.close()
+
+
+def test_a_line_that_never_ends_is_dropped_with_a_message():
+    fake = FakeSerial(byte_delay=0.0)
+    events = Collector()
+    lk = make_link(fake, poll=False)
+    lk.subscribe(events)
+    try:
+        fake._out.put("x" * 6000)
+        assert wait_for(lambda: any("no line end" in m["text"] for m in events.of("message")), 5.0)
+        # What is left of the junk ends at the next line end; the link reads on.
+        fake._out.put("\n")
+        fake.message("still here")
+        assert wait_for(lambda: any(m["text"] == "still here" for m in events.of("message")), 5.0)
+    finally:
+        lk.close()
+
+
+def test_open_fails_when_the_port_dies_during_the_banner_wait():
+    fake = FakeSerial(banner_at_open=False)
+    fake.vanish()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    with pytest.raises(LinkError):
+        lk.open()
+    assert not lk.is_open

@@ -83,10 +83,15 @@ impl Inbox {
         state
     }
 
-    /// The client went away; the loop finishes what it is doing and stops.
+    /// The client went away. What it had sent and the loop has not taken
+    /// is dropped, as the board drops the lines its reader still holds:
+    /// a dead client's job must not run on, and a loop waiting for planner
+    /// room in a hold would otherwise never drain the queue and never end.
     pub fn close(&self) {
         let mut state = self.state.lock().unwrap();
         state.closed = true;
+        state.lines.clear();
+        state.realtime.clear();
         self.signal.notify_all();
     }
 

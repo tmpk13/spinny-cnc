@@ -393,3 +393,78 @@ def test_hold_and_reset_from_the_console_go_through_the_run(client, fake):
     assert progress["state"] == "stopped" and "reset" in progress["error"], progress
     after = fake.received_lines[fake.received_at_reset[0]:]
     assert not [line for line in after if line.split()[0] in ("go", "cut")], after
+
+
+def test_a_realtime_character_typed_in_the_console_goes_out_as_one(client, fake):
+    connect(client)
+    assert client.post("/api/command", json={"line": "?"}).json() == {"lines": []}
+    assert 0x3F in fake.realtime_bytes
+    assert client.post("/api/command", json={"line": "go R1\u0018"}).status_code == 400
+    # A typed move forgets the jog target the next board jog would chain from.
+    client.backend._jog_target = (6.0, 0.0)
+    assert client.post("/api/command", json={"line": "jogto R1 A0"}).json()["lines"] == ["ok"]
+    assert client.backend._jog_target is None
+
+
+def test_a_relative_jog_while_jogging_keeps_the_planned_end(tmp_path):
+    fake = FakeSerial(move_time=0.6)
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        connect(client)
+        client.post("/api/goto", json={"kind": "joint", "r": 5.0, "a": 0.0})
+        fake.joint = [2.5, 0.0]
+        assert fake.state() == "Jog"
+        # The firmware resolves a relative jog from the planned end, so the
+        # end of this one is known: 5 + 1.
+        assert client.post("/api/jog", json={"kind": "joint", "dr": 1.0}).status_code == 200
+        assert backend._jog_target == (6.0, 0.0)
+        lines = client.post("/api/jog", json={"kind": "board", "dx": 1.0, "dy": 0.0}).json()["lines"]
+        assert lines == ["jogto R7.000 A0.0000"]
+        # A move typed in the console makes the end unknown, and a one-axis
+        # goto from an unknown start records no end at all.
+        client.post("/api/command", json={"line": "jog R5"})
+        assert backend._jog_target is None
+        fake.joint = [2.5, 0.0]
+        assert fake.state() == "Jog"
+        assert client.post("/api/goto", json={"kind": "joint", "a": 90.0}).status_code == 200
+        assert backend._jog_target is None
+
+
+def test_a_refused_patch_leaves_the_job_as_it_was(client):
+    job = client.post("/api/jobs", files={"file": ("drawing.svg", SVG.encode(), "image/svg+xml")}).json()
+    response = client.patch(f"/api/jobs/{job['id']}", json={"groups": [{"index": 0, "power": 900}, {"index": 7}]})
+    assert response.status_code == 400
+    again = client.get(f"/api/jobs/{job['id']}").json()
+    assert again["groups"][0]["power"] == job["groups"][0]["power"]
+    assert again["stats"] == job["stats"]
+    headers = {"content-type": "application/json"}
+    response = client.patch(f"/api/jobs/{job['id']}", content='{"groups": [{"index": 0, "power": NaN}]}', headers=headers)
+    assert response.status_code == 422
+
+
+def test_a_settings_write_with_an_unknown_name_applies_nothing(client, fake):
+    connect(client)
+    response = client.put("/api/settings", json={"values": {"r_rate": 777, "nope": 1}})
+    assert response.status_code == 400
+    assert fake.settings["r_rate"] == 1000
+    assert client.put("/api/settings", json={"values": {"r_rate": 777}}).status_code == 200
+    assert fake.settings["r_rate"] == 777
+
+
+def test_an_overlong_upload_name_is_refused_cleanly(client):
+    response = client.post("/api/jobs", files={"file": ("a" * 300 + ".svg", SVG.encode(), "image/svg+xml")})
+    assert response.status_code == 400
+
+
+def test_a_body_that_is_not_a_number_is_refused_before_anything_moves(client, fake):
+    connect(client)
+    headers = {"content-type": "application/json"}
+    assert client.post("/api/goto", content='{"kind": "board", "x": NaN, "y": 0.0}', headers=headers).status_code == 422
+    assert client.post("/api/jog", content='{"kind": "joint", "dr": Infinity}', headers=headers).status_code == 422
+    assert client.post("/api/laser", content='{"power": NaN, "ms": 100}', headers=headers).status_code == 422
+    assert not [line for line in fake.received_lines if line.split()[0] in ("jog", "jogto", "laser")]

@@ -42,5 +42,6 @@ pub fn run(options: &Options) -> io::Result<()> {
         );
     }
     let mut sim = Sim::new(setup(options));
+    sim.trace_mut().open()?;
     server::serve(listener, &mut sim, options.quiet)
 }

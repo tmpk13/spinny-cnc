@@ -45,6 +45,9 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
             const next = await ctx.call(ctx.api.connect(url));
             if (next) {
                 ctx.store.set({ snapshot: next });
+                if (next.connected) {
+                    await ctx.refreshSettings();
+                }
             }
         }
     }

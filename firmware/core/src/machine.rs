@@ -202,13 +202,19 @@ impl<'a> Machine<'a> {
     /// timer running. A host simulation may wait for input instead of
     /// advancing time.
     pub fn is_quiet(&self) -> bool {
+        self.is_settled() && self.beam.is_none() && !(self.enabled && self.settings.idle_ms > 0)
+    }
+
+    /// Nothing moves or waits: `Idle` or `Alarm` with no line pending, the
+    /// stepper idle and in sync, the slide still. Unlike `is_quiet` this
+    /// ignores a constant beam and the idle disable timer, which only need
+    /// the clock to run on.
+    pub fn is_settled(&self) -> bool {
         matches!(self.state, State::Idle | State::Alarm(_))
             && self.pending == Pending::None
             && !self.front.busy()
             && !self.front.resync_pending()
             && !self.slide.busy()
-            && self.beam.is_none()
-            && !(self.enabled && self.settings.idle_ms > 0)
     }
 
     /// Parses and starts executing one line. Immediate commands answer

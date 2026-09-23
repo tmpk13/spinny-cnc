@@ -334,3 +334,18 @@ def test_rates_follow_the_step_generator_ceiling():
     assert rates.a_rate == pytest.approx(421.875, rel=1e-4)
     # A coarser scale leaves the rate setting in charge.
     assert Rates.from_settings({"r_rate": 1000, "a_rate": 1080, "r_steps": 256, "a_steps": 888.889}) == Rates(1000.0, 1080.0)
+
+
+def test_a_first_vertex_within_a_quantum_of_the_axis_leaves_it_with_a_turn():
+    job = Job(groups=[Group(label="g", power=500, speed=400, paths=[[(0.0003, 0.0), (0.0, 5.0)]])])
+    lines = [piece.line for piece in Streamer().job_pieces(job, (10.0, 0.0))]
+    assert lines == ["go R0.000 A0.0000", "go A90.0000", "cut R5.000 A90.0000 F400 S500"]
+
+
+def test_rates_follow_the_step_pulse_width_and_default_to_the_firmwares():
+    assert Rates() == Rates(560.0, 400.0)
+    wide = Rates.from_settings({"r_rate": 560, "a_rate": 400, "r_steps": 10240, "a_steps": 14222.222, "step_us": 20})
+    assert wide.r_rate == pytest.approx(1.0e6 / 33 * 60 / 10240, rel=1e-4)
+    assert wide.a_rate == pytest.approx(1.0e6 / 33 * 60 / 14222.222, rel=1e-4)
+    with pytest.raises(ValueError):
+        Streamer().board_goto((5.0, 0.0), float("nan"), 0.0)

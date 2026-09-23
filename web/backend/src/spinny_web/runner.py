@@ -112,7 +112,7 @@ class Runner:
         # takes it for every snapshot, and the status answer arrives on that
         # thread.
         try:
-            status = link.status_now(1.0)
+            status = link.status_now(1.0, routine=True)
         except LinkError as exc:
             raise RunnerError(f"no status from the machine: {exc}") from exc
         if status.state != "Idle":
@@ -206,7 +206,7 @@ class Runner:
             self._wait_rest(link, HOLD_WAIT)
             link.reset(timeout=1.0)
             try:
-                status = link.status_now(1.0)
+                status = link.status_now(1.0, routine=True)
             except LinkError:
                 status = link.status
             if status is not None and status.state == "Alarm":
@@ -294,7 +294,7 @@ class Runner:
                 # were even sent, and a short job is acked in full before
                 # the poll comes round again.
                 try:
-                    status = link.status_now(1.0)
+                    status = link.status_now(1.0, routine=True)
                 except LinkError:
                     status = None
                 if status is not None and not status.moving:
@@ -336,7 +336,7 @@ class Runner:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if link.status_now(0.3).state in AT_REST:
+                if link.status_now(0.3, routine=True).state in AT_REST:
                     return True
             except LinkClosed:
                 return False

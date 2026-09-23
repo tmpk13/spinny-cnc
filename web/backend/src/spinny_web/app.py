@@ -11,17 +11,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from . import __version__
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
@@ -30,6 +33,7 @@ from .link import (
     REALTIME_HOLD,
     REALTIME_JOG_CANCEL,
     REALTIME_RESUME,
+    REALTIME_STATUS,
     CommandError,
     Event,
     Link,
@@ -82,7 +86,7 @@ NO_FRONTEND = """<!doctype html>
 <body style="font-family: sans-serif; margin: 2em">
 <h1>spinny-web</h1>
 <p>The frontend is not built. Run the build in <code>web/frontend</code>,
-then reload; the API is up at <code>/api</code>.</p>
+then restart the backend; the API is up at <code>/api</code>.</p>
 </body></html>
 """
 
@@ -94,7 +98,13 @@ class ConnectBody(BaseModel):
     url: str
 
 
-class JogBody(BaseModel):
+class Finite(BaseModel):
+    """A body whose numbers are numbers: NaN and infinity are refused."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+
+class JogBody(Finite):
     kind: str = "joint"
     dr: float | None = None
     da: float | None = None
@@ -105,7 +115,7 @@ class JogBody(BaseModel):
     feed: float | None = None
 
 
-class GotoBody(BaseModel):
+class GotoBody(Finite):
     kind: str = "joint"
     r: float | None = None
     a: float | None = None
@@ -115,7 +125,7 @@ class GotoBody(BaseModel):
     feed: float | None = None
 
 
-class PositionBody(BaseModel):
+class PositionBody(Finite):
     r: float | None = None
     a: float | None = None
     z: float | None = None
@@ -133,7 +143,7 @@ class CommandBody(BaseModel):
     line: str
 
 
-class LaserBody(BaseModel):
+class LaserBody(Finite):
     power: float
     ms: int | None = None
 
@@ -229,8 +239,10 @@ class Backend:
     def _save_config(self) -> None:
         try:
             self.config_path.write_text(json.dumps(self.config, indent=4) + "\n", encoding="utf-8")
-        except OSError:
-            pass
+        except OSError as exc:
+            # The value is in force for this process; say that it will not
+            # outlive it rather than lose it in silence.
+            self.publish_message("error", f"could not save {self.config_path}: {exc}")
 
     @property
     def tolerance(self) -> float:
@@ -270,7 +282,7 @@ class Backend:
         else:
             self.publish_message("info", f"connected to {url}, firmware v{link.banner.version}")
         try:
-            link.status_now(1.0)
+            link.status_now(1.0, routine=True)
             self.read_settings(force=True)
         except (LinkError, HTTPException):
             pass
@@ -304,14 +316,17 @@ class Backend:
         return link
 
     def move_start(self, link: Link) -> tuple[tuple[float, float], bool]:
-        """Where the next jog starts, and whether the machine is idle there.
+        """Where the next move starts, and whether that is certain.
 
         While a jog is still running the reported position is on its way
-        somewhere, so the end of that jog is the start of the next one.
+        somewhere, so the end of that jog is the start of the next one; the
+        firmware resolves a relative jog queued behind it from that same
+        planned end. The start is uncertain only while the machine jogs
+        toward an end this backend did not send.
         """
-        status = link.status_now(1.0)
+        status = link.status_now(1.0, routine=True)
         if status.state == "Jog" and self._jog_target is not None:
-            return self._jog_target, False
+            return self._jog_target, True
         self._jog_target = None
         return status.joint, status.state == "Idle"
 
@@ -398,9 +413,9 @@ class Backend:
                     raise ValueError("the cross slide moves on its own: dz cannot be sent with dr or da")
                 return self._slide_move(link, streamer.slide_jog(body.dz, body.feed))
             lines = [streamer.joint_jog(body.dr, body.da, body.feed)]
-            start, idle = self.move_start(link)
-            # A relative jog's end is only known when it starts from rest.
-            end = (start[0] + (body.dr or 0.0), start[1] + (body.da or 0.0)) if idle else None
+            start, known = self.move_start(link)
+            # A relative jog's end is known when its start is.
+            end = (start[0] + (body.dr or 0.0), start[1] + (body.da or 0.0)) if known else None
         elif body.kind == "board":
             start, _ = self.move_start(link)
             here = board_of(start)
@@ -421,8 +436,15 @@ class Backend:
                     raise ValueError("the cross slide moves on its own: z cannot be sent with r or a")
                 return self._slide_move(link, streamer.slide_goto(body.z, body.feed))
             lines = [streamer.joint_goto(body.r, body.a, body.feed)]
-            start, _ = self.move_start(link)
-            end = (start[0] if body.r is None else body.r, start[1] if body.a is None else body.a)
+            start, known = self.move_start(link)
+            # An axis left out stays where the queued jog ends, which is
+            # only known when the start is.
+            if body.r is not None and body.a is not None:
+                end = (body.r, body.a)
+            elif known:
+                end = (start[0] if body.r is None else body.r, start[1] if body.a is None else body.a)
+            else:
+                end = None
         elif body.kind == "board":
             if body.x is None or body.y is None:
                 raise ValueError("a board goto needs x and y")
@@ -452,7 +474,7 @@ class Backend:
         if body.z is not None:
             # Z goes on a line of its own: it is never a word beside R or A.
             link.request_ok(f"set Z{num(body.z)}")
-        link.status_now(1.0)
+        link.status_now(1.0, routine=True)
         return self.snapshot()
 
     def realtime(self, action: str) -> dict:
@@ -489,7 +511,17 @@ class Backend:
 
     def command(self, line: str) -> dict:
         link = self.require_link()
-        return {"lines": link.request(line)}
+        text = line.strip()
+        # A realtime byte typed on its own goes out as one, outside the
+        # credits; what it brings back arrives as an event.
+        realtime = {"?": REALTIME_STATUS, "!": REALTIME_HOLD, "~": REALTIME_RESUME}
+        if text in realtime:
+            link.realtime(realtime[text])
+            return {"lines": []}
+        # A typed line may move the head or declare where it is, which
+        # makes the end of the last jog meaningless as a starting point.
+        self._jog_target = None
+        return {"lines": link.request(text)}
 
     def laser(self, power: float, ms: int | None) -> dict:
         link = self.require_link()
@@ -512,19 +544,19 @@ class Backend:
             raise ValueError("mode must be dyn or const")
         link = self.require_link()
         link.request_ok(f"mode {mode}")
-        link.status_now(1.0)
+        link.status_now(1.0, routine=True)
         return self.snapshot()
 
     def motors(self, enabled: bool) -> dict:
         link = self.require_link()
         link.request_ok("enable" if enabled else "disable")
-        link.status_now(1.0)
+        link.status_now(1.0, routine=True)
         return self.snapshot()
 
     def unlock(self) -> dict:
         link = self.require_link()
         link.request_ok("unlock")
-        link.status_now(1.0)
+        link.status_now(1.0, routine=True)
         return self.snapshot()
 
     # --- settings -----------------------------------------------------------------
@@ -558,9 +590,14 @@ class Backend:
         if values:
             link = self.require_link()
             current = self.read_settings(force=True)["values"]
+            # Every name is checked before any value goes to the machine,
+            # so a refused entry does not leave the ones before it applied.
             for name, value in values.items():
                 if name not in current:
                     raise ValueError(f"unknown setting {name!r}")
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError(f"{name} must be a number")
+            for name, value in values.items():
                 if _number(str(value)) == current[name]:
                     continue
                 link.request_ok(f"${name}={_setting_text(value)}")
@@ -595,10 +632,13 @@ class Backend:
         name = Path(filename or "upload").name
         if not name or name.startswith("."):
             raise JobImportError("the upload needs a file name with a suffix")
-        with tempfile.TemporaryDirectory(prefix="spinny-upload-") as folder:
-            path = Path(folder) / name
-            path.write_bytes(data)
-            job = import_file(path, path.stem, options, self.streamer())
+        try:
+            with tempfile.TemporaryDirectory(prefix="spinny-upload-") as folder:
+                path = Path(folder) / name
+                path.write_bytes(data)
+                job = import_file(path, path.stem, options, self.streamer())
+        except OSError as exc:
+            raise JobImportError(f"cannot store the upload {name!r}: {exc}") from exc
         return self.store.add(job)
 
     def patch_job(self, job_id: str, patch: JobPatch) -> Job:
@@ -607,7 +647,7 @@ class Backend:
             raise HTTPException(status_code=404, detail="no such job")
         if self.runner.active and self.runner.progress.job == job_id:
             raise HTTPException(status_code=409, detail="the job is running")
-        apply_patch(job, patch, self.streamer())
+        job = apply_patch(job, patch, self.streamer())
         self.store.save(job)
         return job
 
@@ -643,7 +683,11 @@ def _setting_text(value) -> str:
 # --- the app ---------------------------------------------------------------------
 
 
-def create_app(backend: Backend | None = None, frontend: Path | None = None) -> FastAPI:
+def create_app(
+    backend: Backend | None = None,
+    frontend: Path | None = None,
+    cors_origins: list[str] | None = None,
+) -> FastAPI:
     backend = backend or Backend()
     frontend = FRONTEND_DIST if frontend is None else frontend
 
@@ -657,6 +701,25 @@ def create_app(backend: Backend | None = None, frontend: Path | None = None) -> 
 
     app = FastAPI(title="spinny-web", version=__version__, lifespan=lifespan)
     app.state.backend = backend
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_failed(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # The stock answer echoes the input, and an input refused for
+        # being NaN cannot be written as JSON: the echo is left out.
+        errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+    if cors_origins:
+        # Only for a page served from elsewhere, such as the frontend's dev
+        # server: a browser refuses cross-origin calls otherwise, and
+        # nothing else should be allowed to drive the machine from a page.
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            allow_headers=["content-type"],
+        )
 
     def guarded(call: Callable[[], Any]) -> Any:
         try:
@@ -867,9 +930,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="spinny-web", description="Web backend for the rotary table laser.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--cors-origin",
+        action="append",
+        default=[],
+        help="an origin allowed to call the API from a page served elsewhere, such as the"
+        " frontend dev server: http://localhost:3000; repeatable",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
-    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
+    uvicorn.run(create_app(cors_origins=args.cors_origin), host=args.host, port=args.port, log_level="info")
     return 0
 
 

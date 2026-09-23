@@ -24,17 +24,15 @@ if TYPE_CHECKING:
 DECIMALS = 3
 ANGLE_DECIMALS = 4
 DEFAULT_TOLERANCE = 0.005
-# Most step events a second the firmware's step generator produces; an
-# axis with many steps per unit runs into this before its own rate.
-STEP_CEILING_HZ = 100_000.0
 
 
 @dataclass(frozen=True)
 class Rates:
-    """The firmware's axis limits, for the time estimate."""
+    """The firmware's axis limits, for the time estimate. The defaults
+    are the firmware's own, for a job priced before a machine is read."""
 
-    r_rate: float = 1000.0
-    a_rate: float = 1080.0
+    r_rate: float = 560.0
+    a_rate: float = 400.0
 
     @classmethod
     def from_settings(cls, values: dict) -> "Rates":
@@ -44,17 +42,27 @@ class Rates:
             a_rate = float(values.get("a_rate", rates.a_rate))
             r_steps = float(values.get("r_steps", 0.0))
             a_steps = float(values.get("a_steps", 0.0))
+            step_us = int(float(values.get("step_us", 2)))
         except (TypeError, ValueError):
             return rates
         r_rate = r_rate if r_rate > 0 else rates.r_rate
         a_rate = a_rate if a_rate > 0 else rates.a_rate
         # The planner caps each axis by the step generator as well as by
         # its rate setting, and the estimate follows the lower of the two.
+        ceiling = step_ceiling_hz(step_us)
         if r_steps > 0:
-            r_rate = min(r_rate, STEP_CEILING_HZ * 60.0 / r_steps)
+            r_rate = min(r_rate, ceiling * 60.0 / r_steps)
         if a_steps > 0:
-            a_rate = min(a_rate, STEP_CEILING_HZ * 60.0 / a_steps)
+            a_rate = min(a_rate, ceiling * 60.0 / a_steps)
         return cls(r_rate, a_rate)
+
+
+def step_ceiling_hz(step_us: int) -> float:
+    """Most steps a second the firmware produces at a step pulse width: one
+    per 10 us tick, and fewer once the pulse, busy-waited inside the tick at
+    about 1.5 times its setting, plus the interrupt's own work no longer fit."""
+    tick_us = max(10, (3 * max(0, step_us) + 1) // 2 + 3)
+    return 1.0e6 / tick_us
 
 
 @dataclass
@@ -108,6 +116,13 @@ def num(value: float, decimals: int = 3) -> str:
     if text in ("-0", ""):
         text = "0"
     return text
+
+
+def _finite(*values: float | None) -> None:
+    """Refuses a value that is not a number before it can become a word."""
+    for value in values:
+        if value is not None and not (math.isfinite(value) and abs(value) <= 1.0e6):
+            raise ValueError("a move needs numbers within 1e6")
 
 
 def coord(value: float, decimals: int) -> str:
@@ -216,6 +231,11 @@ class Streamer:
                 )
                 if not turn and self._same(joint, next_joint):
                     point = next_point
+                    if polar.on_axis(next_joint):
+                        # No line goes out, but the head is on the axis
+                        # to within a quantum, and the next segment must
+                        # be split as leaving it.
+                        joint = next_joint
                     continue
                 yield next_point, next_joint, turn
                 point, joint = next_point, next_joint
@@ -284,6 +304,11 @@ class Streamer:
                 if len(points) < 2:
                     continue
                 first = joint_of(points[0], joint[1])
+                if first[0] < self.snap:
+                    # The word written is R0.000: the head is on the axis,
+                    # and the joint tracked must say so or the move away
+                    # from it is cut as a spiral instead of a turn.
+                    first = (0.0, first[1])
                 if not self._same(joint, first):
                     yield Piece(
                         line=f"go {self.words(first)}",
@@ -386,6 +411,7 @@ class Streamer:
 
     def board_move(self, start: Joint, target: Point, feed: float | None = None) -> list[str]:
         """`jogto` lines that take the beam to a board point from a joint."""
+        _finite(target[0], target[1], feed)
         return self.jog_lines(self.board_targets(start, target), feed)
 
     def board_jog(self, start: Joint, dx: float, dy: float, feed: float | None = None) -> list[str]:
@@ -414,6 +440,7 @@ class Streamer:
         return self._slide_line("jogto", z, feed)
 
     def _slide_line(self, keyword: str, z: float, feed: float | None) -> str:
+        _finite(z, feed)
         # Z is never put on a line with R or A: the three are not
         # interpolated together, so the firmware refuses the combination.
         words = [f"Z{num(z, self.decimals)}"]
@@ -422,6 +449,7 @@ class Streamer:
         return f"{keyword} {' '.join(words)}"
 
     def _joint_line(self, keyword: str, r: float | None, a: float | None, feed: float | None) -> str:
+        _finite(r, a, feed)
         words = []
         if r is not None and (keyword == "jogto" or r != 0.0):
             words.append(f"R{num(r, self.decimals)}")

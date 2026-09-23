@@ -28,6 +28,11 @@ POLL_IDLE = 0.2
 POLL_MOVING = 0.1
 MOVING_STATES = ("Run", "Jog", "Hold")
 MAX_LINE = 96
+# Longest run of bytes without a line end the reader keeps; the firmware
+# never sends a line a tenth as long, so more is not the firmware.
+MAX_PARTIAL = 4096
+# Bytes the firmware acts on wherever they land, so they never belong in a line.
+REALTIME_CHARS = "?!~"
 
 # What a port raises once it is gone. pyserial does not settle on one
 # exception: a closed socket url leaves its handler reading from None, and
@@ -191,6 +196,12 @@ def parse_banner(text: str) -> Banner | None:
     return banner
 
 
+def _keyword(line: str) -> str:
+    """The command word of a line, comment stripped, lower case."""
+    body = line.split(";", 1)[0].split()
+    return body[0].lower() if body else ""
+
+
 def open_serial(url: str):
     """A raw pyserial port for a device path or a `socket://host:port` url."""
     port = serial.serial_for_url(
@@ -226,7 +237,7 @@ class Link:
         self._port: Any = None
         self._pending: deque[Pending] = deque()
         self._credit = threading.Condition()
-        self._send_lock = threading.Lock()
+        self._close_lock = threading.Lock()
         # Held around a line's bookkeeping and its bytes, and around a
         # reset's flush and its byte, so the two cannot interleave: a line
         # written between a reset dropping the outstanding lines and the
@@ -274,6 +285,10 @@ class Link:
                 self.request("version", timeout=banner_timeout)
             except LinkError:
                 pass
+        if self._closed.is_set():
+            # The port went away underneath the wait: that is a failure to
+            # open, not a silent link with no banner.
+            raise LinkError(f"cannot open {self.url}: {self.close_reason}")
 
     @property
     def restarts(self) -> int:
@@ -291,15 +306,17 @@ class Link:
         return self._opened and not self._closed.is_set()
 
     def close(self, reason: str = "closed") -> None:
-        if self._closed.is_set():
-            return
-        self.close_reason = reason
-        self._closed.set()
+        with self._close_lock:
+            if self._closed.is_set():
+                return
+            self.close_reason = reason
+            self._closed.set()
         with self._status_cond:
             self._polls_out = 0
         with self._credit:
             self._credit.notify_all()
         with self._banner_cond:
+            self._expected_banners = 0
             self._banner_cond.notify_all()
         with self._status_cond:
             self._status_cond.notify_all()
@@ -342,12 +359,19 @@ class Link:
         line = line.strip()
         if not line or "\n" in line or "\r" in line:
             raise ValueError("a command is one non-empty line")
+        # A realtime byte acts wherever it lands in the stream, outside
+        # this bookkeeping, and the firmware turns any other control byte
+        # into `?`: none of them belongs in a line.
+        if any(c in REALTIME_CHARS or (ord(c) < 0x20 and c != "\t") or ord(c) >= 0x7F for c in line):
+            raise ValueError("a command cannot carry realtime or control bytes")
         data = (line + "\n").encode("ascii")
         if len(data) > MAX_LINE:
             raise ValueError(f"line longer than {MAX_LINE} bytes")
         deadline = None if timeout is None else time.monotonic() + timeout
-        with self._send_lock:
-            pending = Pending(line=line, callback=callback)
+        pending = Pending(line=line, callback=callback)
+        while True:
+            # Nothing is held while waiting for a credit, so every sender's
+            # own timeout and abort stay in force whoever else is waiting.
             with self._credit:
                 while len(self._pending) >= self.credits:
                     if self._closed.is_set():
@@ -361,10 +385,10 @@ class Link:
                             raise LinkTimeout(f"no credit for {line!r}")
                         wait = min(wait, left)
                     self._credit.wait(wait)
-            # The credit found above stays free: senders are serialized by
-            # the send lock, and nothing else appends. The line is queued
-            # and written under the write lock, so a reset either goes out
-            # before the whole of it or after the whole of it.
+            # The line is queued and written under the write lock, so a
+            # reset either goes out before the whole of it or after the
+            # whole of it. Another sender may have taken the credit in
+            # between, in which case the wait starts over.
             with self._write_lock:
                 with self._credit:
                     if self._closed.is_set():
@@ -378,6 +402,8 @@ class Link:
                         # Writing now would put a line into a machine that
                         # was just stopped, which would take it and move.
                         raise LinkError("aborted")
+                    if len(self._pending) >= self.credits:
+                        continue
                     self._pending.append(pending)
                 try:
                     self._write(data)
@@ -387,6 +413,7 @@ class Link:
                             self._pending.remove(pending)
                         self._credit.notify_all()
                     raise
+                break
         self._publish(Event("console", {"dir": "tx", "text": line, "poll": False}))
         return pending
 
@@ -443,19 +470,28 @@ class Link:
                 lambda: self._banner_seq != seq or self._closed.is_set(), timeout
             ) and not self._closed.is_set()
 
-    def status_now(self, timeout: float = 1.0) -> Status:
-        """Ask for a status report and wait for it."""
+    def status_now(self, timeout: float = 1.0, routine: bool = False) -> Status:
+        """Ask for a status report and wait for it.
+
+        `routine` marks a report the host asks for on its own behalf (a
+        run's bookkeeping, a snapshot after a command) rather than one an
+        operator asked to see, so the console can hide it with the polls.
+        """
         with self._status_cond:
             seq = self._status_seq
-        self.realtime(REALTIME_STATUS)
+        self.realtime(REALTIME_STATUS, routine=routine)
         with self._status_cond:
-            if not self._status_cond.wait_for(
-                lambda: self._status_seq != seq or self._closed.is_set(), timeout
-            ):
-                raise LinkTimeout("no status report")
-        if self.status is None:
+            self._status_cond.wait_for(lambda: self._status_seq != seq or self._closed.is_set(), timeout)
+            fresh = self._status_seq != seq
+        if not fresh:
+            # A report from before the request is not an answer to it.
+            if self._closed.is_set():
+                raise LinkClosed(self.close_reason or "closed")
+            raise LinkTimeout("no status report")
+        status = self.status
+        if status is None:
             raise LinkClosed(self.close_reason or "closed")
-        return self.status
+        return status
 
     def _write(self, data: bytes) -> None:
         if self._closed.is_set() or self._port is None:
@@ -490,12 +526,25 @@ class Link:
             while True:
                 cut = buffer.find(b"\n")
                 if cut < 0:
+                    if len(buffer) > MAX_PARTIAL:
+                        # Not the firmware: it never sends a line this long.
+                        dropped = len(buffer)
+                        buffer.clear()
+                        self._publish(Event("message", {"level": "error", "text": f"dropped {dropped} bytes with no line end"}))
                     break
                 raw = bytes(buffer[:cut])
                 del buffer[: cut + 1]
                 text = raw.decode("ascii", errors="replace").strip("\r").strip()
-                if text:
+                if not text:
+                    continue
+                try:
                     self._handle_line(text)
+                except Exception as exc:
+                    # A fault in the handling must not end this thread in
+                    # silence with the link still open: nothing would ever
+                    # be answered again.
+                    self._fail(f"reader failed: {exc!r}")
+                    return
 
     def _handle_line(self, text: str) -> None:
         routine = False
@@ -504,6 +553,13 @@ class Link:
                 routine = self._polls_out > 0
                 if routine:
                     self._polls_out -= 1
+            if not routine:
+                # The `status` command prints the same report before its
+                # `ok`; it belongs to that line's answer as well.
+                with self._credit:
+                    oldest = self._pending[0] if self._pending else None
+                if oldest is not None and _keyword(oldest.line) == "status":
+                    oldest.lines.append(text)
         self._publish(Event("console", {"dir": "rx", "text": text, "poll": routine}))
         if text == "ok" or text.startswith("error:"):
             self._complete(text)
@@ -527,23 +583,25 @@ class Link:
                     self._pending[0].lines.append(text)
 
     def _handle_banner(self, text: str) -> None:
-        with self._credit:
-            oldest = self._pending[0] if self._pending else None
-        answer = oldest is not None and oldest.line.lower() == "version"
-        expected = False
-        if not answer:
-            with self._banner_cond:
-                expected = self._expected_banners > 0
-                if expected:
-                    self._expected_banners -= 1
-        if answer:
-            # The same line answers `version`: that is an answer, not a
-            # restart, and a run in progress must not be told otherwise.
-            oldest.lines.append(text)
-        elif not expected:
-            # An unasked banner means the firmware restarted and dropped
-            # whatever was waiting for an answer.
-            self._fail_pending("reset")
+        # A reset's banner comes first, before anything sent after the
+        # reset byte is answered, so it is taken before a `version` request
+        # can claim it; the same line answers `version`, and that is an
+        # answer, not a restart, which a run in progress must not be told.
+        with self._banner_cond:
+            expected = self._expected_banners > 0
+            if expected:
+                self._expected_banners -= 1
+        answer = False
+        if not expected:
+            with self._credit:
+                oldest = self._pending[0] if self._pending else None
+            answer = oldest is not None and _keyword(oldest.line) == "version"
+            if answer:
+                oldest.lines.append(text)
+            else:
+                # An unasked banner means the firmware restarted and dropped
+                # whatever was waiting for an answer.
+                self._fail_pending("reset")
         banner = parse_banner(text)
         if banner is not None:
             self.banner = banner
@@ -563,10 +621,18 @@ class Link:
                 return
             pending = self._pending.popleft()
             self._credit.notify_all()
+        self._deliver(pending, response)
+
+    def _deliver(self, pending: Pending, response: str) -> None:
         pending.response = response
         pending.done.set()
         if pending.callback is not None:
-            pending.callback(pending)
+            try:
+                pending.callback(pending)
+            except Exception as exc:
+                # The reader thread runs this; a fault in a callback is
+                # reported, not allowed to end the thread.
+                self._publish(Event("message", {"level": "error", "text": f"callback failed for {pending.line!r}: {exc!r}"}))
 
     def _fail_pending(self, reason: str) -> None:
         # Under the write lock, so a sender that has found a credit waits
@@ -578,10 +644,7 @@ class Link:
                 dropped = list(self._pending)
                 self._pending.clear()
             for pending in dropped:
-                pending.response = reason
-                pending.done.set()
-                if pending.callback is not None:
-                    pending.callback(pending)
+                self._deliver(pending, reason)
             with self._credit:
                 self._credit.notify_all()
 

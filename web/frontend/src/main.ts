@@ -35,8 +35,13 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
         },
         async refreshState() {
             const snapshot = await ctx.call(api.state());
-            if (snapshot) {
-                store.set({ snapshot, progress: snapshot.run ?? store.get().progress });
+            // Once the event feed is open it carries the same snapshot at up
+            // to 10 Hz, and a reply built before its latest frame must not
+            // step the readout back; before that, the reply is all there is.
+            // A null run is the backend's word that no run exists in it
+            // (it restarted): a run kept from before would lock the page.
+            if (snapshot && store.get().link !== "open") {
+                store.set({ snapshot, progress: snapshot.run });
             }
         },
         async refreshPorts() {
@@ -77,7 +82,12 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshSettings()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs()]);
+    // The settings live on the machine: asking with no machine connected
+    // is answered with an error, which is not news.
+    if (ctx.store.get().snapshot.connected) {
+        await ctx.refreshSettings();
+    }
 }
 
 function main(): void {
@@ -109,10 +119,7 @@ function main(): void {
     feed.onEvent((event) => {
         switch (event.type) {
             case "state":
-                store.set({ snapshot: event.data });
-                if (event.data.run) {
-                    store.set({ progress: event.data.run });
-                }
+                store.set({ snapshot: event.data, progress: event.data.run });
                 break;
             case "console":
                 appendConsole(store, event.data);

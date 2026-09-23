@@ -11,6 +11,10 @@ uv run spinny-web --host 0.0.0.0 --port 8000
 uv run pytest
 ```
 
+`--cors-origin http://localhost:3000` (repeatable) lets a page served from
+elsewhere, such as the frontend's dev server, call the API; by default no
+other origin can.
+
 The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `../frontend/dist` is served at `/` when it exists.
 

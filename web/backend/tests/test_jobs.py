@@ -104,7 +104,7 @@ def test_svg_with_nothing_to_cut_is_refused():
         from_svg("not xml at all", "bad", ImportOptions())
 
 
-def test_gcode_import_groups_by_power_and_speed():
+def test_gcode_import_groups_consecutive_paths_by_power_and_speed():
     text = """G21
 G90
 M4 S0
@@ -120,8 +120,10 @@ G1 X1 Y0 S500 F400
 M5
 """
     job = from_gcode(text, "sample", ImportOptions(anchor="keep"))
-    assert [group.label for group in job.groups] == ["S500 F400", "S700 F300"]
-    assert len(job.groups[0].paths) == 2
+    # The file's order is kept: the last path is not pulled forward into
+    # the first group although it shares its power and feed.
+    assert [group.label for group in job.groups] == ["S500 F400", "S700 F300", "S500 F400"]
+    assert len(job.groups[0].paths) == 1 and len(job.groups[2].paths) == 1
     assert job.groups[0].paths[0] == [(10.0, 10.0), (14.0, 10.0), (14.0, 12.0)]
     assert job.groups[1].power == 700.0 and job.groups[1].speed == 300.0
     with pytest.raises(JobImportError):
@@ -223,19 +225,26 @@ def test_patch_shifts_and_reprices():
     job = from_svg(SVG, "drawing", ImportOptions(anchor="center"))
     job.refresh_stats(streamer)
     before = bbox(all_paths(job))
-    apply_patch(job, JobPatch(offset={"x": 0.0, "y": 14.0}), streamer)
+    original = job
+    job = apply_patch(job, JobPatch(offset={"x": 0.0, "y": 14.0}), streamer)
     after = bbox(all_paths(job))
     assert after[1] == pytest.approx(before[1] + 14.0) and after[0] == pytest.approx(before[0])
     assert job.offset.y == 14.0
-    apply_patch(job, JobPatch(groups=[{"index": 0, "power": 100, "speed": 50, "enabled": False}]), streamer)
+    # The job given is left as it was: a patch is a new object.
+    assert original.offset.y == 0.0 and bbox(all_paths(original)) == before
+    job = apply_patch(job, JobPatch(groups=[{"index": 0, "power": 100, "speed": 50, "enabled": False}]), streamer)
     assert job.groups[0].power == 100 and not job.groups[0].enabled
     seconds = job.stats.seconds
-    apply_patch(job, JobPatch(groups=[{"index": 0, "enabled": True}]), streamer)
+    job = apply_patch(job, JobPatch(groups=[{"index": 0, "enabled": True}]), streamer)
     assert job.stats.seconds > seconds
     with pytest.raises(ValueError):
         apply_patch(job, JobPatch(groups=[{"index": 9, "enabled": True}]), streamer)
     with pytest.raises(ValueError):
         apply_patch(job, JobPatch(groups=[{"index": 0, "speed": 0}]), streamer)
+    # A patch refused part way changes nothing.
+    with pytest.raises(ValueError):
+        apply_patch(job, JobPatch(groups=[{"index": 0, "power": 900}, {"index": 9}]), streamer)
+    assert job.groups[0].power == 100
 
 
 def test_summary_is_compact():
@@ -276,7 +285,7 @@ def test_a_json_job_with_joints_gets_drawn_paths_and_stays_on_the_axis():
     # It is written about the axis: no offset, but the burn settings change.
     with pytest.raises(ValueError):
         apply_patch(job, JobPatch(offset={"x": 0.0, "y": 14.0}), streamer)
-    apply_patch(job, JobPatch(groups=[{"index": 0, "speed": 100}]), streamer)
+    job = apply_patch(job, JobPatch(groups=[{"index": 0, "speed": 100}]), streamer)
     assert job.groups[0].speed == 100
     with pytest.raises(JobImportError):
         from_json(json.dumps({"groups": [{"label": "x", "joints": [[[1, 0]]]}]}), "bad")
@@ -314,3 +323,36 @@ def test_a_json_job_with_a_bad_speed_or_power_is_refused():
     text = json.dumps({"name": "x", "spot": 0, "groups": [{"label": "g", "paths": [[[1, 1], [2, 2]]]}]})
     with pytest.raises(jobs.JobImportError, match="spot"):
         from_json(text, "x")
+
+
+def test_numbers_that_are_not_numbers_or_too_large_are_refused():
+    with pytest.raises(jobs.JobImportError):
+        from_json('{"name":"bad","groups":[{"label":"g","paths":[[[NaN,0],[1,1]]]}]}', "bad")
+    with pytest.raises(jobs.JobImportError):
+        from_json('{"name":"bad","groups":[{"label":"g","power":1e9,"paths":[[[0,0],[1,1]]]}]}', "bad")
+    with pytest.raises(jobs.JobImportError):
+        from_json('{"name":"bad","groups":[{"label":"g","paths":[[[1e7,0],[1,1]]]}]}', "bad")
+    with pytest.raises(jobs.JobImportError):
+        from_json('{"name":"bad","spot":Infinity,"groups":[{"label":"g","paths":[[[0,0],[1,1]]]}]}', "bad")
+
+
+def test_svg_close_followed_by_a_line_keeps_the_first_segment():
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" viewBox="0 0 40 40">'
+        '<path d="M 0 0 L 10 0 L 10 10 Z L 20 20 L 30 30" stroke="#ff0000" fill="none"/></svg>'
+    )
+    shapes = jobs.svg_polylines(svg, 0.005)
+    assert len(shapes) == 2
+    second = [(round(x, 3), round(y, 3)) for x, y in shapes[1][1]]
+    assert second == [(0.0, 0.0), (20.0, -20.0), (30.0, -30.0)]
+
+
+def test_gcode_import_keeps_the_order_of_the_file():
+    text = (
+        "G21\nG90\nM4 S0\n"
+        "G0 X0 Y0\nG1 X5 Y0 S500 F200\n"
+        "G0 X10 Y0\nG1 X15 Y0 S300 F800\n"
+        "G0 X20 Y0\nG1 X25 Y0 S500 F200\nM5\n"
+    )
+    job = jobs.from_gcode(text, "order", jobs.ImportOptions(anchor="keep"))
+    assert [(g.power, g.speed, len(g.paths)) for g in job.groups] == [(500.0, 200.0, 1), (300.0, 800.0, 1), (500.0, 200.0, 1)]

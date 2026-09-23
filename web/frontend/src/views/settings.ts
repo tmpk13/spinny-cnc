@@ -95,8 +95,10 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         const done = await ctx.call(ctx.api.updateSettings(patch).then(() => true));
         if (done) {
             ctx.toast("info", "settings applied");
-            await ctx.refreshSettings();
         }
+        // Refreshed either way: a refused write may still have changed
+        // the values before the one refused, and the table must say so.
+        await ctx.refreshSettings();
     }
 
     async function saveFlash(): Promise<void> {

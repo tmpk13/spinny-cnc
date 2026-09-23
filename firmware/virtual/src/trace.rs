@@ -17,6 +17,8 @@ const MIN_STEP_MM: f64 = 0.05;
 const MAX_GAP_US: u64 = 2000;
 /// Marks kept before sampling stops; the file says when it did.
 const MAX_MARKS: usize = 200_000;
+/// Commands kept, for the same reason: the process outlives many sessions.
+const MAX_COMMANDS: usize = 20_000;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Mark {
@@ -71,7 +73,8 @@ impl Trace {
         let a = (joint[1] as f64).to_radians();
         let (x, y) = (r * a.cos(), r * a.sin());
         let mark = Mark { us, x, y, r, a: joint[1] as f64, duty };
-        self.max_radius = self.max_radius.max(r);
+        // The far side of the axis is as far out as the near one.
+        self.max_radius = self.max_radius.max(r.abs());
         let (keep, moved) = match self.last {
             None => (duty > 0, 0.0),
             Some(last) => {
@@ -109,8 +112,23 @@ impl Trace {
     }
 
     pub fn command(&mut self, command: Command) {
-        if self.path.is_some() {
-            self.commands.push(command);
+        if self.path.is_none() {
+            return;
+        }
+        if self.commands.len() >= MAX_COMMANDS {
+            self.truncated = true;
+            return;
+        }
+        self.commands.push(command);
+    }
+
+    /// Creates or empties the file, so a path that cannot be written is
+    /// known before a run rather than after, and a stale file from an
+    /// earlier run cannot pass for this one.
+    pub fn open(&self) -> io::Result<()> {
+        match &self.path {
+            Some(path) => fs::write(path, self.render()),
+            None => Ok(()),
         }
     }
 
@@ -257,6 +275,14 @@ mod tests {
         assert!(text.contains("\"line\": \"cut R1 F60 S500\""));
         assert!(text.contains("\"seconds\": 1.0000"));
         assert!(text.contains("\"duty\": 1000"));
+    }
+
+    #[test]
+    fn the_far_side_counts_toward_the_reach() {
+        let mut trace = trace();
+        trace.sample(0, [-6.0, 0.0], 800);
+        trace.sample(100, [-4.0, 110.0], 800);
+        assert!((trace.max_radius - 6.0).abs() < 1e-9);
     }
 
     #[test]

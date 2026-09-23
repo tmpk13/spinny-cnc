@@ -54,8 +54,11 @@ its position between clients, as unplugging USB does.
 | `--quiet` | no periodic report on stderr |
 
 The trace holds the board position of every mark the beam would leave,
-with its duty, plus each line the client sent and how long it took. It is
-written when a client disconnects and when a run ends.
+with its duty as commanded (the pin level is the other way round under
+`laser_invert`), plus each line the client sent, when it was accepted and
+where the head was then: a motion line is accepted when the planner takes
+it, so its `seconds` is the wait for room, not the move. It is written
+when a client disconnects and when a run ends.
 
 ```sh
 picocom -b 115200 /dev/ttyACM0     # or: nc 127.0.0.1 2323

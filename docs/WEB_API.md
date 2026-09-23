@@ -46,7 +46,7 @@ State snapshot:
 | `POST /api/motors` | `{"enabled": false}` |
 | `POST /api/unlock` | |
 | `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out |
-| `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}` |
+| `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a `status` command's own report is in its `lines` |
 
 Board jogs and gotos are turned into joint moves on the host with the chord
 tolerance from the settings page, so a board move through the axis becomes

@@ -5,3 +5,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 if (typeof document === "undefined") {
     GlobalRegistrator.register({ url: "http://localhost/" });
 }
+
+import { confirmSettle } from "../src/confirm.ts";
+
+// The views tests click the confirm button the moment it appears.
+confirmSettle.ms = 0;

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use spinny_core::hal::StepPort;
 use spinny_core::machine::Machine;
-use spinny_core::parser::Error;
+use spinny_core::parser::{Error, Realtime};
 use spinny_core::report;
 use spinny_core::settings::Settings;
 use spinny_core::stepper::{self, Isr, Shared};
@@ -114,7 +114,11 @@ impl Sim {
         self.flush(socket)?;
         loop {
             while let Some(action) = inbox.take_realtime() {
+                let pending = !self.machine.ready_for_line();
                 self.machine.realtime(action, &mut self.laser, &mut self.out);
+                if pending && action == Realtime::Reset {
+                    self.drop_awaiting();
+                }
             }
             if self.machine.ready_for_line() {
                 match inbox.take_line() {
@@ -130,9 +134,11 @@ impl Sim {
             // the client goes: a trace from the run before is worse than
             // no trace at all, because it reads exactly like this one.
             if self.trace.has_fresh() && self.machine.is_quiet() {
-                let _ = self.trace.flush();
+                self.write_trace();
             }
-            if inbox.is_closed() && inbox.is_empty() {
+            // Whatever the client had queued went with it (the inbox drops
+            // it on close), so there is nothing to wait for.
+            if inbox.is_closed() {
                 break;
             }
             self.advance(Some(inbox));
@@ -141,18 +147,54 @@ impl Sim {
     }
 
     /// The client has gone: stop, drop the beam, and let the abort drain.
+    /// Settled, not quiet: a constant beam or the idle disable timer would
+    /// hold the next client off for as long as they take to run out.
     fn disconnect(&mut self) {
+        let pending = !self.machine.ready_for_line();
         self.machine.disconnected(&mut self.laser, &mut self.port);
+        if pending {
+            self.drop_awaiting();
+        }
         self.out.take();
         for _ in 0..SETTLE_POLLS {
             self.poll();
             self.out.take();
-            if self.machine.is_quiet() && self.next_tick.is_none() {
+            if self.machine.is_settled() && self.next_tick.is_none() {
                 break;
             }
             self.advance(None);
         }
-        let _ = self.trace.flush();
+        self.write_trace();
+    }
+
+    /// A pending line was thrown away unanswered: its entry goes to the
+    /// trace now, or every later answer would land on the wrong line.
+    fn drop_awaiting(&mut self) {
+        let now = self.clock.now();
+        let joint = self.machine.joint();
+        for mut command in self.awaiting.drain(..) {
+            command.done_us = now;
+            command.to = joint;
+            self.trace.command(command);
+        }
+    }
+
+    fn write_trace(&mut self) {
+        if let Err(error) = self.trace.flush() {
+            if self.report_at.is_some() {
+                eprintln!("trace: {error}");
+            }
+        }
+    }
+
+    /// The beam as commanded: the port carries the pin level, which is
+    /// the other way round under `laser_invert`.
+    fn beam_duty(&self) -> u16 {
+        if self.machine.settings().laser_invert {
+            1000 - self.laser.duty
+        } else {
+            self.laser.duty
+        }
     }
 
     fn submit(&mut self, line: &str) {
@@ -185,7 +227,7 @@ impl Sim {
         if kick {
             self.next_tick = Some(now);
         }
-        self.trace.sample(now, self.machine.joint(), self.laser.duty);
+        self.trace.sample(now, self.machine.joint(), self.beam_duty());
         if let Some(due) = self.report_at {
             if Instant::now() >= due {
                 eprintln!("{}", self.status_line());
@@ -197,7 +239,7 @@ impl Sim {
     fn tick(&mut self) {
         let next = self.isr.tick(&mut self.port, &mut self.laser);
         let now = self.clock.now();
-        self.trace.sample(now, self.machine.joint(), self.laser.duty);
+        self.trace.sample(now, self.machine.joint(), self.beam_duty());
         self.next_tick = next.map(|us| now + u64::from(us));
     }
 
@@ -336,9 +378,6 @@ mod tests {
         let inbox = Inbox::new();
         inbox.push(line("set R0 A0"));
         inbox.push(line("cut R20 F400 S800"));
-        // Closed as well, so the session cannot sit waiting for a client
-        // that is not coming if the write somehow succeeds.
-        inbox.close();
         // The banner and the first answer get through; the answer to the
         // cut, by which time the machine is moving with the beam on, does
         // not.
@@ -349,6 +388,64 @@ mod tests {
         // client finds the alarm and has to unlock before it can move.
         assert_eq!(sim.state(), report::State::Alarm(1), "the machine kept running");
         assert_eq!(sim.laser_duty(), 0, "the beam was left on");
+    }
+
+    #[test]
+    fn a_client_that_hangs_up_takes_its_queued_lines_with_it() {
+        let mut sim = sim();
+        let inbox = Inbox::new();
+        inbox.push(line("set R0 A0"));
+        inbox.push(line("cut R20 F400 S800"));
+        // Gone before the loop took anything: nothing of it may run, and
+        // the session must end rather than wait for the queue to drain.
+        inbox.close();
+        let mut out = Vec::new();
+        sim.session(&inbox, &mut out).unwrap();
+        assert_eq!(sim.state(), report::State::Idle);
+        assert_eq!(sim.joint(), [0.0, 0.0], "a dead client's line ran");
+        assert_eq!(sim.laser_duty(), 0);
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("ok"), "{text:?}");
+    }
+
+    #[test]
+    fn the_trace_records_the_beam_not_the_pin_level() {
+        let mut settings = Settings::default();
+        settings.laser_invert = true;
+        let mut sim = Sim::new(Setup {
+            settings,
+            store: FileStore::default(),
+            clock: Clock::fast(),
+            trace: Trace::new(Some(std::path::PathBuf::from("/dev/null"))),
+            quiet: true,
+        });
+        let inbox = Inbox::new();
+        inbox.push(line("set R0 A0"));
+        inbox.push(line("go R10"));
+        inbox.push(line("cut A90 F300 S1000"));
+        inbox.push(line("go R0 A0"));
+        // The loop as `serve` runs it, until the lines are taken and the
+        // machine has come to rest.
+        let mut out = Vec::new();
+        for _ in 0..4_000_000 {
+            if sim.machine.ready_for_line() {
+                if let Some(Inbound::Line(text)) = inbox.take_line() {
+                    sim.submit(text.as_str());
+                }
+            }
+            sim.poll();
+            sim.flush(&mut out).unwrap();
+            if inbox.is_empty() && sim.machine.is_settled() && sim.next_tick.is_none() {
+                break;
+            }
+            sim.advance(None);
+        }
+        assert_eq!(sim.state(), report::State::Idle);
+        // The pin rests high under laser_invert, and the cut drove it low:
+        // the trace counts the cut, a quarter turn at 10 mm, as the burn.
+        assert_eq!(sim.laser_duty(), 1000);
+        let burnt = sim.trace_mut().laser_on_mm();
+        assert!((burnt - 15.7).abs() < 0.5, "burnt {burnt} mm");
     }
 
     #[test]

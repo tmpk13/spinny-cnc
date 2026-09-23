@@ -17,7 +17,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import kinematics
 from .kinematics import Streamer
@@ -34,6 +34,9 @@ DEFAULT_PPI = 96.0
 FLATTEN_DEPTH = 16
 
 GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gm1")
+# Largest value a power, a speed or a coordinate may take: far past any
+# machine, and short enough to keep every protocol line under its limit.
+MAX_VALUE = 1.0e6
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -43,7 +46,13 @@ class JobImportError(ValueError):
     """The file could not be turned into a job."""
 
 
-class Group(BaseModel):
+class Finite(BaseModel):
+    """A model whose numbers are numbers: NaN and infinity are refused."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+
+class Group(Finite):
     label: str
     power: float = DEFAULT_POWER
     speed: float = DEFAULT_SPEED
@@ -61,12 +70,12 @@ class Group(BaseModel):
         return bool(self.joints) or bool(self.paths)
 
 
-class Offset(BaseModel):
+class Offset(Finite):
     x: float = 0.0
     y: float = 0.0
 
 
-class JobStats(BaseModel):
+class JobStats(Finite):
     length_mm: float = 0.0
     seconds: float = 0.0
     max_radius: float = 0.0
@@ -75,7 +84,7 @@ class JobStats(BaseModel):
     moves: int = 0
 
 
-class Job(BaseModel):
+class Job(Finite):
     id: str = ""
     name: str = "job"
     source: str = "json"
@@ -126,7 +135,7 @@ class Job(BaseModel):
         self.stats = JobStats(**stats.to_dict())
 
 
-class GroupPatch(BaseModel):
+class GroupPatch(Finite):
     index: int
     label: str | None = None
     power: float | None = None
@@ -134,35 +143,57 @@ class GroupPatch(BaseModel):
     enabled: bool | None = None
 
 
-class JobPatch(BaseModel):
+class JobPatch(Finite):
     name: str | None = None
     groups: list[GroupPatch] | None = None
     offset: Offset | None = None
 
 
+def check_power(power: float, what: str = "power") -> None:
+    if not 0.0 <= power <= MAX_VALUE:
+        raise ValueError(f"{what} must be between 0 and {MAX_VALUE:g}")
+
+
+def check_speed(speed: float, what: str = "speed") -> None:
+    if not 0.0 < speed <= MAX_VALUE:
+        raise ValueError(f"{what} must be above 0 and at most {MAX_VALUE:g}")
+
+
 def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
-    if patch.name:
-        job.name = patch.name
+    """The job with the patch applied, as a new object.
+
+    The whole patch is checked before anything changes, and the job given
+    is left as it was: a patch refused part way must not leave a job half
+    changed in memory and unchanged on disk.
+    """
     for change in patch.groups or []:
         if not 0 <= change.index < len(job.groups):
             raise ValueError(f"no group {change.index}")
-        group = job.groups[change.index]
+        if change.power is not None:
+            check_power(change.power)
+        if change.speed is not None:
+            check_speed(change.speed)
+    if patch.offset is not None:
+        dx, dy = patch.offset.x - job.offset.x, patch.offset.y - job.offset.y
+        if (dx != 0.0 or dy != 0.0) and any(group.joints for group in job.groups):
+            raise ValueError("a joint-space group is fixed to the axis and cannot be moved")
+    updated = job.model_copy(deep=True)
+    if patch.name:
+        updated.name = patch.name
+    for change in patch.groups or []:
+        group = updated.groups[change.index]
         if change.label is not None:
             group.label = change.label
         if change.power is not None:
-            if change.power < 0:
-                raise ValueError("power must be >= 0")
             group.power = change.power
         if change.speed is not None:
-            if change.speed <= 0:
-                raise ValueError("speed must be > 0")
             group.speed = change.speed
         if change.enabled is not None:
             group.enabled = change.enabled
     if patch.offset is not None:
-        job.shift(patch.offset.x - job.offset.x, patch.offset.y - job.offset.y)
-    job.refresh_stats(streamer)
-    return job
+        updated.shift(patch.offset.x - updated.offset.x, patch.offset.y - updated.offset.y)
+    updated.refresh_stats(streamer)
+    return updated
 
 
 def _shifted(path, dx: float, dy: float) -> list[tuple[float, float]]:
@@ -186,12 +217,17 @@ class ImportOptions:
     def check(self) -> None:
         if self.anchor not in (ANCHOR_CENTER, ANCHOR_KEEP):
             raise JobImportError(f"anchor must be {ANCHOR_CENTER} or {ANCHOR_KEEP}")
-        if self.power < 0:
-            raise JobImportError("power must be >= 0")
-        if self.speed <= 0:
-            raise JobImportError("speed must be > 0")
-        if self.spot <= 0:
-            raise JobImportError("spot must be > 0")
+        try:
+            check_power(self.power)
+            check_speed(self.speed)
+        except ValueError as exc:
+            raise JobImportError(str(exc)) from exc
+        if not 0.0 < self.spot <= 1000.0:
+            raise JobImportError("spot must be above 0 and at most 1000")
+        if not all(math.isfinite(v) and abs(v) <= MAX_VALUE for v in self.offset):
+            raise JobImportError(f"offset must be within {MAX_VALUE:g} mm")
+        if not (math.isfinite(self.tolerance) and self.tolerance > 0.0):
+            raise JobImportError("tolerance must be > 0")
         if self.passes < 1:
             raise JobImportError("passes must be >= 1")
 
@@ -223,17 +259,23 @@ def from_json(text: str, name: str) -> Job:
     if not job.name or job.name == "job":
         job.name = name
     job.source = "json"
-    if job.spot <= 0:
-        raise JobImportError("spot must be > 0")
+    if not 0.0 < job.spot <= 1000.0:
+        raise JobImportError("spot must be above 0 and at most 1000")
     for group in job.groups:
         # The firmware refuses a cut with F at or below zero, so a group
-        # that carries one would end its run on the first line.
-        if group.speed <= 0:
-            raise JobImportError(f"group {group.label!r}: speed must be > 0")
-        if group.power < 0:
-            raise JobImportError(f"group {group.label!r}: power must be >= 0")
+        # that carries one would end its run on the first line; a number
+        # past the bound would not fit a line at all.
+        try:
+            check_speed(group.speed, f"group {group.label!r}: speed")
+            check_power(group.power, f"group {group.label!r}: power")
+        except ValueError as exc:
+            raise JobImportError(str(exc)) from exc
         if any(len(poly) < 2 for poly in group.joints):
             raise JobImportError("a joint-space path needs at least two points")
+        for poly in group.paths + group.joints:
+            for point in poly:
+                if any(abs(v) > MAX_VALUE for v in point):
+                    raise JobImportError(f"group {group.label!r}: a coordinate is past {MAX_VALUE:g}")
         if group.joints and not group.paths:
             group.paths = [kinematics.joint_preview(poly) for poly in group.joints]
     return job
@@ -264,18 +306,22 @@ def from_gcode(text: str, name: str, options: ImportOptions) -> Job:
     if not paths:
         raise JobImportError("the file has no cuts")
     placed = place([path.points for path in paths], options.anchor, options.offset)
-    groups: dict[tuple[float, float], Group] = {}
+    # Consecutive paths at one power and feed share a group, and the file's
+    # order is kept: a cut-out that comes after an engraving in the file
+    # stays after it, so a piece freed by it cannot move under the beam
+    # before the engraving is done.
+    groups: list[Group] = []
     for path, points in zip(paths, placed):
-        key = (path.power, path.speed)
-        if key not in groups:
-            groups[key] = Group(label=f"S{path.power:g} F{path.speed:g}", power=path.power, speed=path.speed)
-        groups[key].paths.append(points)
+        if groups and groups[-1].power == path.power and groups[-1].speed == path.speed:
+            groups[-1].paths.append(points)
+        else:
+            groups.append(Group(label=f"S{path.power:g} F{path.speed:g}", power=path.power, speed=path.speed, paths=[points]))
     return Job(
         name=name,
         source="gcode",
         spot=options.spot,
         offset=Offset(x=options.offset[0], y=options.offset[1]),
-        groups=list(groups.values()),
+        groups=groups,
     )
 
 
@@ -317,6 +363,10 @@ def svg_polylines(text: str, tolerance: float) -> list[tuple[str, Polyline]]:
                 flush()
                 current = [segment.end]
             elif isinstance(segment, Line):
+                # A line right after a close starts where the closed
+                # subpath began, with no move to say so.
+                if not current:
+                    current = [segment.start]
                 current.append(segment.end)
             elif isinstance(segment, Close):
                 if current:
