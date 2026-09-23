@@ -159,6 +159,9 @@ def check_power(power: float, what: str = "power") -> None:
 def check_speed(speed: float, what: str = "speed") -> None:
     if not 0.0 < speed <= MAX_VALUE:
         raise ValueError(f"{what} must be above 0 and at most {MAX_VALUE:g}")
+    if speed < kinematics.MIN_FEED:
+        # Written with three decimals it would reach the firmware as F0.
+        raise ValueError(f"{what} must be at least {kinematics.MIN_FEED:g} mm/min")
 
 
 def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:

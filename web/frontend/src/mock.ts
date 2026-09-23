@@ -2,8 +2,8 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { ApiError, type Api } from "./api.ts";
-import { boardOfJoint, jointOfBoard, jointPath, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength } from "./kinematics.ts";
-import { buildJob, computeStats, demoCoupon, placeJob } from "./mockjobs.ts";
+import { boardOfJoint, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength } from "./kinematics.ts";
+import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
 import type { LinkStatus } from "./state.ts";
 import type {
     GotoRequest,
@@ -34,22 +34,23 @@ const CLOCK_EPSILON = 1e-9;
 export const LINE_SLOTS = 16;
 export const PLANNER_BLOCKS = 32;
 
+/** The firmware's shipped defaults. */
 export const DEFAULT_SETTINGS: Record<string, number> = {
-    r_steps: 256,
-    a_steps: 888.889,
-    r_rate: 1000,
-    a_rate: 1080,
+    r_steps: 10240,
+    a_steps: 14222.222,
+    r_rate: 560,
+    a_rate: 400,
     r_accel: 50,
     a_accel: 50,
     r_jerk: 3,
-    a_jerk: 10,
+    a_jerk: 2,
     r_max: 0,
-    z_steps: 256,
-    z_rate: 1000,
+    z_steps: 10240,
+    z_rate: 560,
     z_accel: 50,
     jog_z: 120,
-    jog_r: 600,
-    jog_a: 720,
+    jog_r: 300,
+    jog_a: 200,
     dir_invert: 0,
     en_invert: 0,
     idle_ms: 0,
@@ -62,12 +63,19 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     tmc_r_ma: 800,
     tmc_a_ma: 800,
     tmc_hold_pct: 50,
-    tmc_r_micro: 16,
-    tmc_a_micro: 16,
+    tmc_r_micro: 256,
+    tmc_a_micro: 256,
     tmc_z_ma: 800,
-    tmc_z_micro: 16,
+    tmc_z_micro: 256,
     tmc_stealth: 1,
 };
+
+/** The firmware refuses a feed under this, and one that is not a number. */
+export const MIN_FEED = 0.001;
+/** Longest constant beam the firmware takes, ms. */
+export const LASER_MAX_MS = 60000;
+/** A move shorter than this on the board (a turn on the axis) runs with the beam off. */
+const SURFACE_EPSILON_MM = 0.001;
 
 export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "r_steps", unit: "steps/mm", help: "radius motor" },
@@ -132,6 +140,16 @@ interface Slide {
     elapsed: number;
 }
 
+/** What the firmware prints for `help`, one line each, before its `ok`. */
+export const HELP_LINES = [
+    "go [R] [A] | cut [R] [A] [F] [S] | jog [R] [A] [F] | jogto [R] [A] [F]",
+    "cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z",
+    "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A]",
+    "enable | disable | unlock | version | status | help",
+    "$ | $name | $name=value | $save | $load | $defaults | $tmc",
+    "realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel",
+];
+
 export class MachineError extends Error {
     readonly code: number;
 
@@ -162,6 +180,10 @@ export class MockMachine {
     slide: Slide | null = null;
     /** Seconds left on a constant beam; 0 when off. */
     beamSeconds = 0;
+    /** Modal F for `cut`, forgotten on a reset; null until a cut gives one. */
+    feed: number | null = null;
+    /** Modal S for `cut`, back to 0 on a reset. */
+    power = 0;
 
     /** Free planner blocks and line slots, as the status line reports them. */
     queueFree(): { planner: number; lines: number } {
@@ -206,35 +228,49 @@ export class MockMachine {
         };
     }
 
+    /** Any move may cross the axis to the far side; the soft limit is on the distance from it, either side. */
     private checkRadius(r: number): void {
-        if (r < -1e-9) {
-            throw new MachineError(4, "value out of range");
+        if (!Number.isFinite(r)) {
+            throw new MachineError(4, "out of range");
         }
         const rMax = this.settings["r_max"] ?? 0;
-        if (rMax > 0 && r > rMax + 1e-9) {
-            throw new MachineError(4, "value out of range");
+        if (rMax > 0 && Math.abs(r) > rMax + 1e-9) {
+            throw new MachineError(4, "out of range");
+        }
+    }
+
+    private checkWords(move: Move): void {
+        if (move.feed !== null && !(move.feed >= MIN_FEED)) {
+            throw new MachineError(4, "out of range");
+        }
+        if (!(move.power >= 0)) {
+            throw new MachineError(4, "out of range");
+        }
+        this.checkRadius(move.target.r);
+        if (!Number.isFinite(move.target.a)) {
+            throw new MachineError(4, "out of range");
         }
     }
 
     /** Queues a move; the firmware refuses motion in Hold and Alarm, and jogs outside Idle/Jog. */
     push(move: Move): void {
         if (this.state === "Alarm" || this.state === "Hold") {
-            throw new MachineError(5, "not allowed in this state");
+            throw new MachineError(5, "not now");
         }
         if (this.slide !== null) {
             // The cross slide moves on its own; nothing joins it.
-            throw new MachineError(5, "not allowed in this state");
+            throw new MachineError(5, "not now");
         }
         if (move.kind === "jog" && this.state === "Run") {
-            throw new MachineError(5, "not allowed in this state");
+            throw new MachineError(5, "not now");
         }
         if (move.kind !== "jog" && this.state === "Jog") {
-            throw new MachineError(5, "not allowed in this state");
+            throw new MachineError(5, "not now");
         }
         if (!this.canQueue()) {
             throw new MachineError(5, "queue full");
         }
-        this.checkRadius(move.target.r);
+        this.checkWords(move);
         this.queue.push(move);
         this.enabled = true;
         this.beamSeconds = 0;
@@ -266,8 +302,11 @@ export class MockMachine {
     /** Sends the cross slide to `z`; the firmware takes it in Idle only. */
     slideTo(z: number, feed: number | null): void {
         this.requireIdle();
+        if (feed !== null && !(feed >= MIN_FEED)) {
+            throw new MachineError(4, "out of range");
+        }
         const limit = this.settings["z_rate"] ?? 560;
-        const rate = feed !== null && feed > 0 ? Math.min(feed, limit) : this.settings["jog_z"] ?? 120;
+        const rate = feed !== null ? Math.min(feed, limit) : this.settings["jog_z"] ?? 120;
         this.slide = { from: this.z, to: z, seconds: (Math.abs(z - this.z) / rate) * 60, elapsed: 0 };
         this.state = "Jog";
         this.enabled = true;
@@ -285,20 +324,20 @@ export class MockMachine {
         const s = this.settings;
         switch (move.kind) {
             case "go":
-                return moveMinutes(from, move.target, null, s["r_rate"] ?? 1000, s["a_rate"] ?? 1080) * 60;
+                return moveMinutes(from, move.target, null, s["r_rate"] ?? 560, s["a_rate"] ?? 400) * 60;
             case "jog":
                 if (move.feed === null) {
-                    return moveMinutes(from, move.target, null, s["jog_r"] ?? 600, s["jog_a"] ?? 720) * 60;
+                    return moveMinutes(from, move.target, null, s["jog_r"] ?? 300, s["jog_a"] ?? 200) * 60;
                 }
-                return moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 1000, s["a_rate"] ?? 1080) * 60;
+                return moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 560, s["a_rate"] ?? 400) * 60;
             case "cut":
-                return moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 1000, s["a_rate"] ?? 1080) * 60;
+                return moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 560, s["a_rate"] ?? 400) * 60;
         }
     }
 
-    /** Duty in permille for a cut at the achieved speed. */
-    private dutyFor(move: Move, achieved: number): number {
-        if (move.kind !== "cut" || move.power <= 0) {
+    /** Duty in permille for a cut of board length `length` at the achieved speed. */
+    private dutyFor(move: Move, achieved: number, length: number): number {
+        if (move.kind !== "cut" || move.power <= 0 || length < SURFACE_EPSILON_MM) {
             return 0;
         }
         const sMax = this.settings["s_max"] ?? 1000;
@@ -359,7 +398,7 @@ export class MockMachine {
             const length = surfaceLength(active.from, active.move.target);
             const achieved = (length / active.seconds) * 60;
             this.rate = achieved;
-            this.laser = this.dutyFor(active.move, achieved);
+            this.laser = this.dutyFor(active.move, achieved, length);
             if (active.elapsed >= active.seconds - 1e-9) {
                 this.joint = { ...active.move.target };
                 this.active = null;
@@ -378,10 +417,22 @@ export class MockMachine {
         }
     }
 
+    /**
+     * The hold byte. A beam lit by `laser` goes out whatever the state and
+     * does not come back with the resume. The cross slide is a setup move
+     * with nothing behind it to resume into, so a hold ends it where it is
+     * and the state falls back to Idle.
+     */
     hold(): void {
+        this.laser = 0;
+        this.beamSeconds = 0;
+        if (this.slide) {
+            this.slide = null;
+            this.state = "Idle";
+            return;
+        }
         if (this.moving()) {
             this.state = "Hold";
-            this.laser = 0;
             this.rate = 0;
         }
     }
@@ -390,23 +441,30 @@ export class MockMachine {
         if (this.state !== "Hold") {
             return;
         }
-        if (this.slide) {
-            this.state = "Jog";
-            return;
-        }
         const next = this.active?.move ?? this.queue[0];
         this.state = next ? (next.kind === "jog" ? "Jog" : "Run") : "Idle";
     }
 
-    /** The reset byte: stop at once and flush; an alarm if it was moving. */
+    /**
+     * The joint stepper is moving. A hold here is already braked, so a reset
+     * from it loses no steps, and the slide counts its own steps.
+     */
+    private jointsBusy(): boolean {
+        return this.moving() && this.slide === null;
+    }
+
+    /** The reset byte: stop at once, flush, and forget the modal words; an alarm if the joints were moving. */
     reset(): void {
-        const wasMoving = this.moving();
+        const wasMoving = this.jointsBusy();
         this.queue = [];
         this.active = null;
         this.slide = null;
         this.laser = 0;
         this.beamSeconds = 0;
         this.rate = 0;
+        this.feed = null;
+        this.power = 0;
+        this.mode = "dyn";
         if (wasMoving) {
             this.state = "Alarm";
             this.alarm = 1;
@@ -440,7 +498,7 @@ export class MockMachine {
 
     requireIdle(): void {
         if (this.state !== "Idle") {
-            throw new MachineError(5, "not allowed in this state");
+            throw new MachineError(5, "not now");
         }
     }
 
@@ -453,15 +511,16 @@ export class MockMachine {
         this.z = request.z ?? this.z;
     }
 
+    /** `laser S T`: S over `s_max` is full duty, not more; T past the maximum is refused. */
     beam(power: number, ms: number): void {
+        if (!(power >= 0) || !(ms >= 0) || ms > LASER_MAX_MS) {
+            throw new MachineError(4, "out of range");
+        }
         this.requireIdle();
         const sMax = this.settings["s_max"] ?? 1000;
-        if (power < 0 || power > sMax) {
-            throw new MachineError(4, "value out of range");
-        }
         const limit = ms > 0 ? ms : this.settings["laser_ms"] ?? 5000;
         this.laser = Math.max(0, Math.min(1000, (power / sMax) * 1000));
-        this.beamSeconds = Math.min(60000, limit) / 1000;
+        this.beamSeconds = Math.min(LASER_MAX_MS, limit) / 1000;
     }
 
     beamOff(): void {
@@ -775,15 +834,21 @@ export class MockBackend implements Api, EventFeed {
         return snapshot;
     }
 
+    /**
+     * Closing the port ends a run as stopped, with a last progress for the
+     * snapshots to carry, and the machine does what the firmware does when
+     * its USB host goes away: a reset, so nothing keeps moving unattended.
+     */
     async disconnect(): Promise<Snapshot> {
+        this.outbox = [];
+        const session = this.session;
+        if (session) {
+            session.state = "stopped";
+            this.serviceRun(0);
+        }
+        this.machine.reset();
         this.connected = false;
         this.url = null;
-        this.outbox = [];
-        if (this.session) {
-            this.session.state = "stopped";
-            this.session = null;
-        }
-        this.machine.beamOff();
         const snapshot = this.snapshot();
         this.emit({ type: "state", data: snapshot });
         return snapshot;
@@ -904,10 +969,11 @@ export class MockBackend implements Api, EventFeed {
                 if (this.session) {
                     this.session.state = machine.state === "Alarm" ? "error" : "stopped";
                 }
-                this.line("rx", `[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`);
+                this.line("rx", "[MSG:reset]");
                 if (machine.state === "Alarm") {
-                    this.line("rx", "ALARM:1 reset while moving");
+                    this.line("rx", "ALARM:1 reset while moving, position may be off");
                 }
+                this.line("rx", `[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`);
                 break;
             case "cancel":
                 this.line("tx", "<0x85>");
@@ -950,30 +1016,42 @@ export class MockBackend implements Api, EventFeed {
             if (match) {
                 words.set((match[1] ?? "").toUpperCase(), Number(match[2]));
             } else if (!/^[a-z]+$/i.test(word)) {
-                return ["error:2 bad word or number"];
+                return ["error:2 bad word"];
             }
         }
         const get = (key: string): number | null => (words.has(key) ? words.get(key) ?? null : null);
+        const noAxis = get("R") === null && get("A") === null && get("Z") === null;
         try {
             switch (keyword.toLowerCase()) {
                 case "go":
+                    if (noAxis) {
+                        return ["error:3 missing word"];
+                    }
                     machine.go(get("R"), get("A"));
                     return ["ok"];
                 case "cut": {
-                    const feed = get("F") ?? this.lastFeed;
-                    const power = get("S") ?? this.lastPower;
-                    this.lastFeed = feed;
-                    this.lastPower = power;
+                    // F and S are modal, but a reset forgets them: the first
+                    // cut after one must give F again.
+                    const feed = get("F") ?? machine.feed;
+                    if (noAxis || feed === null) {
+                        return ["error:3 missing word"];
+                    }
+                    const power = get("S") ?? machine.power;
                     machine.cut(get("R"), get("A"), feed, power);
+                    machine.feed = feed;
+                    machine.power = power;
                     return ["ok"];
                 }
                 case "jog":
                 case "jogto": {
                     const z = get("Z");
                     const absolute = keyword.toLowerCase() === "jogto";
+                    if (noAxis) {
+                        return ["error:3 missing word"];
+                    }
                     if (z !== null) {
                         if (get("R") !== null || get("A") !== null) {
-                            return ["error:2 bad word or number"];
+                            return ["error:2 bad word"];
                         }
                         if (absolute) {
                             machine.slideTo(z, get("F"));
@@ -992,7 +1070,7 @@ export class MockBackend implements Api, EventFeed {
                 case "mode": {
                     const mode = (rest[0] ?? "").toLowerCase();
                     if (mode !== "dyn" && mode !== "const") {
-                        return ["error:2 bad word or number"];
+                        return ["error:2 bad word"];
                     }
                     machine.mode = mode;
                     return ["ok"];
@@ -1013,7 +1091,7 @@ export class MockBackend implements Api, EventFeed {
                     const a = get("A");
                     const z = get("Z");
                     if (z !== null && (r !== null || a !== null)) {
-                        return ["error:2 bad word or number"];
+                        return ["error:2 bad word"];
                     }
                     if (r !== null) {
                         position.r = r;
@@ -1042,7 +1120,7 @@ export class MockBackend implements Api, EventFeed {
                 case "?":
                     return [statusLine(machine), "ok"];
                 case "help":
-                    return ["[MSG:go cut jog jogto dwell mode laser set enable disable unlock version status $]", "ok"];
+                    return [...HELP_LINES, "ok"];
                 default:
                     return ["error:1 unknown command"];
             }
@@ -1053,9 +1131,6 @@ export class MockBackend implements Api, EventFeed {
             throw error;
         }
     }
-
-    private lastFeed = 100;
-    private lastPower = 0;
 
     private executeSetting(text: string): string[] {
         const machine = this.machine;
@@ -1070,7 +1145,10 @@ export class MockBackend implements Api, EventFeed {
             return ["ok"];
         }
         if (text === "tmc") {
-            return ["[MSG:tmc r: ok 800mA 16us stealth]", "[MSG:tmc a: ok 800mA 16us stealth]", "ok"];
+            // What the drivers answer when asked, microsteps read back from them.
+            const axes: [string, number, string][] = [["R", 0, "tmc_r_micro"], ["A", 2, "tmc_a_micro"], ["Z", 1, "tmc_z_micro"]];
+            const lines = axes.map(([letter, addr, name]) => `[MSG:tmc ${letter} addr${addr} ifcnt=1 micro=${machine.settings[name] ?? 256} status=0x00000000]`);
+            return [...lines, "ok"];
         }
         const eq = text.indexOf("=");
         if (eq < 0) {
@@ -1138,8 +1216,8 @@ export class MockBackend implements Api, EventFeed {
 
     private limits(): { rRate: number; aRate: number; tolerance: number } {
         return {
-            rRate: this.machine.settings["r_rate"] ?? 1000,
-            aRate: this.machine.settings["a_rate"] ?? 1080,
+            rRate: this.machine.settings["r_rate"] ?? 560,
+            aRate: this.machine.settings["a_rate"] ?? 400,
             tolerance: this.tolerance,
         };
     }
@@ -1198,7 +1276,14 @@ export class MockBackend implements Api, EventFeed {
                 source: job.source,
                 spot: job.spot,
                 offset: job.offset,
-                groups: job.groups.map((group) => ({ label: group.label, power: group.power, speed: group.speed, enabled: group.enabled, paths: group.paths.length })),
+                groups: job.groups.map((group) => ({
+                    label: group.label,
+                    power: group.power,
+                    speed: group.speed,
+                    enabled: group.enabled,
+                    paths: group.paths.length,
+                    joints: group.joints?.length ?? 0,
+                })),
                 stats: job.stats,
             };
         });
@@ -1216,12 +1301,41 @@ export class MockBackend implements Api, EventFeed {
         return this.requireJob(id);
     }
 
+    /** The whole patch is checked first and applied to a copy, so a refused one changes nothing. */
     async patchJob(id: string, patch: JobPatch): Promise<void> {
         const job = this.requireJob(id);
+        if (this.session && this.session.job.id === id) {
+            throw new ApiError(409, "the job is running");
+        }
+        try {
+            for (const change of patch.groups ?? []) {
+                if (!job.groups[change.index]) {
+                    throw new Error(`no group ${change.index}`);
+                }
+                if (change.power !== undefined) {
+                    checkPower(change.power);
+                }
+                if (change.speed !== undefined) {
+                    checkSpeed(change.speed);
+                }
+            }
+            if (patch.offset) {
+                const moved = patch.offset.x !== job.offset.x || patch.offset.y !== job.offset.y;
+                if (moved && job.groups.some((group) => group.joints && group.joints.length > 0)) {
+                    throw new Error("a joint-space group is fixed to the axis and cannot be moved");
+                }
+                if (![patch.offset.x, patch.offset.y].every((v) => Number.isFinite(v) && Math.abs(v) <= MAX_VALUE)) {
+                    throw new Error(`offset must be within ${MAX_VALUE_TEXT} mm`);
+                }
+            }
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        const updated = structuredClone(job);
         for (const change of patch.groups ?? []) {
-            const group = job.groups[change.index];
+            const group = updated.groups[change.index];
             if (!group) {
-                throw new ApiError(400, `no group ${change.index}`);
+                continue;
             }
             if (change.power !== undefined) {
                 group.power = change.power;
@@ -1234,17 +1348,18 @@ export class MockBackend implements Api, EventFeed {
             }
         }
         if (patch.offset) {
-            const dx = patch.offset.x - job.offset.x;
-            const dy = patch.offset.y - job.offset.y;
+            const dx = patch.offset.x - updated.offset.x;
+            const dy = patch.offset.y - updated.offset.y;
             const move = (paths: Job["outline"]): Job["outline"] => paths.map((path) => path.map(([x, y]) => [x + dx, y + dy]));
-            for (const group of job.groups) {
+            for (const group of updated.groups) {
                 group.paths = move(group.paths);
             }
-            job.outline = move(job.outline);
-            job.copper = move(job.copper);
-            job.offset = { ...patch.offset };
+            updated.outline = move(updated.outline);
+            updated.copper = move(updated.copper);
+            updated.offset = { ...patch.offset };
         }
-        job.stats = computeStats(job.groups, this.limits());
+        updated.stats = computeStats(updated.groups, this.limits());
+        this.jobStore.set(id, updated);
     }
 
     async deleteJob(id: string): Promise<void> {
@@ -1256,7 +1371,10 @@ export class MockBackend implements Api, EventFeed {
         this.order = this.order.filter((other) => other !== id);
     }
 
-    /** The move list a job streams: a rapid to each path, then cuts within the chord tolerance. */
+    /**
+     * The move list a job streams: a rapid to each path, then cuts within
+     * the chord tolerance; a joint-space group goes out as it is written.
+     */
     movesFor(job: Job): Move[] {
         const moves: Move[] = [];
         let joint = this.machine.endpoint();
@@ -1264,18 +1382,13 @@ export class MockBackend implements Api, EventFeed {
             if (!group.enabled) {
                 return;
             }
-            for (const path of group.paths) {
-                const first = path[0];
-                if (!first) {
-                    continue;
+            for (const step of groupMoves(group, joint, this.tolerance)) {
+                if (step.kind === "go") {
+                    moves.push({ kind: "go", target: step.target, feed: null, power: 0, group: index });
+                } else {
+                    moves.push({ kind: "cut", target: step.target, feed: group.speed, power: group.power, group: index });
                 }
-                const start = jointOfBoard({ x: first[0], y: first[1] }, joint);
-                moves.push({ kind: "go", target: start, feed: null, power: 0, group: index });
-                joint = start;
-                for (const target of jointPath(path.slice(1), start, this.tolerance)) {
-                    moves.push({ kind: "cut", target, feed: group.speed, power: group.power, group: index });
-                    joint = target;
-                }
+                joint = step.target;
             }
         });
         return moves;

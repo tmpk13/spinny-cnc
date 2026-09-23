@@ -108,6 +108,17 @@ def joint_of(point: Point, previous_angle: float) -> Joint:
     return polar.joint_of(point, previous_angle)
 
 
+# The smallest feed the firmware accepts; the host writes F with three
+# decimals, so anything under this would go out as `F0` and be refused.
+MIN_FEED = 0.001
+
+
+def check_feed(feed: float | None) -> None:
+    """A jog or goto feed the firmware will take, or none."""
+    if feed is not None and not (math.isfinite(feed) and feed >= MIN_FEED):
+        raise ValueError(f"feed must be at least {MIN_FEED:g} mm/min")
+
+
 def num(value: float, decimals: int = 3) -> str:
     """A plain decimal with trailing zeros dropped and no negative zero."""
     text = f"{value:.{decimals}f}"
@@ -166,20 +177,9 @@ def joint_preview(poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0
     return polar.sample_joints([(float(r), float(a)) for r, a in poly], step_mm, step_deg)
 
 
-def split_at_axis(start: Point, end: Point, snap: float) -> list[Point]:
-    """The points after `start` on its way to `end`, cut at the axis.
-
-    A segment that comes within `snap` of the axis is broken at its closest
-    point, which is moved onto the axis: the move in is then purely radial,
-    the turn happens on the spot, and the move out is radial again.
-    """
-    if polar.radius_of(start) < polar.AXIS_EPSILON:
-        return [end]
-    if polar.radius_of(end) < snap:
-        return [(0.0, 0.0)]
-    if polar.closest_approach(start, end) >= snap:
-        return [end]
-    return [(0.0, 0.0), end]
+# Shared with the command line tools, which cut a path at the axis the
+# same way before subdividing it.
+split_at_axis = polar.split_at_axis
 
 
 class Streamer:

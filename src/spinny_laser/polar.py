@@ -184,6 +184,26 @@ def subdivide(
     return out
 
 
+def split_at_axis(start: Point, end: Point, snap: float) -> list[Point]:
+    """The points after `start` on its way to `end`, cut at the axis.
+
+    A segment that comes within `snap` of the axis is broken at its closest
+    point, which is moved onto the axis: the move in is then purely radial,
+    the turn happens on the spot with the beam off, and the move out is
+    radial again. Without the cut the subdivision only finds the axis when
+    a bisection point lands on it exactly, and otherwise emits a lit
+    segment that spans it: half a turn of the table under the beam at a
+    radius of a few microns.
+    """
+    if radius_of(start) < AXIS_EPSILON:
+        return [end]
+    if radius_of(end) < snap:
+        return [(0.0, 0.0)]
+    if closest_approach(start, end) >= snap:
+        return [end]
+    return [(0.0, 0.0), end]
+
+
 def closest_approach(start: Point, end: Point) -> float:
     """Nearest the segment comes to the axis, mm."""
     dx, dy = end[0] - start[0], end[1] - start[1]

@@ -53,13 +53,18 @@ def add_machine_arguments(parser: argparse.ArgumentParser) -> None:
         default=0.005,
         help="mm the joint-space path may stray from the straight line",
     )
+    # The limits default to what the simulator assumes, so the estimate
+    # and the playback agree unless the machine is described otherwise.
     machine.add_argument(
         "--rotary-max-rate",
         type=float,
+        default=3600.0,
         help="deg/min the table can do; segments that need more are reported"
-        " and the estimate slows down for them",
+        " and the estimate slows down for them (default 3600)",
     )
-    machine.add_argument("--x-max-rate", type=float, help="mm/min the X axis can do")
+    machine.add_argument(
+        "--x-max-rate", type=float, default=3000.0, help="mm/min the X axis can do (default 3000)"
+    )
     machine.add_argument(
         "--rotary-rapid", type=float, default=3600.0, help="deg/min for G0 in the estimate"
     )

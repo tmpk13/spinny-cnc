@@ -52,6 +52,12 @@ def read_paths(text: str) -> list[Path2D]:
     for index, line in enumerate(lines):
         _refuse(line, index)
         m_code = line.value("M")
+        # A feed or a motion word counts whichever line it shares: `M4 S500
+        # F900` on its own line sets the feed of the cuts that follow.
+        if line.has("F"):
+            speed = line.value("F")
+        if line.motion is not None:
+            modal = line.motion
         if m_code is not None:
             code = int(m_code)
             if code in (3, 4):
@@ -68,10 +74,6 @@ def read_paths(text: str) -> list[Path2D]:
             power = line.value("S") or 0.0
             if power == 0.0:
                 close()
-        if line.has("F"):
-            speed = line.value("F")
-        if line.motion is not None:
-            modal = line.motion
         if not line.xy:
             continue
         if modal is None:

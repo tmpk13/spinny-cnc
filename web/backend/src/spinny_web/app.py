@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from . import __version__
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
-from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, num
+from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, check_feed, num
 from .link import (
     check_url,
     CommandError,
@@ -452,6 +452,7 @@ class Backend:
             return self._jog(link, body)
 
     def _jog(self, link: Link, body: JogBody) -> dict:
+        check_feed(body.feed)
         streamer = self.streamer()
         if body.kind == "joint":
             if body.dz is not None:
@@ -480,6 +481,7 @@ class Backend:
             return self._goto(link, body)
 
     def _goto(self, link: Link, body: GotoBody) -> dict:
+        check_feed(body.feed)
         streamer = self.streamer()
         if body.kind == "joint":
             if body.z is not None:

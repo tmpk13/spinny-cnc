@@ -120,3 +120,15 @@
   selection on a refused delete, asks before deleting, updates the groups
   table in place, shows the run's reason, checks the tolerance and the
   beam duration as sent, and gives signed fields a keyboard with a minus.
+- Doubles, docs and CLI (2026-09-23): the mock mirrors the firmware and
+  the backend in fifteen places (far side, hold, slide, disconnect, axis
+  turn, minimum radius, joint groups, gcode and SVG reading, bounds,
+  defaults, modal words, patches) and prints the firmware's texts; the
+  protocol and web API docs gained the reset transcript, the state table,
+  the setting bounds, `$tmc`, non-ASCII and empty lines, error bodies,
+  patch fields and nulls; speeds and feeds under the firmware's floor are
+  refused on the host; the command line emitter no longer turns a
+  repeated point into a hop to the axis, cuts crossings at the axis the
+  way the backend does, keeps an `F` given on the spindle line, prices the
+  table at the simulator's rate by default, keeps the angle on a grblHAL
+  return home, and `--fine` refuses the coarse pattern's flags.

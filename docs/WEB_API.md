@@ -20,7 +20,7 @@ State snapshot:
 ```json
 {
   "connected": true,
-  "url": "/dev/ttyACM0",
+  "url": "/dev/ttyACM0",  // the last url used; kept after a disconnect, null before the first connect
   "firmware": {"version": "0.1.0", "lines": 16, "blocks": 32},
   "machine": {
     "state": "Idle", "alarm": null,
@@ -64,7 +64,7 @@ control.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/laser` | `{"power": 50, "ms": 2000}` constant beam with a timeout |
+| `POST /api/laser` | `{"power": 50, "ms": 2000}` constant beam with a timeout; `ms` left out means the firmware's `laser_ms`, `ms` under 1 is 400, and over 60000 the firmware's refusal comes back as 400 |
 | `POST /api/laser/off` | |
 | `POST /api/mode` | `{"mode": "dyn" \| "const"}` |
 
@@ -81,13 +81,17 @@ control.
 | Method and path | Body |
 | --- | --- |
 | `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50); a file over 64 MB answers 413 |
-| `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` being the count |
+| `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
-| `PATCH /api/jobs/{id}` | `{"groups": [{"index": 0, "power": 500, "speed": 400, "enabled": true}], "offset": {"x": 0, "y": 14}}` |
+| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "speed": 400, "enabled": true}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed under 0.001 mm/min is refused like one of 0 |
 | `DELETE /api/jobs/{id}` | |
 | `POST /api/jobs/{id}/run` | starts streaming |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | |
 | `GET /api/run` | progress, or `null` before any job has run |
+
+Every refusal is `{"detail": "<text>"}`; a body or field that does not
+parse is 422 with `detail` as a list; a link fault (port gone, no answer)
+is 502.
 
 Accepted uploads: `.svg` (paths, lines, polylines, polygons, rects,
 circles; curves flattened; mm from the viewBox), `.gcode`/`.nc` (absolute
@@ -126,7 +130,7 @@ are left out. Progress:
  "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null}
 ```
 
-`state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
+`group` is `null` until the first line has gone out. `state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
 the reason when it is `error`, why a run was stopped from outside (a reset
 from the console), and what a stop cost when it was not clean: the machine
 did not come to rest in time and was reset moving, or is in an alarm the

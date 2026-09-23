@@ -85,3 +85,9 @@ def test_default_output_sits_next_to_the_input(tmp_path):
     assert main([str(source)]) == 0
     assert (tmp_path / "job.polar.gcode").exists()
     assert (tmp_path / "job.polar.gcode.sim.json").exists()
+
+
+def test_a_feed_on_the_spindle_line_counts():
+    text = "G21\nG90\nG0 X0 Y0\nM4 S500 F900\nG1 X5 Y0\nM5\n"
+    paths = read_paths(text)
+    assert len(paths) == 1 and paths[0].speed == 900.0 and paths[0].power == 500.0

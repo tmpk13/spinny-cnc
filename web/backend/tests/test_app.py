@@ -660,3 +660,18 @@ def test_a_board_goto_with_one_axis_keeps_the_other_from_the_planned_end(client,
     response = client.post("/api/goto", json={"kind": "board", "y": 6.0})
     assert response.status_code == 400 and "both x and y" in response.text
     assert client.post("/api/goto", json={"kind": "board"}).status_code == 400
+
+
+def test_a_feed_or_speed_the_firmware_would_read_as_zero_is_refused_here(client, fake):
+    connect(client)
+    before = len(fake.received_lines)
+    response = client.post("/api/jog", json={"kind": "joint", "dr": 1.0, "feed": 0.0005})
+    assert response.status_code == 400 and "0.001" in response.text
+    response = client.post("/api/goto", json={"kind": "board", "x": 1.0, "y": 1.0, "feed": 0.0004})
+    assert response.status_code == 400 and "0.001" in response.text
+    assert len(fake.received_lines) == before
+    job = {"name": "slow", "groups": [{"label": "g", "speed": 0.0005, "paths": [[[1, 0], [2, 0]]]}]}
+    response = client.post("/api/jobs", files={"file": ("slow.json", json.dumps(job).encode(), "application/json")})
+    assert response.status_code == 400 and "0.001" in response.text
+    # A comment-only line typed at the console is answered like any other.
+    assert client.post("/api/command", json={"line": "; note"}).json()["lines"] == ["ok"]

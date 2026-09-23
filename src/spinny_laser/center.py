@@ -223,6 +223,17 @@ def notes_for(lines: int) -> list[str]:
     ]
 
 
+# The arguments the fine pattern reads; the rest belong to the coarse
+# pattern and its gcode output.
+FINE_ARGS = frozenset(
+    {
+        "fine", "reach", "angle", "cross", "arm", "spiral", "ring", "power", "s_max", "speed",
+        "show_error", "output", "spot", "dry_run", "want_map", "map_path", "want_preview",
+        "preview_path", "min_radius", "rotary_max_rate", "tolerance",
+    }
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -231,6 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.ring is None:
         args.ring = 0.0 if args.fine else 8.0
     if args.fine:
+        # The fine pattern has its own geometry and writes joint-space
+        # lines; a flag for the coarse pattern or the gcode dialect would
+        # be taken and silently ignored.
+        for name in sorted(vars(args)):
+            if name not in FINE_ARGS and getattr(args, name) != parser.get_default(name):
+                parser.error(f"--{name.replace('_', '-')} does not apply with --fine")
         return fine.run(args, parser)
     try:
         if args.lines == 0 and args.ring <= 0:

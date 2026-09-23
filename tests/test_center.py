@@ -171,3 +171,14 @@ def test_a_ring_only_pattern_says_only_what_applies(tmp_path):
     report = (tmp_path / "ring.gcode.map.md").read_text()
     assert "half its diameter" in report
     assert "square" not in report, "a ring on its own bounds no square"
+
+
+def test_fine_refuses_flags_that_belong_to_the_coarse_pattern(tmp_path):
+    from spinny_laser import center
+
+    out = tmp_path / "fine.json"
+    with pytest.raises(SystemExit) as failed:
+        center.main(["--fine", "--lines", "0", "-o", str(out), "--dry-run"])
+    assert failed.value.code == 2
+    assert not out.exists()
+    assert center.main(["--fine", "-o", str(out), "--dry-run"]) == 0

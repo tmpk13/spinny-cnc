@@ -545,7 +545,7 @@ describe("laser and settings", () => {
         const settings = await api.settings();
         store.set({ settings });
         expect(root.querySelectorAll("table.settings tbody tr").length).toBe(settings.schema.length);
-        expect(changedValues(settings, { r_rate: 1000, a_rate: 500 })).toEqual({ a_rate: 500 });
+        expect(changedValues(settings, { r_rate: 560, a_rate: 500 })).toEqual({ a_rate: 500 });
         const input = root.querySelector('input[aria-label="r_rate"]') as HTMLInputElement;
         input.value = "900";
         input.dispatchEvent(new Event("input", { bubbles: true }));

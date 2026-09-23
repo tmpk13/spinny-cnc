@@ -147,6 +147,15 @@ describe("segmentation", () => {
     });
 });
 
+test("a coordinate that is not finite is refused rather than bisected to the depth cap", () => {
+    expect(() => segmentBoardMove({ r: 10, a: 0 }, { x: Number.POSITIVE_INFINITY, y: 0 }, 0.005)).toThrow("not finite");
+    expect(() => segmentBoardMove({ r: 10, a: 0 }, { x: 1, y: Number.NaN }, 0.005)).toThrow("not finite");
+    expect(() => segmentBoardMove({ r: Number.NaN, a: 0 }, { x: 1, y: 1 }, 0.005)).toThrow("not finite");
+    expect(() => segmentBoardMove({ r: 1, a: Number.NEGATIVE_INFINITY }, { x: 1, y: 1 }, 0.005)).toThrow("not finite");
+    expect(() => jointPath([[1, 1], [Number.NaN, 2]], { r: 0, a: 0 }, 0.005)).toThrow("not finite");
+    expect(segmentBoardMove({ r: 10, a: 0 }, { x: 10, y: 0.5 }, 0.005).length).toBe(1);
+});
+
 test("a board move from the far side comes back through the axis first", () => {
     const out = segmentBoardMove({ r: -5, a: 0 }, { x: 0, y: 3 }, 0.005);
     expect(out[0]).toEqual({ r: 0, a: 0 });

@@ -1,7 +1,7 @@
 // Job geometry for the in-page mock backend: SVG and gcode readers, a demo
 // coupon for the formats only the real backend can read, placement and stats.
 
-import { jointOfBoard, jointPath, moveMinutes, surfaceLength } from "./kinematics.ts";
+import { boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "./kinematics.ts";
 import type { Anchor, Board, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "./types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
@@ -13,8 +13,29 @@ const CIRCLE_STEPS = 48;
 /** Millimeters per CSS pixel: an SVG length without a unit is a pixel at 96 dpi. */
 export const PX_MM = 25.4 / 96;
 
+export const DEFAULT_POWER = 500;
+export const DEFAULT_SPEED = 400;
+export const DEFAULT_SPOT = 0.1;
+/** Largest number a coordinate, power or speed may be, as the backend bounds them. */
+export const MAX_VALUE = 1e6;
+/** The bound as the backend writes it in its refusals. */
+export const MAX_VALUE_TEXT = "1e+06";
+
+export function checkPower(power: number, what = "power"): void {
+    if (!(power >= 0 && power <= MAX_VALUE)) {
+        throw new Error(`${what} must be between 0 and ${MAX_VALUE_TEXT}`);
+    }
+}
+
+export function checkSpeed(speed: number, what = "speed"): void {
+    if (!(speed > 0 && speed <= MAX_VALUE)) {
+        throw new Error(`${what} must be above 0 and at most ${MAX_VALUE_TEXT}`);
+    }
+}
+
+/** A read drawing: groups of board paths, each with the power and speed the file gave them, if any. */
 export interface ParsedGeometry {
-    groups: { label: string; paths: Path[] }[];
+    groups: { label: string; paths: Path[]; power?: number; speed?: number }[];
 }
 
 function multiply(m: Matrix, n: Matrix): Matrix {
@@ -380,22 +401,130 @@ function shapePaths(node: Element): Path[] {
     }
 }
 
-function collect(node: Element, matrix: Matrix, out: Path[]): void {
+/** Presentation reaching a shape from itself or its ancestors: the stroke, and whether it is drawn. */
+interface Paint {
+    /** `#rrggbb`, or `none` when nothing is painted. */
+    stroke: string;
+    /** `visibility: hidden`; a child may turn itself visible again. */
+    hidden: boolean;
+    /** `display: none`: the whole subtree is left out. */
+    gone: boolean;
+}
+
+interface Shape {
+    stroke: string;
+    path: Path;
+}
+
+const NAMED_COLORS: Record<string, string> = {
+    black: "#000000",
+    white: "#ffffff",
+    red: "#ff0000",
+    lime: "#00ff00",
+    green: "#008000",
+    blue: "#0000ff",
+    yellow: "#ffff00",
+    cyan: "#00ffff",
+    aqua: "#00ffff",
+    magenta: "#ff00ff",
+    fuchsia: "#ff00ff",
+    gray: "#808080",
+    grey: "#808080",
+    silver: "#c0c0c0",
+    maroon: "#800000",
+    olive: "#808000",
+    navy: "#000080",
+    purple: "#800080",
+    teal: "#008080",
+    orange: "#ffa500",
+};
+
+/**
+ * A CSS color as `#rrggbb` (`#rrggbbaa` when not opaque), `none` when nothing
+ * is painted, or null when unreadable.
+ */
+export function colorName(text: string): string | null {
+    const value = text.trim().toLowerCase();
+    if (value === "" || value === "none" || value === "transparent") {
+        return "none";
+    }
+    const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(value);
+    if (hex) {
+        let digits = hex[1] ?? "";
+        if (digits.length <= 4) {
+            digits = digits.split("").map((d) => d + d).join("");
+        }
+        return digits.length === 8 && digits.endsWith("ff") ? `#${digits.slice(0, 6)}` : `#${digits}`;
+    }
+    const rgb = /^rgba?\(([^)]*)\)$/.exec(value);
+    if (rgb) {
+        const parts = (rgb[1] ?? "").split(/[\s,/]+/).filter((s) => s !== "");
+        if (parts.length < 3) {
+            return null;
+        }
+        const channel = (part: string): string => {
+            const number = parseFloat(part);
+            const scaled = part.endsWith("%") ? (number / 100) * 255 : number;
+            return Math.max(0, Math.min(255, Math.round(scaled))).toString(16).padStart(2, "0");
+        };
+        return `#${parts.slice(0, 3).map(channel).join("")}`;
+    }
+    return NAMED_COLORS[value] ?? null;
+}
+
+/** A property from the style attribute, which wins, else the presentation attribute. */
+function declared(node: Element, name: string): string | null {
+    const style = node.getAttribute("style");
+    if (style) {
+        for (const rule of style.split(";")) {
+            const colon = rule.indexOf(":");
+            if (colon > 0 && rule.slice(0, colon).trim().toLowerCase() === name) {
+                return rule.slice(colon + 1).trim();
+            }
+        }
+    }
+    return node.getAttribute(name);
+}
+
+function paintOf(node: Element, parent: Paint): Paint {
+    const paint = { ...parent };
+    const stroke = declared(node, "stroke");
+    if (stroke !== null && stroke.trim().toLowerCase() !== "inherit") {
+        paint.stroke = colorName(stroke) ?? "none";
+    }
+    const visibility = declared(node, "visibility");
+    if (visibility !== null && visibility.trim().toLowerCase() !== "inherit") {
+        paint.hidden = visibility.trim().toLowerCase() === "hidden";
+    }
+    const display = declared(node, "display");
+    if (display !== null && display.trim().toLowerCase() === "none") {
+        paint.gone = true;
+    }
+    return paint;
+}
+
+function collect(node: Element, matrix: Matrix, parent: Paint, out: Shape[]): void {
+    const paint = paintOf(node, parent);
+    if (paint.gone) {
+        return;
+    }
     const local = multiply(matrix, parseTransform(node.getAttribute("transform")));
-    const own = shapePaths(node);
-    for (const path of own) {
-        out.push(path.map(([x, y]) => apply(local, x, y)));
+    if (!paint.hidden) {
+        for (const path of shapePaths(node)) {
+            out.push({ stroke: paint.stroke, path: path.map(([x, y]) => apply(local, x, y)) });
+        }
     }
     if (node.localName === "g" || node.localName === "svg" || node.localName === "a") {
         for (const child of Array.from(node.children)) {
-            collect(child, local, out);
+            collect(child, local, paint, out);
         }
     }
 }
 
 /**
- * Reads an SVG into board paths in mm, y up. Top level groups become job
- * groups; loose shapes go into one group. Needs a DOMParser.
+ * Reads an SVG into board paths in mm, y up: one job group per stroke color
+ * in the order the colors first appear, hidden shapes left out. Needs a
+ * DOMParser.
  */
 export function parseSvg(text: string): ParsedGeometry {
     if (typeof DOMParser !== "function") {
@@ -418,99 +547,170 @@ export function parseSvg(text: string): ParsedGeometry {
     const originY = viewBox.length === 4 ? viewBox[1] ?? 0 : 0;
     const toBoard = (path: Path): Path => path.map(([x, y]) => [(x - originX) * scale, (originY - y) * scale]);
 
-    const groups: { label: string; paths: Path[] }[] = [];
-    const loose: Path[] = [];
-    let count = 0;
-    for (const child of Array.from(root.children)) {
-        if (child.localName === "g") {
-            const paths: Path[] = [];
-            collect(child, IDENTITY, paths);
-            if (paths.length > 0) {
-                count += 1;
-                const label = child.getAttribute("inkscape:label") ?? child.getAttribute("id") ?? `group ${count}`;
-                groups.push({ label, paths: paths.map(toBoard) });
-            }
-        } else {
-            collect(child, IDENTITY, loose);
+    const shapes: Shape[] = [];
+    const rootPaint = paintOf(root, { stroke: "none", hidden: false, gone: false });
+    if (!rootPaint.gone) {
+        for (const child of Array.from(root.children)) {
+            collect(child, IDENTITY, rootPaint, shapes);
         }
     }
-    if (loose.length > 0) {
-        groups.push({ label: "paths", paths: loose.map(toBoard) });
+    const groups: { label: string; paths: Path[] }[] = [];
+    const byStroke = new Map<string, Path[]>();
+    for (const shape of shapes) {
+        let paths = byStroke.get(shape.stroke);
+        if (!paths) {
+            paths = [];
+            byStroke.set(shape.stroke, paths);
+            groups.push({ label: shape.stroke === "none" ? "no stroke" : `stroke ${shape.stroke}`, paths });
+        }
+        paths.push(toBoard(shape.path));
     }
     if (groups.length === 0) {
-        throw new Error("no drawable shapes in the SVG");
+        throw new Error("the SVG has no shapes to cut");
     }
     return { groups };
 }
 
-/** Reads absolute X/Y G0/G1 gcode; G0 starts a new path. */
-export function parseGcode(text: string): ParsedGeometry & { power: number | null; speed: number | null } {
-    const paths: Path[] = [];
-    let current: Path = [];
-    let pos: Point = [0, 0];
-    let motion = 0;
-    let power: number | null = null;
+/** G codes the importer refuses, with the reason it gives. */
+const REFUSED_G: Record<number, string> = {
+    2: "arcs, export them as line segments",
+    3: "arcs, export them as line segments",
+    10: "coordinate system changes",
+    20: "inches",
+    28: "moves to a predefined position",
+    30: "moves to a predefined position",
+    38: "probing",
+    53: "machine coordinate moves",
+    91: "relative moves",
+    92: "coordinate offsets",
+};
+
+const GCODE_WORD = /\([^)]*\)|([A-Za-z])\s*([-+]?(?:\d+\.?\d*|\.\d+))/g;
+
+interface CutRun {
+    points: Path;
+    power: number;
+    speed: number;
+}
+
+/**
+ * Reads absolute X/Y gcode: runs of G1 moves with the spindle on at a power
+ * above zero are cuts. A rapid, M5, S0 or a change of S or F ends a path,
+ * and consecutive paths at one S and F share a group labeled with them.
+ */
+export function parseGcode(text: string): ParsedGeometry {
+    const runs: CutRun[] = [];
+    let position: Point | null = null;
+    let modal: number | null = null;
+    let power = 0;
     let speed: number | null = null;
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.replace(/\(.*?\)/g, "").replace(/;.*$/, "").trim().toUpperCase();
-        if (line === "") {
-            continue;
+    let spindleOn = false;
+    let current: CutRun | null = null;
+    const close = (): void => {
+        if (current !== null && current.points.length > 1) {
+            runs.push(current);
         }
-        const words = line.match(/[A-Z][-+]?\d*\.?\d+/g) ?? [];
-        let x: number | null = null;
-        let y: number | null = null;
-        for (const word of words) {
-            const value = Number(word.slice(1));
-            switch (word[0]) {
-                case "G":
-                    if (value === 0 || value === 1) {
-                        motion = value;
-                    }
-                    break;
-                case "X":
-                    x = value;
-                    break;
-                case "Y":
-                    y = value;
-                    break;
-                case "S":
-                    if (power === null && value > 0) {
-                        power = value;
-                    }
-                    break;
-                case "F":
-                    if (speed === null && value > 0) {
-                        speed = value;
-                    }
-                    break;
-                default:
-                    break;
+        current = null;
+    };
+    text.split(/\r?\n/).forEach((raw, index) => {
+        const where = `line ${index + 1}`;
+        const code = raw.split(";")[0] ?? "";
+        // The first word of a letter is the one that counts.
+        const words = new Map<string, number>();
+        const gCodes: number[] = [];
+        for (const match of code.matchAll(GCODE_WORD)) {
+            const letter = match[1];
+            if (letter === undefined) {
+                continue;
+            }
+            const value = Number(match[2]);
+            if (letter.toUpperCase() === "G") {
+                gCodes.push(value);
+            }
+            if (!words.has(letter.toUpperCase())) {
+                words.set(letter.toUpperCase(), value);
             }
         }
-        if (x === null && y === null) {
-            continue;
-        }
-        const next: Point = [x ?? pos[0], y ?? pos[1]];
-        if (motion === 0) {
-            if (current.length > 1) {
-                paths.push(current);
+        for (const g of gCodes) {
+            const reason = REFUSED_G[Math.trunc(g)];
+            if (reason !== undefined) {
+                throw new Error(`${where}: G${Math.trunc(g)} is ${reason}`);
             }
-            current = [next];
+        }
+        const xy = words.has("X") || words.has("Y");
+        const m = words.get("M");
+        if (m !== undefined) {
+            const mCode = Math.trunc(m);
+            if (mCode === 3 || mCode === 4) {
+                spindleOn = true;
+                if (words.has("S")) {
+                    power = words.get("S") ?? 0;
+                }
+            } else if (mCode === 5) {
+                spindleOn = false;
+            }
+            if ((mCode === 3 || mCode === 4 || mCode === 5) && !xy) {
+                if (power === 0 || !spindleOn) {
+                    close();
+                }
+                return;
+            }
+        }
+        if (words.has("S")) {
+            power = words.get("S") ?? 0;
+            if (power === 0) {
+                close();
+            }
+        }
+        if (words.has("F")) {
+            speed = words.get("F") ?? null;
+        }
+        const motion = gCodes.find((g) => g === 0 || g === 1);
+        if (motion !== undefined) {
+            modal = motion;
+        }
+        if (!xy) {
+            return;
+        }
+        if (modal === null) {
+            throw new Error(`${where}: axis words before any G0 or G1`);
+        }
+        if (position === null && !(words.has("X") && words.has("Y"))) {
+            throw new Error(`${where}: the first move must give both X and Y`);
+        }
+        const here: Point = position ?? [0, 0];
+        const target: Point = [words.get("X") ?? here[0], words.get("Y") ?? here[1]];
+        if (modal === 1 && spindleOn && power > 0) {
+            if (position === null) {
+                throw new Error(`${where}: a cut before any rapid`);
+            }
+            if (speed === null || speed <= 1) {
+                throw new Error(`${where}: a cut with no usable feed rate`);
+            }
+            if (current === null || current.power !== power || current.speed !== speed) {
+                close();
+                current = { points: [position], power, speed };
+            }
+            current.points.push(target);
         } else {
-            if (current.length === 0) {
-                current.push(pos);
-            }
-            current.push(next);
+            close();
         }
-        pos = next;
+        position = target;
+    });
+    close();
+    if (runs.length === 0) {
+        throw new Error("the file has no cuts");
     }
-    if (current.length > 1) {
-        paths.push(current);
+    const groups: ParsedGeometry["groups"] = [];
+    for (const run of runs) {
+        const last = groups[groups.length - 1];
+        if (last && last.power === run.power && last.speed === run.speed) {
+            last.paths.push(run.points);
+        } else {
+            groups.push({ label: `S${run.power} F${run.speed}`, paths: [run.points], power: run.power, speed: run.speed });
+        }
     }
-    if (paths.length === 0) {
-        throw new Error("no G1 moves in the file");
-    }
-    return { groups: [{ label: "gcode", paths }], power, speed };
+    return { groups };
 }
 
 function rectPath(x0: number, y0: number, x1: number, y1: number): Path {
@@ -595,6 +795,127 @@ export interface RateLimits {
     tolerance: number;
 }
 
+/** Nearest a board segment comes to the axis, mm. */
+export function closestApproach(start: Point, end: Point): number {
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const length2 = dx * dx + dy * dy;
+    if (length2 === 0) {
+        return Math.hypot(start[0], start[1]);
+    }
+    const t = Math.min(1, Math.max(0, -(start[0] * dx + start[1] * dy) / length2));
+    return Math.hypot(start[0] + dx * t, start[1] + dy * t);
+}
+
+/** Nearest a board path comes to the axis: a straight edge passes closer than its ends. */
+export function pathMinRadius(path: Path): number {
+    const only = path[0];
+    if (path.length === 1 && only) {
+        return Math.hypot(only[0], only[1]);
+    }
+    let low = Infinity;
+    for (let i = 0; i + 1 < path.length; i++) {
+        low = Math.min(low, closestApproach(path[i] as Point, path[i + 1] as Point));
+    }
+    return low;
+}
+
+/** Nearest a joint polyline comes to the axis; zero when a move crosses it. */
+export function jointMinRadius(poly: [number, number][]): number {
+    let low = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+        const here = poly[i] as [number, number];
+        const next = poly[i + 1];
+        if (next && here[0] < 0 !== next[0] < 0) {
+            return 0;
+        }
+        low = Math.min(low, Math.abs(here[0]));
+    }
+    return low;
+}
+
+/** Board points along a joint polyline, close enough to draw it; a negative radius lands on the far side. */
+export function jointPreview(poly: [number, number][], stepMm = 0.1, stepDeg = 1): Path {
+    const first = poly[0];
+    if (!first) {
+        return [];
+    }
+    const point = (r: number, a: number): Point => {
+        const board = boardOfJoint({ r, a });
+        return [board.x, board.y];
+    };
+    const out: Path = [point(first[0], first[1])];
+    for (let i = 0; i + 1 < poly.length; i++) {
+        const [r0, a0] = poly[i] as [number, number];
+        const [r1, a1] = poly[i + 1] as [number, number];
+        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(r1 - r0) / stepMm, Math.abs(a1 - a0) / stepDeg)));
+        for (let k = 1; k <= steps; k++) {
+            const t = k / steps;
+            out.push(point(r0 + (r1 - r0) * t, a0 + (a1 - a0) * t));
+        }
+    }
+    return out;
+}
+
+/** Within the resolution of a protocol line: 3 decimals of mm, 4 of degrees. */
+function sameJoint(a: Joint, b: Joint): boolean {
+    return Math.abs(a.r - b.r) < 0.5e-3 && Math.abs(a.a - b.a) < 0.5e-4;
+}
+
+export interface PlannedMove {
+    kind: "go" | "cut";
+    target: Joint;
+}
+
+/**
+ * The joint moves of one group from `from`: a rapid to each path's start
+ * and a cut per segment within the chord tolerance. A joint-space path goes
+ * out as written, with whole turns added so its start is the nearest one.
+ */
+export function groupMoves(group: Group, from: Joint, tolerance: number): PlannedMove[] {
+    const out: PlannedMove[] = [];
+    let joint = from;
+    if (group.joints && group.joints.length > 0) {
+        for (const poly of group.joints) {
+            const head = poly[0];
+            if (!head || poly.length < 2) {
+                continue;
+            }
+            const turns = Math.round((joint.a - head[1]) / 360);
+            const joints = poly.map(([r, a]) => ({ r, a: a + 360 * turns }));
+            const first = joints[0] as Joint;
+            if (!sameJoint(joint, first)) {
+                out.push({ kind: "go", target: first });
+                joint = first;
+            }
+            for (const target of joints.slice(1)) {
+                if (sameJoint(joint, target)) {
+                    continue;
+                }
+                out.push({ kind: "cut", target });
+                joint = target;
+            }
+        }
+        return out;
+    }
+    for (const path of group.paths) {
+        const first = path[0];
+        if (!first || path.length < 2) {
+            continue;
+        }
+        const start = jointOfBoard({ x: first[0], y: first[1] }, joint);
+        if (!sameJoint(joint, start)) {
+            out.push({ kind: "go", target: start });
+            joint = start;
+        }
+        for (const target of jointPath(path.slice(1), joint, tolerance)) {
+            out.push({ kind: "cut", target });
+            joint = target;
+        }
+    }
+    return out;
+}
+
 /** Length, time, radii and the table-limited share over the enabled groups. */
 export function computeStats(groups: Group[], limits: RateLimits): Stats {
     let length = 0;
@@ -608,32 +929,42 @@ export function computeStats(groups: Group[], limits: RateLimits): Stats {
         if (!group.enabled) {
             continue;
         }
-        for (const path of group.paths) {
-            const first = path[0];
-            if (!first) {
-                continue;
+        if (group.joints && group.joints.length > 0) {
+            for (const poly of group.joints) {
+                if (poly.length === 0) {
+                    continue;
+                }
+                for (const [r] of poly) {
+                    maxRadius = Math.max(maxRadius, Math.abs(r));
+                }
+                minRadius = Math.min(minRadius, jointMinRadius(poly));
             }
-            for (const [x, y] of path) {
-                const r = Math.hypot(x, y);
-                maxRadius = Math.max(maxRadius, r);
-                minRadius = Math.min(minRadius, r);
+        } else {
+            for (const path of group.paths) {
+                if (path.length === 0) {
+                    continue;
+                }
+                for (const [x, y] of path) {
+                    maxRadius = Math.max(maxRadius, Math.hypot(x, y));
+                }
+                minRadius = Math.min(minRadius, pathMinRadius(path));
             }
-            const start = jointOfBoard({ x: first[0], y: first[1] }, joint);
-            minutes += moveMinutes(joint, start, null, limits.rRate, limits.aRate);
-            moves += 1;
-            joint = start;
-            for (const target of jointPath(path.slice(1), start, limits.tolerance)) {
-                const segment = surfaceLength(joint, target);
+        }
+        for (const step of groupMoves(group, joint, limits.tolerance)) {
+            if (step.kind === "go") {
+                minutes += moveMinutes(joint, step.target, null, limits.rRate, limits.aRate);
+            } else {
+                const segment = surfaceLength(joint, step.target);
                 const wanted = group.speed > 0 ? segment / group.speed : 0;
-                const actual = moveMinutes(joint, target, group.speed, limits.rRate, limits.aRate);
+                const actual = moveMinutes(joint, step.target, group.speed, limits.rRate, limits.aRate);
                 if (actual > wanted * (1 + 1e-6)) {
                     limited += segment;
                 }
                 length += segment;
                 minutes += actual;
-                moves += 1;
-                joint = target;
             }
+            moves += 1;
+            joint = step.target;
         }
     }
     return {
@@ -651,67 +982,145 @@ export interface BuiltJob {
     note: string | null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown, what: string): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new Error(`not a job: ${what} must be a number`);
+    }
+    return value;
+}
+
+/** A list of polylines from JSON: every point two finite numbers within the bound. */
+function pathsOf(value: unknown, what: string): Path[] {
+    if (value === undefined || value === null) {
+        return [];
+    }
+    if (!Array.isArray(value)) {
+        throw new Error(`not a job: ${what} must be a list of paths`);
+    }
+    return value.map((path: unknown): Path => {
+        if (!Array.isArray(path)) {
+            throw new Error(`not a job: ${what} must be a list of paths`);
+        }
+        return path.map((point: unknown): Point => {
+            if (!Array.isArray(point) || point.length !== 2) {
+                throw new Error(`not a job: ${what} has a point that is not two numbers`);
+            }
+            const x = finiteNumber(point[0], what);
+            const y = finiteNumber(point[1], what);
+            if (Math.abs(x) > MAX_VALUE || Math.abs(y) > MAX_VALUE) {
+                throw new Error(`${what}: a coordinate is past ${MAX_VALUE_TEXT}`);
+            }
+            return [x, y];
+        });
+    });
+}
+
+/** A saved job read back, checked the way the backend checks one. */
+function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits): Job {
+    if (!isRecord(data) || !Array.isArray(data["groups"])) {
+        throw new Error("job JSON has no groups");
+    }
+    const groups: Group[] = data["groups"].map((raw: unknown, index: number): Group => {
+        if (!isRecord(raw) || typeof raw["label"] !== "string") {
+            throw new Error(`not a job: group ${index} has no label`);
+        }
+        const label = raw["label"];
+        const what = `group '${label}'`;
+        const power = raw["power"] === undefined ? DEFAULT_POWER : finiteNumber(raw["power"], `${what}: power`);
+        const speed = raw["speed"] === undefined ? DEFAULT_SPEED : finiteNumber(raw["speed"], `${what}: speed`);
+        checkSpeed(speed, `${what}: speed`);
+        checkPower(power, `${what}: power`);
+        const paths = pathsOf(raw["paths"], what);
+        const joints = pathsOf(raw["joints"], what);
+        if (joints.some((poly) => poly.length < 2)) {
+            throw new Error("a joint-space path needs at least two points");
+        }
+        const group: Group = {
+            label,
+            power,
+            speed,
+            enabled: raw["enabled"] === undefined ? true : Boolean(raw["enabled"]),
+            paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
+        };
+        if (joints.length > 0) {
+            group.joints = joints;
+        }
+        return group;
+    });
+    const spot = data["spot"] === undefined ? DEFAULT_SPOT : finiteNumber(data["spot"], "spot");
+    if (!(spot > 0 && spot <= 1000)) {
+        throw new Error("spot must be above 0 and at most 1000");
+    }
+    const offset: Board = { x: 0, y: 0 };
+    if (data["offset"] !== undefined) {
+        if (!isRecord(data["offset"])) {
+            throw new Error("not a job: offset must have x and y");
+        }
+        offset.x = finiteNumber(data["offset"]["x"], "offset x");
+        offset.y = finiteNumber(data["offset"]["y"], "offset y");
+    }
+    const given = data["name"];
+    const name = typeof given === "string" && given !== "" && given !== "job" ? given : stem;
+    const job: Job = {
+        id,
+        name,
+        source: "json",
+        spot,
+        offset,
+        groups,
+        outline: pathsOf(data["outline"], "outline"),
+        copper: pathsOf(data["copper"], "copper"),
+        stats: { length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 },
+    };
+    job.stats = computeStats(job.groups, limits);
+    return job;
+}
+
 /** Turns an uploaded file into a job the way the backend would, as far as the browser can. */
 export function buildJob(id: string, name: string, text: string, options: UploadOptions, limits: RateLimits): BuiltJob {
     const lower = name.toLowerCase();
     const extension = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
-    const power = options.power ?? 500;
-    const speed = options.speed ?? 400;
-    const spot = options.spot ?? 0.1;
+    const power = options.power ?? DEFAULT_POWER;
+    const speed = options.speed ?? DEFAULT_SPEED;
+    const spot = options.spot ?? DEFAULT_SPOT;
     const anchor: Anchor = options.anchor ?? "center";
     const offset: Board = { x: options.offset_x ?? 0, y: options.offset_y ?? 0 };
-    let source: string;
-    let note: string | null = null;
-    let geometry: { groups: { label: string; paths: Path[] }[]; copper?: Path[]; outline?: Path[] };
-    let groupPower = power;
-    let groupSpeed = speed;
-
-    if (extension === "json") {
-        const parsed = JSON.parse(text) as Partial<Job>;
-        if (!Array.isArray(parsed.groups)) {
-            throw new Error("job JSON has no groups");
-        }
-        const job: Job = {
-            id,
-            name: parsed.name ?? name.replace(/\.json$/i, ""),
-            source: parsed.source ?? "json",
-            spot: parsed.spot ?? spot,
-            offset: parsed.offset ?? { x: 0, y: 0 },
-            groups: parsed.groups.map((group) => ({
-                label: group.label ?? "group",
-                power: group.power ?? power,
-                speed: group.speed ?? speed,
-                enabled: group.enabled ?? true,
-                paths: group.paths ?? [],
-            })),
-            outline: parsed.outline ?? [],
-            copper: parsed.copper ?? [],
-            stats: {
-                length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0,
-            },
-        };
-        job.stats = computeStats(job.groups, limits);
-        return { job, note: null };
+    checkPower(power);
+    checkSpeed(speed);
+    if (!(spot > 0 && spot <= 1000)) {
+        throw new Error("spot must be above 0 and at most 1000");
+    }
+    if (![offset.x, offset.y].every((v) => Number.isFinite(v) && Math.abs(v) <= MAX_VALUE)) {
+        throw new Error(`offset must be within ${MAX_VALUE_TEXT} mm`);
     }
 
+    if (extension === "json") {
+        let data: unknown;
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            throw new Error(`not a job: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        return { job: jobFromJson(id, name.replace(/\.json$/i, ""), data, limits), note: null };
+    }
+
+    let source: string;
+    let note: string | null = null;
+    let geometry: ParsedGeometry & { copper?: Path[]; outline?: Path[] };
     switch (extension) {
         case "svg":
             geometry = parseSvg(text);
             source = "svg";
             break;
         case "gcode":
-        case "nc": {
-            const parsed = parseGcode(text);
-            geometry = parsed;
+        case "nc":
+            geometry = parseGcode(text);
             source = "gcode";
-            if (options.power === undefined && parsed.power !== null) {
-                groupPower = parsed.power;
-            }
-            if (options.speed === undefined && parsed.speed !== null) {
-                groupSpeed = parsed.speed;
-            }
             break;
-        }
         case "gbr":
         case "kicad_pcb":
             geometry = demoCoupon();
@@ -723,10 +1132,11 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     }
 
     const placed = placeJob(geometry, anchor, offset);
-    const groups: Group[] = placed.groups.map((group) => ({
+    // A gcode group keeps the power and feed the file ran it at.
+    const groups: Group[] = placed.groups.map((group, index) => ({
         label: group.label,
-        power: groupPower,
-        speed: groupSpeed,
+        power: geometry.groups[index]?.power ?? power,
+        speed: geometry.groups[index]?.speed ?? speed,
         enabled: true,
         paths: group.paths,
     }));

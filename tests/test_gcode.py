@@ -256,3 +256,38 @@ def test_without_presplitting_the_controller_would_miss():
     raw = "G94\nM4 S0\nG0 X0.400 Y-0.600\nG1 X1.600 Y-0.600 S500 F400\nG1 X1.600 Y0.600\nG1 X0.400 Y0.600\nG1 X0.400 Y-0.600\nM4 S0\nM5\n"
     mark = replay_grblhal(raw)[0]
     assert deviation(mark, square(0.4, -0.6, 1.2)) > 0.01
+
+
+def test_a_repeated_point_is_not_a_turn_on_the_axis():
+    # A gcode file gives a rapid and then a cut to the same point; treated
+    # as a turn it hopped the head to the axis and cut its way back out.
+    path = [(5.0, 3.0), (5.0, 3.0), (6.0, 3.0)]
+    job = emit_grblhal([path])
+    cuts = cut_lines(job.text)
+    assert all(not re.match(r"G1 X0\.\d+ Y0\.\d+", line) for line in cuts), cuts
+    assert "G0 X0.002" not in job.text
+    joint = emit([path])
+    assert len(cut_lines(joint.text)) >= 1
+    assert joint.cut_length == pytest.approx(1.0, abs=1e-6)
+
+
+def test_a_crossing_that_misses_the_axis_by_less_than_a_quantum_is_cut_there():
+    # Only an exact hit on the axis used to be seen; anything else was a
+    # lit chord spanning it, half a turn of the table under the beam.
+    job = emit([[(-5.0, 0.0), (2.0, 0.0)]])
+    lines = job.text.splitlines()
+    turns = [line for line in lines if line.startswith("G0 X0.000 A")]
+    assert turns, lines
+    for line in cut_lines(job.text):
+        radius = float(re.match(r"G1 X(-?[\d.]+)", line).group(1))
+        assert radius >= 0.5 or radius == 0.0, line
+    assert job.cut_length == pytest.approx(7.0, abs=1e-6)
+
+
+def test_the_cartesian_return_home_keeps_the_table_angle():
+    path = [(3.0, 0.0), (-2.0, 5.0)]
+    job = emit_grblhal([path], return_home=True)
+    assert job.text.rstrip().splitlines()[-1].startswith("G0 X0.000 Y0.000")
+    assert job.final_angle == pytest.approx(math.degrees(math.atan2(5.0, -2.0)), abs=1e-6)
+    joint = emit([path], return_home=True)
+    assert joint.final_angle == pytest.approx(0.0, abs=1e-9)

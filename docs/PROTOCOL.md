@@ -8,8 +8,12 @@ them. Everything is ASCII text over USB CDC.
 
 ## Transport
 
-- One command per line, terminated by `\n` (`\r` is ignored).
+- One command per line, terminated by `\n` (`\r` is ignored). A byte
+  outside 0x20..0x7E inside a line is read as a literal `?` and a tab as
+  a space, so UTF-8 or a control byte in a line ends in `error:2`.
 - A line is at most 96 bytes. Longer lines are rejected with `error:8`.
+- An empty line, or one that is only a `;` comment, is answered `ok` and
+  spends a credit like any other.
 - Keyword first, then words: a letter directly followed by a decimal number
   (`R12.5`, `A-90`, `F400`, `S500`, `T250`). Words are separated by spaces.
   Case does not matter. Text after `;` is ignored.
@@ -33,7 +37,7 @@ part of the line.
 | `?` | one status line |
 | `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a beam lit by `laser` is closed from any state |
 | `~` | resume from `Hold` |
-| `0x18` | reset: stop at once, flush everything, laser off; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
+| `0x18` | reset: stop at once, flush everything, laser off, and forget the modal state (`F`, `S`, `mode` back to `dyn`); prints `[MSG:reset]`, then `ALARM:1 reset while moving, position may be off` if it was moving, then the banner; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
 | `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle` |
 
 ## Motion commands
@@ -55,7 +59,19 @@ surface length is under 1 um (a turn on the axis) runs at the max rates with
 the laser off. Speed is capped by `r_rate` and `a_rate`; under `mode dyn`
 the laser power follows the achieved speed so the dose per mm holds.
 
-Jogs are accepted in `Idle` and `Jog` only. Any move may take `R` past
+Which commands each state takes:
+
+| State | Accepted |
+| --- | --- |
+| `Idle` | everything |
+| `Run` | `go`, `cut`, `dwell`, `mode`, `laser`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
+| `Jog` | jogs, `mode`, `laser`; `go`/`cut`/`dwell`/`set`/`$` are `error:5` |
+| `Hold` | nothing that moves or declares; a pending motion line waits for the resume |
+| `Alarm` | `unlock`, `$`, queries; motion and `set` are `error:5` |
+
+`unlock` outside `Alarm` is `error:5`, and any move is `error:5` while the
+cross slide moves or a jog cancel is still braking. Jogs are accepted in
+`Idle` and `Jog` only. Any move may take `R` past
 the axis and out the far side, and `set R<negative>` declares the head
 parked there. A jog goes there to be lined up with the axis, stepping
 through zero. A `go` or `cut` goes there to reach a board point from the
@@ -116,7 +132,9 @@ own steps and its position is still good. The beam is off throughout.
 | `laser off` | beam off |
 
 The beam is off during `go`, jogs, holds, alarms, after a reset, when the
-USB host disconnects, and when the planner runs dry. `S` is 0 to `s_max`
+USB host disconnects, and when the planner runs dry. A USB disconnect is a
+full reset: the queue is flushed, the modal state forgotten, and a machine
+that was moving is left in `Alarm:1`. `S` is 0 to `s_max`
 and maps linearly to PWM duty; in `dyn` mode a computed power below `s_min`
 is set to 0.
 
@@ -142,7 +160,14 @@ is set to 0.
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
 | `$defaults` | factory values in RAM (`Idle` only) |
-| `$tmc` | driver status lines from the TMC2209 UART |
+| `$tmc` | one `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]` per driver, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`, then `ok`; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked |
+
+A value outside its bounds is `error:7`; an integer setting refuses
+decimal text such as `5000.0`. Steps, rates, accelerations and jerks must
+be above 0; `r_max` at least 0; `dir_invert` 0..7; `step_us` 1..20;
+`laser_hz` 100..100000; `laser_ms` 1..60000; `s_max` above 0 and `s_min`
+0..`s_max`; `tmc_*_ma` at most 2000; `tmc_hold_pct` at most 100; the
+microsteps a power of two up to 256.
 
 | Name | Unit | Default | Meaning |
 | --- | --- | --- | --- |

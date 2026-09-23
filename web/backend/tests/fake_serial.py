@@ -238,7 +238,10 @@ class FakeSerial:
                     self._outstanding.popleft()
 
     def _execute(self, text: str) -> list[str]:
-        words = text.split()
+        words = text.split(";", 1)[0].split()
+        if not words:
+            # An empty or comment-only line is answered like any other.
+            return ["ok"]
         keyword = words[0].lower()
         rest = " ".join(words[1:])
         values = {k.upper(): float(v) for k, v in WORD.findall(rest)}
@@ -363,11 +366,14 @@ class FakeSerial:
             self.hold = False
             self.busy_until = 0.0
             self.laser = 0
+            # The modal state goes with the queue, as on the firmware.
+            self.mode = "dyn"
             if moving:
                 self.alarm = 1
-            self._emit(self.banner())
+            self._emit("[MSG:reset]")
             if moving:
-                self._emit("ALARM:1 reset while moving")
+                self._emit("ALARM:1 reset while moving, position may be off")
+            self._emit(self.banner())
         elif byte == 0x85:
             if self.jogging:
                 self.busy_until = 0.0

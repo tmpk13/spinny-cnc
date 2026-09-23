@@ -104,6 +104,11 @@ function distanceToSegment(px: number, py: number, a: Board, b: Board): { distan
  * with the turn. The returned list holds the joint targets in order.
  */
 export function segmentBoardMove(from: Joint, to: Board, tolerance: number): Joint[] {
+    if (![from.r, from.a, to.x, to.y].every(Number.isFinite)) {
+        // Every stop test below is false for NaN, so the bisection would
+        // only end at its depth cap with millions of joints.
+        throw new Error("coordinate is not finite");
+    }
     const out: Joint[] = [];
     if (from.r < 0) {
         // The head is past the axis, where lining it up leaves it. A board

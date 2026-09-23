@@ -184,12 +184,14 @@ export interface JobsResponse {
 
 export interface GroupPatch {
     index: number;
+    label?: string;
     power?: number;
     speed?: number;
     enabled?: boolean;
 }
 
 export interface JobPatch {
+    name?: string;
     groups?: GroupPatch[];
     offset?: Board;
 }

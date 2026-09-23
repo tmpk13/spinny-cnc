@@ -207,19 +207,28 @@ class _Writer:
 
         self.rapid_to(points[0])
         first = True
+        # A segment that passes within half a coordinate quantum of the axis
+        # is cut there, so the crossing is a radial move in, a dark turn on
+        # the spot and a radial move out, never a lit chord spanning it.
+        snap = 0.5 * 10.0 ** -self.options.decimals
         for target in points[1:]:
-            # A turn on the axis moves the start of what is left, so the
-            # remainder is subdivided again from where the head really is.
-            while True:
-                here, joint = self._here()
-                self.hopped = False
-                for point, next_joint in polar.subdivide(here, target, joint, self.kinematics):
-                    first = self._segment(point, next_joint, power, speed, first)
-                    if self.hopped:
-                        break
-                if not self.hopped:
-                    break
+            here, _ = self._here()
+            for stop in polar.split_at_axis(here, target, snap):
+                first = self._trace(stop, power, speed, first)
         self._close()
+
+    def _trace(self, target: Point, power: float, speed: float, first: bool) -> bool:
+        # A turn on the axis moves the start of what is left, so the
+        # remainder is subdivided again from where the head really is.
+        while True:
+            here, joint = self._here()
+            self.hopped = False
+            for point, next_joint in polar.subdivide(here, target, joint, self.kinematics):
+                first = self._segment(point, next_joint, power, speed, first)
+                if self.hopped:
+                    break
+            if not self.hopped:
+                return first
 
     def _here(self) -> tuple[Point, Joint]:
         assert self.point is not None and self.joint is not None
@@ -233,6 +242,12 @@ class _Writer:
         dr = abs(joint[0] - previous[0])
         da = abs(joint[1] - previous[1])
         if length < polar.AXIS_EPSILON:
+            if not polar.on_axis(previous):
+                # The same point twice, which a gcode file gives as a rapid
+                # followed by a cut to where it already is: nothing to cut
+                # and nothing to turn. Treated as a turn it would hop the
+                # head to the axis and cut its way back out.
+                return first
             # Only the table moves: cross it dark rather than dwell the spot.
             self._close()
             if self.options.cartesian:
@@ -363,9 +378,14 @@ def generate(groups: list[PathGroup], options: PolarOptions, header: list[str]) 
         writer.raw("G94         ; Back to units per minute")
         writer.raw("G1F1")
     if options.return_home and writer.joint is not None:
-        # Back over the axis, and the table to its starting orientation by
-        # the short way rather than unwinding every turn of the job.
-        home_angle = 360.0 * round(writer.joint[1] / 360.0)
+        if options.cartesian:
+            # The controller is told X0 Y0 and keeps the table where it is
+            # at the axis; the estimate must not book a turn it never makes.
+            home_angle = writer.joint[1]
+        else:
+            # Back over the axis, and the table to its starting orientation
+            # by the short way rather than unwinding every turn of the job.
+            home_angle = 360.0 * round(writer.joint[1] / 360.0)
         writer._rapid((0.0, home_angle), (0.0, 0.0))
 
     return Job(
