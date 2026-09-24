@@ -1024,6 +1024,7 @@ def create_app(
         offset_x: float | None = Form(None),
         offset_y: float | None = Form(None),
         passes: int | None = Form(None),
+        clear: str | None = Form(None),
     ):
         options = ImportOptions(tolerance=backend.tolerance)
         if power is not None:
@@ -1038,6 +1039,8 @@ def create_app(
             options.offset = (offset_x or 0.0, offset_y or 0.0)
         if passes is not None:
             options.passes = passes
+        if clear:
+            options.clear = clear.strip().lower()
         chunks: list[bytes] = []
         size = 0
         while chunk := await file.read(1 << 20):

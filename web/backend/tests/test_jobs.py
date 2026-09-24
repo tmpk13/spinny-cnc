@@ -12,6 +12,7 @@ from polar_sim import deviation
 
 from spinny_web import jobs
 from spinny_web.jobs import (
+    Group,
     ImportOptions,
     Job,
     JobImportError,
@@ -31,6 +32,7 @@ GCODE_SAMPLE = REPO / "out" / "board.gcode"
 GERBER_DIR = REPO.parent / "test-gerbers"
 GERBER_SAMPLES = [GERBER_DIR / "test-gerbers-F_Cu.gbr", GERBER_DIR / "smaller-test" / "smaller-test-F_Cu.gbr"]
 BOARD_SAMPLE = REPO / "tests" / "data" / "board.kicad_pcb"
+BOARD_COPPER = REPO / "tests" / "data" / "board-F_Cu.gbr"
 
 SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="60mm" viewBox="0 0 100 60">
     <g transform="translate(10,10)">
@@ -173,6 +175,64 @@ def test_kicad_board_import_exports_gerbers():
     assert job.source == "kicad"
     assert job.groups and job.groups[0].label.startswith("isolation loop 1")
     assert job.outline
+
+
+def words(line: str) -> dict[str, str]:
+    return {word[0]: word[1:] for word in line.split()[1:]}
+
+
+def streamed(path) -> list:
+    """The pieces one board path goes out as, on its own."""
+    job = Job(groups=[Group(label="one", paths=[path])])
+    return list(Streamer().job_pieces(job, (0.0, 0.0)))
+
+
+@pytest.mark.parametrize("pattern", ["radial", "rings", "lines"])
+def test_a_board_can_clear_its_copper_before_the_outline_is_cut(pattern):
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, clear=pattern))
+    labels = [group.label for group in job.groups]
+    assert labels[0].startswith("isolation loop 1")
+    assert labels[-2:] == [f"copper clearing, {pattern}, 0.100 mm pitch", "board outline pass 1"]
+    clearing = job.groups[-2]
+    assert len(clearing.paths) > 100 and clearing.power == jobs.DEFAULT_POWER
+    job.refresh_stats(Streamer())
+    assert job.stats.seconds > 0
+
+
+def test_without_clearing_a_board_has_only_loops_and_outline():
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1))
+    assert not any("clearing" in group.label for group in job.groups)
+
+
+def test_a_spoke_goes_out_as_one_radial_cut():
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, clear="radial"))
+    spokes = [
+        path for path in job.groups[-2].paths
+        if len(path) == 2 and abs(path[0][0] * path[1][1] - path[0][1] * path[1][0]) < 1e-9
+    ]
+    assert len(spokes) > 100
+    for spoke in spokes:
+        pieces = streamed(spoke)
+        assert [piece.kind for piece in pieces] == ["go", "cut"]
+        assert words(pieces[0].line)["A"] == words(pieces[1].line)["A"]
+
+
+def test_a_ring_arc_goes_out_one_cut_per_chord_at_one_radius():
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, clear="rings"))
+    arcs = [
+        path for path in job.groups[-2].paths
+        if len(path) > 2 and max(math.hypot(*p) for p in path) - min(math.hypot(*p) for p in path) < 1e-9
+    ]
+    assert len(arcs) > 50
+    for arc in arcs:
+        pieces = streamed(arc)
+        assert [piece.kind for piece in pieces] == ["go"] + ["cut"] * (len(arc) - 1)
+        assert len({words(piece.line)["R"] for piece in pieces}) == 1
+
+
+def test_an_unknown_clearing_is_refused():
+    with pytest.raises(JobImportError, match="clear"):
+        ImportOptions(clear="zigzag").check()
 
 
 def test_board_import_refuses_missing_files(tmp_path):

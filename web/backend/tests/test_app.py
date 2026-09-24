@@ -601,6 +601,8 @@ def test_passes_and_upload_size_are_bounded(client, monkeypatch):
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0" stroke="#000"/></svg>'
     response = client.post("/api/jobs", files={"file": ("a.svg", svg, "image/svg+xml")}, data={"passes": "1000"})
     assert response.status_code == 400 and "passes" in response.text
+    response = client.post("/api/jobs", files={"file": ("a.svg", svg, "image/svg+xml")}, data={"clear": "zigzag"})
+    assert response.status_code == 400 and "clear" in response.text
     from spinny_web import app as app_module
 
     monkeypatch.setattr(app_module, "MAX_UPLOAD_BYTES", 1000)

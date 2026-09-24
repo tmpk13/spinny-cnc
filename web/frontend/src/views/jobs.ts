@@ -4,7 +4,7 @@ import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, Job, Progress, UploadOptions } from "../types.ts";
+import type { Anchor, ClearPattern, Job, Progress, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
 import type { Ctx } from "./context.ts";
 
@@ -51,6 +51,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     );
     const offsetX = numberField({ value: 0 });
     const offsetY = numberField({ value: 0 });
+    const clearField = el("select", {
+        class: "field",
+        "aria-label": "Clear copper",
+        title: "Burn away the copper the isolation leaves, inside the board outline or else the job's X/Y box (gerber and KiCad only)",
+    },
+        el("option", { value: "off" }, "off"),
+        el("option", { value: "radial" }, "radial"),
+        el("option", { value: "rings" }, "rings"),
+        el("option", { value: "lines" }, "lines"),
+    );
     const drop = el("div", { class: "drop" },
         el("p", {}, "Drop a file here (svg, json, gerber, kicad_pcb, gcode) or"),
         el("label", { class: "btn btn-quiet" }, "pick a file", fileInput),
@@ -62,6 +72,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         labeled("Anchor", anchorField),
         labeled("Offset x", offsetX),
         labeled("Offset y", offsetY),
+        labeled("Clear copper", clearField),
     );
     const list = el("ul", { class: "job-list" });
     const details = el("div", { class: "job-details" });
@@ -88,6 +99,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         }
         if (oy !== null) {
             out.offset_y = oy;
+        }
+        if (clearField.value !== "off") {
+            out.clear = clearField.value as ClearPattern;
         }
         return out;
     };

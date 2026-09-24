@@ -150,3 +150,9 @@
   at `S`, still under `s_min`'s cutoff); groups carry `min_power` through
   the store, patch, emitter and mock, and the groups table has a Min S
   column whose number fields shrink with a narrow panel.
+- Copper clearing in the web page (2026-09-23): a board upload takes
+  `clear` (`radial`, `rings` or `lines`) and adds a `copper clearing` group
+  that burns everything the isolation leaves inside the board outline, or
+  the X/Y box the isolation spans without one, with beam centers kept
+  outside the outermost loop and a pass along the inside of the edge; the
+  Jobs panel has a Clear copper choice, and the mock checks the value.

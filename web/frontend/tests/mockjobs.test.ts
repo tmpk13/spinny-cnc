@@ -277,6 +277,8 @@ describe("building jobs", () => {
         expect(built.note).not.toBeNull();
         expect(built.job.source).toBe("gerber");
         expect(built.job.copper.length).toBe(demoCoupon().copper.length);
+        const cleared = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", { clear: "radial" }, limits);
+        expect(cleared.note).toContain("clearing need the real backend");
     });
 
     test("json is taken as a job", () => {
@@ -328,6 +330,7 @@ describe("building jobs", () => {
         expect(() => buildJob("0011", "a.svg", svg, { power: -5 }, limits)).toThrow("power must be between 0");
         expect(() => buildJob("0011", "a.svg", svg, { spot: 0 }, limits)).toThrow("spot must be above 0");
         expect(() => buildJob("0011", "a.svg", svg, { offset_x: Number.NaN }, limits)).toThrow("offset must be within");
+        expect(() => buildJob("0011", "a.svg", svg, { clear: "zigzag" as never }, limits)).toThrow("clear must be one of off, radial, rings, lines");
     });
 
     test("unknown types are refused", () => {

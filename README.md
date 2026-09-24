@@ -267,6 +267,11 @@ classDiagram
         spokes(count, inner, outer)
         ring(radius)
     }
+    class clear {
+        clear(copper, keep, spot, pattern, outline) strokes
+        perimeter(copper, keep, spot, outline)
+        spokes / rings / rows(area, pitch)
+    }
     class fine {
         Design  reach, angle, cross, arm, spiral
         build(design, ...) JointGroup[]
@@ -327,6 +332,7 @@ classDiagram
     convert --> preview
     gcode --> polar
     jog --> polar
+    clear --> laser_sweep : offsets
     center --> machine
     center --> preview
     center --> fine : --fine

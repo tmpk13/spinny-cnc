@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+from spinny_laser import clear as copper_clearing
 
 from . import kinematics
 from .kinematics import Streamer
@@ -39,6 +40,10 @@ GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gm1")
 MAX_VALUE = 1.0e6
 # Isolation passes around the copper; each is another offset of every loop.
 MAX_PASSES = 50
+# A board import clears no copper past the isolation unless asked to, and
+# then with one of the clearing fills.
+CLEAR_OFF = "off"
+CLEAR_CHOICES = (CLEAR_OFF, *copper_clearing.PATTERNS)
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -228,10 +233,14 @@ class ImportOptions:
     tolerance: float = kinematics.DEFAULT_TOLERANCE
     passes: int = 1
     layer: str = "F.Cu"
+    # Only a board has copper to clear; other files ignore it.
+    clear: str = CLEAR_OFF
 
     def check(self) -> None:
         if self.anchor not in (ANCHOR_CENTER, ANCHOR_KEEP):
             raise JobImportError(f"anchor must be {ANCHOR_CENTER} or {ANCHOR_KEEP}")
+        if self.clear not in CLEAR_CHOICES:
+            raise JobImportError(f"clear must be one of {', '.join(CLEAR_CHOICES)}")
         try:
             check_power(self.power)
             check_speed(self.speed)
@@ -488,6 +497,18 @@ def from_board(path: Path, name: str, options: ImportOptions) -> Job:
         )
         isolate.offsets_for(config)
         plan = isolate.build(copper, config, outline=outline)
+        cleared: list = []
+        if options.clear != CLEAR_OFF:
+            # The clearing keeps its beam outside the outermost loop, and
+            # runs its rings in chords the streamer sends out whole.
+            cleared = copper_clearing.clear(
+                plan.copper,
+                max(plan.offsets),
+                options.spot,
+                options.clear,
+                outline=plan.outline,
+                tolerance=options.tolerance,
+            )
     except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
         raise JobImportError(str(exc)) from exc
     finally:
@@ -503,6 +524,16 @@ def from_board(path: Path, name: str, options: ImportOptions) -> Job:
                 power=options.power,
                 speed=options.speed,
                 paths=[[tuple(p) for p in loop.points] for loop in members],
+            )
+        )
+    if cleared:
+        # Before the outline: a board cut free may move under the beam.
+        groups.append(
+            Group(
+                label=f"copper clearing, {options.clear}, {options.spot:.3f} mm pitch",
+                power=options.power,
+                speed=options.speed,
+                paths=[[tuple(p) for p in path] for path in cleared],
             )
         )
     if plan.outline:

@@ -446,6 +446,26 @@ describe("jobs", () => {
         expect(minPower.value).toBe("80");
     });
 
+    test("the clear choice goes with an upload, and off sends none", async () => {
+        const { ctx, root, calls } = setup();
+        mountJobs(root, ctx);
+        const clear = root.querySelector('select[aria-label="Clear copper"]') as HTMLSelectElement;
+        const drop = root.querySelector(".drop") as HTMLElement;
+        const send = async (): Promise<void> => {
+            const event = new Event("drop", { cancelable: true });
+            Object.defineProperty(event, "dataTransfer", { value: { files: [new File(["G04 x*"], "board-F_Cu.gbr")] } });
+            drop.dispatchEvent(event);
+            for (let i = 0; i < 5; i++) {
+                await settle();
+            }
+        };
+        await send();
+        clear.value = "rings";
+        await send();
+        const uploads = calls.filter((c) => c.name === "uploadJob").map((c) => c.args[1] as { clear?: string });
+        expect(uploads.map((options) => options.clear)).toEqual([undefined, "rings"]);
+    });
+
     test("list and groups of the selected job", async () => {
         const { store, ctx, root, api } = setup();
         mountJobs(root, ctx);

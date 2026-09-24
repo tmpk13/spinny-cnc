@@ -1083,6 +1083,9 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
     return job;
 }
 
+/** What a board import may clear with, as the backend names them. */
+const CLEAR_CHOICES: string[] = ["off", "radial", "rings", "lines"];
+
 /** Turns an uploaded file into a job the way the backend would, as far as the browser can. */
 export function buildJob(id: string, name: string, text: string, options: UploadOptions, limits: RateLimits): BuiltJob {
     const lower = name.toLowerCase();
@@ -1099,6 +1102,10 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     }
     if (![offset.x, offset.y].every((v) => Number.isFinite(v) && Math.abs(v) <= MAX_VALUE)) {
         throw new Error(`offset must be within ${MAX_VALUE_TEXT} mm`);
+    }
+    const clear: string = options.clear ?? "off";
+    if (!CLEAR_CHOICES.includes(clear)) {
+        throw new Error(`clear must be one of ${CLEAR_CHOICES.join(", ")}`);
     }
 
     if (extension === "json") {
@@ -1128,7 +1135,9 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         case "kicad_pcb":
             geometry = demoCoupon();
             source = extension === "gbr" ? "gerber" : "kicad";
-            note = "mock backend: copper geometry needs the real backend, showing a demo coupon";
+            note = clear === "off"
+                ? "mock backend: copper geometry needs the real backend, showing a demo coupon"
+                : "mock backend: copper geometry and clearing need the real backend, showing a demo coupon";
             break;
         default:
             throw new Error(`unsupported file type: .${extension || "?"}`);

@@ -147,6 +147,9 @@ export interface Stats {
 
 export type Anchor = "center" | "keep";
 
+/** How a board import clears the copper the isolation leaves: spokes from the axis, rings about it, or rows along X. */
+export type ClearPattern = "radial" | "rings" | "lines";
+
 export interface Job {
     id: string;
     name: string;
@@ -207,6 +210,8 @@ export interface UploadOptions {
     anchor?: Anchor;
     offset_x?: number;
     offset_y?: number;
+    /** Gerber and KiCad boards only; left out, no copper is cleared. */
+    clear?: ClearPattern;
 }
 
 /** The options of the centering test burn; a missing reach or ring takes the pattern's default. */

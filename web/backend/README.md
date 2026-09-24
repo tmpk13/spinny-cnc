@@ -93,6 +93,9 @@ classDiagram
     class spinny_laser_center {
         center.build / fine.build
     }
+    class spinny_laser_clear {
+        clear(copper, keep, spot, pattern, outline)
+    }
     class laser_sweep {
         gerber, geom, isolate, isocli
     }
@@ -107,6 +110,7 @@ classDiagram
     runner --> kinematics
     jobs --> kinematics
     jobs --> laser_sweep
+    jobs --> spinny_laser_clear
     kinematics --> spinny_laser_polar
 ```
 
