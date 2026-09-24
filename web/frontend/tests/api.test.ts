@@ -37,7 +37,7 @@ const summary = {
     source: "svg",
     spot: 0.1,
     offset: { x: 0, y: 14 },
-    groups: [{ label: "g", power: 500, speed: 400, enabled: true, paths: 3 }],
+    groups: [{ label: "g", power: 500, min_power: 0, speed: 400, enabled: true, paths: 3 }],
     stats: { length_mm: 1, seconds: 2, max_radius: 3, min_radius: 1, limited_fraction: 0, moves: 4 },
 };
 

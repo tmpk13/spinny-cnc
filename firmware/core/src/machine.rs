@@ -56,7 +56,7 @@ pub struct Events {
 enum Pending {
     None,
     /// Waits for planner room, and for a hold to end.
-    Motion { target: [f32; AXES], kind: MoveKind, feed: Feed, power: f32 },
+    Motion { target: [f32; AXES], kind: MoveKind, feed: Feed, power: f32, min_power: f32 },
     /// A cross slide move, started once the joints have come to rest.
     SlideMove { target: f32, feed: Option<f32> },
     /// The sync commands below wait for queued motion to finish.
@@ -254,13 +254,15 @@ impl<'a> Machine<'a> {
         match command {
             Command::Go { target } => {
                 self.check_motion_state(false)?;
-                self.queue_motion(target, false, MoveKind::Rapid, Feed::Max, 0.0)?;
+                self.queue_motion(target, false, MoveKind::Rapid, Feed::Max, 0.0, 0.0)?;
                 Ok(false)
             }
-            Command::Cut { target, feed, power } => {
+            Command::Cut { target, feed, power, min_power } => {
                 self.check_motion_state(false)?;
                 let feed = feed.or(self.feed).ok_or(Error::MissingWord)?;
-                self.queue_motion(target, false, MoveKind::Cut, Feed::Surface(feed), power.unwrap_or(self.power))?;
+                // `M` is not modal: a cut without it has no floor.
+                let min_power = min_power.unwrap_or(0.0);
+                self.queue_motion(target, false, MoveKind::Cut, Feed::Surface(feed), power.unwrap_or(self.power), min_power)?;
                 self.feed = Some(feed);
                 if let Some(power) = power {
                     self.power = power;
@@ -270,7 +272,7 @@ impl<'a> Machine<'a> {
             Command::Jog { target, feed, absolute } => {
                 self.check_motion_state(true)?;
                 let feed = feed.map_or(Feed::Jog, Feed::Surface);
-                self.queue_motion(target, !absolute, MoveKind::Jog, feed, 0.0)?;
+                self.queue_motion(target, !absolute, MoveKind::Jog, feed, 0.0, 0.0)?;
                 Ok(false)
             }
             Command::JogZ { target, feed, absolute } => {
@@ -439,6 +441,7 @@ impl<'a> Machine<'a> {
         kind: MoveKind,
         feed: Feed,
         power: f32,
+        min_power: f32,
     ) -> Result<(), Error> {
         let here = self.planner.position_units(&self.settings);
         let mut target = here;
@@ -475,7 +478,7 @@ impl<'a> Machine<'a> {
                 return Err(Error::OutOfRange);
             }
         }
-        self.pending = Pending::Motion { target, kind, feed, power };
+        self.pending = Pending::Motion { target, kind, feed, power, min_power };
         Ok(())
     }
 
@@ -703,11 +706,11 @@ impl<'a> Machine<'a> {
         out: &mut impl Sink,
     ) -> bool {
         let pending = self.pending;
-        if let Pending::Motion { target, kind, feed, power } = pending {
+        if let Pending::Motion { target, kind, feed, power, min_power } = pending {
             if self.state == State::Hold || self.front.resync_pending() {
                 return false;
             }
-            match self.planner.push(target, kind, feed, power, &self.settings) {
+            match self.planner.push(target, kind, feed, power, min_power, &self.settings) {
                 Ok(_) => {
                     self.set_enabled(true, port);
                     if self.beam.take().is_some() {

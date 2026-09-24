@@ -193,8 +193,8 @@ describe("placement and stats", () => {
             }
             return path;
         };
-        const near: Group[] = [{ label: "near", power: 500, speed: 400, enabled: true, paths: [circle(10)] }];
-        const far: Group[] = [{ label: "far", power: 500, speed: 400, enabled: true, paths: [circle(30)] }];
+        const near: Group[] = [{ label: "near", power: 500, min_power: 0, speed: 400, enabled: true, paths: [circle(10)] }];
+        const far: Group[] = [{ label: "far", power: 500, min_power: 0, speed: 400, enabled: true, paths: [circle(30)] }];
         const nearStats = computeStats(near, limits);
         const farStats = computeStats(far, limits);
         expect(nearStats.length_mm).toBeCloseTo(2 * Math.PI * 10, 0);
@@ -206,7 +206,7 @@ describe("placement and stats", () => {
     });
 
     test("disabled groups do not count", () => {
-        const groups: Group[] = [{ label: "off", power: 1, speed: 100, enabled: false, paths: [[[5, 5], [6, 6]]] }];
+        const groups: Group[] = [{ label: "off", power: 1, min_power: 0, speed: 100, enabled: false, paths: [[[5, 5], [6, 6]]] }];
         expect(computeStats(groups, limits)).toEqual({ length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 });
     });
 
@@ -217,13 +217,13 @@ describe("placement and stats", () => {
         expect(closestApproach([3, 4], [3, 4])).toBeCloseTo(5, 9);
         expect(pathMinRadius([[3, 4]])).toBeCloseTo(5, 9);
         expect(pathMinRadius([[-18, 2], [18, 2], [18, 12]])).toBeCloseTo(2, 9);
-        const groups: Group[] = [{ label: "edge", power: 500, speed: 400, enabled: true, paths: [[[-18, 2], [18, 2]]] }];
+        const groups: Group[] = [{ label: "edge", power: 500, min_power: 0, speed: 400, enabled: true, paths: [[[-18, 2], [18, 2]]] }];
         expect(computeStats(groups, limits).min_radius).toBeCloseTo(2, 6);
         expect(computeStats(groups, limits).max_radius).toBeCloseTo(Math.hypot(18, 2), 9);
         const demo = placeJob(demoCoupon(), "center", { x: 0, y: 14 });
-        const enabled = demo.groups.map((g) => ({ label: g.label, power: 500, speed: 400, enabled: true, paths: g.paths }));
+        const enabled = demo.groups.map((g) => ({ label: g.label, power: 500, min_power: 0, speed: 400, enabled: true, paths: g.paths }));
         expect(computeStats(enabled, limits).min_radius).toBeCloseTo(2, 6);
-        const crossing: Group[] = [{ label: "x", power: 500, speed: 400, enabled: true, paths: [[[-5, 0], [5, 0]]] }];
+        const crossing: Group[] = [{ label: "x", power: 500, min_power: 0, speed: 400, enabled: true, paths: [[[-5, 0], [5, 0]]] }];
         expect(computeStats(crossing, limits).min_radius).toBe(0);
     });
 
@@ -241,7 +241,7 @@ describe("placement and stats", () => {
         expect(turn.length).toBe(91);
         expect(turn[90]![0]).toBeCloseTo(0, 9);
         expect(turn[90]![1]).toBeCloseTo(10, 9);
-        const group: Group = { label: "rail", power: 200, speed: 300, enabled: true, paths: [], joints: [[[5, 0], [-5, 0]], [[-5, 0], [-5, 90]]] };
+        const group: Group = { label: "rail", power: 200, min_power: 0, speed: 300, enabled: true, paths: [], joints: [[[5, 0], [-5, 0]], [[-5, 0], [-5, 90]]] };
         // The start is taken a whole number of turns toward where the head is.
         const moves = groupMoves(group, { r: 0, a: 710 }, 0.005);
         expect(moves).toEqual([

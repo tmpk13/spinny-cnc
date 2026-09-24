@@ -36,7 +36,9 @@ pub fn realtime(byte: u8) -> Option<Realtime> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Command<'a> {
     Go { target: [Option<f32>; AXES] },
-    Cut { target: [Option<f32>; AXES], feed: Option<f32>, power: Option<f32> },
+    /// `min_power` is the floor of a dynamic cut's power; unlike `F` and
+    /// `S` it is not modal.
+    Cut { target: [Option<f32>; AXES], feed: Option<f32>, power: Option<f32>, min_power: Option<f32> },
     /// `absolute` for `jogto`.
     Jog { target: [Option<f32>; AXES], feed: Option<f32>, absolute: bool },
     /// The cross slide on its own; it is never interpolated with `R` or `A`.
@@ -154,6 +156,7 @@ struct Words {
     z: Option<f32>,
     f: Option<f32>,
     s: Option<f32>,
+    m: Option<f32>,
     t: Option<f32>,
 }
 
@@ -178,6 +181,7 @@ impl Words {
                 b'Z' => &mut words.z,
                 b'F' => &mut words.f,
                 b'S' => &mut words.s,
+                b'M' => &mut words.m,
                 b'T' => &mut words.t,
                 _ => return Err(Error::BadWord),
             };
@@ -221,7 +225,7 @@ impl Words {
     }
 
     fn check_power(&self) -> Result<(), Error> {
-        if self.s.is_some_and(|s| s < 0.0) {
+        if self.s.is_some_and(|s| s < 0.0) || self.m.is_some_and(|m| m < 0.0) {
             return Err(Error::OutOfRange);
         }
         Ok(())
@@ -307,11 +311,11 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             Ok(Command::Go { target: words.target() })
         }
         b"cut" => {
-            let words = Words::read(tokens, b"RAFS")?;
+            let words = Words::read(tokens, b"RAFSM")?;
             words.need_axis()?;
             words.check_feed()?;
             words.check_power()?;
-            Ok(Command::Cut { target: words.target(), feed: words.f, power: words.s })
+            Ok(Command::Cut { target: words.target(), feed: words.f, power: words.s, min_power: words.m })
         }
         key @ (b"jog" | b"jogto") => {
             let absolute = key == b"jogto";
@@ -491,19 +495,28 @@ mod tests {
     fn cut_forms() {
         assert_eq!(
             parse("cut A90 F300 S400"),
-            Ok(Command::Cut { target: [None, Some(90.0)], feed: Some(300.0), power: Some(400.0) })
+            Ok(Command::Cut { target: [None, Some(90.0)], feed: Some(300.0), power: Some(400.0), min_power: None })
         );
-        assert_eq!(parse("cut A180"), Ok(Command::Cut { target: [None, Some(180.0)], feed: None, power: None }));
+        assert_eq!(parse("cut A180"), Ok(Command::Cut { target: [None, Some(180.0)], feed: None, power: None, min_power: None }));
         assert_eq!(
             parse("CUT s0 f0.5 r1.5 a-2"),
-            Ok(Command::Cut { target: [Some(1.5), Some(-2.0)], feed: Some(0.5), power: Some(0.0) })
+            Ok(Command::Cut { target: [Some(1.5), Some(-2.0)], feed: Some(0.5), power: Some(0.0), min_power: None })
         );
         // A cut on the far side of the axis: the same board point half a
         // turn away, reached with the head's offset mirrored.
         assert_eq!(
             parse("cut R-1 A90"),
-            Ok(Command::Cut { target: [Some(-1.0), Some(90.0)], feed: None, power: None })
+            Ok(Command::Cut { target: [Some(-1.0), Some(90.0)], feed: None, power: None, min_power: None })
         );
+        assert_eq!(
+            parse("cut R2 F300 S400 M120"),
+            Ok(Command::Cut { target: [Some(2.0), None], feed: Some(300.0), power: Some(400.0), min_power: Some(120.0) })
+        );
+        assert_eq!(parse("cut R2 M-1"), Err(Error::OutOfRange));
+        assert_eq!(parse("cut R2 M1 M2"), Err(Error::BadWord));
+        // The floor is a cut word only.
+        assert_eq!(parse("go R2 M1"), Err(Error::BadWord));
+        assert_eq!(parse("dwell T10 M1"), Err(Error::BadWord));
     }
 
     #[test]
@@ -551,7 +564,7 @@ mod tests {
         assert_eq!(parse("go R-1"), Ok(go(Some(-1.0), None)));
         assert_eq!(
             parse("cut R-1 F60"),
-            Ok(Command::Cut { target: [Some(-1.0), None], feed: Some(60.0), power: None })
+            Ok(Command::Cut { target: [Some(-1.0), None], feed: Some(60.0), power: None, min_power: None })
         );
         assert_eq!(parse("jog R5 F0"), Err(Error::OutOfRange));
         assert_eq!(parse("jogto A5 F-1"), Err(Error::OutOfRange));

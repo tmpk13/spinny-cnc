@@ -234,6 +234,11 @@ def test_patch_shifts_and_reprices():
     assert original.offset.y == 0.0 and bbox(all_paths(original)) == before
     job = apply_patch(job, JobPatch(groups=[{"index": 0, "power": 100, "speed": 50, "enabled": False}]), streamer)
     assert job.groups[0].power == 100 and not job.groups[0].enabled
+    assert job.groups[0].min_power == 0.0
+    job = apply_patch(job, JobPatch(groups=[{"index": 0, "min_power": 40}]), streamer)
+    assert job.groups[0].min_power == 40 and job.groups[0].power == 100
+    with pytest.raises(ValueError, match="min power"):
+        apply_patch(job, JobPatch(groups=[{"index": 0, "min_power": -1}]), streamer)
     seconds = job.stats.seconds
     job = apply_patch(job, JobPatch(groups=[{"index": 0, "enabled": True}]), streamer)
     assert job.stats.seconds > seconds
@@ -323,6 +328,12 @@ def test_a_json_job_with_a_bad_speed_or_power_is_refused():
     text = json.dumps({"name": "x", "spot": 0, "groups": [{"label": "g", "paths": [[[1, 1], [2, 2]]]}]})
     with pytest.raises(jobs.JobImportError, match="spot"):
         from_json(text, "x")
+    text = json.dumps({"name": "x", "groups": [{"label": "g", "min_power": -5, "paths": [[[1, 1], [2, 2]]]}]})
+    with pytest.raises(jobs.JobImportError, match="min power"):
+        from_json(text, "x")
+    # A job saved before groups had a floor loads with none.
+    text = json.dumps({"name": "x", "groups": [{"label": "g", "paths": [[[1, 1], [2, 2]]]}]})
+    assert from_json(text, "x").groups[0].min_power == 0.0
 
 
 def test_numbers_that_are_not_numbers_or_too_large_are_refused():

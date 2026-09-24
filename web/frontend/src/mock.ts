@@ -123,6 +123,8 @@ export interface Move {
     feed: number | null;
     /** S word for a cut. */
     power: number;
+    /** M word for a cut: the floor of its dynamic power, not modal. */
+    minPower?: number;
     /** Job group index, for progress. */
     group: number;
 }
@@ -296,9 +298,9 @@ export class MockMachine {
         this.push({ kind: "go", target: { r: r ?? from.r, a: a ?? from.a }, feed: null, power: 0, group: -1 });
     }
 
-    cut(r: number | null, a: number | null, feed: number, power: number): void {
+    cut(r: number | null, a: number | null, feed: number, power: number, minPower = 0): void {
         const from = this.endpoint();
-        this.push({ kind: "cut", target: { r: r ?? from.r, a: a ?? from.a }, feed, power, group: -1 });
+        this.push({ kind: "cut", target: { r: r ?? from.r, a: a ?? from.a }, feed, power, minPower, group: -1 });
     }
 
     /** Sends the cross slide to `z`; the firmware takes it in Idle only. */
@@ -347,7 +349,8 @@ export class MockMachine {
         let power = move.power;
         if (this.mode === "dyn") {
             const wanted = move.feed ?? 0;
-            power = wanted > 0 ? (move.power * achieved) / wanted : 0;
+            power = wanted > 0 ? Math.min(move.power, (move.power * achieved) / wanted) : 0;
+            power = Math.max(power, Math.min(move.minPower ?? 0, move.power));
             if (power < sMin) {
                 power = 0;
             }
@@ -1039,7 +1042,11 @@ export class MockBackend implements Api, EventFeed {
                         return ["error:3 missing word"];
                     }
                     const power = get("S") ?? machine.power;
-                    machine.cut(get("R"), get("A"), feed, power);
+                    const minPower = get("M") ?? 0;
+                    if (power < 0 || minPower < 0) {
+                        return ["error:4 out of range"];
+                    }
+                    machine.cut(get("R"), get("A"), feed, power, minPower);
                     machine.feed = feed;
                     machine.power = power;
                     return ["ok"];
@@ -1229,7 +1236,7 @@ export class MockBackend implements Api, EventFeed {
     private seedDemo(): void {
         const placed = placeJob(demoCoupon(), "center", { x: 0, y: 14 });
         const id = this.newId();
-        const groups = placed.groups.map((group) => ({ label: group.label, power: 500, speed: 400, enabled: true, paths: group.paths }));
+        const groups = placed.groups.map((group) => ({ label: group.label, power: 500, min_power: 0, speed: 400, enabled: true, paths: group.paths }));
         const job: Job = {
             id,
             name: "demo coupon",
@@ -1293,6 +1300,7 @@ export class MockBackend implements Api, EventFeed {
                 groups: job.groups.map((group) => ({
                     label: group.label,
                     power: group.power,
+                    min_power: group.min_power,
                     speed: group.speed,
                     enabled: group.enabled,
                     paths: group.paths.length,
@@ -1329,6 +1337,9 @@ export class MockBackend implements Api, EventFeed {
                 if (change.power !== undefined) {
                     checkPower(change.power);
                 }
+                if (change.min_power !== undefined) {
+                    checkPower(change.min_power, "min power");
+                }
                 if (change.speed !== undefined) {
                     checkSpeed(change.speed);
                 }
@@ -1353,6 +1364,9 @@ export class MockBackend implements Api, EventFeed {
             }
             if (change.power !== undefined) {
                 group.power = change.power;
+            }
+            if (change.min_power !== undefined) {
+                group.min_power = change.min_power;
             }
             if (change.speed !== undefined) {
                 group.speed = change.speed;
@@ -1400,7 +1414,7 @@ export class MockBackend implements Api, EventFeed {
                 if (step.kind === "go") {
                     moves.push({ kind: "go", target: step.target, feed: null, power: 0, group: index });
                 } else {
-                    moves.push({ kind: "cut", target: step.target, feed: group.speed, power: group.power, group: index });
+                    moves.push({ kind: "cut", target: step.target, feed: group.speed, power: group.power, minPower: group.min_power, group: index });
                 }
                 joint = step.target;
             }
@@ -1476,7 +1490,8 @@ export function formatMove(move: Move): string {
         case "jog":
             return move.feed !== null ? `jogto ${words} F${move.feed}` : `jogto ${words}`;
         case "cut":
-            return `cut ${words} F${move.feed ?? 0} S${move.power}`;
+            const floor = (move.minPower ?? 0) > 0 ? ` M${Math.min(move.minPower ?? 0, move.power)}` : "";
+            return `cut ${words} F${move.feed ?? 0} S${move.power}${floor}`;
     }
 }
 

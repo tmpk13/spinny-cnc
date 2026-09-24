@@ -69,6 +69,29 @@ describe("mock machine motion", () => {
         expect(machine.joint.a).toBeCloseTo(90, 6);
     });
 
+    test("a cut's M word floors the dyn power and is capped at S", () => {
+        const machine = new MockMachine();
+        machine.setPosition({ r: 10 });
+        // Held to the table rate, the scaled power would be about 87.
+        machine.cut(10, 90, 400, 500, 150);
+        stepped(machine, 1);
+        expect(machine.laser).toBeCloseTo(150, 6);
+        const capped = new MockMachine();
+        capped.setPosition({ r: 10 });
+        capped.cut(10, 90, 400, 500, 900);
+        stepped(capped, 1);
+        expect(capped.laser).toBeCloseTo(500, 6);
+        expect(formatMove({ kind: "cut", target: { r: 1, a: 2 }, feed: 300, power: 200, minPower: 50, group: 0 })).toBe("cut R1.000 A2.0000 F300 S200 M50");
+        expect(formatMove({ kind: "cut", target: { r: 1, a: 2 }, feed: 300, power: 200, minPower: 0, group: 0 })).toBe("cut R1.000 A2.0000 F300 S200");
+    });
+
+    test("the M word reaches the mock machine from a line", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        expect(await backend.command("cut R5 F100 S100 M-1")).toEqual(["error:4 out of range"]);
+        expect(await backend.command("cut R5 F100 S100 M20")).toEqual(["ok"]);
+    });
+
     test("a cut with the table fast enough runs at the feed", () => {
         const machine = new MockMachine();
         // At 60 mm the table's 400 deg/min gives 419 mm/min, over the feed.
@@ -579,6 +602,7 @@ describe("mock backend", () => {
         const before = structuredClone(await backend.job(id));
         await expect(backend.patchJob(id, { groups: [{ index: 0, speed: 0 }] })).rejects.toMatchObject({ status: 400, message: "speed must be above 0 and at most 1e+06" });
         await expect(backend.patchJob(id, { groups: [{ index: 0, power: -1 }] })).rejects.toMatchObject({ status: 400, message: "power must be between 0 and 1e+06" });
+        await expect(backend.patchJob(id, { groups: [{ index: 0, min_power: -1 }] })).rejects.toMatchObject({ status: 400, message: "min power must be between 0 and 1e+06" });
         await expect(backend.patchJob(id, { groups: [{ index: 9, power: 1 }] })).rejects.toMatchObject({ status: 400 });
         await expect(backend.patchJob(id, { groups: [{ index: 0, power: 10 }, { index: 1, speed: Number.NaN }] })).rejects.toMatchObject({ status: 400 });
         await expect(backend.patchJob(id, { offset: { x: Number.POSITIVE_INFINITY, y: 0 } })).rejects.toMatchObject({ status: 400 });
@@ -589,9 +613,11 @@ describe("mock backend", () => {
         await expect(backend.patchJob(id, { offset: { x: 1, y: 14 } })).rejects.toMatchObject({ status: 409 });
         expect(await backend.job(id)).toEqual(before);
         await backend.runStop();
-        await backend.patchJob(id, { groups: [{ index: 0, power: 10, speed: 50 }], offset: { x: 1, y: 14 } });
+        await backend.patchJob(id, { groups: [{ index: 0, power: 10, min_power: 4, speed: 50 }], offset: { x: 1, y: 14 } });
         const after = await backend.job(id);
         expect(after.groups[0]!.power).toBe(10);
+        expect(after.groups[0]!.min_power).toBe(4);
+        expect((await backend.jobs()).find((job) => job.id === id)!.groups[0]!.min_power).toBe(4);
         expect(after.groups[0]!.speed).toBe(50);
         expect(after.offset).toEqual({ x: 1, y: 14 });
         expect(after.groups[0]!.paths[0]![0]![0]).toBeCloseTo(before.groups[0]!.paths[0]![0]![0] + 1, 9);

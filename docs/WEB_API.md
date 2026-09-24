@@ -84,7 +84,7 @@ control.
 | `POST /api/center` | JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
-| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "speed": 400, "enabled": true}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed under 0.001 mm/min is refused like one of 0 |
+| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "enabled": true}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed under 0.001 mm/min is refused like one of 0 |
 | `DELETE /api/jobs/{id}` | |
 | `POST /api/jobs/{id}/run` | starts streaming |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | |
@@ -106,9 +106,9 @@ Job:
   "id": "a1b2", "name": "board", "source": "gerber",
   "spot": 0.1, "offset": {"x": 0, "y": 14},
   "groups": [
-    {"label": "isolation loop 1", "power": 500, "speed": 400, "enabled": true,
+    {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "enabled": true,
      "paths": [[[x, y], ...], ...]},
-    {"label": "rail line through the axis", "power": 400, "speed": 200, "enabled": true,
+    {"label": "rail line through the axis", "power": 400, "min_power": 0, "speed": 200, "enabled": true,
      "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]}
   ],
   "outline": [[[x, y], ...]], "copper": [[[x, y], ...]],
@@ -118,7 +118,9 @@ Job:
 ```
 
 Path coordinates are board mm with the rotation axis at the origin; the
-offset is already applied. A group may instead carry `joints`: polylines
+offset is already applied. `min_power` is the group's floor in the
+firmware's `dyn` mode, sent as `M` on each of its cuts when above 0 (a
+floor above `power` goes out as `power`); a job without it loads with 0. A group may instead carry `joints`: polylines
 in joint space, radius mm and angle degrees, each pair of points streamed
 as one `cut` with no kinematics in between, and a negative radius meaning
 the far side of the axis. Such a group is written about the axis, so a

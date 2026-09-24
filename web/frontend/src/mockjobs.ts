@@ -1031,9 +1031,11 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
         const label = raw["label"];
         const what = `group '${label}'`;
         const power = raw["power"] === undefined ? DEFAULT_POWER : finiteNumber(raw["power"], `${what}: power`);
+        const minPower = raw["min_power"] === undefined ? 0 : finiteNumber(raw["min_power"], `${what}: min power`);
         const speed = raw["speed"] === undefined ? DEFAULT_SPEED : finiteNumber(raw["speed"], `${what}: speed`);
         checkSpeed(speed, `${what}: speed`);
         checkPower(power, `${what}: power`);
+        checkPower(minPower, `${what}: min power`);
         const paths = pathsOf(raw["paths"], what);
         const joints = pathsOf(raw["joints"], what);
         if (joints.some((poly) => poly.length < 2)) {
@@ -1042,6 +1044,7 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
         const group: Group = {
             label,
             power,
+            min_power: minPower,
             speed,
             enabled: raw["enabled"] === undefined ? true : Boolean(raw["enabled"]),
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
@@ -1136,6 +1139,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     const groups: Group[] = placed.groups.map((group, index) => ({
         label: group.label,
         power: geometry.groups[index]?.power ?? power,
+        min_power: 0,
         speed: geometry.groups[index]?.speed ?? speed,
         enabled: true,
         paths: group.paths,
@@ -1193,12 +1197,12 @@ export function centerJob(id: string, request: CenterRequest, limits: RateLimits
             const theta = (2 * Math.PI * i) / lines;
             paths.push([[0, 0], [reach * Math.cos(theta), reach * Math.sin(theta)]]);
         }
-        groups.push({ label: `${lines} radial lines from the axis to ${reach} mm`, power, speed, enabled: true, paths });
+        groups.push({ label: `${lines} radial lines from the axis to ${reach} mm`, power, min_power: 0, speed, enabled: true, paths });
     }
     const notes: string[] = [];
     if (ring > 0) {
         const around = Math.min(speed, RING_HEADROOM * (limits.aRate * Math.PI / 180) * ring);
-        groups.push({ label: `reference ring at ${ring} mm`, power, speed: around, enabled: true, paths: [circlePath(0, 0, ring, 360)] });
+        groups.push({ label: `reference ring at ${ring} mm`, power, min_power: 0, speed: around, enabled: true, paths: [circlePath(0, 0, ring, 360)] });
         if (around < speed) {
             notes.push(`The ring runs at ${around.toFixed(0)} mm/min, not ${speed}: that is all the table can turn at ${ring} mm.`);
         }

@@ -57,6 +57,10 @@ class Finite(BaseModel):
 class Group(Finite):
     label: str
     power: float = DEFAULT_POWER
+    # The least power a cut runs at in the firmware's dynamic mode, where
+    # power follows the speed down into corners; above `power` it counts
+    # as `power`, and zero is no floor.
+    min_power: float = 0.0
     speed: float = DEFAULT_SPEED
     enabled: bool = True
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
@@ -108,6 +112,7 @@ class Job(Finite):
                 {
                     "label": group.label,
                     "power": group.power,
+                    "min_power": group.min_power,
                     "speed": group.speed,
                     "enabled": group.enabled,
                     "paths": len(group.paths),
@@ -141,6 +146,7 @@ class GroupPatch(Finite):
     index: int
     label: str | None = None
     power: float | None = None
+    min_power: float | None = None
     speed: float | None = None
     enabled: bool | None = None
 
@@ -176,6 +182,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             raise ValueError(f"no group {change.index}")
         if change.power is not None:
             check_power(change.power)
+        if change.min_power is not None:
+            check_power(change.min_power, "min power")
         if change.speed is not None:
             check_speed(change.speed)
     if patch.offset is not None:
@@ -191,6 +199,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             group.label = change.label
         if change.power is not None:
             group.power = change.power
+        if change.min_power is not None:
+            group.min_power = change.min_power
         if change.speed is not None:
             group.speed = change.speed
         if change.enabled is not None:
@@ -273,6 +283,7 @@ def from_json(text: str, name: str) -> Job:
         try:
             check_speed(group.speed, f"group {group.label!r}: speed")
             check_power(group.power, f"group {group.label!r}: power")
+            check_power(group.min_power, f"group {group.label!r}: min power")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
         if any(len(poly) < 2 for poly in group.joints):

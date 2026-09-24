@@ -67,9 +67,11 @@ def test_small_job_runs_on_the_virtual_firmware(firmware):
         assert link.banner is not None
         assert link.request_ok("set R0 A0") == []
         square = [(10.0, -2.0), (12.0, -2.0), (12.0, 2.0), (10.0, 2.0), (10.0, -2.0)]
-        job = Job(id="e2e", name="square", groups=[Group(label="one", power=500, speed=4000, paths=[square])])
+        # The floor rides on every cut as an M word the firmware must take.
+        job = Job(id="e2e", name="square", groups=[Group(label="one", power=500, min_power=150, speed=4000, paths=[square])])
         streamer = Streamer()
         expected = [piece for piece in streamer.job_pieces(job, (0.0, 0.0))]
+        assert expected[-1].line.endswith(" S500 M150")
         runner = Runner()
         runner.start(job, link, streamer)
         deadline = time.monotonic() + 120.0

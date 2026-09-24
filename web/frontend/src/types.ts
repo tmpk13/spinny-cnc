@@ -122,6 +122,8 @@ export type Path = Point[];
 export interface Group {
     label: string;
     power: number;
+    /** The least power in the firmware's dynamic mode; above `power` it counts as `power`, 0 is none. */
+    min_power: number;
     speed: number;
     enabled: boolean;
     paths: Path[];
@@ -161,6 +163,7 @@ export interface Job {
 export interface GroupSummary {
     label: string;
     power: number;
+    min_power: number;
     speed: number;
     enabled: boolean;
     paths: number;
@@ -186,6 +189,7 @@ export interface GroupPatch {
     index: number;
     label?: string;
     power?: number;
+    min_power?: number;
     speed?: number;
     enabled?: boolean;
 }

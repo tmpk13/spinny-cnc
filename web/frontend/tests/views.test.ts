@@ -417,9 +417,12 @@ describe("jobs", () => {
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
         const table = root.querySelector("table.groups")!;
-        const inputs = Array.from(table.querySelectorAll("tbody tr")[0]!.querySelectorAll("input")) as HTMLInputElement[];
-        const power = inputs[0]!;
-        const speed = inputs[1]!;
+        const row = table.querySelectorAll("tbody tr")[0]!;
+        const field = (label: string): HTMLInputElement => row.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
+        const power = field("power");
+        const minPower = field("min power");
+        const speed = field("speed");
+        expect(minPower.value).toBe("0");
         speed.focus();
         speed.value = "123";
         power.value = "321";
@@ -432,6 +435,15 @@ describe("jobs", () => {
         expect(speed.isConnected).toBe(true);
         expect(speed.value).toBe("123");
         expect(power.value).toBe("321");
+        minPower.value = "80";
+        minPower.dispatchEvent(new Event("change", { bubbles: true }));
+        await settle();
+        await settle();
+        await settle();
+        const group = (await api.job(jobs[0]!.id)).groups[0]!;
+        expect(group.min_power).toBe(80);
+        expect(group.power).toBe(321);
+        expect(minPower.value).toBe("80");
     });
 
     test("list and groups of the selected job", async () => {

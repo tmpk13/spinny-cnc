@@ -29,6 +29,7 @@ export function progressText(progress: Progress | null): { bar: number; counts: 
 interface GroupRow {
     row: HTMLElement;
     power: HTMLInputElement;
+    minPower: HTMLInputElement;
     speed: HTMLInputElement;
     enabled: HTMLInputElement;
 }
@@ -244,6 +245,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         job.groups.forEach((group, index) => {
             const row = groupRows[index]!;
             setUnlessFocused(row.power, String(group.power), focused);
+            setUnlessFocused(row.minPower, String(group.min_power), focused);
             setUnlessFocused(row.speed, String(group.speed), focused);
             if (row.enabled !== focused) {
                 row.enabled.checked = group.enabled;
@@ -277,37 +279,60 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         setLocked(stopButton, !connected || !active);
     }
 
+    /** A number cell of the groups table; the stylesheet sizes it to the column. */
+    function groupField(value: number, min: number, label: string): HTMLInputElement {
+        const field = numberField({ value, min, step: 1 });
+        field.setAttribute("aria-label", label);
+        return field;
+    }
+
     function groupsTable(job: Job): HTMLElement {
         groupRows = [];
         const rows = job.groups.map((group, index) => {
-            const power = numberField({ value: group.power, min: 0, step: 1, width: "5.5rem" });
-            const speed = numberField({ value: group.speed, min: 1, step: 1, width: "5.5rem" });
+            const power = groupField(group.power, 0, "power");
+            const minPower = groupField(group.min_power, 0, "min power");
+            const speed = groupField(group.speed, 1, "speed");
             const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
             enabled.checked = group.enabled;
             const patch = async (): Promise<void> => {
                 const p = parseNumber(power.value);
+                const m = parseNumber(minPower.value);
                 const s = parseNumber(speed.value);
                 await ctx.call(ctx.api.patchJob(job.id, {
-                    groups: [{ index, ...(p !== null ? { power: p } : {}), ...(s !== null ? { speed: s } : {}), enabled: enabled.checked }],
+                    groups: [{
+                        index,
+                        ...(p !== null ? { power: p } : {}),
+                        ...(m !== null ? { min_power: m } : {}),
+                        ...(s !== null ? { speed: s } : {}),
+                        enabled: enabled.checked,
+                    }],
                 }));
                 await ctx.selectJob(job.id);
                 await ctx.refreshJobs();
             };
             power.addEventListener("change", () => void patch());
+            minPower.addEventListener("change", () => void patch());
             speed.addEventListener("change", () => void patch());
             enabled.addEventListener("change", () => void patch());
             const row = el("tr", { class: group.enabled ? "" : "disabled" },
                 el("td", {}, el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
                     el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`)),
                 el("td", {}, power),
+                el("td", {}, minPower),
                 el("td", {}, speed),
                 el("td", {}, enabled),
             );
-            groupRows.push({ row, power, speed, enabled });
+            groupRows.push({ row, power, minPower, speed, enabled });
             return row;
         });
         return el("table", { class: "groups" },
-            el("thead", {}, el("tr", {}, el("th", {}, "Group"), el("th", {}, "S"), el("th", {}, "mm/min"), el("th", {}, "On"))),
+            el("thead", {}, el("tr", {},
+                el("th", {}, "Group"),
+                el("th", {}, "S"),
+                el("th", { title: "Least power where the head slows for a corner (dyn mode); 0 is none" }, "Min S"),
+                el("th", {}, "mm/min"),
+                el("th", {}, "On"),
+            )),
             el("tbody", {}, ...rows),
         );
     }

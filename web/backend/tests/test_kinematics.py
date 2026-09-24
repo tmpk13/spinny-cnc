@@ -135,6 +135,21 @@ def test_every_cut_carries_its_group_feed_and_power():
     assert all(" F" in line for line in lines if line.startswith("cut "))
     kinds = [line.split()[0] for line in lines]
     assert kinds.count("go") == 3
+
+
+def test_a_group_floor_goes_out_as_m_on_every_cut():
+    streamer = Streamer(tolerance=TOLERANCE)
+    groups = [
+        Group(label="floor", power=500, min_power=120, speed=400, paths=[[(10.0, 0.0), (12.0, 0.0)]]),
+        Group(label="capped", power=300, min_power=800, speed=400, paths=[[(10.0, 5.0), (12.0, 5.0)]]),
+        Group(label="none", power=300, speed=400, paths=[[(10.0, -5.0), (12.0, -5.0)]]),
+        Group(label="joints", power=200, min_power=50, speed=400, joints=[[(3.0, 0.0), (3.0, 30.0)]]),
+    ]
+    lines = lines_of(streamer, job_of(groups=groups))
+    tails = [line.split(" F")[1] for line in lines if line.startswith("cut ")]
+    # The word is not modal: a group with no floor leaves it off rather
+    # than carrying the one before it, and a floor above S is sent as S.
+    assert set(tails) == {"400 S500 M120", "400 S300 M300", "400 S300", "400 S200 M50"}
     assert not any("S900" in line for line in lines)
     for line in lines:
         keyword, words = parse(line)

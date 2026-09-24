@@ -270,6 +270,8 @@ class Streamer:
                 continue
             feed = float(group.speed)
             power = float(group.power)
+            # `M` is not modal, so a group without a floor leaves it off.
+            floor = f" M{num(min(float(group.min_power), power))}" if group.min_power > 0 else ""
             if group.joints:
                 # Joint-space paths go out as they are: each pair of points
                 # is one move, and a negative radius is the far side of the
@@ -295,7 +297,7 @@ class Streamer:
                             continue
                         seconds, limited = self._cut_cost(joint, target, feed)
                         yield Piece(
-                            line=f"cut {self.words(target)} F{num(feed)} S{num(power)}",
+                            line=f"cut {self.words(target)} F{num(feed)} S{num(power)}{floor}",
                             kind="cut",
                             joint=target,
                             seconds=seconds,
@@ -343,7 +345,7 @@ class Streamer:
                             # would otherwise leave every line after it
                             # refused for a missing word rather than simply
                             # stopping the run.
-                            line = f"cut {self.words(next_joint)} F{num(feed)} S{num(power)}"
+                            line = f"cut {self.words(next_joint)} F{num(feed)} S{num(power)}{floor}"
                             yield Piece(
                                 line=line,
                                 kind="cut",

@@ -145,3 +145,8 @@
   `spinny-center` pattern, coarse or fine with its options, as a stored job
   with its summary and reading notes; the Jobs panel has the form, and the
   mock builds the coarse one.
+- Per-layer minimum power (2026-09-23): `cut` takes a non-modal `M` word,
+  the floor a `dyn` cut's speed-scaled power does not drop below (capped
+  at `S`, still under `s_min`'s cutoff); groups carry `min_power` through
+  the store, patch, emitter and mock, and the groups table has a Min S
+  column whose number fields shrink with a narrow panel.

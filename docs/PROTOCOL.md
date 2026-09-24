@@ -48,7 +48,7 @@ keeps that axis where it is.
 | Command | Effect |
 | --- | --- |
 | `go [R<mm>] [A<deg>]` | rapid, laser off, each axis at its max rate; both axes arrive together |
-| `cut [R<mm>] [A<deg>] [F<mm/min>] [S<power>]` | line at surface speed `F` with laser power `S`; `F` and `S` are modal for later `cut` lines |
+| `cut [R<mm>] [A<deg>] [F<mm/min>] [S<power>] [M<power>]` | line at surface speed `F` with laser power `S`; `F` and `S` are modal for later `cut` lines; `M` is the least power in `dyn` mode, for this line only |
 | `jog [R<mm>] [A<deg>] [F<mm/min>]` | relative move, laser off, cancelable; without `F` at the `jog_r`/`jog_a` rates |
 | `jogto [R<mm>] [A<deg>] [F<mm/min>]` | absolute jog |
 | `dwell T<ms> [S<power>]` | wait after motion (`T` at most 600000); with `S` the laser is on at constant `S` for the dwell (a spot burn) |
@@ -126,7 +126,7 @@ own steps and its position is still good. The beam is off throughout.
 
 | Command | Effect |
 | --- | --- |
-| `mode dyn` | default: `cut` power is `S * achieved / requested` speed, off when stopped |
+| `mode dyn` | default: `cut` power is `S * achieved / requested` speed, but not below the line's `M`; off when stopped |
 | `mode const` | `cut` power is `S` while moving |
 | `laser S<power> [T<ms>]` | constant beam, `Idle` only, off after `T` ms (default `laser_ms`, max 60000) |
 | `laser off` | beam off |
@@ -136,7 +136,9 @@ USB host disconnects, and when the planner runs dry. A USB disconnect is a
 full reset: the queue is flushed, the modal state forgotten, and a machine
 that was moving is left in `Alarm:1`. `S` is 0 to `s_max`
 and maps linearly to PWM duty; in `dyn` mode a computed power below `s_min`
-is set to 0.
+is set to 0. `M` holds the beam up where the head slows for a corner: an `M`
+above `S` counts as `S`, a turn on the axis stays dark, and `s_min` still
+turns off a floor below it.
 
 ## Position and state
 

@@ -372,6 +372,9 @@ fn segment_duty(block: &Block, speed: f32, settings: &Settings, mode: PowerMode)
             } else {
                 0.0
             };
+            // The cut's floor keeps the beam up where the head slows for a
+            // corner or a ramp; `s_min` still turns off whatever is below it.
+            let scaled = scaled.max(block.min_power);
             if scaled < settings.s_min {
                 0.0
             } else {
@@ -949,18 +952,22 @@ mod tests {
             self.front.shared
         }
 
-        fn push(&mut self, r: f32, a: f32, kind: MoveKind, feed: Feed, power: f32) {
-            assert_eq!(self.planner.push([r, a], kind, feed, power, &self.settings), Ok(true));
+        fn push(&mut self, r: f32, a: f32, kind: MoveKind, feed: Feed, power: f32, min_power: f32) {
+            assert_eq!(self.planner.push([r, a], kind, feed, power, min_power, &self.settings), Ok(true));
             let block = self.planner.nth(self.planner.len() - 1).unwrap();
             self.pushed.push((block.steps, block.dir_forward));
         }
 
         fn go(&mut self, r: f32, a: f32) {
-            self.push(r, a, MoveKind::Rapid, Feed::Max, 0.0);
+            self.push(r, a, MoveKind::Rapid, Feed::Max, 0.0, 0.0);
         }
 
         fn cut(&mut self, r: f32, a: f32, feed: f32, power: f32) {
-            self.push(r, a, MoveKind::Cut, Feed::Surface(feed), power);
+            self.push(r, a, MoveKind::Cut, Feed::Surface(feed), power, 0.0);
+        }
+
+        fn cut_with_floor(&mut self, r: f32, a: f32, feed: f32, power: f32, min_power: f32) {
+            self.push(r, a, MoveKind::Cut, Feed::Surface(feed), power, min_power);
         }
 
         fn tick(&mut self) {
@@ -1404,8 +1411,8 @@ mod tests {
     #[test]
     fn jog_cancel_flushes_the_rest() {
         let mut rig = Rig::new(settings());
-        rig.push(50.0, 0.0, MoveKind::Jog, Feed::Jog, 0.0);
-        rig.push(50.0, 100.0, MoveKind::Jog, Feed::Jog, 0.0);
+        rig.push(50.0, 0.0, MoveKind::Jog, Feed::Jog, 0.0, 0.0);
+        rig.push(50.0, 100.0, MoveKind::Jog, Feed::Jog, 0.0, 0.0);
         assert!(rig.planner.has_jog());
         rig.advance(1_000_000);
         rig.front.request_hold();
@@ -1550,6 +1557,29 @@ mod tests {
         rig.go(10.0, 0.0);
         rig.run();
         assert_eq!(rig.max_duty(), 0);
+    }
+
+    #[test]
+    fn min_power_floors_the_dynamic_ramp() {
+        let mut rig = Rig::new(settings());
+        rig.cut_with_floor(10.0, 0.0, 600.0, 400.0, 150.0);
+        rig.run();
+        let duties: Vec<u16> = rig.loads.iter().filter(|l| l.segment.ticks > 0).map(|l| l.segment.duty).collect();
+        assert!(duties.contains(&400));
+        assert!(duties.iter().all(|&d| (150..=400).contains(&d)), "{duties:?}");
+        assert!(duties.contains(&150), "the ramp ends reach the floor: {duties:?}");
+        // `s_min` above the floor still turns the slow ends off.
+        let mut rig = Rig::new(settings());
+        rig.settings.s_min = 300.0;
+        rig.cut_with_floor(10.0, 0.0, 600.0, 400.0, 150.0);
+        rig.run();
+        assert!(rig.loads.iter().all(|l| l.segment.duty == 0 || l.segment.duty >= 300));
+        // Constant mode is already at S.
+        let mut rig = Rig::new(settings());
+        rig.mode = PowerMode::Constant;
+        rig.cut_with_floor(10.0, 0.0, 600.0, 400.0, 150.0);
+        rig.run();
+        assert!(rig.loads.iter().all(|l| l.segment.duty == 400));
     }
 
     #[test]

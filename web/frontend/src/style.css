@@ -702,6 +702,23 @@ table.groups input[type="checkbox"] {
     height: 1.5rem;
 }
 
+/* The group numbers shrink with a narrow column so the group's name keeps
+   some room; without spin buttons four digits still fit at the least. */
+table.groups input[type="number"] {
+    width: 100%;
+    min-width: 3rem;
+    max-width: 5.5rem;
+    padding-inline: 0.3rem;
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+table.groups input[type="number"]::-webkit-inner-spin-button,
+table.groups input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
 .swatch {
     display: inline-block;
     width: 0.7rem;

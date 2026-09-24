@@ -65,6 +65,9 @@ pub struct Block {
     pub kind: MoveKind,
     /// S value for a cut; zero for a turn on the axis.
     pub power: f32,
+    /// The floor a dynamic cut's power does not scale below, at most
+    /// `power`; zero for none.
+    pub min_power: f32,
     /// Board mm per second along this block at nominal speed, for reports.
     pub surface_rate: f32,
     /// Board length of the block, mm.
@@ -89,6 +92,7 @@ impl Block {
         acceleration: 0.0,
         kind: MoveKind::Rapid,
         power: 0.0,
+        min_power: 0.0,
         surface_rate: 0.0,
         surface_mm: 0.0,
         recalculate: false,
@@ -209,6 +213,7 @@ impl Planner {
         kind: MoveKind,
         feed: Feed,
         power: f32,
+        min_power: f32,
         settings: &Settings,
     ) -> Result<bool, PlanError> {
         let mut target_steps = [0i32; AXES];
@@ -286,6 +291,7 @@ impl Planner {
 
         // A turn on the axis has nothing under the beam: laser off.
         let power = if surface_mm < SURFACE_EPSILON_MM { 0.0 } else { power };
+        let min_power = min_power.clamp(0.0, power);
         let block = Block {
             steps,
             dir_forward,
@@ -299,6 +305,7 @@ impl Planner {
             acceleration,
             kind,
             power,
+            min_power,
             surface_rate: nominal_speed * surface_mm / length,
             surface_mm,
             recalculate: false,
@@ -458,7 +465,7 @@ mod tests {
     }
 
     fn push(planner: &mut Planner, r: f32, a: f32, kind: MoveKind, feed: Feed, power: f32) -> bool {
-        planner.push([r, a], kind, feed, power, &settings()).unwrap()
+        planner.push([r, a], kind, feed, power, 0.0, &settings()).unwrap()
     }
 
     fn close(a: f32, b: f32, tol: f32) -> bool {
@@ -512,11 +519,11 @@ mod tests {
     fn ring_fills_and_drains() {
         let mut planner = Planner::new();
         for i in 1..=BLOCKS {
-            assert_eq!(planner.push([i as f32, 0.0], MoveKind::Rapid, Feed::Max, 0.0, &settings()), Ok(true));
+            assert_eq!(planner.push([i as f32, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()), Ok(true));
         }
         assert_eq!(planner.free(), 0);
         assert_eq!(
-            planner.push([100.0, 0.0], MoveKind::Rapid, Feed::Max, 0.0, &settings()),
+            planner.push([100.0, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()),
             Err(PlanError::Full)
         );
         assert_eq!(planner.position(), [BLOCKS as i32 * 256, 0]);
@@ -597,6 +604,20 @@ mod tests {
         assert_eq!(b.surface_rate, 0.0);
         assert_eq!(b.power, 0.0);
         assert_eq!(b.kind, MoveKind::Cut);
+    }
+
+    #[test]
+    fn min_power_is_held_between_zero_and_power() {
+        let mut planner = Planner::new();
+        let s = settings();
+        planner.push([10.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
+        assert_eq!(planner.nth(0).unwrap().min_power, 150.0);
+        planner.push([20.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 900.0, &s).unwrap();
+        assert_eq!(planner.nth(1).unwrap().min_power, 400.0);
+        // A turn on the axis burns nothing, floor or not.
+        planner.push([0.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
+        planner.push([0.0, 90.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
+        assert_eq!(planner.nth(3).unwrap().min_power, 0.0);
     }
 
     #[test]
