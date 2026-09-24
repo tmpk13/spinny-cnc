@@ -84,6 +84,9 @@ function fakeApi(state: HeightMapState): { api: Api; calls: { name: string; args
         if (name === "jobs") {
             return [];
         }
+        if (name === "settings") {
+            return { values: { probe_ms: 20 }, schema: [], host: { tolerance: 0.005 } };
+        }
         return name === "state" ? connected() : state;
     };
     const api = new Proxy({}, { get: (_, name: string) => answer(name) }) as unknown as Api;
@@ -299,6 +302,26 @@ describe("height map panel", () => {
             { depth: 3 },
             { offset: [0, -1.5] },
         ]);
+    });
+});
+
+describe("probe brake queue", () => {
+    test("the queue field shows the machine setting and writes it", async () => {
+        const { store, ctx, root, calls } = setup({ map: null, probe: null, settings: SETTINGS });
+        mountHeightMap(root, ctx);
+        store.set({ snapshot: connected(), settings: { values: { probe_ms: 20 }, schema: [], host: { tolerance: 0.005 } } });
+        const fields = root.querySelectorAll(".hm-probe-settings input");
+        const queue = fields[6] as HTMLInputElement;
+        expect(queue.value).toBe("20");
+        queue.value = "0";
+        queue.dispatchEvent(new Event("change"));
+        await settle();
+        expect(calls.find((call) => call.name === "updateSettings")?.args[0]).toEqual({ values: { probe_ms: 0 } });
+        queue.value = "165";
+        queue.dispatchEvent(new Event("change"));
+        await settle();
+        expect(calls.filter((call) => call.name === "updateSettings").length).toBe(1);
+        expect(queue.value).toBe("20");
     });
 });
 

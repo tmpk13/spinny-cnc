@@ -15,6 +15,8 @@ export const DEFAULT_GRID: Grid = { x0: -20, y0: -20, x1: 20, y1: 20, nx: 5, ny:
 export const FIT_MARGIN = 1;
 /** Above this many points a side the cells are too small to carry their value. */
 export const LABELED_POINTS = 8;
+/** Largest brake queue the firmware takes, ms: its whole segment ring. */
+export const PROBE_MS_MAX = 160;
 /** The strongest a cell's color gets, percent of the pole: past it the value on top loses its contrast. */
 export const MAX_TINT = 70;
 
@@ -256,6 +258,28 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     onChange(settingFields.along, () => offsetPatch());
     onChange(settingFields.across, () => offsetPatch());
 
+    // How long the head goes on past the contact before it brakes: a
+    // setting of the machine, not of this page, so it is written there.
+    const queueField = numberField({ min: 0, max: PROBE_MS_MAX, step: 10 });
+    queueField.addEventListener("change", () => {
+        const value = parseNumber(queueField.value);
+        if (value === null || !Number.isInteger(value) || value < 0 || value > PROBE_MS_MAX) {
+            ctx.toast("error", `the probe queue is a whole number of ms from 0 to ${PROBE_MS_MAX}`);
+            showQueue(ctx.store.get());
+            return;
+        }
+        void (async () => {
+            await ctx.call(ctx.api.updateSettings({ values: { probe_ms: value } }));
+            await ctx.refreshSettings();
+        })();
+    });
+    const showQueue = (state: AppState): void => {
+        const value = state.settings?.values["probe_ms"];
+        if (queueField !== document.activeElement) {
+            queueField.value = value === undefined ? "" : String(value);
+        }
+    };
+
     const probeButton = button("Probe", () => startProbe(), "btn btn-primary");
     const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger");
     const probeNote = el("p", { class: "muted hint" });
@@ -308,10 +332,14 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
                 labeled("Back-off mm", settingFields.backoff),
                 labeled("Tip along mm", settingFields.along),
                 labeled("Tip across mm", settingFields.across),
+                labeled("Brake queue ms", queueField),
             ),
             el("p", { class: "muted hint" },
                 "Depth is the most the probe goes down from where the head starts. Slow 0 touches once."
-                + " The tip offset is from the beam: along the rail, outward positive, and across it."),
+                + " The tip offset is from the beam: along the rail, outward positive, and across it."
+                + " The brake queue is how long the head goes on past the contact before it brakes;"
+                + " the height is read at the contact either way. 0 stops it dead when the probe is"
+                + " no faster than h_jerk. It is a machine setting: Save to flash keeps it."),
         ),
         el("div", { class: "button-row" }, fit, probeButton, stopButton),
         probeNote,
@@ -535,6 +563,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     ctx.store.subscribe((state) => renderData(state), ["heightMap"]);
     publishDraft();
     ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress"]);
+    ctx.store.subscribe((state) => showQueue(state), ["settings"]);
+    showQueue(ctx.store.get());
     renderData(ctx.store.get());
     render(ctx.store.get());
 }

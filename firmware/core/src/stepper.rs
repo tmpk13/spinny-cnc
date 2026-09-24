@@ -30,8 +30,16 @@
 //! itself: the main loop sees the flag and brakes like a jog cancel, so
 //! the latched position is the contact and the travel after it is only
 //! the braking distance. A brake only reaches segments not yet written,
-//! so a probe keeps no more than `PROBE_SEGMENTS` in the ring: with the
-//! full ring the head would press on for 160 ms past the contact.
+//! so a probe keeps no more than `probe_segments` in the ring (the
+//! `probe_ms` setting): with the full ring the head would press on for
+//! 160 ms past the contact.
+//!
+//! A probe armed to halt (`probe_ms` 0, and slow enough that stopping dead
+//! is within the axis's jerk) does not brake at all: at the contact the
+//! interrupt drops the segment in progress and everything queued, and
+//! while the halt stands it drops whatever else arrives, so the head
+//! stops within the tick. The main loop then ends the probe with
+//! `Front::abort`, which forgets the halt.
 //!
 //! Abort ordering: `Front::abort` sets `Shared::abort` and forgets its own
 //! state; it cannot empty the ring because the `Consumer` belongs to the
@@ -72,8 +80,11 @@ const MIN_EVENT_RATE_HZ: f32 = 2.0;
 /// Segment length as planned, seconds.
 const SEGMENT_S: f32 = SEGMENT_MS as f32 / 1000.0;
 /// Segments a probe block keeps queued: the time between contact and the
-/// start of the brake, beyond the main loop's own period.
-pub const PROBE_SEGMENTS: usize = 2;
+/// start of the brake, beyond the main loop's own period. `probe_ms` in
+/// whole segments, rounded up, and at least one.
+pub fn probe_segments(settings: &Settings) -> usize {
+    (settings.probe_ms.div_ceil(SEGMENT_MS) as usize).clamp(1, SEGMENTS)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StepBlock {
@@ -148,6 +159,9 @@ pub struct Shared {
     /// in steps at that tick. Cleared by `Front::arm_probe`.
     pub probe_hit: AtomicBool,
     pub probe_at: AtomicI32,
+    /// The probe stops dead at contact rather than braking: set by
+    /// `Front::arm_probe`, cleared when the front forgets its state.
+    pub probe_halt: AtomicBool,
     /// Slot of the segment in progress, `NO_SLOT` when none; kept for the
     /// slot reuse check in the tests.
     #[cfg(test)]
@@ -188,6 +202,7 @@ impl Shared {
             probe_level: AtomicBool::new(false),
             probe_hit: AtomicBool::new(false),
             probe_at: AtomicI32::new(0),
+            probe_halt: AtomicBool::new(false),
             #[cfg(test)]
             executing: core::sync::atomic::AtomicU8::new(NO_SLOT),
         }
@@ -455,7 +470,12 @@ impl<'a> Front<'a> {
                 break;
             }
             let probing = planner.current().is_some_and(|block| block.kind == MoveKind::Probe);
-            if probing && self.producer.len() >= PROBE_SEGMENTS {
+            if probing && self.producer.len() >= probe_segments(settings) {
+                break;
+            }
+            // A halted probe is over: nothing more goes out until the main
+            // loop has ended it.
+            if self.halted() {
                 break;
             }
             if !self.produce(planner, settings, mode) {
@@ -666,6 +686,7 @@ impl<'a> Front<'a> {
         self.hold = Hold::None;
         self.resume_pending = false;
         self.speed = 0.0;
+        self.shared.probe_halt.store(false, Ordering::SeqCst);
     }
 
     /// After a hold has stopped: discard what was queued (a jog cancel) and
@@ -685,9 +706,17 @@ impl<'a> Front<'a> {
         self.shared.read_position()
     }
 
-    /// Forgets an earlier contact, before a probe block is queued.
-    pub fn arm_probe(&mut self) {
+    /// Forgets an earlier contact, before a probe block is queued. With
+    /// `halt` the interrupt stops the axes dead at the contact.
+    pub fn arm_probe(&mut self, halt: bool) {
         self.shared.probe_hit.store(false, Ordering::SeqCst);
+        self.shared.probe_halt.store(halt, Ordering::SeqCst);
+    }
+
+    /// A probe armed to halt has met contact, and the interrupt is
+    /// dropping whatever reaches it.
+    fn halted(&self) -> bool {
+        self.shared.probe_halt.load(Ordering::SeqCst) && self.shared.probe_hit.load(Ordering::SeqCst)
     }
 
     /// Focus axis position in steps at the contact a probe block met, once
@@ -748,17 +777,14 @@ impl<'a> Isr<'a> {
     pub fn tick(&mut self, port: &mut impl StepPort, laser: &mut impl LaserPort) -> Option<u32> {
         let shared = self.shared;
         if shared.abort.load(Ordering::SeqCst) {
-            let mut dropped = self.segment.take().map_or(0, |_| 1);
-            while self.consumer.dequeue().is_some() {
-                dropped += 1;
-            }
-            self.loaded = None;
-            self.ticks_left = 0;
-            self.finish_segments(dropped);
-            laser.set_duty(shared.off_duty());
-            self.publish(0.0, shared.off_duty());
-            shared.idle.store(true, Ordering::SeqCst);
+            self.drop_all(laser);
             shared.abort.store(false, Ordering::SeqCst);
+            return None;
+        }
+        // A halted probe stays halted: a segment the front wrote just as
+        // the contact came is dropped here, not stepped.
+        if shared.probe_halt.load(Ordering::SeqCst) && shared.probe_hit.load(Ordering::SeqCst) {
+            self.drop_all(laser);
             return None;
         }
         if self.segment.is_none() {
@@ -790,6 +816,12 @@ impl<'a> Isr<'a> {
         {
             shared.probe_at.store(shared.position[H].load(Ordering::Relaxed), Ordering::Relaxed);
             shared.probe_hit.store(true, Ordering::Release);
+            if shared.probe_halt.load(Ordering::SeqCst) {
+                // Not even this tick's steps: the axis stops where the
+                // input was read.
+                self.drop_all(laser);
+                return None;
+            }
         }
         let mut mask = 0u8;
         for i in 0..AXES {
@@ -814,6 +846,22 @@ impl<'a> Isr<'a> {
         let carry = self.frac_acc >> 8;
         self.frac_acc &= 0xFF;
         Some(segment.period_us + carry)
+    }
+
+    /// Drops the segment in progress and everything queued, beam off, and
+    /// goes idle; an abort and a probe halt end this way.
+    fn drop_all(&mut self, laser: &mut impl LaserPort) {
+        let shared = self.shared;
+        let mut dropped = self.segment.take().map_or(0, |_| 1);
+        while self.consumer.dequeue().is_some() {
+            dropped += 1;
+        }
+        self.loaded = None;
+        self.ticks_left = 0;
+        self.finish_segments(dropped);
+        laser.set_duty(shared.off_duty());
+        self.publish(0.0, shared.off_duty());
+        shared.idle.store(true, Ordering::SeqCst);
     }
 
     /// Publishes what the executing segment does, for the status report.

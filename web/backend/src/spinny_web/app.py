@@ -98,6 +98,7 @@ SETTINGS_SCHEMA = [
     {"name": "probe_invert", "unit": "0/1", "help": "1 = probe input active high"},
     {"name": "tmc_h_ma", "unit": "mA", "help": "focus axis run current"},
     {"name": "tmc_h_micro", "unit": "", "help": "microsteps"},
+    {"name": "probe_ms", "unit": "ms", "help": "motion queued during a probe, 0 to 160; 0 stops dead within h_jerk"},
 ]
 
 NO_FRONTEND = """<!doctype html>

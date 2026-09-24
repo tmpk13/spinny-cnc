@@ -30,8 +30,9 @@
 //! before it, like a dwell, then runs as a jog of the focus axis whose
 //! block watches the probe input, and it stays pending until it ends, so
 //! nothing runs behind it. At contact the interrupt latches the position,
-//! `poll` brakes, and the line is answered with `[PRB:h:1]` and `ok` once
-//! the head has stopped. A probe that goes its whole distance without
+//! `poll` brakes (or, with `probe_ms` 0 and a probe slow enough, the
+//! interrupt has already stopped the axis dead), and the line is answered
+//! with `[PRB:h:1]` and `ok` once the head has stopped. A probe that goes its whole distance without
 //! contact raises `Alarm:2` and is answered `error:11`: the head is lower
 //! than whoever sent it thinks, and whatever they sent next would move it
 //! across the board. A jog cancel ends it with `[PRB:h:0]` and `ok`.
@@ -118,6 +119,8 @@ pub struct Machine<'a> {
     jog_cancel: bool,
     /// A probe met contact and is braking.
     probe_braking: bool,
+    /// The probe in progress stops dead at contact instead of braking.
+    probe_halting: bool,
     /// The probe input is active, as of the last `poll`.
     probe_active: bool,
     /// A hold asked for while idle with a motion line taken in or still
@@ -158,6 +161,7 @@ impl<'a> Machine<'a> {
             beam_until: 0,
             jog_cancel: false,
             probe_braking: false,
+            probe_halting: false,
             probe_active: false,
             hold_latched: false,
             apply_laser: true,
@@ -644,6 +648,7 @@ impl<'a> Machine<'a> {
         self.pending = Pending::None;
         self.jog_cancel = false;
         self.probe_braking = false;
+        self.probe_halting = false;
         self.hold_latched = false;
         self.dwell_until = None;
         self.dwell_left_us = 0;
@@ -721,8 +726,15 @@ impl<'a> Machine<'a> {
         if motion_done {
             self.enter_idle(laser);
         }
-        if self.pending == Pending::Probing && !self.jog_cancel {
-            self.poll_probe(laser, out);
+        if self.pending == Pending::Probing {
+            // A halt at contact has stopped the axis already, whatever a
+            // jog cancel was braking toward; the probe ends as a contact.
+            if self.probe_halting && self.front.probe_contact().is_some() {
+                self.jog_cancel = false;
+            }
+            if !self.jog_cancel {
+                self.poll_probe(laser, out);
+            }
         }
         if self.jog_cancel && self.front.is_stopped() {
             self.jog_cancel = false;
@@ -739,6 +751,7 @@ impl<'a> Machine<'a> {
                 // is, so no alarm, but no contact either unless there was.
                 self.pending = Pending::None;
                 self.probe_braking = false;
+                self.probe_halting = false;
                 self.report_probe(contact, out);
                 report::ok(out);
             }
@@ -906,7 +919,11 @@ impl<'a> Machine<'a> {
         {
             return refuse(self, Error::OutOfRange, out);
         }
-        self.front.arm_probe();
+        // Stopping dead is a speed change of the whole probe speed at once,
+        // which the axis takes only within its jerk allowance; a faster
+        // probe brakes as usual, from a single queued segment.
+        let halting = self.settings.probe_ms == 0 && feed / 60.0 <= self.settings.jerk[H];
+        self.front.arm_probe(halting);
         match self.planner.push(target, MoveKind::Probe, Feed::Surface(feed), 0.0, 0.0, &self.settings) {
             Ok(true) => {}
             // Under one step, or no speed: nothing to probe with.
@@ -917,6 +934,7 @@ impl<'a> Machine<'a> {
             laser.set_duty(self.off_duty());
         }
         self.pending = Pending::Probing;
+        self.probe_halting = halting;
         self.state = State::Jog;
         if self.hold_latched {
             self.enter_hold(laser);
@@ -929,13 +947,28 @@ impl<'a> Machine<'a> {
     fn poll_probe(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) {
         let contact = self.front.probe_contact();
         if contact.is_some() && !self.probe_braking {
-            self.front.request_hold();
+            if self.probe_halting {
+                // The interrupt has stopped the axis and dropped the ring;
+                // the abort drops what the front still meant to write and
+                // takes the position from the steps actually made.
+                self.front.abort(&mut self.planner);
+                self.planner.clear();
+            } else {
+                self.front.request_hold();
+            }
             self.probe_braking = true;
         }
         if self.probe_braking {
-            if self.front.is_stopped() {
-                self.front.flush(&mut self.planner);
-                self.planner.clear();
+            let stopped = if self.probe_halting {
+                !self.front.busy() && !self.front.resync_pending()
+            } else {
+                self.front.is_stopped()
+            };
+            if stopped {
+                if !self.probe_halting {
+                    self.front.flush(&mut self.planner);
+                    self.planner.clear();
+                }
                 self.finish_probe(contact, laser, out);
             }
             return;
@@ -950,6 +983,7 @@ impl<'a> Machine<'a> {
     fn finish_probe(&mut self, contact: Option<i32>, laser: &mut impl LaserPort, out: &mut impl Sink) {
         self.pending = Pending::None;
         self.probe_braking = false;
+        self.probe_halting = false;
         self.report_probe(contact, out);
         if contact.is_some() {
             report::ok(out);
@@ -2120,7 +2154,7 @@ mod tests {
         assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("tmc_h_micro=256\nok\n"));
+        assert!(listing.ends_with("probe_ms=20\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -2750,5 +2784,72 @@ mod tests {
         rig.run();
         assert_eq!(rig.take_out(), "[PRB:-1.0000:1]\nok\n");
         assert_eq!(rig.machine.joint()[R], 20.0);
+    }
+
+    /// How far past a contact at -1.25 mm a 60 mm/min probe stops.
+    fn overtravel(probe_ms: u32) -> f32 {
+        let mut rig = Rig::with(Settings { h_axis: true, probe_ms, ..bench_settings() });
+        rig.take_out();
+        rig.surface = Some(-1.25);
+        assert_eq!(rig.line("probe H-5 F60"), "[PRB:-1.2500:1]\nok\n", "probe_ms={probe_ms}");
+        -1.25 - rig.machine.joint()[H]
+    }
+
+    #[test]
+    fn the_probe_queue_sets_how_far_the_head_presses_on() {
+        let (full, default, short) = (overtravel(160), overtravel(20), overtravel(10));
+        // At 1 mm/s every 10 ms of queue is 0.01 mm, the segment being
+        // stepped one more, and the brake at 50 mm/s^2 another 0.01 mm.
+        assert!(full > 0.15, "{full}");
+        assert!(default > short && default < 0.045, "{default}");
+        assert!(short < 0.035, "{short}");
+        // Rounded up to whole segments.
+        assert_eq!(overtravel(15), default);
+    }
+
+    #[test]
+    fn a_probe_at_zero_ms_stops_dead_at_the_contact() {
+        // 60 mm/min is the 1 mm/s the bench allows the axis to change at once.
+        assert_eq!(overtravel(0), 0.0);
+        let mut rig = Rig::with(Settings { h_axis: true, probe_ms: 0, ..bench_settings() });
+        rig.take_out();
+        rig.surface = Some(-1.25);
+        assert_eq!(rig.line("probe H-5 F60"), "[PRB:-1.2500:1]\nok\n");
+        assert_eq!(rig.state(), State::Idle);
+        // The halt is over: the next moves run.
+        assert_eq!(rig.line("jogto H1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[H], 1.0);
+        rig.surface = Some(0.5);
+        assert_eq!(rig.line("probe H-1 F30"), "[PRB:0.5000:1]\nok\n");
+        assert_eq!(rig.machine.joint()[H], 0.5);
+    }
+
+    #[test]
+    fn a_probe_too_fast_to_stop_dead_brakes_instead() {
+        let mut rig = Rig::with(Settings { h_axis: true, probe_ms: 0, ..bench_settings() });
+        rig.take_out();
+        rig.surface = Some(-1.25);
+        assert_eq!(rig.line("probe H-5 F120"), "[PRB:-1.2500:1]\nok\n");
+        let past = -1.25 - rig.machine.joint()[H];
+        // One segment at 2 mm/s and the brake from it.
+        assert!(past > 0.01 && past < 0.08, "{past}");
+    }
+
+    #[test]
+    fn a_halt_during_a_jog_cancel_ends_as_a_contact() {
+        let mut rig = Rig::with(Settings { h_axis: true, probe_ms: 0, ..bench_settings() });
+        rig.take_out();
+        rig.surface = Some(-1.005);
+        rig.submit("probe H-3 F60");
+        rig.advance(1_000_000);
+        rig.realtime(Realtime::JogCancel);
+        rig.run();
+        let out = rig.take_out();
+        assert!(out.starts_with("[PRB:-1.00") && out.ends_with(":1]\nok\n"), "{out:?}");
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.line("jog H1"), "ok\n");
+        rig.run();
+        assert!(rig.machine.joint()[H] > -0.01, "{:?}", rig.machine.joint());
     }
 }

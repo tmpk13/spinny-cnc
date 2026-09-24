@@ -122,9 +122,15 @@ when it ends; nothing runs behind it
 meanwhile. The state is `Jog` while it moves.
 
 - Contact: `[PRB:<h>:1]` then `ok`, with `<h>` the `H` position in mm, four
-  decimals, when the input went active. The head brakes from there: a
-  probe keeps only 20 ms of motion queued, so it stops about
-  `F / 60 * 0.02` mm plus the braking distance past the contact.
+  decimals, when the input went active, read at every step: the queue
+  below changes where the head stops, not the height reported. The head
+  brakes from there: a probe keeps only `probe_ms` of motion queued
+  (20 ms by default, in whole 10 ms segments), and with the segment being
+  stepped it stops about `F / 60 * (probe_ms + 10) / 1000` mm plus the
+  braking distance past the contact. With `probe_ms` 0 and `F / 60` within
+  `h_jerk` (the speed the axis may change at once) there is no brake:
+  the interrupt stops the axis at the step the contact was read on. A
+  faster probe with `probe_ms` 0 brakes from one queued segment.
 - No contact within the distance: `[PRB:<h>:0]`, `ALARM:2 probe missed,
   check the head before moving`, then `error:11 probe missed`. The machine
   stays in `Alarm:2` until `unlock`: the head went further down than
@@ -254,6 +260,7 @@ microsteps a power of two up to 256.
 | `probe_invert` | 0/1 | 0 | 1 = probe input active high |
 | `tmc_h_ma` | mA | 600 | focus axis run current; its driver is left alone while `h_axis` is 0 |
 | `tmc_h_micro` | | 256 | |
+| `probe_ms` | ms | 20 | motion queued during a probe, 0 to 160: how long the head goes on past contact before it brakes; 0 stops it dead when the probe is within `h_jerk` |
 
 Changing a `tmc_*` setting or `h_axis` re-sends the driver configuration.
 

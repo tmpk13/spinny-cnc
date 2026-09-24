@@ -8,7 +8,7 @@
 use crate::hal::Sink;
 use crate::parser::number;
 use crate::report;
-use crate::{A, AXES, H, R};
+use crate::{A, AXES, H, R, SEGMENTS, SEGMENT_MS};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -63,7 +63,16 @@ pub struct Settings {
     /// The probe input is active high; off, it is active low, as a switch
     /// or a pin touching grounded copper pulls it down.
     pub probe_invert: bool,
+    /// Motion kept queued ahead of the step interrupt during a probe, ms:
+    /// with the segment being stepped, how long the head goes on past the
+    /// contact before its brake starts. Whole segments, rounded up; 0 stops
+    /// the axis at the contact without a brake when the probe is slow
+    /// enough for that (see `stepper`).
+    pub probe_ms: u32,
 }
+
+/// Largest `probe_ms`: the whole segment ring.
+pub const PROBE_MS_MAX: u32 = SEGMENTS as u32 * SEGMENT_MS;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -104,12 +113,13 @@ impl Default for Settings {
             tmc_stealth: true,
             h_axis: false,
             probe_invert: false,
+            probe_ms: 20,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 41] = [
+pub const NAMES: [&str; 42] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -117,7 +127,7 @@ pub const NAMES: [&str; 41] = [
     "tmc_r_ma", "tmc_a_ma", "tmc_hold_pct", "tmc_r_micro", "tmc_a_micro",
     "tmc_z_ma", "tmc_z_micro", "tmc_stealth",
     "h_axis", "h_steps", "h_rate", "h_accel", "h_jerk", "jog_h", "probe_invert",
-    "tmc_h_ma", "tmc_h_micro",
+    "tmc_h_ma", "tmc_h_micro", "probe_ms",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,14 +155,14 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
 /// older firmware is thrown away rather than read as this layout.
-const BLOB_VERSION: u8 = 3;
+const BLOB_VERSION: u8 = 4;
 /// Bytes before the first field: magic and version.
 const HEADER_LEN: usize = MAGIC.len() + 1;
 /// Serialized size of the fields, in blob order.
 const FIELDS_LEN: usize = 4 * (AXES + AXES + AXES + AXES + 1 + 4 + AXES)
     + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 + 4
     + 4 * AXES + 4 + 4 * AXES + 4 + 4 + 1
-    + 1 + 1;
+    + 1 + 1 + 4;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -173,7 +183,7 @@ fn index_of(name: &str) -> Option<usize> {
 
 fn group(index: usize) -> Changed {
     match index {
-        0..=18 | 33..=38 => Changed::Motion,
+        0..=18 | 33..=38 | 41 => Changed::Motion,
         19..=23 => Changed::Laser,
         // Whether the focus axis is fitted decides whether its driver is
         // configured.
@@ -317,7 +327,8 @@ impl Settings {
             37 => Slot::Float(&mut self.jog_rate[H]),
             38 => Slot::Flag(&mut self.probe_invert),
             39 => Slot::Int(&mut self.tmc_ma[H]),
-            _ => Slot::Int(&mut self.tmc_micro[H]),
+            40 => Slot::Int(&mut self.tmc_micro[H]),
+            _ => Slot::Int(&mut self.probe_ms),
         }
     }
 
@@ -344,6 +355,7 @@ impl Settings {
             && positive(self.jog_z)
             && self.jog_rate.iter().all(|&v| positive(v))
             && self.dir_invert <= 15
+            && self.probe_ms <= PROBE_MS_MAX
             && (1..=20).contains(&self.step_us)
             && (100..=100_000).contains(&self.laser_hz)
             && positive(self.s_max)
@@ -459,6 +471,7 @@ impl Settings {
         w.flag(self.tmc_stealth);
         w.flag(self.h_axis);
         w.flag(self.probe_invert);
+        w.u32(self.probe_ms);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
     }
@@ -518,6 +531,7 @@ impl Settings {
         s.tmc_stealth = r.flag()?;
         s.h_axis = r.flag()?;
         s.probe_invert = r.flag()?;
+        s.probe_ms = r.u32();
         if !s.is_valid() {
             return None;
         }
@@ -593,7 +607,8 @@ mod tests {
         jog_h=120\n\
         probe_invert=0\n\
         tmc_h_ma=600\n\
-        tmc_h_micro=256\n";
+        tmc_h_micro=256\n\
+        probe_ms=20\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -602,7 +617,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 41> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 42> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -621,7 +636,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 41] = [
+        let table: [(&str, &str, &str, Changed); 42] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -663,6 +678,7 @@ mod tests {
             ("probe_invert", "1", "1", Changed::Motion),
             ("tmc_h_ma", "400", "400", Changed::Driver),
             ("tmc_h_micro", "16", "16", Changed::Driver),
+            ("probe_ms", "0", "0", Changed::Motion),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -758,6 +774,10 @@ mod tests {
         rejects("h_steps", "0");
         rejects("h_axis", "2");
         rejects("tmc_h_micro", "3");
+        rejects("probe_ms", "161");
+        rejects("probe_ms", "-10");
+        accepts("probe_ms", "160");
+        accepts("probe_ms", "15");
         accepts("dir_invert", "0");
         accepts("dir_invert", "7");
         accepts("idle_ms", "0");
@@ -935,13 +955,17 @@ mod tests {
         let mut blob = [0u8; BLOB_LEN];
         Settings::default().to_blob(&mut blob);
         // Every field lands where the writer says it does: the stealth
-        // flag, then the focus axis and probe flags, just before the padding.
-        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - 3], 1);
-        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - 2..HEADER_LEN + FIELDS_LEN], [0, 0]);
-        assert!(blob[HEADER_LEN + FIELDS_LEN..CRC_OFFSET].iter().all(|&b| b == 0));
-        let focus = Settings { h_axis: true, probe_invert: true, ..Settings::default() };
+        // flag, the focus axis and probe flags, then the probe queue time,
+        // just before the padding.
+        let end = HEADER_LEN + FIELDS_LEN;
+        assert_eq!(blob[end - 7], 1);
+        assert_eq!(blob[end - 6..end - 4], [0, 0]);
+        assert_eq!(blob[end - 4..end], 20u32.to_le_bytes());
+        assert!(blob[end..CRC_OFFSET].iter().all(|&b| b == 0));
+        let focus = Settings { h_axis: true, probe_invert: true, probe_ms: 160, ..Settings::default() };
         focus.to_blob(&mut blob);
-        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - 2..HEADER_LEN + FIELDS_LEN], [1, 1]);
+        assert_eq!(blob[end - 6..end - 4], [1, 1]);
+        assert_eq!(blob[end - 4..end], 160u32.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), Some(focus));
     }
 

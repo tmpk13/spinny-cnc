@@ -62,6 +62,7 @@ DEFAULT_SETTINGS = {
     "probe_invert": 0,
     "tmc_h_ma": 600,
     "tmc_h_micro": 256,
+    "probe_ms": 20,
 }
 
 

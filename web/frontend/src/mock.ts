@@ -86,6 +86,7 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     probe_invert: 0,
     tmc_h_ma: 600,
     tmc_h_micro: 256,
+    probe_ms: 20,
 };
 
 /**
@@ -144,6 +145,7 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "probe_invert", unit: "0/1", help: "1 = probe input active high" },
     { name: "tmc_h_ma", unit: "mA", help: "focus axis run current" },
     { name: "tmc_h_micro", unit: "", help: "microsteps" },
+    { name: "probe_ms", unit: "ms", help: "motion queued during a probe, 0 to 160; 0 stops dead within h_jerk" },
 ];
 
 export type MoveKind = "go" | "cut" | "jog";
@@ -720,6 +722,9 @@ export class MockMachine {
             throw new MachineError(7, "bad setting value");
         }
         if ((name === "h_axis" || name === "probe_invert") && value !== 0 && value !== 1) {
+            throw new MachineError(7, "bad setting value");
+        }
+        if (name === "probe_ms" && !(Number.isInteger(value) && value >= 0 && value <= 160)) {
             throw new MachineError(7, "bad setting value");
         }
         this.settings[name] = value;

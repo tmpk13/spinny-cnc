@@ -109,10 +109,13 @@ USB packet or a flash write cannot stretch a step. The interrupt only
 consumes the ring: it advances the Bresenham counters, pulses the pins and
 sets the duty for the segment it starts.
 
-A probe block is the one exception to filling far ahead: it keeps two
-segments queued, because a brake only reaches segments not yet written,
-and the interrupt reads the probe input at every tick of it, latching the
-focus position at contact for the main loop to report once it has braked.
+A probe block is the one exception to filling far ahead: it keeps only
+`$probe_ms` of segments queued (20 ms by default), because a brake only
+reaches segments not yet written, and the interrupt reads the probe input
+at every tick of it, latching the focus position at contact for the main
+loop to report once it has braked. With `$probe_ms=0` and a probe slow
+enough for the axis to stop at once, the interrupt drops the ring at the
+contact instead, and the head stops on that step.
 
 The cross slide is deliberately outside all of that. It runs from the main
 loop, capped at 20 kHz, because it only ever moves alone, from rest, with

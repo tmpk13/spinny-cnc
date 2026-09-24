@@ -166,3 +166,7 @@
   firmware, a prober and height map in the backend, runs compensated by
   the focus axis or by power, and a Height map panel with focus jogs, the
   probe grid on the preview and a compensation choice on Run.
+- Adjustable probe brake queue (2026-09-23): `$probe_ms` (0 to 160 ms,
+  default 20) sets how long a probe goes on past the contact before it
+  brakes; 0 stops the focus axis dead at the contact when the probe is
+  within `h_jerk`. Also a field under Probe in the Height map panel.
