@@ -1,85 +1,123 @@
-/* Spinny laser web interface. Sizes are rem, %, vh and clamp(); no pixels. */
+/* Spinny laser web interface. Sizes are rem, %, vh and clamp(); no pixels.
+   Colors are the Solarized palette, light and dark. */
 
 :root {
     color-scheme: light dark;
     --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    --bg: #eef0f2;
-    --panel: #ffffff;
-    --panel-2: #f5f6f8;
-    --text: #1c1e21;
-    --muted: #66707a;
-    --border: #d3d8de;
-    --accent: #2060c0;
-    --accent-text: #ffffff;
-    --danger: #c02020;
-    --danger-text: #ffffff;
-    --idle: #6b7680;
-    --run: #2060c0;
-    --jog: #1f8a3c;
-    --hold: #c07a00;
-    --alarm: #c02020;
-    --laser: #e07000;
-    --pv-bg: #fbfbfa;
-    --pv-grid: #dcdcd8;
-    --pv-axis: #e07000;
-    --pv-rail: #8090a0;
-    --pv-rmax: #c02020;
-    --pv-copper: #c8a165;
-    --pv-outline: #404040;
-    --pv-head: #e07000;
-    --pv-trail: #e0a000;
-    --pv-text: #707070;
-    --pv-g0: #c02020;
-    --pv-g1: #204090;
-    --pv-g2: #207040;
-    --pv-g3: #806000;
-    --pv-probe: #7a3fb0;
+
+    /* Solarized */
+    --base03: #002b36;
+    --base02: #073642;
+    --base01: #586e75;
+    --base00: #657b83;
+    --base0: #839496;
+    --base1: #93a1a1;
+    --base2: #eee8d5;
+    --base3: #fdf6e3;
+    --yellow: #b58900;
+    --orange: #cb4b16;
+    --red: #dc322f;
+    --magenta: #d33682;
+    --violet: #6c71c4;
+    --blue: #268bd2;
+    --cyan: #2aa198;
+    --green: #859900;
+
+    /* Surfaces: the page, a panel on it, and wells set into a panel
+       (fields, readouts, the console). */
+    --bg: var(--base2);
+    --panel: var(--base3);
+    --panel-2: color-mix(in oklab, var(--base2) 55%, var(--base3));
+    --field: var(--panel-2);
+    --btn: var(--base2);
+    --btn-hover: color-mix(in oklab, var(--base1) 22%, var(--base2));
+    --border: color-mix(in oklab, var(--base1) 40%, var(--base2));
+    --border-strong: color-mix(in oklab, var(--base1) 75%, var(--base2));
+    --strong: var(--base03);
+    --text: var(--base02);
+    --muted: var(--base01);
+    --shadow: 0 0.0625rem 0.2rem color-mix(in oklab, var(--base01) 18%, transparent);
+    --shadow-lg: 0 0.5rem 1.5rem color-mix(in oklab, var(--base01) 30%, transparent);
+
+    --accent: var(--blue);
+    /* Filled buttons sit a shade darker than the accent so their label
+       reads in both themes. */
+    --accent-fill: color-mix(in oklab, var(--blue) 86%, var(--base03));
+    --danger: var(--red);
+    --danger-fill: color-mix(in oklab, var(--red) 90%, var(--base03));
+    --on-fill: var(--base3);
+    --ring: color-mix(in oklab, var(--blue) 40%, transparent);
+
+    /* Aliases the views and older rules use. */
+    --accent-text: var(--on-fill);
+    --danger-text: var(--on-fill);
+
+    --idle: var(--base00);
+    --run: var(--blue);
+    --jog: var(--green);
+    --hold: var(--yellow);
+    --alarm: var(--red);
+    --laser: var(--orange);
+    --mock: var(--violet);
+
+    /* The preview canvas reads these as plain colors: keep them literal. */
+    --pv-bg: #fdf6e3;
+    --pv-grid: #e6dfca;
+    --pv-axis: #cb4b16;
+    --pv-rail: #93a1a1;
+    --pv-rmax: #dc322f;
+    --pv-copper: #b58900;
+    --pv-outline: #586e75;
+    --pv-head: #cb4b16;
+    --pv-trail: #b58900;
+    --pv-text: #657b83;
+    --pv-g0: #dc322f;
+    --pv-g1: #268bd2;
+    --pv-g2: #859900;
+    --pv-g3: #6c71c4;
+    --pv-probe: #d33682;
     /* Height map: below the mean, at it, above it. */
-    --hm-low: #256abf;
-    --hm-mid: #f0efec;
-    --hm-high: #e34948;
+    --hm-low: #268bd2;
+    --hm-mid: #f3edda;
+    --hm-high: #dc322f;
+
     --radius: 0.5rem;
+    --radius-lg: 0.75rem;
     --gap: 0.75rem;
+    --pad: 0.875rem;
     --touch: 2.75rem;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --bg: #141618;
-        --panel: #1e2124;
-        --panel-2: #262a2e;
-        --text: #e4e6e8;
-        --muted: #98a0a8;
-        --border: #363b41;
-        --accent: #5b8fe6;
-        --accent-text: #0e1420;
-        --danger: #e05050;
-        --danger-text: #1a0808;
-        --idle: #8a949e;
-        --run: #5b8fe6;
-        --jog: #4cc26e;
-        --hold: #e6a030;
-        --alarm: #e05050;
-        --laser: #ff9030;
-        --pv-bg: #17191c;
-        --pv-grid: #2c3035;
-        --pv-axis: #ff9030;
-        --pv-rail: #7d8b99;
-        --pv-rmax: #e05050;
-        --pv-copper: #b08a50;
-        --pv-outline: #c0c4c8;
-        --pv-head: #ff9030;
-        --pv-trail: #e8b040;
-        --pv-text: #9aa0a6;
-        --pv-g0: #ff6060;
-        --pv-g1: #6f9cf0;
-        --pv-g2: #5ec880;
-        --pv-g3: #d8b040;
-        --pv-probe: #b48ae8;
-        --hm-low: #6da7ec;
-        --hm-mid: #383835;
-        --hm-high: #e66767;
+        --bg: var(--base03);
+        --panel: var(--base02);
+        --panel-2: color-mix(in oklab, var(--base03) 70%, var(--base02));
+        --btn: color-mix(in oklab, var(--base01) 30%, var(--base02));
+        --btn-hover: color-mix(in oklab, var(--base01) 48%, var(--base02));
+        --border: color-mix(in oklab, var(--base01) 42%, var(--base02));
+        --border-strong: color-mix(in oklab, var(--base01) 85%, var(--base02));
+        --strong: var(--base3);
+        --text: color-mix(in oklab, var(--base2) 80%, var(--base1));
+        --muted: var(--base1);
+        --shadow: 0 0.0625rem 0.2rem color-mix(in oklab, #000000 35%, transparent);
+        --shadow-lg: 0 0.5rem 1.5rem color-mix(in oklab, #000000 50%, transparent);
+        --idle: var(--base0);
+
+        --pv-bg: #002b36;
+        --pv-grid: #0f4351;
+        --pv-rail: #657b83;
+        --pv-outline: #93a1a1;
+        --pv-text: #839496;
+        --hm-mid: #0d3d49;
+    }
+}
+
+@media (min-width: 64rem) {
+    :root {
+        --gap: 1rem;
+        --pad: 1rem;
     }
 }
 
@@ -98,17 +136,32 @@ body {
     line-height: 1.4;
     background: var(--bg);
     color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+    background: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+:focus-visible {
+    outline: 0.125rem solid var(--accent);
+    outline-offset: 0.125rem;
 }
 
 h2, h3 {
     margin: 0 0 0.5rem;
     font-size: 1rem;
     font-weight: 600;
-    letter-spacing: 0.02em;
+    color: var(--strong);
 }
 
 h3 {
-    font-weight: 500;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+input[type="checkbox"] {
+    accent-color: var(--accent);
 }
 
 .muted {
@@ -131,19 +184,6 @@ h3 {
     min-height: 100vh;
 }
 
-.statusbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 1rem;
-    padding: 0.5rem var(--gap);
-    background: var(--panel);
-    border-bottom: thin solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 2;
-}
-
 .grid {
     display: grid;
     gap: var(--gap);
@@ -159,11 +199,15 @@ h3 {
         "console"
         "settings";
     align-content: start;
+    transition: opacity 0.2s, filter 0.2s;
 }
 
 @media (min-width: 64rem) {
     .grid {
         grid-template-columns: minmax(20rem, 1fr) minmax(0, 2fr) minmax(20rem, 1fr);
+        /* Height the tall jobs and preview panels need beyond the position
+           readout goes to the jog row, so the readout never stretches. */
+        grid-template-rows: auto 1fr auto auto;
         grid-template-areas:
             "dro preview jobs"
             "jog preview jobs"
@@ -175,7 +219,7 @@ h3 {
 #dro { grid-area: dro; }
 #preview { grid-area: preview; }
 #jog { grid-area: jog; }
-#laser { grid-area: laser; }
+#laser { grid-area: laser; align-self: start; }
 #jobs { grid-area: jobs; }
 #heightmap { grid-area: heightmap; }
 #console { grid-area: console; }
@@ -184,21 +228,42 @@ h3 {
 .panel {
     background: var(--panel);
     border: thin solid var(--border);
-    border-radius: var(--radius);
-    padding: var(--gap);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    padding: var(--pad);
     min-width: 0;
 }
 
+/* Every panel opens on a title line of one height, ruled off from its
+   body, whether the title stands alone or shares the line with buttons. */
+.panel > h2,
 .panel-head {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    min-height: 2.25rem;
+    margin: 0 0 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: thin solid var(--border);
+}
+
+.panel h2 {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.panel-head {
+    justify-content: space-between;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
 }
 
 .panel-head h2 {
+    margin: 0;
+}
+
+.panel-head .button-row {
     margin: 0;
 }
 
@@ -209,96 +274,171 @@ h3 {
     min-width: 0;
 }
 
-.panel-body:disabled {
-    opacity: 0.55;
-}
-
 /* Controls */
 
 .btn {
     font: inherit;
+    font-weight: 500;
+    line-height: 1.2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    text-align: center;
     min-height: var(--touch);
     padding: 0.4rem 0.9rem;
     border-radius: var(--radius);
     border: thin solid var(--border);
-    background: var(--panel-2);
+    background: var(--btn);
     color: var(--text);
+    box-shadow: 0 0.0625rem 0 var(--border);
     cursor: pointer;
     touch-action: manipulation;
     user-select: none;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
-.btn:hover {
-    border-color: var(--accent);
+.btn:hover:not(:disabled) {
+    background: var(--btn-hover);
+    border-color: var(--border-strong);
 }
 
-.btn:active {
+.btn:active:not(:disabled) {
     transform: translateY(0.0625rem);
+    box-shadow: none;
 }
 
 .btn:disabled {
-    opacity: 0.5;
-    cursor: default;
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 .btn-primary {
-    background: var(--accent);
-    color: var(--accent-text);
-    border-color: var(--accent);
+    background: var(--accent-fill);
+    color: var(--on-fill);
+    border-color: var(--accent-fill);
+    font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--accent-fill) 85%, var(--strong));
+    border-color: color-mix(in oklab, var(--accent-fill) 85%, var(--strong));
 }
 
 .btn-danger {
-    background: var(--danger);
-    color: var(--danger-text);
-    border-color: var(--danger);
+    background: var(--danger-fill);
+    color: var(--on-fill);
+    border-color: var(--danger-fill);
+    font-weight: 600;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--danger-fill) 85%, var(--strong));
+    border-color: color-mix(in oklab, var(--danger-fill) 85%, var(--strong));
 }
 
 .btn-quiet {
     background: transparent;
+    box-shadow: none;
+}
+
+.btn-quiet:hover:not(:disabled) {
+    background: var(--btn);
 }
 
 .btn-small {
     min-height: 2.25rem;
-    padding: 0.2rem 0.6rem;
-    font-size: 0.9rem;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.875rem;
 }
 
 .btn-big {
     min-height: 3.5rem;
     flex: 1 1 auto;
     font-size: 1.1rem;
+    font-weight: 600;
 }
 
-.btn-choice[aria-pressed="true"] {
-    background: var(--accent);
-    color: var(--accent-text);
-    border-color: var(--accent);
+.btn-choice[aria-pressed="true"],
+.btn-choice[aria-pressed="true"]:hover:not(:disabled) {
+    background: var(--accent-fill);
+    color: var(--on-fill);
+    border-color: var(--accent-fill);
+    font-weight: 600;
 }
 
 .field {
     font: inherit;
     min-height: var(--touch);
-    padding: 0.3rem 0.5rem;
+    padding: 0.35rem 0.6rem;
     border-radius: var(--radius);
     border: thin solid var(--border);
-    background: var(--panel);
-    color: var(--text);
+    background-color: var(--field);
+    color: var(--strong);
     min-width: 0;
     width: 100%;
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.field::placeholder {
+    color: var(--muted);
+    opacity: 0.7;
+}
+
+.field:hover:not(:disabled) {
+    border-color: var(--border-strong);
+}
+
+.field:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.1875rem var(--ring);
+}
+
+.field:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* A chevron drawn with two gradients, so it follows the theme. */
+select.field {
+    appearance: none;
+    cursor: pointer;
+    padding-right: 2rem;
+    text-overflow: ellipsis;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 1.1rem) calc(50% + 0.05rem),
+        calc(100% - 0.75rem) calc(50% + 0.05rem);
+    background-size: 0.35rem 0.35rem;
+    background-repeat: no-repeat;
+}
+
+select.field option {
+    background: var(--panel);
+    color: var(--text);
 }
 
 input[type="number"].field {
     width: 6rem;
     font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
 }
 
 .labeled {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
-    font-size: 0.85rem;
-    color: var(--muted);
+    gap: 0.25rem;
     min-width: 0;
+}
+
+.labeled-text {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--muted);
 }
 
 .labeled.inline {
@@ -317,26 +457,102 @@ input[type="number"].field {
 
 .choice-label {
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    font-weight: 500;
     min-width: 3rem;
+}
+
+/* A choice row is one segmented control: the buttons share their borders
+   and split the width between them. */
+.choice-row {
+    flex-wrap: nowrap;
+    gap: 0;
+}
+
+.choice-row .choice-label {
+    margin-right: 0.5rem;
+}
+
+.choice-row .btn-choice {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 0.5rem;
+    border-radius: 0;
+    box-shadow: none;
+    white-space: nowrap;
+}
+
+.choice-row .btn-choice + .btn-choice {
+    margin-left: -0.0625rem;
+}
+
+.choice-row .btn-choice:first-of-type {
+    border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.choice-row .btn-choice:last-of-type {
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.choice-row .btn-choice[aria-pressed="true"] {
+    position: relative;
+    z-index: 1;
+}
+
+.goto-row .field,
+.goto-row input[type="number"].field {
+    flex: 1 1 4.5rem;
+    width: auto;
 }
 
 .field-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    gap: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
 }
 
-.field-grid .field {
+.field-grid .field,
+.field-grid input[type="number"].field {
     width: 100%;
 }
 
 /* Status bar */
 
+.statusbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding: 0.5rem var(--gap);
+    background: color-mix(in oklab, var(--panel) 92%, transparent);
+    backdrop-filter: blur(0.5rem);
+    border-bottom: thin solid var(--border);
+    box-shadow: var(--shadow);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+/* The mark is the page icon: a beam spot on the rotation axis. */
 .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
+    color: var(--strong);
+    white-space: nowrap;
+}
+
+.brand::before {
+    content: "";
+    flex: none;
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 50%;
+    border: 0.125rem solid var(--muted);
+    background: radial-gradient(circle, var(--laser) 0 30%, transparent 34%);
 }
 
 .connection {
@@ -344,63 +560,135 @@ input[type="number"].field {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    flex: 1 1 20rem;
+    flex: 1 1 28rem;
 }
 
 .connection select {
-    flex: 1 1 10rem;
+    flex: 1 1 12rem;
+    max-width: 28rem;
 }
 
 .connection .url {
-    flex: 2 1 12rem;
+    flex: 1 1 10rem;
+    max-width: 20rem;
     font-family: var(--mono);
+    font-size: 0.9rem;
+}
+
+.connection .btn {
+    flex: none;
 }
 
 .status {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem 0.75rem;
     flex-wrap: wrap;
+    margin-left: auto;
 }
 
+/* On a phone the name and the machine state share the first line and
+   the port controls take the next. */
+@media (max-width: 48rem) {
+    .status {
+        order: 1;
+    }
+
+    .connection {
+        order: 2;
+        flex-basis: 100%;
+    }
+}
+
+.firmware {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+}
+
+/* A badge takes its color from --tone: a tint behind, the tone for the
+   dot, and the tone pulled toward the text color for the words. */
 .badge {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
-    border-radius: 1rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #ffffff;
-    background: var(--idle);
+    --tone: var(--idle);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
     min-width: 4rem;
-    text-align: center;
+    padding: 0.2rem 0.7rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    color: color-mix(in oklab, var(--tone) 65%, var(--strong));
+    background: color-mix(in oklab, var(--tone) 16%, var(--panel));
+    border: thin solid color-mix(in oklab, var(--tone) 45%, var(--panel));
 }
 
-.badge[data-state="Idle"] { background: var(--idle); }
-.badge[data-state="Run"] { background: var(--run); }
-.badge[data-state="Jog"] { background: var(--jog); }
-.badge[data-state="Hold"] { background: var(--hold); }
-.badge[data-state="Alarm"] { background: var(--alarm); }
-.badge[data-state="none"] { background: transparent; color: var(--muted); border: thin solid var(--border); }
-.badge.mock { background: var(--hold); }
+.badge::before {
+    content: "";
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--tone);
+}
+
+.badge[data-state="Idle"] { --tone: var(--idle); }
+.badge[data-state="Run"] { --tone: var(--run); }
+.badge[data-state="Jog"] { --tone: var(--jog); }
+.badge[data-state="Hold"] { --tone: var(--hold); }
+.badge[data-state="none"] { --tone: var(--muted); background: transparent; }
+.badge.mock { --tone: var(--mock); }
+
+/* An alarm is the one state that shouts. */
+.badge[data-state="Alarm"] {
+    color: var(--on-fill);
+    background: var(--danger-fill);
+    border-color: var(--danger-fill);
+}
+
+.badge[data-state="Alarm"]::before {
+    background: var(--on-fill);
+}
+
+.badge[data-state="Run"]::before,
+.badge[data-state="Jog"]::before,
+.run-state[data-run="running"]::before,
+.hm-badge[data-map="running"]::before {
+    animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    50% { opacity: 0.3; }
+}
 
 .link {
-    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
     color: var(--muted);
 }
 
 .link::before {
     content: "";
-    display: inline-block;
-    width: 0.6rem;
-    height: 0.6rem;
+    flex: none;
+    width: 0.55rem;
+    height: 0.55rem;
     border-radius: 50%;
-    margin-right: 0.35rem;
     background: var(--alarm);
-    vertical-align: middle;
 }
 
-.link[data-link="open"]::before { background: var(--jog); }
-.link[data-link="connecting"]::before { background: var(--hold); }
+.link[data-link="open"]::before {
+    background: var(--jog);
+    box-shadow: 0 0 0 0.2rem color-mix(in oklab, var(--jog) 25%, transparent);
+}
+
+.link[data-link="connecting"]::before {
+    background: var(--hold);
+    animation: pulse 1s ease-in-out infinite;
+}
 
 .link[data-link="closed"] {
     color: var(--alarm);
@@ -410,9 +698,15 @@ input[type="number"].field {
 /* Everything below the bar is stale while the event feed is down. */
 #app[data-link="closed"] .grid {
     opacity: 0.6;
+    filter: saturate(0.5);
 }
 
 /* DRO */
+
+.dro.laser-on {
+    border-color: var(--laser);
+    box-shadow: 0 0 0 0.15rem color-mix(in oklab, var(--laser) 35%, transparent), var(--shadow);
+}
 
 .dro-row {
     display: grid;
@@ -427,32 +721,49 @@ input[type="number"].field {
     grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
 }
 
+/* The axis letter and unit ride above the number, which gets the full
+   width of the cell and scales with it so nine characters always fit. */
 .dro-cell {
+    container-type: inline-size;
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+        "label unit"
+        "value value";
     align-items: baseline;
-    gap: 0.4rem;
-    padding: 0.4rem 0.6rem;
+    gap: 0 0.4rem;
+    padding: 0.4rem 0.7rem 0.35rem;
     background: var(--panel-2);
+    border: thin solid var(--border);
     border-radius: var(--radius);
 }
 
+.dro-cell .dro-label { grid-area: label; }
+.dro-cell .dro-unit { grid-area: unit; }
+
 .dro-label {
     color: var(--muted);
-    font-size: 0.85rem;
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
 }
 
 .dro-value {
+    grid-area: value;
     font-family: var(--mono);
-    font-size: clamp(1.4rem, 4vw, 2rem);
+    font-size: 1.4rem;
+    font-size: clamp(1.1rem, 15cqi, 2rem);
+    font-weight: 500;
+    line-height: 1.15;
+    color: var(--strong);
     text-align: right;
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
 
 .dro-unit {
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
 }
 
 .dro-small {
@@ -460,18 +771,21 @@ input[type="number"].field {
        run into the next one at narrow widths. */
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem 1.2rem;
+    gap: 0.35rem 1.1rem;
+    padding-top: 0.25rem;
+    font-size: 0.875rem;
 }
 
 .dro-small > div {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.35rem;
     align-items: baseline;
 }
 
 .dro-small-value {
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
+    color: var(--strong);
 }
 
 .dro.laser-on [data-dro="laser"] {
@@ -482,45 +796,60 @@ input[type="number"].field {
 /* Jog */
 
 .steps {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
     gap: 0.5rem 1rem;
-    align-items: flex-end;
+    align-items: end;
     margin-bottom: 0.75rem;
 }
 
+.steps .choice-row {
+    margin: 0;
+}
+
 .steps .labeled input {
-    width: 6rem;
+    width: 7.5rem;
 }
 
 .jog-main {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 0.75rem 1rem;
     align-items: center;
+    justify-content: center;
     margin-bottom: 0.75rem;
 }
 
 .pad {
     display: grid;
-    grid-template-columns: repeat(3, minmax(3.5rem, 5rem));
-    grid-template-rows: repeat(3, minmax(3.5rem, 5rem));
+    grid-template-columns: repeat(3, minmax(3.5rem, 4.75rem));
+    grid-template-rows: repeat(3, minmax(3.5rem, 4.75rem));
     grid-template-areas:
         ". up ."
         "left mid right"
         ". down .";
     gap: 0.4rem;
+    padding: 0.5rem;
+    background: var(--panel-2);
+    border: thin solid var(--border);
+    border-radius: var(--radius-lg);
 }
 
 .btn-pad {
     font-size: 1.1rem;
-    font-weight: 600;
+    font-weight: 700;
     padding: 0;
 }
 
 .btn-cancel {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--danger);
+    border-radius: 50%;
+}
+
+.btn-cancel:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--danger) 12%, var(--btn));
+    border-color: var(--danger);
 }
 
 .axis-buttons {
@@ -541,19 +870,23 @@ input[type="number"].field {
     flex-direction: column;
     gap: 0.4rem;
     flex: 1 1 12rem;
-    padding: 0.5rem;
+    padding: 0.6rem 0.7rem;
     background: var(--panel-2);
     border: thin solid var(--border);
     border-radius: var(--radius);
 }
 
 .slide-title {
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--strong);
 }
 
 .slide-note {
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
 }
 
 .slide .choice-row {
@@ -573,50 +906,18 @@ input[type="number"].field {
 /* Jobs */
 
 .drop {
-    border: 0.125rem dashed var(--border);
+    border: 0.125rem dashed var(--border-strong);
     border-radius: var(--radius);
-    padding: 0.75rem;
+    padding: 1rem 0.75rem;
     text-align: center;
-    margin-bottom: 0.5rem;
-}
-
-.center-test {
-    border: 0.0625rem solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.5rem;
-}
-
-.center-test > summary {
-    cursor: pointer;
-    font-weight: 600;
-}
-
-.center-test[open] > summary {
-    margin-bottom: 0.5rem;
-}
-
-.center-test .field:disabled {
-    opacity: 0.45;
-}
-
-.center-test-summary {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-size: 0.8rem;
-    margin: 0.5rem 0;
-}
-
-.center-test-notes {
-    font-size: 0.85rem;
-    color: var(--muted);
-    padding-left: 1.25rem;
-    margin: 0;
+    margin-bottom: 0.75rem;
+    background: var(--panel-2);
+    transition: border-color 0.12s, background-color 0.12s;
 }
 
 .drop.over {
     border-color: var(--accent);
-    background: var(--panel-2);
+    background: color-mix(in oklab, var(--accent) 10%, var(--panel));
 }
 
 .drop.busy {
@@ -625,8 +926,9 @@ input[type="number"].field {
 }
 
 .drop p {
-    margin: 0 0 0.5rem;
+    margin: 0 0 0.6rem;
     color: var(--muted);
+    font-size: 0.875rem;
 }
 
 .drop label.btn {
@@ -642,23 +944,123 @@ input[type="number"].field {
     overflow: hidden;
 }
 
+/* Disclosures draw their own chevron in place of the marker. */
+.center-test > summary,
+.hm-probe-settings > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    list-style: none;
+    cursor: pointer;
+}
+
+.center-test > summary::-webkit-details-marker,
+.hm-probe-settings > summary::-webkit-details-marker {
+    display: none;
+}
+
+.center-test > summary::before,
+.hm-probe-settings > summary::before {
+    content: "";
+    flex: none;
+    width: 0.4rem;
+    height: 0.4rem;
+    margin-left: 0.1rem;
+    border-right: 0.125rem solid currentColor;
+    border-bottom: 0.125rem solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s;
+}
+
+.center-test[open] > summary::before,
+.hm-probe-settings[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+.center-test {
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    padding: 0 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.center-test > summary {
+    font-weight: 600;
+    color: var(--strong);
+    min-height: 2.5rem;
+}
+
+.center-test[open] {
+    padding-bottom: 0.75rem;
+}
+
+.center-test[open] > summary {
+    margin-bottom: 0.25rem;
+}
+
+.center-test > p {
+    margin: 0 0 0.6rem;
+    font-size: 0.875rem;
+}
+
+.center-test .field:disabled {
+    opacity: 0.45;
+}
+
+.center-test-summary {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.6rem;
+    background: var(--panel-2);
+    border-radius: var(--radius);
+}
+
+.center-test-notes {
+    font-size: 0.85rem;
+    color: var(--muted);
+    padding-left: 1.25rem;
+    margin: 0;
+}
+
 .job-list {
     list-style: none;
     margin: 0 0 0.75rem;
     padding: 0;
     max-height: 30vh;
     overflow: auto;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
 }
 
 .job-list li {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    padding-right: 0.4rem;
     border-bottom: thin solid var(--border);
+    transition: background-color 0.12s;
+}
+
+.job-list li:last-child {
+    border-bottom: 0;
+}
+
+.job-list li.muted {
+    padding: 0.6rem 0.75rem;
+}
+
+.job-list li:hover {
+    background: var(--panel-2);
 }
 
 .job-list li.selected {
-    background: var(--panel-2);
+    background: color-mix(in oklab, var(--accent) 12%, var(--panel));
+    box-shadow: inset 0.2rem 0 0 var(--accent);
 }
 
 .job-pick {
@@ -669,46 +1071,62 @@ input[type="number"].field {
     color: inherit;
     font: inherit;
     min-height: var(--touch);
-    padding: 0.4rem 0.5rem;
+    padding: 0.45rem 0.75rem;
     cursor: pointer;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+.job-pick:focus-visible {
+    outline-offset: -0.125rem;
+}
+
 .job-name {
     font-weight: 600;
+    color: var(--strong);
 }
 
 .job-stat {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+}
+
+.job-details h3 {
+    margin-top: 0.25rem;
 }
 
 table.groups, table.settings {
     width: 100%;
     border-collapse: collapse;
     margin-bottom: 0.5rem;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 table.groups th, table.settings th {
     text-align: left;
     color: var(--muted);
-    font-weight: 500;
-    padding: 0.2rem 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.35rem;
 }
 
 table.groups td, table.settings td {
-    padding: 0.2rem 0.3rem;
+    padding: 0.3rem 0.35rem;
     border-top: thin solid var(--border);
     vertical-align: middle;
 }
 
 /* A group is a name line over its fields line, one border above the pair. */
 table.groups tr.group-name th {
-    color: var(--text);
-    font-weight: 500;
+    color: var(--strong);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
     border-top: thin solid var(--border);
+    padding-top: 0.5rem;
     padding-bottom: 0;
 }
 
@@ -746,8 +1164,8 @@ table.groups input[type="number"]::-webkit-outer-spin-button {
     display: inline-block;
     width: 0.7rem;
     height: 0.7rem;
-    border-radius: 0.15rem;
-    margin-right: 0.4rem;
+    border-radius: 0.2rem;
+    margin-right: 0.45rem;
     vertical-align: middle;
     background: var(--pv-g0);
 }
@@ -760,30 +1178,32 @@ table.groups input[type="number"]::-webkit-outer-spin-button {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
     gap: 0.4rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
 }
 
 .stat {
     display: flex;
     flex-direction: column;
     background: var(--panel-2);
+    border: thin solid var(--border);
     border-radius: var(--radius);
-    padding: 0.3rem 0.5rem;
+    padding: 0.3rem 0.6rem;
 }
 
 .stat-label {
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
 }
 
 .stat-value {
     font-family: var(--mono);
+    color: var(--strong);
 }
 
 .progress-track {
-    height: 0.75rem;
+    height: 0.6rem;
     background: var(--panel-2);
-    border-radius: 0.4rem;
+    border-radius: 1rem;
     overflow: hidden;
     border: thin solid var(--border);
 }
@@ -792,23 +1212,36 @@ table.groups input[type="number"]::-webkit-outer-spin-button {
     height: 100%;
     width: 0;
     background: var(--accent);
+    border-radius: 1rem;
     transition: width 0.2s linear;
 }
 
 .progress-text {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.4rem 0.75rem;
     align-items: center;
-    font-size: 0.9rem;
-    margin-top: 0.3rem;
+    font-size: 0.85rem;
+    margin-top: 0.4rem;
     font-family: var(--mono);
+    color: var(--muted);
 }
 
-.run-state[data-run="running"] { background: var(--run); }
-.run-state[data-run="hold"] { background: var(--hold); }
-.run-state[data-run="done"] { background: var(--jog); }
-.run-state[data-run="stopped"], .run-state[data-run="error"] { background: var(--alarm); }
+/* The height map choice takes a line above the run buttons, which share
+   the one below it. */
+.run-row .field {
+    order: -1;
+    flex: 1 1 100%;
+}
+
+.run-row .btn {
+    flex: 1 1 auto;
+}
+
+.run-state[data-run="running"] { --tone: var(--run); }
+.run-state[data-run="hold"] { --tone: var(--hold); }
+.run-state[data-run="done"] { --tone: var(--jog); }
+.run-state[data-run="stopped"], .run-state[data-run="error"] { --tone: var(--alarm); }
 
 /* Preview */
 
@@ -823,12 +1256,13 @@ table.groups input[type="number"]::-webkit-outer-spin-button {
     .preview-panel {
         display: flex;
         flex-direction: column;
+        max-height: 90vh;
     }
 
     .preview-box {
         flex: 1 1 auto;
         aspect-ratio: auto;
-        max-height: none;
+        max-height: 70vh;
         min-height: clamp(15rem, 30vh, 25rem);
     }
 }
@@ -843,24 +1277,31 @@ canvas.preview {
     cursor: grab;
 }
 
+canvas.preview:active {
+    cursor: grabbing;
+}
+
 .hint {
     margin: 0.4rem 0 0;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
 }
 
 /* Console */
 
 .console-log {
     font-family: var(--mono);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
+    line-height: 1.45;
     background: var(--panel-2);
     border: thin solid var(--border);
     border-radius: var(--radius);
     height: clamp(10rem, 30vh, 24rem);
     overflow: auto;
-    padding: 0.4rem 0.5rem;
+    padding: 0.5rem 0.65rem;
     white-space: pre-wrap;
     word-break: break-all;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
 }
 
 .console-line .dir {
@@ -874,15 +1315,16 @@ canvas.preview {
 }
 
 .console-line.poll {
-    opacity: 0.55;
+    opacity: 0.5;
 }
 
 .check {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
+    gap: 0.35rem;
     color: var(--muted);
     font-size: 0.85em;
+    cursor: pointer;
 }
 
 .console-input {
@@ -898,12 +1340,21 @@ canvas.preview {
 /* Settings */
 
 table.settings td.help {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+}
+
+table.settings tbody tr:hover td {
+    background: var(--panel-2);
+}
+
+table.settings tr.edited td {
+    background: color-mix(in oklab, var(--accent) 9%, var(--panel));
 }
 
 table.settings tr.edited td:first-child {
     color: var(--accent);
     font-weight: 600;
+    box-shadow: inset 0.2rem 0 0 var(--accent);
 }
 
 table.settings input {
@@ -934,17 +1385,27 @@ table.settings input {
 }
 
 .toast {
-    padding: 0.6rem 0.9rem;
+    padding: 0.65rem 0.9rem;
     border-radius: var(--radius);
     background: var(--panel);
+    color: var(--text);
+    font-size: 0.9rem;
     border: thin solid var(--border);
     border-left: 0.3rem solid var(--accent);
-    box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-lg);
     cursor: pointer;
+    animation: toast-in 0.18s ease-out;
 }
 
 .toast.error {
     border-left-color: var(--danger);
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(0.5rem);
+    }
 }
 
 /* Confirm dialog */
@@ -954,13 +1415,19 @@ dialog.confirm {
     background: var(--panel);
     color: var(--text);
     border: thin solid var(--border);
-    border-radius: var(--radius);
-    padding: 1rem;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 1.25rem;
     max-width: min(28rem, 90vw);
 }
 
+dialog.confirm p {
+    margin: 0 0 1rem;
+}
+
 dialog.confirm::backdrop {
-    background: rgba(0, 0, 0, 0.45);
+    background: color-mix(in oklab, var(--base03) 55%, transparent);
+    backdrop-filter: blur(0.125rem);
 }
 
 .confirm-actions {
@@ -971,24 +1438,28 @@ dialog.confirm::backdrop {
 
 /* Height map */
 
-.hm-badge[data-map="none"] { background: transparent; color: var(--muted); border: thin solid var(--border); }
-.hm-badge[data-map="partial"] { background: var(--hold); }
-.hm-badge[data-map="running"] { background: var(--run); }
-.hm-badge[data-map="ready"] { background: var(--jog); }
+.hm-badge[data-map="none"] { --tone: var(--muted); background: transparent; }
+.hm-badge[data-map="partial"] { --tone: var(--hold); }
+.hm-badge[data-map="running"] { --tone: var(--run); }
+.hm-badge[data-map="ready"] { --tone: var(--jog); }
 
 .hm-probe-settings {
     margin-bottom: 0.5rem;
 }
 
 .hm-probe-settings summary {
-    cursor: pointer;
     color: var(--muted);
+    font-size: 0.875rem;
+    font-weight: 600;
+    min-height: 2rem;
     margin-bottom: 0.4rem;
 }
 
 .hm-map {
     margin: 0.5rem 0;
     overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
 }
 
 /* Cells sit apart by a hairline of the panel so neighbors never merge. */
@@ -1002,7 +1473,7 @@ dialog.confirm::backdrop {
 .hm-cell {
     padding: 0.45rem 0;
     border: thin dashed var(--border);
-    border-radius: 0.25rem;
+    border-radius: 0.3rem;
     color: var(--text);
     font: 0.7rem var(--mono);
     text-align: center;
@@ -1017,7 +1488,7 @@ dialog.confirm::backdrop {
 }
 
 .hm-cell[data-probing] {
-    outline: 0.125rem solid var(--text);
+    outline: 0.125rem solid var(--strong);
     outline-offset: -0.0625rem;
 }
 
@@ -1041,7 +1512,8 @@ dialog.confirm::backdrop {
     display: inline-block;
     width: 6rem;
     height: 0.6rem;
-    border-radius: 0.3rem;
+    border-radius: 1rem;
+    border: thin solid var(--border);
     background: linear-gradient(to right,
         color-mix(in oklab, var(--hm-low) 70%, var(--hm-mid)),
         var(--hm-mid),
@@ -1055,4 +1527,11 @@ dialog.confirm::backdrop {
 [data-dro="probe"][data-down] {
     color: var(--hold);
     font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+    }
 }
