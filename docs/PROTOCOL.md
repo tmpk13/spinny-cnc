@@ -65,9 +65,9 @@ Which commands each state takes:
 | State | Accepted |
 | --- | --- |
 | `Idle` | everything |
-| `Run` | `go`, `cut`, `dwell`, `mode`, `laser`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
-| `Jog` | jogs, `mode`, `laser`; `go`/`cut`/`dwell`/`set`/`$` are `error:5` |
-| `Hold` | `go`, `cut` and `dwell` are taken in and wait for the resume (a hold of a run); jogs, `set`, `$` and the rest are `error:5` |
+| `Run` | `go`, `cut`, `dwell`, `probe`, `mode`, `laser`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
+| `Jog` | jogs, `probe`, `mode`, `laser`; `go`/`cut`/`dwell`/`set`/`$` are `error:5` |
+| `Hold` | `go`, `cut` and `dwell` are taken in and wait for the resume (a hold of a run), and so is `probe` in any hold; jogs, `set`, `$` and the rest are `error:5` |
 | `Alarm` | `unlock`, `$`, queries; motion and `set` are `error:5` |
 
 `unlock` outside `Alarm` is `error:5`, and any move is `error:5` while the
@@ -116,8 +116,9 @@ through `h_rate`, `h_accel` and `h_jerk`.
 | --- | --- |
 | `probe H<mm> [F<mm/min>]` | move the focus axis by up to `H` mm (relative, signed: negative is down) at `F` (default `jog_h`) until the probe input goes active |
 
-`probe` is taken in `Idle`, `Run` and `Jog`, waits for the motion queued
-before it, and is answered only when it ends; nothing runs behind it
+`probe` is taken in `Idle`, `Run`, `Jog` and `Hold`, waits for the motion
+queued before it (and for the resume of a hold), and is answered only
+when it ends; nothing runs behind it
 meanwhile. The state is `Jog` while it moves.
 
 - Contact: `[PRB:<h>:1]` then `ok`, with `<h>` the `H` position in mm, four

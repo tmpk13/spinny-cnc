@@ -321,8 +321,9 @@ impl<'a> Machine<'a> {
                 }
                 // A probe is a setup move that waits for what was queued
                 // before it, so a host may send it behind a positioning
-                // move; it does not join a hold, which could be anyone's.
-                if self.slide.busy() || self.jog_cancel || !matches!(self.state, State::Idle | State::Run | State::Jog) {
+                // move, and through a hold of that move, which it waits
+                // out like the move itself.
+                if self.slide.busy() || self.jog_cancel || !matches!(self.state, State::Idle | State::Run | State::Jog | State::Hold) {
                     return Err(Error::State);
                 }
                 let feed = feed.unwrap_or(self.settings.jog_rate[H]);
@@ -2730,5 +2731,24 @@ mod tests {
         assert_eq!(rig.line("unlock"), "ok\n");
         let out = rig.line("probe H-1 F120");
         assert!(out.ends_with(":0]\nALARM:2 probe missed, check the head before moving\nerror:11 probe missed\n"), "{out:?}");
+    }
+
+    #[test]
+    fn a_probe_sent_during_a_hold_waits_for_the_resume() {
+        let mut rig = focus_rig();
+        rig.surface = Some(-1.0);
+        assert_eq!(rig.line("go R20"), "ok\n");
+        rig.advance(100_000);
+        rig.realtime(Realtime::Hold);
+        rig.advance(1_000_000);
+        assert!(rig.status_line().starts_with("<Hold|"));
+        rig.submit("probe H-3 F120");
+        rig.advance(500_000);
+        assert_eq!(rig.take_out(), "", "neither refused nor started");
+        assert_eq!(rig.machine.joint()[H], 0.0);
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!(rig.take_out(), "[PRB:-1.0000:1]\nok\n");
+        assert_eq!(rig.machine.joint()[R], 20.0);
     }
 }
