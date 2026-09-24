@@ -83,6 +83,8 @@ export function parseEvent(raw: unknown): WsEvent | null {
             return { type, data: data as DataOf<"console"> };
         case "progress":
             return { type, data: data as DataOf<"progress"> };
+        case "heightmap":
+            return { type, data: data as DataOf<"heightmap"> };
         case "message":
             return { type, data: data as DataOf<"message"> };
         default:

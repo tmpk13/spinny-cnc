@@ -4,7 +4,11 @@ import type {
     CenterRequest,
     CenterResponse,
     CommandResponse,
+    Compensate,
     GotoRequest,
+    Grid,
+    HeightMap,
+    HeightMapState,
     Job,
     JobPatch,
     JobSummary,
@@ -14,6 +18,7 @@ import type {
     Port,
     PortsResponse,
     PositionRequest,
+    ProbeSettings,
     Progress,
     RealtimeAction,
     SettingsResponse,
@@ -62,11 +67,22 @@ export interface Api {
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
     deleteJob(id: string): Promise<void>;
-    runJob(id: string): Promise<void>;
+    /** `compensate` follows the height map; left out, the run does not. */
+    runJob(id: string, compensate?: Compensate): Promise<void>;
     runHold(): Promise<void>;
     runResume(): Promise<void>;
     runStop(): Promise<void>;
     run(): Promise<Progress | null>;
+
+    heightMap(): Promise<HeightMapState>;
+    /** Probes the grid, replacing the map; the head's height now is the travel height. */
+    probe(grid: Grid): Promise<HeightMapState>;
+    probeStop(): Promise<HeightMapState>;
+    /** Sets the focus offset; null takes it from the head over the board now. */
+    focus(offset: number | null): Promise<HeightMapState>;
+    probeSettings(patch: Partial<ProbeSettings>): Promise<HeightMapState>;
+    putHeightMap(map: HeightMap): Promise<HeightMapState>;
+    clearHeightMap(): Promise<HeightMapState>;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -236,8 +252,8 @@ export class HttpApi implements Api {
         await this.request("DELETE", `/api/jobs/${encodeURIComponent(id)}`);
     }
 
-    async runJob(id: string): Promise<void> {
-        await this.request("POST", `/api/jobs/${encodeURIComponent(id)}/run`);
+    async runJob(id: string, compensate: Compensate = "off"): Promise<void> {
+        await this.request("POST", `/api/jobs/${encodeURIComponent(id)}/run`, { compensate });
     }
 
     async runHold(): Promise<void> {
@@ -258,5 +274,33 @@ export class HttpApi implements Api {
             return null;
         }
         return data as Progress;
+    }
+
+    heightMap(): Promise<HeightMapState> {
+        return this.request<HeightMapState>("GET", "/api/heightmap");
+    }
+
+    probe(grid: Grid): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/probe", grid);
+    }
+
+    probeStop(): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/stop");
+    }
+
+    focus(offset: number | null): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/focus", offset === null ? {} : { offset });
+    }
+
+    probeSettings(patch: Partial<ProbeSettings>): Promise<HeightMapState> {
+        return this.request<HeightMapState>("PUT", "/api/heightmap/settings", patch);
+    }
+
+    putHeightMap(map: HeightMap): Promise<HeightMapState> {
+        return this.request<HeightMapState>("PUT", "/api/heightmap", map);
+    }
+
+    clearHeightMap(): Promise<HeightMapState> {
+        return this.request<HeightMapState>("DELETE", "/api/heightmap");
     }
 }

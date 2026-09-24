@@ -160,3 +160,9 @@
   through the store, patch, streamer, stats and mock; each pass streams
   the whole group again from where the last one stopped, and the groups
   table has a Passes column.
+- Probing and height map (2026-09-23): an optional focus axis `H` on the
+  E socket as a third joint, a touch probe on Z-STOP GP25 (`probe H [F]`,
+  `[PRB:h:1]`, `Alarm:2` on a miss), a simulated board in the virtual
+  firmware, a prober and height map in the backend, runs compensated by
+  the focus axis or by power, and a Height map panel with focus jogs, the
+  probe grid on the preview and a compensation choice on Run.

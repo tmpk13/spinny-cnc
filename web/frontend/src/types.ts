@@ -25,10 +25,12 @@ export interface Joint {
     a: number;
 }
 
-/** What the machine reports: the joint pair and the cross slide. */
+/** What the machine reports: the joint pair, the cross slide and the focus axis. */
 export interface JointPosition extends Joint {
     /** Cross slide in mm: the setup axis that carries the rail across the rotation axis. */
     z: number;
+    /** Focus axis in mm, up positive; null on a machine without one. */
+    h?: number | null;
 }
 
 /** Board position in mm with the rotation axis at the origin. */
@@ -54,6 +56,8 @@ export interface Machine {
     mode: Mode;
     enabled: boolean;
     queue: Queue;
+    /** The touch probe is down; null on a machine without a focus axis. */
+    probe?: boolean | null;
 }
 
 export interface Snapshot {
@@ -68,19 +72,20 @@ export interface Snapshot {
 // own shape and the never members keep them off a request that carries the
 // radius or the angle.
 export type JogRequest =
-    | { kind: "joint"; dr?: number; da?: number; dz?: never; feed?: number | null }
-    | { kind: "joint"; dz: number; dr?: never; da?: never; feed?: number | null }
+    | { kind: "joint"; dr?: number; da?: number; dh?: number; dz?: never; feed?: number | null }
+    | { kind: "joint"; dz: number; dr?: never; da?: never; dh?: never; feed?: number | null }
     | { kind: "board"; dx?: number; dy?: number; feed?: number | null };
 
 export type GotoRequest =
-    | { kind: "joint"; r?: number; a?: number; z?: never; feed?: number | null }
-    | { kind: "joint"; z: number; r?: never; a?: never; feed?: number | null }
+    | { kind: "joint"; r?: number; a?: number; h?: number; z?: never; feed?: number | null }
+    | { kind: "joint"; z: number; r?: never; a?: never; h?: never; feed?: number | null }
     | { kind: "board"; x?: number; y?: number; feed?: number | null };
 
 export interface PositionRequest {
     r?: number;
     a?: number;
     z?: number;
+    h?: number;
 }
 
 export type RealtimeAction = "hold" | "resume" | "reset" | "cancel" | "status";
@@ -258,6 +263,66 @@ export interface Progress {
     error?: string | null;
 }
 
+/** How a run follows the height map: not at all, the focus axis where fitted, else power, or one of the two. */
+export type Compensate = "off" | "auto" | "focus" | "power";
+
+/** Probe points `nx` by `ny` over a board rectangle, corners included. */
+export interface Grid {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    nx: number;
+    ny: number;
+}
+
+export interface HeightMap {
+    grid: Grid;
+    /** heights[iy][ix]: the focus axis at contact, mm; null until probed. */
+    heights: (number | null)[][];
+    /** Focus height minus contact height, mm. */
+    focus_offset: number;
+    /** Someone has said what the focus offset is; a run needs it. */
+    focus_set: boolean;
+    /** The probe tip from the beam when probed: along the rail, across it, mm. */
+    probe_offset: [number, number];
+    created: string;
+}
+
+export type ProbeState = "running" | "done" | "stopped" | "error";
+
+export interface ProbeProgress {
+    state: ProbeState;
+    done: number;
+    total: number;
+    /** The point being probed, [ix, iy]. */
+    point: [number, number] | null;
+    seconds: number;
+    error: string | null;
+}
+
+/** The host's probing parameters. */
+export interface ProbeSettings {
+    /** The most the probe goes down from the travel height, mm. */
+    depth: number;
+    /** First touch, mm/min. */
+    feed: number;
+    /** Second, slower touch; 0 for one touch. */
+    slow: number;
+    /** Rise before the second touch, mm. */
+    backoff: number;
+    /** The probe tip from the beam: along the rail, across it, mm. */
+    offset: [number, number];
+    /** The beam's Rayleigh length for power compensation, mm. */
+    rayleigh: number;
+}
+
+export interface HeightMapState {
+    map: HeightMap | null;
+    probe: ProbeProgress | null;
+    settings: ProbeSettings;
+}
+
 export type ConsoleDir = "rx" | "tx";
 
 export interface ConsoleLine {
@@ -278,4 +343,5 @@ export type WsEvent =
     | { type: "state"; data: Snapshot }
     | { type: "console"; data: ConsoleLine }
     | { type: "progress"; data: Progress }
+    | { type: "heightmap"; data: HeightMapState }
     | { type: "message"; data: Message };

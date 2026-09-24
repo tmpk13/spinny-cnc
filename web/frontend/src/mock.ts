@@ -2,13 +2,18 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { ApiError, type Api } from "./api.ts";
-import { boardOfJoint, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength } from "./kinematics.ts";
+import { AXIS_EPSILON, DEG, boardOfJoint, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength, unwrap } from "./kinematics.ts";
 import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, centerJob, checkPasses, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
 import type { LinkStatus } from "./state.ts";
 import type {
+    Board,
     CenterRequest,
     CenterResponse,
+    Compensate,
     GotoRequest,
+    Grid,
+    HeightMap,
+    HeightMapState,
     Job,
     JobPatch,
     JobSummary,
@@ -19,6 +24,8 @@ import type {
     Mode,
     Port,
     PositionRequest,
+    ProbeProgress,
+    ProbeSettings,
     Progress,
     RealtimeAction,
     RunState,
@@ -70,7 +77,23 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     tmc_z_ma: 800,
     tmc_z_micro: 256,
     tmc_stealth: 1,
+    h_axis: 0,
+    h_steps: 6400,
+    h_rate: 600,
+    h_accel: 50,
+    h_jerk: 1,
+    jog_h: 120,
+    probe_invert: 0,
+    tmc_h_ma: 600,
+    tmc_h_micro: 256,
 };
+
+/**
+ * What the demo machine starts with over the shipped defaults: the firmware
+ * ships without a focus axis, the mock has one so the page shows probing
+ * and the height map. `$h_axis=0` takes it out.
+ */
+export const MOCK_MACHINE_SETTINGS: Record<string, number> = { h_axis: 1 };
 
 /** The firmware refuses a feed under this, and one that is not a number. */
 export const MIN_FEED = 0.001;
@@ -95,7 +118,7 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "jog_z", unit: "mm/min", help: "jog rate without F" },
     { name: "jog_r", unit: "mm/min", help: "jog rate without F" },
     { name: "jog_a", unit: "deg/min", help: "jog rate without F" },
-    { name: "dir_invert", unit: "mask", help: "bit 0 radius, bit 1 table, bit 2 cross slide" },
+    { name: "dir_invert", unit: "mask", help: "bit 0 radius, bit 1 table, bit 2 cross slide, bit 3 focus axis" },
     { name: "en_invert", unit: "0/1", help: "1 = enable pin active high" },
     { name: "idle_ms", unit: "ms", help: "disable motors after idle, 0 = never" },
     { name: "step_us", unit: "us", help: "step pulse width" },
@@ -112,6 +135,15 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tmc_z_ma", unit: "mA", help: "cross slide run current" },
     { name: "tmc_z_micro", unit: "", help: "microsteps" },
     { name: "tmc_stealth", unit: "0/1", help: "stealthChop, else spreadCycle" },
+    { name: "h_axis", unit: "0/1", help: "1 = a focus axis is fitted, on the E socket" },
+    { name: "h_steps", unit: "steps/mm", help: "focus axis motor" },
+    { name: "h_rate", unit: "mm/min", help: "max focus axis rate" },
+    { name: "h_accel", unit: "mm/s^2", help: "focus axis acceleration" },
+    { name: "h_jerk", unit: "mm/s", help: "allowed speed change at a corner" },
+    { name: "jog_h", unit: "mm/min", help: "jog and probe rate without F" },
+    { name: "probe_invert", unit: "0/1", help: "1 = probe input active high" },
+    { name: "tmc_h_ma", unit: "mA", help: "focus axis run current" },
+    { name: "tmc_h_micro", unit: "", help: "microsteps" },
 ];
 
 export type MoveKind = "go" | "cut" | "jog";
@@ -119,6 +151,8 @@ export type MoveKind = "go" | "cut" | "jog";
 export interface Move {
     kind: MoveKind;
     target: Joint;
+    /** Focus axis at the end, mm; left out, the head keeps the height the move before left it at. */
+    h?: number;
     /** Surface speed in mm/min for a cut, the jog feed, or null for the default rates. */
     feed: number | null;
     /** S word for a cut. */
@@ -132,6 +166,8 @@ export interface Move {
 interface Active {
     move: Move;
     from: Joint;
+    fromH: number;
+    toH: number;
     seconds: number;
     elapsed: number;
 }
@@ -146,9 +182,10 @@ interface Slide {
 
 /** What the firmware prints for `help`, one line each, before its `ok`. */
 export const HELP_LINES = [
-    "go [R] [A] | cut [R] [A] [F] [S] | jog [R] [A] [F] | jogto [R] [A] [F]",
+    "go [R] [A] [H] | cut [R] [A] [H] [F] [S] [M] | jog [R] [A] [H] [F] | jogto [R] [A] [H] [F]",
     "cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z",
-    "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A]",
+    "focus axis probe (h_axis=1): probe H [F]",
+    "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]",
     "enable | disable | unlock | version | status | help",
     "$ | $name | $name=value | $save | $load | $defaults | $tmc",
     "realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel",
@@ -164,12 +201,33 @@ export class MachineError extends Error {
     }
 }
 
+/**
+ * The simulated board under the probe: the focus axis height, mm, at which
+ * the probe touches it at a board point. A gently warped plate about a
+ * millimeter and a half below the head's zero.
+ */
+export function boardSurface(x: number, y: number): number {
+    return -1.5 + 0.004 * x - 0.006 * y + 0.0002 * (x * x + y * y);
+}
+
+/** What `probe` found: the H of contact, or where it gave up. */
+export interface ProbeResult {
+    h: number;
+    contact: boolean;
+}
+
 /** Joint-space motion at constant rates, the firmware's state machine without acceleration. */
 export class MockMachine {
-    settings: Record<string, number> = { ...DEFAULT_SETTINGS };
+    settings: Record<string, number>;
+    /** What `$load` reads back and `$save` writes. */
+    flash: Record<string, number>;
     joint: Joint = { r: 0, a: 0 };
     /** Cross slide position in mm. */
     z = 0;
+    /** Focus axis position in mm, up positive; kept whether or not the axis is fitted. */
+    h = 0;
+    /** The probe tip from the beam, along the rail and across it, mm: where it is mounted. */
+    probeOffset: [number, number] = [0, 0];
     state: MachineState = "Idle";
     alarm: number | null = null;
     mode: Mode = "dyn";
@@ -188,6 +246,52 @@ export class MockMachine {
     feed: number | null = null;
     /** Modal S for `cut`, back to 0 on a reset. */
     power = 0;
+
+    /** `settings` over the shipped defaults, as though stored in flash. */
+    constructor(settings: Record<string, number> = {}) {
+        this.settings = { ...DEFAULT_SETTINGS, ...settings };
+        this.flash = { ...this.settings };
+    }
+
+    hasFocusAxis(): boolean {
+        return (this.settings["h_axis"] ?? 0) !== 0;
+    }
+
+    /** The board point under the probe tip with the joints at `joint`. */
+    tipBoard(joint: Joint = this.joint): Board {
+        const [along, across] = this.probeOffset;
+        const rad = joint.a * DEG;
+        const reach = joint.r + along;
+        return {
+            x: reach * Math.cos(rad) - across * Math.sin(rad),
+            y: reach * Math.sin(rad) + across * Math.cos(rad),
+        };
+    }
+
+    /** The H at which the probe touches the board where the tip is now. */
+    contactHeight(): number {
+        const tip = this.tipBoard();
+        return boardSurface(tip.x, tip.y);
+    }
+
+    /** The probe input: the tip on the board, through the polarity setting. */
+    probeActive(): boolean {
+        const touching = this.h <= this.contactHeight();
+        return (this.settings["probe_invert"] ?? 0) !== 0 ? !touching : touching;
+    }
+
+    /** An H word needs the focus axis, and a number. */
+    private checkFocusWord(h: number | undefined): void {
+        if (h === undefined) {
+            return;
+        }
+        if (!this.hasFocusAxis()) {
+            throw new MachineError(2, "bad word");
+        }
+        if (!Number.isFinite(h)) {
+            throw new MachineError(4, "out of range");
+        }
+    }
 
     /** Free planner blocks and line slots, as the status line reports them. */
     queueFree(): { planner: number; lines: number } {
@@ -214,21 +318,34 @@ export class MockMachine {
         return this.active ? this.active.move.target : this.joint;
     }
 
+    /** The focus axis once the queue has run: the last H word, else where it is headed now. */
+    endpointH(): number {
+        for (let i = this.queue.length - 1; i >= 0; i--) {
+            const h = this.queue[i]?.h;
+            if (h !== undefined) {
+                return h;
+            }
+        }
+        return this.active ? this.active.toH : this.h;
+    }
+
     moving(): boolean {
         return this.state === "Run" || this.state === "Jog";
     }
 
     status(): Machine {
+        const focus = this.hasFocusAxis();
         return {
             state: this.state,
             alarm: this.alarm,
-            joint: { ...this.joint, z: this.z },
+            joint: { ...this.joint, z: this.z, h: focus ? this.h : null },
             board: boardOfJoint(this.joint),
             rate: this.rate,
             laser: this.laser,
             mode: this.mode,
             enabled: this.enabled,
             queue: this.queueFree(),
+            probe: focus ? this.probeActive() : null,
         };
     }
 
@@ -258,6 +375,7 @@ export class MockMachine {
 
     /** Queues a move; the firmware refuses motion in Hold and Alarm, and jogs outside Idle/Jog. */
     push(move: Move): void {
+        this.checkFocusWord(move.h);
         if (this.state === "Alarm" || this.state === "Hold") {
             throw new MachineError(5, "not now");
         }
@@ -283,24 +401,26 @@ export class MockMachine {
         }
     }
 
-    jog(dr: number, da: number, feed: number | null): void {
+    /** A relative jog; a `dh` of null leaves the focus axis out of it. */
+    jog(dr: number, da: number, feed: number | null, dh: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "jog", target: { r: from.r + dr, a: from.a + da }, feed, power: 0, group: -1 });
+        const h = dh !== null ? this.endpointH() + dh : undefined;
+        this.push({ kind: "jog", target: { r: from.r + dr, a: from.a + da }, h, feed, power: 0, group: -1 });
     }
 
-    jogTo(r: number | null, a: number | null, feed: number | null): void {
+    jogTo(r: number | null, a: number | null, feed: number | null, h: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "jog", target: { r: r ?? from.r, a: a ?? from.a }, feed, power: 0, group: -1 });
+        this.push({ kind: "jog", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, feed, power: 0, group: -1 });
     }
 
-    go(r: number | null, a: number | null): void {
+    go(r: number | null, a: number | null, h: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "go", target: { r: r ?? from.r, a: a ?? from.a }, feed: null, power: 0, group: -1 });
+        this.push({ kind: "go", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, feed: null, power: 0, group: -1 });
     }
 
-    cut(r: number | null, a: number | null, feed: number, power: number, minPower = 0): void {
+    cut(r: number | null, a: number | null, feed: number, power: number, minPower = 0, h: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "cut", target: { r: r ?? from.r, a: a ?? from.a }, feed, power, minPower, group: -1 });
+        this.push({ kind: "cut", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, feed, power, minPower, group: -1 });
     }
 
     /** Sends the cross slide to `z`; the firmware takes it in Idle only. */
@@ -324,19 +444,29 @@ export class MockMachine {
         this.slideTo(this.z + dz, feed);
     }
 
-    private secondsFor(move: Move, from: Joint): number {
+    /**
+     * The focus axis moves with the joints and holds them back only when it
+     * is the slower. F stays the board speed, except on a move that only
+     * raises or lowers the head, which takes it as the speed of H.
+     */
+    private secondsFor(move: Move, from: Joint, fromH: number, toH: number): number {
         const s = this.settings;
-        switch (move.kind) {
-            case "go":
-                return moveMinutes(from, move.target, null, s["r_rate"] ?? 560, s["a_rate"] ?? 400) * 60;
-            case "jog":
-                if (move.feed === null) {
-                    return moveMinutes(from, move.target, null, s["jog_r"] ?? 300, s["jog_a"] ?? 200) * 60;
-                }
-                return moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 560, s["a_rate"] ?? 400) * 60;
-            case "cut":
-                return moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 560, s["a_rate"] ?? 400) * 60;
+        const hRate = s["h_rate"] ?? 600;
+        const headOnly = Math.abs(move.target.r - from.r) < 1e-9 && Math.abs(move.target.a - from.a) < 1e-9;
+        let minutes: number;
+        let focusRate = hRate;
+        if (move.kind === "go") {
+            minutes = moveMinutes(from, move.target, null, s["r_rate"] ?? 560, s["a_rate"] ?? 400);
+        } else if (move.kind === "jog" && move.feed === null) {
+            minutes = moveMinutes(from, move.target, null, s["jog_r"] ?? 300, s["jog_a"] ?? 200);
+            focusRate = s["jog_h"] ?? 120;
+        } else {
+            minutes = moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 560, s["a_rate"] ?? 400);
+            if (headOnly && move.feed !== null) {
+                focusRate = Math.min(move.feed, hRate);
+            }
         }
+        return Math.max(minutes, Math.abs(toH - fromH) / focusRate) * 60;
     }
 
     /** Duty in permille for a cut of board length `length` at the achieved speed. */
@@ -387,11 +517,14 @@ export class MockMachine {
                     return;
                 }
                 this.state = move.kind === "jog" ? "Jog" : "Run";
-                this.active = { move, from: { ...this.joint }, seconds: this.secondsFor(move, this.joint), elapsed: 0 };
+                const toH = move.h ?? this.h;
+                const seconds = this.secondsFor(move, this.joint, this.h, toH);
+                this.active = { move, from: { ...this.joint }, fromH: this.h, toH, seconds, elapsed: 0 };
             }
             const active = this.active;
             if (active.seconds <= 1e-9) {
                 this.joint = { ...active.move.target };
+                this.h = active.toH;
                 this.active = null;
                 continue;
             }
@@ -400,12 +533,14 @@ export class MockMachine {
             remaining -= step;
             const t = Math.min(1, active.elapsed / active.seconds);
             this.joint = lerpJoint(active.from, active.move.target, t);
+            this.h = active.fromH + (active.toH - active.fromH) * t;
             const length = surfaceLength(active.from, active.move.target);
             const achieved = (length / active.seconds) * 60;
             this.rate = achieved;
             this.laser = this.dutyFor(active.move, achieved, length);
             if (active.elapsed >= active.seconds - 1e-9) {
                 this.joint = { ...active.move.target };
+                this.h = active.toH;
                 this.active = null;
             }
         }
@@ -508,12 +643,53 @@ export class MockMachine {
     }
 
     setPosition(request: PositionRequest): void {
+        this.checkFocusWord(request.h);
         this.requireIdle();
         if (request.r !== undefined) {
             this.checkRadius(request.r);
         }
         this.joint = { r: request.r ?? this.joint.r, a: request.a ?? this.joint.a };
         this.z = request.z ?? this.z;
+        this.h = request.h ?? this.h;
+    }
+
+    /**
+     * `probe H<distance> [F]`: moves the focus axis by up to `distance`
+     * until the probe input goes active. The mock answers at once rather
+     * than over time, so it takes the line only at rest where the firmware
+     * would wait for the moves queued before it. A miss is `Alarm:2`.
+     */
+    probe(distance: number, feed: number | null): ProbeResult {
+        if (!this.hasFocusAxis()) {
+            throw new MachineError(2, "bad word");
+        }
+        if (!Number.isFinite(distance) || distance === 0 || (feed !== null && !(feed >= MIN_FEED))) {
+            throw new MachineError(4, "out of range");
+        }
+        this.requireIdle();
+        if (this.probeActive()) {
+            throw new MachineError(10, "probe active");
+        }
+        this.enabled = true;
+        this.beamOff();
+        const from = this.h;
+        const end = from + distance;
+        const surface = this.contactHeight();
+        // The input starts inactive, so it changes where the head crosses
+        // the board's height, whichever way the polarity is set.
+        const crosses = distance < 0 ? from > surface && end <= surface : from <= surface && end > surface;
+        if (!crosses) {
+            this.h = end;
+            this.state = "Alarm";
+            this.alarm = 2;
+            return { h: end, contact: false };
+        }
+        // The head brakes a little past the contact: 20 ms of motion at the
+        // probe's speed, as much as the distance leaves.
+        const speed = feed ?? this.settings["jog_h"] ?? 120;
+        const brake = Math.min(Math.abs(end - surface), Math.max(1e-4, (speed / 60) * 0.02));
+        this.h = surface + Math.sign(distance) * brake;
+        return { h: surface, contact: true };
     }
 
     /** `laser S T`: S over `s_max` is full duty, not more; T past the maximum is refused. */
@@ -540,7 +716,10 @@ export class MockMachine {
         if (!Number.isFinite(value)) {
             throw new MachineError(7, "bad setting value");
         }
-        if (/_(steps|rate|accel)$/.test(name) && value <= 0) {
+        if (/_(steps|rate|accel|jerk)$/.test(name) && value <= 0) {
+            throw new MachineError(7, "bad setting value");
+        }
+        if ((name === "h_axis" || name === "probe_invert") && value !== 0 && value !== 1) {
             throw new MachineError(7, "bad setting value");
         }
         this.settings[name] = value;
@@ -557,6 +736,286 @@ interface RunSession {
     group: number;
 }
 
+/** Points per side of a probe grid. */
+const GRID_MIN_POINTS = 2;
+const GRID_MAX_POINTS = 50;
+/** Most a map may span top to bottom and still be followed, mm. */
+const MAX_SPAN = 5;
+/** How far past the grid a job may reach and still be compensated, mm. */
+const COVER_MARGIN = 1;
+/** Mock time the probing spends on one grid point, s: less than a real probe, enough to watch. */
+export const PROBE_POINT_SECONDS = 0.25;
+const COMPENSATE_MODES: readonly string[] = ["off", "auto", "focus", "power"];
+
+export const DEFAULT_PROBE_SETTINGS: ProbeSettings = { depth: 5, feed: 60, slow: 15, backoff: 0.3, offset: [0, 0], rayleigh: 0.5 };
+
+/** A probing under way: the points in the order they are visited and the joints that reach them. */
+interface ProbeSession {
+    settings: ProbeSettings;
+    order: [number, number][];
+    joints: Joint[];
+    /** Index into `order` of the point in progress. */
+    next: number;
+    /** Seconds spent on the point in progress. */
+    elapsed: number;
+    /** The head's height when probing began, which it travels at between points. */
+    travel: number;
+    map: HeightMap;
+    /** Seconds unrounded; the state rounds them. */
+    progress: ProbeProgress;
+}
+
+/** A plain decimal with trailing zeros dropped and no negative zero. */
+function num(value: number, decimals = 3): string {
+    return String(Number(value.toFixed(decimals)));
+}
+
+/** A fixed-decimal word value without a negative zero. */
+function coord(value: number, decimals: number): string {
+    const text = value.toFixed(decimals);
+    return Number(text) === 0 ? text.replace(/^-/, "") : text;
+}
+
+/** Six significant digits, trailing zeros dropped: the backend's short number format. */
+function shortNumber(value: number): string {
+    return String(Number(value.toPrecision(6)));
+}
+
+function round4(value: number): number {
+    return Math.round(value * 1e4) / 1e4;
+}
+
+function clamp(value: number, low: number, high: number): number {
+    return value < low ? low : value > high ? high : value;
+}
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function checkGrid(grid: Grid): void {
+    for (const value of [grid.x0, grid.y0, grid.x1, grid.y1]) {
+        if (!(Math.abs(value) <= MAX_VALUE)) {
+            throw new Error(`grid corners must be within ${MAX_VALUE_TEXT} mm`);
+        }
+    }
+    if (!(grid.x1 > grid.x0 && grid.y1 > grid.y0)) {
+        throw new Error("the grid needs x1 above x0 and y1 above y0");
+    }
+    for (const [count, name] of [[grid.nx, "nx"], [grid.ny, "ny"]] as const) {
+        if (!Number.isInteger(count) || count < GRID_MIN_POINTS || count > GRID_MAX_POINTS) {
+            throw new Error(`${name} must be ${GRID_MIN_POINTS} to ${GRID_MAX_POINTS}`);
+        }
+    }
+}
+
+function gridXs(grid: Grid): number[] {
+    return Array.from({ length: grid.nx }, (_, i) => grid.x0 + ((grid.x1 - grid.x0) * i) / (grid.nx - 1));
+}
+
+function gridYs(grid: Grid): number[] {
+    return Array.from({ length: grid.ny }, (_, j) => grid.y0 + ((grid.y1 - grid.y0) * j) / (grid.ny - 1));
+}
+
+/** The finer of the two point spacings, mm. */
+function gridSpacing(grid: Grid): number {
+    return Math.min((grid.x1 - grid.x0) / (grid.nx - 1), (grid.y1 - grid.y0) / (grid.ny - 1));
+}
+
+/** Every point as [ix, iy], row by row with every other row reversed, so the head never crosses the board between two points. */
+export function gridOrder(grid: Grid): [number, number][] {
+    const out: [number, number][] = [];
+    for (let iy = 0; iy < grid.ny; iy++) {
+        for (let k = 0; k < grid.nx; k++) {
+            out.push([iy % 2 === 0 ? k : grid.nx - 1 - k, iy]);
+        }
+    }
+    return out;
+}
+
+/**
+ * The joints that put the probe tip, `offset` from the beam along the rail
+ * and across it, over a board point, with the tip outside the beam. A tip
+ * off the rail never comes nearer the axis than its offset across it; a
+ * point inside that circle is probed from the nearest place on it when that
+ * is at most `slack` away, and refused otherwise.
+ */
+export function probeJoint(point: [number, number], offset: [number, number], previousAngle: number, slack = 0): Joint {
+    const [along, across] = offset;
+    let [x, y] = point;
+    let rho = Math.hypot(x, y);
+    if (rho < Math.abs(across)) {
+        if (Math.abs(across) - rho > slack) {
+            throw new Error(
+                `the probe cannot reach (${x.toFixed(2)}, ${y.toFixed(2)}): its tip is ${shortNumber(Math.abs(across))} mm off` +
+                    " the rail, so it never comes nearer the axis than that; move the grid off the axis or" +
+                    " mount the probe in line with the rail",
+            );
+        }
+        const direction = rho > 0 ? Math.atan2(y, x) : 0;
+        rho = Math.abs(across);
+        x = rho * Math.cos(direction);
+        y = rho * Math.sin(direction);
+    }
+    const reach = Math.sqrt(Math.max(0, rho * rho - across * across));
+    const r = reach - along;
+    if (rho < AXIS_EPSILON) {
+        return { r, a: previousAngle };
+    }
+    const angle = (Math.atan2(y, x) - Math.atan2(across, reach)) / DEG;
+    return { r, a: unwrap(angle, previousAngle) };
+}
+
+/** The board's height at a board point: bilinear inside the grid, the nearest edge outside it. */
+export function heightAt(map: HeightMap, x: number, y: number): number {
+    const grid = map.grid;
+    const u = clamp(((x - grid.x0) / (grid.x1 - grid.x0)) * (grid.nx - 1), 0, grid.nx - 1);
+    const v = clamp(((y - grid.y0) / (grid.y1 - grid.y0)) * (grid.ny - 1), 0, grid.ny - 1);
+    const i = Math.min(Math.floor(u), grid.nx - 2);
+    const j = Math.min(Math.floor(v), grid.ny - 2);
+    const t = u - i;
+    const s = v - j;
+    const h00 = map.heights[j]?.[i];
+    const h10 = map.heights[j]?.[i + 1];
+    const h01 = map.heights[j + 1]?.[i];
+    const h11 = map.heights[j + 1]?.[i + 1];
+    if (h00 == null || h10 == null || h01 == null || h11 == null) {
+        throw new Error("the height map is not complete");
+    }
+    return (1 - t) * (1 - s) * h00 + t * (1 - s) * h10 + (1 - t) * s * h01 + t * s * h11;
+}
+
+function probedValues(map: HeightMap): number[] {
+    return map.heights.flat().filter((value): value is number => value !== null);
+}
+
+/** Refuses a map whose shape does not match its grid. */
+function checkHeightMap(map: HeightMap): void {
+    checkGrid(map.grid);
+    if (map.heights.length !== map.grid.ny || map.heights.some((row) => row.length !== map.grid.nx)) {
+        throw new Error(`heights must be ${map.grid.ny} rows of ${map.grid.nx}`);
+    }
+    if (probedValues(map).some((value) => Math.abs(value) > MAX_VALUE)) {
+        throw new Error(`heights must be within ${MAX_VALUE_TEXT} mm`);
+    }
+    if (Math.abs(map.focus_offset) > MAX_VALUE) {
+        throw new Error(`focus_offset must be within ${MAX_VALUE_TEXT} mm`);
+    }
+}
+
+/** A map as the backend reads one from a request: defaults filled in, numbers that are numbers. */
+function readHeightMap(map: HeightMap): HeightMap {
+    const grid = map?.grid;
+    if (!grid || !Array.isArray(map.heights) || !map.heights.every((row) => Array.isArray(row))) {
+        throw new ApiError(422, "a height map needs a grid and rows of heights");
+    }
+    const read: HeightMap = {
+        grid: { x0: grid.x0, y0: grid.y0, x1: grid.x1, y1: grid.y1, nx: grid.nx ?? 5, ny: grid.ny ?? 5 },
+        heights: map.heights.map((row) => row.map((value) => value ?? null)),
+        focus_offset: map.focus_offset ?? 0,
+        focus_set: map.focus_set ?? false,
+        probe_offset: map.probe_offset ? [map.probe_offset[0], map.probe_offset[1]] : [0, 0],
+        created: map.created ?? "",
+    };
+    const numbers = [...Object.values(read.grid), ...probedValues(read), read.focus_offset, ...read.probe_offset];
+    if (!numbers.every((value) => typeof value === "number" && Number.isFinite(value))) {
+        throw new ApiError(422, "a height map's numbers must be finite");
+    }
+    return read;
+}
+
+/** Refuses a map a run should not follow. */
+function checkUsable(map: HeightMap): void {
+    const values = probedValues(map);
+    const total = map.grid.nx * map.grid.ny;
+    if (values.length !== total) {
+        throw new Error(`the height map is not complete: ${values.length} of ${total} points probed`);
+    }
+    if (!map.focus_set) {
+        throw new Error("the focus offset is not set: focus the beam by eye over the probed area and use focus here");
+    }
+    const span = values.length > 0 ? Math.max(...values) - Math.min(...values) : 0;
+    if (span > MAX_SPAN) {
+        throw new Error(`the height map spans ${span.toFixed(3)} mm, more than ${MAX_SPAN} mm: probe again or flatten the board`);
+    }
+}
+
+/** The board box the enabled groups of a job cut inside, joint-space groups included. */
+function jobExtent(job: Job): [number, number, number, number] | null {
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const group of job.groups) {
+        if (!group.enabled) {
+            continue;
+        }
+        const points: [number, number][] =
+            group.joints && group.joints.length > 0
+                ? group.joints.flat().map(([r, a]): [number, number] => {
+                      const board = boardOfJoint({ r, a });
+                      return [board.x, board.y];
+                  })
+                : group.paths.flat();
+        for (const [x, y] of points) {
+            xs.push(x);
+            ys.push(y);
+        }
+    }
+    if (xs.length === 0) {
+        return null;
+    }
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+/** Refuses a job that reaches past the probed area, where the edge value would stand in for a board nobody measured. */
+function checkCovers(map: HeightMap, job: Job): void {
+    const box = jobExtent(job);
+    if (box === null) {
+        return;
+    }
+    const grid = map.grid;
+    const [x0, y0, x1, y1] = box;
+    const m = COVER_MARGIN;
+    if (!(x0 >= grid.x0 - m && y0 >= grid.y0 - m && x1 <= grid.x1 + m && y1 <= grid.y1 + m)) {
+        const f = (value: number): string => value.toFixed(1);
+        throw new Error(
+            `the height map does not cover the job: probed X ${f(grid.x0)}..${f(grid.x1)} Y ${f(grid.y0)}..${f(grid.y1)}, ` +
+                `the job reaches X ${f(x0)}..${f(x1)} Y ${f(y0)}..${f(y1)}`,
+        );
+    }
+}
+
+function checkProbeSettings(settings: ProbeSettings): void {
+    if (!(settings.depth > 0 && settings.depth <= 100)) {
+        throw new Error("depth must be above 0 and at most 100 mm");
+    }
+    if (!(settings.feed >= 0.001 && settings.feed <= 10000)) {
+        throw new Error("feed must be 0.001 to 10000 mm/min");
+    }
+    if (settings.slow !== 0 && !(settings.slow >= 0.001 && settings.slow <= 10000)) {
+        throw new Error("slow must be 0 (one touch) or 0.001 to 10000 mm/min");
+    }
+    if (!(settings.backoff > 0 && settings.backoff <= settings.depth)) {
+        throw new Error("backoff must be above 0 and at most the depth");
+    }
+    const offset = settings.offset;
+    if (!(Array.isArray(offset) && offset.length === 2 && offset.every((value) => Math.abs(value) <= 1000))) {
+        throw new Error("the probe offset must be within 1000 mm");
+    }
+    if (!(settings.rayleigh >= 0.001 && settings.rayleigh <= 100)) {
+        throw new Error("rayleigh must be 0.001 to 100 mm");
+    }
+}
+
+/** The firmware's answer to `probe H<distance> [F<feed>]`, a refusal thrown as a MachineError. */
+function probeReplies(machine: MockMachine, distance: number, feed: number | null): string[] {
+    const result = machine.probe(distance, feed);
+    const report = `[PRB:${result.h.toFixed(4)}:${result.contact ? 1 : 0}]`;
+    if (result.contact) {
+        return [report, "ok"];
+    }
+    return [report, "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"];
+}
+
 export interface MockOptions {
     /** Drive the simulation from a timer; off for tests, which call `step`. */
     timers?: boolean;
@@ -568,7 +1027,7 @@ export interface MockOptions {
 
 /** Fake API and event feed: `api` and `feed` in one object. */
 export class MockBackend implements Api, EventFeed {
-    readonly machine = new MockMachine();
+    readonly machine = new MockMachine(MOCK_MACHINE_SETTINGS);
     connected = false;
     url: string | null = null;
     tolerance = 0.005;
@@ -591,11 +1050,18 @@ export class MockBackend implements Api, EventFeed {
     private stateClock = 0;
     private progressClock = 0;
     private lastSocket: string | null = null;
+    private heightmap: HeightMap | null = null;
+    /** The last probing's progress, kept once it has ended. */
+    private probeProgress: ProbeProgress | null = null;
+    private probing: ProbeSession | null = null;
+    private probeConfig: ProbeSettings = structuredClone(DEFAULT_PROBE_SETTINGS);
 
     constructor(options: MockOptions = {}) {
         this.useTimers = options.timers ?? true;
         this.tickMs = options.tickMs ?? 50;
         this.now = options.now ?? (() => (typeof performance !== "undefined" ? performance.now() : Date.now()));
+        // The simulated probe sits where the probe settings say it is mounted.
+        this.machine.probeOffset = [...this.probeConfig.offset];
         this.seedDemo();
     }
 
@@ -668,6 +1134,7 @@ export class MockBackend implements Api, EventFeed {
             this.machine.advance(dt);
             this.drainOutbox();
             this.serviceRun(dt);
+            this.serviceProbe(dt);
             const period = wasMoving || this.machine.moving() ? 0.1 : 0.2;
             this.stateClock += dt;
             if (this.stateClock >= period - CLOCK_EPSILON) {
@@ -797,6 +1264,18 @@ export class MockBackend implements Api, EventFeed {
         }
     }
 
+    /** A move or a position declaration: nothing else may move the head while the board is probed. */
+    private requireMovable(): void {
+        this.requireConnected();
+        this.refuseWhileProbing();
+    }
+
+    private refuseWhileProbing(): void {
+        if (this.probing) {
+            throw new ApiError(409, "the board is being probed");
+        }
+    }
+
     /** Runs a machine action and turns its refusal into the backend's error reply. */
     private exchange(tx: string, action: () => void): void {
         this.requireConnected();
@@ -851,6 +1330,9 @@ export class MockBackend implements Api, EventFeed {
             session.state = "stopped";
             this.serviceRun(0);
         }
+        if (this.probing) {
+            this.probeFinish(this.probing, "stopped", null);
+        }
         this.machine.reset();
         this.connected = false;
         this.url = null;
@@ -870,6 +1352,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async jog(request: JogRequest): Promise<void> {
+        this.requireMovable();
         const feed = request.feed ?? null;
         const feedWord = feed !== null ? ` F${feed}` : "";
         if (request.kind === "joint") {
@@ -880,11 +1363,11 @@ export class MockBackend implements Api, EventFeed {
             }
             const dr = request.dr ?? 0;
             const da = request.da ?? 0;
-            const words = [dr !== 0 ? `R${dr.toFixed(3)}` : "", da !== 0 ? `A${da.toFixed(4)}` : ""].filter((w) => w !== "");
-            this.exchange(`jog ${words.join(" ")}${feedWord}`.trim(), () => this.machine.jog(dr, da, feed));
+            const dh = request.dh ?? 0;
+            const words = [dr !== 0 ? `R${dr.toFixed(3)}` : "", da !== 0 ? `A${da.toFixed(4)}` : "", dh !== 0 ? `H${dh.toFixed(4)}` : ""].filter((w) => w !== "");
+            this.exchange(`jog ${words.join(" ")}${feedWord}`.trim(), () => this.machine.jog(dr, da, feed, dh !== 0 ? dh : null));
             return;
         }
-        this.requireConnected();
         const from = boardOfJoint(this.pendingEndpoint());
         const target = { x: from.x + (request.dx ?? 0), y: from.y + (request.dy ?? 0) };
         for (const joint of this.boardTargets(target)) {
@@ -899,6 +1382,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async goto(request: GotoRequest): Promise<void> {
+        this.requireMovable();
         const feed = request.feed ?? null;
         const feedWord = feed !== null ? ` F${feed}` : "";
         if (request.kind === "joint") {
@@ -909,11 +1393,11 @@ export class MockBackend implements Api, EventFeed {
             }
             const r = request.r ?? null;
             const a = request.a ?? null;
-            const words = [r !== null ? `R${r.toFixed(3)}` : "", a !== null ? `A${a.toFixed(4)}` : ""].filter((w) => w !== "");
-            this.exchange(`jogto ${words.join(" ")}${feedWord}`.trim(), () => this.machine.jogTo(r, a, feed));
+            const h = request.h ?? null;
+            const words = [r !== null ? `R${r.toFixed(3)}` : "", a !== null ? `A${a.toFixed(4)}` : "", h !== null ? `H${h.toFixed(4)}` : ""].filter((w) => w !== "");
+            this.exchange(`jogto ${words.join(" ")}${feedWord}`.trim(), () => this.machine.jogTo(r, a, feed, h));
             return;
         }
-        this.requireConnected();
         const from = boardOfJoint(this.pendingEndpoint());
         const target = { x: request.x ?? from.x, y: request.y ?? from.y };
         for (const joint of this.boardTargets(target)) {
@@ -930,13 +1414,15 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async setPosition(request: PositionRequest): Promise<void> {
+        this.requireMovable();
         const words = [
             request.r !== undefined ? `R${request.r}` : "",
             request.a !== undefined ? `A${request.a}` : "",
+            request.h !== undefined ? `H${request.h}` : "",
         ].filter((w) => w !== "");
         if (words.length > 0) {
-            const { r, a } = request;
-            this.exchange(`set ${words.join(" ")}`, () => this.machine.setPosition({ r, a }));
+            const { r, a, h } = request;
+            this.exchange(`set ${words.join(" ")}`, () => this.machine.setPosition({ r, a, h }));
         }
         if (request.z !== undefined) {
             // Z is declared on a line of its own, as the firmware wants it.
@@ -968,6 +1454,10 @@ export class MockBackend implements Api, EventFeed {
                 machine.resume();
                 break;
             case "reset":
+                // Probing is told first, so nothing more of it goes out after the byte.
+                if (this.probing) {
+                    this.probeFinish(this.probing, "stopped", "reset by the operator");
+                }
                 this.line("tx", "<0x18>");
                 this.outbox = [];
                 machine.reset();
@@ -1025,14 +1515,14 @@ export class MockBackend implements Api, EventFeed {
             }
         }
         const get = (key: string): number | null => (words.has(key) ? words.get(key) ?? null : null);
-        const noAxis = get("R") === null && get("A") === null && get("Z") === null;
+        const noAxis = get("R") === null && get("A") === null && get("Z") === null && get("H") === null;
         try {
             switch (keyword.toLowerCase()) {
                 case "go":
                     if (noAxis) {
                         return ["error:3 missing word"];
                     }
-                    machine.go(get("R"), get("A"));
+                    machine.go(get("R"), get("A"), get("H"));
                     return ["ok"];
                 case "cut": {
                     // F and S are modal, but a reset forgets them: the first
@@ -1046,7 +1536,7 @@ export class MockBackend implements Api, EventFeed {
                     if (power < 0 || minPower < 0) {
                         return ["error:4 out of range"];
                     }
-                    machine.cut(get("R"), get("A"), feed, power, minPower);
+                    machine.cut(get("R"), get("A"), feed, power, minPower, get("H"));
                     machine.feed = feed;
                     machine.power = power;
                     return ["ok"];
@@ -1059,7 +1549,7 @@ export class MockBackend implements Api, EventFeed {
                         return ["error:3 missing word"];
                     }
                     if (z !== null) {
-                        if (get("R") !== null || get("A") !== null) {
+                        if (get("R") !== null || get("A") !== null || get("H") !== null) {
                             return ["error:2 bad word"];
                         }
                         if (absolute) {
@@ -1068,11 +1558,27 @@ export class MockBackend implements Api, EventFeed {
                             machine.slideJog(z, get("F"));
                         }
                     } else if (absolute) {
-                        machine.jogTo(get("R"), get("A"), get("F"));
+                        machine.jogTo(get("R"), get("A"), get("F"), get("H"));
                     } else {
-                        machine.jog(get("R") ?? 0, get("A") ?? 0, get("F"));
+                        machine.jog(get("R") ?? 0, get("A") ?? 0, get("F"), get("H"));
                     }
                     return ["ok"];
+                }
+                case "probe": {
+                    // H and F only; a missing or zero distance is refused
+                    // before the machine is asked, as the firmware parses it.
+                    if ([...words.keys()].some((key) => key !== "H" && key !== "F")) {
+                        return ["error:2 bad word"];
+                    }
+                    const distance = get("H");
+                    const feed = get("F");
+                    if (distance === null) {
+                        return ["error:3 missing word"];
+                    }
+                    if (distance === 0 || (feed !== null && !(feed >= MIN_FEED))) {
+                        return ["error:4 out of range"];
+                    }
+                    return probeReplies(machine, distance, feed);
                 }
                 case "dwell":
                     return get("T") === null ? ["error:3 missing word"] : ["ok"];
@@ -1099,7 +1605,8 @@ export class MockBackend implements Api, EventFeed {
                     const r = get("R");
                     const a = get("A");
                     const z = get("Z");
-                    if (z !== null && (r !== null || a !== null)) {
+                    const h = get("H");
+                    if (z !== null && (r !== null || a !== null || h !== null)) {
                         return ["error:2 bad word"];
                     }
                     if (r !== null) {
@@ -1107,6 +1614,9 @@ export class MockBackend implements Api, EventFeed {
                     }
                     if (a !== null) {
                         position.a = a;
+                    }
+                    if (h !== null) {
+                        position.h = h;
                     }
                     if (z !== null) {
                         position.z = z;
@@ -1147,10 +1657,11 @@ export class MockBackend implements Api, EventFeed {
             return [...Object.entries(machine.settings).map(([name, value]) => `${name}=${value}`), "ok"];
         }
         if (text === "save") {
+            machine.flash = { ...machine.settings };
             return ["ok"];
         }
         if (text === "load" || text === "defaults") {
-            machine.settings = { ...DEFAULT_SETTINGS };
+            machine.settings = { ...(text === "load" ? machine.flash : DEFAULT_SETTINGS) };
             return ["ok"];
         }
         if (text === "tmc") {
@@ -1219,7 +1730,10 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async saveSettings(): Promise<void> {
-        this.exchange("$save", () => this.machine.requireIdle());
+        this.exchange("$save", () => {
+            this.machine.requireIdle();
+            this.machine.flash = { ...this.machine.settings };
+        });
         this.message("info", "settings written to flash (mock)");
     }
 
@@ -1409,8 +1923,9 @@ export class MockBackend implements Api, EventFeed {
     /**
      * The move list a job streams: a rapid to each path, then cuts within
      * the chord tolerance; a joint-space group goes out as it is written.
+     * With `focusAt`, every move also carries the focus height at its end.
      */
-    movesFor(job: Job): Move[] {
+    movesFor(job: Job, focusAt: ((board: Board) => number) | null = null): Move[] {
         const moves: Move[] = [];
         let joint = this.machine.endpoint();
         job.groups.forEach((group, index) => {
@@ -1418,33 +1933,71 @@ export class MockBackend implements Api, EventFeed {
                 return;
             }
             for (const step of groupMoves(group, joint, this.tolerance)) {
-                if (step.kind === "go") {
-                    moves.push({ kind: "go", target: step.target, feed: null, power: 0, group: index });
-                } else {
-                    moves.push({ kind: "cut", target: step.target, feed: group.speed, power: group.power, minPower: group.min_power, group: index });
+                const move: Move =
+                    step.kind === "go"
+                        ? { kind: "go", target: step.target, feed: null, power: 0, group: index }
+                        : { kind: "cut", target: step.target, feed: group.speed, power: group.power, minPower: group.min_power, group: index };
+                if (focusAt) {
+                    move.h = round4(focusAt(boardOfJoint(step.target)));
                 }
+                moves.push(move);
                 joint = step.target;
             }
         });
         return moves;
     }
 
-    async runJob(id: string): Promise<void> {
+    /**
+     * How a run of `job` follows the height map, checked as the backend
+     * checks it; null for off. Power compensation is only checked here: the
+     * mock streams its cuts at the power they have.
+     */
+    private compensation(mode: string, job: Job): { mode: "focus" | "power"; map: HeightMap } | null {
+        if (!COMPENSATE_MODES.includes(mode)) {
+            throw new ApiError(400, `compensate must be one of ${COMPENSATE_MODES.join(", ")}`);
+        }
+        if (mode === "off") {
+            return null;
+        }
+        const map = this.heightmap;
+        try {
+            if (!map) {
+                throw new Error("there is no height map: probe the board first");
+            }
+            checkUsable(map);
+            checkCovers(map, job);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const hasAxis = this.machine.hasFocusAxis();
+        const resolved = mode === "auto" ? (hasAxis ? "focus" : "power") : mode === "focus" ? "focus" : "power";
+        if (resolved === "focus" && !hasAxis) {
+            throw new ApiError(400, "the focus axis is not fitted ($h_axis=0): compensate by power instead");
+        }
+        return { mode: resolved, map };
+    }
+
+    async runJob(id: string, compensate: Compensate = "off"): Promise<void> {
         this.requireConnected();
         const job = this.requireJob(id);
+        this.refuseWhileProbing();
+        const followed = this.compensation(compensate, job);
         if (this.session) {
             throw new ApiError(409, "a job is already running");
         }
         if (this.machine.state !== "Idle" || this.outbox.length > 0) {
             throw new ApiError(409, "machine is not idle");
         }
-        const moves = this.movesFor(job);
+        const map = followed?.map;
+        const focusAt = map && followed.mode === "focus" ? (board: Board) => heightAt(map, board.x, board.y) + map.focus_offset : null;
+        const moves = this.movesFor(job, focusAt);
         if (moves.length === 0) {
             throw new ApiError(400, "job has no enabled paths");
         }
         this.session = { job, moves, next: 0, okSent: 0, state: "running", seconds: 0, group: 0 };
         this.lastProgress = null;
-        this.message("info", `running ${job.name}: ${moves.length} moves`);
+        const following = followed ? `, following the board by ${followed.mode}` : "";
+        this.message("info", `running ${job.name}: ${moves.length} moves${following}`);
         this.serviceRun(0);
     }
 
@@ -1474,11 +2027,7 @@ export class MockBackend implements Api, EventFeed {
         if (!session) {
             throw new ApiError(409, "no job running");
         }
-        this.line("tx", "!");
-        this.machine.hold();
-        this.line("tx", "<0x18>");
-        this.outbox = [];
-        this.machine.reset();
+        this.halt();
         session.state = "stopped";
         this.serviceRun(0);
         this.emit({ type: "state", data: this.snapshot() });
@@ -1487,10 +2036,340 @@ export class MockBackend implements Api, EventFeed {
     async run(): Promise<Progress | null> {
         return this.progress();
     }
+
+    /** A stop's hold, then its reset: from a hold the reset loses no steps. */
+    private halt(): void {
+        this.line("tx", "!");
+        this.machine.hold();
+        this.line("tx", "<0x18>");
+        this.outbox = [];
+        this.machine.reset();
+    }
+
+    // Height map.
+
+    private heightMapState(): HeightMapState {
+        const progress = this.probeProgress;
+        return {
+            map: this.heightmap ? structuredClone(this.heightmap) : null,
+            probe: progress
+                ? { ...progress, point: progress.point ? [progress.point[0], progress.point[1]] : null, seconds: Math.round(progress.seconds * 10) / 10 }
+                : null,
+            settings: structuredClone(this.probeConfig),
+        };
+    }
+
+    private emitHeightMap(): void {
+        this.emit({ type: "heightmap", data: this.heightMapState() });
+    }
+
+    async heightMap(): Promise<HeightMapState> {
+        return this.heightMapState();
+    }
+
+    /**
+     * Probes a grid of board points on the mock's clock, a fixed time per
+     * point: the head goes over the point, touches, touches again slower,
+     * and rises back to the height it had when probing began.
+     */
+    async probe(grid: Grid): Promise<HeightMapState> {
+        this.requireConnected();
+        if (this.session) {
+            throw new ApiError(409, "a job is running");
+        }
+        this.refuseWhileProbing();
+        try {
+            checkGrid(grid);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const machine = this.machine;
+        if (machine.state !== "Idle") {
+            throw new ApiError(409, `the machine is ${statusLine(machine)}, not Idle`);
+        }
+        if (!machine.hasFocusAxis()) {
+            throw new ApiError(409, "the machine has no focus axis: set $h_axis=1 to probe");
+        }
+        if (machine.probeActive()) {
+            throw new ApiError(409, "the probe is already touching: raise the head clear of the board first");
+        }
+        const settings = structuredClone(this.probeConfig);
+        // Every point is checked for reach before the first move.
+        const xs = gridXs(grid);
+        const ys = gridYs(grid);
+        const order = gridOrder(grid);
+        const joints: Joint[] = [];
+        let angle = machine.joint.a;
+        for (const [ix, iy] of order) {
+            let joint: Joint;
+            try {
+                joint = probeJoint([xs[ix] ?? 0, ys[iy] ?? 0], settings.offset, angle, gridSpacing(grid) / 2);
+            } catch (error) {
+                throw new ApiError(409, errorText(error));
+            }
+            joints.push(joint);
+            angle = joint.a;
+        }
+        const map: HeightMap = {
+            grid: { x0: grid.x0, y0: grid.y0, x1: grid.x1, y1: grid.y1, nx: grid.nx, ny: grid.ny },
+            heights: Array.from({ length: grid.ny }, () => Array<number | null>(grid.nx).fill(null)),
+            focus_offset: 0,
+            focus_set: false,
+            probe_offset: [settings.offset[0], settings.offset[1]],
+            created: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
+        };
+        // A map probed before keeps its focus offset only if the probe has
+        // not moved: the offset is contact to focus for that probe.
+        const previous = this.heightmap;
+        if (previous && previous.probe_offset[0] === settings.offset[0] && previous.probe_offset[1] === settings.offset[1]) {
+            map.focus_offset = previous.focus_offset;
+            map.focus_set = previous.focus_set;
+        }
+        // The new map replaces the old one from the start, so its grid fills in.
+        this.heightmap = map;
+        const progress: ProbeProgress = { state: "running", done: 0, total: grid.nx * grid.ny, point: null, seconds: 0, error: null };
+        this.probeProgress = progress;
+        const session: ProbeSession = { settings, order, joints, next: 0, elapsed: 0, travel: machine.h, map, progress };
+        this.probing = session;
+        this.emitHeightMap();
+        this.probeBegin(session);
+        return this.heightMapState();
+    }
+
+    async probeStop(): Promise<HeightMapState> {
+        const session = this.probing;
+        if (!session) {
+            throw new ApiError(409, "nothing is being probed");
+        }
+        this.halt();
+        this.probeFinish(session, "stopped", null);
+        this.emit({ type: "state", data: this.snapshot() });
+        return this.heightMapState();
+    }
+
+    /** Sets the focus offset: given, or the head's height less the map's height under the beam. */
+    async focus(offset: number | null): Promise<HeightMapState> {
+        this.refuseWhileProbing();
+        const map = this.heightmap;
+        if (!map) {
+            throw new ApiError(400, "there is no height map: probe the board first");
+        }
+        let value = offset;
+        if (value === null) {
+            this.requireConnected();
+            const machine = this.machine;
+            if (machine.state !== "Idle") {
+                throw new ApiError(400, `the machine is ${machine.state}: focus with the head at rest`);
+            }
+            // Without a focus axis the head's height is fixed, and zero is
+            // as good a name for it as any: the map only needs the same one.
+            const here = machine.hasFocusAxis() ? machine.h : 0;
+            const board = boardOfJoint(machine.joint);
+            try {
+                value = here - heightAt(map, board.x, board.y);
+            } catch (error) {
+                throw new ApiError(400, errorText(error));
+            }
+        }
+        if (!Number.isFinite(value)) {
+            throw new ApiError(422, "offset must be a finite number");
+        }
+        if (Math.abs(value) > MAX_VALUE) {
+            throw new ApiError(400, `focus_offset must be within ${MAX_VALUE_TEXT} mm`);
+        }
+        map.focus_offset = round4(value);
+        map.focus_set = true;
+        this.emitHeightMap();
+        return this.heightMapState();
+    }
+
+    async probeSettings(patch: Partial<ProbeSettings>): Promise<HeightMapState> {
+        const current = this.probeConfig;
+        const next: ProbeSettings = {
+            depth: patch.depth ?? current.depth,
+            feed: patch.feed ?? current.feed,
+            slow: patch.slow ?? current.slow,
+            backoff: patch.backoff ?? current.backoff,
+            offset: patch.offset ? [patch.offset[0], patch.offset[1]] : [current.offset[0], current.offset[1]],
+            rayleigh: patch.rayleigh ?? current.rayleigh,
+        };
+        try {
+            checkProbeSettings(next);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        this.probeConfig = next;
+        this.machine.probeOffset = [next.offset[0], next.offset[1]];
+        this.emitHeightMap();
+        return this.heightMapState();
+    }
+
+    async putHeightMap(map: HeightMap): Promise<HeightMapState> {
+        this.refuseWhileProbing();
+        const read = readHeightMap(map);
+        try {
+            checkHeightMap(read);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        this.heightmap = read;
+        this.emitHeightMap();
+        return this.heightMapState();
+    }
+
+    async clearHeightMap(): Promise<HeightMapState> {
+        this.refuseWhileProbing();
+        this.heightmap = null;
+        this.emitHeightMap();
+        return this.heightMapState();
+    }
+
+    private serviceProbe(dt: number): void {
+        const session = this.probing;
+        if (!session) {
+            return;
+        }
+        session.progress.seconds += dt;
+        session.elapsed += dt;
+        while (this.probing === session && session.elapsed >= PROBE_POINT_SECONDS - CLOCK_EPSILON) {
+            session.elapsed -= PROBE_POINT_SECONDS;
+            this.probePoint(session);
+        }
+    }
+
+    /** Sends the head over the next point, or ends the probing when every point is done. */
+    private probeBegin(session: ProbeSession): void {
+        const point = session.order[session.next];
+        const joint = session.joints[session.next];
+        if (!point || !joint) {
+            session.progress.point = null;
+            this.probeFinish(session, "done", null);
+            return;
+        }
+        session.progress.point = point;
+        this.emitHeightMap();
+        this.probeRequest(session, `go R${coord(joint.r, 3)} A${coord(joint.a, 4)}`, () => this.probeGo(joint, null));
+    }
+
+    /** Touches the point in progress, records it, and goes on to the next. */
+    private probePoint(session: ProbeSession): void {
+        const point = session.order[session.next];
+        if (!point) {
+            return;
+        }
+        const { depth, feed, slow, backoff } = session.settings;
+        let height = this.probeTouch(session, feed, depth);
+        if (height === null) {
+            return;
+        }
+        if (slow > 0) {
+            const above = height + backoff;
+            if (!this.probeRequest(session, `go H${coord(above, 4)}`, () => this.probeGo(null, above))) {
+                return;
+            }
+            height = this.probeTouch(session, slow, 2 * backoff);
+            if (height === null) {
+                return;
+            }
+        }
+        if (!this.probeRequest(session, `go H${coord(session.travel, 4)}`, () => this.probeGo(null, session.travel))) {
+            return;
+        }
+        const [ix, iy] = point;
+        const row = session.map.heights[iy];
+        if (row) {
+            row[ix] = round4(height);
+        }
+        session.progress.done += 1;
+        session.next += 1;
+        this.emitHeightMap();
+        this.probeBegin(session);
+    }
+
+    /** One probe down; the height at contact, or null when the probing has failed. */
+    private probeTouch(session: ProbeSession, feed: number, distance: number): number | null {
+        const replies = this.probeRequest(session, `probe H-${num(distance, 4)} F${num(feed)}`, () => probeReplies(this.machine, -distance, feed));
+        if (replies === null) {
+            return null;
+        }
+        const report = /^\[PRB:(-?[\d.]+):([01])\]$/.exec(replies[0] ?? "");
+        if (!report) {
+            this.probeFail(session, `no probe result in ${replies.join(", ")}`);
+            return null;
+        }
+        if (report[2] !== "1") {
+            this.probeFail(session, `the probe found nothing within ${shortNumber(distance)} mm`);
+            return null;
+        }
+        return Number(report[1]);
+    }
+
+    /**
+     * A positioning line of the probing, done at once: the mock spends its
+     * fixed time per point instead of the travel.
+     */
+    private probeGo(joint: Joint | null, h: number | null): string[] {
+        const machine = this.machine;
+        if (h !== null && !machine.hasFocusAxis()) {
+            throw new MachineError(2, "bad word");
+        }
+        machine.requireIdle();
+        if (joint) {
+            machine.joint = { ...joint };
+        }
+        if (h !== null) {
+            machine.h = h;
+        }
+        machine.enabled = true;
+        return ["ok"];
+    }
+
+    /** One line of the probing, logged both ways; anything but ok fails the probing. Null once it has failed. */
+    private probeRequest(session: ProbeSession, line: string, action: () => string[]): string[] | null {
+        this.line("tx", line);
+        let replies: string[];
+        try {
+            replies = action();
+        } catch (error) {
+            if (!(error instanceof MachineError)) {
+                throw error;
+            }
+            replies = [error.message];
+        }
+        for (const reply of replies) {
+            this.line("rx", reply);
+        }
+        const answer = replies[replies.length - 1] ?? "";
+        if (answer !== "ok") {
+            this.probeFail(session, `'${line}': ${answer}`);
+            return null;
+        }
+        return replies;
+    }
+
+    /** A missed probe has raised the alarm and stopped; anything else is halted the way a stop halts it. */
+    private probeFail(session: ProbeSession, reason: string): void {
+        if (this.machine.state !== "Alarm") {
+            this.halt();
+        }
+        this.message("error", `probing failed: ${reason}`);
+        this.probeFinish(session, "error", reason);
+    }
+
+    private probeFinish(session: ProbeSession, state: ProbeProgress["state"], error: string | null): void {
+        if (this.probing !== session) {
+            return;
+        }
+        this.probing = null;
+        session.progress.state = state;
+        session.progress.error = error;
+        this.emitHeightMap();
+    }
 }
 
 export function formatMove(move: Move): string {
-    const words = `R${move.target.r.toFixed(3)} A${move.target.a.toFixed(4)}`;
+    const focus = move.h !== undefined ? ` H${coord(move.h, 4)}` : "";
+    const words = `R${move.target.r.toFixed(3)} A${move.target.a.toFixed(4)}${focus}`;
     switch (move.kind) {
         case "go":
             return `go ${words}`;
@@ -1505,5 +2384,7 @@ export function formatMove(move: Move): string {
 export function statusLine(machine: MockMachine): string {
     const free = machine.queueFree();
     const state = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? 1}` : machine.state;
-    return `<${state}|J:${machine.joint.r.toFixed(3)},${machine.joint.a.toFixed(4)}|V:${Math.round(machine.rate)}|L:${Math.round(machine.laser)}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${machine.z.toFixed(3)}>`;
+    // The focus axis fields are there only with the axis fitted.
+    const focus = machine.hasFocusAxis() ? `|H:${machine.h.toFixed(3)}|P:${machine.probeActive() ? 1 : 0}` : "";
+    return `<${state}|J:${machine.joint.r.toFixed(3)},${machine.joint.a.toFixed(4)}|V:${Math.round(machine.rate)}|L:${Math.round(machine.laser)}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${machine.z.toFixed(3)}${focus}>`;
 }

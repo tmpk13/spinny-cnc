@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
-import { MockBackend, MockMachine, formatMove, statusLine } from "../src/mock.ts";
-import type { Job, WsEvent } from "../src/types.ts";
+import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock.ts";
+import type { Compensate, Grid, HeightMap, HeightMapState, Job, WsEvent } from "../src/types.ts";
 
 function stepped(machine: MockMachine, seconds: number, dt = 0.01): void {
     let left = seconds;
@@ -275,7 +275,8 @@ describe("mock machine motion", () => {
         expect(statusLine(machine)).toBe("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.500>");
         machine.setPosition({ z: 0 });
         expect(machine.z).toBe(0);
-        expect(machine.status().joint).toEqual({ r: 0, a: 0, z: 0 });
+        // Without a focus axis its position is null, as the backend reports it.
+        expect(machine.status().joint).toEqual({ r: 0, a: 0, z: 0, h: null });
     });
 
     test("a hold ends a slide move where it is, with nothing to resume", () => {
@@ -678,5 +679,410 @@ describe("mock backend", () => {
         const moving = events.filter((e) => e.type === "state").length;
         expect(idle).toBe(5);
         expect(moving).toBe(10);
+    });
+});
+
+/** Steps the backend's clock by `seconds` in ticks of `dt`. */
+function advance(backend: MockBackend, seconds: number, dt = 0.05): void {
+    for (let left = seconds; left > 1e-9; left -= dt) {
+        backend.step(Math.min(dt, left));
+    }
+}
+
+function heightMapEvents(events: WsEvent[]): HeightMapState[] {
+    return events.flatMap((e) => (e.type === "heightmap" ? [e.data] : []));
+}
+
+/** A complete 2 by 2 map over a board box. */
+function flatMap(x0: number, y0: number, x1: number, y1: number, heights: number[][], focusSet = true): HeightMap {
+    return {
+        grid: { x0, y0, x1, y1, nx: 2, ny: 2 },
+        heights,
+        focus_offset: 1.5,
+        focus_set: focusSet,
+        probe_offset: [0, 0],
+        created: "",
+    };
+}
+
+const SMALL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" viewBox="0 0 10 10"><path d="M0 0 L10 0 L10 10"/></svg>';
+
+describe("mock focus axis", () => {
+    test("without the axis an H word is refused and the status leaves it off", () => {
+        const machine = new MockMachine();
+        expect(() => machine.go(null, null, 1)).toThrow("error:2 bad word");
+        expect(() => machine.setPosition({ h: 0 })).toThrow("error:2 bad word");
+        expect(() => machine.probe(-1, null)).toThrow("error:2 bad word");
+        expect(machine.status().probe).toBeNull();
+        expect(statusLine(machine)).toBe("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>");
+    });
+
+    test("a focus jog runs at its own feed and a cut carries the head along", () => {
+        const machine = new MockMachine({ h_axis: 1 });
+        expect(statusLine(machine)).toBe("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000|H:0.000|P:0>");
+        // A move of the head alone takes F as its speed: 2 mm at 60 mm/min.
+        machine.jog(0, 0, 60, 2);
+        stepped(machine, 1);
+        expect(machine.h).toBeCloseTo(1, 6);
+        expect(machine.state).toBe("Jog");
+        stepped(machine, 1.01);
+        expect(machine.h).toBeCloseTo(2, 9);
+        expect(machine.state).toBe("Idle");
+        // Without F it is jog_h, 120 mm/min.
+        machine.jogTo(null, null, null, 1);
+        stepped(machine, 0.51);
+        expect(machine.h).toBeCloseTo(1, 9);
+        expect(machine.state).toBe("Idle");
+        // F stays the board speed on a cut, 10 mm at 300 mm/min; the head follows it.
+        machine.cut(10, null, 300, 100, 0, 0.5);
+        stepped(machine, 1);
+        expect(machine.h).toBeCloseTo(0.75, 6);
+        expect(machine.joint.r).toBeCloseTo(5, 6);
+        stepped(machine, 1.01);
+        expect(machine.status().joint).toEqual({ r: 10, a: 0, z: 0, h: 0.5 });
+        expect(machine.endpointH()).toBe(0.5);
+        machine.setPosition({ h: 3 });
+        expect(machine.h).toBe(3);
+    });
+
+    test("move lines carry the focus height", () => {
+        expect(formatMove({ kind: "cut", target: { r: 1, a: 2 }, h: -0.5, feed: 300, power: 200, group: 0 })).toBe("cut R1.000 A2.0000 H-0.5000 F300 S200");
+        expect(formatMove({ kind: "go", target: { r: 0, a: 0 }, h: 0, feed: null, power: 0, group: 0 })).toBe("go R0.000 A0.0000 H0.0000");
+    });
+
+    test("the console probe answers like the firmware", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        expect(backend.snapshot().machine?.joint.h).toBe(0);
+        expect(backend.snapshot().machine?.probe).toBe(false);
+        expect(await backend.command("probe")).toEqual(["error:3 missing word"]);
+        expect(await backend.command("probe H0")).toEqual(["error:4 out of range"]);
+        expect(await backend.command("probe H-1 F0")).toEqual(["error:4 out of range"]);
+        expect(await backend.command("probe R1 H-1")).toEqual(["error:2 bad word"]);
+
+        // The board is 1.5 mm below the head's zero over the axis.
+        expect(await backend.command("probe H-5 F60")).toEqual(["[PRB:-1.5000:1]", "ok"]);
+        const h = backend.machine.h;
+        expect(h).toBeLessThanOrEqual(-1.5);
+        expect(h).toBeGreaterThan(-1.55);
+        expect(backend.machine.state).toBe("Idle");
+        expect(statusLine(backend.machine).endsWith("|P:1>")).toBe(true);
+        expect(backend.snapshot().machine?.probe).toBe(true);
+        expect(await backend.command("probe H-1")).toEqual(["error:10 probe active"]);
+
+        expect(await backend.command("jogto H1")).toEqual(["ok"]);
+        advance(backend, 2);
+        expect(backend.machine.h).toBeCloseTo(1, 9);
+        expect(statusLine(backend.machine).endsWith("|H:1.000|P:0>")).toBe(true);
+        expect(await backend.command("probe H-1 F120")).toEqual([
+            "[PRB:0.0000:0]",
+            "ALARM:2 probe missed, check the head before moving",
+            "error:11 probe missed",
+        ]);
+        expect(backend.machine.state).toBe("Alarm");
+        expect(backend.machine.alarm).toBe(2);
+        expect(await backend.command("go R1")).toEqual(["error:5 not now"]);
+        expect(await backend.command("unlock")).toEqual(["ok"]);
+
+        // An active-high input reads open as contact.
+        expect(await backend.command("$probe_invert=1")).toEqual(["ok"]);
+        expect(await backend.command("probe H-1")).toEqual(["error:10 probe active"]);
+        expect(await backend.command("$probe_invert=0")).toEqual(["ok"]);
+
+        expect(await backend.command("$h_axis=0")).toEqual(["ok"]);
+        for (const line of ["go H1", "cut R1 H1 F100 S10", "jog H1", "jogto H1", "set H0", "probe H-1"]) {
+            expect(await backend.command(line)).toEqual(["error:2 bad word"]);
+        }
+        expect(await backend.command("jog Z1 H1")).toEqual(["error:2 bad word"]);
+        expect(statusLine(backend.machine).endsWith("|Z:0.000>")).toBe(true);
+        expect(backend.snapshot().machine?.joint.h).toBeNull();
+        expect(backend.snapshot().machine?.probe).toBeNull();
+        expect(await backend.command("$load")).toEqual(["ok"]);
+        expect(backend.machine.hasFocusAxis()).toBe(true);
+    });
+
+    test("jogs, gotos and position declarations take the focus axis", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.jog({ kind: "joint", dh: 0.5 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jog H0.5000", "rx ok"]);
+        advance(backend, 0.5);
+        expect(backend.snapshot().machine?.joint.h).toBeCloseTo(0.5, 9);
+        await backend.goto({ kind: "joint", r: 5, h: -0.25 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto R5.000 H-0.2500", "rx ok"]);
+        advance(backend, 2);
+        expect(backend.machine.joint.r).toBeCloseTo(5, 9);
+        expect(backend.machine.h).toBeCloseTo(-0.25, 9);
+        await backend.setPosition({ r: 0, h: 0 });
+        expect(consoleLines().slice(-2)).toEqual(["tx set R0 H0", "rx ok"]);
+        expect(backend.machine.h).toBe(0);
+        await backend.updateSettings({ values: { h_axis: 0 } });
+        await expect(backend.jog({ kind: "joint", dh: 1 })).rejects.toMatchObject({ status: 409, message: "error:2 bad word" });
+    });
+});
+
+describe("mock height map", () => {
+    const grid: Grid = { x0: 4, y0: 6, x1: 14, y1: 11, nx: 3, ny: 2 };
+
+    async function probed(offset?: [number, number]) {
+        const log = backendWithLog();
+        await log.backend.connect("/dev/ttyACM0");
+        if (offset) {
+            await log.backend.probeSettings({ offset });
+        }
+        const started = await log.backend.probe(grid);
+        advance(log.backend, grid.nx * grid.ny * PROBE_POINT_SECONDS + 0.2);
+        return { ...log, started };
+    }
+
+    test("probing a grid fills the map with the board's heights", async () => {
+        const { backend, events, consoleLines, started } = await probed();
+        expect(started.probe).toMatchObject({ state: "running", done: 0, total: 6, point: [0, 0] });
+        expect(started.map?.heights).toEqual([[null, null, null], [null, null, null]]);
+        expect(started.map?.focus_set).toBe(false);
+        const state = await backend.heightMap();
+        expect(state.probe).toMatchObject({ state: "done", done: 6, total: 6, point: null, error: null });
+        expect(state.probe!.seconds).toBeCloseTo(1.5, 0);
+        const xs = [4, 9, 14];
+        const ys = [6, 11];
+        for (let iy = 0; iy < 2; iy++) {
+            for (let ix = 0; ix < 3; ix++) {
+                expect(state.map!.heights[iy]![ix]!).toBeCloseTo(boardSurface(xs[ix]!, ys[iy]!), 4);
+            }
+        }
+        // Back at the travel height, over the last point of the serpentine.
+        expect(backend.machine.h).toBe(0);
+        expect(backend.machine.state).toBe("Idle");
+        expect(backend.machine.status().board.x).toBeCloseTo(4, 6);
+        expect(backend.machine.status().board.y).toBeCloseTo(11, 6);
+        const lines = consoleLines();
+        expect(lines).toContain("tx probe H-5 F60");
+        expect(lines).toContain("tx probe H-0.6 F15");
+        expect(lines).toContain("tx go H0.0000");
+        expect(lines.some((line) => /^rx \[PRB:-1\.\d{4}:1\]$/.test(line))).toBe(true);
+        // One event per point done, in order, and the last one says done.
+        const seen = heightMapEvents(events);
+        const counts = seen.map((s) => s.probe?.done ?? -1);
+        expect(counts).toEqual([...counts].sort((a, b) => a - b));
+        for (let done = 1; done <= 6; done++) {
+            expect(counts).toContain(done);
+        }
+        expect(seen[seen.length - 1]?.probe?.state).toBe("done");
+        expect(seen[seen.length - 1]?.map?.heights.flat().every((h) => h !== null)).toBe(true);
+    });
+
+    test("an offset probe tip is placed over each point", async () => {
+        const { backend } = await probed([3, 1.5]);
+        const state = await backend.heightMap();
+        expect(state.map?.probe_offset).toEqual([3, 1.5]);
+        expect(state.map!.heights[1]![2]!).toBeCloseTo(boardSurface(14, 11), 4);
+        expect(state.map!.heights[0]![1]!).toBeCloseTo(boardSurface(9, 6), 4);
+        // The beam is off the point by the tip's offset.
+        const tip = backend.machine.tipBoard();
+        expect(tip.x).toBeCloseTo(4, 6);
+        expect(tip.y).toBeCloseTo(11, 6);
+    });
+
+    test("probing is refused like the backend refuses it", async () => {
+        const { backend } = backendWithLog();
+        await expect(backend.probe(grid)).rejects.toMatchObject({ status: 409, message: "not connected" });
+        await backend.connect("/dev/ttyACM0");
+        await expect(backend.probe({ ...grid, nx: 1 })).rejects.toMatchObject({ status: 400, message: "nx must be 2 to 50" });
+        await expect(backend.probe({ ...grid, x1: grid.x0 })).rejects.toMatchObject({ status: 400, message: "the grid needs x1 above x0 and y1 above y0" });
+
+        await backend.probeSettings({ offset: [0, 5] });
+        await expect(backend.probe({ x0: -1, y0: -1, x1: 1, y1: 1, nx: 2, ny: 2 })).rejects.toMatchObject({
+            status: 409,
+            message:
+                "the probe cannot reach (-1.00, -1.00): its tip is 5 mm off the rail, so it never comes nearer the axis than that;" +
+                " move the grid off the axis or mount the probe in line with the rail",
+        });
+        await backend.probeSettings({ offset: [0, 0] });
+
+        await backend.goto({ kind: "joint", h: -3 });
+        await expect(backend.probe(grid)).rejects.toMatchObject({ status: 409 });
+        await expect(backend.probe(grid)).rejects.toThrow(/^the machine is <Jog\|.*>, not Idle$/);
+        advance(backend, 2);
+        await expect(backend.probe(grid)).rejects.toMatchObject({
+            status: 409,
+            message: "the probe is already touching: raise the head clear of the board first",
+        });
+        await backend.setPosition({ h: 0 });
+
+        await backend.updateSettings({ values: { h_axis: 0 } });
+        await expect(backend.probe(grid)).rejects.toMatchObject({ status: 409, message: "the machine has no focus axis: set $h_axis=1 to probe" });
+        expect((await backend.heightMap()).map).toBeNull();
+    });
+
+    test("nothing else moves the head while the board is probed", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = (await backend.jobs())[0]!;
+        await backend.probe(grid);
+        const probing = { status: 409, message: "the board is being probed" };
+        await expect(backend.jog({ kind: "joint", dr: 1 })).rejects.toMatchObject(probing);
+        await expect(backend.goto({ kind: "board", x: 1, y: 1 })).rejects.toMatchObject(probing);
+        await expect(backend.setPosition({ r: 0 })).rejects.toMatchObject(probing);
+        await expect(backend.runJob(job.id)).rejects.toMatchObject(probing);
+        await expect(backend.focus(1)).rejects.toMatchObject(probing);
+        await expect(backend.focus(null)).rejects.toMatchObject(probing);
+        await expect(backend.clearHeightMap()).rejects.toMatchObject(probing);
+        await expect(backend.probe(grid)).rejects.toMatchObject(probing);
+        advance(backend, 0.6);
+        const stopped = await backend.probeStop();
+        expect(stopped.probe).toMatchObject({ state: "stopped", done: 2, error: null });
+        expect(stopped.map?.heights.flat().filter((h) => h !== null).length).toBe(2);
+        expect(backend.machine.state).toBe("Idle");
+        expect(backend.machine.alarm).toBeNull();
+        await expect(backend.probeStop()).rejects.toMatchObject({ status: 409, message: "nothing is being probed" });
+        // Stopped, it no longer counts time.
+        advance(backend, 1);
+        expect((await backend.heightMap()).probe?.seconds).toBe(stopped.probe?.seconds);
+        await backend.jog({ kind: "joint", dr: 1 });
+
+        advance(backend, 1);
+        await backend.probe(grid);
+        await backend.realtime("reset");
+        expect((await backend.heightMap()).probe).toMatchObject({ state: "stopped", error: "reset by the operator" });
+    });
+
+    test("a probe that finds nothing ends the probing in error with the machine in Alarm:2", async () => {
+        const { backend, events } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.probeSettings({ depth: 1 });
+        await backend.probe(grid);
+        advance(backend, 1);
+        const state = await backend.heightMap();
+        expect(state.probe).toMatchObject({ state: "error", done: 0, error: "'probe H-1 F60': error:11 probe missed" });
+        expect(backend.machine.state).toBe("Alarm");
+        expect(backend.machine.alarm).toBe(2);
+        expect(events.some((e) => e.type === "message" && e.data.text === "probing failed: 'probe H-1 F60': error:11 probe missed")).toBe(true);
+    });
+
+    test("the probe settings merge, check and move the simulated tip", async () => {
+        const { backend, events } = backendWithLog();
+        expect((await backend.heightMap()).settings).toEqual({ depth: 5, feed: 60, slow: 15, backoff: 0.3, offset: [0, 0], rayleigh: 0.5 });
+        const state = await backend.probeSettings({ slow: 0, offset: [2, -1] });
+        expect(state.settings).toMatchObject({ depth: 5, slow: 0, offset: [2, -1] });
+        expect(backend.machine.probeOffset).toEqual([2, -1]);
+        expect(heightMapEvents(events).at(-1)?.settings.offset).toEqual([2, -1]);
+        await expect(backend.probeSettings({ backoff: 6 })).rejects.toMatchObject({ status: 400, message: "backoff must be above 0 and at most the depth" });
+        await expect(backend.probeSettings({ slow: 0.0001 })).rejects.toMatchObject({ status: 400, message: "slow must be 0 (one touch) or 0.001 to 10000 mm/min" });
+        await expect(backend.probeSettings({ offset: [0, 2000] })).rejects.toMatchObject({ status: 400, message: "the probe offset must be within 1000 mm" });
+        await expect(backend.probeSettings({ rayleigh: 0 })).rejects.toMatchObject({ status: 400, message: "rayleigh must be 0.001 to 100 mm" });
+        expect((await backend.heightMap()).settings.slow).toBe(0);
+    });
+
+    test("a map is interpolated inside its grid and held at its edge outside", () => {
+        const map = flatMap(0, 0, 10, 10, [[0, 1], [2, 3]]);
+        expect(heightAt(map, 5, 5)).toBeCloseTo(1.5, 12);
+        expect(heightAt(map, 10, 0)).toBeCloseTo(1, 12);
+        expect(heightAt(map, -5, -5)).toBeCloseTo(0, 12);
+        expect(heightAt(map, 20, 5)).toBeCloseTo(2, 12);
+        expect(() => heightAt({ ...map, heights: [[0, null], [2, 3]] }, 5, 5)).toThrow("the height map is not complete");
+    });
+
+    test("focus takes the offset from the head over the board, or as given", async () => {
+        const { backend } = backendWithLog();
+        await expect(backend.focus(1)).rejects.toMatchObject({ status: 400, message: "there is no height map: probe the board first" });
+        await backend.connect("/dev/ttyACM0");
+        await backend.probe(grid);
+        advance(backend, 2);
+        await backend.goto({ kind: "board", x: 7, y: 8 });
+        await expect(backend.focus(null)).rejects.toMatchObject({ status: 400, message: "the machine is Jog: focus with the head at rest" });
+        advance(backend, 10);
+        await backend.goto({ kind: "joint", h: -0.4 });
+        advance(backend, 1);
+        const map = (await backend.heightMap()).map!;
+        const board = backend.machine.status().board;
+        const expected = -0.4 - heightAt(map, board.x, board.y);
+        const focused = await backend.focus(null);
+        expect(focused.map?.focus_set).toBe(true);
+        expect(focused.map!.focus_offset).toBeCloseTo(expected, 4);
+        expect((await backend.focus(1.25)).map?.focus_offset).toBe(1.25);
+        // A new probing with the same probe keeps the offset; another probe forgets it.
+        const again = await backend.probe(grid);
+        expect(again.map).toMatchObject({ focus_offset: 1.25, focus_set: true });
+        await backend.probeStop();
+        await backend.probeSettings({ offset: [1, 0] });
+        await backend.setPosition({ h: 0 });
+        const moved = await backend.probe(grid);
+        expect(moved.map).toMatchObject({ focus_offset: 0, focus_set: false });
+        await backend.probeStop();
+        // Without a focus axis the head's height is called 0.
+        await backend.updateSettings({ values: { h_axis: 0 } });
+        await backend.putHeightMap(flatMap(-50, -50, 50, 50, [[-1, -1], [-1, -1]], false));
+        expect((await backend.focus(null)).map?.focus_offset).toBe(1);
+    });
+
+    test("a map put back is checked for shape and cleared on request", async () => {
+        const { backend, events } = backendWithLog();
+        await expect(backend.putHeightMap(flatMap(0, 0, 10, 10, [[0, 1]]))).rejects.toMatchObject({ status: 400, message: "heights must be 2 rows of 2" });
+        await expect(backend.putHeightMap(flatMap(0, 0, 0, 10, [[0, 1], [2, 3]]))).rejects.toMatchObject({ status: 400 });
+        await expect(backend.putHeightMap(flatMap(0, 0, 10, 10, [[0, Number.NaN], [2, 3]]))).rejects.toMatchObject({ status: 422 });
+        const put = await backend.putHeightMap(flatMap(0, 0, 10, 10, [[0, 1], [2, 3]]));
+        expect(put.map?.heights).toEqual([[0, 1], [2, 3]]);
+        expect(heightMapEvents(events).at(-1)?.map?.grid.x1).toBe(10);
+        expect((await backend.clearHeightMap()).map).toBeNull();
+        expect(heightMapEvents(events).at(-1)?.map).toBeNull();
+    });
+
+    test("a compensated run is checked like the backend checks it", async () => {
+        const { backend, events, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
+        const refused = (message: string) => ({ status: 400, message });
+        await expect(backend.runJob(job.id, "focus")).rejects.toMatchObject(refused("there is no height map: probe the board first"));
+        await expect(backend.runJob(job.id, "bogus" as Compensate)).rejects.toMatchObject(refused("compensate must be one of off, auto, focus, power"));
+
+        await backend.putHeightMap({ ...flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]), heights: [[-1.5, null], [-1.6, -1.5]] });
+        await expect(backend.runJob(job.id, "auto")).rejects.toMatchObject(refused("the height map is not complete: 3 of 4 points probed"));
+        await backend.putHeightMap(flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]], false));
+        await expect(backend.runJob(job.id, "auto")).rejects.toMatchObject(
+            refused("the focus offset is not set: focus the beam by eye over the probed area and use focus here"),
+        );
+        await backend.putHeightMap(flatMap(-10, 10, 10, 30, [[-4, 2], [-1.6, -1.5]]));
+        await expect(backend.runJob(job.id, "power")).rejects.toMatchObject(
+            refused("the height map spans 6.000 mm, more than 5 mm: probe again or flatten the board"),
+        );
+        await backend.putHeightMap(flatMap(-3, 16, 3, 24, [[-1.5, -1.4], [-1.6, -1.5]]));
+        await expect(backend.runJob(job.id, "power")).rejects.toMatchObject(
+            refused("the height map does not cover the job: probed X -3.0..3.0 Y 16.0..24.0, the job reaches X -5.0..5.0 Y 15.0..25.0"),
+        );
+
+        await backend.putHeightMap(flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]));
+        await backend.updateSettings({ values: { h_axis: 0 } });
+        await expect(backend.runJob(job.id, "focus")).rejects.toMatchObject(
+            refused("the focus axis is not fitted ($h_axis=0): compensate by power instead"),
+        );
+        // Auto without the axis is power: the lines carry no H.
+        await backend.runJob(job.id, "auto");
+        expect(events.some((e) => e.type === "message" && e.data.text.endsWith("following the board by power"))).toBe(true);
+        const tx = consoleLines().filter((line) => line.startsWith("tx go") || line.startsWith("tx cut"));
+        expect(tx.length).toBeGreaterThan(0);
+        expect(tx.some((line) => line.includes(" H"))).toBe(false);
+        await backend.runStop();
+        await backend.updateSettings({ values: { h_axis: 1 } });
+    });
+
+    test("a run by focus puts the head at the map's focus height at each move's end", async () => {
+        const { backend, events, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
+        const map = flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]);
+        await backend.putHeightMap(map);
+        await backend.runJob(job.id, "auto");
+        expect(events.some((e) => e.type === "message" && e.data.text.endsWith("following the board by focus"))).toBe(true);
+        const tx = consoleLines().filter((line) => line.startsWith("tx go") || line.startsWith("tx cut"));
+        expect(tx.length).toBeGreaterThan(1);
+        expect(tx.every((line) => / H-?\d+\.\d{4}( |$)/.test(line))).toBe(true);
+        let guard = 0;
+        while ((await backend.run())?.state === "running" && guard < 20000) {
+            backend.step(0.05);
+            guard += 1;
+        }
+        expect((await backend.run())?.state).toBe("done");
+        const end = backend.machine.status().board;
+        expect(backend.machine.h).toBeCloseTo(heightAt(map, end.x, end.y) + map.focus_offset, 4);
     });
 });

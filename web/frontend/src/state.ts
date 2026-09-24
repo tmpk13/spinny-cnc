@@ -2,6 +2,8 @@
 
 import type {
     ConsoleLine,
+    Grid,
+    HeightMapState,
     Job,
     JobSummary,
     MessageLevel,
@@ -77,6 +79,10 @@ export interface AppState {
     job: Job | null;
     progress: Progress | null;
     settings: SettingsResponse | null;
+    /** The height map, the probing under way and the probe settings; null until read. */
+    heightMap: HeightMapState | null;
+    /** The grid the height map panel's fields describe, drawn on the preview before it is probed. */
+    probeDraft: Grid | null;
     console: ConsoleLine[];
     /** Show the link's status polls in the console. */
     showPolls: boolean;
@@ -99,6 +105,8 @@ export function initialState(mock: boolean): AppState {
         job: null,
         progress: null,
         settings: null,
+        heightMap: null,
+        probeDraft: null,
         console: [],
         showPolls: false,
         toasts: [],

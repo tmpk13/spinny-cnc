@@ -32,6 +32,9 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
     ctx.store.subscribe((state) => {
         preview.setRMax(state.settings?.values["r_max"] ?? 0);
     }, ["settings"]);
+    ctx.store.subscribe((state) => {
+        preview.setProbe(state.heightMap?.map ?? null, state.probeDraft);
+    }, ["heightMap", "probeDraft"]);
     preview.resize();
     return preview;
 }

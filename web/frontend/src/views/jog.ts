@@ -1,6 +1,6 @@
-// Jog pad for board X/Y, radius and turn buttons, the cross slide setup
-// control, go-to fields, position declaration, motors and unlock. Arrow keys
-// jog when no input has focus.
+// Jog pad for board X/Y, radius and turn buttons, the focus axis (on a
+// machine with one), the cross slide setup control, go-to fields, position
+// declaration, motors and unlock. Arrow keys jog when no input has focus.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, inputHasFocus, labeled, modalOpen, numberField } from "../dom.ts";
@@ -12,11 +12,14 @@ export const STEPS_DEG = [1, 10, 90];
 // The cross slide is set from a measured centering burn, so its steps are the
 // small corrections that reading calls for.
 export const STEPS_Z = [0.05, 0.1, 0.5];
+// The focus axis: fine steps to find focus by eye, a coarse one to clear the board.
+export const STEPS_H = [0.05, 0.1, 1];
 
 export interface JogControls {
     jogBoard(dx: number, dy: number): Promise<void>;
     jogJoint(dr: number, da: number): Promise<void>;
     jogSlide(dz: number): Promise<void>;
+    jogFocus(dh: number): Promise<void>;
     cancel(): Promise<void>;
     stepMm(): number;
     stepDeg(): number;
@@ -45,6 +48,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     let stepMm = 1;
     let stepDeg = 10;
     let stepZ = 0.1;
+    let stepH = 0.1;
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
 
@@ -64,6 +68,10 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
             // The slide keeps the firmware's own jog rate: the feed field
             // belongs to the moves that carry the beam over the board.
             await ctx.call(ctx.api.jog({ kind: "joint", dz, feed: null }));
+        },
+        async jogFocus(dh) {
+            // Its own rate too: the firmware's jog_h, not a surface speed.
+            await ctx.call(ctx.api.jog({ kind: "joint", dh, feed: null }));
         },
         async cancel() {
             await ctx.call(ctx.api.jogCancel());
@@ -114,7 +122,19 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         ),
         button("Set Z=0 here", () => declare("z"), "btn btn-quiet"),
     );
-    body.append(el("div", { class: "jog-main" }, pad, axes, slide));
+    // The focus axis moves the head up and down over the board; it is shown
+    // only on a machine that reports one.
+    const focus = el("div", { class: "slide focus-axis hidden" },
+        el("span", { class: "slide-title" }, "Focus axis"),
+        el("span", { class: "slide-note" }, "Raises and lowers the head; up is positive"),
+        choiceRow(STEPS_H, stepH, (value) => { stepH = value; }, (value) => `${value} mm`, "Step"),
+        el("div", { class: "slide-buttons" },
+            button("Down", () => controls.jogFocus(-stepH), "btn btn-slide"),
+            button("Up", () => controls.jogFocus(stepH), "btn btn-slide"),
+        ),
+        button("Set H=0 here", () => declare("h"), "btn btn-quiet"),
+    );
+    body.append(el("div", { class: "jog-main" }, pad, axes, slide, focus));
 
     const gotoX = numberField({ placeholder: "x" });
     const gotoY = numberField({ placeholder: "y" });
@@ -185,17 +205,17 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         ),
     );
 
-    async function declare(axis: "r" | "a" | "z"): Promise<void> {
-        const what = { r: "the radius", a: "the table angle", z: "the cross slide" }[axis];
+    async function declare(axis: "r" | "a" | "z" | "h"): Promise<void> {
+        const what = { r: "the radius", a: "the table angle", z: "the cross slide", h: "the focus axis" }[axis];
         const hint = {
             r: "The beam must be over the rotation axis.",
             a: "",
             z: "The rail is over the axis when the centering lines meet at a point.",
+            h: "A height map probed before keeps its heights in the old numbers: probe again after this.",
         }[axis];
         const ok = await askConfirm(`Declare ${what} to be 0 at the current position? ${hint}`.trim(), "Set 0");
         if (ok) {
-            const request = axis === "r" ? { r: 0 } : axis === "a" ? { a: 0 } : { z: 0 };
-            await ctx.call(ctx.api.setPosition(request));
+            await ctx.call(ctx.api.setPosition({ [axis]: 0 }));
         }
     }
 
@@ -203,6 +223,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         const machine = state.snapshot.machine;
         body.disabled = !state.snapshot.connected;
         motors.textContent = machine?.enabled ? "Motors off" : "Motors on";
+        focus.classList.toggle("hidden", machine?.joint.h === null || machine?.joint.h === undefined);
     }, ["snapshot"]);
 
     // One key jog at a time: a held or hammered key must not queue up moves.

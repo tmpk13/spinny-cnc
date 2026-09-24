@@ -1,16 +1,38 @@
 // Canvas preview drawn around the rotation axis in board mm: the axis cross,
-// the rail along +X, the r_max circle, copper, outline, the job's paths and
-// the head with a short trail. Wheel zooms, drag pans, double click resets.
+// the rail along +X, the r_max circle, copper, outline, the job's paths, the
+// probe grid and the head with a short trail. Wheel zooms, drag pans, double
+// click resets.
 
 import { cssVar } from "./dom.ts";
 import { boardOfJoint } from "./kinematics.ts";
-import type { Job, Joint, Path, Point } from "./types.ts";
+import type { Grid, HeightMap, Job, Joint, Path, Point } from "./types.ts";
 
 /** World center in mm and CSS pixels per mm. */
 export interface View {
     cx: number;
     cy: number;
     scale: number;
+}
+
+/** Every point of a probe grid, row by row from the lowest Y. */
+export function gridPoints(grid: Grid): Point[] {
+    const points: Point[] = [];
+    for (let iy = 0; iy < grid.ny; iy++) {
+        for (let ix = 0; ix < grid.nx; ix++) {
+            points.push([
+                grid.x0 + (grid.x1 - grid.x0) * ix / Math.max(1, grid.nx - 1),
+                grid.y0 + (grid.y1 - grid.y0) * iy / Math.max(1, grid.ny - 1),
+            ]);
+        }
+    }
+    return points;
+}
+
+export function sameGrid(a: Grid | null, b: Grid | null): boolean {
+    if (a === null || b === null) {
+        return a === b;
+    }
+    return a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1 && a.nx === b.nx && a.ny === b.ny;
 }
 
 /** Screen room a ring label needs before the next one is drawn. */
@@ -102,6 +124,7 @@ interface Colors {
     trail: string;
     text: string;
     groups: string[];
+    probe: string;
 }
 
 export class Preview {
@@ -117,6 +140,8 @@ export class Preview {
     private rMax = 0;
     private head: Joint | null = null;
     private trail: Point[] = [];
+    private probeMap: HeightMap | null = null;
+    private probeDraft: Grid | null = null;
     private groupShapes: (Path2D | null)[] = [];
     private copperShape: Path2D | null = null;
     private outlineShape: Path2D | null = null;
@@ -142,6 +167,15 @@ export class Preview {
             this.requestDraw();
         } else {
             this.resetView();
+        }
+    }
+
+    /** The height map's points, filled where probed, and a grid about to be probed. */
+    setProbe(map: HeightMap | null, draft: Grid | null): void {
+        if (this.probeMap !== map || !sameGrid(this.probeDraft, draft)) {
+            this.probeMap = map;
+            this.probeDraft = draft;
+            this.requestDraw();
         }
     }
 
@@ -305,6 +339,8 @@ export class Preview {
             }
         }
 
+        this.drawProbe(ctx, colors, px);
+
         // Axis cross.
         const cross = 10 * px;
         ctx.strokeStyle = colors.axis;
@@ -377,6 +413,39 @@ export class Preview {
         ctx.fillText(`${(view.scale).toFixed(1)} px/mm`, width - 6, height - 4);
     }
 
+    /** The probe grid: its outline and points, solid and filled where the map is probed, dashed and hollow for a grid not probed yet. */
+    private drawProbe(ctx: CanvasRenderingContext2D, colors: Colors, px: number): void {
+        const map = this.probeMap;
+        const draft = this.probeDraft;
+        const grids: { grid: Grid; heights: (number | null)[][] | null }[] = [];
+        if (draft !== null && (map === null || !sameGrid(draft, map.grid))) {
+            grids.push({ grid: draft, heights: null });
+        }
+        if (map !== null) {
+            grids.push({ grid: map.grid, heights: map.heights });
+        }
+        ctx.strokeStyle = colors.probe;
+        ctx.fillStyle = colors.probe;
+        ctx.lineWidth = 1.2 * px;
+        for (const { grid, heights } of grids) {
+            ctx.setLineDash(heights === null ? [5 * px, 4 * px] : []);
+            ctx.globalAlpha = heights === null ? 0.7 : 0.9;
+            ctx.strokeRect(grid.x0, grid.y0, grid.x1 - grid.x0, grid.y1 - grid.y0);
+            ctx.setLineDash([]);
+            gridPoints(grid).forEach(([x, y], index) => {
+                const probed = heights !== null && (heights[Math.floor(index / grid.nx)]?.[index % grid.nx] ?? null) !== null;
+                ctx.beginPath();
+                ctx.arc(x, y, 3 * px, 0, Math.PI * 2);
+                if (probed) {
+                    ctx.fill();
+                } else {
+                    ctx.stroke();
+                }
+            });
+        }
+        ctx.globalAlpha = 1;
+    }
+
     private colors(): Colors {
         const node = this.canvas;
         return {
@@ -396,6 +465,7 @@ export class Preview {
                 cssVar(node, "--pv-g2", "#207040"),
                 cssVar(node, "--pv-g3", "#806000"),
             ],
+            probe: cssVar(node, "--pv-probe", "#7a3fb0"),
         };
     }
 

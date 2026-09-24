@@ -9,6 +9,7 @@ import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountConsole } from "./views/console.ts";
 import type { Ctx } from "./views/context.ts";
 import { mountDro } from "./views/dro.ts";
+import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobs } from "./views/jobs.ts";
 import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
@@ -66,6 +67,12 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
                 store.set({ settings });
             }
         },
+        async refreshHeightMap() {
+            const heightMap = await ctx.call(api.heightMap());
+            if (heightMap) {
+                store.set({ heightMap });
+            }
+        },
         async selectJob(id) {
             if (id === null) {
                 store.set({ job: null });
@@ -82,7 +89,7 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -127,6 +134,9 @@ function main(): void {
             case "progress":
                 store.set({ progress: event.data });
                 break;
+            case "heightmap":
+                store.set({ heightMap: event.data });
+                break;
             case "message":
                 ctx.toast(event.data.level, event.data.text);
                 break;
@@ -145,6 +155,7 @@ function main(): void {
     mountJog(panel("jog"), ctx);
     mountLaser(panel("laser"), ctx);
     mountJobs(panel("jobs"), ctx);
+    mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountConsole(panel("console"), ctx);
     mountSettings(panel("settings"), ctx);

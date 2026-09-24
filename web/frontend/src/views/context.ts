@@ -14,6 +14,7 @@ export interface Ctx {
     refreshPorts(): Promise<void>;
     refreshJobs(): Promise<void>;
     refreshSettings(): Promise<void>;
+    refreshHeightMap(): Promise<void>;
     /** Loads a job in full and makes it the selected one; null clears the selection. */
     selectJob(id: string | null): Promise<void>;
 }

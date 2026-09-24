@@ -18,9 +18,15 @@ for the dev server. Without it the browser refuses every call.
 
 Board coordinates are mm with the rotation axis at the origin: `x = r cos a`,
 `y = r sin a`, y up in the preview. The DRO shows the joint (`R` mm, `A` deg),
-the cross slide (`Z` mm) and the board position the backend derives from the
-joint. The cross slide is a setup axis: the jog panel moves it on its own,
-in the small steps a centering burn is measured into.
+the cross slide (`Z` mm), the focus axis (`H` mm) and the probe on a machine
+with one, and the board position the backend derives from the joint. The
+cross slide is a setup axis: the jog panel moves it on its own, in the small
+steps a centering burn is measured into.
+
+The Height map panel probes a grid (drawn on the preview before and while it
+is probed), shows the heights as a map of the board seen from above, blue
+below the mean and red above it, and sets the focus offset. The run button
+sends the chosen compensation, which turns to `auto` once a map is usable.
 
 ## Architecture
 
@@ -41,10 +47,10 @@ classDiagram
         AppState
     }
     class views {
-        statusbar dro jog laser jobs center previewpanel console settings toasts
+        statusbar dro jog laser jobs center heightmap previewpanel console settings toasts
     }
     class preview {
-        Preview  canvas around the axis, y up
+        Preview  canvas around the axis, y up, probe grid
     }
     class kinematics {
         segmentBoardMove(from, to, tolerance)
@@ -52,7 +58,7 @@ classDiagram
     }
     class mock {
         MockBackend  Api and EventFeed in one
-        MockMachine  joint motion at the rates, cross slide on its own
+        MockMachine  joint motion at the rates, cross slide on its own, focus axis and probe
     }
     class mockjobs {
         parseSvg parseGcode placeJob computeStats centerJob

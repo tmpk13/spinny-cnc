@@ -34,6 +34,11 @@
     --pv-g1: #204090;
     --pv-g2: #207040;
     --pv-g3: #806000;
+    --pv-probe: #7a3fb0;
+    /* Height map: below the mean, at it, above it. */
+    --hm-low: #256abf;
+    --hm-mid: #f0efec;
+    --hm-high: #e34948;
     --radius: 0.5rem;
     --gap: 0.75rem;
     --touch: 2.75rem;
@@ -71,6 +76,10 @@
         --pv-g1: #6f9cf0;
         --pv-g2: #5ec880;
         --pv-g3: #d8b040;
+        --pv-probe: #b48ae8;
+        --hm-low: #6da7ec;
+        --hm-mid: #383835;
+        --hm-high: #e66767;
     }
 }
 
@@ -146,6 +155,7 @@ h3 {
         "jog"
         "laser"
         "jobs"
+        "heightmap"
         "console"
         "settings";
     align-content: start;
@@ -157,7 +167,7 @@ h3 {
         grid-template-areas:
             "dro preview jobs"
             "jog preview jobs"
-            "laser preview jobs"
+            "laser preview heightmap"
             "console console settings";
     }
 }
@@ -167,6 +177,7 @@ h3 {
 #jog { grid-area: jog; }
 #laser { grid-area: laser; }
 #jobs { grid-area: jobs; }
+#heightmap { grid-area: heightmap; }
 #console { grid-area: console; }
 #settings { grid-area: settings; }
 
@@ -956,4 +967,92 @@ dialog.confirm::backdrop {
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+}
+
+/* Height map */
+
+.hm-badge[data-map="none"] { background: transparent; color: var(--muted); border: thin solid var(--border); }
+.hm-badge[data-map="partial"] { background: var(--hold); }
+.hm-badge[data-map="running"] { background: var(--run); }
+.hm-badge[data-map="ready"] { background: var(--jog); }
+
+.hm-probe-settings {
+    margin-bottom: 0.5rem;
+}
+
+.hm-probe-settings summary {
+    cursor: pointer;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+}
+
+.hm-map {
+    margin: 0.5rem 0;
+    overflow-x: auto;
+}
+
+/* Cells sit apart by a hairline of the panel so neighbors never merge. */
+.hm-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0.125rem;
+}
+
+.hm-cell {
+    padding: 0.45rem 0;
+    border: thin dashed var(--border);
+    border-radius: 0.25rem;
+    color: var(--text);
+    font: 0.7rem var(--mono);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+}
+
+.hm-cell:hover,
+.hm-cell:focus-visible {
+    outline: 0.125rem solid var(--accent);
+    outline-offset: -0.0625rem;
+}
+
+.hm-cell[data-probing] {
+    outline: 0.125rem solid var(--text);
+    outline-offset: -0.0625rem;
+}
+
+.hm-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+    margin-bottom: 0.5rem;
+}
+
+.hm-scale {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.hm-ramp {
+    display: inline-block;
+    width: 6rem;
+    height: 0.6rem;
+    border-radius: 0.3rem;
+    background: linear-gradient(to right,
+        color-mix(in oklab, var(--hm-low) 70%, var(--hm-mid)),
+        var(--hm-mid),
+        color-mix(in oklab, var(--hm-high) 70%, var(--hm-mid)));
+}
+
+.hm-focus {
+    margin-bottom: 0.25rem;
+}
+
+[data-dro="probe"][data-down] {
+    color: var(--hold);
+    font-weight: 700;
 }

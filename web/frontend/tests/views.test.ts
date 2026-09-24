@@ -132,7 +132,7 @@ describe("buttons", () => {
 
 describe("dro", () => {
     test("text for a machine and for none", () => {
-        expect(droText(machine())).toEqual({ r: "12.345", a: "90.0000", z: "0.000", x: "0.000", y: "12.345", laser: "0.0%", rate: "0", mode: "dyn", queue: "32/16", motors: "on" });
+        expect(droText(machine())).toEqual({ r: "12.345", a: "90.0000", z: "0.000", h: null, x: "0.000", y: "12.345", laser: "0.0%", rate: "0", mode: "dyn", queue: "32/16", motors: "on", probe: null });
         expect(droText(machine({ joint: { r: 1, a: 2, z: -0.125 } })).z).toBe("-0.125");
         expect(droText(null).r).toBe("-.---");
         expect(droText(null).z).toBe("-.---");

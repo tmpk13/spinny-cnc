@@ -159,17 +159,36 @@ with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
 per unit at low speed before the first job.
 
+### Probing and the height map
+
+An optional focus axis (`H`, the E driver socket, `$h_axis=1`) carries a
+touch probe on the Z-STOP input. The Height map panel probes a grid over
+the board, and a run can then follow it: the focus axis tracks the board
+under the beam, or, without a focus axis, the power is raised where the
+board sits out of focus.
+
+1. Jog the head up until the probe clears the board: probing travels at
+   that height. Set the probe's offset from the beam under *Probe*.
+2. *Fit to job* (the preview shows the grid), then *Probe*.
+3. Jog the beam over the board, focus it by eye with the focus axis, and
+   press *Focus here*.
+4. Run with *height map: auto*.
+
+Wiring and bring-up are in `firmware/rp2040/README.md`; nothing of this has
+run on hardware yet.
+
 ```mermaid
 flowchart LR
     subgraph web
         FE[frontend, TypeScript] <-->|REST, WebSocket| BE[backend, FastAPI]
         BE --> KIN[spinny_laser.polar]
         BE --> LS[laser_sweep: gerber, isolation]
+        BE --> HM[height map: probing, focus or power compensation]
     end
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
-        RP[rp2040: embassy, USB, step timer, laser PWM, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper, machine]
-        VIRT[virtual: TCP server, virtual clock] --> CORE
+        RP[rp2040: embassy, USB, step timer, laser PWM, TMC2209, flash, probe input] --> CORE[spinny-core: parser, settings, planner, stepper R A H, probe, machine]
+        VIRT[virtual: TCP server, virtual clock, board surface] --> CORE
     end
 ```
 

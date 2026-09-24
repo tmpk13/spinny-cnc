@@ -4,8 +4,9 @@ import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, ClearPattern, Job, Progress, UploadOptions } from "../types.ts";
+import type { Anchor, ClearPattern, Compensate, Job, Progress, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
+import { mapUsable } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.kicad_pcb,.gcode,.nc";
@@ -156,7 +157,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     });
 
     ctx.store.subscribe((state) => renderList(state), ["jobs", "job"]);
-    ctx.store.subscribe((state) => renderDetails(state), ["job", "progress", "snapshot"]);
+    ctx.store.subscribe((state) => renderDetails(state), ["job", "progress", "snapshot", "heightMap"]);
 
     function renderList(state: AppState): void {
         const selected = state.job?.id ?? null;
@@ -208,10 +209,22 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const progressState = el("span", { class: "badge run-state" });
     const progressReason = el("span", { class: "progress-reason" });
     const runButton = button("Run", () => run(), "btn btn-primary");
+    // How the run follows the height map. It turns to auto by itself once a
+    // usable map exists, until the operator picks something.
+    const compensate = el("select", { class: "field", "aria-label": "Height map" },
+        el("option", { value: "off" }, "no height map"),
+        el("option", { value: "auto" }, "height map: auto"),
+        el("option", { value: "focus" }, "height map: focus axis"),
+        el("option", { value: "power" }, "height map: power"),
+    ) as HTMLSelectElement;
+    let compensateTouched = false;
+    compensate.addEventListener("change", () => {
+        compensateTouched = true;
+    });
     const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
     const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
     const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
-    const runRow = el("div", { class: "run-row" }, runButton, holdButton, resumeButton, stopButton);
+    const runRow = el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton);
     const progressBox = el("div", { class: "progress" },
         el("div", { class: "progress-track" }, progressBar),
         el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
@@ -222,7 +235,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         if (!job) {
             return;
         }
-        await ctx.call(ctx.api.runJob(job.id));
+        await ctx.call(ctx.api.runJob(job.id, compensate.value as Compensate));
         await ctx.refreshState();
     }
 
@@ -294,6 +307,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         setLocked(holdButton, !connected || !active || progress.state !== "running");
         setLocked(resumeButton, !connected || !active || progress.state !== "hold");
         setLocked(stopButton, !connected || !active);
+        compensate.disabled = active;
+        if (!compensateTouched) {
+            compensate.value = mapUsable(state.heightMap?.map ?? null) ? "auto" : "off";
+        }
     }
 
     /** A number cell of the groups table; the stylesheet sizes it to the column. */
