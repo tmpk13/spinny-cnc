@@ -160,7 +160,9 @@ class Prober:
         with self._lock:
             return self.progress.to_dict() if self.progress is not None else None
 
-    def start(self, grid: Grid, settings: ProbeSettings, link: Link | None, streamer: Streamer) -> dict:
+    def start(
+        self, grid: Grid, settings: ProbeSettings, link: Link | None, streamer: Streamer, r_max: float = 0.0
+    ) -> dict:
         grid.check()
         settings.check()
         if link is None or not link.is_open:
@@ -173,11 +175,11 @@ class Prober:
                 raise ProberError("the last probing is still stopping")
             self._starting = True
         try:
-            return self._start(grid, settings, link, streamer)
+            return self._start(grid, settings, link, streamer, r_max)
         finally:
             self._starting = False
 
-    def _start(self, grid: Grid, settings: ProbeSettings, link: Link, streamer: Streamer) -> dict:
+    def _start(self, grid: Grid, settings: ProbeSettings, link: Link, streamer: Streamer, r_max: float) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
         except LinkError as exc:
@@ -197,6 +199,11 @@ class Prober:
                 joints[(ix, iy)] = probe_joint(point, settings.offset, angle, grid.spacing / 2.0)
             except ValueError as exc:
                 raise ProberError(str(exc)) from exc
+            if r_max > 0 and abs(joints[(ix, iy)][0]) > r_max + 1e-9:
+                raise ProberError(
+                    f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
+                    f" R{joints[(ix, iy)][0]:.3f}, past the soft limit r_max={r_max:g}"
+                )
             angle = joints[(ix, iy)][1]
         heightmap = HeightMap.empty(grid, settings.offset)
         # A map probed before keeps its focus offset only if the probe has

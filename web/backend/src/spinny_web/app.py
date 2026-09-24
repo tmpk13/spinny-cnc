@@ -869,9 +869,13 @@ class Backend:
 
     def start_probe(self, grid: Grid) -> dict:
         link = self._movable()
+        try:
+            r_max = float(self.read_settings(force=True)["values"].get("r_max", 0) or 0)
+        except (TypeError, ValueError):
+            r_max = 0.0
         with self._move_lock:
             self._jog_target = None
-            self.prober.start(grid, self.probe_settings(), link, self.streamer())
+            self.prober.start(grid, self.probe_settings(), link, self.streamer(), r_max)
         return self.heightmap_state()
 
     def stop_probe(self) -> dict:

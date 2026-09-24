@@ -162,7 +162,7 @@ minus contact height, which `focus` sets.
 | Method and path | Body |
 | --- | --- |
 | `GET /api/heightmap` | returns `{"map": map or null, "probe": probing progress or null, "settings": probe settings}` |
-| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, or while a run or another probing is under way; a point the probe tip cannot reach is 409 before anything moves |
+| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, or while a run or another probing is under way; a point the probe tip cannot reach, or one that would take the head past `r_max`, is 409 before anything moves |
 | `POST /api/heightmap/stop` | holds and resets like a run's stop; 409 when nothing is being probed |
 | `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset; `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam |
 | `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail and across it (mm), and the beam's Rayleigh length for power compensation (mm) |
@@ -190,6 +190,22 @@ by `offset[1]` never comes nearer the axis than that; a grid point inside
 that circle is probed from the nearest place on it when that is within
 half a grid spacing, and refused otherwise. A miss leaves the firmware in
 `Alarm:2` and the probing in `error`.
+
+One point, as the lines go out (each answered before the next; the times
+are for the default settings with the board 2 mm under the travel height):
+
+```mermaid
+gantt
+    title One probe point
+    dateFormat X
+    axisFormat %s s
+    section Lines
+    go R A (to the point, at travel height)   :0, 1
+    probe H-5 F60 (first touch)               :1, 3
+    go H (back off 0.3 mm)                    :3, 4
+    probe H-0.6 F15 (second touch, recorded)  :4, 6
+    go H (back to travel height)              :6, 7
+```
 
 A compensated run is refused with 400 unless the map is complete, its
 focus offset has been set, it spans at most 5 mm top to bottom, and it

@@ -141,6 +141,10 @@ def test_probing_is_refused_without_a_focus_axis_or_with_the_probe_down(client, 
     assert response.status_code == 400
     response = client.post("/api/heightmap/probe", json={**body, "x1": -20})
     assert response.status_code == 400
+    fake.settings["r_max"] = 8
+    response = client.post("/api/heightmap/probe", json=body)
+    assert response.status_code == 409 and "r_max=8" in response.json()["detail"]
+    assert not any(line.startswith(("go", "probe")) for line in fake.received_lines)
 
 
 def test_nothing_else_moves_the_head_while_probing(client, fake):
