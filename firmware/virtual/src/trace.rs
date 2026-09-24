@@ -11,6 +11,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use spinny_core::{A, AXES, H, R};
+
 /// Board distance between marks along a cut, mm.
 const MIN_STEP_MM: f64 = 0.05;
 /// Longest gap between marks while the beam is on, microseconds.
@@ -27,6 +29,8 @@ pub struct Mark {
     pub y: f64,
     pub r: f64,
     pub a: f64,
+    /// Focus axis, mm.
+    pub h: f64,
     pub duty: u16,
 }
 
@@ -36,8 +40,9 @@ pub struct Command {
     pub text: String,
     pub sent_us: u64,
     pub done_us: u64,
-    pub from: [f32; 2],
-    pub to: [f32; 2],
+    /// Joints before and after; the file carries the radius and angle.
+    pub from: [f32; AXES],
+    pub to: [f32; AXES],
 }
 
 #[derive(Default)]
@@ -63,16 +68,16 @@ impl Trace {
         self.path.is_some()
     }
 
-    /// Offers the beam position after a step. Joint is radius mm and
-    /// angle degrees.
-    pub fn sample(&mut self, us: u64, joint: [f32; 2], duty: u16) {
+    /// Offers the beam position after a step. Joint is radius mm, angle
+    /// degrees and focus mm.
+    pub fn sample(&mut self, us: u64, joint: [f32; AXES], duty: u16) {
         if self.path.is_none() {
             return;
         }
-        let r = joint[0] as f64;
-        let a = (joint[1] as f64).to_radians();
+        let r = joint[R] as f64;
+        let a = (joint[A] as f64).to_radians();
         let (x, y) = (r * a.cos(), r * a.sin());
-        let mark = Mark { us, x, y, r, a: joint[1] as f64, duty };
+        let mark = Mark { us, x, y, r, a: joint[A] as f64, h: joint[H] as f64, duty };
         // The far side of the axis is as far out as the near one.
         self.max_radius = self.max_radius.max(r.abs());
         let (keep, moved) = match self.last {
@@ -185,8 +190,8 @@ impl Trace {
             out.push_str(if i == 0 { "\n    " } else { ",\n    " });
             let _ = write!(
                 out,
-                "{{\"us\": {}, \"x\": {:.4}, \"y\": {:.4}, \"r\": {:.4}, \"a\": {:.4}, \"duty\": {}}}",
-                mark.us, mark.x, mark.y, mark.r, mark.a, mark.duty
+                "{{\"us\": {}, \"x\": {:.4}, \"y\": {:.4}, \"r\": {:.4}, \"a\": {:.4}, \"h\": {:.4}, \"duty\": {}}}",
+                mark.us, mark.x, mark.y, mark.r, mark.a, mark.h, mark.duty
             );
         }
         out.push_str("\n  ]\n}\n");
@@ -218,12 +223,12 @@ mod tests {
     #[test]
     fn marks_start_when_the_beam_opens_and_follow_the_move() {
         let mut trace = trace();
-        trace.sample(0, [10.0, 0.0], 0);
+        trace.sample(0, [10.0, 0.0, 0.0], 0);
         assert!(trace.marks.is_empty(), "a dark move leaves no mark");
-        trace.sample(100, [10.0, 0.0], 500);
+        trace.sample(100, [10.0, 0.0, 0.0], 500);
         assert_eq!(trace.marks.len(), 1);
         // Half a degree at 10 mm is 0.087 mm, past the distance gate.
-        trace.sample(200, [10.0, 0.5], 500);
+        trace.sample(200, [10.0, 0.5, 0.0], 500);
         assert_eq!(trace.marks.len(), 2);
         let last = trace.marks[1];
         assert!((last.x - 10.0 * 0.5f64.to_radians().cos()).abs() < 1e-9);
@@ -236,13 +241,13 @@ mod tests {
         // A cut along the rail, offered one step at a time: the sum must
         // be the line, not the sum of the steps that make it up.
         for i in 0..=2000 {
-            trace.sample(i as u64 * 100, [10.0 + i as f32 * 0.001, 0.0], 500);
+            trace.sample(i as u64 * 100, [10.0 + i as f32 * 0.001, 0.0, 0.0], 500);
         }
         assert!((trace.laser_on_mm() - 2.0).abs() < 0.11, "{}", trace.laser_on_mm());
         // A dark move adds nothing.
         let burnt = trace.laser_on_mm();
         for i in 0..=100 {
-            trace.sample(1_000_000 + i as u64 * 100, [12.0 + i as f32 * 0.05, 0.0], 0);
+            trace.sample(1_000_000 + i as u64 * 100, [12.0 + i as f32 * 0.05, 0.0, 0.0], 0);
         }
         assert_eq!(trace.laser_on_mm(), burnt);
     }
@@ -250,25 +255,25 @@ mod tests {
     #[test]
     fn a_still_beam_is_sampled_by_time_and_a_change_of_duty_always_lands() {
         let mut trace = trace();
-        trace.sample(0, [5.0, 0.0], 800);
-        trace.sample(MAX_GAP_US / 2, [5.0, 0.0], 800);
+        trace.sample(0, [5.0, 0.0, 0.0], 800);
+        trace.sample(MAX_GAP_US / 2, [5.0, 0.0, 0.0], 800);
         assert_eq!(trace.marks.len(), 1, "too soon to sample a still beam again");
-        trace.sample(MAX_GAP_US, [5.0, 0.0], 800);
+        trace.sample(MAX_GAP_US, [5.0, 0.0, 0.0], 800);
         assert_eq!(trace.marks.len(), 2);
-        trace.sample(MAX_GAP_US + 1, [5.0, 0.0], 0);
+        trace.sample(MAX_GAP_US + 1, [5.0, 0.0, 0.0], 0);
         assert_eq!(trace.marks.len(), 3, "the beam closing is always a mark");
     }
 
     #[test]
     fn json_carries_the_summary_the_commands_and_the_marks() {
         let mut trace = trace();
-        trace.sample(0, [1.0, 0.0], 1000);
+        trace.sample(0, [1.0, 0.0, 0.0], 1000);
         trace.command(Command {
             text: "cut R1 F60 S500".into(),
             sent_us: 0,
             done_us: 1_000_000,
-            from: [0.0, 0.0],
-            to: [1.0, 0.0],
+            from: [0.0, 0.0, 0.0],
+            to: [1.0, 0.0, 0.0],
         });
         let text = trace.render();
         assert!(text.contains("\"marks\": 1"));
@@ -280,8 +285,8 @@ mod tests {
     #[test]
     fn the_far_side_counts_toward_the_reach() {
         let mut trace = trace();
-        trace.sample(0, [-6.0, 0.0], 800);
-        trace.sample(100, [-4.0, 110.0], 800);
+        trace.sample(0, [-6.0, 0.0, 0.0], 800);
+        trace.sample(100, [-4.0, 110.0, 0.0], 800);
         assert!((trace.max_radius - 6.0).abs() < 1e-9);
     }
 

@@ -76,6 +76,10 @@ async fn main(spawner: Spawner) {
         z_step: p.PIN_19,
         z_dir: p.PIN_28,
         z_en: p.PIN_2,
+        h_step: p.PIN_14,
+        h_dir: p.PIN_13,
+        h_en: p.PIN_15,
+        probe: p.PIN_25,
     }, laser_invert);
 
     // Every other interrupt below the step timer, which `step_timer::start` puts at P0.

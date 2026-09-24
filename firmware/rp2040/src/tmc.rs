@@ -14,7 +14,7 @@ use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async::{Read, ReadReady, Write};
 use spinny_core::report;
 use spinny_core::settings::Settings;
-use spinny_core::{A, R};
+use spinny_core::{A, H, R};
 use spinny_fw_logic::tmc::{
     config_datagrams, micro_of, parse_reply, read_request, refused_text, report_text, unfinished_after, Datagram,
     DriverConfig, Reply, ADDR,
@@ -60,12 +60,15 @@ pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PI
 }
 
 /// Queues a reconfiguration from the current settings. The axis order is
-/// the one `ADDR` and `AXIS_LETTER` use: radius, table, cross slide.
+/// the one `ADDR` and `AXIS_LETTER` use: radius, table, cross slide, focus.
+/// The focus driver is left alone without `h_axis`: a board with nothing
+/// in the E socket would otherwise report it refused, and retry, forever.
 pub fn configure_from(settings: &Settings) {
+    let focus_ma = if settings.h_axis { settings.tmc_ma[H] } else { 0 };
     let cfg = DriverConfig {
-        ma: [settings.tmc_ma[R], settings.tmc_ma[A], settings.tmc_z_ma],
+        ma: [settings.tmc_ma[R], settings.tmc_ma[A], settings.tmc_z_ma, focus_ma],
         hold_pct: settings.tmc_hold_pct,
-        micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_z_micro],
+        micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_z_micro, settings.tmc_micro[H]],
         stealth: settings.tmc_stealth,
     };
     CONFIG.signal(cfg);

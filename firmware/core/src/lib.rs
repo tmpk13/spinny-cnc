@@ -1,6 +1,7 @@
 //! Motion control core for the spinny laser machine: a radius axis and a
 //! rotary table driven as straight lines in joint space, with the laser
-//! power tied to the speed actually reached.
+//! power tied to the speed actually reached, and an optional focus axis
+//! that raises and lowers the head along with them.
 //!
 //! The crate is portable. The RP2040 firmware and the host-side virtual
 //! machine both drive it through the traits in `hal`, and every module is
@@ -13,6 +14,13 @@
 //!
 //! The cross slide `Z` in `slide` stands apart from all of that: it is a
 //! setup axis that moves alone, from the main loop, with the beam off.
+//!
+//! The focus axis `H` is a joint like the other two, stepped by the same
+//! interrupt, so a cut can follow the board's height as it goes. It only
+//! takes words when the `h_axis` setting says one is fitted; a machine
+//! without it never steps it. A touch probe on it measures the board: a
+//! probe block samples the probe input every tick and latches the
+//! position at contact (`stepper`), and the machine brakes and reports it.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod hal;
@@ -27,10 +35,12 @@ pub mod stepper;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Joint axes: index 0 is the radius in mm, index 1 the table angle in degrees.
-pub const AXES: usize = 2;
+/// Joint axes: index 0 is the radius in mm, index 1 the table angle in
+/// degrees, index 2 the focus axis in mm, up positive.
+pub const AXES: usize = 3;
 pub const R: usize = 0;
 pub const A: usize = 1;
+pub const H: usize = 2;
 
 /// Longest accepted line, newline included.
 pub const LINE_MAX: usize = 96;

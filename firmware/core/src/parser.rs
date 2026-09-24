@@ -4,7 +4,7 @@
 //! check (`F` not above zero, `S` negative). State-dependent checks are
 //! the machine's job.
 
-use crate::{A, AXES, LINE_MAX, R};
+use crate::{A, AXES, H, LINE_MAX, R};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerMode {
@@ -43,6 +43,8 @@ pub enum Command<'a> {
     Jog { target: [Option<f32>; AXES], feed: Option<f32>, absolute: bool },
     /// The cross slide on its own; it is never interpolated with `R` or `A`.
     JogZ { target: f32, feed: Option<f32>, absolute: bool },
+    /// Moves the focus axis by up to `distance` mm until the probe touches.
+    Probe { distance: f32, feed: Option<f32> },
     Dwell { ms: u32, power: Option<f32> },
     Mode(PowerMode),
     LaserOn { power: f32, ms: Option<u32> },
@@ -75,6 +77,10 @@ pub enum Error {
     BadSettingValue,
     TooLong,
     Flash,
+    /// The probe input was already active when a probe was to start.
+    ProbeActive,
+    /// A probe went its whole distance without contact.
+    ProbeMissed,
 }
 
 impl Error {
@@ -89,6 +95,8 @@ impl Error {
             Error::BadSettingValue => 7,
             Error::TooLong => 8,
             Error::Flash => 9,
+            Error::ProbeActive => 10,
+            Error::ProbeMissed => 11,
         }
     }
 
@@ -103,6 +111,8 @@ impl Error {
             Error::BadSettingValue => "bad setting value",
             Error::TooLong => "line too long",
             Error::Flash => "flash failed",
+            Error::ProbeActive => "probe active",
+            Error::ProbeMissed => "probe missed",
         }
     }
 }
@@ -153,6 +163,7 @@ pub fn number(text: &str) -> Option<f32> {
 struct Words {
     r: Option<f32>,
     a: Option<f32>,
+    h: Option<f32>,
     z: Option<f32>,
     f: Option<f32>,
     s: Option<f32>,
@@ -178,6 +189,7 @@ impl Words {
             let slot = match letter {
                 b'R' => &mut words.r,
                 b'A' => &mut words.a,
+                b'H' => &mut words.h,
                 b'Z' => &mut words.z,
                 b'F' => &mut words.f,
                 b'S' => &mut words.s,
@@ -197,12 +209,13 @@ impl Words {
         let mut target = [None; AXES];
         target[R] = self.r;
         target[A] = self.a;
+        target[H] = self.h;
         target
     }
 
     /// At least one axis word.
     fn need_axis(&self) -> Result<(), Error> {
-        if self.r.is_none() && self.a.is_none() && self.z.is_none() {
+        if self.r.is_none() && self.a.is_none() && self.h.is_none() && self.z.is_none() {
             return Err(Error::MissingWord);
         }
         Ok(())
@@ -211,7 +224,7 @@ impl Words {
     /// The cross slide takes a line to itself: it is a separate mechanism
     /// and is never interpolated with the joints.
     fn check_slide_alone(&self) -> Result<(), Error> {
-        if self.z.is_some() && (self.r.is_some() || self.a.is_some()) {
+        if self.z.is_some() && (self.r.is_some() || self.a.is_some() || self.h.is_some()) {
             return Err(Error::BadWord);
         }
         Ok(())
@@ -306,12 +319,12 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
         // direction, where the head's offset from the axis is mirrored;
         // the machine holds it to the soft limit, not to zero.
         b"go" => {
-            let words = Words::read(tokens, b"RA")?;
+            let words = Words::read(tokens, b"RAH")?;
             words.need_axis()?;
             Ok(Command::Go { target: words.target() })
         }
         b"cut" => {
-            let words = Words::read(tokens, b"RAFSM")?;
+            let words = Words::read(tokens, b"RAHFSM")?;
             words.need_axis()?;
             words.check_feed()?;
             words.check_power()?;
@@ -319,7 +332,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
         }
         key @ (b"jog" | b"jogto") => {
             let absolute = key == b"jogto";
-            let words = Words::read(tokens, b"RAZF")?;
+            let words = Words::read(tokens, b"RAHZF")?;
             words.need_axis()?;
             words.check_slide_alone()?;
             words.check_feed()?;
@@ -332,6 +345,17 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             // distance, absolute it is the far side of the axis, which is
             // where the head has to go to be lined up with it.
             Ok(Command::Jog { target: words.target(), feed: words.f, absolute })
+        }
+        b"probe" => {
+            // Relative, like a jog: the distance is the most the head may
+            // travel looking for the board, and its sign the direction.
+            let words = Words::read(tokens, b"HF")?;
+            let distance = words.h.ok_or(Error::MissingWord)?;
+            if distance == 0.0 {
+                return Err(Error::OutOfRange);
+            }
+            words.check_feed()?;
+            Ok(Command::Probe { distance, feed: words.f })
         }
         b"dwell" => {
             let words = Words::read(tokens, b"TS")?;
@@ -367,7 +391,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             Ok(Command::LaserOn { power, ms })
         }
         b"set" => {
-            let words = Words::read(tokens, b"RAZ")?;
+            let words = Words::read(tokens, b"RAHZ")?;
             words.need_axis()?;
             words.check_slide_alone()?;
             if let Some(value) = words.z {
@@ -392,7 +416,7 @@ mod tests {
     use super::*;
 
     fn go(r: Option<f32>, a: Option<f32>) -> Command<'static> {
-        Command::Go { target: [r, a] }
+        Command::Go { target: [r, a, None] }
     }
 
     #[test]
@@ -495,22 +519,22 @@ mod tests {
     fn cut_forms() {
         assert_eq!(
             parse("cut A90 F300 S400"),
-            Ok(Command::Cut { target: [None, Some(90.0)], feed: Some(300.0), power: Some(400.0), min_power: None })
+            Ok(Command::Cut { target: [None, Some(90.0), None], feed: Some(300.0), power: Some(400.0), min_power: None })
         );
-        assert_eq!(parse("cut A180"), Ok(Command::Cut { target: [None, Some(180.0)], feed: None, power: None, min_power: None }));
+        assert_eq!(parse("cut A180"), Ok(Command::Cut { target: [None, Some(180.0), None], feed: None, power: None, min_power: None }));
         assert_eq!(
             parse("CUT s0 f0.5 r1.5 a-2"),
-            Ok(Command::Cut { target: [Some(1.5), Some(-2.0)], feed: Some(0.5), power: Some(0.0), min_power: None })
+            Ok(Command::Cut { target: [Some(1.5), Some(-2.0), None], feed: Some(0.5), power: Some(0.0), min_power: None })
         );
         // A cut on the far side of the axis: the same board point half a
         // turn away, reached with the head's offset mirrored.
         assert_eq!(
             parse("cut R-1 A90"),
-            Ok(Command::Cut { target: [Some(-1.0), Some(90.0)], feed: None, power: None, min_power: None })
+            Ok(Command::Cut { target: [Some(-1.0), Some(90.0), None], feed: None, power: None, min_power: None })
         );
         assert_eq!(
             parse("cut R2 F300 S400 M120"),
-            Ok(Command::Cut { target: [Some(2.0), None], feed: Some(300.0), power: Some(400.0), min_power: Some(120.0) })
+            Ok(Command::Cut { target: [Some(2.0), None, None], feed: Some(300.0), power: Some(400.0), min_power: Some(120.0) })
         );
         assert_eq!(parse("cut R2 M-1"), Err(Error::OutOfRange));
         assert_eq!(parse("cut R2 M1 M2"), Err(Error::BadWord));
@@ -533,18 +557,18 @@ mod tests {
 
     #[test]
     fn jog_forms() {
-        assert_eq!(parse("jog R-5"), Ok(Command::Jog { target: [Some(-5.0), None], feed: None, absolute: false }));
+        assert_eq!(parse("jog R-5"), Ok(Command::Jog { target: [Some(-5.0), None, None], feed: None, absolute: false }));
         assert_eq!(
             parse("jog A10 F100"),
-            Ok(Command::Jog { target: [None, Some(10.0)], feed: Some(100.0), absolute: false })
+            Ok(Command::Jog { target: [None, Some(10.0), None], feed: Some(100.0), absolute: false })
         );
         assert_eq!(
             parse("jogto R20 A-30"),
-            Ok(Command::Jog { target: [Some(20.0), Some(-30.0)], feed: None, absolute: true })
+            Ok(Command::Jog { target: [Some(20.0), Some(-30.0), None], feed: None, absolute: true })
         );
         assert_eq!(
             parse("JOGTO r0 f50"),
-            Ok(Command::Jog { target: [Some(0.0), None], feed: Some(50.0), absolute: true })
+            Ok(Command::Jog { target: [Some(0.0), None, None], feed: Some(50.0), absolute: true })
         );
     }
 
@@ -559,12 +583,12 @@ mod tests {
         // point from the far side.
         assert_eq!(
             parse("jogto R-1"),
-            Ok(Command::Jog { target: [Some(-1.0), None], feed: None, absolute: true })
+            Ok(Command::Jog { target: [Some(-1.0), None, None], feed: None, absolute: true })
         );
         assert_eq!(parse("go R-1"), Ok(go(Some(-1.0), None)));
         assert_eq!(
             parse("cut R-1 F60"),
-            Ok(Command::Cut { target: [Some(-1.0), None], feed: Some(60.0), power: None, min_power: None })
+            Ok(Command::Cut { target: [Some(-1.0), None, None], feed: Some(60.0), power: None, min_power: None })
         );
         assert_eq!(parse("jog R5 F0"), Err(Error::OutOfRange));
         assert_eq!(parse("jogto A5 F-1"), Err(Error::OutOfRange));
@@ -677,12 +701,12 @@ mod tests {
 
     #[test]
     fn set_forms() {
-        assert_eq!(parse("set R0"), Ok(Command::SetPosition { value: [Some(0.0), None] }));
-        assert_eq!(parse("set R0 A0"), Ok(Command::SetPosition { value: [Some(0.0), Some(0.0)] }));
-        assert_eq!(parse("SET a-90"), Ok(Command::SetPosition { value: [None, Some(-90.0)] }));
+        assert_eq!(parse("set R0"), Ok(Command::SetPosition { value: [Some(0.0), None, None] }));
+        assert_eq!(parse("set R0 A0"), Ok(Command::SetPosition { value: [Some(0.0), Some(0.0), None] }));
+        assert_eq!(parse("SET a-90"), Ok(Command::SetPosition { value: [None, Some(-90.0), None] }));
         assert_eq!(parse("set"), Err(Error::MissingWord));
         // The head can be parked past the axis, so it can be declared there.
-        assert_eq!(parse("set R-1"), Ok(Command::SetPosition { value: [Some(-1.0), None] }));
+        assert_eq!(parse("set R-1"), Ok(Command::SetPosition { value: [Some(-1.0), None, None] }));
         assert_eq!(parse("set F1"), Err(Error::BadWord));
         assert_eq!(parse("set R1 A2 A3"), Err(Error::BadWord));
     }
@@ -775,5 +799,28 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn focus_words_and_the_probe() {
+        assert_eq!(parse("go H1.5"), Ok(Command::Go { target: [None, None, Some(1.5)] }));
+        assert_eq!(
+            parse("cut R2 A3 H-0.25 F100 S50"),
+            Ok(Command::Cut { target: [Some(2.0), Some(3.0), Some(-0.25)], feed: Some(100.0), power: Some(50.0), min_power: None })
+        );
+        assert_eq!(parse("jog h2"), Ok(Command::Jog { target: [None, None, Some(2.0)], feed: None, absolute: false }));
+        assert_eq!(parse("set H0"), Ok(Command::SetPosition { value: [None, None, Some(0.0)] }));
+        // The cross slide still moves alone, the focus axis included.
+        assert_eq!(parse("jog H1 Z1"), Err(Error::BadWord));
+        assert_eq!(parse("set H1 Z1"), Err(Error::BadWord));
+        assert_eq!(parse("probe H-2 F50"), Ok(Command::Probe { distance: -2.0, feed: Some(50.0) }));
+        assert_eq!(parse("PROBE h3"), Ok(Command::Probe { distance: 3.0, feed: None }));
+        assert_eq!(parse("probe"), Err(Error::MissingWord));
+        assert_eq!(parse("probe F50"), Err(Error::MissingWord));
+        assert_eq!(parse("probe H0"), Err(Error::OutOfRange));
+        assert_eq!(parse("probe H-1 F0"), Err(Error::OutOfRange));
+        assert_eq!(parse("probe R1 H-1"), Err(Error::BadWord));
+        assert_eq!(Error::ProbeActive.code(), 10);
+        assert_eq!(Error::ProbeMissed.code(), 11);
     }
 }

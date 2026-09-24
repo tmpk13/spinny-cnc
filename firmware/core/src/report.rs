@@ -6,7 +6,7 @@
 
 use crate::hal::Sink;
 use crate::parser::PowerMode;
-use crate::{A, AXES, BLOCKS, LINE_SLOTS, R, VERSION};
+use crate::{A, AXES, BLOCKS, H, LINE_SLOTS, R, VERSION};
 
 /// One state for the status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub enum State {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Status {
     pub state: State,
-    /// Radius mm, angle deg.
+    /// Radius mm, angle deg, focus mm.
     pub joint: [f32; AXES],
     /// Board mm/min.
     pub rate: f32,
@@ -34,6 +34,9 @@ pub struct Status {
     pub enabled: bool,
     /// Cross slide position, mm.
     pub slide: f32,
+    /// With a focus axis fitted: whether the probe input is active. The
+    /// focus position and this are left off the line without one.
+    pub probe: Option<bool>,
 }
 
 /// Most decimal places `float` renders.
@@ -43,11 +46,13 @@ pub const MAX_DECIMALS: usize = 9;
 pub fn alarm_text(code: u8) -> &'static str {
     match code {
         1 => "reset while moving, position may be off",
+        2 => "probe missed, check the head before moving",
         _ => "unknown alarm",
     }
 }
 
-/// `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>` plus newline.
+/// `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>` plus newline;
+/// with a focus axis, `|H:0.000|P:0` before the `>`.
 pub fn status(status: &Status, out: &mut impl Sink) {
     out.write(b"<");
     match status.state {
@@ -81,6 +86,12 @@ pub fn status(status: &Status, out: &mut impl Sink) {
     out.write(if status.enabled { b"1" } else { b"0" });
     out.write(b"|Z:");
     float(status.slide, 3, out);
+    if let Some(active) = status.probe {
+        out.write(b"|H:");
+        float(status.joint[H], 3, out);
+        out.write(b"|P:");
+        out.write(if active { b"1" } else { b"0" });
+    }
     out.write(b">\n");
 }
 
@@ -93,6 +104,14 @@ pub fn banner(out: &mut impl Sink) {
     out.write(b" blocks:");
     uint(BLOCKS as u64, out);
     out.write(b"]\n");
+}
+
+/// `[PRB:h:1]` plus newline: the focus axis position in mm where a probe
+/// met contact, or where it stopped without (`:0`).
+pub fn probe(h: f32, contact: bool, out: &mut impl Sink) {
+    out.write(b"[PRB:");
+    float(h, 4, out);
+    out.write(if contact { b":1]\n" } else { b":0]\n" });
 }
 
 /// `[MSG:text]` plus newline.
@@ -256,7 +275,7 @@ mod tests {
     fn sample() -> Status {
         Status {
             state: State::Idle,
-            joint: [0.0, 0.0],
+            joint: [0.0, 0.0, 0.0],
             rate: 0.0,
             duty: 0,
             planner_free: 32,
@@ -264,6 +283,7 @@ mod tests {
             mode: PowerMode::Dynamic,
             enabled: false,
             slide: 0.0,
+            probe: None,
         }
     }
 
@@ -282,7 +302,7 @@ mod tests {
     fn status_run_sample_from_protocol() {
         let status = Status {
             state: State::Run,
-            joint: [7.512, 135.0],
+            joint: [7.512, 135.0, 0.0],
             rate: 300.0,
             duty: 400,
             planner_free: 30,
@@ -290,6 +310,7 @@ mod tests {
             mode: PowerMode::Dynamic,
             enabled: true,
             slide: -1.25,
+            probe: None,
         };
         assert_eq!(status_text(&status).as_str(), "<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:-1.250>\n");
     }
@@ -298,11 +319,11 @@ mod tests {
     fn status_negative_angle_and_rounding() {
         let mut status = sample();
         status.state = State::Jog;
-        status.joint = [2.0625, -45.5];
+        status.joint = [2.0625, -45.5, 0.0];
         status.rate = 299.5;
         status.mode = PowerMode::Constant;
         assert_eq!(status_text(&status).as_str(), "<Jog|J:2.063,-45.5000|V:300|L:0|Q:32,16|M:const|E:0|Z:0.000>\n");
-        status.joint = [0.0, -0.03125];
+        status.joint = [0.0, -0.03125, 0.0];
         status.rate = 299.4;
         assert_eq!(status_text(&status).as_str(), "<Jog|J:0.000,-0.0313|V:299|L:0|Q:32,16|M:const|E:0|Z:0.000>\n");
     }
@@ -310,7 +331,7 @@ mod tests {
     #[test]
     fn status_tiny_negative_is_not_minus_zero() {
         let mut status = sample();
-        status.joint = [-0.0001, -0.00001];
+        status.joint = [-0.0001, -0.00001, 0.0];
         assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>\n");
     }
 
@@ -449,5 +470,29 @@ mod tests {
         let mut buffer = Buffer::<4>::new();
         buffer.write(b"abcdef");
         assert_eq!(buffer.as_bytes(), b"abcd");
+    }
+
+    #[test]
+    fn status_with_a_focus_axis() {
+        let mut status = sample();
+        status.joint = [1.0, 2.0, -1.2345];
+        status.probe = Some(true);
+        assert_eq!(
+            status_text(&status).as_str(),
+            "<Idle|J:1.000,2.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000|H:-1.235|P:1>\n"
+        );
+        status.probe = Some(false);
+        assert!(status_text(&status).as_str().ends_with("|H:-1.235|P:0>\n"));
+    }
+
+    #[test]
+    fn probe_lines() {
+        let mut out = Out::new();
+        probe(-1.25, true, &mut out);
+        probe(0.00004, false, &mut out);
+        assert_eq!(out.as_str(), "[PRB:-1.2500:1]\n[PRB:0.0000:0]\n");
+        let mut out = Out::new();
+        alarm(2, &mut out);
+        assert_eq!(out.as_str(), "ALARM:2 probe missed, check the head before moving\n");
     }
 }

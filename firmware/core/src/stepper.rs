@@ -23,6 +23,16 @@
 //! new exit up at its next segment, and nothing accumulates: the steps of a
 //! segment are whole events taken off the block's exact event count.
 //!
+//! Probing: a block made by `probe` carries `StepBlock::probe`. While one
+//! is loaded the interrupt reads the probe input at every tick and, the
+//! first time it is active, copies the executed position into
+//! `Shared::probe_at` and sets `Shared::probe_hit`. It does not stop by
+//! itself: the main loop sees the flag and brakes like a jog cancel, so
+//! the latched position is the contact and the travel after it is only
+//! the braking distance. A brake only reaches segments not yet written,
+//! so a probe keeps no more than `PROBE_SEGMENTS` in the ring: with the
+//! full ring the head would press on for 160 ms past the contact.
+//!
 //! Abort ordering: `Front::abort` sets `Shared::abort` and forgets its own
 //! state; it cannot empty the ring because the `Consumer` belongs to the
 //! interrupt. The caller pends the interrupt; the interrupt's next `tick`
@@ -42,7 +52,7 @@ use crate::math;
 use crate::parser::PowerMode;
 use crate::planner::{Block, MoveKind, Planner};
 use crate::settings::Settings;
-use crate::{AXES, SEGMENTS, SEGMENT_MS};
+use crate::{AXES, H, SEGMENTS, SEGMENT_MS};
 
 /// Block ring size on the stepper side.
 pub const STEP_BLOCKS: usize = 4;
@@ -61,6 +71,9 @@ pub const AMASS_TARGET_HZ: f32 = 4000.0;
 const MIN_EVENT_RATE_HZ: f32 = 2.0;
 /// Segment length as planned, seconds.
 const SEGMENT_S: f32 = SEGMENT_MS as f32 / 1000.0;
+/// Segments a probe block keeps queued: the time between contact and the
+/// start of the brake, beyond the main loop's own period.
+pub const PROBE_SEGMENTS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StepBlock {
@@ -72,6 +85,8 @@ pub struct StepBlock {
     pub dir_forward: u8,
     /// Board mm per metric unit, for the rate report.
     pub surface_scale: f32,
+    /// Sample the probe input at every tick of this block.
+    pub probe: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -127,6 +142,12 @@ pub struct Shared {
     /// the segment last written to the ring, up to 150 ms ahead of it.
     pub surface_rate: AtomicU32,
     pub duty: AtomicU32,
+    /// Probe input level that means contact, from the settings.
+    pub probe_level: AtomicBool,
+    /// A probe block met contact; `probe_at` holds the focus axis position
+    /// in steps at that tick. Cleared by `Front::arm_probe`.
+    pub probe_hit: AtomicBool,
+    pub probe_at: AtomicI32,
     /// Slot of the segment in progress, `NO_SLOT` when none; kept for the
     /// slot reuse check in the tests.
     #[cfg(test)]
@@ -152,8 +173,11 @@ impl Shared {
     pub const fn new() -> Self {
         Shared {
             ring: UnsafeCell::new(Queue::new()),
-            blocks: UnsafeCell::new([StepBlock { steps: [0; AXES], event_count: 0, dir_levels: 0, dir_forward: 0, surface_scale: 0.0 }; STEP_BLOCKS]),
-            position: [AtomicI32::new(0), AtomicI32::new(0)],
+            blocks: UnsafeCell::new(
+                [StepBlock { steps: [0; AXES], event_count: 0, dir_levels: 0, dir_forward: 0, surface_scale: 0.0, probe: false };
+                    STEP_BLOCKS],
+            ),
+            position: [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)],
             idle: AtomicBool::new(true),
             abort: AtomicBool::new(false),
             done: AtomicU32::new(0),
@@ -161,6 +185,9 @@ impl Shared {
             laser_off: AtomicBool::new(false),
             surface_rate: AtomicU32::new(0),
             duty: AtomicU32::new(0),
+            probe_level: AtomicBool::new(false),
+            probe_hit: AtomicBool::new(false),
+            probe_at: AtomicI32::new(0),
             #[cfg(test)]
             executing: core::sync::atomic::AtomicU8::new(NO_SLOT),
         }
@@ -242,6 +269,8 @@ pub struct Isr<'a> {
     forward: u8,
     /// Board mm per metric unit of the loaded block.
     surface_scale: f32,
+    /// The loaded block is a probe: watch the input.
+    probing: bool,
     /// Local copy of `Shared::done`.
     done: u32,
     /// Fraction of a microsecond owed to the timer, in 1/256 us.
@@ -284,6 +313,7 @@ pub fn split(shared: &'static mut Shared) -> (Front<'static>, Isr<'static>) {
         event_shifted: 0,
         forward: 0,
         surface_scale: 0.0,
+        probing: false,
         done: 0,
         frac_acc: 0,
         #[cfg(test)]
@@ -397,6 +427,7 @@ impl<'a> Front<'a> {
     /// the ring is full or the planner is empty.
     pub fn prep(&mut self, planner: &mut Planner, settings: &Settings, mode: PowerMode) -> Prep {
         self.shared.laser_invert.store(settings.laser_invert, Ordering::Relaxed);
+        self.shared.probe_level.store(settings.probe_invert, Ordering::Relaxed);
         if self.shared.abort.load(Ordering::SeqCst) {
             // The interrupt has to run once more to empty the ring, even
             // when it is idle.
@@ -421,6 +452,10 @@ impl<'a> Front<'a> {
         let mut kick = false;
         while self.producer.ready() {
             if self.slice.is_none() && !self.load_block(planner, settings) {
+                break;
+            }
+            let probing = planner.current().is_some_and(|block| block.kind == MoveKind::Probe);
+            if probing && self.producer.len() >= PROBE_SEGMENTS {
                 break;
             }
             if !self.produce(planner, settings, mode) {
@@ -458,9 +493,10 @@ impl<'a> Front<'a> {
         let step_block = StepBlock {
             steps: block.steps,
             event_count: block.step_event_count,
-            dir_levels: block.dir_forward ^ settings.dir_invert,
+            dir_levels: block.dir_forward ^ settings.joint_dir_invert(),
             dir_forward: block.dir_forward,
             surface_scale: if block.length > 0.0 { block.surface_mm / block.length } else { 0.0 },
+            probe: block.kind == MoveKind::Probe,
         };
         #[cfg(test)]
         self.check_slot_unreferenced(slot as u8);
@@ -649,6 +685,21 @@ impl<'a> Front<'a> {
         self.shared.read_position()
     }
 
+    /// Forgets an earlier contact, before a probe block is queued.
+    pub fn arm_probe(&mut self) {
+        self.shared.probe_hit.store(false, Ordering::SeqCst);
+    }
+
+    /// Focus axis position in steps at the contact a probe block met, once
+    /// it has.
+    pub fn probe_contact(&self) -> Option<i32> {
+        if self.shared.probe_hit.load(Ordering::Acquire) {
+            Some(self.shared.probe_at.load(Ordering::Relaxed))
+        } else {
+            None
+        }
+    }
+
     /// Declares the executed position (a `set` command). Only while the
     /// interrupt is idle and the ring is empty, so no step is in flight.
     pub fn set_position(&mut self, steps: [i32; AXES]) {
@@ -731,6 +782,15 @@ impl<'a> Isr<'a> {
             }
         }
         let segment = self.segment.unwrap_or_default();
+        // Before this tick's steps, so the position latched is the one the
+        // input was read at.
+        if self.probing
+            && !shared.probe_hit.load(Ordering::Relaxed)
+            && port.probe() == shared.probe_level.load(Ordering::Relaxed)
+        {
+            shared.probe_at.store(shared.position[H].load(Ordering::Relaxed), Ordering::Relaxed);
+            shared.probe_hit.store(true, Ordering::Release);
+        }
         let mut mask = 0u8;
         for i in 0..AXES {
             self.counter[i] += self.steps_shifted[i] >> segment.amass;
@@ -783,6 +843,7 @@ impl<'a> Isr<'a> {
             }
             self.forward = block.dir_forward;
             self.surface_scale = block.surface_scale;
+            self.probing = block.probe;
             port.set_dir(block.dir_levels);
             self.loaded = Some(segment.block);
         }
@@ -832,7 +893,7 @@ mod tests {
         }
 
         fn step(&mut self, mask: u8) {
-            assert!(mask != 0 && mask < 4);
+            assert!(mask != 0 && mask < 1 << AXES);
             for i in 0..AXES {
                 if mask & (1 << i) != 0 {
                     self.count[i] += 1;
@@ -844,6 +905,10 @@ mod tests {
         }
 
         fn set_enable(&mut self, _high: bool) {}
+
+        fn probe(&mut self) -> bool {
+            true
+        }
     }
 
     struct Laser {
@@ -953,7 +1018,7 @@ mod tests {
         }
 
         fn push(&mut self, r: f32, a: f32, kind: MoveKind, feed: Feed, power: f32, min_power: f32) {
-            assert_eq!(self.planner.push([r, a], kind, feed, power, min_power, &self.settings), Ok(true));
+            assert_eq!(self.planner.push([r, a, 0.0], kind, feed, power, min_power, &self.settings), Ok(true));
             let block = self.planner.nth(self.planner.len() - 1).unwrap();
             self.pushed.push((block.steps, block.dir_forward));
         }
@@ -1147,10 +1212,10 @@ mod tests {
             // machine's defaults: 256 steps/mm on the radius, 888.889
             // steps/deg on the table, neither near the step generator's
             // ceiling.
-            steps: [256.0, 888.889],
-            max_rate: [1000.0, 1080.0],
-            jog_rate: [600.0, 720.0],
-            jerk: [3.0, 10.0],
+            steps: [256.0, 888.889, 256.0],
+            max_rate: [1000.0, 1080.0, 600.0],
+            jog_rate: [600.0, 720.0, 120.0],
+            jerk: [3.0, 10.0, 1.0],
             ..Settings::default()
         }
     }
@@ -1161,8 +1226,8 @@ mod tests {
         rig.settings.dir_invert = 0b10;
         rig.go(10.0, -90.0);
         let seconds = rig.run();
-        assert_eq!(rig.port.count, [2560, 80000]);
-        assert_eq!(rig.front.position(), [2560, -80000]);
+        assert_eq!(rig.port.count, [2560, 80000, 0]);
+        assert_eq!(rig.front.position(), [2560, -80000, 0]);
         rig.position_matches();
         assert_eq!(rig.port.dirs, std::vec![0b01 ^ 0b10]);
         assert_eq!(rig.executed_blocks(), rig.pushed);
@@ -1186,7 +1251,7 @@ mod tests {
         rig.go(5.0, -30.0);
         rig.run();
         assert_eq!(rig.port.count, rig.pushed_steps());
-        assert_eq!(rig.front.position(), [1280, -26667]);
+        assert_eq!(rig.front.position(), [1280, -26667, 0]);
         rig.position_matches();
         assert_eq!(rig.executed_blocks(), rig.pushed);
         rig.check_axis_rates();
@@ -1198,14 +1263,14 @@ mod tests {
         let mut rig = Rig::new(settings());
         rig.go(0.0, 3600.0);
         let seconds = rig.run();
-        assert_eq!(rig.port.count, [0, 3_200_000]);
-        assert_eq!(rig.front.position(), [0, 3_200_000]);
+        assert_eq!(rig.port.count, [0, 3_200_000, 0]);
+        assert_eq!(rig.front.position(), [0, 3_200_000, 0]);
         rig.position_matches();
         assert!((seconds - (200.0 + 0.36)).abs() < 0.5, "{seconds}");
         rig.go(0.0, 3599.0);
         rig.run();
-        assert_eq!(rig.front.position(), [0, 3_199_111]);
-        assert_eq!(rig.port.count, [0, 3_200_889]);
+        assert_eq!(rig.front.position(), [0, 3_199_111, 0]);
+        assert_eq!(rig.port.count, [0, 3_200_889, 0]);
         rig.check_axis_rates();
     }
 
@@ -1219,7 +1284,7 @@ mod tests {
         rig.advance(300_000);
         rig.cut(30.0, 0.0, 600.0, 100.0);
         rig.run();
-        assert_eq!(rig.port.count, [7680, 0]);
+        assert_eq!(rig.port.count, [7680, 0, 0]);
         rig.position_matches();
         rig.check_acceleration();
         // The first block was already slowing toward zero when the second
@@ -1271,9 +1336,9 @@ mod tests {
         // commanded speed, the interrupt would fall behind it, and the
         // beam would burn at a power meant for a speed never reached.
         let fine = Settings {
-            steps: [10240.0, 14222.222],
-            max_rate: [5000.0, 5000.0],
-            accel: [500.0, 500.0],
+            steps: [10240.0, 14222.222, 256.0],
+            max_rate: [5000.0, 5000.0, 600.0],
+            accel: [500.0, 500.0, 500.0],
             ..settings()
         };
         let ceiling = MAX_EVENT_RATE_HZ / 10240.0;
@@ -1323,7 +1388,7 @@ mod tests {
         let before = rig.loads[boundary - 1].segment.speed;
         let after = rig.loads[boundary].segment.speed;
         assert!((before - 10.0).abs() < 0.2 && (after - 10.0).abs() < 0.2, "{before} {after}");
-        assert_eq!(rig.port.count, [25600, 0]);
+        assert_eq!(rig.port.count, [25600, 0, 0]);
         rig.check_acceleration();
     }
 
@@ -1343,7 +1408,7 @@ mod tests {
         assert!(before <= 3.3 && before > 2.5, "{before}");
         assert!(after <= 3.3 && after > 2.5, "{after}");
         assert!(rig.max_segment_speed() > 9.5);
-        assert_eq!(rig.port.count, [12800, 44444]);
+        assert_eq!(rig.port.count, [12800, 44444, 0]);
         rig.check_acceleration();
     }
 
@@ -1376,7 +1441,7 @@ mod tests {
             rig.front.resume(&mut rig.planner);
             rig.run();
             assert_eq!(rig.port.count, total, "hold at {hold_at_us}");
-            assert_eq!(rig.front.position(), [0, 0]);
+            assert_eq!(rig.front.position(), [0, 0, 0]);
             rig.position_matches();
             rig.check_axis_rates();
             rig.check_acceleration();
@@ -1391,8 +1456,8 @@ mod tests {
         rig.front.request_hold();
         rig.front.resume(&mut rig.planner);
         rig.run();
-        assert_eq!(rig.port.count, [7680, 0]);
-        assert_eq!(rig.front.position(), [7680, 0]);
+        assert_eq!(rig.port.count, [7680, 0, 0]);
+        assert_eq!(rig.front.position(), [7680, 0, 0]);
         // The ramp down did happen.
         assert!(rig.loads.iter().any(|l| l.segment.speed < 0.6));
     }
@@ -1405,7 +1470,7 @@ mod tests {
         rig.front.resume(&mut rig.planner);
         rig.go(1.0, 0.0);
         rig.run();
-        assert_eq!(rig.port.count, [256, 0]);
+        assert_eq!(rig.port.count, [256, 0, 0]);
     }
 
     #[test]
@@ -1427,7 +1492,7 @@ mod tests {
         rig.pushed.clear();
         rig.go(0.0, 0.0);
         rig.run();
-        assert_eq!(rig.front.position(), [0, 0]);
+        assert_eq!(rig.front.position(), [0, 0, 0]);
         assert_eq!(rig.port.count[R], 2 * rig.pushed[0].0[R] as u64);
     }
 
@@ -1447,17 +1512,17 @@ mod tests {
         assert!(!rig.front.busy());
         assert_eq!(rig.laser.duty, 0);
         assert_eq!(rig.planner.position(), rig.front.position());
-        assert_eq!(rig.port.count, [5120, rig.front.position()[A] as u64]);
+        assert_eq!(rig.port.count, [5120, rig.front.position()[A] as u64, 0]);
         // At most the tick in flight after the abort.
         assert!(rig.port.count[A] - count_at_abort[A] <= 1);
         rig.advance(50_000);
-        assert_eq!(rig.port.count, [5120, rig.front.position()[A] as u64]);
+        assert_eq!(rig.port.count, [5120, rig.front.position()[A] as u64, 0]);
         let aborted_at = rig.front.position();
         rig.pushed.clear();
         rig.go(0.0, 0.0);
         rig.run();
-        assert_eq!(rig.front.position(), [0, 0]);
-        assert_eq!(rig.port.count, [5120 * 2, 2 * aborted_at[A] as u64]);
+        assert_eq!(rig.front.position(), [0, 0, 0]);
+        assert_eq!(rig.port.count, [5120 * 2, 2 * aborted_at[A] as u64, 0]);
         rig.check_acceleration();
     }
 
@@ -1478,13 +1543,13 @@ mod tests {
         rig.advance(1_000);
         assert!(!rig.front.abort_pending());
         assert!(rig.front.producer.is_empty());
-        assert_eq!(rig.port.count, [0, 0]);
-        assert_eq!(rig.planner.position(), [0, 0]);
+        assert_eq!(rig.port.count, [0, 0, 0]);
+        assert_eq!(rig.planner.position(), [0, 0, 0]);
         assert!(!rig.front.busy());
         rig.pushed.clear();
         rig.go(1.0, 0.0);
         rig.run();
-        assert_eq!(rig.port.count, [256, 0]);
+        assert_eq!(rig.port.count, [256, 0, 0]);
     }
 
     #[test]
@@ -1492,10 +1557,10 @@ mod tests {
         let mut rig = Rig::new(settings());
         rig.go(1.0, 0.0);
         rig.run();
-        rig.planner.set_position([5, 5]);
+        rig.planner.set_position([5, 5, 0]);
         rig.front.abort(&mut rig.planner);
         assert!(!rig.front.abort_pending());
-        assert_eq!(rig.planner.position(), [256, 0]);
+        assert_eq!(rig.planner.position(), [256, 0, 0]);
     }
 
     #[test]
@@ -1503,7 +1568,7 @@ mod tests {
         let mut rig = Rig::new(settings());
         rig.cut(0.0, 180.0, 100.0, 500.0);
         let seconds = rig.run();
-        assert_eq!(rig.port.count, [0, 160000]);
+        assert_eq!(rig.port.count, [0, 160000, 0]);
         assert_eq!(rig.max_duty(), 0);
         assert!(rig.laser.duties.iter().all(|&(_, d)| d == 0));
         assert!((rig.max_segment_speed() - 18.0).abs() < 0.01);
@@ -1592,7 +1657,7 @@ mod tests {
         // 13 radius steps against 8889 table steps at about 2500 events/s.
         rig.cut(10.05, 10.0, 30.0, 0.0);
         let seconds = rig.run();
-        assert_eq!(rig.port.count, [2560 + 13, 88889 - 80000]);
+        assert_eq!(rig.port.count, [2560 + 13, 88889 - 80000, 0]);
         let cruise: Vec<&Loaded> = rig.loads.iter().filter(|l| l.segment.speed > rig.max_segment_speed() * 0.999).collect();
         assert!(cruise.len() > 10);
         let period = cruise[0].segment.period_us;
@@ -1647,9 +1712,9 @@ mod tests {
         // The planner's ceiling follows it, so a wide pulse slows the
         // plan rather than the interrupt: the duty then matches the speed.
         let wide = Settings {
-            steps: [10240.0, 14222.222],
-            max_rate: [5000.0, 5000.0],
-            accel: [500.0, 500.0],
+            steps: [10240.0, 14222.222, 256.0],
+            max_rate: [5000.0, 5000.0, 600.0],
+            accel: [500.0, 500.0, 500.0],
             step_us: 20,
             ..settings()
         };
@@ -1695,7 +1760,7 @@ mod tests {
             rig.cut(i as f32 * 0.05, 0.0, 600.0, 100.0);
         }
         rig.run();
-        assert_eq!(rig.port.count, [(BLOCKS_IN_TEST as f32 * 0.05 * 256.0) as u64, 0]);
+        assert_eq!(rig.port.count, [(BLOCKS_IN_TEST as f32 * 0.05 * 256.0) as u64, 0, 0]);
         assert_eq!(rig.executed_blocks(), rig.pushed);
         // Every segment was executed against the block it was written for.
         let mut expected = rig.pushed.iter();
@@ -1725,19 +1790,19 @@ mod tests {
         assert!(rig.front.busy());
         rig.next_tick = Some(rig.now);
         rig.run();
-        assert_eq!(rig.port.count, [25600, 0]);
+        assert_eq!(rig.port.count, [25600, 0, 0]);
     }
 
     #[test]
     fn negative_moves_count_down() {
         let mut rig = Rig::new(settings());
-        rig.planner.set_position([2560, 88889]);
+        rig.planner.set_position([2560, 88889, 0]);
         rig.shared().position[R].store(2560, Ordering::Relaxed);
         rig.shared().position[A].store(88889, Ordering::Relaxed);
         rig.go(5.0, -50.0);
         rig.run();
-        assert_eq!(rig.front.position(), [1280, -44444]);
-        assert_eq!(rig.port.count, [1280, 88889 + 44444]);
+        assert_eq!(rig.front.position(), [1280, -44444, 0]);
+        assert_eq!(rig.port.count, [1280, 88889 + 44444, 0]);
         assert_eq!(rig.port.dirs, std::vec![0]);
     }
 

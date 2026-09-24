@@ -9,6 +9,7 @@ pub mod inbox;
 pub mod ports;
 pub mod server;
 pub mod sim;
+pub mod surface;
 pub mod trace;
 
 use std::io;
@@ -27,6 +28,7 @@ pub fn setup(options: &Options) -> Setup {
         clock: if options.fast { Clock::fast() } else { Clock::real() },
         trace: Trace::new(options.trace.clone()),
         quiet: options.quiet,
+        surface: options.surface,
     }
 }
 

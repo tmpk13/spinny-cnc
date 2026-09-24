@@ -26,6 +26,16 @@
 //! and at the end of motion; during motion the step interrupt drives it
 //! per segment.
 //!
+//! A `probe` is a pending command too: it waits for the motion queued
+//! before it, like a dwell, then runs as a jog of the focus axis whose
+//! block watches the probe input, and it stays pending until it ends, so
+//! nothing runs behind it. At contact the interrupt latches the position,
+//! `poll` brakes, and the line is answered with `[PRB:h:1]` and `ok` once
+//! the head has stopped. A probe that goes its whole distance without
+//! contact raises `Alarm:2` and is answered `error:11`: the head is lower
+//! than whoever sent it thinks, and whatever they sent next would move it
+//! across the board. A jog cancel ends it with `[PRB:h:0]` and `ok`.
+//!
 //! The cross slide is a pending command like any other, but it runs on
 //! its own `Slide` rather than through the planner: it is taken only from
 //! `Idle`, holds the state at `Jog` until it stops, and is stepped by
@@ -40,7 +50,7 @@ use crate::report::{self, State, Status};
 use crate::settings::{Changed, SetError, Settings, BLOB_LEN};
 use crate::slide::Slide;
 use crate::stepper::{self, Front};
-use crate::{AXES, LINE_MAX, LINE_SLOTS, R};
+use crate::{AXES, H, LINE_MAX, LINE_SLOTS, R};
 
 /// Things the port loop must act on after a `poll`. Taken with `take_events`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -63,6 +73,11 @@ enum Pending {
     Dwell { ms: u32, power: Option<f32> },
     /// A dwell in progress; answered when its time is up.
     Dwelling,
+    /// A probe, started once queued motion is done: the focus axis moves
+    /// by up to `distance` mm at `feed` mm/min.
+    Probe { distance: f32, feed: f32 },
+    /// A probe in progress; answered when it ends.
+    Probing,
     Mode(PowerMode),
     LaserOn { power: f32, ms: Option<u32> },
     LaserOff,
@@ -101,6 +116,10 @@ pub struct Machine<'a> {
     beam_until: u64,
     /// A jog cancel is waiting for the stepper to stop.
     jog_cancel: bool,
+    /// A probe met contact and is braking.
+    probe_braking: bool,
+    /// The probe input is active, as of the last `poll`.
+    probe_active: bool,
     /// A hold asked for while idle with a motion line taken in or still
     /// waiting: it is applied the moment that line starts.
     hold_latched: bool,
@@ -138,6 +157,8 @@ impl<'a> Machine<'a> {
             beam: None,
             beam_until: 0,
             jog_cancel: false,
+            probe_braking: false,
+            probe_active: false,
             hold_latched: false,
             apply_laser: true,
             apply_enable: true,
@@ -294,6 +315,20 @@ impl<'a> Machine<'a> {
                 self.pending = Pending::SetSlide(value);
                 Ok(false)
             }
+            Command::Probe { distance, feed } => {
+                if !self.settings.h_axis {
+                    return Err(Error::BadWord);
+                }
+                // A probe is a setup move that waits for what was queued
+                // before it, so a host may send it behind a positioning
+                // move; it does not join a hold, which could be anyone's.
+                if self.slide.busy() || self.jog_cancel || !matches!(self.state, State::Idle | State::Run | State::Jog) {
+                    return Err(Error::State);
+                }
+                let feed = feed.unwrap_or(self.settings.jog_rate[H]);
+                self.pending = Pending::Probe { distance, feed };
+                Ok(false)
+            }
             Command::Dwell { ms, power } => {
                 self.check_motion_state(false)?;
                 self.pending = Pending::Dwell { ms, power };
@@ -314,6 +349,9 @@ impl<'a> Machine<'a> {
             }
             Command::SetPosition { value } => {
                 self.require_idle()?;
+                if value[H].is_some() && !self.settings.h_axis {
+                    return Err(Error::BadWord);
+                }
                 for i in 0..AXES {
                     if value[i].is_some_and(|units| !math::fits_steps(units, self.settings.steps[i])) {
                         return Err(Error::OutOfRange);
@@ -443,6 +481,11 @@ impl<'a> Machine<'a> {
         power: f32,
         min_power: f32,
     ) -> Result<(), Error> {
+        // Without a focus axis there is nothing to move: an `H` word is
+        // refused rather than stepping a driver that is not there.
+        if words[H].is_some() && !self.settings.h_axis {
+            return Err(Error::BadWord);
+        }
         let here = self.planner.position_units(&self.settings);
         let mut target = here;
         for i in 0..AXES {
@@ -503,6 +546,7 @@ impl<'a> Machine<'a> {
             mode: self.mode,
             enabled: self.enabled,
             slide: self.slide.position(),
+            probe: self.settings.h_axis.then_some(self.probe_active),
         }
     }
 
@@ -531,7 +575,7 @@ impl<'a> Machine<'a> {
                     // in, or still waiting to be read, starts the moment
                     // this returns and would run on as if the hold had
                     // never been asked for. It is kept for that line.
-                    let waiting = matches!(self.pending, Pending::Motion { .. } | Pending::Dwell { .. })
+                    let waiting = matches!(self.pending, Pending::Motion { .. } | Pending::Dwell { .. } | Pending::Probe { .. })
                         || self.lines_waiting > 0;
                     if self.state == State::Idle && waiting {
                         self.hold_latched = true;
@@ -598,6 +642,7 @@ impl<'a> Machine<'a> {
         self.slide.stop();
         self.pending = Pending::None;
         self.jog_cancel = false;
+        self.probe_braking = false;
         self.hold_latched = false;
         self.dwell_until = None;
         self.dwell_left_us = 0;
@@ -632,6 +677,7 @@ impl<'a> Machine<'a> {
         out: &mut impl Sink,
     ) -> bool {
         self.now = now_us;
+        self.probe_active = port.probe() == self.settings.probe_invert;
         let mut kick = self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
         if self.progress(port, laser, store, out) {
             kick |= self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
@@ -670,17 +716,29 @@ impl<'a> Machine<'a> {
             && !self.front.busy()
             && !self.slide.busy()
             && !self.jog_cancel
-            && !matches!(self.pending, Pending::Motion { .. } | Pending::Dwelling);
+            && !matches!(self.pending, Pending::Motion { .. } | Pending::Dwelling | Pending::Probing);
         if motion_done {
             self.enter_idle(laser);
         }
+        if self.pending == Pending::Probing && !self.jog_cancel {
+            self.poll_probe(laser, out);
+        }
         if self.jog_cancel && self.front.is_stopped() {
             self.jog_cancel = false;
+            // Read before the flush, which the next probe's arming clears.
+            let contact = self.front.probe_contact();
             self.front.flush(&mut self.planner);
             self.planner.clear();
             if matches!(self.pending, Pending::Motion { .. }) {
                 // The rest of the jog is discarded, the line still answered.
                 self.pending = Pending::None;
+                report::ok(out);
+            } else if self.pending == Pending::Probing {
+                // Canceled on purpose: the operator knows where the head
+                // is, so no alarm, but no contact either unless there was.
+                self.pending = Pending::None;
+                self.probe_braking = false;
+                self.report_probe(contact, out);
                 report::ok(out);
             }
             self.enter_idle(laser);
@@ -732,7 +790,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if matches!(pending, Pending::None | Pending::Dwelling) {
+        if matches!(pending, Pending::None | Pending::Dwelling | Pending::Probing) {
             return false;
         }
         if !self.planner.is_empty() || self.front.busy() {
@@ -757,6 +815,7 @@ impl<'a> Machine<'a> {
                 }
                 return false;
             }
+            Pending::Probe { distance, feed } => return self.start_probe(distance, feed, port, laser, out),
             Pending::Mode(mode) => self.mode = mode,
             Pending::LaserOn { power, ms } => {
                 self.beam = Some(power);
@@ -807,11 +866,105 @@ impl<'a> Machine<'a> {
                     return false;
                 }
             }
-            Pending::None | Pending::Dwelling | Pending::Motion { .. } => {}
+            Pending::None | Pending::Dwelling | Pending::Probing | Pending::Motion { .. } => {}
         }
         self.pending = Pending::None;
         report::ok(out);
         false
+    }
+
+    /// Queues the probe block once everything before it has run. True
+    /// when a block was pushed.
+    fn start_probe(
+        &mut self,
+        distance: f32,
+        feed: f32,
+        port: &mut impl StepPort,
+        laser: &mut impl LaserPort,
+        out: &mut impl Sink,
+    ) -> bool {
+        // Held with the probe still waiting: it starts after the resume.
+        if self.state == State::Hold {
+            return false;
+        }
+        let refuse = |machine: &mut Self, error: Error, out: &mut _| {
+            machine.pending = Pending::None;
+            report::error(error, out);
+            false
+        };
+        // Pressed already: moving toward the board would only press harder.
+        if self.probe_active {
+            return refuse(self, Error::ProbeActive, out);
+        }
+        let mut target = self.planner.position_units(&self.settings);
+        let steps = self.settings.steps[H];
+        let from = self.planner.position()[H];
+        target[H] += distance;
+        if !math::fits_steps(target[H], steps)
+            || (math::units_to_steps(target[H], steps) as i64 - from as i64).unsigned_abs() > stepper::MAX_EVENTS as u64
+        {
+            return refuse(self, Error::OutOfRange, out);
+        }
+        self.front.arm_probe();
+        match self.planner.push(target, MoveKind::Probe, Feed::Surface(feed), 0.0, 0.0, &self.settings) {
+            Ok(true) => {}
+            // Under one step, or no speed: nothing to probe with.
+            Ok(false) | Err(_) => return refuse(self, Error::OutOfRange, out),
+        }
+        self.set_enabled(true, port);
+        if self.beam.take().is_some() {
+            laser.set_duty(self.off_duty());
+        }
+        self.pending = Pending::Probing;
+        self.state = State::Jog;
+        if self.hold_latched {
+            self.enter_hold(laser);
+        }
+        true
+    }
+
+    /// Follows a probe in progress: brakes at contact, and answers the line
+    /// once the head has stopped there or has run out of distance.
+    fn poll_probe(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        let contact = self.front.probe_contact();
+        if contact.is_some() && !self.probe_braking {
+            self.front.request_hold();
+            self.probe_braking = true;
+        }
+        if self.probe_braking {
+            if self.front.is_stopped() {
+                self.front.flush(&mut self.planner);
+                self.planner.clear();
+                self.finish_probe(contact, laser, out);
+            }
+            return;
+        }
+        // Out of distance without contact. A held probe still has its
+        // block, so this is the end of the move, not a pause in it.
+        if self.state != State::Hold && self.planner.is_empty() && !self.front.busy() {
+            self.finish_probe(None, laser, out);
+        }
+    }
+
+    fn finish_probe(&mut self, contact: Option<i32>, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        self.pending = Pending::None;
+        self.probe_braking = false;
+        self.report_probe(contact, out);
+        if contact.is_some() {
+            report::ok(out);
+            self.enter_idle(laser);
+        } else {
+            report::alarm(2, out);
+            report::error(Error::ProbeMissed, out);
+            self.state = State::Alarm(2);
+            self.drive_beam(laser);
+        }
+    }
+
+    /// `[PRB:h:1]` at the contact, or `[PRB:h:0]` where the head is.
+    fn report_probe(&self, contact: Option<i32>, out: &mut impl Sink) {
+        let steps = contact.unwrap_or_else(|| self.front.position()[H]);
+        report::probe(math::steps_to_units(steps, self.settings.steps[H]), contact.is_some(), out);
     }
 
     fn enter_idle(&mut self, laser: &mut impl LaserPort) {
@@ -912,9 +1065,10 @@ impl<'a> Machine<'a> {
     }
 }
 
-const HELP: &str = "go [R] [A] | cut [R] [A] [F] [S] | jog [R] [A] [F] | jogto [R] [A] [F]\n\
+const HELP: &str = "go [R] [A] [H] | cut [R] [A] [H] [F] [S] [M] | jog [R] [A] [H] [F] | jogto [R] [A] [H] [F]\n\
 cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z\n\
-dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A]\n\
+focus axis probe (h_axis=1): probe H [F]\n\
+dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]\n\
 enable | disable | unlock | version | status | help\n\
 $ | $name | $name=value | $save | $load | $defaults | $tmc\n\
 realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel\n";
@@ -937,6 +1091,8 @@ mod tests {
         count: [u64; AXES],
         enable_level: Option<bool>,
         enable_writes: u32,
+        /// Probe pin level: high is open for the default active-low probe.
+        probe_level: bool,
     }
 
     impl StepPort for Port {
@@ -953,6 +1109,10 @@ mod tests {
         fn set_enable(&mut self, high: bool) {
             self.enable_level = Some(high);
             self.enable_writes += 1;
+        }
+
+        fn probe(&mut self) -> bool {
+            self.probe_level
         }
     }
 
@@ -1043,6 +1203,9 @@ mod tests {
         /// Ticks that stepped while `record` is set: (time, mask).
         min_duty_while_stepping: u16,
         max_duty_while_stepping: u16,
+        /// Focus axis position at and below which the probe touches the
+        /// board; `None` for no board under it.
+        surface: Option<f32>,
     }
 
     /// Fixed settings so these tests measure the machine and not its
@@ -1051,10 +1214,10 @@ mod tests {
     /// near the step generator's ceiling.
     fn bench_settings() -> Settings {
         Settings {
-            steps: [256.0, 888.889],
-            max_rate: [1000.0, 1080.0],
-            jog_rate: [600.0, 720.0],
-            jerk: [3.0, 10.0],
+            steps: [256.0, 888.889, 256.0],
+            max_rate: [1000.0, 1080.0, 600.0],
+            jog_rate: [600.0, 720.0, 120.0],
+            jerk: [3.0, 10.0, 1.0],
             // The same for the cross slide: a coarse scale and a rate
             // that keep a jog a readable number of steps.
             z_steps: 256.0,
@@ -1075,7 +1238,7 @@ mod tests {
             let mut rig = Rig {
                 machine: Machine::new(front, settings),
                 isr,
-                port: Port { count: [0; AXES], enable_level: None, enable_writes: 0 },
+                port: Port { count: [0; AXES], enable_level: None, enable_writes: 0, probe_level: true },
                 slide: SlidePins::default(),
                 laser: Laser { now: 0, duty: 0, hz: 0, duties: Vec::new() },
                 store: FakeStore::default(),
@@ -1084,6 +1247,7 @@ mod tests {
                 next_tick: None,
                 min_duty_while_stepping: 1000,
                 max_duty_while_stepping: 0,
+                surface: None,
             };
             report::banner(&mut rig.out);
             rig
@@ -1093,8 +1257,16 @@ mod tests {
             core::mem::take(&mut self.out.0)
         }
 
+        /// The probe pin as the board under the head sets it: pulled low
+        /// while touching, for the default active-low input.
+        fn update_probe(&mut self) {
+            let h = self.machine.joint()[H];
+            self.port.probe_level = !self.surface.is_some_and(|top| h <= top);
+        }
+
         fn poll(&mut self) {
             self.laser.now = self.now;
+            self.update_probe();
             // As on the board: the slide is stepped from the main loop,
             // before the poll that ends its jog.
             self.machine.poll_slide(self.now, &mut self.slide);
@@ -1106,6 +1278,7 @@ mod tests {
 
         fn tick(&mut self) {
             self.laser.now = self.now;
+            self.update_probe();
             let before = self.port.count;
             let next = self.isr.tick(&mut self.port, &mut self.laser);
             if self.port.count != before {
@@ -1195,7 +1368,11 @@ mod tests {
         fn executed_steps(&self) -> [i32; AXES] {
             let joint = self.machine.joint();
             let steps = self.machine.settings().steps;
-            [math::units_to_steps(joint[R], steps[R]), math::units_to_steps(joint[A], steps[A])]
+            [
+                math::units_to_steps(joint[R], steps[R]),
+                math::units_to_steps(joint[A], steps[A]),
+                math::units_to_steps(joint[H], steps[H]),
+            ]
         }
     }
 
@@ -1239,8 +1416,8 @@ mod tests {
         assert_eq!(field(&status, "E:"), "1");
         rig.run();
         assert_eq!(rig.state(), State::Idle);
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
-        assert_eq!(rig.port.count, [2 * 2560, 2 * 160_000]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.port.count, [2 * 2560, 2 * 160_000, 0]);
         assert_eq!(rig.laser.duty, 0);
         let status = rig.status_line();
         assert_eq!(status, "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
@@ -1270,7 +1447,7 @@ mod tests {
         assert_eq!(rig.line("cut A20"), "ok\n");
         assert_eq!(rig.line("cut A30 S500"), "ok\n");
         rig.run();
-        assert_eq!(rig.port.count, [0, 26667]);
+        assert_eq!(rig.port.count, [0, 26667, 0]);
         // A reset clears the modal words again.
         rig.realtime(Realtime::Reset);
         rig.take_out();
@@ -1301,23 +1478,23 @@ mod tests {
         assert_eq!(rig.line("dwell T10"), "error:5 not now\n");
         assert_eq!(rig.line("jog R-10"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [40.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0]);
         // A jog may cross the axis and come out the far side: lining the
         // head up with it needs both directions through zero.
         assert_eq!(rig.line("jog R-41"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [-1.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [-1.0, 0.0, 0.0]);
         // A cutting move may go there too: a calibration burn lands on the
         // same board point from both sides of the axis.
         assert_eq!(rig.line("go R-3"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [-3.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [-3.0, 0.0, 0.0]);
         assert_eq!(rig.line("cut R-1 F100"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [-1.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [-1.0, 0.0, 0.0]);
         assert_eq!(rig.line("jog R1"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
         assert_eq!(rig.line("go A1"), "ok\n");
         rig.run();
         assert_eq!(rig.line("jog R0"), "ok\n");
@@ -1356,9 +1533,9 @@ mod tests {
             rig.run();
             assert_eq!(rig.state(), State::Idle);
             // R: 0 -> 20 -> 15 -> 0; A: 0 -> 180 -> 200 -> 0.
-            assert_eq!(rig.port.count, [5120 + 1280 + 3840, 160_000 + 17_778 + 177_778], "hold at {hold_at_us}");
-            assert_eq!(rig.machine.joint(), [0.0, 0.0]);
-            assert_eq!(rig.machine.planned_position(), [0, 0]);
+            assert_eq!(rig.port.count, [5120 + 1280 + 3840, 160_000 + 17_778 + 177_778, 0], "hold at {hold_at_us}");
+            assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+            assert_eq!(rig.machine.planned_position(), [0, 0, 0]);
             assert!(rig.max_duty_while_stepping > 0);
         }
     }
@@ -1381,7 +1558,7 @@ mod tests {
         rig.realtime(Realtime::Resume);
         rig.run();
         assert_eq!(rig.take_out(), "ok\n");
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
         assert_eq!(rig.port.count[R], 2 * 32 * 256);
     }
 
@@ -1413,8 +1590,8 @@ mod tests {
         assert_eq!(rig.machine.planned_position(), rig.executed_steps());
         assert_eq!(rig.line("go R0"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
-        assert_eq!(rig.machine.planned_position(), [0, 0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.planned_position(), [0, 0, 0]);
         assert_eq!(rig.port.count[R], 2 * stopped[R]);
     }
 
@@ -1498,11 +1675,11 @@ mod tests {
         assert_eq!(rig.take_out(), "ok\n");
         assert_eq!(rig.state(), State::Hold);
         rig.advance(500_000);
-        assert_eq!(rig.port.count, [0, 0], "moved while held");
+        assert_eq!(rig.port.count, [0, 0, 0], "moved while held");
         assert_eq!(rig.laser.duty, 0);
         rig.realtime(Realtime::Resume);
         rig.run();
-        assert_eq!(rig.machine.joint(), [20.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [20.0, 0.0, 0.0]);
         // Waiting lines count too, and a hold kept for a line that is not
         // motion is forgotten once it has been read.
         rig.machine.note_lines_waiting(1);
@@ -1513,7 +1690,7 @@ mod tests {
         assert_eq!(rig.line("go R10"), "ok\n");
         assert_eq!(rig.state(), State::Run);
         rig.run();
-        assert_eq!(rig.machine.joint(), [10.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -1563,7 +1740,7 @@ mod tests {
         assert_eq!(rig.line("go R0"), "ok\n");
         rig.run();
         assert_eq!(rig.port.count[R] as i32, 2 * steps[R]);
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
 
         // A jog waiting for planner room is answered and dropped by the cancel.
         for _ in 0..BLOCKS {
@@ -1744,16 +1921,16 @@ mod tests {
         rig.run();
         assert_eq!(rig.status_line(), "<Idle|J:10.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         assert_eq!(rig.line("set R0"), "ok\n");
-        assert_eq!(rig.executed_steps(), [0, 40000]);
-        assert_eq!(rig.machine.planned_position(), [0, 40000]);
+        assert_eq!(rig.executed_steps(), [0, 40000, 0]);
+        assert_eq!(rig.machine.planned_position(), [0, 40000, 0]);
         assert_eq!(rig.status_line(), "<Idle|J:0.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         let before = rig.port.count;
         assert_eq!(rig.line("go R5 A0"), "ok\n");
         rig.run();
-        assert_eq!(rig.port.count, [before[R] + 1280, before[A] + 40000]);
-        assert_eq!(rig.machine.joint(), [5.0, 0.0]);
+        assert_eq!(rig.port.count, [before[R] + 1280, before[A] + 40000, 0]);
+        assert_eq!(rig.machine.joint(), [5.0, 0.0, 0.0]);
         assert_eq!(rig.line("set A-90 R1"), "ok\n");
-        assert_eq!(rig.executed_steps(), [256, -80000]);
+        assert_eq!(rig.executed_steps(), [256, -80000, 0]);
         assert_eq!(rig.status_line(), "<Idle|J:1.000,-90.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
     }
 
@@ -1774,8 +1951,8 @@ mod tests {
         assert_eq!(rig.slide.dir, Some(true));
         assert!(rig.status_line().ends_with("|Z:2.000>\n"));
         // The joints did not move with it.
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
-        assert_eq!(rig.port.count, [0, 0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.port.count, [0, 0, 0]);
 
         // Relative jogs add up; an absolute one goes where it says.
         assert_eq!(rig.line("jog Z-0.5"), "ok\n");
@@ -1942,8 +2119,8 @@ mod tests {
         assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("tmc_stealth=1\nok\n"));
-        assert_eq!(listing.lines().count(), 33);
+        assert!(listing.ends_with("tmc_h_micro=256\nok\n"));
+        assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
     #[test]
@@ -2014,7 +2191,7 @@ mod tests {
         assert_eq!(rig.line("unlock"), "ok\n");
         assert_eq!(rig.line("go R0"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -2117,7 +2294,7 @@ mod tests {
             assert!(rig.laser.duty > 0, "{mode}: the resume should cut again");
             rig.run();
             assert_eq!(rig.laser.duty, 0, "{mode}");
-            assert_eq!(rig.machine.joint(), [40.0, 0.0], "{mode}");
+            assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0], "{mode}");
         }
     }
 
@@ -2183,7 +2360,7 @@ mod tests {
         assert_eq!(rig.line(&std::format!("jog A-{over_a:.0}")), "error:4 out of range\n");
         assert_eq!(rig.line(&std::format!("go R{over_r:.0}")), "error:4 out of range\n");
         assert_eq!(rig.line(&std::format!("cut A{over_a:.0} F600")), "error:4 out of range\n");
-        assert_eq!(rig.machine.planned_position(), [0, 0]);
+        assert_eq!(rig.machine.planned_position(), [0, 0, 0]);
         assert!(rig.machine.ready_for_line());
         // What fits is still taken, and the limit is on the move, not on
         // the angle reached: another one of the same size follows it.
@@ -2242,7 +2419,7 @@ mod tests {
         rig.run();
         // One change, to off, at the block boundary; nothing lights again.
         assert_eq!(duties_since(&rig, from), std::vec![0u16]);
-        assert_eq!(rig.machine.joint(), [40.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -2376,5 +2553,182 @@ mod tests {
         assert_eq!(rig.line("cut R0.001 F0.001 S500"), "ok\n");
         rig.realtime(Realtime::Reset);
         rig.run();
+    }
+
+    /// The bench with a focus axis fitted: 256 steps/mm, so a step is
+    /// 3.90625 um and a sixteenth of a millimetre is a whole step count.
+    fn focus_rig() -> Rig {
+        let mut rig = Rig::with(Settings { h_axis: true, ..bench_settings() });
+        rig.take_out();
+        rig
+    }
+
+    #[test]
+    fn focus_words_are_refused_without_the_axis() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        for line in ["go H1", "cut R1 H1 F100 S10", "jog H1", "jogto H1", "set H0", "probe H-1"] {
+            assert_eq!(rig.line(line), "error:2 bad word\n", "{line}");
+        }
+        assert_eq!(rig.port.count, [0, 0, 0]);
+        assert!(rig.status_line().ends_with("|Z:0.000>\n"), "no focus fields without the axis");
+    }
+
+    #[test]
+    fn a_cut_carries_the_focus_axis_along() {
+        let mut rig = focus_rig();
+        assert_eq!(rig.line("cut R10 H0.5 F600 S100"), "ok\n");
+        let start = rig.now;
+        rig.run();
+        assert_eq!(rig.port.count, [2560, 0, 128]);
+        assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.5]);
+        // 10 mm on the board at 600 mm/min: the focus axis follows the cut
+        // rather than setting its pace.
+        let seconds = (rig.now - start) as f64 / 1e6;
+        assert!(seconds > 0.95 && seconds < 1.3, "{seconds} s");
+        assert!(rig.status_line().ends_with("|H:0.500|P:0>\n"));
+    }
+
+    #[test]
+    fn a_focus_jog_runs_at_its_own_feed() {
+        let mut rig = focus_rig();
+        assert_eq!(rig.line("jog H2 F60"), "ok\n");
+        let start = rig.now;
+        rig.run();
+        let seconds = (rig.now - start) as f64 / 1e6;
+        assert!(seconds > 1.9 && seconds < 2.2, "{seconds} s for 2 mm at 60 mm/min");
+        assert_eq!(rig.machine.joint()[H], 2.0);
+        assert_eq!(rig.line("jogto H-0.25"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[H], -0.25);
+        assert_eq!(rig.line("set H3"), "ok\n");
+        assert_eq!(rig.machine.joint()[H], 3.0);
+    }
+
+    #[test]
+    fn a_probe_stops_at_contact_and_reports_where() {
+        let mut rig = focus_rig();
+        rig.surface = Some(-1.25);
+        assert_eq!(rig.line("probe H-5 F60"), "[PRB:-1.2500:1]\nok\n");
+        assert_eq!(rig.state(), State::Idle);
+        // It stopped a braking distance past the contact, not at the end.
+        // At 1 mm/s the head stops within a few hundredths past contact.
+        let h = rig.machine.joint()[H];
+        assert!(h <= -1.25 && h > -1.3, "stopped at {h}");
+        assert!(rig.status_line().ends_with("|P:1>\n"));
+        // The next line runs as usual.
+        assert_eq!(rig.line("jogto H1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[H], 1.0);
+        assert!(rig.status_line().ends_with("|H:1.000|P:0>\n"));
+    }
+
+    #[test]
+    fn a_probe_that_finds_nothing_raises_an_alarm() {
+        let mut rig = focus_rig();
+        assert_eq!(
+            rig.line("probe H-1 F120"),
+            "[PRB:-1.0000:0]\nALARM:2 probe missed, check the head before moving\nerror:11 probe missed\n"
+        );
+        assert_eq!(rig.state(), State::Alarm(2));
+        assert_eq!(rig.line("go R1"), "error:5 not now\n");
+        assert_eq!(rig.line("unlock"), "ok\n");
+        assert_eq!(rig.line("jog H1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[H], 0.0);
+    }
+
+    #[test]
+    fn a_probe_already_touching_does_not_move() {
+        let mut rig = focus_rig();
+        rig.surface = Some(0.5);
+        rig.advance(POLL_US);
+        assert_eq!(rig.line("probe H-1"), "error:10 probe active\n");
+        assert_eq!(rig.port.count, [0, 0, 0]);
+        assert_eq!(rig.state(), State::Idle);
+    }
+
+    #[test]
+    fn a_probe_active_high_follows_the_setting() {
+        let mut rig = Rig::with(Settings { h_axis: true, probe_invert: true, ..bench_settings() });
+        rig.take_out();
+        // Open reads high, which is contact for an active-high input.
+        assert_eq!(rig.line("probe H-1"), "error:10 probe active\n");
+    }
+
+    #[test]
+    fn a_probe_waits_for_the_move_before_it() {
+        let mut rig = focus_rig();
+        rig.surface = Some(-1.0);
+        rig.submit("go R5 H1");
+        assert_eq!(rig.line("probe H-3 F120"), "ok\n", "the go's own answer");
+        rig.run();
+        assert_eq!(rig.take_out(), "[PRB:-1.0000:1]\nok\n");
+        assert_eq!(rig.machine.joint()[R], 5.0);
+        assert_eq!(rig.state(), State::Idle);
+    }
+
+    #[test]
+    fn nothing_runs_behind_a_probe_until_it_is_answered() {
+        let mut rig = focus_rig();
+        rig.surface = Some(-2.0);
+        rig.submit("probe H-3 F60");
+        rig.advance(POLL_US);
+        assert!(!rig.machine.ready_for_line(), "the probe is still pending");
+        assert_eq!(rig.state(), State::Jog);
+        let status = rig.status_line();
+        assert!(status.starts_with("<Jog|"), "{status}");
+        rig.run();
+        assert_eq!(rig.take_out(), "[PRB:-2.0000:1]\nok\n");
+    }
+
+    #[test]
+    fn a_jog_cancel_ends_a_probe_without_an_alarm() {
+        let mut rig = focus_rig();
+        rig.submit("probe H-10 F60");
+        rig.advance(1_000_000);
+        rig.realtime(Realtime::JogCancel);
+        rig.run();
+        let out = rig.take_out();
+        assert!(out.starts_with("[PRB:-") && out.ends_with(":0]\nok\n"), "{out:?}");
+        assert_eq!(rig.state(), State::Idle);
+        let h = rig.machine.joint()[H];
+        assert!(h < -0.95 && h > -1.05, "stopped at {h}");
+    }
+
+    #[test]
+    fn a_held_probe_resumes_and_still_finds_the_board() {
+        let mut rig = focus_rig();
+        rig.surface = Some(-1.5);
+        rig.submit("probe H-3 F60");
+        rig.advance(500_000);
+        rig.realtime(Realtime::Hold);
+        rig.advance(200_000);
+        assert!(rig.status_line().starts_with("<Hold|"));
+        let held_at = rig.machine.joint()[H];
+        rig.advance(500_000);
+        assert_eq!(rig.machine.joint()[H], held_at, "moved while held");
+        assert_eq!(rig.take_out(), "", "answered while held");
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!(rig.take_out(), "[PRB:-1.5000:1]\nok\n");
+    }
+
+    #[test]
+    fn a_reset_during_a_probe_is_a_reset_while_moving() {
+        let mut rig = focus_rig();
+        rig.submit("probe H-3 F60");
+        rig.advance(500_000);
+        rig.realtime(Realtime::Reset);
+        rig.run();
+        assert_eq!(rig.state(), State::Alarm(1));
+        assert!(rig.machine.ready_for_line());
+        let out = rig.take_out();
+        assert!(!out.contains("PRB"), "{out:?}");
+        // A fresh probe after the unlock starts clean, with no stale contact.
+        rig.surface = Some(-5.0);
+        assert_eq!(rig.line("unlock"), "ok\n");
+        let out = rig.line("probe H-1 F120");
+        assert!(out.ends_with(":0]\nALARM:2 probe missed, check the head before moving\nerror:11 probe missed\n"), "{out:?}");
     }
 }

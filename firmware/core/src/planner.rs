@@ -2,7 +2,8 @@
 //!
 //! Every move becomes a block with a step count per axis and a trapezoid
 //! speed profile along the block. The planning metric is the plain
-//! Euclidean length of the joint delta with mm and degrees counted alike;
+//! Euclidean length of the joint delta with mm and degrees counted alike
+//! (the focus axis included);
 //! it is only a parameter along the line, and the per-axis limits
 //! (`max_rate`, `accel`, `jerk`) are what bound the physical motion, each
 //! projected through the block's direction cosines. Junction speeds come
@@ -19,7 +20,7 @@
 
 use crate::math;
 use crate::settings::Settings;
-use crate::{max_event_rate_hz, AXES, BLOCKS, SURFACE_EPSILON_MM};
+use crate::{max_event_rate_hz, AXES, BLOCKS, H, SURFACE_EPSILON_MM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -29,13 +30,17 @@ pub enum MoveKind {
     Cut,
     /// Laser off, cancelable.
     Jog,
+    /// A jog of the focus axis that watches the probe input.
+    Probe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Feed {
     /// Each axis at its max rate; the slower axis paces the move.
     Max,
-    /// Board surface speed in mm/min (see `math::surface_length`).
+    /// Board surface speed in mm/min (see `math::surface_length`). A move
+    /// with nothing on the board but a focus axis move takes it as the
+    /// focus axis speed instead.
     Surface(f32),
     /// The settings' jog rates, the slower axis pacing.
     Jog,
@@ -238,7 +243,7 @@ impl Planner {
             return Err(PlanError::Full);
         }
 
-        let length = math::hypot(delta_units[0], delta_units[1]);
+        let length = math::norm(&delta_units);
         let mut unit = [0f32; AXES];
         for i in 0..AXES {
             unit[i] = delta_units[i] / length;
@@ -254,10 +259,17 @@ impl Planner {
             Feed::Max => axis_limit,
             Feed::Jog => paced_speed(&unit, &effective_jog_rate(settings)),
             Feed::Surface(mm_per_min) => {
-                if surface_mm < SURFACE_EPSILON_MM || mm_per_min.is_nan() || mm_per_min <= 0.0 {
+                if mm_per_min.is_nan() || mm_per_min <= 0.0 {
                     axis_limit
-                } else {
+                } else if surface_mm >= SURFACE_EPSILON_MM {
                     length * (mm_per_min / 60.0) / surface_mm
+                } else if steps[H] > 0 {
+                    // Only the head goes up or down (a turn on the axis may
+                    // come with it): F is the focus axis speed, as a jog or
+                    // a probe of it asks for.
+                    length * (mm_per_min / 60.0) / libm::fabsf(delta_units[H])
+                } else {
+                    axis_limit
                 }
             }
         };
@@ -439,9 +451,9 @@ impl Planner {
         self.replan();
     }
 
-    /// Any block queued is a jog.
+    /// Any block queued is a jog or a probe.
     pub fn has_jog(&self) -> bool {
-        (0..self.count).any(|nth| self.blocks[self.index(nth)].kind == MoveKind::Jog)
+        (0..self.count).any(|nth| matches!(self.blocks[self.index(nth)].kind, MoveKind::Jog | MoveKind::Probe))
     }
 }
 
@@ -456,16 +468,16 @@ mod tests {
             // machine's defaults: 256 steps/mm on the radius, 888.889
             // steps/deg on the table, neither near the step generator's
             // ceiling.
-            steps: [256.0, 888.889],
-            max_rate: [1000.0, 1080.0],
-            jog_rate: [600.0, 720.0],
-            jerk: [3.0, 10.0],
+            steps: [256.0, 888.889, 256.0],
+            max_rate: [1000.0, 1080.0, 600.0],
+            jog_rate: [600.0, 720.0, 120.0],
+            jerk: [3.0, 10.0, 1.0],
             ..Settings::default()
         }
     }
 
     fn push(planner: &mut Planner, r: f32, a: f32, kind: MoveKind, feed: Feed, power: f32) -> bool {
-        planner.push([r, a], kind, feed, power, 0.0, &settings()).unwrap()
+        planner.push([r, a, 0.0], kind, feed, power, 0.0, &settings()).unwrap()
     }
 
     fn close(a: f32, b: f32, tol: f32) -> bool {
@@ -479,8 +491,8 @@ mod tests {
         assert_eq!(planner.free(), BLOCKS);
         assert_eq!(planner.len(), 0);
         assert!(planner.current().is_none());
-        assert_eq!(planner.position(), [0, 0]);
-        assert_eq!(planner.position_units(&settings()), [0.0, 0.0]);
+        assert_eq!(planner.position(), [0, 0, 0]);
+        assert_eq!(planner.position_units(&settings()), [0.0, 0.0, 0.0]);
         assert!(!planner.has_jog());
         assert_eq!(planner.current_exit_speed_sqr(), 0.0);
     }
@@ -492,10 +504,10 @@ mod tests {
         assert!(planner.is_empty());
         assert!(push(&mut planner, 10.0, -90.0, MoveKind::Rapid, Feed::Max, 0.0));
         let block = planner.current().unwrap();
-        assert_eq!(block.steps, [2560, 80000]);
+        assert_eq!(block.steps, [2560, 80000, 0]);
         assert_eq!(block.dir_forward, 1 << R);
         assert_eq!(block.step_event_count, 80000);
-        assert_eq!(planner.position(), [2560, -80000]);
+        assert_eq!(planner.position(), [2560, -80000, 0]);
         let units = planner.position_units(&settings());
         assert!(close(units[R], 10.0, 1e-6) && close(units[A], -90.0, 1e-6));
         assert!(!push(&mut planner, 10.0, -90.0, MoveKind::Rapid, Feed::Max, 0.0));
@@ -507,11 +519,11 @@ mod tests {
         let mut planner = Planner::new();
         assert!(push(&mut planner, 0.0, 3600.0, MoveKind::Rapid, Feed::Max, 0.0));
         let block = planner.current().unwrap();
-        assert_eq!(block.steps, [0, 3_200_000]);
-        assert_eq!(block.unit, [0.0, 1.0]);
+        assert_eq!(block.steps, [0, 3_200_000, 0]);
+        assert_eq!(block.unit, [0.0, 1.0, 0.0]);
         assert!(close(block.length, 3600.0, 1e-5));
         assert!(push(&mut planner, 0.0, 3599.999, MoveKind::Rapid, Feed::Max, 0.0));
-        assert_eq!(planner.nth(1).unwrap().steps, [0, 1]);
+        assert_eq!(planner.nth(1).unwrap().steps, [0, 1, 0]);
         assert_eq!(planner.nth(1).unwrap().dir_forward, 0);
     }
 
@@ -519,14 +531,14 @@ mod tests {
     fn ring_fills_and_drains() {
         let mut planner = Planner::new();
         for i in 1..=BLOCKS {
-            assert_eq!(planner.push([i as f32, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()), Ok(true));
+            assert_eq!(planner.push([i as f32, 0.0, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()), Ok(true));
         }
         assert_eq!(planner.free(), 0);
         assert_eq!(
-            planner.push([100.0, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()),
+            planner.push([100.0, 0.0, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()),
             Err(PlanError::Full)
         );
-        assert_eq!(planner.position(), [BLOCKS as i32 * 256, 0]);
+        assert_eq!(planner.position(), [BLOCKS as i32 * 256, 0, 0]);
         for i in 0..BLOCKS {
             assert_eq!(planner.current().unwrap().steps[R], 256, "block {i}");
             planner.discard_current();
@@ -539,9 +551,9 @@ mod tests {
         planner.clear();
         assert!(planner.is_empty());
         assert!(!planner.has_jog());
-        assert_eq!(planner.position(), [0, 889]);
-        planner.set_position([5, -7]);
-        assert_eq!(planner.position(), [5, -7]);
+        assert_eq!(planner.position(), [0, 889, 0]);
+        planner.set_position([5, -7, 0]);
+        assert_eq!(planner.position(), [5, -7, 0]);
     }
 
     #[test]
@@ -610,13 +622,13 @@ mod tests {
     fn min_power_is_held_between_zero_and_power() {
         let mut planner = Planner::new();
         let s = settings();
-        planner.push([10.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
+        planner.push([10.0, 0.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
         assert_eq!(planner.nth(0).unwrap().min_power, 150.0);
-        planner.push([20.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 900.0, &s).unwrap();
+        planner.push([20.0, 0.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 900.0, &s).unwrap();
         assert_eq!(planner.nth(1).unwrap().min_power, 400.0);
         // A turn on the axis burns nothing, floor or not.
-        planner.push([0.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
-        planner.push([0.0, 90.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
+        planner.push([0.0, 0.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
+        planner.push([0.0, 90.0, 0.0], MoveKind::Cut, Feed::Surface(100.0), 400.0, 150.0, &s).unwrap();
         assert_eq!(planner.nth(3).unwrap().min_power, 0.0);
     }
 
@@ -712,7 +724,7 @@ mod tests {
         let mut planner = Planner::new();
         push(&mut planner, 10.0, 3.0, MoveKind::Cut, Feed::Surface(600.0), 100.0);
         let full = *planner.current().unwrap();
-        assert_eq!(full.steps, [2560, 2667]);
+        assert_eq!(full.steps, [2560, 2667, 0]);
         assert_eq!(full.step_event_count, 2667);
         for done in [1u32, 100, 1333, 2666] {
             let mut copy = Planner::new();
@@ -763,11 +775,11 @@ mod tests {
     #[test]
     fn negative_direction_and_mixed_axes() {
         let mut planner = Planner::new();
-        planner.set_position([2560, 88889]);
+        planner.set_position([2560, 88889, 0]);
         push(&mut planner, 5.0, 50.0, MoveKind::Rapid, Feed::Max, 0.0);
         let b = planner.current().unwrap();
         assert_eq!(b.dir_forward, 0);
-        assert_eq!(b.steps, [1280, 88889 - 44444]);
+        assert_eq!(b.steps, [1280, 88889 - 44444, 0]);
         assert!(b.unit[R] < 0.0 && b.unit[A] < 0.0);
         assert!(close(b.length, math::hypot(5.0, 50.0), 1e-4));
     }

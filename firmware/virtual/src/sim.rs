@@ -20,6 +20,7 @@ use spinny_core::AXES;
 use crate::clock::Clock;
 use crate::inbox::{Inbound, Inbox};
 use crate::ports::{FileStore, Laser, OutBuf, Slide, Steppers};
+use crate::surface::Surface;
 use crate::trace::{Command, Trace};
 
 /// Main loop period, as on the board.
@@ -46,6 +47,8 @@ pub struct Sim {
     awaiting: Vec<Command>,
     /// When the next stderr report is due; `None` keeps it silent.
     report_at: Option<Instant>,
+    /// The board under the probe.
+    surface: Option<Surface>,
 }
 
 /// Start values for a simulated board.
@@ -55,6 +58,7 @@ pub struct Setup {
     pub clock: Clock,
     pub trace: Trace,
     pub quiet: bool,
+    pub surface: Option<Surface>,
 }
 
 impl Sim {
@@ -74,6 +78,7 @@ impl Sim {
             trace: setup.trace,
             awaiting: Vec::new(),
             report_at: (!setup.quiet).then(|| Instant::now() + REPORT_EVERY),
+            surface: setup.surface,
         };
         // Stored settings win over the ones given on the command line, as
         // they do on the board, where flash is read at boot.
@@ -212,7 +217,15 @@ impl Sim {
         }
     }
 
+    /// The probe input as the board under the tip sets it, wired the way
+    /// the `probe_invert` setting says: pulled low at contact by default.
+    fn update_probe(&mut self) {
+        let touching = self.surface.is_some_and(|surface| surface.touching(self.machine.joint()));
+        self.port.probe_level = touching == self.machine.settings().probe_invert;
+    }
+
     fn poll(&mut self) {
+        self.update_probe();
         let now = self.clock.now();
         // The cross slide is stepped from the main loop, as on the board,
         // and before the poll that ends its jog.
@@ -237,6 +250,7 @@ impl Sim {
     }
 
     fn tick(&mut self) {
+        self.update_probe();
         let next = self.isr.tick(&mut self.port, &mut self.laser);
         let now = self.clock.now();
         self.trace.sample(now, self.machine.joint(), self.beam_duty());
@@ -302,13 +316,15 @@ impl Sim {
             report::State::Alarm(code) => format!("Alarm:{code}"),
         };
         format!(
-            "{state} R{:.3} A{:.4} Z{:.3} laser {} pulses {}/{}/{}",
+            "{state} R{:.3} A{:.4} H{:.3} Z{:.3} laser {} pulses {}/{}/{}/{}",
             joint[0],
             joint[1],
+            joint[2],
             self.machine.slide_position(),
             self.laser.duty,
             self.port.pulses[0],
             self.port.pulses[1],
+            self.port.pulses[2],
             self.slide.pulses,
         )
     }
@@ -346,6 +362,7 @@ mod tests {
             clock: Clock::fast(),
             trace: Trace::new(None),
             quiet: true,
+            surface: None,
         })
     }
 
@@ -402,7 +419,7 @@ mod tests {
         let mut out = Vec::new();
         sim.session(&inbox, &mut out).unwrap();
         assert_eq!(sim.state(), report::State::Idle);
-        assert_eq!(sim.joint(), [0.0, 0.0], "a dead client's line ran");
+        assert_eq!(sim.joint(), [0.0, 0.0, 0.0], "a dead client's line ran");
         assert_eq!(sim.laser_duty(), 0);
         let text = String::from_utf8(out).unwrap();
         assert!(!text.contains("ok"), "{text:?}");
@@ -418,6 +435,7 @@ mod tests {
             clock: Clock::fast(),
             trace: Trace::new(Some(std::path::PathBuf::from("/dev/null"))),
             quiet: true,
+            surface: None,
         });
         let inbox = Inbox::new();
         inbox.push(line("set R0 A0"));
@@ -446,6 +464,46 @@ mod tests {
         assert_eq!(sim.laser_duty(), 1000);
         let burnt = sim.trace_mut().laser_on_mm();
         assert!((burnt - 15.7).abs() < 0.5, "burnt {burnt} mm");
+    }
+
+    #[test]
+    fn a_probe_finds_the_board_under_its_tip() {
+        let mut settings = Settings::default();
+        settings.h_axis = true;
+        let mut sim = Sim::new(Setup {
+            settings,
+            store: FileStore::default(),
+            clock: Clock::fast(),
+            trace: Trace::new(None),
+            quiet: true,
+            // Tilted up along X, with the tip 2 mm further out than the beam.
+            surface: Some(Surface { base: -1.0, slope: [0.01, 0.0], curve: 0.0, offset: [2.0, 0.0] }),
+        });
+        let inbox = Inbox::new();
+        inbox.push(line("go R8"));
+        inbox.push(line("probe H-5 F120"));
+        inbox.push(line("go H1"));
+        inbox.push(line("go A180"));
+        inbox.push(line("probe H-5 F120"));
+        let mut out = Vec::new();
+        for _ in 0..4_000_000 {
+            if sim.machine.ready_for_line() {
+                if let Some(Inbound::Line(text)) = inbox.take_line() {
+                    sim.submit(text.as_str());
+                }
+            }
+            sim.poll();
+            sim.flush(&mut out).unwrap();
+            if inbox.is_empty() && sim.machine.is_settled() && sim.next_tick.is_none() {
+                break;
+            }
+            sim.advance(None);
+        }
+        // The tip at board X 10 finds the top 0.1 mm up the slope, and
+        // half a turn later at X -10 as far down it.
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text, "ok\n[PRB:-0.9000:1]\nok\nok\nok\n[PRB:-1.1000:1]\nok\n");
+        assert_eq!(sim.state(), report::State::Idle);
     }
 
     #[test]

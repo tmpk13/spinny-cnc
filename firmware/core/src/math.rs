@@ -14,6 +14,11 @@ pub fn hypot(x: f32, y: f32) -> f32 {
     libm::sqrtf(x * x + y * y)
 }
 
+/// Euclidean length of a vector.
+pub fn norm(v: &[f32]) -> f32 {
+    libm::sqrtf(v.iter().map(|x| x * x).sum())
+}
+
 pub fn sqrt(x: f32) -> f32 {
     libm::sqrtf(x)
 }

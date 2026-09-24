@@ -9,10 +9,11 @@ use core::mem::forget;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_rp::clocks::clk_sys_freq;
-use embassy_rp::gpio::{Level, Output, Pin};
+use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::pac::{PWM, SIO};
 use embassy_rp::peripherals::{
-    PIN_10, PIN_11, PIN_12, PIN_19, PIN_2, PIN_20, PIN_28, PIN_5, PIN_6, PIN_7, PWM_SLICE2,
+    PIN_10, PIN_11, PIN_12, PIN_13, PIN_14, PIN_15, PIN_19, PIN_2, PIN_20, PIN_25, PIN_28, PIN_5, PIN_6, PIN_7,
+    PWM_SLICE2,
 };
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::Peri;
@@ -22,18 +23,23 @@ use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_
 use spinny_fw_logic::pins::{level_masks, mask_of};
 use spinny_fw_logic::step::pulse_loops;
 
-/// STEP pins: radius on the X driver, table on the Y driver.
-pub const STEP_PINS: [u8; 2] = [11, 6];
-pub const DIR_PINS: [u8; 2] = [10, 5];
+/// STEP pins: radius on the X driver, table on the Y driver, focus axis
+/// on the E driver, in the core's joint order.
+pub const STEP_PINS: [u8; 3] = [11, 6, 14];
+pub const DIR_PINS: [u8; 3] = [10, 5, 13];
 /// The cross slide on the Z driver socket. It is a single axis, so its
 /// pins are one-element tables for the same SIO mask helpers.
 pub const Z_STEP_PINS: [u8; 1] = [19];
 pub const Z_DIR_PINS: [u8; 1] = [28];
 /// Driver enable pins, active low on the TMC2209 sockets: radius, table,
-/// cross slide. They are driven together, so a move energizes all three.
-pub const EN_PINS: [u8; 3] = [12, 7, 2];
+/// cross slide, focus axis. They are driven together, so a move energizes
+/// all four; an empty socket takes no harm from its line.
+pub const EN_PINS: [u8; 4] = [12, 7, 2, 15];
 /// Every axis selected in an enable write.
-const EN_ALL: u8 = 0b111;
+const EN_ALL: u8 = 0b1111;
+/// Probe input, GP25 on the Z-STOP header, with the internal pull-up: a
+/// switch or a pin touching grounded copper pulls it low.
+pub const PROBE_PIN: u8 = 25;
 /// Laser output, GP20 on the FAN3 header: PWM slice 2 channel A. The
 /// slice and channel follow from the pin, `(gpio / 2) % 8` and even for A.
 pub const LASER_PIN: u8 = 20;
@@ -66,6 +72,10 @@ pub struct Pins {
     pub z_step: Peri<'static, PIN_19>,
     pub z_dir: Peri<'static, PIN_28>,
     pub z_en: Peri<'static, PIN_2>,
+    pub h_step: Peri<'static, PIN_14>,
+    pub h_dir: Peri<'static, PIN_13>,
+    pub h_en: Peri<'static, PIN_15>,
+    pub probe: Peri<'static, PIN_25>,
 }
 
 /// Claims the pins in a safe order: the laser output driven low, the
@@ -85,25 +95,30 @@ pub fn init(pins: Pins, laser_invert: bool) -> (StepPins, LaserPwm, SlidePins) {
     LASER_TOP.store(params.top as u32, Ordering::Relaxed);
     forget(Pwm::new_output_a(pins.pwm, pins.laser, cfg));
 
-    let step = [pins.r_step.pin(), pins.a_step.pin()];
-    let dir = [pins.r_dir.pin(), pins.a_dir.pin()];
-    let en = [pins.r_en.pin(), pins.a_en.pin(), pins.z_en.pin()];
+    let step = [pins.r_step.pin(), pins.a_step.pin(), pins.h_step.pin()];
+    let dir = [pins.r_dir.pin(), pins.a_dir.pin(), pins.h_dir.pin()];
+    let en = [pins.r_en.pin(), pins.a_en.pin(), pins.z_en.pin(), pins.h_en.pin()];
+    let probe = pins.probe.pin();
     let z_step = [pins.z_step.pin()];
     let z_dir = [pins.z_dir.pin()];
     forget(Output::new(pins.r_en, Level::High));
     forget(Output::new(pins.a_en, Level::High));
     forget(Output::new(pins.z_en, Level::High));
+    forget(Output::new(pins.h_en, Level::High));
     forget(Output::new(pins.r_step, Level::Low));
     forget(Output::new(pins.a_step, Level::Low));
     forget(Output::new(pins.z_step, Level::Low));
+    forget(Output::new(pins.h_step, Level::Low));
     forget(Output::new(pins.r_dir, Level::Low));
     forget(Output::new(pins.a_dir, Level::Low));
     forget(Output::new(pins.z_dir, Level::Low));
+    forget(Output::new(pins.h_dir, Level::Low));
+    forget(Input::new(pins.probe, Pull::Up));
     // The SIO masks come from the tables above, which must name the pins
     // the outputs were just made on. Checked with every line at its safe
     // level, so a halt here leaves the drivers off and the laser low.
     assert!(step == STEP_PINS && dir == DIR_PINS && en == EN_PINS);
-    assert!(z_step == Z_STEP_PINS && z_dir == Z_DIR_PINS);
+    assert!(z_step == Z_STEP_PINS && z_dir == Z_DIR_PINS && probe == PROBE_PIN);
 
     set_step_width(Settings::default().step_us);
     (StepPins, LaserPwm, SlidePins)
@@ -150,6 +165,10 @@ impl StepPort for StepPins {
         } else {
             out.value_clr().write_value(bits);
         }
+    }
+
+    fn probe(&mut self) -> bool {
+        SIO.gpio_in(0).read() & (1 << PROBE_PIN) != 0
     }
 }
 

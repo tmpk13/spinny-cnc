@@ -25,7 +25,8 @@ them. Everything is ASCII text over USB CDC.
   and realtime bytes cannot get through either, so the credit must be kept.
 - Unsolicited lines: `[spinny v<version> lines:16 blocks:32]` at connect and
   after a reset, `[MSG:<text>]` for notes, `ALARM:<code> <text>` when an
-  alarm is raised, `<...>` status only in answer to `?`.
+  alarm is raised, `<...>` status only in answer to `?`. `[PRB:<h>:<0|1>]`
+  comes just before the answer to a `probe`, as part of it.
 
 ## Realtime bytes
 
@@ -47,10 +48,10 @@ keeps that axis where it is.
 
 | Command | Effect |
 | --- | --- |
-| `go [R<mm>] [A<deg>]` | rapid, laser off, each axis at its max rate; both axes arrive together |
-| `cut [R<mm>] [A<deg>] [F<mm/min>] [S<power>] [M<power>]` | line at surface speed `F` with laser power `S`; `F` and `S` are modal for later `cut` lines; `M` is the least power in `dyn` mode, for this line only |
-| `jog [R<mm>] [A<deg>] [F<mm/min>]` | relative move, laser off, cancelable; without `F` at the `jog_r`/`jog_a` rates |
-| `jogto [R<mm>] [A<deg>] [F<mm/min>]` | absolute jog |
+| `go [R<mm>] [A<deg>] [H<mm>]` | rapid, laser off, each axis at its max rate; the axes arrive together |
+| `cut [R<mm>] [A<deg>] [H<mm>] [F<mm/min>] [S<power>] [M<power>]` | line at surface speed `F` with laser power `S`; `F` and `S` are modal for later `cut` lines; `M` is the least power in `dyn` mode, for this line only |
+| `jog [R<mm>] [A<deg>] [H<mm>] [F<mm/min>]` | relative move, laser off, cancelable; without `F` at the `jog_r`/`jog_a`/`jog_h` rates |
+| `jogto [R<mm>] [A<deg>] [H<mm>] [F<mm/min>]` | absolute jog |
 | `dwell T<ms> [S<power>]` | wait after motion (`T` at most 600000); with `S` the laser is on at constant `S` for the dwell (a spot burn) |
 
 Surface speed: the length of a joint move on the board is taken as
@@ -99,6 +100,44 @@ the tick to about `1.5 * step_us + 3` microseconds and lowers the ceiling
 with it: at `step_us` 10 to 55000 steps a second, at 20 to 30000. `F`
 below 0.001 is refused (`error:4`).
 
+## The focus axis and the probe
+
+`H` is the focus axis: the head's height in mm, up positive. It is
+optional, and fitted only when `h_axis` is 1; without it any `H` word, and
+`probe`, is `error:2`, and the status line leaves its fields off. Unlike
+the cross slide it is a joint like `R` and `A`: it takes part in `go`,
+`cut` and jogs, and moves along with them, so a cut can follow the
+board's height. `F` stays the board surface speed; a move that only
+raises or lowers the head (nothing moves on the board) takes `F` as the
+speed of `H` instead, and is dark. `r_rate`-style limits apply to it
+through `h_rate`, `h_accel` and `h_jerk`.
+
+| Command | Effect |
+| --- | --- |
+| `probe H<mm> [F<mm/min>]` | move the focus axis by up to `H` mm (relative, signed: negative is down) at `F` (default `jog_h`) until the probe input goes active |
+
+`probe` is taken in `Idle`, `Run` and `Jog`, waits for the motion queued
+before it, and is answered only when it ends; nothing runs behind it
+meanwhile. The state is `Jog` while it moves.
+
+- Contact: `[PRB:<h>:1]` then `ok`, with `<h>` the `H` position in mm, four
+  decimals, when the input went active. The head brakes from there: a
+  probe keeps only 20 ms of motion queued, so it stops about
+  `F / 60 * 0.02` mm plus the braking distance past the contact.
+- No contact within the distance: `[PRB:<h>:0]`, `ALARM:2 probe missed,
+  check the head before moving`, then `error:11 probe missed`. The machine
+  stays in `Alarm:2` until `unlock`: the head went further down than
+  whoever sent the line meant, and whatever they queued next would drag
+  it across the board.
+- Already active at the start: `error:10 probe active`, and nothing moves.
+- `0x85` ends it like a jog: `[PRB:<h>:0]` (or `:1` if it had touched)
+  and `ok`, no alarm. `!` holds it and `~` goes on with it. A reset ends
+  it with no answer, as it does any line, and raises `Alarm:1` when it
+  was moving.
+
+The input's polarity is `probe_invert`: 0 is active low, as a switch or a
+pin touching grounded copper pulls it down against the pull-up.
+
 ## The cross slide
 
 `Z` is the cross slide that carries the rail across the rotation axis. It
@@ -112,7 +151,7 @@ state is `Jog` until it stops.
 | `jogto Z<mm> [F<mm/min>]` | absolute |
 | `set Z<mm>` | declare the position, as for `R` and `A` |
 
-`Z` cannot be combined with `R` or `A` on one line (`error:2`): the three
+`Z` cannot be combined with `R`, `A` or `H` on one line (`error:2`): they
 are not interpolated together. The slide is stepped from the main loop at
 most 20000 steps a second, so its rate ceiling is `1200000 / z_steps`,
 117 mm/min at the default scale, and a `z_rate` or `jog_z` above that is
@@ -144,7 +183,7 @@ turns off a floor below it.
 
 | Command | Effect |
 | --- | --- |
-| `set [R<mm>] [A<deg>]` | declare the current position (`Idle` only); `set R0` after driving the beam over the axis |
+| `set [R<mm>] [A<deg>] [H<mm>]` | declare the current position (`Idle` only); `set R0` after driving the beam over the axis |
 | `enable` / `disable` | motor enable pins; any motion enables them; `disable` loses the microstep position |
 | `unlock` | clear an alarm |
 | `mode`, `laser`, `set`, `enable`, `disable` | sync commands: they wait until queued motion is done |
@@ -166,7 +205,7 @@ turns off a floor below it.
 
 A value outside its bounds is `error:7`; an integer setting refuses
 decimal text such as `5000.0`. Steps, rates, accelerations and jerks must
-be above 0; `r_max` at least 0; `dir_invert` 0..7; `step_us` 1..20;
+be above 0; `r_max` at least 0; `dir_invert` 0..15; `step_us` 1..20;
 `laser_hz` 100..100000; `laser_ms` 1..60000; `s_max` above 0 and `s_min`
 0..`s_max`; `tmc_*_ma` at most 2000; `tmc_hold_pct` at most 100; the
 microsteps a power of two up to 256.
@@ -188,7 +227,7 @@ microsteps a power of two up to 256.
 | `jog_z` | mm/min | 120 | jog rate without `F` |
 | `jog_r` | mm/min | 300 | jog rate without `F` |
 | `jog_a` | deg/min | 200 | |
-| `dir_invert` | mask | 0 | bit 0 radius, bit 1 table, bit 2 cross slide |
+| `dir_invert` | mask | 0 | bit 0 radius, bit 1 table, bit 2 cross slide, bit 3 focus axis |
 | `en_invert` | 0/1 | 0 | 1 = enable pin active high |
 | `idle_ms` | ms | 0 | disable motors after idle, 0 = never |
 | `step_us` | us | 2 | step pulse width |
@@ -205,14 +244,29 @@ microsteps a power of two up to 256.
 | `tmc_z_ma` | mA | 800 | cross slide run current |
 | `tmc_z_micro` | | 256 | |
 | `tmc_stealth` | 0/1 | 1 | stealthChop, else spreadCycle |
+| `h_axis` | 0/1 | 0 | a focus axis is fitted |
+| `h_steps` | steps/mm | 6400 | 200 steps * 256 microsteps over an 8 mm lead |
+| `h_rate` | mm/min | 600 | max focus axis rate |
+| `h_accel` | mm/s^2 | 50 | |
+| `h_jerk` | mm/s | 1 | |
+| `jog_h` | mm/min | 120 | jog and probe rate without `F` |
+| `probe_invert` | 0/1 | 0 | 1 = probe input active high |
+| `tmc_h_ma` | mA | 600 | focus axis run current; its driver is left alone while `h_axis` is 0 |
+| `tmc_h_micro` | | 256 | |
 
-Changing a `tmc_*` setting re-sends the driver configuration.
+Changing a `tmc_*` setting or `h_axis` re-sends the driver configuration.
+
+The settings stored by a firmware from before the focus axis are thrown
+away at boot (the stored layout changed): set them again and `$save`.
 
 ## Status line
 
 ```
 <Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>
+<Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000|H:-1.250|P:0>
 ```
+
+The second form is with `h_axis` set.
 
 | Field | Meaning |
 | --- | --- |
@@ -224,6 +278,8 @@ Changing a `tmc_*` setting re-sends the driver configuration.
 | `M` | power mode |
 | `E` | motors enabled |
 | `Z` | cross slide position, mm |
+| `H` | focus axis position, mm; only with `h_axis` |
+| `P` | 1 while the probe input is active; only with `h_axis` |
 
 ## Errors and alarms
 
@@ -238,7 +294,10 @@ Changing a `tmc_*` setting re-sends the driver configuration.
 | `error:7` | bad setting value |
 | `error:8` | line too long |
 | `error:9` | flash failed: `$save` could not write, or `$load` found nothing valid stored |
+| `error:10` | probe active: the probe input was already active when a `probe` was to start |
+| `error:11` | probe missed: a `probe` went its whole distance without contact (with `ALARM:2`) |
 | `ALARM:1` | reset while moving, the position may be off; `unlock` clears it |
+| `ALARM:2` | probe missed: the head is lower than the probe was meant to take it; `unlock` clears it |
 
 ## Example session
 

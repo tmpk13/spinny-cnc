@@ -21,6 +21,9 @@ pub struct Steppers {
     pub dir_levels: u8,
     /// Enable pin level, `None` until it is first driven.
     pub enable_level: Option<bool>,
+    /// Probe input level, set by the simulation from the board surface
+    /// before each poll and tick.
+    pub probe_level: bool,
 }
 
 impl StepPort for Steppers {
@@ -38,6 +41,10 @@ impl StepPort for Steppers {
 
     fn set_enable(&mut self, high: bool) {
         self.enable_level = Some(high);
+    }
+
+    fn probe(&mut self) -> bool {
+        self.probe_level
     }
 }
 

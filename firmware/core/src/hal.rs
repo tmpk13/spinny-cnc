@@ -1,7 +1,7 @@
 //! What the core needs from the hardware. Every polarity is applied inside
 //! the core, so the ports drive raw pin levels.
 
-/// Step and direction pins for the joint axes.
+/// Step and direction pins for the joint axes, and the probe input.
 pub trait StepPort {
     /// Pin level per axis (bit i = axis i). Settled before the next pulse.
     fn set_dir(&mut self, levels: u8);
@@ -9,6 +9,9 @@ pub trait StepPort {
     fn step(&mut self, mask: u8);
     /// Level of the shared enable pin.
     fn set_enable(&mut self, high: bool);
+    /// Level of the probe input, high true. Read from the step interrupt
+    /// during a probe and from the main loop, so a plain register read.
+    fn probe(&mut self) -> bool;
 }
 
 /// Step and direction pins for the cross slide. It moves alone and never

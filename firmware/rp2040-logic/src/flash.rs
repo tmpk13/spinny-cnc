@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips() {
         let mut sector = RamSector::blank();
-        let blob: Vec<u8> = (0..BLOB_LEN as u8).collect();
+        let blob: Vec<u8> = (0..BLOB_LEN).map(|i| i as u8).collect();
         assert!(save(&mut sector, &blob));
         let mut buf = [0u8; BLOB_LEN];
         assert_eq!(load(&mut sector, &mut buf), Some(BLOB_LEN));

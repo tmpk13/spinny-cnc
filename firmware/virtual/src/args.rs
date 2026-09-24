@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use spinny_core::settings::Settings;
 
+use crate::surface::Surface;
+
 pub const USAGE: &str = "\
 spinny-virtual: the spinny control core on a TCP socket
 
@@ -12,6 +14,12 @@ spinny-virtual: the spinny control core on a TCP socket
     --trace PATH        write the beam's marks and the command log as JSON
     --settings K=V      set a machine setting at start, repeatable
     --store PATH        file standing in for the settings sector
+    --surface B[,SX,SY[,C]]
+                        a board under the probe: its top at focus height
+                        B + SX*x + SY*y + C*(x^2 + y^2), board mm; without
+                        it a probe finds nothing
+    --probe-offset L,C  the probe tip L mm along the rail and C mm across
+                        it from the beam
     --quiet             no periodic report on stderr
     --help              this text
 
@@ -28,6 +36,8 @@ pub struct Options {
     pub store: Option<PathBuf>,
     pub quiet: bool,
     pub settings: Settings,
+    /// The board a probe touches; `None` for none.
+    pub surface: Option<Surface>,
 }
 
 impl Default for Options {
@@ -39,6 +49,7 @@ impl Default for Options {
             store: None,
             quiet: false,
             settings: Settings::default(),
+            surface: None,
         }
     }
 }
@@ -56,6 +67,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Options>,
             "--listen" => options.listen = value("--listen")?,
             "--trace" => options.trace = Some(PathBuf::from(value("--trace")?)),
             "--store" => options.store = Some(PathBuf::from(value("--store")?)),
+            "--surface" => {
+                let offset = options.surface.map_or([0.0; 2], |surface| surface.offset);
+                options.surface = Some(Surface { offset, ..Surface::parse(&value("--surface")?)? });
+            }
+            "--probe-offset" => {
+                let offset = Surface::parse_offset(&value("--probe-offset")?)?;
+                options.surface = Some(Surface { offset, ..options.surface.unwrap_or_default() });
+            }
             "--settings" => {
                 let pair = value("--settings")?;
                 let (name, text) = pair
@@ -118,5 +137,16 @@ mod tests {
         assert!(parse_args(&["--settings", "a_rate"]).unwrap_err().contains("name=value"));
         assert!(parse_args(&["--settings", "a_rate=0"]).unwrap_err().contains("a_rate"));
         assert!(parse_args(&["--settings", "nope=1"]).unwrap_err().contains("nope"));
+    }
+
+    #[test]
+    fn a_surface_and_a_probe_offset_in_either_order() {
+        let options = parse_args(&["--probe-offset", "3,-1", "--surface", "-2,0.01,0"]).unwrap().unwrap();
+        let surface = options.surface.unwrap();
+        assert_eq!((surface.base, surface.slope, surface.offset), (-2.0, [0.01, 0.0], [3.0, -1.0]));
+        let options = parse_args(&["--surface", "-2", "--probe-offset", "3,-1"]).unwrap().unwrap();
+        assert_eq!(options.surface.unwrap().offset, [3.0, -1.0]);
+        assert!(parse_args(&["--surface", "1,2"]).unwrap_err().contains("--surface"));
+        assert_eq!(parse_args(&[]).unwrap().unwrap().surface, None);
     }
 }

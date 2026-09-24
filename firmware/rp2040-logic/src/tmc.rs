@@ -1,9 +1,9 @@
-//! TMC2209 register values and UART datagrams for the three drivers, and
+//! TMC2209 register values and UART datagrams for the four drivers, and
 //! the reply parsing behind the status report.
 //!
 //! The SKR Pico straps the X socket to UART address 0, the Y socket to
-//! address 2 and the Z socket to address 1, and fits 110 mOhm sense
-//! resistors. Every driver shares one wire, so every byte sent comes back
+//! address 2, the Z socket to address 1 and the E socket to address 3,
+//! and fits 110 mOhm sense resistors. Every driver shares one wire, so every byte sent comes back
 //! on RX before any reply.
 
 use core::fmt::Write;
@@ -15,10 +15,12 @@ use tmc2209::{ReadRequest, Reader, WriteRequest};
 
 /// Sense resistor on the SKR Pico, milliohms.
 pub const RSENSE_MOHM: u64 = 110;
+/// Driver sockets in use.
+pub const DRIVERS: usize = 4;
 /// UART address per axis: radius on the X socket, table on the Y socket,
-/// cross slide on the Z socket.
-pub const ADDR: [u8; 3] = [0, 2, 1];
-pub const AXIS_LETTER: [char; 3] = ['R', 'A', 'Z'];
+/// cross slide on the Z socket, focus axis on the E socket.
+pub const ADDR: [u8; DRIVERS] = [0, 2, 1, 3];
+pub const AXIS_LETTER: [char; DRIVERS] = ['R', 'A', 'Z', 'H'];
 /// IHOLD_IRUN.IHOLDDELAY: power-down ramp in units of 2^18 clocks.
 pub const IHOLD_DELAY: u8 = 10;
 /// CHOPCONF chopper fields: the datasheet's reset values with TBL=2.
@@ -35,9 +37,9 @@ const VFS_LOW_SENS_MV: u64 = 325;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DriverConfig {
     /// Run current per axis, mA; 0 leaves that driver untouched.
-    pub ma: [u32; 3],
+    pub ma: [u32; DRIVERS],
     pub hold_pct: u32,
-    pub micro: [u32; 3],
+    pub micro: [u32; DRIVERS],
     pub stealth: bool,
 }
 
@@ -256,9 +258,9 @@ mod tests {
     #[test]
     fn datagrams_carry_the_register_fields() {
         let cfg = DriverConfig {
-            ma: [800, 1500, 600],
+            ma: [800, 1500, 600, 400],
             hold_pct: 50,
-            micro: [16, 32, 128],
+            micro: [16, 32, 128, 8],
             stealth: true,
         };
         let [gconf, currents, chop] = config_datagrams(0, &cfg).unwrap();
@@ -314,7 +316,7 @@ mod tests {
         // protection runs. None is ours to set, and all of them ride on
         // the register defaults, so a change of those must fail here
         // rather than on the machine.
-        let cfg = DriverConfig { ma: [800, 800, 800], hold_pct: 50, micro: [256, 256, 256], stealth: true };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
         let [gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
         let g = GCONF::from(data(&gconf));
         assert!(!g.internal_rsense(), "the driver would ignore the sense resistors");
@@ -337,21 +339,21 @@ mod tests {
     #[test]
     fn spread_cycle_and_untouched_axes() {
         let cfg = DriverConfig {
-            ma: [0, 600, 600],
+            ma: [0, 600, 600, 0],
             hold_pct: 30,
-            micro: [16, 12, 16],
+            micro: [16, 12, 16, 16],
             stealth: false,
         };
         assert!(config_datagrams(0, &cfg).is_none());
         assert!(config_datagrams(1, &cfg).is_none());
-        let cfg = DriverConfig { micro: [16, 16, 16], ..cfg };
+        let cfg = DriverConfig { micro: [16; DRIVERS], ..cfg };
         let [gconf, ..] = config_datagrams(1, &cfg).unwrap();
         assert!(GCONF::from(data(&gconf)).en_spread_cycle());
     }
 
     #[test]
     fn a_configuration_is_kept_only_while_it_has_not_landed() {
-        let cfg = DriverConfig { ma: [800; 3], hold_pct: 50, micro: [256; 3], stealth: true };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
         assert_eq!(unfinished_after(true, cfg), None, "a landed configuration is not retried");
         assert_eq!(unfinished_after(false, cfg), Some(cfg), "a refused one is");
     }
@@ -407,7 +409,7 @@ mod tests {
         // What each axis reports when its configuration landed, and what
         // the sockets strap to when it did not.
         let asked = |micro: u32| {
-            let cfg = DriverConfig { ma: [800; 3], hold_pct: 50, micro: [micro; 3], stealth: true };
+            let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [micro; DRIVERS], stealth: true };
             let [_, _, chop] = config_datagrams(0, &cfg).unwrap();
             micro_of(data(&chop))
         };
