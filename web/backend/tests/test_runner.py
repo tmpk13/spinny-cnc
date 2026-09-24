@@ -240,9 +240,9 @@ class Crashing(Streamer):
         super().__init__()
         self.calls = 0
 
-    def job_pieces(self, job, start):
+    def job_pieces(self, job, start, compensation=None):
         self.calls += 1
-        for index, piece in enumerate(super().job_pieces(job, start)):
+        for index, piece in enumerate(super().job_pieces(job, start, compensation)):
             if self.calls > 1 and index == 2:
                 raise RuntimeError("boom")
             yield piece
@@ -271,9 +271,9 @@ class Watching(Streamer):
         self.runner = runner
         self.locked: bool | None = None
 
-    def estimate(self, job, start=(0.0, 0.0)):
+    def estimate(self, job, start=(0.0, 0.0), compensation=None):
         self.locked = self.runner._lock.locked()
-        return super().estimate(job, start)
+        return super().estimate(job, start, compensation)
 
 
 def test_start_does_not_hold_the_lock_while_asking_the_machine():
@@ -482,11 +482,11 @@ def test_a_run_being_prepared_counts_as_active_and_checks_the_start_again():
         seen = []
 
         class SlowStreamer(Streamer):
-            def estimate(self, job, start):
+            def estimate(self, job, start, compensation=None):
                 seen.append(runner.active)
                 # A typed line moves the head while the estimate runs.
                 link.request_ok("set R3 A0")
-                return super().estimate(job, start)
+                return super().estimate(job, start, compensation)
 
         with pytest.raises(RunnerError, match="moved"):
             runner.start(small_job(), link, SlowStreamer())

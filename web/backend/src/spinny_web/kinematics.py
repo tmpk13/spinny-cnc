@@ -7,10 +7,15 @@ stays within the chord tolerance, and each piece becomes one `cut`, `go` or
 axis is split there: the crossing becomes a radial move in, a turn on the
 spot with the beam off, and a radial move out, since a spiral out of the
 axis can never be made straight by subdividing it.
+
+With a height map a run is compensated for the board's height (see
+`heightmap`): `compensate` rewrites the pieces, splitting cuts and adding
+the focus axis word or raising the power.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterator
@@ -19,10 +24,13 @@ from spinny_laser import polar
 from spinny_laser.polar import Joint, Kinematics, Point
 
 if TYPE_CHECKING:
+    from .heightmap import Compensation
     from .jobs import Job
 
 DECIMALS = 3
 ANGLE_DECIMALS = 4
+# The focus axis word: a tenth of a micron is under a step at any usual scale.
+FOCUS_DECIMALS = 4
 DEFAULT_TOLERANCE = 0.005
 
 
@@ -78,6 +86,12 @@ class Piece:
     # The time is set by an axis limit rather than by F.
     limited: bool = False
     group: int | None = None
+    # What a cut was made from, so it can be split and rewritten: where it
+    # starts, and its F, S and M (None for no M).
+    start: Joint | None = None
+    feed: float = 0.0
+    power: float = 0.0
+    floor: float | None = None
 
 
 @dataclass
@@ -111,6 +125,10 @@ def joint_of(point: Point, previous_angle: float) -> Joint:
 # The smallest feed the firmware accepts; the host writes F with three
 # decimals, so anything under this would go out as `F0` and be refused.
 MIN_FEED = 0.001
+
+
+def _lerp_joint(a: Joint, b: Joint, t: float) -> Joint:
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
 
 
 def check_feed(feed: float | None) -> None:
@@ -210,13 +228,22 @@ class Streamer:
 
     # --- words ------------------------------------------------------------
 
-    def words(self, joint: Joint, radius: bool = True, angle: bool = True) -> str:
+    def words(self, joint: Joint, radius: bool = True, angle: bool = True, h: float | None = None) -> str:
         parts = []
         if radius:
             parts.append(f"R{coord(joint[0], self.decimals)}")
         if angle:
             parts.append(f"A{coord(joint[1], self.angle_decimals)}")
+        if h is not None:
+            parts.append(f"H{coord(h, FOCUS_DECIMALS)}")
         return " ".join(parts)
+
+    def cut_line(self, joint: Joint, feed: float, power: float, floor: float | None, h: float | None = None) -> str:
+        """A `cut` with its own F and S, and M when there is a floor."""
+        line = f"cut {self.words(joint, h=h)} F{num(feed)} S{num(power)}"
+        if floor is not None:
+            line += f" M{num(floor)}"
+        return line
 
     def _same(self, a: Joint, b: Joint) -> bool:
         return (
@@ -262,8 +289,59 @@ class Streamer:
 
     # --- jobs -------------------------------------------------------------
 
-    def job_pieces(self, job: "Job", start: Joint) -> Iterator[Piece]:
-        """Every protocol line of the job, lazily, from the machine's joint."""
+    def job_pieces(self, job: "Job", start: Joint, compensation: "Compensation | None" = None) -> Iterator[Piece]:
+        """Every protocol line of the job, lazily, from the machine's joint,
+        compensated for the board's height when asked."""
+        pieces = self._job_pieces(job, start)
+        if compensation is None:
+            return pieces
+        return self.compensate(pieces, compensation)
+
+    def compensate(self, pieces: Iterator[Piece], compensation: "Compensation") -> Iterator[Piece]:
+        """The pieces rewritten for the board's height.
+
+        A cut is split along its joint line into pieces no longer than the
+        compensation's step on the board. That is the same line the
+        firmware would have moved, since it interpolates joints linearly,
+        but the focus height or the power now follows the surface along it
+        instead of changing once per cut. With the focus axis every line
+        carries the focus height at its end, rapids and turns included, so
+        the head is at focus when a cut begins; with power the rapids are
+        left as they are.
+        """
+        focus = compensation.mode == "focus"
+        for piece in pieces:
+            if piece.kind == "cut" and piece.start is not None:
+                a, b = piece.start, piece.joint
+                parts = max(1, math.ceil(piece.length / compensation.step - 1e-9))
+                previous = a
+                for k in range(1, parts + 1):
+                    joint = b if k == parts else _lerp_joint(a, b, k / parts)
+                    if focus:
+                        h = compensation.focus(board_of(joint))
+                        power, floor = piece.power, piece.floor
+                    else:
+                        h = None
+                        middle = board_of(_lerp_joint(a, b, (k - 0.5) / parts))
+                        power, floor = compensation.scaled(piece.power, piece.floor, middle)
+                    yield dataclasses.replace(
+                        piece,
+                        line=self.cut_line(joint, piece.feed, power, floor, h),
+                        joint=joint,
+                        seconds=piece.seconds / parts,
+                        length=piece.length / parts,
+                        start=previous,
+                        power=power,
+                        floor=floor,
+                    )
+                    previous = joint
+            elif focus and piece.kind in ("go", "turn"):
+                h = compensation.focus(board_of(piece.joint))
+                yield dataclasses.replace(piece, line=f"{piece.line} H{coord(h, FOCUS_DECIMALS)}")
+            else:
+                yield piece
+
+    def _job_pieces(self, job: "Job", start: Joint) -> Iterator[Piece]:
         joint = start
         for index, group in enumerate(job.groups):
             if not group.enabled:
@@ -271,7 +349,7 @@ class Streamer:
             feed = float(group.speed)
             power = float(group.power)
             # `M` is not modal, so a group without a floor leaves it off.
-            floor = f" M{num(min(float(group.min_power), power))}" if group.min_power > 0 else ""
+            floor = min(float(group.min_power), power) if group.min_power > 0 else None
             # Each pass is the whole group again, from wherever the last
             # one left the head: a closed loop starts where it ended, an
             # open path is gone back to.
@@ -301,13 +379,17 @@ class Streamer:
                             continue
                         seconds, limited = self._cut_cost(joint, target, feed)
                         yield Piece(
-                            line=f"cut {self.words(target)} F{num(feed)} S{num(power)}{floor}",
+                            line=self.cut_line(target, feed, power, floor),
                             kind="cut",
                             joint=target,
                             seconds=seconds,
                             length=surface_length(joint, target),
                             limited=limited,
                             group=index,
+                            start=joint,
+                            feed=feed,
+                            power=power,
+                            floor=floor,
                         )
                         joint = target
                 continue
@@ -349,20 +431,23 @@ class Streamer:
                             # would otherwise leave every line after it
                             # refused for a missing word rather than simply
                             # stopping the run.
-                            line = f"cut {self.words(next_joint)} F{num(feed)} S{num(power)}{floor}"
                             yield Piece(
-                                line=line,
+                                line=self.cut_line(next_joint, feed, power, floor),
                                 kind="cut",
                                 joint=next_joint,
                                 seconds=seconds,
                                 length=math.dist(point, next_point),
                                 limited=limited,
                                 group=index,
+                                start=joint,
+                                feed=feed,
+                                power=power,
+                                floor=floor,
                             )
                         point, joint = next_point, next_joint
                     point = target
 
-    def estimate(self, job: "Job", start: Joint = (0.0, 0.0)) -> Stats:
+    def estimate(self, job: "Job", start: Joint = (0.0, 0.0), compensation: "Compensation | None" = None) -> Stats:
         stats = Stats()
         limited = 0.0
         radii: list[float] = []
@@ -384,7 +469,7 @@ class Streamer:
                     continue
                 radii.append(max(polar.radius_of(p) for p in points))
                 lows.append(polar.path_min_radius(points))
-        for piece in self.job_pieces(job, start):
+        for piece in self.job_pieces(job, start, compensation):
             stats.moves += 1
             stats.seconds += piece.seconds
             stats.length_mm += piece.length
@@ -433,14 +518,14 @@ class Streamer:
     def board_goto(self, start: Joint, x: float, y: float, feed: float | None = None) -> list[str]:
         return self.board_move(start, (x, y), feed)
 
-    def joint_jog(self, dr: float | None, da: float | None, feed: float | None = None) -> str:
-        return self._joint_line("jog", dr, da, feed)
+    def joint_jog(self, dr: float | None, da: float | None, feed: float | None = None, dh: float | None = None) -> str:
+        return self._joint_line("jog", dr, da, feed, dh)
 
-    def joint_goto(self, r: float | None, a: float | None, feed: float | None = None) -> str:
+    def joint_goto(self, r: float | None, a: float | None, feed: float | None = None, h: float | None = None) -> str:
         # A negative radius is the far side of the axis. A job can never
         # ask for one, but lining the head up with the axis means stepping
         # through zero, so a jog may.
-        return self._joint_line("jogto", r, a, feed)
+        return self._joint_line("jogto", r, a, feed, h)
 
     def slide_jog(self, dz: float, feed: float | None = None) -> str:
         """`jog Z<mm>`: the cross slide is a setup axis and moves on its own."""
@@ -460,15 +545,20 @@ class Streamer:
             words.append(f"F{num(feed)}")
         return f"{keyword} {' '.join(words)}"
 
-    def _joint_line(self, keyword: str, r: float | None, a: float | None, feed: float | None) -> str:
-        _finite(r, a, feed)
+    def _joint_line(
+        self, keyword: str, r: float | None, a: float | None, feed: float | None, h: float | None = None
+    ) -> str:
+        _finite(r, a, feed, h)
         words = []
         if r is not None and (keyword == "jogto" or r != 0.0):
             words.append(f"R{num(r, self.decimals)}")
         if a is not None and (keyword == "jogto" or a != 0.0):
             words.append(f"A{num(a, self.angle_decimals)}")
+        # The focus axis, which the firmware refuses without one fitted.
+        if h is not None and (keyword == "jogto" or h != 0.0):
+            words.append(f"H{num(h, FOCUS_DECIMALS)}")
         if not words:
-            raise ValueError("a joint move needs a radius or an angle")
+            raise ValueError("a joint move needs a radius, an angle or a focus height")
         if feed:
             words.append(f"F{num(feed)}")
         return f"{keyword} {' '.join(words)}"

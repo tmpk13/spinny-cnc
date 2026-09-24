@@ -24,7 +24,8 @@ State snapshot:
   "firmware": {"version": "0.1.0", "lines": 16, "blocks": 32},
   "machine": {
     "state": "Idle", "alarm": null,
-    "joint": {"r": 12.345, "a": 90.1234, "z": 0.0},
+    "joint": {"r": 12.345, "a": 90.1234, "z": 0.0, "h": -1.25},
+    "probe": false,
     "board": {"x": 0.0, "y": 12.345},
     "rate": 0.0, "laser": 0, "mode": "dyn", "enabled": true,
     "queue": {"planner": 32, "lines": 16}
@@ -34,18 +35,21 @@ State snapshot:
 ```
 
 `board` is derived on the host from `joint`: `x = r cos a`, `y = r sin a`.
+`joint.h` (the focus axis, mm, up positive) and `probe` (the probe input is
+active) are `null` on a machine without a focus axis (`$h_axis=0`).
 
 ## Moving
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `{"kind": "joint", "dz": 0.5}` moves the cross slide, which cannot be combined with `dr` or `da` |
-| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r` or `a` |
+| `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "dh": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `dh` is the focus axis, alone or with the joints (the firmware refuses it without one fitted); `{"kind": "joint", "dz": 0.5}` moves the cross slide, which cannot be combined with `dr`, `da` or `dh` |
+| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0, "h": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r`, `a` or `h` |
 | `POST /api/jog/cancel` | |
-| `POST /api/position` | `{"r": 0}`, `{"a": 0}` and/or `{"z": 0}`: declare the current position |
+| `POST /api/position` | `{"r": 0}`, `{"a": 0}`, `{"h": 0}` and/or `{"z": 0}`: declare the current position |
 
 A jog, a goto or a position declaration answers 409 while a run owns the
-machine, from the moment the run is being planned. A board move whose
+machine, from the moment the run is being planned, and while the board is
+being probed. A board move whose
 lines would pass the firmware's `r_max` is refused whole with 400 before
 any of them goes out; a move within the limit chains from the end of the
 jog in progress. Move requests are served one at a time.
@@ -86,7 +90,7 @@ control.
 | `GET /api/jobs/{id}` | the job |
 | `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed under 0.001 mm/min is refused like one of 0 |
 | `DELETE /api/jobs/{id}` | |
-| `POST /api/jobs/{id}/run` | starts streaming |
+| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | |
 | `GET /api/run` | progress, or `null` before any job has run |
 
@@ -148,6 +152,54 @@ an hour after the last answer, holds not counted, ends the run as `error`
 with a stop. `acked` counts lines the firmware answered; lines a stop
 flushed are not answered.
 
+## Height map
+
+The touch probe on the focus axis measures the board over a grid, and a
+run can follow the result. Heights are the focus axis position at
+contact, mm, at grid points in board mm; `focus_offset` is focus height
+minus contact height, which `focus` sets.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/heightmap` | returns `{"map": map or null, "probe": probing progress or null, "settings": probe settings}` |
+| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, or while a run or another probing is under way; a point the probe tip cannot reach is 409 before anything moves |
+| `POST /api/heightmap/stop` | holds and resets like a run's stop; 409 when nothing is being probed |
+| `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset; `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam |
+| `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail and across it (mm), and the beam's Rayleigh length for power compensation (mm) |
+| `PUT /api/heightmap` | a map, to put one back from a file |
+| `DELETE /api/heightmap` | clears it |
+
+Map:
+
+```json
+{"grid": {"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4},
+ "heights": [[-1.512, -1.498, ...], ...],
+ "focus_offset": 1.2, "focus_set": true,
+ "probe_offset": [0, 0], "created": "2026-09-23T10:00:00+00:00"}
+```
+
+`heights[iy][ix]` is `null` where not yet probed. Probing progress:
+`{"state": "running" | "done" | "stopped" | "error", "done": 3, "total":
+20, "point": [ix, iy] or null, "seconds": 12.5, "error": null}`.
+
+Probing starts from the head's height at the time, which is the travel
+height between points: raise the head so the probe clears the board
+first. At each point the tip goes over it, touches at `feed`, backs off
+`backoff` and touches again at `slow`, and rises back. A tip off the rail
+by `offset[1]` never comes nearer the axis than that; a grid point inside
+that circle is probed from the nearest place on it when that is within
+half a grid spacing, and refused otherwise. A miss leaves the firmware in
+`Alarm:2` and the probing in `error`.
+
+A compensated run is refused with 400 unless the map is complete, its
+focus offset has been set, it spans at most 5 mm top to bottom, and it
+covers every enabled group of the job to within 1 mm. `focus` needs the
+focus axis: each line carries the focus height (map plus offset) at its
+end, and cuts are split to a quarter of the grid spacing, 0.25 to 2 mm.
+`power` leaves the head where it is and raises each cut piece's `S` and
+`M` by `sqrt(1 + (dz / rayleigh)^2)`, `dz` the defocus there, up to
+`s_max`. `auto` is `focus` with a focus axis, else `power`.
+
 A `POST` from a page on another origin is refused with 403, and so is a
 websocket opened by one; only the server's own origin and any
 `--cors-origin` pass. Requests without an `Origin` header (scripts, curl)
@@ -165,4 +217,5 @@ sit next to `type` in one flat object: `{"type": "console", "dir": "rx",
 | `state` | the state snapshot, at 5 Hz idle and 10 Hz while moving |
 | `console` | `{"dir": "rx" \| "tx", "text": "...", "poll": false}` every line either way; `poll` marks the status poll the backend sends several times a second and the report it brings back, which a console should hide by default or it buries everything else |
 | `progress` | the progress object |
+| `heightmap` | what `GET /api/heightmap` returns, whenever the map, the probing or the probe settings change |
 | `message` | `{"level": "info" \| "error", "text": "..."}` |

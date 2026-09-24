@@ -32,6 +32,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `jobs.py` | the job model (board `paths`, or `joints` for a group written in joint space), importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
 | `center.py` | the `spinny-center` test burn built in place as a job, coarse (board paths) or fine (joint space) |
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
+| `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
+| `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
 | `app.py` | FastAPI routes, the `/ws` fan-out, settings, the frontend |
 
 ## Events
@@ -39,7 +41,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `/ws` sends one JSON object per event with the payload flattened next to
 `type`: `{"type": "state", "connected": ..., "machine": ...}`,
 `{"type": "console", "dir": "rx", "text": "ok"}`,
-`{"type": "progress", "state": "running", ...}` and
+`{"type": "progress", "state": "running", ...}`,
+`{"type": "heightmap", "map": ..., "probe": ..., "settings": ...}` and
 `{"type": "message", "level": "info", "text": "..."}`. Console events
 include the status polls and reports.
 
@@ -49,7 +52,8 @@ state is `error`.
 
 ## Files
 
-- `config.json` (ignored): the host tolerance and the last url.
+- `config.json` (ignored): the host tolerance, the last url and the probe settings.
+- `heightmap.json` (ignored): the last probed height map and its focus offset.
 - `jobs/*.json` (ignored): one file per imported job.
 
 ## Architecture
@@ -84,8 +88,19 @@ classDiagram
         build(request, streamer, rate) CenterResult
     }
     class runner {
-        Runner.start(job, link, streamer)
+        Runner.start(job, link, streamer, compensation)
         Runner.hold / resume / stop
+        halt(link) stop at rest
+    }
+    class heightmap {
+        Grid, HeightMap, HeightMapStore
+        Compensation focus / power
+        check_covers(map, job)
+    }
+    class prober {
+        Prober.start(grid, settings, link)
+        Prober.stop / cancel
+        probe_joint(point, offset)
     }
     class spinny_laser_polar {
         subdivide(start, end, joint, kin)
@@ -104,6 +119,13 @@ classDiagram
     app --> runner
     app --> kinematics
     app --> center
+    app --> heightmap
+    app --> prober
+    prober --> link
+    prober --> heightmap
+    prober --> runner
+    runner --> heightmap
+    heightmap --> kinematics
     center --> jobs
     center --> spinny_laser_center
     runner --> link
@@ -119,4 +141,5 @@ classDiagram
 `uv run pytest` runs everything on the host against a fake serial port that
 feeds bytes one at a time. The end-to-end test is marked `e2e` and runs
 only when `SPINNY_VIRTUAL` names a built virtual firmware binary that takes
-`--listen 127.0.0.1:PORT --fast`.
+`--listen 127.0.0.1:PORT --fast`; the probing one also gives it a board
+surface and a probe offset.

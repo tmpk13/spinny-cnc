@@ -17,4 +17,5 @@ web/frontend/dist/
 web/backend/.venv/
 web/backend/jobs/
 web/backend/config.json
+web/backend/heightmap.json
 .claude/

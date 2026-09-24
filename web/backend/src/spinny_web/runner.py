@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .heightmap import Compensation
 from .jobs import Job
 from .kinematics import Streamer, num
 from .link import (
@@ -111,7 +112,7 @@ class Runner:
 
     # --- control ----------------------------------------------------------
 
-    def start(self, job: Job, link: Link | None, streamer: Streamer) -> dict:
+    def start(self, job: Job, link: Link | None, streamer: Streamer, compensation: Compensation | None = None) -> dict:
         with self._lock:
             if self.active:
                 raise RunnerError("a job is already running")
@@ -122,7 +123,7 @@ class Runner:
                 raise RunnerError("the previous run is still stopping")
             self._starting = True
         try:
-            start, stats = self._prepare(job, link, streamer)
+            start, stats = self._prepare(job, link, streamer, compensation)
             assert link is not None
             with self._lock:
                 self.progress = Progress(
@@ -140,7 +141,7 @@ class Runner:
                 self._last_publish = 0.0
                 self._thread = threading.Thread(
                     target=self._run,
-                    args=(job, link, streamer, start, progress),
+                    args=(job, link, streamer, start, progress, compensation),
                     name="runner",
                     daemon=True,
                 )
@@ -150,7 +151,7 @@ class Runner:
         self._emit(force=True)
         return progress.to_dict()
 
-    def _prepare(self, job: Job, link: Link | None, streamer: Streamer):
+    def _prepare(self, job: Job, link: Link | None, streamer: Streamer, compensation: Compensation | None):
         if link is None or not link.is_open:
             raise RunnerError("not connected")
         # The status and the estimate run outside the lock: the reader thread
@@ -171,7 +172,7 @@ class Runner:
                 raise RunnerError(f"could not renumber the table angle: {exc}") from exc
             status = self._idle_status(link)
         start = status.joint
-        stats = streamer.estimate(job, start)
+        stats = streamer.estimate(job, start, compensation)
         # The estimate takes a while on a large job, and the plan is only
         # good from where the machine was when it was made: a typed line in
         # the meantime may have moved the head, or declared it elsewhere.
@@ -259,37 +260,7 @@ class Runner:
         return link
 
     def _halt(self, link: Link) -> tuple[bool, str | None]:
-        """Hold, wait for the machine to come to rest, and reset it.
-
-        Returns whether the reset went out, and a note when the stop was
-        not clean: the machine did not come to rest in time, so the reset
-        may have cost steps, or an alarm is up afterwards. The alarm is
-        left for the operator: it says the position may be off, and only
-        they can check that.
-        """
-        try:
-            link.realtime(REALTIME_HOLD)
-            rested = self._wait_rest(link, HOLD_WAIT)
-            answered = link.reset(timeout=1.0)
-        except LinkError as exc:
-            self._message("error", f"stop: {exc}")
-            return False, str(exc)
-        note = None
-        if not rested:
-            note = "the machine did not come to rest before the reset: the position may be off"
-        try:
-            status = link.status_now(1.0, routine=True)
-        except LinkError:
-            status = None
-        if status is None and not answered:
-            # Neither the banner nor a report came back: the reset byte
-            # went out, but nothing says the machine acted on it.
-            note = "the machine did not answer the reset: check that it has stopped"
-        if status is not None and status.state == "Alarm":
-            note = f"the machine is in {status.raw or status.state}: check the position, then unlock"
-        if note is not None:
-            self._message("error", note)
-        return True, note
+        return halt(link, self._message)
 
     # --- the streaming thread ---------------------------------------------
 
@@ -300,11 +271,12 @@ class Runner:
         streamer: Streamer,
         start: tuple[float, float],
         progress: Progress,
+        compensation: Compensation | None = None,
     ) -> None:
         restarts = link.restarts
         on_ack = functools.partial(self._on_ack, progress)
         try:
-            for piece in streamer.job_pieces(job, start):
+            for piece in streamer.job_pieces(job, start, compensation):
                 if self._abort.is_set():
                     break
                 if link.restarts != restarts:
@@ -449,36 +421,6 @@ class Runner:
             progress.finished = time.monotonic()
         self._emit(force=True)
 
-    def _wait_rest(self, link: Link, timeout: float) -> bool:
-        """Fresh status reports until the machine is held, idle or alarmed,
-        and, when idle, with no line left waiting that could start it.
-
-        Only reports asked for after the hold count: the cached one may
-        predate it and still say Idle for a move that has since started.
-        A hold that went out ahead of a line the machine had not taken up
-        yet found nothing to hold, and that line then starts the motion;
-        seeing the machine move, the hold is asked for again. A held or
-        alarmed machine takes up no line, so lines waiting behind those
-        states are at rest too, and the reset flushes them.
-        """
-        deadline = time.monotonic() + timeout
-        nudged = time.monotonic()
-        while time.monotonic() < deadline:
-            try:
-                status = link.status_now(0.3, routine=True)
-            except LinkClosed:
-                return False
-            except LinkError:
-                status = None
-            if status is not None:
-                if status.state in AT_REST and not (status.state == "Idle" and _lines_waiting(link, status)):
-                    return True
-                if status.state in ("Run", "Jog") and time.monotonic() - nudged > 0.1:
-                    link.realtime(REALTIME_HOLD)
-                    nudged = time.monotonic()
-            time.sleep(0.02)
-        return False
-
     def _emit(self, force: bool = False) -> None:
         now = time.monotonic()
         with self._lock:
@@ -494,3 +436,68 @@ def _lines_waiting(link: Link, status) -> bool:
     says Idle with one of those still queued is not a machine at rest."""
     banner = link.banner
     return banner is not None and status.lines < banner.lines
+
+
+def halt(link: Link, message: Callable[[str, str], None]) -> tuple[bool, str | None]:
+    """Hold, wait for the machine to come to rest, and reset it.
+
+    Returns whether the reset went out, and a note when the stop was
+    not clean: the machine did not come to rest in time, so the reset
+    may have cost steps, or an alarm is up afterwards. The alarm is
+    left for the operator: it says the position may be off, and only
+    they can check that.
+    """
+    try:
+        link.realtime(REALTIME_HOLD)
+        rested = wait_rest(link, HOLD_WAIT)
+        answered = link.reset(timeout=1.0)
+    except LinkError as exc:
+        message("error", f"stop: {exc}")
+        return False, str(exc)
+    note = None
+    if not rested:
+        note = "the machine did not come to rest before the reset: the position may be off"
+    try:
+        status = link.status_now(1.0, routine=True)
+    except LinkError:
+        status = None
+    if status is None and not answered:
+        # Neither the banner nor a report came back: the reset byte
+        # went out, but nothing says the machine acted on it.
+        note = "the machine did not answer the reset: check that it has stopped"
+    if status is not None and status.state == "Alarm":
+        note = f"the machine is in {status.raw or status.state}: check the position, then unlock"
+    if note is not None:
+        message("error", note)
+    return True, note
+
+
+def wait_rest(link: Link, timeout: float) -> bool:
+    """Fresh status reports until the machine is held, idle or alarmed,
+    and, when idle, with no line left waiting that could start it.
+
+    Only reports asked for after the hold count: the cached one may
+    predate it and still say Idle for a move that has since started.
+    A hold that went out ahead of a line the machine had not taken up
+    yet found nothing to hold, and that line then starts the motion;
+    seeing the machine move, the hold is asked for again. A held or
+    alarmed machine takes up no line, so lines waiting behind those
+    states are at rest too, and the reset flushes them.
+    """
+    deadline = time.monotonic() + timeout
+    nudged = time.monotonic()
+    while time.monotonic() < deadline:
+        try:
+            status = link.status_now(0.3, routine=True)
+        except LinkClosed:
+            return False
+        except LinkError:
+            status = None
+        if status is not None:
+            if status.state in AT_REST and not (status.state == "Idle" and _lines_waiting(link, status)):
+                return True
+            if status.state in ("Run", "Jog") and time.monotonic() - nudged > 0.1:
+                link.realtime(REALTIME_HOLD)
+                nudged = time.monotonic()
+        time.sleep(0.02)
+    return False

@@ -189,3 +189,99 @@ def test_a_stop_from_motion_holds_first_and_resets_at_rest(firmware):
         assert again.state == "Idle" and again.joint == status.joint, again.raw
     finally:
         link.close()
+
+
+def board_top(x: float, y: float) -> float:
+    """The simulated board: 1.5 mm under the head's zero, tilted."""
+    return -1.5 + 0.01 * x - 0.02 * y
+
+
+@pytest.fixture
+def focus_firmware(tmp_path):
+    if not BINARY or not Path(BINARY).exists():
+        pytest.skip("SPINNY_VIRTUAL does not name a virtual firmware binary")
+    port = free_port()
+    trace = tmp_path / "trace.json"
+    process = subprocess.Popen(
+        [
+            BINARY, "--listen", f"127.0.0.1:{port}", "--fast", "--quiet",
+            "--settings", "h_axis=1",
+            "--surface", "-1.5,0.01,-0.02",
+            "--probe-offset", "2,1",
+            "--trace", str(trace),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not wait_port(port):
+            pytest.fail("the virtual firmware did not open its port")
+        yield port, trace
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def test_probing_then_a_focus_run_follows_the_board_on_the_virtual_firmware(focus_firmware, tmp_path):
+    import json
+
+    from spinny_web.heightmap import Compensation, Grid, HeightMapStore
+    from spinny_web.prober import DONE as PROBED
+    from spinny_web.prober import Prober, ProbeSettings
+
+    port, trace = focus_firmware
+    link = Link(f"socket://127.0.0.1:{port}")
+    link.open()
+    try:
+        store = HeightMapStore(tmp_path / "heightmap.json")
+        prober = Prober(store)
+        settings = ProbeSettings(depth=4, feed=240, slow=30, backoff=0.3, offset=(2.0, 1.0))
+        streamer = Streamer()
+        prober.start(Grid(x0=-8, y0=-8, x1=8, y1=8, nx=3, ny=3), settings, link, streamer)
+        deadline = time.monotonic() + 120.0
+        while prober.active and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert prober.progress.state == PROBED, prober.snapshot()
+        heightmap = store.get()
+        # The tip, 2 mm out and 1 mm across from the beam, touched the board
+        # at every point within a step of the focus axis. It never comes
+        # within 1 mm of the axis, so the middle point was probed 1 mm out.
+        for iy, y in enumerate(heightmap.grid.ys):
+            for ix, x in enumerate(heightmap.grid.xs):
+                at = (x, y) if (x, y) != (0.0, 0.0) else (1.0, 0.0)
+                assert heightmap.heights[iy][ix] == pytest.approx(board_top(*at), abs=0.002)
+        # Probed as the board is, not as it would have been at the axis.
+        heightmap.heights[1][1] = board_top(0.0, 0.0)
+        assert link.status_now(1.0).h == pytest.approx(0.0, abs=1e-3), "back at the travel height"
+
+        heightmap.focus_offset = 1.0
+        heightmap.focus_set = True
+        compensation = Compensation(heightmap=heightmap, mode="focus")
+        square = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0), (-5.0, -5.0)]
+        job = Job(id="focus", name="square", groups=[Group(label="one", power=500, speed=2000, paths=[square])])
+        runner = Runner()
+        runner.start(job, link, streamer, compensation)
+        deadline = time.monotonic() + 120.0
+        while runner.progress.state == "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert runner.progress.state == DONE, runner.snapshot()
+    finally:
+        link.close()
+    # The trace is written once the client has gone.
+    deadline = time.monotonic() + 10.0
+    marks = []
+    while time.monotonic() < deadline:
+        try:
+            marks = [m for m in json.loads(trace.read_text())["marks"] if m["duty"] > 0]
+        except (OSError, ValueError):
+            marks = []
+        if marks:
+            break
+        time.sleep(0.1)
+    assert len(marks) > 50
+    # Along the whole burn the beam's focus sat 1 mm above the board under it.
+    worst = max(abs(m["h"] - (board_top(m["x"], m["y"]) + 1.0)) for m in marks)
+    assert worst < 0.01, worst

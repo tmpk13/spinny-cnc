@@ -67,7 +67,7 @@ def test_connect_disconnect_and_last_url(client, fake, tmp_path):
     assert state["connected"] and state["url"] == "socket://127.0.0.1:9999"
     assert state["firmware"] == {"version": "0.1.0", "lines": 16, "blocks": 32}
     assert state["machine"]["state"] == "Idle"
-    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0}
+    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0, "h": None}
     assert state["machine"]["board"] == {"x": 0.0, "y": 0.0}
     assert state["machine"]["queue"] == {"planner": 32, "lines": 16}
     ports = client.get("/api/ports").json()["ports"]
@@ -124,7 +124,7 @@ def test_jogs_gotos_and_position(client, fake):
     assert client.post("/api/goto", json={"kind": "board"}).status_code == 400
     state = client.post("/api/position", json={"r": 0, "a": 0}).json()
     assert "set R0 A0" in fake.received_lines
-    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0}
+    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 0.0, "h": None}
     assert client.post("/api/position", json={}).status_code == 400
     assert client.post("/api/jog/cancel").status_code == 200
     assert 0x85 in fake.realtime_bytes
@@ -140,7 +140,7 @@ def test_the_cross_slide_moves_on_its_own(client, fake):
     assert client.post("/api/goto", json={"kind": "joint", "z": 1.25}).json() == {"lines": ["jogto Z1.25"]}
     assert fake.z == pytest.approx(1.25)
     state = client.post("/api/realtime", json={"action": "status"}).json()
-    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 1.25}
+    assert state["machine"]["joint"] == {"r": 0.0, "a": 0.0, "z": 1.25, "h": None}
     # A body that mixes the axes is refused before anything goes out.
     sent = len(fake.received_lines)
     assert client.post("/api/jog", json={"kind": "joint", "dz": 0.5, "dr": 1.0}).status_code == 400

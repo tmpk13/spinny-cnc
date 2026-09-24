@@ -8,11 +8,13 @@ motion lines move a joint position and keep the state at Run for a moment.
 
 from __future__ import annotations
 
+import math
 import queue
 import re
 import threading
 import time
 from collections import deque
+from typing import Callable
 
 import serial
 
@@ -51,6 +53,15 @@ DEFAULT_SETTINGS = {
     "tmc_z_ma": 800,
     "tmc_z_micro": 16,
     "tmc_stealth": 1,
+    "h_axis": 0,
+    "h_steps": 6400,
+    "h_rate": 600,
+    "h_accel": 50,
+    "h_jerk": 1,
+    "jog_h": 120,
+    "probe_invert": 0,
+    "tmc_h_ma": 600,
+    "tmc_h_micro": 256,
 }
 
 
@@ -92,6 +103,12 @@ class FakeSerial:
         self.joint = [0.0, 0.0]
         # The cross slide, which moves on its own and never with R or A.
         self.z = 0.0
+        # The focus axis, taken only with `h_axis` set, and the board under
+        # the probe: a function of the board point under the tip giving the
+        # height at which the probe touches, or None for no board.
+        self.h = 0.0
+        self.surface: Callable[[float, float], float | None] | None = None
+        self.probe_offset = (0.0, 0.0)
         self.mode = "dyn"
         self.enabled = False
         self.laser = 0
@@ -200,11 +217,27 @@ class FakeSerial:
         moving = time.monotonic() < self.busy_until and not self.hold
         rate = 300 if moving else 0
         laser = self.laser if moving else 0
+        focus = f"|H:{self.h:.3f}|P:{int(self.touching())}" if self.settings["h_axis"] else ""
         return (
             f"<{self.state()}|J:{r:.3f},{a:.4f}|V:{rate}|L:{laser}"
             f"|Q:{self.blocks},{self.credits - waiting}|M:{self.mode}|E:{int(self.enabled)}"
-            f"|Z:{self.z:.3f}>"
+            f"|Z:{self.z:.3f}{focus}>"
         )
+
+    def top(self) -> float | None:
+        """Height at which the probe touches the board under its tip."""
+        if self.surface is None:
+            return None
+        r, a = self.joint
+        theta = math.radians(a)
+        along, across = self.probe_offset
+        x = (r + along) * math.cos(theta) - across * math.sin(theta)
+        y = (r + along) * math.sin(theta) + across * math.cos(theta)
+        return self.surface(x, y)
+
+    def touching(self) -> bool:
+        top = self.top()
+        return top is not None and self.h <= top + 1e-9
 
     def banner(self) -> str:
         return f"[spinny v{self.version} lines:{self.credits} blocks:{self.blocks}]"
@@ -253,12 +286,19 @@ class FakeSerial:
             return ["go cut jog jogto dwell mode laser set enable disable unlock", "ok"]
         if keyword.startswith("$"):
             return self._setting(text.strip())
+        if keyword == "probe":
+            return self._probe(values)
         if keyword in ("go", "cut", "jog", "jogto"):
             if self.alarm is not None:
                 return ["error:5 not now"]
             r = values.get("R")
             a = values.get("A")
             z = values.get("Z")
+            h = values.get("H")
+            if h is not None:
+                if not self.settings["h_axis"] or z is not None:
+                    return ["error:2 bad word"]
+                self.h = self.h + h if keyword == "jog" else h
             if z is not None:
                 if keyword not in ("jog", "jogto") or r is not None or a is not None:
                     return ["error:2 bad word"]
@@ -303,6 +343,10 @@ class FakeSerial:
         if keyword == "set":
             if "Z" in values and ("R" in values or "A" in values):
                 return ["error:2 bad word"]
+            if "H" in values:
+                if not self.settings["h_axis"]:
+                    return ["error:2 bad word"]
+                self.h = values["H"]
             if "R" in values:
                 self.joint[0] = values["R"]
             if "A" in values:
@@ -317,6 +361,29 @@ class FakeSerial:
             self.alarm = None
             return ["ok"]
         return ["error:1 unknown command"]
+
+    def _probe(self, values: dict) -> list[str]:
+        """The focus axis down (or up) by at most H until the board is met,
+        answered at once with where."""
+        if not self.settings["h_axis"]:
+            return ["error:2 bad word"]
+        if self.alarm is not None:
+            return ["error:5 not now"]
+        distance = values.get("H")
+        if distance is None:
+            return ["error:3 missing word"]
+        if self.touching():
+            return ["error:10 probe active"]
+        target = self.h + distance
+        top = self.top()
+        self.enabled = True
+        self.busy_until = max(self.busy_until, time.monotonic()) + self.move_time
+        if top is not None and target <= top:
+            self.h = top
+            return [f"[PRB:{top:.4f}:1]", "ok"]
+        self.h = target
+        self.alarm = 2
+        return [f"[PRB:{target:.4f}:0]", "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"]
 
     def _setting(self, text: str) -> list[str]:
         body = text[1:]

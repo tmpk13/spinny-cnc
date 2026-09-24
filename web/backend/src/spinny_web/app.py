@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from . import __version__, center
+from .heightmap import AUTO, FOCUS, MODES, OFF, POWER, Compensation, Grid, HeightMap, HeightMapStore, check_covers
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
 from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, check_feed, num
 from .link import (
@@ -41,6 +42,7 @@ from .link import (
     REALTIME_RESUME,
     REALTIME_STATUS,
 )
+from .prober import Prober, ProberError, ProbeSettings
 from .runner import HOLD, RUNNING, Runner, RunnerError
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -70,7 +72,7 @@ SETTINGS_SCHEMA = [
     {"name": "jog_z", "unit": "mm/min", "help": "jog rate without F"},
     {"name": "jog_r", "unit": "mm/min", "help": "jog rate without F"},
     {"name": "jog_a", "unit": "deg/min", "help": "jog rate without F"},
-    {"name": "dir_invert", "unit": "mask", "help": "bit 0 radius, bit 1 table, bit 2 cross slide"},
+    {"name": "dir_invert", "unit": "mask", "help": "bit 0 radius, bit 1 table, bit 2 cross slide, bit 3 focus axis"},
     {"name": "en_invert", "unit": "0/1", "help": "1 = enable pin active high"},
     {"name": "idle_ms", "unit": "ms", "help": "disable motors after idle, 0 = never"},
     {"name": "step_us", "unit": "us", "help": "step pulse width"},
@@ -87,6 +89,15 @@ SETTINGS_SCHEMA = [
     {"name": "tmc_z_ma", "unit": "mA", "help": "cross slide run current"},
     {"name": "tmc_z_micro", "unit": "", "help": "microsteps"},
     {"name": "tmc_stealth", "unit": "0/1", "help": "stealthChop, else spreadCycle"},
+    {"name": "h_axis", "unit": "0/1", "help": "1 = a focus axis is fitted, on the E socket"},
+    {"name": "h_steps", "unit": "steps/mm", "help": "focus axis motor"},
+    {"name": "h_rate", "unit": "mm/min", "help": "max focus axis rate"},
+    {"name": "h_accel", "unit": "mm/s^2", "help": "focus axis acceleration"},
+    {"name": "h_jerk", "unit": "mm/s", "help": "allowed speed change at a corner"},
+    {"name": "jog_h", "unit": "mm/min", "help": "jog and probe rate without F"},
+    {"name": "probe_invert", "unit": "0/1", "help": "1 = probe input active high"},
+    {"name": "tmc_h_ma", "unit": "mA", "help": "focus axis run current"},
+    {"name": "tmc_h_micro", "unit": "", "help": "microsteps"},
 ]
 
 NO_FRONTEND = """<!doctype html>
@@ -118,6 +129,8 @@ class JogBody(Finite):
     da: float | None = None
     # The cross slide moves on its own, so dz comes without dr or da.
     dz: float | None = None
+    # The focus axis, which may move with the joints.
+    dh: float | None = None
     dx: float | None = None
     dy: float | None = None
     feed: float | None = None
@@ -128,6 +141,7 @@ class GotoBody(Finite):
     r: float | None = None
     a: float | None = None
     z: float | None = None
+    h: float | None = None
     x: float | None = None
     y: float | None = None
     feed: float | None = None
@@ -137,6 +151,7 @@ class PositionBody(Finite):
     r: float | None = None
     a: float | None = None
     z: float | None = None
+    h: float | None = None
 
 
 class MotorsBody(BaseModel):
@@ -163,6 +178,27 @@ class ModeBody(BaseModel):
 class SettingsBody(BaseModel):
     values: dict[str, Any] | None = None
     host: dict[str, Any] | None = None
+
+
+class RunBody(BaseModel):
+    # How the run follows the board's height: off, auto (the focus axis
+    # when one is fitted, else power), focus or power.
+    compensate: str = OFF
+
+
+class FocusBody(Finite):
+    # Focus height minus contact height; left out, it is taken from where
+    # the head is now, over a probed point with the beam in focus.
+    offset: float | None = None
+
+
+class ProbeConfigBody(Finite):
+    depth: float | None = None
+    feed: float | None = None
+    slow: float | None = None
+    backoff: float | None = None
+    offset: tuple[float, float] | None = None
+    rayleigh: float | None = None
 
 
 # --- fan-out ------------------------------------------------------------------
@@ -215,16 +251,19 @@ class Backend:
         link_factory: Callable[[str], Link] | None = None,
         jobs_dir: Path | None = None,
         config_path: Path | None = None,
+        heightmap_path: Path | None = None,
     ) -> None:
         self.root = root
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
+        self.heightmaps = HeightMapStore(heightmap_path or self.config_path.parent / "heightmap.json")
         self.link_factory = link_factory or (lambda url: Link(url))
         self.link: Link | None = None
         self.url: str | None = self.config.get("last_url")
         self.broadcast = Broadcast()
         self.runner = Runner(publish=self._publish_progress, message=self.publish_message)
+        self.prober = Prober(self.heightmaps, publish=self._publish_probe, message=self.publish_message)
         self.rates = Rates()
         self._settings_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
@@ -317,6 +356,11 @@ class Backend:
                 self.runner.stop()
             except RunnerError:
                 pass
+        if self.prober.active:
+            try:
+                self.prober.stop()
+            except ProberError:
+                pass
         link.close("disconnected")
         self.link = None
         self._jog_target = None
@@ -337,6 +381,8 @@ class Backend:
         link = self.require_link()
         if self.runner.active:
             raise HTTPException(status_code=409, detail="a job is running")
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
         return link
 
     def move_start(self, link: Link) -> tuple[tuple[float, float], bool]:
@@ -399,7 +445,8 @@ class Backend:
                 machine = {
                     "state": status.state,
                     "alarm": status.alarm,
-                    "joint": {"r": status.r, "a": status.a, "z": status.z},
+                    "joint": {"r": status.r, "a": status.a, "z": status.z, "h": status.h},
+                    "probe": status.probe,
                     "board": {"x": round(x, 4), "y": round(y, 4)},
                     "rate": status.rate,
                     "laser": status.laser,
@@ -435,6 +482,12 @@ class Backend:
     def _publish_progress(self, progress: dict) -> None:
         self.broadcast.publish_threadsafe({"type": "progress", **progress})
 
+    def _publish_probe(self, progress: dict | None, heightmap: dict | None) -> None:
+        self.publish_heightmap()
+
+    def publish_heightmap(self) -> None:
+        self.broadcast.publish_threadsafe({"type": "heightmap", **self.heightmap_state()})
+
     def publish_message(self, level: str, text: str) -> None:
         self.broadcast.publish_threadsafe({"type": "message", "level": level, "text": text})
 
@@ -456,10 +509,10 @@ class Backend:
         streamer = self.streamer()
         if body.kind == "joint":
             if body.dz is not None:
-                if body.dr is not None or body.da is not None:
-                    raise ValueError("the cross slide moves on its own: dz cannot be sent with dr or da")
+                if body.dr is not None or body.da is not None or body.dh is not None:
+                    raise ValueError("the cross slide moves on its own: dz cannot be sent with dr, da or dh")
                 return self._slide_move(link, streamer.slide_jog(body.dz, body.feed))
-            lines = [streamer.joint_jog(body.dr, body.da, body.feed)]
+            lines = [streamer.joint_jog(body.dr, body.da, body.feed, body.dh)]
             start, known = self.move_start(link)
             # A relative jog's end is known when its start is.
             end = (start[0] + (body.dr or 0.0), start[1] + (body.da or 0.0)) if known else None
@@ -485,10 +538,10 @@ class Backend:
         streamer = self.streamer()
         if body.kind == "joint":
             if body.z is not None:
-                if body.r is not None or body.a is not None:
-                    raise ValueError("the cross slide moves on its own: z cannot be sent with r or a")
+                if body.r is not None or body.a is not None or body.h is not None:
+                    raise ValueError("the cross slide moves on its own: z cannot be sent with r, a or h")
                 return self._slide_move(link, streamer.slide_goto(body.z, body.feed))
-            lines = [streamer.joint_goto(body.r, body.a, body.feed)]
+            lines = [streamer.joint_goto(body.r, body.a, body.feed, body.h)]
             start, known = self.move_start(link)
             # An axis left out stays where the queued jog ends, which is
             # only known when the start is.
@@ -531,8 +584,10 @@ class Backend:
             words.append(f"R{num(body.r)}")
         if body.a is not None:
             words.append(f"A{num(body.a, 4)}")
+        if body.h is not None:
+            words.append(f"H{num(body.h, 4)}")
         if not words and body.z is None:
-            raise ValueError("give r, a and/or z")
+            raise ValueError("give r, a, h and/or z")
         self._jog_target = None
         if words:
             link.request_ok("set " + " ".join(words))
@@ -564,6 +619,7 @@ class Backend:
             # next lines into a machine that is Idle again and would run
             # them.
             self.runner.abort("reset by the operator")
+            self.prober.cancel("reset by the operator")
             link.reset(timeout=1.0)
         elif action == "cancel":
             self._jog_target = None
@@ -761,11 +817,118 @@ class Backend:
         self.store.save(job)
         return job
 
-    def run_job(self, job_id: str) -> dict:
+    def run_job(self, job_id: str, compensate: str = OFF) -> dict:
         job = self.store.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="no such job")
-        return self.runner.start(job, self.link, self.streamer())
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
+        compensation = self.compensation(compensate, job)
+        return self.runner.start(job, self.link, self.streamer(), compensation)
+
+    # --- the height map ---------------------------------------------------------------
+
+    def probe_settings(self) -> ProbeSettings:
+        try:
+            settings = ProbeSettings.model_validate(self.config.get("probe", {}))
+            settings.check()
+            return settings
+        except ValueError:
+            return ProbeSettings()
+
+    def heightmap_state(self) -> dict:
+        heightmap = self.heightmaps.get()
+        return {
+            "map": heightmap.model_dump() if heightmap is not None else None,
+            "probe": self.prober.snapshot(),
+            "settings": self.probe_settings().model_dump(),
+        }
+
+    def put_heightmap(self, heightmap: HeightMap) -> dict:
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
+        self.heightmaps.put(heightmap)
+        self.publish_heightmap()
+        return self.heightmap_state()
+
+    def clear_heightmap(self) -> dict:
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
+        self.heightmaps.put(None)
+        self.publish_heightmap()
+        return self.heightmap_state()
+
+    def update_probe_settings(self, body: ProbeConfigBody) -> dict:
+        patch = {key: value for key, value in body.model_dump().items() if value is not None}
+        settings = ProbeSettings.model_validate({**self.probe_settings().model_dump(), **patch})
+        settings.check()
+        self.config["probe"] = settings.model_dump()
+        self._save_config()
+        self.publish_heightmap()
+        return self.heightmap_state()
+
+    def start_probe(self, grid: Grid) -> dict:
+        link = self._movable()
+        with self._move_lock:
+            self._jog_target = None
+            self.prober.start(grid, self.probe_settings(), link, self.streamer())
+        return self.heightmap_state()
+
+    def stop_probe(self) -> dict:
+        self.prober.stop()
+        return self.heightmap_state()
+
+    def focus(self, offset: float | None) -> dict:
+        """Sets the focus offset: given, or from the head's height over the
+        board point under the beam, which the operator has just focused."""
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
+        heightmap = self.heightmaps.get()
+        if heightmap is None:
+            raise ValueError("there is no height map: probe the board first")
+        if offset is None:
+            status = self.require_link().status_now(1.0, routine=True)
+            if status.state != "Idle":
+                raise ValueError(f"the machine is {status.state}: focus with the head at rest")
+            # Without a focus axis the head's height is fixed, and zero is
+            # as good a name for it as any: the map only needs the same one.
+            here = status.h if status.h is not None else 0.0
+            x, y = board_of(status.joint)
+            offset = here - heightmap.height_at(x, y)
+        heightmap.focus_offset = round(offset, 4)
+        heightmap.focus_set = True
+        self.heightmaps.put(heightmap)
+        self.publish_heightmap()
+        return self.heightmap_state()
+
+    def compensation(self, mode: str, job: Job) -> Compensation | None:
+        """What a run of `job` follows the board with, checked; None for off."""
+        if mode not in MODES:
+            raise ValueError(f"compensate must be one of {', '.join(MODES)}")
+        if mode == OFF:
+            return None
+        heightmap = self.heightmaps.get()
+        if heightmap is None:
+            raise ValueError("there is no height map: probe the board first")
+        heightmap.usable()
+        check_covers(heightmap, job)
+        # Read afresh: a focus axis taken out a moment ago must not be
+        # driven from a cached answer.
+        values = self.read_settings(force=True)["values"]
+        has_axis = bool(values.get("h_axis"))
+        if mode == AUTO:
+            mode = FOCUS if has_axis else POWER
+        if mode == FOCUS and not has_axis:
+            raise ValueError("the focus axis is not fitted ($h_axis=0): compensate by power instead")
+        status = self.require_link().status_now(1.0, routine=True)
+        s_max = values.get("s_max", 1000.0)
+        return Compensation(
+            heightmap=heightmap,
+            mode=mode,
+            head_h=status.h if status.h is not None else 0.0,
+            rayleigh=self.probe_settings().rayleigh,
+            s_max=float(s_max) if isinstance(s_max, (int, float)) and s_max > 0 else 1000.0,
+        )
 
 
 def _number(text: str):
@@ -925,7 +1088,7 @@ def create_app(
             return call()
         except CommandError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except RunnerError as exc:
+        except (RunnerError, ProberError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (JobImportError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1083,8 +1246,9 @@ def create_app(
         return {"deleted": job_id}
 
     @app.post("/api/jobs/{job_id}/run")
-    def run_job(job_id: str):
-        return guarded(lambda: backend.run_job(job_id))
+    def run_job(job_id: str, body: RunBody | None = None):
+        compensate = body.compensate if body is not None else OFF
+        return guarded(lambda: backend.run_job(job_id, compensate))
 
     @app.post("/api/run/hold")
     def run_hold():
@@ -1102,6 +1266,36 @@ def create_app(
     def run_progress():
         # Null until a job has run, like the snapshot's `run`.
         return backend.runner.snapshot()
+
+    # --- the height map ---
+
+    @app.get("/api/heightmap")
+    def heightmap():
+        return backend.heightmap_state()
+
+    @app.put("/api/heightmap")
+    def put_heightmap(body: HeightMap):
+        return guarded(lambda: backend.put_heightmap(body))
+
+    @app.delete("/api/heightmap")
+    def delete_heightmap():
+        return guarded(backend.clear_heightmap)
+
+    @app.put("/api/heightmap/settings")
+    def put_probe_settings(body: ProbeConfigBody):
+        return guarded(lambda: backend.update_probe_settings(body))
+
+    @app.post("/api/heightmap/probe")
+    def start_probe(body: Grid):
+        return guarded(lambda: backend.start_probe(body))
+
+    @app.post("/api/heightmap/stop")
+    def stop_probe():
+        return guarded(backend.stop_probe)
+
+    @app.post("/api/heightmap/focus")
+    def focus(body: FocusBody):
+        return guarded(lambda: backend.focus(body.offset))
 
     # --- events ---
 

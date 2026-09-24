@@ -82,6 +82,10 @@ class Status:
     # Cross slide position in mm. A firmware that does not report the field
     # leaves it at zero, which is what a machine without the axis reads as.
     z: float = 0.0
+    # Focus axis position in mm and the probe input, reported only by a
+    # machine with a focus axis fitted; None without one.
+    h: float | None = None
+    probe: bool | None = None
     rate: float = 0.0
     laser: int = 0
     planner: int = 0
@@ -144,7 +148,8 @@ class Pending:
 
 
 def parse_status(text: str) -> Status | None:
-    """`<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:0.000>` to a Status."""
+    """`<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:0.000>` to a
+    Status; a machine with a focus axis adds `|H:-1.250|P:0`."""
     if len(text) < 2 or text[0] != "<" or text[-1] != ">":
         return None
     parts = text[1:-1].split("|")
@@ -165,6 +170,10 @@ def parse_status(text: str) -> Status | None:
                 status.a = float(a)
             elif key == "Z":
                 status.z = float(value)
+            elif key == "H":
+                status.h = float(value)
+            elif key == "P":
+                status.probe = value.strip() not in ("0", "")
             elif key == "V":
                 status.rate = float(value)
             elif key == "L":
@@ -180,6 +189,19 @@ def parse_status(text: str) -> Status | None:
     except ValueError:
         return None
     return status
+
+
+_PROBE = re.compile(r"^\[PRB:(?P<h>-?\d+(?:\.\d+)?):(?P<contact>[01])\]$")
+
+
+def parse_probe(lines: list[str]) -> tuple[float, bool] | None:
+    """The `[PRB:<h>:<0|1>]` among a probe's answer lines: where the focus
+    axis was at contact, or where it stopped without one."""
+    for text in lines:
+        match = _PROBE.match(text.strip())
+        if match is not None:
+            return float(match.group("h")), match.group("contact") == "1"
+    return None
 
 
 def parse_banner(text: str) -> Banner | None:
