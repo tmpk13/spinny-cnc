@@ -272,13 +272,17 @@ class Streamer:
             power = float(group.power)
             # `M` is not modal, so a group without a floor leaves it off.
             floor = f" M{num(min(float(group.min_power), power))}" if group.min_power > 0 else ""
+            # Each pass is the whole group again, from wherever the last
+            # one left the head: a closed loop starts where it ended, an
+            # open path is gone back to.
+            passes = max(1, int(group.passes))
             if group.joints:
                 # Joint-space paths go out as they are: each pair of points
                 # is one move, and a negative radius is the far side of the
                 # axis. Only whole turns are added, so the table does not
                 # swing the long way round to a start that is the same
                 # place a turn away.
-                for poly in group.joints:
+                for poly in group.joints * passes:
                     joints = turned_toward([(float(r), float(a)) for r, a in poly], joint[1])
                     if len(joints) < 2:
                         continue
@@ -307,7 +311,7 @@ class Streamer:
                         )
                         joint = target
                 continue
-            for path in group.paths:
+            for path in group.paths * passes:
                 points = [tuple(p) for p in path]
                 if len(points) < 2:
                     continue

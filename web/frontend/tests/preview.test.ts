@@ -9,7 +9,7 @@ const job: Job = {
     source: "svg",
     spot: 0.1,
     offset: { x: 0, y: 0 },
-    groups: [{ label: "g", power: 1, min_power: 0, speed: 1, enabled: true, paths: [[[3, 4], [-6, 8]]] }],
+    groups: [{ label: "g", power: 1, min_power: 0, speed: 1, passes: 1, enabled: true, paths: [[[3, 4], [-6, 8]]] }],
     outline: [],
     copper: [[[1, 1], [2, 2]]],
     stats: { length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 },

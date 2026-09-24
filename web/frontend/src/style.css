@@ -693,7 +693,19 @@ table.groups td, table.settings td {
     vertical-align: middle;
 }
 
-table.groups tr.disabled td:first-child {
+/* A group is a name line over its fields line, one border above the pair. */
+table.groups tr.group-name th {
+    color: var(--text);
+    font-weight: 500;
+    border-top: thin solid var(--border);
+    padding-bottom: 0;
+}
+
+table.groups tr.group-fields td {
+    border-top: none;
+}
+
+table.groups tbody.disabled tr.group-name th {
     color: var(--muted);
 }
 
@@ -702,8 +714,8 @@ table.groups input[type="checkbox"] {
     height: 1.5rem;
 }
 
-/* The group numbers shrink with a narrow column so the group's name keeps
-   some room; without spin buttons four digits still fit at the least. */
+/* The group numbers shrink with a narrow panel; without spin buttons four
+   digits still fit at the least. */
 table.groups input[type="number"] {
     width: 100%;
     min-width: 3rem;

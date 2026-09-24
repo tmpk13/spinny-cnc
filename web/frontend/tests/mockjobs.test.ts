@@ -193,8 +193,8 @@ describe("placement and stats", () => {
             }
             return path;
         };
-        const near: Group[] = [{ label: "near", power: 500, min_power: 0, speed: 400, enabled: true, paths: [circle(10)] }];
-        const far: Group[] = [{ label: "far", power: 500, min_power: 0, speed: 400, enabled: true, paths: [circle(30)] }];
+        const near: Group[] = [{ label: "near", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [circle(10)] }];
+        const far: Group[] = [{ label: "far", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [circle(30)] }];
         const nearStats = computeStats(near, limits);
         const farStats = computeStats(far, limits);
         expect(nearStats.length_mm).toBeCloseTo(2 * Math.PI * 10, 0);
@@ -206,7 +206,7 @@ describe("placement and stats", () => {
     });
 
     test("disabled groups do not count", () => {
-        const groups: Group[] = [{ label: "off", power: 1, min_power: 0, speed: 100, enabled: false, paths: [[[5, 5], [6, 6]]] }];
+        const groups: Group[] = [{ label: "off", power: 1, min_power: 0, speed: 100, passes: 1, enabled: false, paths: [[[5, 5], [6, 6]]] }];
         expect(computeStats(groups, limits)).toEqual({ length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 });
     });
 
@@ -217,13 +217,13 @@ describe("placement and stats", () => {
         expect(closestApproach([3, 4], [3, 4])).toBeCloseTo(5, 9);
         expect(pathMinRadius([[3, 4]])).toBeCloseTo(5, 9);
         expect(pathMinRadius([[-18, 2], [18, 2], [18, 12]])).toBeCloseTo(2, 9);
-        const groups: Group[] = [{ label: "edge", power: 500, min_power: 0, speed: 400, enabled: true, paths: [[[-18, 2], [18, 2]]] }];
+        const groups: Group[] = [{ label: "edge", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [[[-18, 2], [18, 2]]] }];
         expect(computeStats(groups, limits).min_radius).toBeCloseTo(2, 6);
         expect(computeStats(groups, limits).max_radius).toBeCloseTo(Math.hypot(18, 2), 9);
         const demo = placeJob(demoCoupon(), "center", { x: 0, y: 14 });
-        const enabled = demo.groups.map((g) => ({ label: g.label, power: 500, min_power: 0, speed: 400, enabled: true, paths: g.paths }));
+        const enabled = demo.groups.map((g) => ({ label: g.label, power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: g.paths }));
         expect(computeStats(enabled, limits).min_radius).toBeCloseTo(2, 6);
-        const crossing: Group[] = [{ label: "x", power: 500, min_power: 0, speed: 400, enabled: true, paths: [[[-5, 0], [5, 0]]] }];
+        const crossing: Group[] = [{ label: "x", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [[[-5, 0], [5, 0]]] }];
         expect(computeStats(crossing, limits).min_radius).toBe(0);
     });
 
@@ -241,7 +241,7 @@ describe("placement and stats", () => {
         expect(turn.length).toBe(91);
         expect(turn[90]![0]).toBeCloseTo(0, 9);
         expect(turn[90]![1]).toBeCloseTo(10, 9);
-        const group: Group = { label: "rail", power: 200, min_power: 0, speed: 300, enabled: true, paths: [], joints: [[[5, 0], [-5, 0]], [[-5, 0], [-5, 90]]] };
+        const group: Group = { label: "rail", power: 200, min_power: 0, speed: 300, passes: 1, enabled: true, paths: [], joints: [[[5, 0], [-5, 0]], [[-5, 0], [-5, 90]]] };
         // The start is taken a whole number of turns toward where the head is.
         const moves = groupMoves(group, { r: 0, a: 710 }, 0.005);
         expect(moves).toEqual([
@@ -256,6 +256,34 @@ describe("placement and stats", () => {
         expect(stats.length_mm).toBeCloseTo(10 + 5 * Math.PI / 2, 6);
         // A rapid already at its target and a repeated point send nothing.
         expect(groupMoves({ ...group, joints: [[[0, 0], [0, 0], [1, 0]]] }, { r: 0, a: 0 }, 0.005)).toEqual([{ kind: "cut", target: { r: 1, a: 0 } }]);
+    });
+
+    test("a group with passes runs whole again from where the last pass ended", () => {
+        const rail: Group = { label: "rail", power: 200, min_power: 0, speed: 300, passes: 2, enabled: true, paths: [], joints: [[[5, 0], [5, 90]]] };
+        // Each pass goes back to the start of an open path.
+        expect(groupMoves(rail, { r: 0, a: 0 }, 0.005)).toEqual([
+            { kind: "go", target: { r: 5, a: 0 } },
+            { kind: "cut", target: { r: 5, a: 90 } },
+            { kind: "go", target: { r: 5, a: 0 } },
+            { kind: "cut", target: { r: 5, a: 90 } },
+        ]);
+        const square: [number, number][] = [[10, 0], [12, 0], [12, 2], [10, 2], [10, 0]];
+        const line: [number, number][] = [[10, -5], [12, -5]];
+        const once: Group = { label: "g", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [square, line] };
+        const thrice: Group = { ...once, passes: 3 };
+        const one = groupMoves(once, { r: 0, a: 0 }, 0.005);
+        const three = groupMoves(thrice, { r: 0, a: 0 }, 0.005);
+        // The whole group each pass, the square then the line, not each path three times.
+        expect(three.length).toBe(3 * one.length);
+        three.forEach((move, i) => {
+            expect(move.kind).toBe(one[i % one.length]!.kind);
+            expect(move.target.r).toBeCloseTo(one[i % one.length]!.target.r, 6);
+        });
+        const oneStats = computeStats([once], limits);
+        const threeStats = computeStats([thrice], limits);
+        expect(threeStats.length_mm).toBeCloseTo(3 * oneStats.length_mm, 6);
+        expect(threeStats.max_radius).toBe(oneStats.max_radius);
+        expect(threeStats.moves).toBe(3 * oneStats.moves);
     });
 });
 

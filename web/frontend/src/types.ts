@@ -125,6 +125,8 @@ export interface Group {
     /** The least power in the firmware's dynamic mode; above `power` it counts as `power`, 0 is none. */
     min_power: number;
     speed: number;
+    /** Times the group runs, all of its paths each time; 1 is once. */
+    passes: number;
     enabled: boolean;
     paths: Path[];
     /**
@@ -168,6 +170,7 @@ export interface GroupSummary {
     power: number;
     min_power: number;
     speed: number;
+    passes: number;
     enabled: boolean;
     paths: number;
     joints?: number;
@@ -194,6 +197,7 @@ export interface GroupPatch {
     power?: number;
     min_power?: number;
     speed?: number;
+    passes?: number;
     enabled?: boolean;
 }
 

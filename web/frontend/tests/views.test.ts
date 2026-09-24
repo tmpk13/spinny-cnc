@@ -417,7 +417,7 @@ describe("jobs", () => {
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
         const table = root.querySelector("table.groups")!;
-        const row = table.querySelectorAll("tbody tr")[0]!;
+        const row = table.querySelectorAll("tbody")[0]!;
         const field = (label: string): HTMLInputElement => row.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
         const power = field("power");
         const minPower = field("min power");
@@ -444,6 +444,16 @@ describe("jobs", () => {
         expect(group.min_power).toBe(80);
         expect(group.power).toBe(321);
         expect(minPower.value).toBe("80");
+        const passes = field("passes");
+        expect(passes.value).toBe("1");
+        passes.value = "3";
+        passes.dispatchEvent(new Event("change", { bubbles: true }));
+        await settle();
+        await settle();
+        await settle();
+        expect((await api.job(jobs[0]!.id)).groups[0]!.passes).toBe(3);
+        expect(root.querySelector("table.groups")).toBe(table);
+        expect(passes.value).toBe("3");
     });
 
     test("the clear choice goes with an upload, and off sends none", async () => {
@@ -473,7 +483,8 @@ describe("jobs", () => {
         expect(root.querySelectorAll("li").length).toBe(1);
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
-        expect(root.querySelectorAll("table.groups tbody tr").length).toBe(4);
+        expect(root.querySelectorAll("table.groups tbody").length).toBe(4);
+        expect(root.querySelectorAll("table.groups tbody tr.group-fields input[type=number]").length).toBe(16);
         expect(root.querySelector(".stats")?.textContent).toContain("Table limited");
         expect(root.querySelector("li")?.classList.contains("selected")).toBe(true);
         store.set({ progress: { job: jobs[0]!.id, state: "running", sent: 1, acked: 1, total: 10, seconds: 1, estimate: 10, group: 0 } });

@@ -157,6 +157,35 @@ def test_a_group_floor_goes_out_as_m_on_every_cut():
             assert "R" in words and "A" in words
 
 
+def test_a_group_with_passes_runs_whole_again():
+    streamer = Streamer(tolerance=TOLERANCE)
+    square = [(10.0, 0.0), (12.0, 0.0), (12.0, 2.0), (10.0, 2.0), (10.0, 0.0)]
+    line = [(10.0, -5.0), (12.0, -5.0)]
+    once = Group(label="once", speed=400, paths=[square, line])
+    thrice = once.model_copy(update={"passes": 3})
+    one = list(streamer.job_pieces(job_of(groups=[once]), (0.0, 0.0)))
+    three = list(streamer.job_pieces(job_of(groups=[thrice]), (0.0, 0.0)))
+    one_cuts = [piece.joint for piece in one if piece.kind == "cut"]
+    three_cuts = [piece.joint for piece in three if piece.kind == "cut"]
+    # Every pass is the whole group, the square then the line, not each
+    # path three times over, and the table angle carries on from where
+    # the last pass left it rather than winding back.
+    assert len(three_cuts) == 3 * len(one_cuts)
+    assert [joint[0] for joint in three_cuts] == pytest.approx([joint[0] for joint in one_cuts] * 3)
+    assert {piece.group for piece in three} == {0}
+    # Back to the square from the end of the open line each time, and on
+    # to the line from the square's closing corner.
+    assert sum(piece.kind == "go" for piece in three) == 3 * sum(piece.kind == "go" for piece in one)
+    stats_one = streamer.estimate(job_of(groups=[once]))
+    stats_three = streamer.estimate(job_of(groups=[thrice]))
+    assert stats_three.length_mm == pytest.approx(3 * stats_one.length_mm)
+    assert stats_three.max_radius == pytest.approx(stats_one.max_radius)
+    joints = Group(label="joints", speed=400, passes=2, joints=[[(3.0, 0.0), (3.0, 30.0)]])
+    lines = lines_of(streamer, job_of(groups=[joints]))
+    # An open joint-space path is gone back to between passes.
+    assert [line.split()[0] for line in lines] == ["go", "cut", "go", "cut"]
+
+
 def test_start_angle_comes_from_the_machine():
     streamer = Streamer(tolerance=TOLERANCE)
     lines = lines_of(streamer, job_of([(10.0, 0.0), (10.0, 1.0)]), start=(3.0, 720.0))

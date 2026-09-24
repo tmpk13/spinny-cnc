@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
 import { MockBackend, MockMachine, formatMove, statusLine } from "../src/mock.ts";
-import type { WsEvent } from "../src/types.ts";
+import type { Job, WsEvent } from "../src/types.ts";
 
 function stepped(machine: MockMachine, seconds: number, dt = 0.01): void {
     let left = seconds;
@@ -603,6 +603,8 @@ describe("mock backend", () => {
         await expect(backend.patchJob(id, { groups: [{ index: 0, speed: 0 }] })).rejects.toMatchObject({ status: 400, message: "speed must be above 0 and at most 1e+06" });
         await expect(backend.patchJob(id, { groups: [{ index: 0, power: -1 }] })).rejects.toMatchObject({ status: 400, message: "power must be between 0 and 1e+06" });
         await expect(backend.patchJob(id, { groups: [{ index: 0, min_power: -1 }] })).rejects.toMatchObject({ status: 400, message: "min power must be between 0 and 1e+06" });
+        await expect(backend.patchJob(id, { groups: [{ index: 0, passes: 0 }] })).rejects.toMatchObject({ status: 400, message: "passes must be between 1 and 100" });
+        await expect(backend.patchJob(id, { groups: [{ index: 0, passes: 1.5 }] })).rejects.toMatchObject({ status: 400 });
         await expect(backend.patchJob(id, { groups: [{ index: 9, power: 1 }] })).rejects.toMatchObject({ status: 400 });
         await expect(backend.patchJob(id, { groups: [{ index: 0, power: 10 }, { index: 1, speed: Number.NaN }] })).rejects.toMatchObject({ status: 400 });
         await expect(backend.patchJob(id, { offset: { x: Number.POSITIVE_INFINITY, y: 0 } })).rejects.toMatchObject({ status: 400 });
@@ -613,11 +615,18 @@ describe("mock backend", () => {
         await expect(backend.patchJob(id, { offset: { x: 1, y: 14 } })).rejects.toMatchObject({ status: 409 });
         expect(await backend.job(id)).toEqual(before);
         await backend.runStop();
-        await backend.patchJob(id, { groups: [{ index: 0, power: 10, min_power: 4, speed: 50 }], offset: { x: 1, y: 14 } });
+        expect(before.groups[0]!.passes).toBe(1);
+        await backend.patchJob(id, { groups: [{ index: 0, power: 10, min_power: 4, speed: 50, passes: 2 }], offset: { x: 1, y: 14 } });
         const after = await backend.job(id);
         expect(after.groups[0]!.power).toBe(10);
         expect(after.groups[0]!.min_power).toBe(4);
         expect((await backend.jobs()).find((job) => job.id === id)!.groups[0]!.min_power).toBe(4);
+        expect(after.groups[0]!.passes).toBe(2);
+        expect((await backend.jobs()).find((job) => job.id === id)!.groups[0]!.passes).toBe(2);
+        // The rapids depend on where the head starts; the cuts are the group's twice over.
+        const cuts = (job: Job): number => backend.movesFor(job).filter((move) => move.group === 0 && move.kind === "cut").length;
+        const single = { ...after, groups: after.groups.map((group, index) => (index === 0 ? { ...group, passes: 1 } : group)) };
+        expect(cuts(after)).toBe(2 * cuts(single));
         expect(after.groups[0]!.speed).toBe(50);
         expect(after.offset).toEqual({ x: 1, y: 14 });
         expect(after.groups[0]!.paths[0]![0]![0]).toBeCloseTo(before.groups[0]!.paths[0]![0]![0] + 1, 9);

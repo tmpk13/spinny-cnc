@@ -27,10 +27,12 @@ export function progressText(progress: Progress | null): { bar: number; counts: 
 }
 
 interface GroupRow {
-    row: HTMLElement;
+    /** The group's name line and its fields line. */
+    body: HTMLElement;
     power: HTMLInputElement;
     minPower: HTMLInputElement;
     speed: HTMLInputElement;
+    passes: HTMLInputElement;
     enabled: HTMLInputElement;
 }
 
@@ -261,10 +263,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             setUnlessFocused(row.power, String(group.power), focused);
             setUnlessFocused(row.minPower, String(group.min_power), focused);
             setUnlessFocused(row.speed, String(group.speed), focused);
+            setUnlessFocused(row.passes, String(group.passes), focused);
             if (row.enabled !== focused) {
                 row.enabled.checked = group.enabled;
             }
-            row.row.classList.toggle("disabled", !group.enabled);
+            row.body.classList.toggle("disabled", !group.enabled);
         });
         if (offsetFields) {
             setUnlessFocused(offsetFields.x, String(job.offset.x), focused);
@@ -306,18 +309,21 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             const power = groupField(group.power, 0, "power");
             const minPower = groupField(group.min_power, 0, "min power");
             const speed = groupField(group.speed, 1, "speed");
+            const passes = groupField(group.passes, 1, "passes");
             const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
             enabled.checked = group.enabled;
             const patch = async (): Promise<void> => {
                 const p = parseNumber(power.value);
                 const m = parseNumber(minPower.value);
                 const s = parseNumber(speed.value);
+                const n = parseNumber(passes.value);
                 await ctx.call(ctx.api.patchJob(job.id, {
                     groups: [{
                         index,
                         ...(p !== null ? { power: p } : {}),
                         ...(m !== null ? { min_power: m } : {}),
                         ...(s !== null ? { speed: s } : {}),
+                        ...(n !== null ? { passes: n } : {}),
                         enabled: enabled.checked,
                     }],
                 }));
@@ -327,27 +333,35 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             power.addEventListener("change", () => void patch());
             minPower.addEventListener("change", () => void patch());
             speed.addEventListener("change", () => void patch());
+            passes.addEventListener("change", () => void patch());
             enabled.addEventListener("change", () => void patch());
-            const row = el("tr", { class: group.enabled ? "" : "disabled" },
-                el("td", {}, el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
-                    el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`)),
-                el("td", {}, power),
-                el("td", {}, minPower),
-                el("td", {}, speed),
-                el("td", {}, enabled),
+            // The name has a line of its own above the fields, so the five
+            // of them get the whole width of a side panel.
+            const body = el("tbody", { class: group.enabled ? "" : "disabled" },
+                el("tr", { class: "group-name" },
+                    el("th", { scope: "rowgroup", colspan: "5" },
+                        el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
+                        el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`))),
+                el("tr", { class: "group-fields" },
+                    el("td", {}, power),
+                    el("td", {}, minPower),
+                    el("td", {}, speed),
+                    el("td", {}, passes),
+                    el("td", {}, enabled),
+                ),
             );
-            groupRows.push({ row, power, minPower, speed, enabled });
-            return row;
+            groupRows.push({ body, power, minPower, speed, passes, enabled });
+            return body;
         });
         return el("table", { class: "groups" },
             el("thead", {}, el("tr", {},
-                el("th", {}, "Group"),
                 el("th", {}, "S"),
                 el("th", { title: "Least power where the head slows for a corner (dyn mode); 0 is none" }, "Min S"),
                 el("th", {}, "mm/min"),
+                el("th", { title: "Times the group runs over all of its paths" }, "Passes"),
                 el("th", {}, "On"),
             )),
-            el("tbody", {}, ...rows),
+            ...rows,
         );
     }
 

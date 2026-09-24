@@ -228,12 +228,15 @@ def test_jobs_upload_list_get_patch_delete(client, tmp_path):
     assert client.get("/api/jobs/nope").status_code == 404
 
     assert listing[0]["groups"][0]["min_power"] == 0.0
+    assert listing[0]["groups"][0]["passes"] == 1
 
-    patch = {"groups": [{"index": 1, "power": 900, "min_power": 90, "enabled": False}], "offset": {"x": 5, "y": 14}}
+    patch = {"groups": [{"index": 1, "power": 900, "min_power": 90, "passes": 3, "enabled": False}], "offset": {"x": 5, "y": 14}}
     patched = client.patch(f"/api/jobs/{job['id']}", json=patch).json()
     assert patched["groups"][1]["power"] == 900 and not patched["groups"][1]["enabled"]
     assert patched["groups"][1]["min_power"] == 90
     assert client.get("/api/jobs").json()["jobs"][0]["groups"][1]["min_power"] == 90
+    assert patched["groups"][1]["passes"] == 3
+    assert client.get("/api/jobs").json()["jobs"][0]["groups"][1]["passes"] == 3
     assert patched["offset"] == {"x": 5.0, "y": 14.0}
     moved = patched["groups"][0]["paths"][0][0][0] - job["groups"][0]["paths"][0][0][0]
     assert moved == pytest.approx(5.0)

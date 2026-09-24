@@ -20,6 +20,8 @@ export const DEFAULT_SPOT = 0.1;
 export const MAX_VALUE = 1e6;
 /** The bound as the backend writes it in its refusals. */
 export const MAX_VALUE_TEXT = "1e+06";
+/** Most times a group may run over its own paths. */
+export const MAX_GROUP_PASSES = 100;
 
 export function checkPower(power: number, what = "power"): void {
     if (!(power >= 0 && power <= MAX_VALUE)) {
@@ -30,6 +32,12 @@ export function checkPower(power: number, what = "power"): void {
 export function checkSpeed(speed: number, what = "speed"): void {
     if (!(speed > 0 && speed <= MAX_VALUE)) {
         throw new Error(`${what} must be above 0 and at most ${MAX_VALUE_TEXT}`);
+    }
+}
+
+export function checkPasses(passes: number, what = "passes"): void {
+    if (!(Number.isInteger(passes) && passes >= 1 && passes <= MAX_GROUP_PASSES)) {
+        throw new Error(`${what} must be between 1 and ${MAX_GROUP_PASSES}`);
     }
 }
 
@@ -867,16 +875,26 @@ export interface PlannedMove {
     target: Joint;
 }
 
+/** The paths once per pass, the whole group each time rather than each path over and over. */
+function perPass<T>(paths: T[], passes: number): T[] {
+    const out: T[] = [];
+    for (let pass = 0; pass < Math.max(1, passes); pass++) {
+        out.push(...paths);
+    }
+    return out;
+}
+
 /**
  * The joint moves of one group from `from`: a rapid to each path's start
  * and a cut per segment within the chord tolerance. A joint-space path goes
  * out as written, with whole turns added so its start is the nearest one.
+ * The group runs once per pass, each pass from where the last one ended.
  */
 export function groupMoves(group: Group, from: Joint, tolerance: number): PlannedMove[] {
     const out: PlannedMove[] = [];
     let joint = from;
     if (group.joints && group.joints.length > 0) {
-        for (const poly of group.joints) {
+        for (const poly of perPass(group.joints, group.passes)) {
             const head = poly[0];
             if (!head || poly.length < 2) {
                 continue;
@@ -898,7 +916,7 @@ export function groupMoves(group: Group, from: Joint, tolerance: number): Planne
         }
         return out;
     }
-    for (const path of group.paths) {
+    for (const path of perPass(group.paths, group.passes)) {
         const first = path[0];
         if (!first || path.length < 2) {
             continue;
@@ -1033,9 +1051,11 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
         const power = raw["power"] === undefined ? DEFAULT_POWER : finiteNumber(raw["power"], `${what}: power`);
         const minPower = raw["min_power"] === undefined ? 0 : finiteNumber(raw["min_power"], `${what}: min power`);
         const speed = raw["speed"] === undefined ? DEFAULT_SPEED : finiteNumber(raw["speed"], `${what}: speed`);
+        const passes = raw["passes"] === undefined ? 1 : finiteNumber(raw["passes"], `${what}: passes`);
         checkSpeed(speed, `${what}: speed`);
         checkPower(power, `${what}: power`);
         checkPower(minPower, `${what}: min power`);
+        checkPasses(passes, `${what}: passes`);
         const paths = pathsOf(raw["paths"], what);
         const joints = pathsOf(raw["joints"], what);
         if (joints.some((poly) => poly.length < 2)) {
@@ -1046,6 +1066,7 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
             power,
             min_power: minPower,
             speed,
+            passes,
             enabled: raw["enabled"] === undefined ? true : Boolean(raw["enabled"]),
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
         };
@@ -1150,6 +1171,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         power: geometry.groups[index]?.power ?? power,
         min_power: 0,
         speed: geometry.groups[index]?.speed ?? speed,
+        passes: 1,
         enabled: true,
         paths: group.paths,
     }));
@@ -1206,12 +1228,12 @@ export function centerJob(id: string, request: CenterRequest, limits: RateLimits
             const theta = (2 * Math.PI * i) / lines;
             paths.push([[0, 0], [reach * Math.cos(theta), reach * Math.sin(theta)]]);
         }
-        groups.push({ label: `${lines} radial lines from the axis to ${reach} mm`, power, min_power: 0, speed, enabled: true, paths });
+        groups.push({ label: `${lines} radial lines from the axis to ${reach} mm`, power, min_power: 0, speed, passes: 1, enabled: true, paths });
     }
     const notes: string[] = [];
     if (ring > 0) {
         const around = Math.min(speed, RING_HEADROOM * (limits.aRate * Math.PI / 180) * ring);
-        groups.push({ label: `reference ring at ${ring} mm`, power, min_power: 0, speed: around, enabled: true, paths: [circlePath(0, 0, ring, 360)] });
+        groups.push({ label: `reference ring at ${ring} mm`, power, min_power: 0, speed: around, passes: 1, enabled: true, paths: [circlePath(0, 0, ring, 360)] });
         if (around < speed) {
             notes.push(`The ring runs at ${around.toFixed(0)} mm/min, not ${speed}: that is all the table can turn at ${ring} mm.`);
         }

@@ -40,6 +40,8 @@ GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gm1")
 MAX_VALUE = 1.0e6
 # Isolation passes around the copper; each is another offset of every loop.
 MAX_PASSES = 50
+# Times a group burns over its own paths, the whole group again each time.
+MAX_GROUP_PASSES = 100
 # A board import clears no copper past the isolation unless asked to, and
 # then with one of the clearing fills.
 CLEAR_OFF = "off"
@@ -67,6 +69,10 @@ class Group(Finite):
     # as `power`, and zero is no floor.
     min_power: float = 0.0
     speed: float = DEFAULT_SPEED
+    # How many times the group runs, all of its paths each time, so a
+    # layer that one burn does not get through goes over the same lines
+    # again once the rest of it has had a moment to cool.
+    passes: int = 1
     enabled: bool = True
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
     # Joint-space polylines, radius mm and angle degrees, streamed as they
@@ -119,6 +125,7 @@ class Job(Finite):
                     "power": group.power,
                     "min_power": group.min_power,
                     "speed": group.speed,
+                    "passes": group.passes,
                     "enabled": group.enabled,
                     "paths": len(group.paths),
                     "joints": len(group.joints),
@@ -153,6 +160,7 @@ class GroupPatch(Finite):
     power: float | None = None
     min_power: float | None = None
     speed: float | None = None
+    passes: int | None = None
     enabled: bool | None = None
 
 
@@ -175,6 +183,11 @@ def check_speed(speed: float, what: str = "speed") -> None:
         raise ValueError(f"{what} must be at least {kinematics.MIN_FEED:g} mm/min")
 
 
+def check_passes(passes: int, what: str = "passes") -> None:
+    if not 1 <= passes <= MAX_GROUP_PASSES:
+        raise ValueError(f"{what} must be between 1 and {MAX_GROUP_PASSES}")
+
+
 def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
     """The job with the patch applied, as a new object.
 
@@ -191,6 +204,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             check_power(change.min_power, "min power")
         if change.speed is not None:
             check_speed(change.speed)
+        if change.passes is not None:
+            check_passes(change.passes)
     if patch.offset is not None:
         dx, dy = patch.offset.x - job.offset.x, patch.offset.y - job.offset.y
         if (dx != 0.0 or dy != 0.0) and any(group.joints for group in job.groups):
@@ -208,6 +223,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             group.min_power = change.min_power
         if change.speed is not None:
             group.speed = change.speed
+        if change.passes is not None:
+            group.passes = change.passes
         if change.enabled is not None:
             group.enabled = change.enabled
     if patch.offset is not None:
@@ -293,6 +310,7 @@ def from_json(text: str, name: str) -> Job:
             check_speed(group.speed, f"group {group.label!r}: speed")
             check_power(group.power, f"group {group.label!r}: power")
             check_power(group.min_power, f"group {group.label!r}: min power")
+            check_passes(group.passes, f"group {group.label!r}: passes")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
         if any(len(poly) < 2 for poly in group.joints):

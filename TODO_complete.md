@@ -156,3 +156,7 @@
   the X/Y box the isolation spans without one, with beam centers kept
   outside the outermost loop and a pass along the inside of the edge; the
   Jobs panel has a Clear copper choice, and the mock checks the value.
+- Per-layer pass count (2026-09-23): groups carry `passes` (1 to 100)
+  through the store, patch, streamer, stats and mock; each pass streams
+  the whole group again from where the last one stopped, and the groups
+  table has a Passes column.

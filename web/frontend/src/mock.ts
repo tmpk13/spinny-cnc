@@ -3,7 +3,7 @@
 
 import { ApiError, type Api } from "./api.ts";
 import { boardOfJoint, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength } from "./kinematics.ts";
-import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, centerJob, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
+import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, centerJob, checkPasses, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
 import type { LinkStatus } from "./state.ts";
 import type {
     CenterRequest,
@@ -1236,7 +1236,7 @@ export class MockBackend implements Api, EventFeed {
     private seedDemo(): void {
         const placed = placeJob(demoCoupon(), "center", { x: 0, y: 14 });
         const id = this.newId();
-        const groups = placed.groups.map((group) => ({ label: group.label, power: 500, min_power: 0, speed: 400, enabled: true, paths: group.paths }));
+        const groups = placed.groups.map((group) => ({ label: group.label, power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: group.paths }));
         const job: Job = {
             id,
             name: "demo coupon",
@@ -1302,6 +1302,7 @@ export class MockBackend implements Api, EventFeed {
                     power: group.power,
                     min_power: group.min_power,
                     speed: group.speed,
+                    passes: group.passes,
                     enabled: group.enabled,
                     paths: group.paths.length,
                     joints: group.joints?.length ?? 0,
@@ -1343,6 +1344,9 @@ export class MockBackend implements Api, EventFeed {
                 if (change.speed !== undefined) {
                     checkSpeed(change.speed);
                 }
+                if (change.passes !== undefined) {
+                    checkPasses(change.passes);
+                }
             }
             if (patch.offset) {
                 const moved = patch.offset.x !== job.offset.x || patch.offset.y !== job.offset.y;
@@ -1370,6 +1374,9 @@ export class MockBackend implements Api, EventFeed {
             }
             if (change.speed !== undefined) {
                 group.speed = change.speed;
+            }
+            if (change.passes !== undefined) {
+                group.passes = change.passes;
             }
             if (change.enabled !== undefined) {
                 group.enabled = change.enabled;
