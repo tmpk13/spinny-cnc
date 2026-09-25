@@ -60,25 +60,46 @@ export interface Machine {
     probe?: boolean | null;
 }
 
+/** How the head moves over the board: the rail and the table, or the rail and the cross slide. */
+export type Kinematics = "polar" | "cartesian";
+
+/** What the output drives. */
+export type Tool = "laser" | "spindle";
+
+/** What the machine is, from its settings as last read. */
+export interface Profile {
+    kinematics: Kinematics;
+    tool: Tool;
+    /** A focus axis is fitted: the depth axis of a spindle. */
+    h_axis: boolean;
+    r_max: number;
+    z_max: number;
+}
+
 export interface Snapshot {
     connected: boolean;
     url: string | null;
     firmware: Firmware | null;
     machine: Machine | null;
+    /** Missing from a backend that predates it: a polar laser. */
+    profile?: Profile;
     run: Progress | null;
 }
 
-// The cross slide is a setup axis: it moves alone, so `dz` and `z` are their
-// own shape and the never members keep them off a request that carries the
-// radius or the angle.
+// On the polar machine the cross slide is a setup axis: it moves alone, so
+// `dz` and `z` are their own shape and the never members keep them off a
+// request that carries the radius or the angle. On a cartesian machine it
+// is a joint beside the radius and the focus axis, which the third shape is.
 export type JogRequest =
     | { kind: "joint"; dr?: number; da?: number; dh?: number; dz?: never; feed?: number | null }
     | { kind: "joint"; dz: number; dr?: never; da?: never; dh?: never; feed?: number | null }
+    | { kind: "joint"; dr?: number; dz?: number; dh?: number; da?: never; feed?: number | null }
     | { kind: "board"; dx?: number; dy?: number; feed?: number | null };
 
 export type GotoRequest =
     | { kind: "joint"; r?: number; a?: number; h?: number; z?: never; feed?: number | null }
     | { kind: "joint"; z: number; r?: never; a?: never; h?: never; feed?: number | null }
+    | { kind: "joint"; r?: number; z?: number; h?: number; a?: never; feed?: number | null }
     | { kind: "board"; x?: number; y?: number; feed?: number | null };
 
 export interface PositionRequest {
@@ -107,6 +128,10 @@ export interface SettingSchema {
 
 export interface HostSettings {
     tolerance: number;
+    /** Milling: travel height over the surface, mm. */
+    clearance?: number;
+    /** Milling: dwell after the spindle starts, s. */
+    spinup?: number;
 }
 
 export interface SettingsResponse {
@@ -130,9 +155,13 @@ export interface Group {
     /** The least power in the firmware's dynamic mode; above `power` it counts as `power`, 0 is none. */
     min_power: number;
     speed: number;
-    /** Times the group runs, all of its paths each time; 1 is once. */
+    /** Times the group runs, all of its paths each time; 1 is once. Milled, each pass a step deeper. */
     passes: number;
     enabled: boolean;
+    /** Milling: how deep under the surface the last pass cuts, mm. */
+    depth?: number;
+    /** Milling: how fast the tool goes down into the cut, mm/min. */
+    plunge?: number;
     paths: Path[];
     /**
      * Joint-space polylines, radius mm and angle degrees, streamed as they
@@ -177,6 +206,8 @@ export interface GroupSummary {
     speed: number;
     passes: number;
     enabled: boolean;
+    depth?: number;
+    plunge?: number;
     paths: number;
     joints?: number;
 }
@@ -204,6 +235,8 @@ export interface GroupPatch {
     speed?: number;
     passes?: number;
     enabled?: boolean;
+    depth?: number;
+    plunge?: number;
 }
 
 export interface JobPatch {

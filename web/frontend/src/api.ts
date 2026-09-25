@@ -54,6 +54,9 @@ export interface Api {
 
     laser(power: number, ms: number): Promise<void>;
     laserOff(): Promise<void>;
+    /** Starts the spindle at `S`, or changes its speed. */
+    spindle(power: number): Promise<void>;
+    spindleOff(): Promise<void>;
     mode(mode: Mode): Promise<void>;
 
     settings(): Promise<SettingsResponse>;
@@ -202,6 +205,14 @@ export class HttpApi implements Api {
 
     async laserOff(): Promise<void> {
         await this.request("POST", "/api/laser/off");
+    }
+
+    async spindle(power: number): Promise<void> {
+        await this.request("POST", "/api/spindle", { power });
+    }
+
+    async spindleOff(): Promise<void> {
+        await this.request("POST", "/api/spindle/off");
     }
 
     async mode(mode: Mode): Promise<void> {

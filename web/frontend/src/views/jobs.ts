@@ -3,6 +3,7 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
+import { isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, ClearPattern, Compensate, Job, Progress, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
@@ -34,7 +35,28 @@ interface GroupRow {
     minPower: HTMLInputElement;
     speed: HTMLInputElement;
     passes: HTMLInputElement;
+    /** Milling only: the depth of the last pass and the plunge rate. */
+    depth: HTMLInputElement;
+    plunge: HTMLInputElement;
     enabled: HTMLInputElement;
+}
+
+/** What a group mills to when a job does not say: through the copper, gently. */
+export const DEFAULT_DEPTH = 0.1;
+export const DEFAULT_PLUNGE = 60;
+
+/** The labels a milling machine gives the job's numbers, and a laser's. */
+export function jobLabels(milling: boolean): { power: string; speed: string; spot: string } {
+    return milling
+        ? { power: "Spindle S", speed: "Feed mm/min", spot: "Tool mm" }
+        : { power: "Power S", speed: "Speed mm/min", spot: "Spot mm" };
+}
+
+function relabel(label: HTMLLabelElement, text: string): void {
+    const span = label.querySelector(".labeled-text");
+    if (span && span.textContent !== text) {
+        span.textContent = text;
+    }
 }
 
 function setUnlessFocused(input: HTMLInputElement, value: string, focused: Element | null): void {
@@ -68,10 +90,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         el("p", {}, "Drop a file here (svg, json, gerber, kicad_pcb, gcode) or"),
         el("label", { class: "btn btn-quiet" }, "pick a file", fileInput),
     );
+    const powerLabel = labeled("Power S", powerField);
+    const speedLabel = labeled("Speed mm/min", speedField);
+    const spotLabel = labeled("Spot mm", spotField);
     const options = el("div", { class: "field-grid" },
-        labeled("Power S", powerField),
-        labeled("Speed mm/min", speedField),
-        labeled("Spot mm", spotField),
+        powerLabel,
+        speedLabel,
+        spotLabel,
         labeled("Anchor", anchorField),
         labeled("Offset x", offsetX),
         labeled("Offset y", offsetY),
@@ -196,6 +221,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
 
     let detailsFor: string | null = null;
     let detailsJob: Job | null = null;
+    // The table's columns are the tool's, so it is built again when the
+    // machine's tool changes under it.
+    let detailsMilling = false;
     // The inputs of the groups table and the offset row, kept so that a
     // fresh copy of the same job updates them in place: rebuilding the
     // table would tear out the field the operator is typing in, and the
@@ -217,6 +245,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         el("option", { value: "focus" }, "height map: focus axis"),
         el("option", { value: "power" }, "height map: power"),
     ) as HTMLSelectElement;
+    const focusOption = compensate.querySelector('option[value="focus"]') as HTMLOptionElement;
+    const powerOption = compensate.querySelector('option[value="power"]') as HTMLOptionElement;
     let compensateTouched = false;
     compensate.addEventListener("change", () => {
         compensateTouched = true;
@@ -250,13 +280,15 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             renderProgress(state);
             return;
         }
-        if (detailsFor !== job.id || detailsJob === null || groupRows.length !== job.groups.length) {
+        const milling = isMilling(state.snapshot);
+        if (detailsFor !== job.id || detailsJob === null || groupRows.length !== job.groups.length || detailsMilling !== milling) {
             detailsFor = job.id;
             detailsJob = job;
+            detailsMilling = milling;
             statsEl = statsBlock(job);
             replace(details,
                 el("h3", {}, job.name),
-                groupsTable(job),
+                groupsTable(job, milling),
                 statsEl,
                 offsetRow(job),
                 runRow,
@@ -277,6 +309,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             setUnlessFocused(row.minPower, String(group.min_power), focused);
             setUnlessFocused(row.speed, String(group.speed), focused);
             setUnlessFocused(row.passes, String(group.passes), focused);
+            setUnlessFocused(row.depth, String(group.depth ?? DEFAULT_DEPTH), focused);
+            setUnlessFocused(row.plunge, String(group.plunge ?? DEFAULT_PLUNGE), focused);
             if (row.enabled !== focused) {
                 row.enabled.checked = group.enabled;
             }
@@ -308,9 +342,20 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         setLocked(resumeButton, !connected || !active || progress.state !== "hold");
         setLocked(stopButton, !connected || !active);
         compensate.disabled = active;
+        // A spindle follows the board with its depth axis or not at all.
+        const milling = isMilling(state.snapshot);
+        powerOption.disabled = milling;
+        focusOption.textContent = milling ? "height map: depth axis" : "height map: focus axis";
+        if (milling && compensate.value === "power") {
+            compensate.value = "auto";
+        }
         if (!compensateTouched) {
             compensate.value = mapUsable(state.heightMap?.map ?? null) ? "auto" : "off";
         }
+        const labels = jobLabels(milling);
+        relabel(powerLabel, labels.power);
+        relabel(speedLabel, labels.speed);
+        relabel(spotLabel, labels.spot);
     }
 
     /** A number cell of the groups table; the stylesheet sizes it to the column. */
@@ -320,13 +365,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         return field;
     }
 
-    function groupsTable(job: Job): HTMLElement {
+    function groupsTable(job: Job, milling: boolean): HTMLElement {
         groupRows = [];
         const rows = job.groups.map((group, index) => {
-            const power = groupField(group.power, 0, "power");
+            const power = groupField(group.power, 0, milling ? "spindle speed" : "power");
             const minPower = groupField(group.min_power, 0, "min power");
-            const speed = groupField(group.speed, 1, "speed");
+            const speed = groupField(group.speed, 1, milling ? "feed" : "speed");
             const passes = groupField(group.passes, 1, "passes");
+            const depth = groupField(group.depth ?? DEFAULT_DEPTH, 0, "depth");
+            depth.step = "0.05";
+            const plunge = groupField(group.plunge ?? DEFAULT_PLUNGE, 1, "plunge");
             const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
             enabled.checked = group.enabled;
             const patch = async (): Promise<void> => {
@@ -334,52 +382,58 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 const m = parseNumber(minPower.value);
                 const s = parseNumber(speed.value);
                 const n = parseNumber(passes.value);
+                const d = parseNumber(depth.value);
+                const u = parseNumber(plunge.value);
                 await ctx.call(ctx.api.patchJob(job.id, {
                     groups: [{
                         index,
                         ...(p !== null ? { power: p } : {}),
-                        ...(m !== null ? { min_power: m } : {}),
+                        ...(m !== null && !milling ? { min_power: m } : {}),
                         ...(s !== null ? { speed: s } : {}),
                         ...(n !== null ? { passes: n } : {}),
+                        ...(d !== null && milling ? { depth: d } : {}),
+                        ...(u !== null && milling ? { plunge: u } : {}),
                         enabled: enabled.checked,
                     }],
                 }));
                 await ctx.selectJob(job.id);
                 await ctx.refreshJobs();
             };
-            power.addEventListener("change", () => void patch());
-            minPower.addEventListener("change", () => void patch());
-            speed.addEventListener("change", () => void patch());
-            passes.addEventListener("change", () => void patch());
-            enabled.addEventListener("change", () => void patch());
-            // The name has a line of its own above the fields, so the five
-            // of them get the whole width of a side panel.
+            for (const field of [power, minPower, speed, passes, depth, plunge, enabled]) {
+                field.addEventListener("change", () => void patch());
+            }
+            // Milled, the floor means nothing and the depth and the plunge
+            // take its place: a pass is a step down, not a burn again.
+            const fields = milling ? [power, depth, speed, plunge, passes, enabled] : [power, minPower, speed, passes, enabled];
+            // The name has a line of its own above the fields, so they get
+            // the whole width of a side panel.
             const body = el("tbody", { class: group.enabled ? "" : "disabled" },
                 el("tr", { class: "group-name" },
-                    el("th", { scope: "rowgroup", colspan: "5" },
+                    el("th", { scope: "rowgroup", colspan: String(fields.length) },
                         el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
                         el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`))),
-                el("tr", { class: "group-fields" },
-                    el("td", {}, power),
-                    el("td", {}, minPower),
-                    el("td", {}, speed),
-                    el("td", {}, passes),
-                    el("td", {}, enabled),
-                ),
+                el("tr", { class: "group-fields" }, ...fields.map((field) => el("td", {}, field))),
             );
-            groupRows.push({ body, power, minPower, speed, passes, enabled });
+            groupRows.push({ body, power, minPower, speed, passes, depth, plunge, enabled });
             return body;
         });
-        return el("table", { class: "groups" },
-            el("thead", {}, el("tr", {},
+        const head = milling
+            ? [
+                el("th", { title: "Spindle speed" }, "S"),
+                el("th", { title: "How deep under the surface the last pass cuts, mm" }, "Depth"),
+                el("th", { title: "Feed along the cut" }, "mm/min"),
+                el("th", { title: "How fast the tool goes down into the cut, mm/min" }, "Plunge"),
+                el("th", { title: "Passes down to the depth, each a step deeper" }, "Passes"),
+                el("th", {}, "On"),
+            ]
+            : [
                 el("th", {}, "S"),
                 el("th", { title: "Least power where the head slows for a corner (dyn mode); 0 is none" }, "Min S"),
                 el("th", {}, "mm/min"),
                 el("th", { title: "Times the group runs over all of its paths" }, "Passes"),
                 el("th", {}, "On"),
-            )),
-            ...rows,
-        );
+            ];
+        return el("table", { class: "groups" }, el("thead", {}, el("tr", {}, ...head)), ...rows);
     }
 
     function statsBlock(job: Job): HTMLElement {

@@ -4,6 +4,7 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
+import { isMilling } from "../profile.ts";
 import { boardOfJoint } from "../kinematics.ts";
 import type { AppState } from "../state.ts";
 import type { Grid, HeightMap, HeightMapState, Job, ProbeSettings } from "../types.ts";
@@ -289,6 +290,14 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     const legend = el("div", { class: "hm-legend" });
 
     // --- focus ---
+    // On a spindle machine the focus offset is the touch-off: the tool, not
+    // a beam, is brought to the surface, and a cut goes that far below it.
+    const FOCUS_HINT = "Focus the beam by eye over the probed area by jogging the head up or down, then"
+        + " Focus here: the offset is the head's height less the board's under the beam.";
+    const TOUCH_HINT = "Jog the tool down over the probed area until it just touches the copper, then"
+        + " Touch off here: the offset is the tool's height less the probed height there. With the"
+        + " tool as the probe (tip offsets 0) it is about 0. A cut goes the group's depth under that.";
+    const focusHint = el("p", { class: "muted hint" }, FOCUS_HINT);
     const focusField = numberField({ step: 0.05 });
     const rayleighField = numberField({ min: 0, step: 0.1 });
     onChange(rayleighField, (rayleigh) => ({ rayleigh }));
@@ -302,6 +311,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         return applyFocus(offset);
     }, "btn btn-quiet");
     const focusHere = button("Focus here", () => applyFocus(null), "btn");
+    const focusLabel = labeled("Focus offset mm", focusField, "labeled inline");
     const loadInput = el("input", { type: "file", accept: ".json,application/json", class: "hidden" }) as HTMLInputElement;
     loadInput.addEventListener("change", () => {
         const file = loadInput.files?.[0];
@@ -346,14 +356,12 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         mapBox,
         legend,
         el("div", { class: "button-row hm-focus" },
-            labeled("Focus offset mm", focusField, "labeled inline"),
+            focusLabel,
             setFocus,
             focusHere,
             focusState,
         ),
-        el("p", { class: "muted hint" },
-            "Focus the beam by eye over the probed area by jogging the head up or down, then"
-            + " Focus here: the offset is the head's height less the board's under the beam."),
+        focusHint,
         el("div", { class: "button-row" },
             labeled("Rayleigh mm", rayleighField, "labeled inline"),
             saveButton, loadButton, clearButton, loadInput,
@@ -529,6 +537,13 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         setLocked(probeButton, !connected || !focusAxis || !idle || probing || busy);
         setLocked(stopButton, !probing);
         setLocked(focusHere, !connected || !heightMap?.map || !idle || probing);
+        const milling = isMilling(state.snapshot);
+        focusHere.textContent = milling ? "Touch off here" : "Focus here";
+        focusHint.textContent = milling ? TOUCH_HINT : FOCUS_HINT;
+        const offsetText = focusLabel.querySelector(".labeled-text");
+        if (offsetText) {
+            offsetText.textContent = milling ? "Touch-off offset mm" : "Focus offset mm";
+        }
         setLocked(setFocus, !heightMap?.map || probing);
         setLocked(clearButton, !heightMap?.map || probing);
         setLocked(loadButton, probing);

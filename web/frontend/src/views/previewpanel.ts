@@ -27,7 +27,10 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
         preview.setJob(job, keep);
     }, ["job"]);
     ctx.store.subscribe((state) => {
-        preview.setHead(state.snapshot.machine?.joint ?? null);
+        // The board point comes from the backend, which knows the frame: on a
+        // cartesian machine the head is not at the joint's polar point.
+        const machine = state.snapshot.machine;
+        preview.setHead(machine?.joint ?? null, machine?.board ?? null);
     }, ["snapshot"]);
     ctx.store.subscribe((state) => {
         preview.setRMax(state.settings?.values["r_max"] ?? 0);

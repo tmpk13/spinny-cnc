@@ -26,6 +26,7 @@ import type {
     PositionRequest,
     ProbeProgress,
     ProbeSettings,
+    Profile,
     Progress,
     RealtimeAction,
     RunState,
@@ -87,6 +88,10 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     tmc_h_ma: 600,
     tmc_h_micro: 256,
     probe_ms: 20,
+    z_jerk: 3,
+    z_max: 0,
+    cartesian: 0,
+    spindle: 0,
 };
 
 /**
@@ -146,6 +151,10 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tmc_h_ma", unit: "mA", help: "focus axis run current" },
     { name: "tmc_h_micro", unit: "", help: "microsteps" },
     { name: "probe_ms", unit: "ms", help: "motion queued during a probe, 0 to 160; 0 stops dead within h_jerk" },
+    { name: "z_jerk", unit: "mm/s", help: "cross slide: allowed speed change at a corner, as a joint" },
+    { name: "z_max", unit: "mm", help: "cross slide soft limit either side of zero, 0 = off" },
+    { name: "cartesian", unit: "0/1", help: "1 = X/Y machine: the rail is X, the cross slide Y, the table holds" },
+    { name: "spindle", unit: "0/1", help: "1 = the laser output drives a spindle, the focus axis is its depth" },
 ];
 
 export type MoveKind = "go" | "cut" | "jog";
@@ -236,6 +245,8 @@ export class MockMachine {
     enabled = false;
     /** Laser duty in permille. */
     laser = 0;
+    /** `S` of the spindle while it turns, with `$spindle=1`; its duty is what the status shows. */
+    spindle = 0;
     /** Surface speed of the move in progress, mm/min. */
     rate = 0;
     queue: Move[] = [];
@@ -257,6 +268,35 @@ export class MockMachine {
 
     hasFocusAxis(): boolean {
         return (this.settings["h_axis"] ?? 0) !== 0;
+    }
+
+    /** What the machine is, as the backend reads it from the settings. */
+    profile(): Profile {
+        return {
+            kinematics: (this.settings["cartesian"] ?? 0) !== 0 ? "cartesian" : "polar",
+            tool: this.milling() ? "spindle" : "laser",
+            h_axis: this.hasFocusAxis(),
+            r_max: this.settings["r_max"] ?? 0,
+            z_max: this.settings["z_max"] ?? 0,
+        };
+    }
+
+    milling(): boolean {
+        return (this.settings["spindle"] ?? 0) !== 0;
+    }
+
+    /** `spindle S` / `spindle off`: refused on a laser machine, as the firmware refuses it. */
+    spin(power: number | null): void {
+        if (!this.milling()) {
+            throw new MachineError(2, "bad word");
+        }
+        if (power !== null && !(power >= 0)) {
+            throw new MachineError(4, "out of range");
+        }
+        if (power !== null && (this.state === "Alarm" || this.state === "Jog")) {
+            throw new MachineError(5, "not now");
+        }
+        this.spindle = power ?? 0;
     }
 
     /** The board point under the probe tip with the joints at `joint`. */
@@ -343,7 +383,7 @@ export class MockMachine {
             joint: { ...this.joint, z: this.z, h: focus ? this.h : null },
             board: boardOfJoint(this.joint),
             rate: this.rate,
-            laser: this.laser,
+            laser: this.milling() ? Math.max(0, Math.min(1000, (this.spindle / (this.settings["s_max"] ?? 1000)) * 1000)) : this.laser,
             mode: this.mode,
             enabled: this.enabled,
             queue: this.queueFree(),
@@ -602,6 +642,7 @@ export class MockMachine {
         this.active = null;
         this.slide = null;
         this.laser = 0;
+        this.spindle = 0;
         this.beamSeconds = 0;
         this.rate = 0;
         this.feed = null;
@@ -721,8 +762,16 @@ export class MockMachine {
         if (/_(steps|rate|accel|jerk)$/.test(name) && value <= 0) {
             throw new MachineError(7, "bad setting value");
         }
-        if ((name === "h_axis" || name === "probe_invert") && value !== 0 && value !== 1) {
+        if (["h_axis", "probe_invert", "cartesian", "spindle"].includes(name) && value !== 0 && value !== 1) {
             throw new MachineError(7, "bad setting value");
+        }
+        if (name === "z_max" && value < 0) {
+            throw new MachineError(7, "bad setting value");
+        }
+        if (name === "spindle" && value !== this.settings["spindle"]) {
+            // The output changes meaning: whatever ran on it stops.
+            this.spindle = 0;
+            this.beamOff();
         }
         if (name === "probe_ms" && !(Number.isInteger(value) && value >= 0 && value <= 160)) {
             throw new MachineError(7, "bad setting value");
@@ -1036,6 +1085,9 @@ export class MockBackend implements Api, EventFeed {
     connected = false;
     url: string | null = null;
     tolerance = 0.005;
+    /** The host's milling settings: travel height over the surface, mm, and the spin-up dwell, s. */
+    clearance = 2;
+    spinup = 2;
     status: LinkStatus = "closed";
 
     private jobStore = new Map<string, Job>();
@@ -1180,6 +1232,7 @@ export class MockBackend implements Api, EventFeed {
             url: this.url,
             firmware: this.connected ? { version: MOCK_VERSION, lines: LINE_SLOTS, blocks: PLANNER_BLOCKS } : null,
             machine: this.connected ? this.machine.status() : null,
+            profile: this.machine.profile(),
             run: this.progress(),
         };
     }
@@ -1692,7 +1745,24 @@ export class MockBackend implements Api, EventFeed {
     // Laser.
 
     async laser(power: number, ms: number): Promise<void> {
+        if (this.machine.milling()) {
+            throw new ApiError(400, "the output drives a spindle ($spindle=1): use the spindle controls");
+        }
         this.exchange(`laser S${power} T${ms}`, () => this.machine.beam(power, ms));
+    }
+
+    async spindle(power: number): Promise<void> {
+        if (this.session) {
+            throw new ApiError(409, "a job is running");
+        }
+        this.exchange(`spindle S${power}`, () => this.machine.spin(power));
+    }
+
+    async spindleOff(): Promise<void> {
+        if (this.session) {
+            throw new ApiError(409, "a job is running: stop it to stop the spindle");
+        }
+        this.exchange("spindle off", () => this.machine.spin(null));
     }
 
     async laserOff(): Promise<void> {
@@ -1711,7 +1781,7 @@ export class MockBackend implements Api, EventFeed {
         return {
             values: { ...this.machine.settings },
             schema: SETTINGS_SCHEMA,
-            host: { tolerance: this.tolerance },
+            host: { tolerance: this.tolerance, clearance: this.clearance, spinup: this.spinup },
         };
     }
 
@@ -1719,6 +1789,16 @@ export class MockBackend implements Api, EventFeed {
         if (patch.host && Number.isFinite(patch.host.tolerance) && patch.host.tolerance > 0) {
             this.tolerance = patch.host.tolerance;
         }
+        const clearance = patch.host?.clearance;
+        const spinup = patch.host?.spinup;
+        if (clearance !== undefined && !(Number.isFinite(clearance) && clearance > 0 && clearance <= 100)) {
+            throw new ApiError(400, "the clearance must be above 0 and at most 100 mm");
+        }
+        if (spinup !== undefined && !(Number.isFinite(spinup) && spinup >= 0 && spinup <= 600)) {
+            throw new ApiError(400, "the spin-up must be 0 to 600 s");
+        }
+        this.clearance = clearance ?? this.clearance;
+        this.spinup = spinup ?? this.spinup;
         const values = patch.values ?? {};
         if (Object.keys(values).length > 0) {
             this.requireConnected();
@@ -1866,6 +1946,12 @@ export class MockBackend implements Api, EventFeed {
                 if (change.passes !== undefined) {
                     checkPasses(change.passes);
                 }
+                if (change.depth !== undefined && !(Number.isFinite(change.depth) && change.depth > 0 && change.depth <= 50)) {
+                    throw new Error("depth must be above 0 and at most 50 mm");
+                }
+                if (change.plunge !== undefined) {
+                    checkSpeed(change.plunge, "plunge");
+                }
             }
             if (patch.offset) {
                 const moved = patch.offset.x !== job.offset.x || patch.offset.y !== job.offset.y;
@@ -1896,6 +1982,12 @@ export class MockBackend implements Api, EventFeed {
             }
             if (change.passes !== undefined) {
                 group.passes = change.passes;
+            }
+            if (change.depth !== undefined) {
+                group.depth = change.depth;
+            }
+            if (change.plunge !== undefined) {
+                group.plunge = change.plunge;
             }
             if (change.enabled !== undefined) {
                 group.enabled = change.enabled;

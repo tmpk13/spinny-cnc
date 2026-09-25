@@ -60,6 +60,7 @@
     --alarm: var(--red);
     --laser: var(--orange);
     --mock: var(--violet);
+    --profile: var(--cyan);
 
     /* The preview canvas reads these as plain colors: keep them literal. */
     --pv-bg: #fdf6e3;
@@ -640,6 +641,8 @@ input[type="number"].field {
 .badge[data-state="Hold"] { --tone: var(--hold); }
 .badge[data-state="none"] { --tone: var(--muted); background: transparent; }
 .badge.mock { --tone: var(--mock); }
+/* The machine is not the polar laser: X/Y, a spindle, or both. */
+.badge.profile { --tone: var(--profile); }
 
 /* An alarm is the one state that shouts. */
 .badge[data-state="Alarm"] {

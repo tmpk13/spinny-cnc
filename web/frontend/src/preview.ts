@@ -5,7 +5,7 @@
 
 import { cssVar } from "./dom.ts";
 import { boardOfJoint } from "./kinematics.ts";
-import type { Grid, HeightMap, Job, Joint, Path, Point } from "./types.ts";
+import type { Board, Grid, HeightMap, Job, Joint, Path, Point } from "./types.ts";
 
 /** World center in mm and CSS pixels per mm. */
 export interface View {
@@ -139,6 +139,7 @@ export class Preview {
     private job: Job | null = null;
     private rMax = 0;
     private head: Joint | null = null;
+    private headBoard: Board | null = null;
     private trail: Point[] = [];
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
@@ -186,11 +187,16 @@ export class Preview {
         }
     }
 
-    /** Live joint position; the trail keeps the last positions that moved. */
-    setHead(joint: Joint | null): void {
+    /**
+     * Live joint position, and the board point under the head when the
+     * caller knows it (a cartesian machine's is not the joint's polar
+     * point); the trail keeps the last positions that moved.
+     */
+    setHead(joint: Joint | null, board: Board | null = null): void {
         this.head = joint;
+        this.headBoard = joint ? board ?? boardOfJoint(joint) : null;
         if (joint) {
-            const board = boardOfJoint(joint);
+            const board = this.headBoard!;
             const last = this.trail[this.trail.length - 1];
             if (!last || Math.hypot(last[0] - board.x, last[1] - board.y) > 1e-4) {
                 this.trail.push([board.x, board.y]);
@@ -368,8 +374,8 @@ export class Preview {
             ctx.stroke();
             ctx.globalAlpha = 1;
         }
-        if (this.head) {
-            const board = boardOfJoint(this.head);
+        if (this.head && this.headBoard) {
+            const board = this.headBoard;
             ctx.strokeStyle = colors.head;
             ctx.fillStyle = colors.head;
             ctx.lineWidth = 1.5 * px;

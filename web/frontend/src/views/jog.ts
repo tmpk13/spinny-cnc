@@ -1,10 +1,14 @@
 // Jog pad for board X/Y, radius and turn buttons, the focus axis (on a
 // machine with one), the cross slide setup control, go-to fields, position
 // declaration, motors and unlock. Arrow keys jog when no input has focus.
+// On a cartesian machine the cross slide is the Y axis instead of a setup
+// control: it steps like the rail, at the feed given, and a joint goto
+// takes it beside the radius.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, inputHasFocus, labeled, modalOpen, numberField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
+import { isCartesian, isMilling } from "../profile.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 
 export const STEPS_MM = [0.1, 1, 10];
@@ -65,9 +69,11 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
             await ctx.call(ctx.api.jog(request));
         },
         async jogSlide(dz) {
-            // The slide keeps the firmware's own jog rate: the feed field
-            // belongs to the moves that carry the beam over the board.
-            await ctx.call(ctx.api.jog({ kind: "joint", dz, feed: null }));
+            // As a setup axis the slide keeps the firmware's own jog rate:
+            // the feed field belongs to the moves that carry the beam over
+            // the board, which on a cartesian machine it is one of.
+            const cartesian = isCartesian(ctx.store.get().snapshot);
+            await ctx.call(ctx.api.jog({ kind: "joint", dz, feed: cartesian ? feed() : null }));
         },
         async jogFocus(dh) {
             // Its own rate too: the firmware's jog_h, not a surface speed.
@@ -111,22 +117,29 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         button("Turn +", () => controls.jogJoint(0, stepDeg), "btn btn-axis"),
     );
     // The cross slide is not a board move: it is kept in its own frame so it
-    // reads as the setup control it is.
+    // reads as the setup control it is. On a cartesian machine it is an axis
+    // like the rail and steps with the main step.
+    const slideTitle = el("span", { class: "slide-title" }, "Cross slide");
+    const slideNote = el("span", { class: "slide-note" }, "Setup only: carries the rail across the rotation axis");
+    const slideSteps = choiceRow(STEPS_Z, stepZ, (value) => { stepZ = value; }, (value) => `${value} mm`, "Step");
+    const slideStep = (): number => (isCartesian(ctx.store.get().snapshot) ? stepMm : stepZ);
     const slide = el("div", { class: "slide" },
-        el("span", { class: "slide-title" }, "Cross slide"),
-        el("span", { class: "slide-note" }, "Setup only: carries the rail across the rotation axis"),
-        choiceRow(STEPS_Z, stepZ, (value) => { stepZ = value; }, (value) => `${value} mm`, "Step"),
+        slideTitle,
+        slideNote,
+        slideSteps,
         el("div", { class: "slide-buttons" },
-            button("Z-", () => controls.jogSlide(-stepZ), "btn btn-slide"),
-            button("Z+", () => controls.jogSlide(stepZ), "btn btn-slide"),
+            button("Z-", () => controls.jogSlide(-slideStep()), "btn btn-slide"),
+            button("Z+", () => controls.jogSlide(slideStep()), "btn btn-slide"),
         ),
         button("Set Z=0 here", () => declare("z"), "btn btn-quiet"),
     );
     // The focus axis moves the head up and down over the board; it is shown
     // only on a machine that reports one.
+    const focusTitle = el("span", { class: "slide-title" }, "Focus axis");
+    const focusNote = el("span", { class: "slide-note" }, "Raises and lowers the head; up is positive");
     const focus = el("div", { class: "slide focus-axis hidden" },
-        el("span", { class: "slide-title" }, "Focus axis"),
-        el("span", { class: "slide-note" }, "Raises and lowers the head; up is positive"),
+        focusTitle,
+        focusNote,
         choiceRow(STEPS_H, stepH, (value) => { stepH = value; }, (value) => `${value} mm`, "Step"),
         el("div", { class: "slide-buttons" },
             button("Down", () => controls.jogFocus(-stepH), "btn btn-slide"),
@@ -142,6 +155,10 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     // takes on a jog: it is how the head is lined up with the axis.
     const gotoR = numberField({ placeholder: "r" });
     const gotoA = numberField({ placeholder: "a" });
+    // On a cartesian machine the joint goto takes the cross slide instead of
+    // the table, which holds the board still under a cut.
+    const gotoZ = numberField({ placeholder: "z" });
+    gotoZ.classList.add("hidden");
     const gotoBoard = async (): Promise<void> => {
         const x = parseNumber(gotoX.value);
         const y = parseNumber(gotoY.value);
@@ -156,6 +173,15 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     };
     const gotoJoint = async (): Promise<void> => {
         const r = parseNumber(gotoR.value);
+        if (isCartesian(ctx.store.get().snapshot)) {
+            const z = parseNumber(gotoZ.value);
+            if (r === null && z === null) {
+                ctx.toast("error", "enter r and/or z");
+                return;
+            }
+            await ctx.call(ctx.api.goto({ kind: "joint", feed: feed(), ...(r !== null ? { r } : {}), ...(z !== null ? { z } : {}) }));
+            return;
+        }
         const a = parseNumber(gotoA.value);
         if (r === null && a === null) {
             ctx.toast("error", "enter r and/or a");
@@ -176,6 +202,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     gotoY.addEventListener("keydown", onEnter(goBoard));
     gotoR.addEventListener("keydown", onEnter(goJoint));
     gotoA.addEventListener("keydown", onEnter(goJoint));
+    gotoZ.addEventListener("keydown", onEnter(goJoint));
 
     body.append(
         el("div", { class: "goto-row" },
@@ -185,7 +212,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         ),
         el("div", { class: "goto-row" },
             el("span", { class: "choice-label" }, "Joint"),
-            gotoR, gotoA,
+            gotoR, gotoA, gotoZ,
             goJoint,
             button("Center", () => ctx.call(ctx.api.goto({ kind: "joint", r: 0 })), "btn btn-quiet"),
         ),
@@ -210,8 +237,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         const hint = {
             r: "The beam must be over the rotation axis.",
             a: "",
-            z: "The rail is over the axis when the centering lines meet at a point.",
-            h: "A height map probed before keeps its heights in the old numbers: probe again after this.",
+            z: isCartesian(ctx.store.get().snapshot)
+                ? "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it."
+                : "The rail is over the axis when the centering lines meet at a point.",
+            h: isMilling(ctx.store.get().snapshot)
+                ? "Touch the tool to the copper first: a milled cut without a height map goes down from H 0."
+                    + " A height map probed before keeps its heights in the old numbers: probe again after this."
+                : "A height map probed before keeps its heights in the old numbers: probe again after this.",
         }[axis];
         const ok = await askConfirm(`Declare ${what} to be 0 at the current position? ${hint}`.trim(), "Set 0");
         if (ok) {
@@ -224,6 +256,19 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         body.disabled = !state.snapshot.connected;
         motors.textContent = machine?.enabled ? "Motors off" : "Motors on";
         focus.classList.toggle("hidden", machine?.joint.h === null || machine?.joint.h === undefined);
+        const cartesian = isCartesian(state.snapshot);
+        slideNote.textContent = cartesian
+            ? "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+            : "Setup only: carries the rail across the rotation axis";
+        slideTitle.textContent = cartesian ? "Cross slide (Y)" : "Cross slide";
+        slideSteps.classList.toggle("hidden", cartesian);
+        gotoA.classList.toggle("hidden", cartesian);
+        gotoZ.classList.toggle("hidden", !cartesian);
+        const milling = isMilling(state.snapshot);
+        focusTitle.textContent = milling ? "Depth axis" : "Focus axis";
+        focusNote.textContent = milling
+            ? "Raises and lowers the tool; up is positive, H 0 is the board's surface"
+            : "Raises and lowers the head; up is positive";
     }, ["snapshot"]);
 
     // One key jog at a time: a held or hammered key must not queue up moves.

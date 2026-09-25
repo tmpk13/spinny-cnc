@@ -23,6 +23,17 @@ with one, and the board position the backend derives from the joint. The
 cross slide is a setup axis: the jog panel moves it on its own, in the small
 steps a centering burn is measured into.
 
+The page follows what the machine is (`profile` in the backend's state,
+from `$cartesian` and `$spindle`), with a badge in the status bar when it
+is not the polar laser. On a cartesian machine the cross slide is the Y
+axis: it steps like the rail, at the feed given, and the joint goto takes
+`r` and `z`. With a spindle the laser panel starts and stops the spindle,
+the groups table has depth and plunge in place of the power floor, the
+focus axis is the depth axis, "Focus here" is "Touch off here", and the
+settings panel has the travel clearance and spin-up. The in-page mock
+takes those settings and runs a spindle, but it moves as the polar
+machine.
+
 The Height map panel probes a grid (drawn on the preview before and while it
 is probed), shows the heights as a map of the board seen from above, blue
 below the mean and red above it, and sets the focus offset. The run button
@@ -52,6 +63,10 @@ classDiagram
     class preview {
         Preview  canvas around the axis, y up, probe grid
     }
+    class profile {
+        profileOf(snapshot) Profile
+        isCartesian / isMilling
+    }
     class kinematics {
         segmentBoardMove(from, to, tolerance)
         moveMinutes(from, to, feed, rRate, aRate)
@@ -68,6 +83,7 @@ classDiagram
     main --> state
     main --> views
     views --> preview
+    views --> profile
     mock --> kinematics
     mock --> mockjobs
     main ..> mock : ?mock=1

@@ -1,9 +1,11 @@
 // Firmware settings table with inline edits, apply, save to flash, and the
-// host chord tolerance.
+// host chord tolerance; on a spindle machine also the host's milling travel
+// clearance and spin-up.
 
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
-import type { SettingsResponse } from "../types.ts";
+import { isMilling } from "../profile.ts";
+import type { HostSettings, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** The values that differ from what the backend reported. */
@@ -19,18 +21,29 @@ export function changedValues(settings: SettingsResponse, edits: Record<string, 
 
 export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });
+    const clearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
+    const spinup = numberField({ value: 2, min: 0, step: 0.5, width: "6rem" });
+    const milling = el("div", { class: "button-row hidden" },
+        labeled("Travel clearance mm", clearance, "labeled inline"),
+        labeled("Spin-up s", spinup, "labeled inline"),
+    );
     const apply = button("Apply", () => applyEdits(), "btn btn-primary");
     const save = button("Save to flash", () => saveFlash(), "btn");
     const reload = button("Reload", () => ctx.refreshSettings(), "btn btn-quiet");
     const table = el("table", { class: "settings" });
     const body = el("fieldset", { class: "panel-body" },
         el("div", { class: "button-row" }, labeled("Chord tolerance mm", tolerance, "labeled inline"), apply, save, reload),
+        milling,
         table,
     );
     root.append(el("h2", {}, "Settings"), body);
 
     let edits: Record<string, number> = {};
     let shown: SettingsResponse | null = null;
+
+    ctx.store.subscribe((state) => {
+        milling.classList.toggle("hidden", !isMilling(state.snapshot));
+    }, ["snapshot"]);
 
     ctx.store.subscribe((state) => {
         if (state.settings !== shown) {
@@ -46,6 +59,8 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         tolerance.value = String(settings.host.tolerance);
+        clearance.value = String(settings.host.clearance ?? 2);
+        spinup.value = String(settings.host.spinup ?? 2);
         const names = settings.schema.length > 0 ? settings.schema : Object.keys(settings.values).map((name) => ({ name, unit: "", help: "" }));
         const rows = names.map((entry) => {
             const current = settings.values[entry.name];
@@ -85,12 +100,36 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "the chord tolerance must be above 0");
             return;
         }
-        const patch: { values?: Record<string, number>; host?: { tolerance: number } } = {};
+        const hostClearance = parseNumber(clearance.value);
+        const hostSpinup = parseNumber(spinup.value);
+        if (hostClearance !== null && hostClearance <= 0) {
+            ctx.toast("error", "the travel clearance must be above 0");
+            return;
+        }
+        if (hostSpinup !== null && hostSpinup < 0) {
+            ctx.toast("error", "the spin-up cannot be negative");
+            return;
+        }
+        const patch: { values?: Record<string, number>; host?: HostSettings } = {};
         if (Object.keys(values).length > 0) {
             patch.values = values;
         }
+        const host: HostSettings = { tolerance: settings.host.tolerance };
+        let hostChanged = false;
         if (hostTolerance !== null && hostTolerance > 0 && hostTolerance !== settings.host.tolerance) {
-            patch.host = { tolerance: hostTolerance };
+            host.tolerance = hostTolerance;
+            hostChanged = true;
+        }
+        if (hostClearance !== null && hostClearance !== settings.host.clearance) {
+            host.clearance = hostClearance;
+            hostChanged = true;
+        }
+        if (hostSpinup !== null && hostSpinup !== settings.host.spinup) {
+            host.spinup = hostSpinup;
+            hostChanged = true;
+        }
+        if (hostChanged) {
+            patch.host = host;
         }
         if (!patch.values && !patch.host) {
             ctx.toast("info", "nothing changed");

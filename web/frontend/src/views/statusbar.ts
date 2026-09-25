@@ -1,6 +1,7 @@
 // Connection selector, machine state, firmware version and the event link.
 
 import { button, el, replace } from "../dom.ts";
+import { profileBadge, profileOf } from "../profile.ts";
 import type { Ctx } from "./context.ts";
 
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
@@ -16,13 +17,15 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const connect = button("Connect", () => toggle());
     const stateBadge = el("span", { class: "badge state", "data-state": "none" }, "No link");
     const firmware = el("span", { class: "firmware muted" }, "");
+    // Shown only for a machine that is not the polar laser.
+    const profile = el("span", { class: "badge profile hidden" }, "");
     const link = el("span", { class: "link", "data-link": "closed" }, "feed off");
     const mock = ctx.store.get().mock ? el("span", { class: "badge mock" }, "mock") : null;
 
     root.append(
         el("div", { class: "brand" }, "Spinny laser"),
         el("div", { class: "connection" }, select, urlInput, refresh, connect),
-        el("div", { class: "status" }, stateBadge, firmware, link, mock),
+        el("div", { class: "status" }, stateBadge, profile, firmware, link, mock),
     );
 
     select.addEventListener("change", () => {
@@ -87,6 +90,9 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
             stateBadge.setAttribute("data-state", machine.state);
         }
         firmware.textContent = snapshot.firmware ? `v${snapshot.firmware.version}` : "";
+        const name = snapshot.connected ? profileBadge(profileOf(snapshot)) : "";
+        profile.textContent = name;
+        profile.classList.toggle("hidden", name === "");
         link.setAttribute("data-link", state.link);
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";
     }, ["snapshot", "link"]);
