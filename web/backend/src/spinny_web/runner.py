@@ -171,12 +171,14 @@ class Runner:
             except LinkError as exc:
                 raise RunnerError(f"could not renumber the table angle: {exc}") from exc
             status = self._idle_status(link)
-        start = status.joint
+        start = streamer.start_of(status)
         stats = streamer.estimate(job, start, compensation)
         # The estimate takes a while on a large job, and the plan is only
         # good from where the machine was when it was made: a typed line in
         # the meantime may have moved the head, or declared it elsewhere.
-        if self._idle_status(link).joint != start:
+        # Every axis counts: a cartesian plan is made in the table's frame.
+        after = self._idle_status(link)
+        if (after.r, after.a, after.z, after.h) != (status.r, status.a, status.z, status.h):
             raise RunnerError("the machine moved while the run was being prepared")
         return start, stats
 

@@ -63,6 +63,10 @@ DEFAULT_SETTINGS = {
     "tmc_h_ma": 600,
     "tmc_h_micro": 256,
     "probe_ms": 20,
+    "z_jerk": 3,
+    "z_max": 0,
+    "cartesian": 0,
+    "spindle": 0,
 }
 
 
@@ -113,6 +117,8 @@ class FakeSerial:
         self.mode = "dyn"
         self.enabled = False
         self.laser = 0
+        # The spindle's S while it turns, with `spindle` set.
+        self.spindle = 0
         self.settings = dict(DEFAULT_SETTINGS)
         self.saved = 0
         self.hold = False
@@ -218,6 +224,8 @@ class FakeSerial:
         moving = time.monotonic() < self.busy_until and not self.hold
         rate = 300 if moving else 0
         laser = self.laser if moving else 0
+        if self.settings["spindle"]:
+            laser = self.spindle
         focus = f"|H:{self.h:.3f}|P:{int(self.touching())}" if self.settings["h_axis"] else ""
         return (
             f"<{self.state()}|J:{r:.3f},{a:.4f}|V:{rate}|L:{laser}"
@@ -232,6 +240,9 @@ class FakeSerial:
         r, a = self.joint
         theta = math.radians(a)
         along, across = self.probe_offset
+        # A cartesian head sits across the rail by the slide's position.
+        if self.settings["cartesian"]:
+            across += self.z
         x = (r + along) * math.cos(theta) - across * math.sin(theta)
         y = (r + along) * math.sin(theta) + across * math.cos(theta)
         return self.surface(x, y)
@@ -289,6 +300,18 @@ class FakeSerial:
             return self._setting(text.strip())
         if keyword == "probe":
             return self._probe(values)
+        if keyword == "spindle":
+            if not self.settings["spindle"]:
+                return ["error:2 bad word"]
+            if rest.lower() == "off":
+                self.spindle = 0
+                return ["ok"]
+            if "S" not in values:
+                return ["error:3 missing word"]
+            self.spindle = int(values["S"])
+            return ["ok"]
+        if keyword in ("go", "cut", "jog", "jogto") and self.settings["cartesian"]:
+            return self._cartesian(keyword, values)
         if keyword in ("go", "cut", "jog", "jogto"):
             if self.alarm is not None:
                 return ["error:5 not now"]
@@ -342,7 +365,7 @@ class FakeSerial:
             self.laser = int(values["S"])
             return ["ok"]
         if keyword == "set":
-            if "Z" in values and ("R" in values or "A" in values):
+            if "Z" in values and ("R" in values or "A" in values) and not self.settings["cartesian"]:
                 return ["error:2 bad word"]
             if "H" in values:
                 if not self.settings["h_axis"]:
@@ -362,6 +385,40 @@ class FakeSerial:
             self.alarm = None
             return ["ok"]
         return ["error:1 unknown command"]
+
+    def _cartesian(self, keyword: str, values: dict) -> list[str]:
+        """A move with the cross slide as a joint beside the others."""
+        if self.alarm is not None:
+            return ["error:5 not now"]
+        if keyword in ("go", "cut") and "A" in values:
+            return ["error:2 bad word"]
+        if self.settings["spindle"] and keyword == "cut" and ("S" in values or "M" in values):
+            return ["error:2 bad word"]
+        if "H" in values and not self.settings["h_axis"]:
+            return ["error:2 bad word"]
+        relative = keyword == "jog"
+        target = {
+            "R": self.joint[0],
+            "A": self.joint[1],
+            "Z": self.z,
+            "H": self.h,
+        }
+        for axis in target:
+            if axis in values:
+                target[axis] = target[axis] + values[axis] if relative else values[axis]
+        if self.settings["r_max"] and abs(target["R"]) > self.settings["r_max"]:
+            return ["error:4 out of range"]
+        if self.settings["z_max"] and abs(target["Z"]) > self.settings["z_max"]:
+            return ["error:4 out of range"]
+        self.joint = [target["R"], target["A"]]
+        self.z = target["Z"]
+        self.h = target["H"]
+        if keyword == "cut" and "S" in values:
+            self.laser = int(values["S"])
+        self.jogging = keyword.startswith("jog")
+        self.enabled = True
+        self.busy_until = max(self.busy_until, time.monotonic()) + self.move_time
+        return ["ok"]
 
     def _probe(self, values: dict) -> list[str]:
         """The focus axis down (or up) by at most H until the board is met,
@@ -434,6 +491,7 @@ class FakeSerial:
             self.hold = False
             self.busy_until = 0.0
             self.laser = 0
+            self.spindle = 0
             # The modal state goes with the queue, as on the firmware.
             self.mode = "dyn"
             if moving:

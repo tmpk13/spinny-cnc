@@ -285,3 +285,110 @@ def test_probing_then_a_focus_run_follows_the_board_on_the_virtual_firmware(focu
     # Along the whole burn the beam's focus sat 1 mm above the board under it.
     worst = max(abs(m["h"] - (board_top(m["x"], m["y"]) + 1.0)) for m in marks)
     assert worst < 0.01, worst
+
+
+@pytest.fixture
+def mill_firmware(tmp_path):
+    """A cartesian machine with a spindle, whose tool is its own probe: it
+    touches the tilted board wherever the tool tip meets it."""
+    if not BINARY or not Path(BINARY).exists():
+        pytest.skip("SPINNY_VIRTUAL does not name a virtual firmware binary")
+    port = free_port()
+    trace = tmp_path / "trace.json"
+    process = subprocess.Popen(
+        [
+            BINARY, "--listen", f"127.0.0.1:{port}", "--fast", "--quiet",
+            "--settings", "h_axis=1",
+            "--settings", "cartesian=1",
+            "--settings", "spindle=1",
+            "--surface", "-1.5,0.01,-0.02",
+            "--trace", str(trace),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not wait_port(port):
+            pytest.fail("the virtual firmware did not open its port")
+        yield port, trace
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def test_a_cartesian_spindle_probes_then_mills_at_depth_under_the_board_on_the_virtual_firmware(mill_firmware, tmp_path):
+    import json
+
+    from spinny_web.heightmap import Compensation, Grid, HeightMapStore
+    from spinny_web.kinematics import CartesianStreamer, Spindle
+    from spinny_web.prober import DONE as PROBED
+    from spinny_web.prober import Prober, ProbeSettings
+
+    port, trace = mill_firmware
+    link = Link(f"socket://127.0.0.1:{port}")
+    link.open()
+    try:
+        store = HeightMapStore(tmp_path / "heightmap.json")
+        prober = Prober(store)
+        streamer = CartesianStreamer(angle=0.0, spindle=Spindle(clearance=1.0, spinup=0.1))
+        settings = ProbeSettings(depth=4, feed=240, slow=30, backoff=0.3, offset=(0.0, 0.0))
+        prober.start(Grid(x0=-8, y0=-8, x1=8, y1=8, nx=3, ny=3), settings, link, streamer)
+        deadline = time.monotonic() + 120.0
+        while prober.active and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert prober.progress.state == PROBED, prober.snapshot()
+        heightmap = store.get()
+        # The tool is the probe, so the rail and the cross slide put it right
+        # over each grid point, the axis included.
+        for iy, y in enumerate(heightmap.grid.ys):
+            for ix, x in enumerate(heightmap.grid.xs):
+                assert heightmap.heights[iy][ix] == pytest.approx(board_top(x, y), abs=0.002)
+        heightmap.focus_offset = 0.0
+        heightmap.focus_set = True
+        compensation = Compensation(heightmap=heightmap, mode="focus")
+        square = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0), (-5.0, -5.0)]
+        job = Job(
+            id="mill",
+            name="square",
+            groups=[Group(label="iso", power=600, speed=400, depth=0.2, passes=2, plunge=120, paths=[square])],
+        )
+        runner = Runner()
+        runner.start(job, link, streamer, compensation)
+        deadline = time.monotonic() + 120.0
+        while runner.progress.state == "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert runner.progress.state == DONE, runner.snapshot()
+        status = link.status_now(1.0)
+        assert status.laser == 0, "the spindle stopped at the end"
+        assert status.h == pytest.approx(heightmap.span()[1] + 1.0, abs=1e-3), "the tool ends up at the travel height"
+    finally:
+        link.close()
+    deadline = time.monotonic() + 10.0
+    marks = []
+    while time.monotonic() < deadline:
+        try:
+            marks = [m for m in json.loads(trace.read_text())["marks"] if m["duty"] > 0]
+        except (OSError, ValueError):
+            marks = []
+        if marks:
+            break
+        time.sleep(0.1)
+    assert marks, "the spindle never turned"
+    # In the work, the tool followed the board at the pass's depth under it,
+    # on the square, with the table still.
+    cutting = [m for m in marks if m["h"] < board_top(m["x"], m["y"]) - 0.05]
+    assert len(cutting) > 50
+    for m in cutting:
+        assert m["a"] == 0.0 and m["x"] == pytest.approx(m["r"]) and m["y"] == pytest.approx(m["z"])
+        on_square = min(abs(abs(m["x"]) - 5.0), abs(abs(m["y"]) - 5.0))
+        assert on_square < 0.01, m
+    depths = sorted({round(board_top(m["x"], m["y"]) - m["h"], 2) for m in cutting if on_edge(m)})
+    assert depths == [0.1, 0.2], depths
+
+
+def on_edge(mark) -> bool:
+    """A mark along a side of the square, not in a corner's plunge."""
+    return max(abs(mark["x"]), abs(mark["y"])) > 4.99 and min(abs(mark["x"]), abs(mark["y"])) < 4.5

@@ -24,7 +24,7 @@ from typing import Callable
 from spinny_laser import polar
 
 from .heightmap import Finite, Grid, HeightMap, HeightMapStore
-from .kinematics import FOCUS_DECIMALS, Streamer, coord, num
+from .kinematics import FOCUS_DECIMALS, Streamer, coord, num, turned
 from .link import Link, LinkError, parse_probe
 from .runner import halt
 
@@ -109,6 +109,16 @@ def probe_joint(
     return r, polar.unwrap(angle, previous_angle)
 
 
+def cartesian_probe_joint(point: tuple[float, float], offset: tuple[float, float], angle: float) -> tuple[float, float]:
+    """The rail and cross slide positions that put the probe tip over a
+    board point on a cartesian machine: the tip is the head plus `offset`
+    along the rail and across it, and the board is turned `angle` degrees
+    from the machine, so the head goes to the point turned back less the
+    offset. Every point is reachable; only the soft limits bound it."""
+    x, y = turned(point, -angle)
+    return x - offset[0], y - offset[1]
+
+
 @dataclass
 class ProbeProgress:
     state: str = RUNNING
@@ -161,7 +171,13 @@ class Prober:
             return self.progress.to_dict() if self.progress is not None else None
 
     def start(
-        self, grid: Grid, settings: ProbeSettings, link: Link | None, streamer: Streamer, r_max: float = 0.0
+        self,
+        grid: Grid,
+        settings: ProbeSettings,
+        link: Link | None,
+        streamer: Streamer,
+        r_max: float = 0.0,
+        z_max: float = 0.0,
     ) -> dict:
         grid.check()
         settings.check()
@@ -175,11 +191,13 @@ class Prober:
                 raise ProberError("the last probing is still stopping")
             self._starting = True
         try:
-            return self._start(grid, settings, link, streamer, r_max)
+            return self._start(grid, settings, link, streamer, r_max, z_max)
         finally:
             self._starting = False
 
-    def _start(self, grid: Grid, settings: ProbeSettings, link: Link, streamer: Streamer, r_max: float) -> dict:
+    def _start(
+        self, grid: Grid, settings: ProbeSettings, link: Link, streamer: Streamer, r_max: float, z_max: float
+    ) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
         except LinkError as exc:
@@ -195,16 +213,26 @@ class Prober:
         joints = {}
         for ix, iy in grid.order():
             point = (grid.xs[ix], grid.ys[iy])
-            try:
-                joints[(ix, iy)] = probe_joint(point, settings.offset, angle, grid.spacing / 2.0)
-            except ValueError as exc:
-                raise ProberError(str(exc)) from exc
+            if streamer.cartesian:
+                # The joint is the rail and the cross slide; the table
+                # stays where the streamer's frame has it.
+                joints[(ix, iy)] = cartesian_probe_joint(point, settings.offset, streamer.angle)
+                if z_max > 0 and abs(joints[(ix, iy)][1]) > z_max + 1e-9:
+                    raise ProberError(
+                        f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
+                        f" Z{joints[(ix, iy)][1]:.3f}, past the soft limit z_max={z_max:g}"
+                    )
+            else:
+                try:
+                    joints[(ix, iy)] = probe_joint(point, settings.offset, angle, grid.spacing / 2.0)
+                except ValueError as exc:
+                    raise ProberError(str(exc)) from exc
+                angle = joints[(ix, iy)][1]
             if r_max > 0 and abs(joints[(ix, iy)][0]) > r_max + 1e-9:
                 raise ProberError(
                     f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
                     f" R{joints[(ix, iy)][0]:.3f}, past the soft limit r_max={r_max:g}"
                 )
-            angle = joints[(ix, iy)][1]
         heightmap = HeightMap.empty(grid, settings.offset)
         # A map probed before keeps its focus offset only if the probe has
         # not changed: the offset is contact to focus for that probe.
@@ -283,6 +311,10 @@ class Prober:
                     raise LinkError("the machine reset during probing")
                 self.store.put(heightmap)
                 self._emit(progress, heightmap)
+            # The last rise is answered once it is queued, not once it is
+            # done; the map is finished when the head is back up and still,
+            # so a run started on it finds the machine at rest.
+            self._settle(link)
             with self._lock:
                 progress.point = None
             self._finish(progress, DONE, None, heightmap)
@@ -309,6 +341,18 @@ class Prober:
             self._abort.set()
             self._message("error", f"probing failed: {exc!r}")
             self._finish(progress, ERROR, f"probing failed: {exc!r}", heightmap)
+
+    def _settle(self, link: Link) -> None:
+        deadline = time.monotonic() + LINE_TIMEOUT
+        while not self._abort.is_set():
+            status = link.status_now(1.0, routine=True)
+            if status.state == "Idle":
+                return
+            if status.state == "Alarm":
+                raise LinkError(f"the machine raised an alarm: {status.raw}")
+            if time.monotonic() > deadline:
+                raise LinkError(f"the head did not come to rest: {status.raw}")
+            time.sleep(0.01)
 
     def _touch(self, link: Link, feed: float, distance: float) -> float:
         """One probe down; the height at contact."""

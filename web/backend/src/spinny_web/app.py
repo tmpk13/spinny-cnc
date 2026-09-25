@@ -30,7 +30,16 @@ from pydantic import BaseModel, ConfigDict
 from . import __version__, center
 from .heightmap import AUTO, FOCUS, MODES, OFF, POWER, Compensation, Grid, HeightMap, HeightMapStore, check_covers
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
-from .kinematics import DEFAULT_TOLERANCE, Rates, Streamer, board_of, check_feed, num
+from .kinematics import (
+    DEFAULT_TOLERANCE,
+    CartesianStreamer,
+    Rates,
+    Spindle,
+    Streamer,
+    check_feed,
+    head_board,
+    num,
+)
 from .link import (
     check_url,
     CommandError,
@@ -99,7 +108,14 @@ SETTINGS_SCHEMA = [
     {"name": "tmc_h_ma", "unit": "mA", "help": "focus axis run current"},
     {"name": "tmc_h_micro", "unit": "", "help": "microsteps"},
     {"name": "probe_ms", "unit": "ms", "help": "motion queued during a probe, 0 to 160; 0 stops dead within h_jerk"},
+    {"name": "z_jerk", "unit": "mm/s", "help": "cross slide: allowed speed change at a corner, as a joint"},
+    {"name": "z_max", "unit": "mm", "help": "cross slide soft limit either side of zero, 0 = off"},
+    {"name": "cartesian", "unit": "0/1", "help": "1 = X/Y machine: the rail is X, the cross slide Y, the table holds"},
+    {"name": "spindle", "unit": "0/1", "help": "1 = the laser output drives a spindle, the focus axis is its depth"},
 ]
+
+POLAR, CARTESIAN = "polar", "cartesian"
+LASER, SPINDLE = "laser", "spindle"
 
 NO_FRONTEND = """<!doctype html>
 <html><head><meta charset="utf-8"><title>spinny</title></head>
@@ -128,7 +144,8 @@ class JogBody(Finite):
     kind: str = "joint"
     dr: float | None = None
     da: float | None = None
-    # The cross slide moves on its own, so dz comes without dr or da.
+    # The cross slide: on its own on a polar machine, a joint beside the
+    # others on a cartesian one.
     dz: float | None = None
     # The focus axis, which may move with the joints.
     dh: float | None = None
@@ -170,6 +187,10 @@ class CommandBody(BaseModel):
 class LaserBody(Finite):
     power: float
     ms: int | None = None
+
+
+class SpindleBody(Finite):
+    power: float
 
 
 class ModeBody(BaseModel):
@@ -266,6 +287,9 @@ class Backend:
         self.runner = Runner(publish=self._publish_progress, message=self.publish_message)
         self.prober = Prober(self.heightmaps, publish=self._publish_probe, message=self.publish_message)
         self.rates = Rates()
+        # What the machine is, from its settings: polar or cartesian, laser
+        # or spindle. A laser on the polar machine until the first read.
+        self.profile = profile_of({})
         self._settings_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
         # One move request at a time: each plans from the end of the last,
@@ -303,8 +327,39 @@ class Backend:
         except ValueError:
             return DEFAULT_TOLERANCE
 
-    def streamer(self) -> Streamer:
-        return Streamer(tolerance=self.tolerance, rates=self.rates)
+    def spindle_config(self) -> Spindle:
+        """The host's milling settings, the defaults for any that do not hold."""
+        try:
+            return Spindle(
+                clearance=float(self.config.get("clearance", Spindle.clearance)),
+                spinup=float(self.config.get("spinup", Spindle.spinup)),
+            )
+        except (TypeError, ValueError):
+            return Spindle()
+
+    def host_settings(self) -> dict:
+        spindle = self.spindle_config()
+        return {"tolerance": self.tolerance, "clearance": spindle.clearance, "spinup": spindle.spinup}
+
+    @property
+    def cartesian(self) -> bool:
+        return self.profile["kinematics"] == CARTESIAN
+
+    @property
+    def milling(self) -> bool:
+        return self.profile["tool"] == SPINDLE
+
+    def streamer(self, status=None) -> Streamer:
+        """The streamer for the machine as its settings were last read. A
+        cartesian one works in the frame of the table angle in `status`, or
+        in the last status polled."""
+        spindle = self.spindle_config() if self.milling else None
+        if self.cartesian:
+            if status is None and self.link is not None and self.link.is_open:
+                status = self.link.status
+            angle = status.a if status is not None else 0.0
+            return CartesianStreamer(angle=angle, tolerance=self.tolerance, rates=self.rates, spindle=spindle)
+        return Streamer(tolerance=self.tolerance, rates=self.rates, spindle=spindle)
 
     # --- connection -----------------------------------------------------------
 
@@ -386,7 +441,7 @@ class Backend:
             raise HTTPException(status_code=409, detail="the board is being probed")
         return link
 
-    def move_start(self, link: Link) -> tuple[tuple[float, float], bool]:
+    def move_start(self, link: Link, streamer: Streamer) -> tuple[tuple[float, float], bool]:
         """Where the next move starts, and whether that is certain.
 
         While a jog is still running the reported position is on its way
@@ -399,7 +454,7 @@ class Backend:
         if status.state == "Jog" and self._jog_target is not None:
             return self._jog_target, True
         self._jog_target = None
-        return status.joint, status.state == "Idle"
+        return streamer.start_of(status), status.state == "Idle"
 
     def _send_jog(self, link: Link, lines: list[str], end: tuple[float, float] | None) -> None:
         try:
@@ -410,23 +465,26 @@ class Backend:
             raise
         self._jog_target = end
 
-    def _check_reach(self, targets: list[tuple[tuple[float, float], bool]]) -> None:
+    def _check_reach(self, targets: list[tuple[tuple[float, float], bool]], cartesian: bool = False) -> None:
         """A board move is refused whole when any of its lines would be.
 
         The firmware checks the soft limit a line at a time, and a move
         sent as several lines would run the ones inside the limit before
         the refusal came back, leaving the head at the limit rather than
-        where it was.
+        where it was. On a cartesian machine the cross slide's limit holds
+        as well.
         """
+        values = self.read_settings()["values"]
         try:
-            limit = float(self.read_settings()["values"].get("r_max", 0) or 0)
+            limit = float(values.get("r_max", 0) or 0)
+            z_limit = float(values.get("z_max", 0) or 0) if cartesian else 0.0
         except (TypeError, ValueError):
-            limit = 0.0
-        if limit <= 0:
-            return
+            limit, z_limit = 0.0, 0.0
         for joint, _ in targets:
-            if abs(joint[0]) > limit + 1e-9:
+            if limit > 0 and abs(joint[0]) > limit + 1e-9:
                 raise ValueError(f"out of reach: R{joint[0]:.3f} is past the soft limit r_max={limit:g}")
+            if z_limit > 0 and abs(joint[1]) > z_limit + 1e-9:
+                raise ValueError(f"out of reach: Z{joint[1]:.3f} is past the soft limit z_max={z_limit:g}")
 
     def snapshot(self) -> dict:
         link = self.link
@@ -442,7 +500,7 @@ class Backend:
                 }
             status = link.status
             if status is not None:
-                x, y = board_of(status.joint)
+                x, y = head_board(status.r, status.a, status.z, self.cartesian)
                 machine = {
                     "state": status.state,
                     "alarm": status.alarm,
@@ -460,6 +518,7 @@ class Backend:
             "url": self.url,
             "firmware": firmware,
             "machine": machine,
+            "profile": self.profile,
             "run": self.runner.snapshot(),
         }
 
@@ -509,19 +568,29 @@ class Backend:
         check_feed(body.feed)
         streamer = self.streamer()
         if body.kind == "joint":
+            if streamer.cartesian:
+                # The cross slide is a joint: it goes on the line with the
+                # others. A turn of the table moves the frame the tracked
+                # end is kept in, so after one the end is not known.
+                lines = [streamer.joint_jog(body.dr, body.da, body.feed, body.dh, body.dz)]
+                start, known = self.move_start(link, streamer)
+                known = known and not body.da
+                end = (start[0] + (body.dr or 0.0), start[1] + (body.dz or 0.0)) if known else None
+                self._send_jog(link, lines, end)
+                return {"lines": lines}
             if body.dz is not None:
                 if body.dr is not None or body.da is not None or body.dh is not None:
                     raise ValueError("the cross slide moves on its own: dz cannot be sent with dr, da or dh")
                 return self._slide_move(link, streamer.slide_jog(body.dz, body.feed))
             lines = [streamer.joint_jog(body.dr, body.da, body.feed, body.dh)]
-            start, known = self.move_start(link)
+            start, known = self.move_start(link, streamer)
             # A relative jog's end is known when its start is.
             end = (start[0] + (body.dr or 0.0), start[1] + (body.da or 0.0)) if known else None
         elif body.kind == "board":
-            start, _ = self.move_start(link)
-            here = board_of(start)
+            start, _ = self.move_start(link, streamer)
+            here = streamer.board_of(start)
             targets = streamer.board_targets(start, (here[0] + (body.dx or 0.0), here[1] + (body.dy or 0.0)))
-            self._check_reach(targets)
+            self._check_reach(targets, streamer.cartesian)
             lines = streamer.jog_lines(targets, body.feed)
             end = targets[-1][0] if targets else start
         else:
@@ -537,13 +606,23 @@ class Backend:
     def _goto(self, link: Link, body: GotoBody) -> dict:
         check_feed(body.feed)
         streamer = self.streamer()
-        if body.kind == "joint":
+        if body.kind == "joint" and streamer.cartesian:
+            lines = [streamer.joint_goto(body.r, body.a, body.feed, body.h, body.z)]
+            start, known = self.move_start(link, streamer)
+            known = known and body.a is None
+            if body.r is not None and body.z is not None and body.a is None:
+                end = (body.r, body.z)
+            elif known:
+                end = (start[0] if body.r is None else body.r, start[1] if body.z is None else body.z)
+            else:
+                end = None
+        elif body.kind == "joint":
             if body.z is not None:
                 if body.r is not None or body.a is not None or body.h is not None:
                     raise ValueError("the cross slide moves on its own: z cannot be sent with r, a or h")
                 return self._slide_move(link, streamer.slide_goto(body.z, body.feed))
             lines = [streamer.joint_goto(body.r, body.a, body.feed, body.h)]
-            start, known = self.move_start(link)
+            start, known = self.move_start(link, streamer)
             # An axis left out stays where the queued jog ends, which is
             # only known when the start is.
             if body.r is not None and body.a is not None:
@@ -555,16 +634,16 @@ class Backend:
         elif body.kind == "board":
             if body.x is None and body.y is None:
                 raise ValueError("a board goto needs x and/or y")
-            start, known = self.move_start(link)
+            start, known = self.move_start(link, streamer)
             # An axis left out keeps the coordinate the head will have
             # once the jog in progress ends, which is only known when the
             # start is: the reported position is one it is passing through.
             if (body.x is None or body.y is None) and not known:
                 raise ValueError("give both x and y: where the head will stop is not known")
-            here = board_of(start)
+            here = streamer.board_of(start)
             target = (here[0] if body.x is None else body.x, here[1] if body.y is None else body.y)
             targets = streamer.board_targets(start, target)
-            self._check_reach(targets)
+            self._check_reach(targets, streamer.cartesian)
             lines = streamer.jog_lines(targets, body.feed)
             end = targets[-1][0] if targets else start
         else:
@@ -593,7 +672,8 @@ class Backend:
         if words:
             link.request_ok("set " + " ".join(words))
         if body.z is not None:
-            # Z goes on a line of its own: it is never a word beside R or A.
+            # Z goes on a line of its own: on a polar machine it is never a
+            # word beside R or A, and on a cartesian one it may be.
             link.request_ok(f"set Z{num(body.z)}")
         link.status_now(1.0, routine=True)
         return self.snapshot()
@@ -647,13 +727,20 @@ class Backend:
         # makes the end of the last jog meaningless as a starting point.
         self._jog_target = None
         lines = link.request(text)
-        if text.startswith("$") and "=" in text:
+        if text.startswith("$") and ("=" in text or text[1:].strip().lower() in ("load", "defaults")):
             # A setting typed at the console: what this side remembers of
-            # the machine's settings is stale.
+            # the machine's settings is stale, and the page's idea of what
+            # the machine is (cartesian, spindle) with it.
             self._settings_cache = None
+            try:
+                self.read_settings(force=True)
+            except LinkError:
+                pass
         return {"lines": lines}
 
     def laser(self, power: float, ms: int | None) -> dict:
+        if self.milling:
+            raise ValueError("the output drives a spindle ($spindle=1): use the spindle controls")
         link = self.require_link()
         if power < 0:
             raise ValueError("power must be >= 0")
@@ -675,6 +762,29 @@ class Backend:
         if self.runner.active:
             return self.snapshot()
         self.require_link().request_ok("laser off")
+        return self.snapshot()
+
+    def spindle_on(self, power: float) -> dict:
+        """Starts the spindle, or changes its speed, from the page. A run
+        starts and stops it itself, and a stop while one is under way would
+        stall the tool in the work while the lines behind went on."""
+        if self.runner.active:
+            raise HTTPException(status_code=409, detail="a job is running")
+        if not self.milling:
+            raise ValueError("the output drives a laser ($spindle=0)")
+        if not (math.isfinite(power) and power >= 0):
+            raise ValueError("power must be >= 0")
+        link = self.require_link()
+        link.request_ok(f"spindle S{num(power)}")
+        link.status_now(1.0, routine=True)
+        return self.snapshot()
+
+    def spindle_off(self) -> dict:
+        if self.runner.active:
+            raise HTTPException(status_code=409, detail="a job is running: stop it to stop the spindle")
+        link = self.require_link()
+        link.request_ok("spindle off" if self.milling else "laser off")
+        link.status_now(1.0, routine=True)
         return self.snapshot()
 
     def mode(self, mode: str) -> dict:
@@ -715,7 +825,8 @@ class Backend:
                     values[name.strip()] = _number(text.strip())
             self._settings_cache = (now, values)
             self.rates = Rates.from_settings(values)
-        return {"values": values, "schema": SETTINGS_SCHEMA, "host": {"tolerance": self.tolerance}}
+            self.profile = profile_of(values)
+        return {"values": values, "schema": SETTINGS_SCHEMA, "host": self.host_settings()}
 
     def write_settings(self, values: dict | None, host: dict | None) -> dict:
         """Settings to the machine and the host's own, all or nothing.
@@ -725,6 +836,16 @@ class Backend:
         host's tolerance is stored only once the machine's part is done.
         """
         tolerance = _tolerance(host["tolerance"]) if host and "tolerance" in host else None
+        milling = None
+        if host and ("clearance" in host or "spinup" in host):
+            current_spindle = self.spindle_config()
+            try:
+                milling = Spindle(
+                    clearance=_host_number(host, "clearance", current_spindle.clearance),
+                    spinup=_host_number(host, "spinup", current_spindle.spinup),
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(str(exc)) from exc
         if values:
             link = self.require_link()
             current = self.read_settings(force=True)["values"]
@@ -745,12 +866,18 @@ class Backend:
                 raise
             finally:
                 self._settings_cache = None
+                # A jog end tracked in one frame means nothing in another.
+                self._jog_target = None
         if tolerance is not None:
             self.config["tolerance"] = tolerance
+        if milling is not None:
+            self.config["clearance"] = milling.clearance
+            self.config["spinup"] = milling.spinup
+        if tolerance is not None or milling is not None:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
-        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": {"tolerance": self.tolerance}}
+        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings()}
 
     def _restore_settings(self, link: Link, previous: dict) -> None:
         """Put back settings a refused write had already changed."""
@@ -797,6 +924,8 @@ class Backend:
         return self.store.add(job)
 
     def center_job(self, request: center.CenterRequest) -> dict:
+        if self.cartesian or self.milling:
+            raise ValueError("the centering test is a burn on the polar laser machine ($cartesian=0, $spindle=0)")
         cached = self._settings_cache
         s_max = cached[1].get("s_max") if cached is not None else None
         result = center.build(
@@ -824,8 +953,16 @@ class Backend:
             raise HTTPException(status_code=404, detail="no such job")
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
+        if self.link is not None and self.link.is_open:
+            values = self.read_settings(force=True)["values"]
+            if self.milling and not values.get("h_axis"):
+                raise ValueError("a spindle needs the focus axis as its depth axis: set $h_axis=1")
         compensation = self.compensation(compensate, job)
-        return self.runner.start(job, self.link, self.streamer(), compensation)
+        # A cartesian plan is made in the frame of the table as it is now.
+        status = None
+        if self.cartesian and self.link is not None and self.link.is_open:
+            status = self.link.status_now(1.0, routine=True)
+        return self.runner.start(job, self.link, self.streamer(status), compensation)
 
     # --- the height map ---------------------------------------------------------------
 
@@ -870,13 +1007,16 @@ class Backend:
 
     def start_probe(self, grid: Grid) -> dict:
         link = self._movable()
+        values = self.read_settings(force=True)["values"]
         try:
-            r_max = float(self.read_settings(force=True)["values"].get("r_max", 0) or 0)
+            r_max = float(values.get("r_max", 0) or 0)
+            z_max = float(values.get("z_max", 0) or 0)
         except (TypeError, ValueError):
-            r_max = 0.0
+            r_max, z_max = 0.0, 0.0
         with self._move_lock:
             self._jog_target = None
-            self.prober.start(grid, self.probe_settings(), link, self.streamer(), r_max)
+            status = link.status_now(1.0, routine=True)
+            self.prober.start(grid, self.probe_settings(), link, self.streamer(status), r_max, z_max)
         return self.heightmap_state()
 
     def stop_probe(self) -> dict:
@@ -898,7 +1038,7 @@ class Backend:
             # Without a focus axis the head's height is fixed, and zero is
             # as good a name for it as any: the map only needs the same one.
             here = status.h if status.h is not None else 0.0
-            x, y = board_of(status.joint)
+            x, y = head_board(status.r, status.a, status.z, self.cartesian)
             offset = here - heightmap.height_at(x, y)
         heightmap.focus_offset = round(offset, 4)
         heightmap.focus_set = True
@@ -923,6 +1063,8 @@ class Backend:
         has_axis = bool(values.get("h_axis"))
         if mode == AUTO:
             mode = FOCUS if has_axis else POWER
+        if self.milling and mode == POWER:
+            raise ValueError("a spindle follows the board with its depth axis: compensate by focus")
         if mode == FOCUS and not has_axis:
             raise ValueError("the focus axis is not fitted ($h_axis=0): compensate by power instead")
         status = self.require_link().status_now(1.0, routine=True)
@@ -969,6 +1111,30 @@ def _setting_text(name: str, value) -> str:
         text = f"{value:.6f}".rstrip("0").rstrip(".")
         return text if text not in ("", "-") else "0"
     raise ValueError(f"{name} must be a number")
+
+
+def profile_of(values: dict) -> dict:
+    """What the machine is, from its settings: how the head moves over the
+    board, what is on the output, and the limits a page draws."""
+
+    def number(name: str) -> float:
+        value = values.get(name, 0)
+        return float(value) if isinstance(value, (int, float)) and math.isfinite(value) else 0.0
+
+    return {
+        "kinematics": CARTESIAN if number("cartesian") else POLAR,
+        "tool": SPINDLE if number("spindle") else LASER,
+        "h_axis": bool(number("h_axis")),
+        "r_max": number("r_max"),
+        "z_max": number("z_max"),
+    }
+
+
+def _host_number(host: dict, name: str, default: float) -> float:
+    value = host.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a number")
+    return float(value)
 
 
 def _tolerance(value) -> float:
@@ -1161,6 +1327,14 @@ def create_app(
     @app.post("/api/laser/off")
     def laser_off():
         return guarded(backend.laser_off)
+
+    @app.post("/api/spindle")
+    def spindle(body: SpindleBody):
+        return guarded(lambda: backend.spindle_on(body.power))
+
+    @app.post("/api/spindle/off")
+    def spindle_off():
+        return guarded(backend.spindle_off)
 
     @app.post("/api/mode")
     def mode(body: ModeBody):

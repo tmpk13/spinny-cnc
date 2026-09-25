@@ -19,6 +19,11 @@ A run compensates one of two ways:
   length, so the power is raised by that factor to hold the energy per
   unit of burnt area along the line, up to `s_max`. It is an
   approximation: a wider spot also cuts a wider line.
+
+A spindle mills with `focus` only. There the offset is the touch-off: the
+tool jogged down until it just touches the copper over a probed point,
+and "focus here" said, so the map plus the offset is the height of the
+surface under the tool, and a cut goes to that less its depth.
 """
 
 from __future__ import annotations
@@ -221,6 +226,12 @@ class Compensation:
 
     def focus(self, point: tuple[float, float]) -> float:
         return self.heightmap.focus_at(point[0], point[1])
+
+    def highest(self) -> float:
+        """The highest focus height over the map: for a spindle, the top of
+        the surface the tool travels clear of."""
+        _, high = self.heightmap.span() or (0.0, 0.0)
+        return high + self.heightmap.focus_offset
 
     def factor(self, point: tuple[float, float]) -> float:
         """How much wider the spot is at a board point than at focus."""

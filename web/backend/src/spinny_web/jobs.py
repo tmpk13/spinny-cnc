@@ -27,6 +27,14 @@ ANCHOR_CENTER, ANCHOR_KEEP = "center", "keep"
 DEFAULT_POWER = 500.0
 DEFAULT_SPEED = 400.0
 DEFAULT_SPOT = 0.1
+# Milling: how deep a group cuts below the surface, mm, and how fast the
+# tool goes down into it, mm/min. A tenth of a millimetre goes through the
+# copper of a usual board.
+DEFAULT_DEPTH = 0.1
+DEFAULT_PLUNGE = 60.0
+# The deepest a group may cut: well past any board, and short of any
+# spindle's reach.
+MAX_DEPTH = 50.0
 # CSS pixels per millimeter at 96 dpi, which is what an SVG length without
 # a unit is; the parser's own rounded factor is used so a file in mm comes
 # back out in exact mm.
@@ -74,6 +82,11 @@ class Group(Finite):
     # again once the rest of it has had a moment to cool.
     passes: int = 1
     enabled: bool = True
+    # Milling only: the depth below the surface the last pass reaches, each
+    # pass going a step deeper, and the plunge rate into it. A spindle's
+    # speed is `power`, its feed `speed`.
+    depth: float = DEFAULT_DEPTH
+    plunge: float = DEFAULT_PLUNGE
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
     # Joint-space polylines, radius mm and angle degrees, streamed as they
     # are with no kinematics in between: a negative radius is the far side
@@ -127,6 +140,8 @@ class Job(Finite):
                     "speed": group.speed,
                     "passes": group.passes,
                     "enabled": group.enabled,
+                    "depth": group.depth,
+                    "plunge": group.plunge,
                     "paths": len(group.paths),
                     "joints": len(group.joints),
                 }
@@ -150,7 +165,13 @@ class Job(Finite):
         self.offset = Offset(x=self.offset.x + dx, y=self.offset.y + dy)
 
     def refresh_stats(self, streamer: Streamer) -> None:
-        stats = streamer.estimate(self)
+        try:
+            stats = streamer.estimate(self)
+        except ValueError:
+            # The machine as it is set up cannot run this job (a joint-space
+            # group on a cartesian or milling machine), which the run will
+            # say; the stats are then the polar laser's.
+            stats = Streamer(tolerance=streamer.tolerance, rates=streamer.rates).estimate(self)
         self.stats = JobStats(**stats.to_dict())
 
 
@@ -162,6 +183,8 @@ class GroupPatch(Finite):
     speed: float | None = None
     passes: int | None = None
     enabled: bool | None = None
+    depth: float | None = None
+    plunge: float | None = None
 
 
 class JobPatch(Finite):
@@ -181,6 +204,11 @@ def check_speed(speed: float, what: str = "speed") -> None:
     if speed < kinematics.MIN_FEED:
         # Written with three decimals it would reach the firmware as F0.
         raise ValueError(f"{what} must be at least {kinematics.MIN_FEED:g} mm/min")
+
+
+def check_depth(depth: float) -> None:
+    if not 0.0 < depth <= MAX_DEPTH:
+        raise ValueError(f"depth must be above 0 and at most {MAX_DEPTH:g} mm")
 
 
 def check_passes(passes: int, what: str = "passes") -> None:
@@ -206,6 +234,10 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             check_speed(change.speed)
         if change.passes is not None:
             check_passes(change.passes)
+        if change.depth is not None:
+            check_depth(change.depth)
+        if change.plunge is not None:
+            check_speed(change.plunge, "plunge")
     if patch.offset is not None:
         dx, dy = patch.offset.x - job.offset.x, patch.offset.y - job.offset.y
         if (dx != 0.0 or dy != 0.0) and any(group.joints for group in job.groups):
@@ -227,6 +259,10 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             group.passes = change.passes
         if change.enabled is not None:
             group.enabled = change.enabled
+        if change.depth is not None:
+            group.depth = change.depth
+        if change.plunge is not None:
+            group.plunge = change.plunge
     if patch.offset is not None:
         updated.shift(patch.offset.x - updated.offset.x, patch.offset.y - updated.offset.y)
     updated.refresh_stats(streamer)
@@ -311,6 +347,9 @@ def from_json(text: str, name: str) -> Job:
             check_power(group.power, f"group {group.label!r}: power")
             check_power(group.min_power, f"group {group.label!r}: min power")
             check_passes(group.passes, f"group {group.label!r}: passes")
+            if not 0.0 < group.depth <= MAX_DEPTH:
+                raise JobImportError(f"group {group.label!r}: depth must be above 0 and at most {MAX_DEPTH:g} mm")
+            check_speed(group.plunge, f"group {group.label!r}: plunge")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
         if any(len(poly) < 2 for poly in group.joints):

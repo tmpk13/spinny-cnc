@@ -30,11 +30,18 @@ State snapshot:
     "rate": 0.0, "laser": 0, "mode": "dyn", "enabled": true,
     "queue": {"planner": 32, "lines": 16}
   },
+  "profile": {"kinematics": "polar", "tool": "laser", "h_axis": true, "r_max": 60.0, "z_max": 0.0},
   "run": null
 }
 ```
 
-`board` is derived on the host from `joint`: `x = r cos a`, `y = r sin a`.
+`board` is derived on the host from `joint`: `x = r cos a`, `y = r sin a`
+on the polar machine; on a cartesian one it is `(r, z)` turned by `a`.
+`profile` is what the machine is, from its settings as last read (a laser
+on the polar machine before the first): `kinematics` is `polar` or
+`cartesian` (`$cartesian`), `tool` is `laser` or `spindle` (`$spindle`).
+It follows a setting changed from the settings page or typed at the
+console.
 `joint.h` (the focus axis, mm, up positive) and `probe` (the probe input is
 active) are `null` on a machine without a focus axis (`$h_axis=0`).
 
@@ -42,8 +49,8 @@ active) are `null` on a machine without a focus axis (`$h_axis=0`).
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "dh": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `dh` is the focus axis, alone or with the joints (the firmware refuses it without one fitted); `{"kind": "joint", "dz": 0.5}` moves the cross slide, which cannot be combined with `dr`, `da` or `dh` |
-| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0, "h": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r`, `a` or `h` |
+| `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "dh": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `dh` is the focus axis, alone or with the joints (the firmware refuses it without one fitted); `{"kind": "joint", "dz": 0.5}` moves the cross slide, which on the polar machine cannot be combined with `dr`, `da` or `dh`, and on a cartesian one is a joint beside them |
+| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0, "h": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r`, `a` or `h` on the polar machine |
 | `POST /api/jog/cancel` | |
 | `POST /api/position` | `{"r": 0}`, `{"a": 0}`, `{"h": 0}` and/or `{"z": 0}`: declare the current position |
 
@@ -60,7 +67,9 @@ jog in progress. Move requests are served one at a time.
 
 Board jogs and gotos are turned into joint moves on the host with the chord
 tolerance from the settings page, so a board move through the axis becomes
-a radial move in, a turn, and a radial move out. Joint jogs move one motor
+a radial move in, a turn, and a radial move out. On a cartesian machine a
+board move is one straight `jogto R Z`, with the board turned by the table
+angle as reported, and `z_max` bounds it beside `r_max`. Joint jogs move one motor
 at a time when only one delta is given: that is the independent axis
 control.
 
@@ -72,12 +81,25 @@ control.
 | `POST /api/laser/off` | during a run this is the run's hold, since `laser off` on the wire would stall the cut and let it go on; `POST /api/mode` answers 409 while a run is active |
 | `POST /api/mode` | `{"mode": "dyn" \| "const"}` |
 
+On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
+400, and the spindle has its own:
+
+| Method and path | Body |
+| --- | --- |
+| `POST /api/spindle` | `{"power": 800}` starts it at that `S`, or changes its speed; 400 on a laser machine, 409 while a run is active (a run starts and stops it itself) |
+| `POST /api/spindle/off` | stops it; 409 while a run is active, where the stop is the run's stop |
+
 ## Settings
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005}}` |
-| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005}}`; all or nothing: an unknown name, a value that is not a finite number, or a tolerance outside `(0, 10]` mm answers 400 with nothing applied, and a value the firmware refuses has the ones sent before it put back; the host tolerance is stored only once the values went through |
+| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}` |
+| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value the firmware refuses has the ones sent before it put back; the host settings are stored only once the values went through |
+
+`clearance` and `spinup` are for milling: the tool travels `clearance` mm
+over the surface (H 0 without a height map, the map's highest point with
+one), and a run dwells `spinup` seconds after starting the spindle or
+changing its speed.
 | `POST /api/settings/save` | writes the firmware settings to flash |
 
 ## Jobs
@@ -85,12 +107,12 @@ control.
 | Method and path | Body |
 | --- | --- |
 | `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, not the group passes below), `clear` (`off`, `radial`, `rings` or `lines`: gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, or the X/Y box the isolation spans when there is none, placed before the outline group); a file over 64 MB answers 413 |
-| `POST /api/center` | JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
+| `POST /api/center` | the polar laser's only (400 on a cartesian or spindle machine); JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
-| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed under 0.001 mm/min is refused like one of 0 |
+| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm |
 | `DELETE /api/jobs/{id}` | |
-| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing |
+| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, and for a spindle without the focus axis (`$h_axis=0`), which is its depth axis |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | |
 | `GET /api/run` | progress, or `null` before any job has run |
 
@@ -111,7 +133,7 @@ Job:
   "spot": 0.1, "offset": {"x": 0, "y": 14},
   "groups": [
     {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "passes": 1, "enabled": true,
-     "paths": [[[x, y], ...], ...]},
+     "depth": 0.1, "plunge": 60, "paths": [[[x, y], ...], ...]},
     {"label": "rail line through the axis", "power": 400, "min_power": 0, "speed": 200, "passes": 1, "enabled": true,
      "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]}
   ],
@@ -141,6 +163,17 @@ are left out. Progress:
  "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null}
 ```
 
+On a spindle machine a job is milled: `power` is the spindle's `S`,
+`speed` the feed, `depth` how far under the surface the group's last pass
+cuts (each pass a step deeper: pass k of n at `depth * k / n`) and
+`plunge` the rate the tool goes down into it. The run lifts the tool to
+the travel height, starts the spindle and dwells for the spin-up, then
+for every path goes to its start at the travel height, plunges, cuts at
+depth (H on every cut) and rises back; the spindle changes speed between
+groups that ask for another and stops at the end. Without a height map
+the surface is H 0, so zero H with the tool touching the copper first.
+A job without `depth` or `plunge` loads with 0.1 mm and 60 mm/min.
+
 `group` is `null` until the first line has gone out. `state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
 the reason when it is `error`, why a run was stopped from outside (a reset
 from the console), and what a stop cost when it was not clean: the machine
@@ -162,7 +195,7 @@ minus contact height, which `focus` sets.
 | Method and path | Body |
 | --- | --- |
 | `GET /api/heightmap` | returns `{"map": map or null, "probe": probing progress or null, "settings": probe settings}` |
-| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, or while a run or another probing is under way; a point the probe tip cannot reach, or one that would take the head past `r_max`, is 409 before anything moves |
+| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, or while a run or another probing is under way; a point the probe tip cannot reach, or one that would take the head past `r_max` (or `z_max` on a cartesian machine, where the rail and the cross slide put the tip over each point), is 409 before anything moves; the map is done once the head is back at the travel height and still |
 | `POST /api/heightmap/stop` | holds and resets like a run's stop; 409 when nothing is being probed |
 | `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset; `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam |
 | `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail and across it (mm), and the beam's Rayleigh length for power compensation (mm) |
@@ -206,6 +239,12 @@ gantt
     probe H-0.6 F15 (second touch, recorded)  :4, 6
     go H (back to travel height)              :6, 7
 ```
+
+With a spindle the probe may be the tool itself, touching grounded copper
+(probe offset `[0, 0]`), and `focus` is the touch-off: jog the tool down
+until it just touches the copper over the probed area, then `{}`. The map
+plus the offset is then the surface under the tool, a cut goes to that
+less its depth, and `power` compensation is refused.
 
 A compensated run is refused with 400 unless the map is complete, its
 focus offset has been set, it spans at most 5 mm top to bottom, and it

@@ -53,7 +53,14 @@ def test_root_page_says_the_frontend_is_not_built(client):
 
 def test_state_and_ports_before_connecting(client, tmp_path):
     state = client.get("/api/state").json()
-    assert state == {"connected": False, "url": None, "firmware": None, "machine": None, "run": None}
+    assert state == {
+        "connected": False,
+        "url": None,
+        "firmware": None,
+        "machine": None,
+        "profile": {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0},
+        "run": None,
+    }
     ports = client.get("/api/ports").json()
     assert "ports" in ports
     for route in ("/api/jog", "/api/goto", "/api/command", "/api/laser/off", "/api/unlock"):
@@ -188,7 +195,7 @@ def test_settings_read_write_save(client, fake, tmp_path):
     connect(client)
     settings = client.get("/api/settings").json()
     assert settings["values"]["r_rate"] == 1000 and settings["values"]["a_steps"] == 888.889
-    assert settings["host"] == {"tolerance": 0.005}
+    assert settings["host"] == {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}
     assert {"name": "r_steps", "unit": "steps/mm", "help": "radius motor"} in settings["schema"]
     asked = fake.received_lines.count("$")
     client.get("/api/settings")

@@ -28,13 +28,13 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | Module | Job |
 | --- | --- |
 | `link.py` | `serial_for_url` port (`/dev/ttyACM0` or `socket://host:port`), reader thread, line classification, credit flow control, realtime bytes, status poll |
-| `kinematics.py` | board polylines to `cut`/`go`/`jogto` lines through `spinny_laser.polar`, joint-space polylines streamed as they are (a negative radius is the far side of the axis), time estimate against the axis limits, the cross slide's own `Z` lines |
+| `kinematics.py` | board polylines to `cut`/`go`/`jogto` lines through `spinny_laser.polar`, joint-space polylines streamed as they are (a negative radius is the far side of the axis), time estimate against the axis limits, the cross slide's own `Z` lines; `CartesianStreamer` for `$cartesian=1` (straight `R Z` lines in the table's frame); milling with a `Spindle` (lift, spin-up, plunge, step-down passes, rise) |
 | `jobs.py` | the job model (board `paths`, or `joints` for a group written in joint space), importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
 | `center.py` | the `spinny-center` test burn built in place as a job, coarse (board paths) or fine (joint space) |
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
 | `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
-| `app.py` | FastAPI routes, the `/ws` fan-out, settings, the frontend |
+| `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
 
 ## Events
 
@@ -52,7 +52,7 @@ state is `error`.
 
 ## Files
 
-- `config.json` (ignored): the host tolerance, the last url and the probe settings.
+- `config.json` (ignored): the host tolerance, the milling clearance and spin-up, the last url and the probe settings.
 - `heightmap.json` (ignored): the last probed height map and its focus offset.
 - `jobs/*.json` (ignored): one file per imported job.
 
@@ -62,6 +62,8 @@ state is `error`.
 classDiagram
     class app {
         Backend
+        Backend.profile polar or cartesian, laser or spindle
+        Backend.streamer(status) Streamer
         Broadcast
         create_app(backend) FastAPI
     }
@@ -77,6 +79,8 @@ classDiagram
         Streamer.board_jog / board_goto
         Streamer.joint_jog / joint_goto
         Streamer.slide_jog / slide_goto
+        CartesianStreamer(angle) R and Z in the table frame
+        Spindle clearance, spinup
     }
     class jobs {
         Job, Group, JobStats
@@ -101,6 +105,7 @@ classDiagram
         Prober.start(grid, settings, link)
         Prober.stop / cancel
         probe_joint(point, offset)
+        cartesian_probe_joint(point, offset, angle)
     }
     class spinny_laser_polar {
         subdivide(start, end, joint, kin)
