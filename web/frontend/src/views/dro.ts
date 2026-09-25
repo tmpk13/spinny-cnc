@@ -3,6 +3,7 @@
 
 import { el } from "../dom.ts";
 import { formatDeg, formatDuty, formatMm, formatRate } from "../format.ts";
+import { isMilling } from "../profile.ts";
 import type { Machine } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
@@ -60,8 +61,10 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
     const small = (name: string): HTMLSpanElement => el("span", { class: "dro-small-value", "data-dro": name }, "-");
     const smalls = { laser: small("laser"), rate: small("rate"), mode: small("mode"), queue: small("queue"), motors: small("motors"), probe: small("probe") };
     const probeBox = el("div", {}, el("span", { class: "dro-label" }, "Probe"), smalls.probe);
+    // The output's duty is a spindle's speed on a spindle machine.
+    const outputLabel = el("span", { class: "dro-label" }, "Laser");
     root.append(el("div", { class: "dro-small" },
-        el("div", {}, el("span", { class: "dro-label" }, "Laser"), smalls.laser),
+        el("div", {}, outputLabel, smalls.laser),
         el("div", {}, el("span", { class: "dro-label" }, "Speed"), smalls.rate, el("span", { class: "dro-unit" }, "mm/min")),
         el("div", {}, el("span", { class: "dro-label" }, "Mode"), smalls.mode),
         el("div", {}, el("span", { class: "dro-label" }, "Queue"), smalls.queue),
@@ -83,6 +86,7 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         setText(cells.x, text.x);
         setText(cells.y, text.y);
         setText(smalls.laser, text.laser);
+        setText(outputLabel, isMilling(state.snapshot) ? "Spindle" : "Laser");
         setText(smalls.rate, text.rate);
         setText(smalls.mode, text.mode);
         setText(smalls.queue, text.queue);

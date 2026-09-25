@@ -170,3 +170,18 @@
   default 20) sets how long a probe goes on past the contact before it
   brakes; 0 stops the focus axis dead at the contact when the probe is
   within `h_jerk`. Also a field under Probe in the Height map panel.
+- Cartesian mode (2026-09-24): `$cartesian=1` makes the cross slide the
+  fourth joint, stepped by the interrupt with the others, so the rail is X
+  and the slide Y; `go`/`cut` refuse `A` so the table holds, switching
+  hands the slide's position over, `$z_jerk` and a `$z_max` soft limit
+  come with it, and the settings blob (version 5) still reads version 4.
+  The backend streams straight `R Z` lines in the table's frame, jogs,
+  probes and checks reach in it, and the page shows the slide as Y.
+- Spindle mode (2026-09-24): `$spindle=1` puts a spindle on the laser
+  output (`spindle S` / `spindle off`, turning through moves and holds,
+  stopped by a reset or an alarm) with the focus axis as its depth axis.
+  A job is milled: lift, spin-up, then per path a plunge, cuts at depth
+  and a rise, each pass a step deeper; groups carry depth and plunge,
+  the host keeps clearance and spin-up, and the height map is the
+  autoleveling with a touch-off. The page has spindle controls and
+  milling columns.

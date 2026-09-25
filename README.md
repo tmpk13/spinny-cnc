@@ -177,17 +177,48 @@ board sits out of focus.
 Wiring and bring-up are in `firmware/rp2040/README.md`; nothing of this has
 run on hardware yet.
 
+### Cartesian and spindle
+
+Two optional modes use the same machine; both are firmware settings, off
+by default, and the page follows them.
+
+`$cartesian=1` makes it an X/Y machine: the rail is X, the cross slide Y,
+interpolated together, and the table holds its angle. Board X/Y is turned
+by that angle, so a board placed for a polar job is cut in the same place.
+
+1. With the polar machine centered, jog the cross slide until the rail
+   passes over the axis and press *Set Z=0 here*.
+2. Set `$z_max` to the slide's travel either side of that, then
+   `$cartesian=1`.
+
+`$spindle=1` puts a spindle on the laser output and uses the focus axis
+(`$h_axis=1`) as its depth axis. A job is milled: the tool rises to the
+travel height, the spindle starts and spins up, and every path is a plunge,
+the cuts at depth and a rise, each pass of a group a step deeper. Groups
+carry a depth and a plunge rate; the host keeps the travel clearance and
+the spin-up (Settings panel).
+
+1. Touch the tool to the copper and press *Set H=0 here*: without a height
+   map H 0 is the surface.
+2. Or probe a height map (the tool can be its own probe, touching grounded
+   copper, tip offsets 0), jog the tool down until it touches the copper,
+   press *Touch off here*, and run with *height map: auto*: the cuts then
+   follow the board.
+
+FAN3 is a low side switch on the fan rail, not a logic output: see the
+spindle note in `firmware/rp2040/README.md` before connecting one.
+
 ```mermaid
 flowchart LR
     subgraph web
         FE[frontend, TypeScript] <-->|REST, WebSocket| BE[backend, FastAPI]
-        BE --> KIN[spinny_laser.polar]
+        BE --> KIN[spinny_laser.polar, or R Z in the table frame when cartesian]
         BE --> LS[laser_sweep: gerber, isolation]
-        BE --> HM[height map: probing, focus or power compensation]
+        BE --> HM[height map: probing, focus or power compensation, spindle depth]
     end
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
-        RP[rp2040: embassy, USB, step timer, laser PWM, TMC2209, flash, probe input] --> CORE[spinny-core: parser, settings, planner, stepper R A H, probe, machine]
+        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, TMC2209, flash, probe input] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, spindle, machine]
         VIRT[virtual: TCP server, virtual clock, board surface] --> CORE
     end
 ```

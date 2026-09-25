@@ -6,6 +6,8 @@ import { MockBackend } from "../src/mock.ts";
 import { POLAR_LASER, isCartesian, isMilling, profileBadge, profileOf } from "../src/profile.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
 import type { Machine, Profile, Snapshot } from "../src/types.ts";
+import { Preview } from "../src/preview.ts";
+import { mountDro } from "../src/views/dro.ts";
 import { jobLabels, mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
 import { mountLaser } from "../src/views/laser.ts";
@@ -242,5 +244,35 @@ describe("cartesian", () => {
         const focus = root.querySelector(".focus-axis")!;
         expect(focus.classList.contains("hidden")).toBe(false);
         expect(focus.textContent).toContain("Depth axis");
+    });
+});
+
+describe("readouts", () => {
+    test("the DRO names the output after the tool", () => {
+        const { store, ctx, root } = setup();
+        mountDro(root, ctx);
+        store.set({ snapshot: snapshot({ tool: "spindle" }, { laser: 700 }) });
+        expect(root.textContent).toContain("Spindle");
+        expect(root.textContent).not.toContain("Laser");
+        store.set({ snapshot: snapshot({}, { laser: 0 }) });
+        expect(root.textContent).toContain("Laser");
+    });
+
+    test("the preview puts the head where the backend says, not at the joint's polar point", () => {
+        const canvas = document.createElement("canvas");
+        document.body.appendChild(canvas);
+        const preview = new Preview(canvas);
+        preview.setHead({ r: 3, a: 0 }, { x: 3, y: 4 });
+        preview.setHead({ r: 3, a: 0 }, { x: 3, y: 5 });
+        const trail = (preview as unknown as { trail: [number, number][] }).trail;
+        expect(trail).toEqual([[3, 4], [3, 5]]);
+        // Without a board point it falls back to the polar one.
+        preview.clearTrail();
+        preview.setHead({ r: 5, a: 90 });
+        const [x, y] = (preview as unknown as { trail: [number, number][] }).trail[0]!;
+        expect(x).toBeCloseTo(0, 9);
+        expect(y).toBeCloseTo(5, 9);
+        preview.dispose();
+        canvas.remove();
     });
 });
