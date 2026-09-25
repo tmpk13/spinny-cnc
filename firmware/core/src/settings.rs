@@ -8,11 +8,13 @@
 use crate::hal::Sink;
 use crate::parser::number;
 use crate::report;
-use crate::{A, AXES, H, R, SEGMENTS, SEGMENT_MS};
+use crate::{A, AXES, H, R, SEGMENTS, SEGMENT_MS, Z};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
-    /// Steps per mm (radius, focus) and per degree (table).
+    /// Steps per mm (radius, focus, cross slide) and per degree (table).
+    /// The cross slide's entries are its `z_*` settings, used by `slide`
+    /// as a setup axis and by the planner as a joint under `cartesian`.
     pub steps: [f32; AXES],
     /// Units per minute.
     pub max_rate: [f32; AXES],
@@ -22,14 +24,8 @@ pub struct Settings {
     pub jerk: [f32; AXES],
     /// Radius soft limit, mm; 0 = off.
     pub r_max: f32,
-    /// Cross slide steps per mm.
-    pub z_steps: f32,
-    /// Cross slide rate, mm per minute.
-    pub z_rate: f32,
-    /// Cross slide acceleration, mm per second squared.
-    pub z_accel: f32,
-    /// Cross slide jog rate without an F word, mm per minute.
-    pub jog_z: f32,
+    /// Cross slide soft limit, mm either side of zero; 0 = off.
+    pub z_max: f32,
     /// Jog rates without an F word, units per minute.
     pub jog_rate: [f32; AXES],
     /// Bit 0 inverts the radius, bit 1 the table, bit 2 the cross slide,
@@ -53,9 +49,6 @@ pub struct Settings {
     pub tmc_ma: [u32; AXES],
     pub tmc_hold_pct: u32,
     pub tmc_micro: [u32; AXES],
-    /// Cross slide run current, mA; 0 leaves its driver untouched.
-    pub tmc_z_ma: u32,
-    pub tmc_z_micro: u32,
     pub tmc_stealth: bool,
     /// A focus axis is fitted: `H` words are taken and its driver is
     /// configured. Off, the axis never moves.
@@ -69,6 +62,14 @@ pub struct Settings {
     /// the axis at the contact without a brake when the probe is slow
     /// enough for that (see `stepper`).
     pub probe_ms: u32,
+    /// The cross slide is a joint: Y of an X/Y machine whose X is the
+    /// radius, interpolated with it and with the focus axis, while the
+    /// table holds its angle. Off, it is the setup axis in `slide`.
+    pub cartesian: bool,
+    /// The laser output drives a spindle: it runs at the speed `spindle`
+    /// set until `spindle off`, a reset or an alarm, through every move
+    /// and hold, and `S` is its speed rather than a beam power.
+    pub spindle: bool,
 }
 
 /// Largest `probe_ms`: the whole segment ring.
@@ -80,22 +81,19 @@ impl Default for Settings {
             // Both motors are 200 step at 256 microsteps. The radius rides
             // a 5 mm per turn screw, the table a 100:1 drive.
             // The focus axis is assumed to be a 200 step motor on an 8 mm
-            // lead screw at 256 microsteps.
-            steps: [10240.0, 14222.222, 6400.0],
+            // lead screw at 256 microsteps. The cross slide rides the same
+            // screw and driver as the radius, so it keeps the radius scale,
+            // rate and jerk.
+            steps: [10240.0, 14222.222, 6400.0, 10240.0],
             // The step generator runs out before the motors do at this
             // resolution: 586 mm/min on the radius and 422 deg/min on the
             // table. Asking for more only moves slower than commanded.
-            max_rate: [560.0, 400.0, 600.0],
-            accel: [50.0, 50.0, 50.0],
-            jerk: [3.0, 2.0, 1.0],
+            max_rate: [560.0, 400.0, 600.0, 560.0],
+            accel: [50.0, 50.0, 50.0, 50.0],
+            jerk: [3.0, 2.0, 1.0, 3.0],
             r_max: 0.0,
-            // The cross slide rides the same screw and driver as the
-            // radius, so it keeps the radius scale and rate.
-            z_steps: 10240.0,
-            z_rate: 560.0,
-            z_accel: 50.0,
-            jog_z: 120.0,
-            jog_rate: [300.0, 200.0, 120.0],
+            z_max: 0.0,
+            jog_rate: [300.0, 200.0, 120.0, 120.0],
             dir_invert: 0,
             en_invert: false,
             idle_ms: 0,
@@ -105,21 +103,21 @@ impl Default for Settings {
             s_min: 0.0,
             laser_invert: false,
             laser_ms: 5000,
-            tmc_ma: [800, 800, 600],
+            tmc_ma: [800, 800, 600, 800],
             tmc_hold_pct: 50,
-            tmc_micro: [256, 256, 256],
-            tmc_z_ma: 800,
-            tmc_z_micro: 256,
+            tmc_micro: [256, 256, 256, 256],
             tmc_stealth: true,
             h_axis: false,
             probe_invert: false,
             probe_ms: 20,
+            cartesian: false,
+            spindle: false,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 42] = [
+pub const NAMES: [&str; 46] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -128,6 +126,7 @@ pub const NAMES: [&str; 42] = [
     "tmc_z_ma", "tmc_z_micro", "tmc_stealth",
     "h_axis", "h_steps", "h_rate", "h_accel", "h_jerk", "jog_h", "probe_invert",
     "tmc_h_ma", "tmc_h_micro", "probe_ms",
+    "z_jerk", "z_max", "cartesian", "spindle",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +141,11 @@ pub enum Changed {
     Motion,
     Laser,
     Driver,
+    /// `cartesian`: the cross slide changes hands between `slide` and the
+    /// joints.
+    Kinematics,
+    /// `spindle`: the output changes meaning, so whatever runs on it stops.
+    Tool,
     Other,
 }
 
@@ -154,15 +158,25 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
-/// older firmware is thrown away rather than read as this layout.
-const BLOB_VERSION: u8 = 4;
+/// older firmware is thrown away rather than read as this layout. Version
+/// 5 is version 4 with fields appended, so a version 4 blob is still read,
+/// with those fields at their defaults.
+const BLOB_VERSION: u8 = 5;
+/// Oldest version whose fields are a prefix of this layout.
+const BLOB_VERSION_PREFIX: u8 = 4;
 /// Bytes before the first field: magic and version.
 const HEADER_LEN: usize = MAGIC.len() + 1;
-/// Serialized size of the fields, in blob order.
-const FIELDS_LEN: usize = 4 * (AXES + AXES + AXES + AXES + 1 + 4 + AXES)
+/// Joints stored per array in the version 4 part of the blob, in this
+/// order; the cross slide's values follow them as separate fields there.
+const PREFIX_JOINTS: [usize; 3] = [R, A, H];
+/// Serialized size of the version 4 fields.
+const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
     + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 1 + 4
-    + 4 * AXES + 4 + 4 * AXES + 4 + 4 + 1
+    + 4 * 3 + 4 + 4 * 3 + 4 + 4 + 1
     + 1 + 1 + 4;
+/// Serialized size of the fields, in blob order: the version 4 fields,
+/// then `z_jerk`, `z_max`, `cartesian` and `spindle`.
+const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -183,8 +197,10 @@ fn index_of(name: &str) -> Option<usize> {
 
 fn group(index: usize) -> Changed {
     match index {
-        0..=18 | 33..=38 | 41 => Changed::Motion,
+        0..=18 | 33..=38 | 41..=43 => Changed::Motion,
         19..=23 => Changed::Laser,
+        44 => Changed::Kinematics,
+        45 => Changed::Tool,
         // Whether the focus axis is fitted decides whether its driver is
         // configured.
         _ => Changed::Driver,
@@ -296,10 +312,10 @@ impl Settings {
             6 => Slot::Float(&mut self.jerk[R]),
             7 => Slot::Float(&mut self.jerk[A]),
             8 => Slot::Float(&mut self.r_max),
-            9 => Slot::Float(&mut self.z_steps),
-            10 => Slot::Float(&mut self.z_rate),
-            11 => Slot::Float(&mut self.z_accel),
-            12 => Slot::Float(&mut self.jog_z),
+            9 => Slot::Float(&mut self.steps[Z]),
+            10 => Slot::Float(&mut self.max_rate[Z]),
+            11 => Slot::Float(&mut self.accel[Z]),
+            12 => Slot::Float(&mut self.jog_rate[Z]),
             13 => Slot::Float(&mut self.jog_rate[R]),
             14 => Slot::Float(&mut self.jog_rate[A]),
             15 => Slot::Byte(&mut self.dir_invert),
@@ -316,8 +332,8 @@ impl Settings {
             26 => Slot::Int(&mut self.tmc_hold_pct),
             27 => Slot::Int(&mut self.tmc_micro[R]),
             28 => Slot::Int(&mut self.tmc_micro[A]),
-            29 => Slot::Int(&mut self.tmc_z_ma),
-            30 => Slot::Int(&mut self.tmc_z_micro),
+            29 => Slot::Int(&mut self.tmc_ma[Z]),
+            30 => Slot::Int(&mut self.tmc_micro[Z]),
             31 => Slot::Flag(&mut self.tmc_stealth),
             32 => Slot::Flag(&mut self.h_axis),
             33 => Slot::Float(&mut self.steps[H]),
@@ -328,15 +344,20 @@ impl Settings {
             38 => Slot::Flag(&mut self.probe_invert),
             39 => Slot::Int(&mut self.tmc_ma[H]),
             40 => Slot::Int(&mut self.tmc_micro[H]),
-            _ => Slot::Int(&mut self.probe_ms),
+            41 => Slot::Int(&mut self.probe_ms),
+            42 => Slot::Float(&mut self.jerk[Z]),
+            43 => Slot::Float(&mut self.z_max),
+            44 => Slot::Flag(&mut self.cartesian),
+            _ => Slot::Flag(&mut self.spindle),
         }
     }
 
     /// Direction inversion for the joint axes as the step port numbers
     /// them (bit i = axis i): the radius and table bits as they are, the
-    /// focus axis from bit 3, since bit 2 belongs to the cross slide.
+    /// focus axis from bit 3 and the cross slide from bit 2, which is how
+    /// `dir_invert` numbered them before either was a joint.
     pub fn joint_dir_invert(&self) -> u8 {
-        (self.dir_invert & 0b0011) | ((self.dir_invert >> 1) & (1 << H))
+        (self.dir_invert & 0b0011) | ((self.dir_invert >> 1) & (1 << H)) | ((self.dir_invert << 1) & (1 << Z))
     }
 
     /// Every field within its range.
@@ -349,10 +370,7 @@ impl Settings {
             && self.accel.iter().all(|&v| positive(v))
             && self.jerk.iter().all(|&v| positive(v))
             && non_negative(self.r_max)
-            && positive(self.z_steps)
-            && positive(self.z_rate)
-            && positive(self.z_accel)
-            && positive(self.jog_z)
+            && non_negative(self.z_max)
             && self.jog_rate.iter().all(|&v| positive(v))
             && self.dir_invert <= 15
             && self.probe_ms <= PROBE_MS_MAX
@@ -363,10 +381,8 @@ impl Settings {
             && self.s_min <= self.s_max
             && (1..=60_000).contains(&self.laser_ms)
             && self.tmc_ma.iter().all(|&ma| ma <= 2000)
-            && self.tmc_z_ma <= 2000
             && self.tmc_hold_pct <= 100
             && self.tmc_micro.iter().all(|&m| microsteps(m))
-            && microsteps(self.tmc_z_micro)
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -423,32 +439,26 @@ impl Settings {
     }
 
     /// Serializes for the store. Layout is private to this module: magic,
-    /// version, the fields little-endian in `NAMES` order, zero padding,
-    /// and a CRC-32 over all of that in the last four bytes.
+    /// version, the fields little-endian (the version 4 fields in their old
+    /// order, then the ones added since), zero padding, and a CRC-32 over
+    /// all of that in the last four bytes.
     pub fn to_blob(&self, buf: &mut [u8; BLOB_LEN]) {
         buf.fill(0);
         let mut w = Writer { buf: &mut buf[..], at: 0 };
         w.bytes(&MAGIC);
         w.u8(BLOB_VERSION);
-        for v in self.steps {
-            w.f32(v);
-        }
-        for v in self.max_rate {
-            w.f32(v);
-        }
-        for v in self.accel {
-            w.f32(v);
-        }
-        for v in self.jerk {
-            w.f32(v);
+        for array in [&self.steps, &self.max_rate, &self.accel, &self.jerk] {
+            for i in PREFIX_JOINTS {
+                w.f32(array[i]);
+            }
         }
         w.f32(self.r_max);
-        w.f32(self.z_steps);
-        w.f32(self.z_rate);
-        w.f32(self.z_accel);
-        w.f32(self.jog_z);
-        for v in self.jog_rate {
-            w.f32(v);
+        w.f32(self.steps[Z]);
+        w.f32(self.max_rate[Z]);
+        w.f32(self.accel[Z]);
+        w.f32(self.jog_rate[Z]);
+        for i in PREFIX_JOINTS {
+            w.f32(self.jog_rate[i]);
         }
         w.u8(self.dir_invert);
         w.flag(self.en_invert);
@@ -459,29 +469,37 @@ impl Settings {
         w.f32(self.s_min);
         w.flag(self.laser_invert);
         w.u32(self.laser_ms);
-        for v in self.tmc_ma {
-            w.u32(v);
+        for i in PREFIX_JOINTS {
+            w.u32(self.tmc_ma[i]);
         }
         w.u32(self.tmc_hold_pct);
-        for v in self.tmc_micro {
-            w.u32(v);
+        for i in PREFIX_JOINTS {
+            w.u32(self.tmc_micro[i]);
         }
-        w.u32(self.tmc_z_ma);
-        w.u32(self.tmc_z_micro);
+        w.u32(self.tmc_ma[Z]);
+        w.u32(self.tmc_micro[Z]);
         w.flag(self.tmc_stealth);
         w.flag(self.h_axis);
         w.flag(self.probe_invert);
         w.u32(self.probe_ms);
+        debug_assert_eq!(w.at, HEADER_LEN + PREFIX_LEN);
+        w.f32(self.jerk[Z]);
+        w.f32(self.z_max);
+        w.flag(self.cartesian);
+        w.flag(self.spindle);
+        debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
     }
 
     /// `None` when the blob is short, or the magic, version or CRC do not
     /// match, or a stored field is out of range. Bytes past `BLOB_LEN`
-    /// are ignored.
+    /// are ignored. A version 4 blob keeps the defaults of the fields
+    /// added after it.
     pub fn from_blob(buf: &[u8]) -> Option<Settings> {
         let buf = buf.get(..BLOB_LEN)?;
-        if buf[..MAGIC.len()] != MAGIC || buf[MAGIC.len()] != BLOB_VERSION {
+        let version = buf[MAGIC.len()];
+        if buf[..MAGIC.len()] != MAGIC || !(BLOB_VERSION_PREFIX..=BLOB_VERSION).contains(&version) {
             return None;
         }
         let stored = u32::from_le_bytes(buf[CRC_OFFSET..].try_into().ok()?);
@@ -490,25 +508,18 @@ impl Settings {
         }
         let mut r = Reader { buf, at: HEADER_LEN };
         let mut s = Settings::default();
-        for v in s.steps.iter_mut() {
-            *v = r.f32();
-        }
-        for v in s.max_rate.iter_mut() {
-            *v = r.f32();
-        }
-        for v in s.accel.iter_mut() {
-            *v = r.f32();
-        }
-        for v in s.jerk.iter_mut() {
-            *v = r.f32();
+        for array in [&mut s.steps, &mut s.max_rate, &mut s.accel, &mut s.jerk] {
+            for i in PREFIX_JOINTS {
+                array[i] = r.f32();
+            }
         }
         s.r_max = r.f32();
-        s.z_steps = r.f32();
-        s.z_rate = r.f32();
-        s.z_accel = r.f32();
-        s.jog_z = r.f32();
-        for v in s.jog_rate.iter_mut() {
-            *v = r.f32();
+        s.steps[Z] = r.f32();
+        s.max_rate[Z] = r.f32();
+        s.accel[Z] = r.f32();
+        s.jog_rate[Z] = r.f32();
+        for i in PREFIX_JOINTS {
+            s.jog_rate[i] = r.f32();
         }
         s.dir_invert = r.u8();
         s.en_invert = r.flag()?;
@@ -519,19 +530,25 @@ impl Settings {
         s.s_min = r.f32();
         s.laser_invert = r.flag()?;
         s.laser_ms = r.u32();
-        for v in s.tmc_ma.iter_mut() {
-            *v = r.u32();
+        for i in PREFIX_JOINTS {
+            s.tmc_ma[i] = r.u32();
         }
         s.tmc_hold_pct = r.u32();
-        for v in s.tmc_micro.iter_mut() {
-            *v = r.u32();
+        for i in PREFIX_JOINTS {
+            s.tmc_micro[i] = r.u32();
         }
-        s.tmc_z_ma = r.u32();
-        s.tmc_z_micro = r.u32();
+        s.tmc_ma[Z] = r.u32();
+        s.tmc_micro[Z] = r.u32();
         s.tmc_stealth = r.flag()?;
         s.h_axis = r.flag()?;
         s.probe_invert = r.flag()?;
         s.probe_ms = r.u32();
+        if version >= 5 {
+            s.jerk[Z] = r.f32();
+            s.z_max = r.f32();
+            s.cartesian = r.flag()?;
+            s.spindle = r.flag()?;
+        }
         if !s.is_valid() {
             return None;
         }
@@ -608,7 +625,11 @@ mod tests {
         probe_invert=0\n\
         tmc_h_ma=600\n\
         tmc_h_micro=256\n\
-        probe_ms=20\n";
+        probe_ms=20\n\
+        z_jerk=3\n\
+        z_max=0\n\
+        cartesian=0\n\
+        spindle=0\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -617,7 +638,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 42> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 46> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -636,7 +657,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 42] = [
+        let table: [(&str, &str, &str, Changed); 46] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -679,6 +700,10 @@ mod tests {
             ("tmc_h_ma", "400", "400", Changed::Driver),
             ("tmc_h_micro", "16", "16", Changed::Driver),
             ("probe_ms", "0", "0", Changed::Motion),
+            ("z_jerk", "1.5", "1.5", Changed::Motion),
+            ("z_max", "8", "8", Changed::Motion),
+            ("cartesian", "1", "1", Changed::Kinematics),
+            ("spindle", "1", "1", Changed::Tool),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -692,14 +717,17 @@ mod tests {
             assert_eq!(line(&settings, name).as_str(), want.as_str());
         }
         assert!(settings.is_valid());
-        assert_eq!(settings.steps, [200.5, 888.8889, 1600.0]);
+        assert_eq!(settings.steps, [200.5, 888.8889, 1600.0, 640.0]);
         assert_eq!(settings.dir_invert, 15);
         assert!(settings.en_invert);
-        assert_eq!(settings.tmc_micro, [256, 1, 16]);
-        assert_eq!(settings.z_steps, 640.0);
-        assert_eq!(settings.jog_z, 60.0);
-        assert_eq!(settings.tmc_z_ma, 600);
-        assert_eq!(settings.tmc_z_micro, 16);
+        assert_eq!(settings.tmc_micro, [256, 1, 16, 16]);
+        assert_eq!(settings.jog_rate[Z], 60.0);
+        assert_eq!(settings.max_rate[Z], 900.0);
+        assert_eq!(settings.accel[Z], 25.5);
+        assert_eq!(settings.jerk[Z], 1.5);
+        assert_eq!(settings.tmc_ma[Z], 600);
+        assert_eq!(settings.z_max, 8.0);
+        assert!(settings.cartesian && settings.spindle);
         assert!(!settings.tmc_stealth);
     }
 
@@ -759,7 +787,7 @@ mod tests {
     fn ranges_are_enforced() {
         for name in [
             "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
-            "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a", "s_max",
+            "z_steps", "z_rate", "z_accel", "z_jerk", "jog_z", "jog_r", "jog_a", "s_max",
         ] {
             rejects(name, "0");
             rejects(name, "-1");
@@ -770,6 +798,10 @@ mod tests {
         rejects("r_max", "-0.5");
         accepts("r_max", "0");
         accepts("r_max", "0.0");
+        rejects("z_max", "-1");
+        accepts("z_max", "0");
+        rejects("cartesian", "2");
+        rejects("spindle", "0.5");
         rejects("dir_invert", "16");
         rejects("h_steps", "0");
         rejects("h_axis", "2");
@@ -852,6 +884,10 @@ mod tests {
         settings.set("tmc_a_ma", "1200").unwrap();
         settings.set("tmc_r_micro", "32").unwrap();
         settings.set("tmc_stealth", "0").unwrap();
+        settings.set("z_jerk", "0.75").unwrap();
+        settings.set("z_max", "12").unwrap();
+        settings.set("cartesian", "1").unwrap();
+        settings.set("spindle", "1").unwrap();
 
         let mut blob = [0xAAu8; BLOB_LEN];
         settings.to_blob(&mut blob);
@@ -928,7 +964,7 @@ mod tests {
         // A flag byte that is neither 0 nor 1, behind a matching CRC.
         let mut blob = [0u8; BLOB_LEN];
         Settings::default().to_blob(&mut blob);
-        let en_invert_at = HEADER_LEN + 4 * (4 * AXES + 1 + 4 + AXES) + 1;
+        let en_invert_at = HEADER_LEN + 4 * (4 * 3 + 1 + 4 + 3) + 1;
         blob[en_invert_at] = 2;
         let crc = crc32(&blob[..CRC_OFFSET]);
         blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -950,33 +986,67 @@ mod tests {
     }
 
     #[test]
+    fn a_version_4_blob_is_read_with_the_new_fields_at_their_defaults() {
+        // Version 4 is this layout without the fields appended since.
+        let mut stored = Settings::default();
+        stored.set("z_steps", "1280").unwrap();
+        stored.set("tmc_z_micro", "64").unwrap();
+        stored.set("probe_ms", "40").unwrap();
+        stored.set("z_jerk", "0.5").unwrap();
+        stored.set("cartesian", "1").unwrap();
+        let mut blob = [0u8; BLOB_LEN];
+        stored.to_blob(&mut blob);
+        blob[MAGIC.len()] = 4;
+        blob[HEADER_LEN + PREFIX_LEN..CRC_OFFSET].fill(0);
+        let crc = crc32(&blob[..CRC_OFFSET]);
+        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        let read = Settings::from_blob(&blob).expect("a version 4 blob is read");
+        assert_eq!(read.steps[Z], 1280.0);
+        assert_eq!(read.tmc_micro[Z], 64);
+        assert_eq!(read.probe_ms, 40);
+        assert_eq!(read.jerk[Z], Settings::default().jerk[Z]);
+        assert!(!read.cartesian && !read.spindle);
+        assert_eq!(read.z_max, 0.0);
+    }
+
+    #[test]
     fn the_cross_slide_fields_fit_the_blob() {
         assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET, "{FIELDS_LEN} bytes of fields");
         let mut blob = [0u8; BLOB_LEN];
         Settings::default().to_blob(&mut blob);
         // Every field lands where the writer says it does: the stealth
         // flag, the focus axis and probe flags, then the probe queue time,
-        // just before the padding.
-        let end = HEADER_LEN + FIELDS_LEN;
+        // at the end of the version 4 fields.
+        let end = HEADER_LEN + PREFIX_LEN;
         assert_eq!(blob[end - 7], 1);
         assert_eq!(blob[end - 6..end - 4], [0, 0]);
         assert_eq!(blob[end - 4..end], 20u32.to_le_bytes());
-        assert!(blob[end..CRC_OFFSET].iter().all(|&b| b == 0));
         let focus = Settings { h_axis: true, probe_invert: true, probe_ms: 160, ..Settings::default() };
         focus.to_blob(&mut blob);
         assert_eq!(blob[end - 6..end - 4], [1, 1]);
         assert_eq!(blob[end - 4..end], 160u32.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), Some(focus));
+        // Then the cross slide's jerk and limit and the two mode flags,
+        // just before the padding.
+        let modes = Settings { z_max: 9.5, cartesian: true, spindle: true, ..Settings::default() };
+        modes.to_blob(&mut blob);
+        let tail = HEADER_LEN + FIELDS_LEN;
+        assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
+        assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
+        assert_eq!(blob[tail - 2..tail], [1, 1]);
+        assert!(blob[tail..CRC_OFFSET].iter().all(|&b| b == 0));
     }
 
     #[test]
-    fn the_focus_axis_bit_moves_past_the_cross_slide() {
+    fn the_focus_axis_and_cross_slide_bits_trade_places() {
         let mut settings = Settings::default();
         settings.dir_invert = 0b0100;
-        assert_eq!(settings.joint_dir_invert(), 0, "the cross slide is not a joint");
+        assert_eq!(settings.joint_dir_invert(), 1 << Z, "bit 2 is the cross slide");
         settings.dir_invert = 0b1011;
-        assert_eq!(settings.joint_dir_invert(), 0b111);
+        assert_eq!(settings.joint_dir_invert(), 0b0111);
         settings.dir_invert = 0b1000;
         assert_eq!(settings.joint_dir_invert(), 1 << H);
+        settings.dir_invert = 0b1111;
+        assert_eq!(settings.joint_dir_invert(), 0b1111);
     }
 }

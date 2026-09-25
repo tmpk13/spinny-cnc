@@ -316,15 +316,16 @@ impl Sim {
             report::State::Alarm(code) => format!("Alarm:{code}"),
         };
         format!(
-            "{state} R{:.3} A{:.4} H{:.3} Z{:.3} laser {} pulses {}/{}/{}/{}",
+            "{state} R{:.3} A{:.4} H{:.3} Z{:.3} laser {} pulses {}/{}/{}/{}+{}",
             joint[0],
             joint[1],
             joint[2],
-            self.machine.slide_position(),
+            joint[3],
             self.laser.duty,
             self.port.pulses[0],
             self.port.pulses[1],
             self.port.pulses[2],
+            self.port.pulses[3],
             self.slide.pulses,
         )
     }
@@ -419,7 +420,7 @@ mod tests {
         let mut out = Vec::new();
         sim.session(&inbox, &mut out).unwrap();
         assert_eq!(sim.state(), report::State::Idle);
-        assert_eq!(sim.joint(), [0.0, 0.0, 0.0], "a dead client's line ran");
+        assert_eq!(sim.joint(), [0.0; AXES], "a dead client's line ran");
         assert_eq!(sim.laser_duty(), 0);
         let text = String::from_utf8(out).unwrap();
         assert!(!text.contains("ok"), "{text:?}");

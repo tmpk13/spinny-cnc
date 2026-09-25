@@ -131,6 +131,8 @@ struct Mark {
     y: f64,
     r: f64,
     a: f64,
+    h: f64,
+    z: f64,
     duty: u32,
 }
 
@@ -155,6 +157,8 @@ fn marks(path: &std::path::Path) -> Vec<Mark> {
             y: field("y"),
             r: field("r"),
             a: field("a"),
+            h: field("h"),
+            z: field("z"),
             duty: field("duty") as u32,
         });
     }
@@ -217,6 +221,56 @@ fn a_quarter_circle_cut_runs_and_lands_where_it_was_asked_to() {
     assert!(arc.len() > 20, "the arc itself was not burnt: {} marks", arc.len());
     for mark in arc {
         assert!((mark.r - 10.0).abs() <= 0.01, "arc left radius 10: {mark:?}");
+    }
+}
+
+#[test]
+fn a_cartesian_spindle_machine_plunges_and_mills_a_straight_line() {
+    let server = start("mill");
+    let mut client = Client::connect(&server);
+    assert!(client.line().starts_with("[spinny v"));
+
+    for line in [
+        "$cartesian=1",
+        "$spindle=1",
+        "$h_axis=1",
+        "set R0 A0 Z0 H0",
+        "go H2",
+        "spindle S600",
+        "dwell T50",
+        "go R2 Z1",
+        "cut H-0.1 F120",
+        "cut R6 Z4 F300",
+        "go H2",
+        "spindle off",
+    ] {
+        let answer = client.send(line);
+        assert_eq!(answer.last().map(String::as_str), Some("ok"), "{line} -> {answer:?}");
+    }
+    let idle = client.wait_for("Idle");
+    let fields = status_fields(&idle);
+    assert_eq!(fields[3], "L:0", "the spindle is off at the end: {idle}");
+    assert_eq!(fields[7], "Z:4.000", "{idle}");
+    assert_eq!(fields[8], "H:2.000", "{idle}");
+    let (r, a) = joint(&idle);
+    assert!((r - 6.0).abs() < 1e-3 && a == 0.0, "{idle}");
+
+    drop(client);
+    let mut next = Client::connect(&server);
+    assert!(next.line().starts_with("[spinny v"));
+    let marks = marks(&server.trace);
+    // The tool turns from the spin-up on; it is in the work only below
+    // the surface at H 0, and there it follows the line (2,1)-(6,4).
+    let turning: Vec<&Mark> = marks.iter().filter(|m| m.duty > 0).collect();
+    assert!(turning.iter().any(|m| m.h > 1.9), "it was turning at the travel height");
+    let milled: Vec<&&Mark> = turning.iter().filter(|m| m.h < -0.09).collect();
+    assert!(milled.len() > 20, "only {} marks in the work", milled.len());
+    for mark in milled {
+        assert!((mark.x - mark.r).abs() < 1e-3 && (mark.y - mark.z).abs() < 1e-3, "the table turned: {mark:?}");
+        // Distance from the line through (2,1) and (6,4): 3x - 4y - 2 = 0.
+        let off = (3.0 * mark.x - 4.0 * mark.y - 2.0).abs() / 5.0;
+        assert!(off < 2e-3, "off the line by {off}: {mark:?}");
+        assert!((2.0 - 1e-3..=6.0 + 1e-3).contains(&mark.x), "{mark:?}");
     }
 }
 

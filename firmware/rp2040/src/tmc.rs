@@ -14,7 +14,7 @@ use embassy_time::{with_timeout, Duration, Instant, Timer};
 use embedded_io_async::{Read, ReadReady, Write};
 use spinny_core::report;
 use spinny_core::settings::Settings;
-use spinny_core::{A, H, R};
+use spinny_core::{A, H, R, Z};
 use spinny_fw_logic::tmc::{
     config_datagrams, micro_of, parse_reply, read_request, refused_text, report_text, unfinished_after, Datagram,
     DriverConfig, Reply, ADDR,
@@ -66,9 +66,9 @@ pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PI
 pub fn configure_from(settings: &Settings) {
     let focus_ma = if settings.h_axis { settings.tmc_ma[H] } else { 0 };
     let cfg = DriverConfig {
-        ma: [settings.tmc_ma[R], settings.tmc_ma[A], settings.tmc_z_ma, focus_ma],
+        ma: [settings.tmc_ma[R], settings.tmc_ma[A], settings.tmc_ma[Z], focus_ma],
         hold_pct: settings.tmc_hold_pct,
-        micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_z_micro, settings.tmc_micro[H]],
+        micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_micro[Z], settings.tmc_micro[H]],
         stealth: settings.tmc_stealth,
     };
     CONFIG.signal(cfg);

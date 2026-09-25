@@ -6,7 +6,7 @@
 
 use crate::hal::Sink;
 use crate::parser::PowerMode;
-use crate::{A, AXES, BLOCKS, H, LINE_SLOTS, R, VERSION};
+use crate::{A, AXES, BLOCKS, H, LINE_SLOTS, R, VERSION, Z};
 
 /// One state for the status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,8 @@ pub enum State {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Status {
     pub state: State,
-    /// Radius mm, angle deg, focus mm.
+    /// Radius mm, angle deg, focus mm, cross slide mm (from `slide`, or
+    /// from the joints on a cartesian machine).
     pub joint: [f32; AXES],
     /// Board mm/min.
     pub rate: f32,
@@ -32,8 +33,6 @@ pub struct Status {
     pub line_free: usize,
     pub mode: PowerMode,
     pub enabled: bool,
-    /// Cross slide position, mm.
-    pub slide: f32,
     /// With a focus axis fitted: whether the probe input is active. The
     /// focus position and this are left off the line without one.
     pub probe: Option<bool>,
@@ -85,7 +84,7 @@ pub fn status(status: &Status, out: &mut impl Sink) {
     out.write(b"|E:");
     out.write(if status.enabled { b"1" } else { b"0" });
     out.write(b"|Z:");
-    float(status.slide, 3, out);
+    float(status.joint[Z], 3, out);
     if let Some(active) = status.probe {
         out.write(b"|H:");
         float(status.joint[H], 3, out);
@@ -275,14 +274,13 @@ mod tests {
     fn sample() -> Status {
         Status {
             state: State::Idle,
-            joint: [0.0, 0.0, 0.0],
+            joint: [0.0; AXES],
             rate: 0.0,
             duty: 0,
             planner_free: 32,
             line_free: 16,
             mode: PowerMode::Dynamic,
             enabled: false,
-            slide: 0.0,
             probe: None,
         }
     }
@@ -302,14 +300,13 @@ mod tests {
     fn status_run_sample_from_protocol() {
         let status = Status {
             state: State::Run,
-            joint: [7.512, 135.0, 0.0],
+            joint: [7.512, 135.0, 0.0, -1.25],
             rate: 300.0,
             duty: 400,
             planner_free: 30,
             line_free: 16,
             mode: PowerMode::Dynamic,
             enabled: true,
-            slide: -1.25,
             probe: None,
         };
         assert_eq!(status_text(&status).as_str(), "<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:-1.250>\n");
@@ -319,11 +316,11 @@ mod tests {
     fn status_negative_angle_and_rounding() {
         let mut status = sample();
         status.state = State::Jog;
-        status.joint = [2.0625, -45.5, 0.0];
+        status.joint = [2.0625, -45.5, 0.0, 0.0];
         status.rate = 299.5;
         status.mode = PowerMode::Constant;
         assert_eq!(status_text(&status).as_str(), "<Jog|J:2.063,-45.5000|V:300|L:0|Q:32,16|M:const|E:0|Z:0.000>\n");
-        status.joint = [0.0, -0.03125, 0.0];
+        status.joint = [0.0, -0.03125, 0.0, 0.0];
         status.rate = 299.4;
         assert_eq!(status_text(&status).as_str(), "<Jog|J:0.000,-0.0313|V:299|L:0|Q:32,16|M:const|E:0|Z:0.000>\n");
     }
@@ -331,19 +328,19 @@ mod tests {
     #[test]
     fn status_tiny_negative_is_not_minus_zero() {
         let mut status = sample();
-        status.joint = [-0.0001, -0.00001, 0.0];
+        status.joint = [-0.0001, -0.00001, 0.0, 0.0];
         assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>\n");
     }
 
     #[test]
     fn status_ends_with_the_cross_slide() {
         let mut status = sample();
-        status.slide = 12.3456;
+        status.joint[Z] = 12.3456;
         let text = status_text(&status);
         assert!(text.as_str().ends_with("|Z:12.346>\n"), "{}", text.as_str());
-        status.slide = -0.0005;
+        status.joint[Z] = -0.0005;
         assert!(status_text(&status).as_str().ends_with("|Z:-0.001>\n"));
-        status.slide = -0.0004;
+        status.joint[Z] = -0.0004;
         assert!(status_text(&status).as_str().ends_with("|Z:0.000>\n"));
     }
 
@@ -475,7 +472,7 @@ mod tests {
     #[test]
     fn status_with_a_focus_axis() {
         let mut status = sample();
-        status.joint = [1.0, 2.0, -1.2345];
+        status.joint = [1.0, 2.0, -1.2345, 0.0];
         status.probe = Some(true);
         assert_eq!(
             status_text(&status).as_str(),

@@ -6,6 +6,11 @@ space and drives the laser. Board geometry never reaches it; the host turns
 board paths into short joint moves (see `spinny_laser.polar`) and streams
 them. Everything is ASCII text over USB CDC.
 
+Two settings change what the machine is, and both are off by default:
+`cartesian` makes the cross slide `Z` a joint, so the radius is X and the
+slide Y of an X/Y machine (see [Cartesian](#cartesian)), and `spindle`
+turns the laser output into a spindle's (see [Spindle](#spindle)).
+
 ## Transport
 
 - One command per line, terminated by `\n` (`\r` is ignored). A byte
@@ -54,8 +59,12 @@ keeps that axis where it is.
 | `jogto [R<mm>] [A<deg>] [H<mm>] [F<mm/min>]` | absolute jog |
 | `dwell T<ms> [S<power>]` | wait after motion (`T` at most 600000); with `S` the laser is on at constant `S` for the dwell (a spot burn) |
 
+With `cartesian` set the moves also take `Z`, and `go` and `cut` no longer
+take `A`.
+
 Surface speed: the length of a joint move on the board is taken as
-`hypot(dr, r_mean * da_rad)` with `r_mean = (r0 + r1) / 2`. A move whose
+`hypot(dr, r_mean * da_rad, dz)` with `r_mean = (r0 + r1) / 2`; `dz`, the
+cross slide, is only ever nonzero on a cartesian machine. A move whose
 surface length is under 1 um (a turn on the axis) runs at the max rates with
 the laser off. Speed is capped by `r_rate` and `a_rate`; under `mode dyn`
 the laser power follows the achieved speed so the dose per mm holds.
@@ -65,9 +74,9 @@ Which commands each state takes:
 | State | Accepted |
 | --- | --- |
 | `Idle` | everything |
-| `Run` | `go`, `cut`, `dwell`, `probe`, `mode`, `laser`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
-| `Jog` | jogs, `probe`, `mode`, `laser`; `go`/`cut`/`dwell`/`set`/`$` are `error:5` |
-| `Hold` | `go`, `cut` and `dwell` are taken in and wait for the resume (a hold of a run), and so is `probe` in any hold; jogs, `set`, `$` and the rest are `error:5` |
+| `Run` | `go`, `cut`, `dwell`, `probe`, `mode`, `laser`, `spindle`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
+| `Jog` | jogs, `probe`, `mode`, `laser`, `spindle off`; `go`/`cut`/`dwell`/`spindle S`/`set`/`$` are `error:5` |
+| `Hold` | `go`, `cut`, `dwell` and `spindle S` are taken in and wait for the resume (a hold of a run), and so is `probe` in any hold; jogs, `set`, `$` and the rest are `error:5` |
 | `Alarm` | `unlock`, `$`, queries; motion and `set` are `error:5` |
 
 `unlock` outside `Alarm` is `error:5`, and any move is `error:5` while the
@@ -147,10 +156,12 @@ pin touching grounded copper pulls it down against the pull-up.
 
 ## The cross slide
 
-`Z` is the cross slide that carries the rail across the rotation axis. It
-is a setup axis: it never takes part in a cut, it moves on its own, and it
-is accepted only in `Idle`. Nothing else moves while it does, and the
-state is `Jog` until it stops.
+`Z` is the cross slide that carries the rail across the rotation axis. On
+a polar machine (`cartesian` 0, the default) it is a setup axis: it never
+takes part in a cut, it moves on its own, and it is accepted only in
+`Idle`. Nothing else moves while it does, and the state is `Jog` until it
+stops. On a cartesian machine it is a joint instead; see
+[Cartesian](#cartesian).
 
 | Command | Effect |
 | --- | --- |
@@ -159,7 +170,9 @@ state is `Jog` until it stops.
 | `set Z<mm>` | declare the position, as for `R` and `A` |
 
 `Z` cannot be combined with `R`, `A` or `H` on one line (`error:2`): they
-are not interpolated together. The slide is stepped from the main loop at
+are not interpolated together, and `go` and `cut` do not take it at all.
+With `z_max` set, a move to further than that from zero is refused
+(`error:4`). The slide is stepped from the main loop at
 most 20000 steps a second, so its rate ceiling is `1200000 / z_steps`,
 117 mm/min at the default scale, and a `z_rate` or `jog_z` above that is
 held to it. `0x85` cancels a `Z` jog like any other.
@@ -167,6 +180,45 @@ held to it. `0x85` cancels a `Z` jog like any other.
 `Hold`: a setup move has no queue behind it for `~` to take up. A reset
 stops it on the spot, and raises no alarm, because the slide counts its
 own steps and its position is still good. The beam is off throughout.
+
+## Cartesian
+
+With `$cartesian=1` the cross slide is the fourth joint, stepped by the
+same interrupt as the others: the radius is X, the slide Y, and the two
+are interpolated with each other and with the focus axis, so `cut R3 Z4
+F300` is a straight 5 mm line on the board at 300 mm/min. The table holds
+its angle, so `go` and `cut` refuse `A` (`error:2`); a jog may still turn
+it, to line a board up, and `set A` still declares it. `Z` then goes on
+`go`, `cut`, `jog`, `jogto` and `set` like any joint word, takes part in
+holds, resets and jog cancels like the others, and moves at `z_rate`,
+`z_accel`, `z_jerk` and `jog_z` with the step interrupt's ceiling, not the
+setup stepper's. `r_max` and `z_max` hold it to a box around zero.
+
+Switching `cartesian` (from `Idle`, as any setting) hands the slide's
+position over, so it stays where it was either way. Y is measured from
+`Z0`: with `Z0` set where the rail passes over the rotation axis, board
+X/Y turned by the table angle is the same frame a polar job uses.
+
+## Spindle
+
+With `$spindle=1` the laser output drives a spindle's speed input and the
+focus axis is its depth axis. `S` is the spindle's speed, mapped to duty
+like a beam's power, `laser_invert` included.
+
+| Command | Effect |
+| --- | --- |
+| `spindle S<speed>` | start the spindle, or change its speed, once queued motion is done; taken in `Idle` and `Run`, and during a hold of a run, where it waits for the resume |
+| `spindle off` | stop it once queued motion is done; taken in any state |
+
+The spindle keeps turning through `go`, `cut`, jogs, dwells, holds and the
+end of motion: a hold stops the tool where it is and the resume drives it
+on, still turning. `spindle off`, `laser off`, a reset, a USB disconnect
+and an alarm (a missed probe) stop it. The step interrupt never writes the
+output, and the status line's `L` is the spindle's duty. `S` and `M` on
+`cut` and `S` on `dwell` are refused (`error:2`), so a laser job sent to a
+spindle machine fails on its first cut rather than running, and so is
+`laser S`; `spindle` on a laser machine is refused the same way. The host
+waits out the spin-up with a `dwell` after `spindle S`.
 
 ## Laser
 
@@ -178,7 +230,8 @@ own steps and its position is still good. The beam is off throughout.
 | `laser off` | beam off |
 
 The beam is off during `go`, jogs, holds, alarms, after a reset, when the
-USB host disconnects, and when the planner runs dry. A USB disconnect is a
+USB host disconnects, and when the planner runs dry (a spindle is not; see
+[Spindle](#spindle)). A USB disconnect is a
 full reset: the queue is flushed, the modal state forgotten, and a machine
 that was moving is left in `Alarm:1`. `S` is 0 to `s_max`
 and maps linearly to PWM duty; in `dyn` mode a computed power below `s_min`
@@ -190,10 +243,10 @@ turns off a floor below it.
 
 | Command | Effect |
 | --- | --- |
-| `set [R<mm>] [A<deg>] [H<mm>]` | declare the current position (`Idle` only); `set R0` after driving the beam over the axis |
+| `set [R<mm>] [A<deg>] [H<mm>] [Z<mm>]` | declare the current position (`Idle` only); `set R0` after driving the beam over the axis; `Z` alone on a polar machine |
 | `enable` / `disable` | motor enable pins; any motion enables them; `disable` loses the microstep position |
 | `unlock` | clear an alarm |
-| `mode`, `laser`, `set`, `enable`, `disable` | sync commands: they wait until queued motion is done |
+| `mode`, `laser`, `spindle`, `set`, `enable`, `disable` | sync commands: they wait until queued motion is done |
 | `version` | `[spinny v<version> ...]` |
 | `status` | same as `?` |
 | `help` | short command list |
@@ -261,11 +314,18 @@ microsteps a power of two up to 256.
 | `tmc_h_ma` | mA | 600 | focus axis run current; its driver is left alone while `h_axis` is 0 |
 | `tmc_h_micro` | | 256 | |
 | `probe_ms` | ms | 20 | motion queued during a probe, 0 to 160: how long the head goes on past contact before it brakes; 0 stops it dead when the probe is within `h_jerk` |
+| `z_jerk` | mm/s | 3 | cross slide's allowed speed change at a corner, as a joint |
+| `z_max` | mm | 0 | soft limit on the cross slide, either side of zero; 0 = off |
+| `cartesian` | 0/1 | 0 | the cross slide is a joint: Y of an X/Y machine with the radius as X |
+| `spindle` | 0/1 | 0 | the laser output drives a spindle |
 
 Changing a `tmc_*` setting or `h_axis` re-sends the driver configuration.
+Changing `spindle` stops whatever runs on the output.
 
 The settings stored by a firmware from before the focus axis are thrown
 away at boot (the stored layout changed): set them again and `$save`.
+Settings stored before `z_jerk`, `z_max`, `cartesian` and `spindle` are
+read, with those four at their defaults.
 
 ## Status line
 
@@ -281,11 +341,11 @@ The second form is with `h_axis` set.
 | state | `Idle`, `Run`, `Jog`, `Hold`, `Alarm:<code>` |
 | `J` | joint position from the executed steps: radius mm, angle deg |
 | `V` | surface speed of the move in progress, mm/min |
-| `L` | laser duty in permille, as driven |
+| `L` | laser duty in permille, as driven; a spindle's duty with `spindle` |
 | `Q` | free planner blocks, free line slots (the 16 credits less the lines received and not yet answered) |
 | `M` | power mode |
 | `E` | motors enabled |
-| `Z` | cross slide position, mm |
+| `Z` | cross slide position, mm, whether the setup stepper or the joints moved it |
 | `H` | focus axis position, mm; only with `h_axis` |
 | `P` | 1 while the probe input is active; only with `h_axis` |
 

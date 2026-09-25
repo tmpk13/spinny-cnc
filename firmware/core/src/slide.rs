@@ -16,6 +16,7 @@
 use crate::hal::SlidePort;
 use crate::math;
 use crate::settings::Settings;
+use crate::Z;
 
 /// Fastest the slide is stepped. A polled step generator cannot hold a
 /// period much shorter than the loop it runs in, and this is the rate a
@@ -93,8 +94,8 @@ impl Slide {
 
     /// Declares the position without moving, for `set Z`.
     pub fn set_position(&mut self, mm: f32, settings: &Settings) {
-        self.steps_per_mm = settings.z_steps;
-        self.position = math::units_to_steps(mm, settings.z_steps);
+        self.steps_per_mm = settings.steps[Z];
+        self.position = math::units_to_steps(mm, settings.steps[Z]);
     }
 
     /// A move is running.
@@ -111,7 +112,7 @@ impl Slide {
     /// the position the executed steps are counted from.
     pub fn start(&mut self, from_mm: f32, to_mm: f32, feed: Option<f32>, settings: &Settings) {
         self.set_position(from_mm, settings);
-        let target = math::units_to_steps(to_mm, settings.z_steps);
+        let target = math::units_to_steps(to_mm, settings.steps[Z]);
         let delta = target as i64 - self.position as i64;
         self.total = delta.unsigned_abs().min(u32::MAX as u64) as u32;
         self.done = 0;
@@ -125,9 +126,9 @@ impl Slide {
         self.dir_pending = true;
         // The ramp works in steps and never leaves them, so a move ends
         // on the step it was asked for however the speeds round.
-        let mm_per_min = feed.filter(|f| *f > 0.0).unwrap_or(settings.jog_z).min(settings.z_rate);
-        self.cruise = (mm_per_min / 60.0 * settings.z_steps).clamp(MIN_RATE_HZ, MAX_RATE_HZ);
-        self.accel = settings.z_accel * settings.z_steps;
+        let mm_per_min = feed.filter(|f| *f > 0.0).unwrap_or(settings.jog_rate[Z]).min(settings.max_rate[Z]);
+        self.cruise = (mm_per_min / 60.0 * settings.steps[Z]).clamp(MIN_RATE_HZ, MAX_RATE_HZ);
+        self.accel = settings.accel[Z] * settings.steps[Z];
     }
 
     /// Brakes to a stop as fast as `z_accel` allows and gives up the rest
@@ -239,13 +240,20 @@ mod tests {
     /// Settings that keep the slide well clear of both the rate cap and
     /// the rate floor, so these tests measure the ramp and not a clamp.
     fn bench() -> Settings {
-        Settings {
-            z_steps: 256.0,
-            z_rate: 600.0,
-            z_accel: 50.0,
-            jog_z: 120.0,
-            ..Settings::default()
-        }
+        let mut settings = Settings::default();
+        settings.steps[Z] = 256.0;
+        settings.max_rate[Z] = 600.0;
+        settings.accel[Z] = 50.0;
+        settings.jog_rate[Z] = 120.0;
+        settings
+    }
+
+    /// The bench with the rate and the jog rate raised past the cap.
+    fn uncapped() -> Settings {
+        let mut settings = bench();
+        settings.max_rate[Z] = 1.0e6;
+        settings.jog_rate[Z] = 1.0e6;
+        settings
     }
 
     /// Runs the slide to its end, polling exactly when it asks to be
@@ -279,13 +287,13 @@ mod tests {
             let mut port = Port::default();
             slide.start(from, to, None, &settings);
             run(&mut slide, &mut port, 0);
-            let target = math::units_to_steps(to, settings.z_steps);
-            let want = target - math::units_to_steps(from, settings.z_steps);
+            let target = math::units_to_steps(to, settings.steps[Z]);
+            let want = target - math::units_to_steps(from, settings.steps[Z]);
             assert_eq!(port.at.len(), want.unsigned_abs() as usize, "{from} to {to}");
             assert_eq!(port.dir, Some(to > from), "{from} to {to}");
             assert_eq!(port.dir_writes, 1, "the direction is driven once a move");
             // The target is the step it rounds to, as everywhere else.
-            assert_eq!(slide.position(), math::steps_to_units(target, settings.z_steps), "{from} to {to}");
+            assert_eq!(slide.position(), math::steps_to_units(target, settings.steps[Z]), "{from} to {to}");
             assert!(!slide.busy());
         }
     }
@@ -314,26 +322,26 @@ mod tests {
         let mut port = Port::default();
         slide.start(0.0, 20.0, None, &settings);
         run(&mut slide, &mut port, 0);
-        let jogged = speeds(&port, settings.z_steps);
+        let jogged = speeds(&port, settings.steps[Z]);
         for speed in &jogged {
-            assert!(*speed <= settings.jog_z, "{speed} mm/min over the jog rate");
+            assert!(*speed <= settings.jog_rate[Z], "{speed} mm/min over the jog rate");
         }
         // Without an F word it runs at jog_z, not at z_rate.
         let top = jogged.iter().cloned().fold(0.0f32, f32::max);
-        assert!((top - settings.jog_z).abs() < 0.1, "reached {top} of {}", settings.jog_z);
+        assert!((top - settings.jog_rate[Z]).abs() < 0.1, "reached {top} of {}", settings.jog_rate[Z]);
 
         // An F word raises it, and z_rate is the ceiling over it.
         let mut port = Port::default();
         slide.start(0.0, 20.0, Some(9000.0), &settings);
         run(&mut slide, &mut port, 0);
-        let top = speeds(&port, settings.z_steps).iter().cloned().fold(0.0f32, f32::max);
-        assert!(top <= settings.z_rate, "{top} mm/min over z_rate");
-        assert!((top - settings.z_rate).abs() < 1.0, "reached {top} of {}", settings.z_rate);
+        let top = speeds(&port, settings.steps[Z]).iter().cloned().fold(0.0f32, f32::max);
+        assert!(top <= settings.max_rate[Z], "{top} mm/min over z_rate");
+        assert!((top - settings.max_rate[Z]).abs() < 1.0, "reached {top} of {}", settings.max_rate[Z]);
     }
 
     #[test]
     fn the_step_rate_is_capped_whatever_the_settings_ask() {
-        let settings = Settings { z_rate: 1.0e6, jog_z: 1.0e6, ..bench() };
+        let settings = uncapped();
         let mut slide = Slide::new();
         let mut port = Port::default();
         slide.start(0.0, 20.0, None, &settings);
@@ -349,9 +357,9 @@ mod tests {
         let settings = bench();
         let mut slide = Slide::new();
         let mut port = Port::default();
-        slide.start(0.0, 10.0, Some(settings.z_rate), &settings);
+        slide.start(0.0, 10.0, Some(settings.max_rate[Z]), &settings);
         run(&mut slide, &mut port, 0);
-        let speeds = speeds(&port, settings.z_steps);
+        let speeds = speeds(&port, settings.steps[Z]);
         assert!(speeds.len() > 1000);
         // Measured over a window: step periods are whole microseconds,
         // and at speed one step to the next differs by only a few of
@@ -364,7 +372,7 @@ mod tests {
         for i in 0..speeds.len() - WINDOW {
             let (v0, v1) = (speeds[i] / 60.0, speeds[i + WINDOW] / 60.0);
             let accel = (v1 - v0).abs() / (middle(i + WINDOW) - middle(i));
-            assert!(accel <= settings.z_accel * 1.05, "{accel} mm/s^2 at step {i}");
+            assert!(accel <= settings.accel[Z] * 1.05, "{accel} mm/s^2 at step {i}");
             rose |= v1 > v0;
             fell |= v1 < v0;
         }
@@ -380,13 +388,13 @@ mod tests {
         let mut slide = Slide::new();
         let mut port = Port::default();
         // Ten steps: far too few to reach 120 mm/min at 50 mm/s^2.
-        slide.start(0.0, 10.0 / settings.z_steps, None, &settings);
+        slide.start(0.0, 10.0 / settings.steps[Z], None, &settings);
         run(&mut slide, &mut port, 0);
         assert_eq!(port.at.len(), 10);
-        let speeds = speeds(&port, settings.z_steps);
+        let speeds = speeds(&port, settings.steps[Z]);
         let top = speeds.iter().cloned().fold(0.0f32, f32::max);
-        assert!(top < settings.jog_z, "{top} mm/min on a ten step move");
-        assert_eq!(slide.position(), 10.0 / settings.z_steps);
+        assert!(top < settings.jog_rate[Z], "{top} mm/min on a ten step move");
+        assert_eq!(slide.position(), 10.0 / settings.steps[Z]);
     }
 
     #[test]
@@ -396,7 +404,7 @@ mod tests {
         let mut port = Port::default();
         slide.set_position(1.0, &settings);
         // Under half a step at 256 steps per mm.
-        slide.start(1.0, 1.0 + 0.4 / settings.z_steps, None, &settings);
+        slide.start(1.0, 1.0 + 0.4 / settings.steps[Z], None, &settings);
         assert!(!slide.busy(), "a move under a step should not start");
         assert_eq!(slide.poll(0, &mut port), None);
         assert!(port.at.is_empty());
@@ -413,7 +421,7 @@ mod tests {
         let settings = bench();
         let mut slide = Slide::new();
         let mut port = Port::default();
-        slide.start(0.0, 20.0, Some(settings.z_rate), &settings);
+        slide.start(0.0, 20.0, Some(settings.max_rate[Z]), &settings);
         // Run into the cruise, then cancel.
         let mut now = 0;
         while let Some(next) = slide.poll(now, &mut port) {
@@ -432,9 +440,9 @@ mod tests {
         assert!(steps > stepped_before, "the brake takes a few more steps");
         assert!(steps < 5120, "it should stop well short of 20 mm");
         // Where it really is: every pulse counted, nothing rounded away.
-        assert_eq!(slide.position(), steps as f32 / settings.z_steps);
+        assert_eq!(slide.position(), steps as f32 / settings.steps[Z]);
         // The brake is a ramp down, not a stop on the spot.
-        let speeds = speeds(&port, settings.z_steps);
+        let speeds = speeds(&port, settings.steps[Z]);
         let last = speeds[speeds.len() - 1];
         assert!(last < speeds[stepped_before - 2], "{last} mm/min at the end");
 
@@ -475,14 +483,14 @@ mod tests {
         slide.stop();
         assert!(!slide.busy());
         let steps = port.at.len();
-        assert_eq!(slide.position(), steps as f32 / settings.z_steps);
+        assert_eq!(slide.position(), steps as f32 / settings.steps[Z]);
         assert_eq!(slide.poll(now + 1_000_000, &mut port), None);
         assert_eq!(port.at.len(), steps, "a stopped slide steps no more");
     }
 
     #[test]
     fn a_late_poll_catches_up_without_a_burst_without_end() {
-        let settings = Settings { z_rate: 1.0e6, jog_z: 1.0e6, ..bench() };
+        let settings = uncapped();
         let mut slide = Slide::new();
         let mut port = Port::default();
         slide.start(0.0, 20.0, None, &settings);
@@ -493,7 +501,7 @@ mod tests {
         assert!(port.at.len() <= MAX_BURST as usize + 1, "{} steps in one poll", port.at.len());
         // The rest still gets stepped, and the total is still exact.
         run(&mut slide, &mut port, 1_000_000);
-        assert_eq!(port.at.len(), (20.0 * settings.z_steps) as usize);
+        assert_eq!(port.at.len(), (20.0 * settings.steps[Z]) as usize);
         assert_eq!(slide.position(), 20.0);
     }
 
@@ -506,7 +514,7 @@ mod tests {
         assert_eq!(slide.position(), -3.5);
         // A new scale takes effect where it is declared, not under a
         // position already counted in the old one.
-        settings.z_steps = 512.0;
+        settings.steps[Z] = 512.0;
         assert_eq!(slide.position(), -3.5);
         slide.set_position(-3.5, &settings);
         assert_eq!(slide.position(), -3.5);

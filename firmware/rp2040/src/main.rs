@@ -9,7 +9,11 @@
 //!
 //! The cross slide is the exception: it is stepped straight from the main
 //! loop, because it only ever moves on its own, from rest, with the beam
-//! off, and nothing depends on when its pulses land.
+//! off, and nothing depends on when its pulses land. With `$cartesian=1`
+//! it is a joint instead and the step timer drives it with the others.
+//!
+//! With `$spindle=1` the laser PWM on FAN3 drives a spindle's speed input;
+//! the core then keeps the step timer off it.
 #![no_std]
 #![no_main]
 

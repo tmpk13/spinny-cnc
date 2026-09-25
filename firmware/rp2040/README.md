@@ -7,6 +7,11 @@ on the E socket with a touch probe on Z-STOP, the laser TTL input from a
 PWM pin, and the line protocol of `docs/PROTOCOL.md` over USB CDC. No
 endstops, no homing.
 
+Two optional modes use the same wiring. `$cartesian=1` steps the cross
+slide from the step timer as a fourth joint, so the rail is X and the
+slide Y of an X/Y machine. `$spindle=1` makes the FAN3 output a spindle's
+speed signal and the focus axis its depth axis.
+
 ## Pins
 
 | Function | GPIO | Note |
@@ -175,14 +180,26 @@ $save
   `jog A5 F60`, `jog Z1 F60`, then `$dir_invert` (bit 0 radius, bit 1
   table, bit 2 cross slide), `$r_steps`, `$a_steps` and `$z_steps` as
   needed.
-- The cross slide has no limit switches and no soft limit. It is a setup
-  axis with a short travel, so drive it in small steps and watch it; a
-  `jogto Z` to a position declared before the slide was moved by hand
-  will run into the end of its travel and stall.
+- The cross slide has no limit switches. It is a setup axis with a short
+  travel, so drive it in small steps and watch it; a `jogto Z` to a
+  position declared before the slide was moved by hand will run into the
+  end of its travel and stall. Set `$z_max` to its travel either side of
+  `Z0` before using it as a cartesian Y axis: a cartesian job moves it
+  across the whole board.
 - The cross slide is stepped from the main loop, at up to 20 kHz. It only
   ever moves alone, from rest, with the beam off, so its timing matters to
   nothing; a jog cancel brakes it and a reset or a USB disconnect stops
-  it, in both cases keeping the steps it actually took.
+  it, in both cases keeping the steps it actually took. With
+  `$cartesian=1` the step timer steps it instead, under the same ceiling
+  as the other joints, and a reset while it moves raises `ALARM:1` like
+  theirs.
+- A spindle on FAN3 (`$spindle=1`) keeps turning through moves and holds;
+  only `spindle off`, `laser off`, a reset, a USB disconnect or an alarm
+  stop it. FAN3 is a low side switch on the fan rail, not a logic output:
+  a spindle controller's PWM or enable input needs an interface that suits
+  it (an opto-isolator, or a pull-up to the controller's own logic
+  supply), checked with a meter before the spindle is connected, and
+  `$laser_hz` set to the frequency the controller expects.
 - The focus axis has no limit switches and no soft limit either. A probe
   that finds nothing goes its whole distance down and raises `ALARM:2`, so
   keep the distance to what the head can travel before anything but the

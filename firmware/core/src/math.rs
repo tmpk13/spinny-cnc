@@ -1,5 +1,7 @@
 //! Small numeric helpers available without std.
 
+use crate::{A, AXES, R, Z};
+
 /// Board length of a straight joint move from `(r0, a0)` to `(r1, a1)`,
 /// radii in mm and angles in degrees: `hypot(dr, r_mean * da_rad)`.
 /// Exact for a pure turn or a pure radial move, a close approximation for
@@ -8,6 +10,14 @@ pub fn surface_length(r0: f32, a0: f32, r1: f32, a1: f32) -> f32 {
     let dr = r1 - r0;
     let arc = 0.5 * (r0 + r1) * (a1 - a0).to_radians();
     hypot(dr, arc)
+}
+
+/// Board length of a straight joint move: the radius and table part as in
+/// `surface_length`, and the cross slide square to it. The slide moves only
+/// as a joint on a cartesian machine, where the table holds still, so
+/// this is `hypot(dx, dy)` there and `surface_length` on a polar one.
+pub fn joint_surface_length(start: &[f32; AXES], end: &[f32; AXES]) -> f32 {
+    hypot(surface_length(start[R], start[A], end[R], end[A]), end[Z] - start[Z])
 }
 
 pub fn hypot(x: f32, y: f32) -> f32 {
@@ -70,6 +80,15 @@ mod tests {
         assert!((surface_length(10.0, 0.0, 10.0, 90.0) - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
         assert!((surface_length(2.0, 30.0, 7.0, 30.0) - 5.0).abs() < 1e-6);
         assert_eq!(surface_length(0.0, 0.0, 0.0, 180.0), 0.0);
+    }
+
+    #[test]
+    fn the_cross_slide_adds_square_to_the_rail() {
+        let start = [1.0, 30.0, 0.0, 2.0];
+        let end = [4.0, 30.0, -1.0, 6.0];
+        assert!((joint_surface_length(&start, &end) - 5.0).abs() < 1e-6, "the focus axis is not on the board");
+        let polar = [10.0, 90.0, 0.0, 2.0];
+        assert!((joint_surface_length(&[10.0, 0.0, 0.0, 2.0], &polar) - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
     }
 
     #[test]

@@ -14,6 +14,13 @@
 //!
 //! The cross slide `Z` in `slide` stands apart from all of that: it is a
 //! setup axis that moves alone, from the main loop, with the beam off.
+//! With the `cartesian` setting it becomes a joint instead, the fourth,
+//! stepped by the interrupt with the others: the radius is then X and the
+//! cross slide Y of an X/Y machine, and `slide` is left idle.
+//!
+//! With the `spindle` setting the laser output drives a spindle: it stays
+//! at the speed `spindle` set through every move and hold, and the step
+//! interrupt leaves it alone.
 //!
 //! The focus axis `H` is a joint like the other two, stepped by the same
 //! interrupt, so a cut can follow the board's height as it goes. It only
@@ -36,11 +43,14 @@ pub mod stepper;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Joint axes: index 0 is the radius in mm, index 1 the table angle in
-/// degrees, index 2 the focus axis in mm, up positive.
-pub const AXES: usize = 3;
+/// degrees, index 2 the focus axis in mm, up positive, index 3 the cross
+/// slide in mm. The cross slide is only moved as a joint under the
+/// `cartesian` setting; otherwise it is the setup axis in `slide`.
+pub const AXES: usize = 4;
 pub const R: usize = 0;
 pub const A: usize = 1;
 pub const H: usize = 2;
+pub const Z: usize = 3;
 
 /// Longest accepted line, newline included.
 pub const LINE_MAX: usize = 96;

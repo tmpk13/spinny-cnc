@@ -13,7 +13,12 @@ it. It only takes words with `$h_axis=1`.
 
 The cross slide `Z` carries the rail across the table's rotation axis. It
 is a setup axis: it moves on its own, only from `Idle`, with the beam off,
-and it is never interpolated with the joints.
+and it is never interpolated with the joints. With `$cartesian=1` it is a
+fourth joint instead, stepped with the others, so the rail is X and the
+slide Y of an X/Y machine while the table holds its angle.
+
+With `$spindle=1` the laser output drives a spindle, which keeps turning
+through moves and holds, and the focus axis is its depth axis.
 
 The line protocol is [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
@@ -95,12 +100,13 @@ flowchart TB
         RING --> ISR[stepper isr: bresenham, duty, probe latch]
         TIMER --> ISR
     end
-    ISR --> PINS[step, dir, enable: R, A, H]
+    ISR --> PINS[step, dir, enable: R, A, H, Z when cartesian]
     PROBE[probe input] --> ISR
     PROBE --> MACHINE
     LOOP --> SLIDE
     SLIDE --> ZPINS[cross slide step, dir]
-    ISR --> PWM[laser duty]
+    ISR --> PWM[laser duty, left alone for a spindle]
+    MACHINE --> PWM
     MACHINE --> REPORT[status, errors, banner] --> IO
 ```
 
@@ -120,3 +126,14 @@ contact instead, and the head stops on that step.
 The cross slide is deliberately outside all of that. It runs from the main
 loop, capped at 20 kHz, because it only ever moves alone, from rest, with
 the beam off, so nothing depends on when its pulses land.
+
+On a cartesian machine (`$cartesian=1`) it is inside all of that: the
+planner and the interrupt carry it as the fourth joint, `Slide` stays idle,
+and switching the setting hands the position from one to the other so the
+slide stays where it was. A cut's board length is then `hypot(dr, dz)`,
+and the table holds its angle, since `go` and `cut` refuse `A`.
+
+A spindle (`$spindle=1`) is the machine's alone: `Shared::spindle` keeps
+the interrupt from writing the output, and the machine drives it at the
+speed `spindle S` set from the main loop, through motion and holds, until
+`spindle off`, a reset, a disconnect or an alarm.

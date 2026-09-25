@@ -42,6 +42,18 @@
 //! `Idle`, holds the state at `Jog` until it stops, and is stepped by
 //! `poll_slide` from the main loop. A jog cancel brakes it, a reset or a
 //! disconnect drops it.
+//!
+//! With the `cartesian` setting the cross slide is the fourth joint
+//! instead: `Z` words go to the planner with the others, the radius is X
+//! and the slide Y, and `A` stays off `go` and `cut` so the table holds
+//! the board still under them. Switching hands the position over between
+//! `Slide` and the joints, so the slide stays where it was either way.
+//!
+//! With the `spindle` setting the laser output drives a spindle. `spindle
+//! S` and `spindle off` are sync commands like `laser`, and the output
+//! then stays at that speed through moves, jogs, dwells and holds; only
+//! `spindle off`, `laser off`, a reset, a disconnect or an alarm stop it.
+//! `S` and `M` on a `cut` or a `dwell`, and a lit `laser`, are refused.
 
 use crate::hal::{LaserPort, Sink, SlidePort, StepPort, Store};
 use crate::math;
@@ -51,7 +63,7 @@ use crate::report::{self, State, Status};
 use crate::settings::{Changed, SetError, Settings, BLOB_LEN};
 use crate::slide::Slide;
 use crate::stepper::{self, Front};
-use crate::{AXES, H, LINE_MAX, LINE_SLOTS, R};
+use crate::{A, AXES, H, LINE_MAX, LINE_SLOTS, R, Z};
 
 /// Things the port loop must act on after a `poll`. Taken with `take_events`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,6 +94,8 @@ enum Pending {
     Mode(PowerMode),
     LaserOn { power: f32, ms: Option<u32> },
     LaserOff,
+    /// The spindle at `S`, or stopped.
+    Spindle(Option<f32>),
     SetPosition([Option<f32>; AXES]),
     SetSlide(f32),
     Enable(bool),
@@ -115,6 +129,8 @@ pub struct Machine<'a> {
     /// Constant beam from the `laser` command: its `S` and deadline.
     beam: Option<f32>,
     beam_until: u64,
+    /// `S` of the spindle while it runs, under the `spindle` setting.
+    spindle: Option<f32>,
     /// A jog cancel is waiting for the stepper to stop.
     jog_cancel: bool,
     /// A probe met contact and is braking.
@@ -159,6 +175,7 @@ impl<'a> Machine<'a> {
             dwell_power: None,
             beam: None,
             beam_until: 0,
+            spindle: None,
             jog_cancel: false,
             probe_braking: false,
             probe_halting: false,
@@ -192,12 +209,16 @@ impl<'a> Machine<'a> {
         self.mode
     }
 
-    /// Executed joint position in units.
+    /// Executed joint position in units. The cross slide's entry is where
+    /// the slide is, whichever of `Slide` and the joints moves it.
     pub fn joint(&self) -> [f32; AXES] {
         let steps = self.front.position();
         let mut units = [0f32; AXES];
         for i in 0..AXES {
             units[i] = math::steps_to_units(steps[i], self.settings.steps[i]);
+        }
+        if !self.settings.cartesian {
+            units[Z] = self.slide.position();
         }
         units
     }
@@ -209,7 +230,7 @@ impl<'a> Machine<'a> {
 
     /// Cross slide position in mm.
     pub fn slide_position(&self) -> f32 {
-        self.slide.position()
+        self.joint()[Z]
     }
 
     /// Steps the cross slide. It is driven from the main loop rather than
@@ -278,20 +299,45 @@ impl<'a> Machine<'a> {
     fn execute(&mut self, command: Command, out: &mut impl Sink) -> Result<bool, Error> {
         match command {
             Command::Go { target } => {
+                self.check_board_words(&target)?;
                 self.check_motion_state(false)?;
                 self.queue_motion(target, false, MoveKind::Rapid, Feed::Max, 0.0, 0.0)?;
                 Ok(false)
             }
             Command::Cut { target, feed, power, min_power } => {
+                self.check_board_words(&target)?;
+                // A spindle's speed is its own command's: an `S` here is a
+                // laser job sent to a machine that has none.
+                if self.settings.spindle && (power.is_some() || min_power.is_some()) {
+                    return Err(Error::BadWord);
+                }
                 self.check_motion_state(false)?;
                 let feed = feed.or(self.feed).ok_or(Error::MissingWord)?;
                 // `M` is not modal: a cut without it has no floor.
                 let min_power = min_power.unwrap_or(0.0);
-                self.queue_motion(target, false, MoveKind::Cut, Feed::Surface(feed), power.unwrap_or(self.power), min_power)?;
+                let power = if self.settings.spindle { 0.0 } else { power.unwrap_or(self.power) };
+                self.queue_motion(target, false, MoveKind::Cut, Feed::Surface(feed), power, min_power)?;
                 self.feed = Some(feed);
-                if let Some(power) = power {
+                if !self.settings.spindle {
                     self.power = power;
                 }
+                Ok(false)
+            }
+            Command::Jog { target, feed, absolute } if target[Z].is_some() && !self.settings.cartesian => {
+                // The slide moves alone and only from rest: it shares the
+                // rail with a cut in progress and would move it.
+                if target[R].is_some() || target[A].is_some() || target[H].is_some() {
+                    return Err(Error::BadWord);
+                }
+                self.require_idle()?;
+                let target = target[Z].unwrap_or(0.0);
+                // The slide has no zero to stay on the far side of, so an
+                // absolute Z is as free as a relative one.
+                let target = if absolute { target } else { self.slide.position() + target };
+                if !math::fits_steps(target, self.settings.steps[Z]) || self.past_z_max(target) {
+                    return Err(Error::OutOfRange);
+                }
+                self.pending = Pending::SlideMove { target, feed };
                 Ok(false)
             }
             Command::Jog { target, feed, absolute } => {
@@ -300,20 +346,13 @@ impl<'a> Machine<'a> {
                 self.queue_motion(target, !absolute, MoveKind::Jog, feed, 0.0, 0.0)?;
                 Ok(false)
             }
-            Command::JogZ { target, feed, absolute } => {
-                // The slide moves alone and only from rest: it shares the
-                // rail with a cut in progress and would move it.
-                self.require_idle()?;
-                let target = if absolute { target } else { self.slide.position() + target };
-                if !math::fits_steps(target, self.settings.z_steps) {
-                    return Err(Error::OutOfRange);
+            Command::SetPosition { value } if value[Z].is_some() && !self.settings.cartesian => {
+                if value[R].is_some() || value[A].is_some() || value[H].is_some() {
+                    return Err(Error::BadWord);
                 }
-                self.pending = Pending::SlideMove { target, feed };
-                Ok(false)
-            }
-            Command::SetSlide { value } => {
                 self.require_idle()?;
-                if !math::fits_steps(value, self.settings.z_steps) {
+                let value = value[Z].unwrap_or(0.0);
+                if !math::fits_steps(value, self.settings.steps[Z]) {
                     return Err(Error::OutOfRange);
                 }
                 self.pending = Pending::SetSlide(value);
@@ -335,6 +374,9 @@ impl<'a> Machine<'a> {
                 Ok(false)
             }
             Command::Dwell { ms, power } => {
+                if self.settings.spindle && power.is_some() {
+                    return Err(Error::BadWord);
+                }
                 self.check_motion_state(false)?;
                 self.pending = Pending::Dwell { ms, power };
                 Ok(false)
@@ -344,12 +386,32 @@ impl<'a> Machine<'a> {
                 Ok(false)
             }
             Command::LaserOn { power, ms } => {
+                if self.settings.spindle {
+                    return Err(Error::BadWord);
+                }
                 self.require_idle()?;
                 self.pending = Pending::LaserOn { power, ms };
                 Ok(false)
             }
             Command::LaserOff => {
                 self.pending = Pending::LaserOff;
+                Ok(false)
+            }
+            Command::SpindleOn { power } => {
+                if !self.settings.spindle {
+                    return Err(Error::BadWord);
+                }
+                // Started where a move would be: from rest or in a run,
+                // and taken in during a hold of a run to start after it.
+                self.check_motion_state(false)?;
+                self.pending = Pending::Spindle(Some(power));
+                Ok(false)
+            }
+            Command::SpindleOff => {
+                if !self.settings.spindle {
+                    return Err(Error::BadWord);
+                }
+                self.pending = Pending::Spindle(None);
                 Ok(false)
             }
             Command::SetPosition { value } => {
@@ -404,6 +466,9 @@ impl<'a> Machine<'a> {
             }
             Command::SettingSet(name, value) => {
                 self.require_idle()?;
+                let was_cartesian = self.settings.cartesian;
+                let was_spindle = self.settings.spindle;
+                let slide_at = self.joint()[Z];
                 let changed = self.settings.set(name, value).map_err(|error| match error {
                     SetError::Unknown => Error::UnknownSetting,
                     SetError::BadValue => Error::BadSettingValue,
@@ -412,6 +477,9 @@ impl<'a> Machine<'a> {
                     Changed::Motion => self.apply_enable = true,
                     Changed::Laser => self.apply_laser = true,
                     Changed::Driver => self.events.driver_config = true,
+                    Changed::Kinematics => self.hand_over_cross_slide(was_cartesian, slide_at),
+                    Changed::Tool if was_spindle != self.settings.spindle => self.stop_output(),
+                    Changed::Tool => {}
                     Changed::Other => {}
                 }
                 Ok(true)
@@ -436,6 +504,50 @@ impl<'a> Machine<'a> {
                 Ok(true)
             }
         }
+    }
+
+    /// `Z` on a `go` or `cut` is a joint on a cartesian machine and
+    /// nothing on a polar one, where the slide moves alone; `A` stays off
+    /// them on a cartesian machine, whose table holds the board still.
+    fn check_board_words(&self, target: &[Option<f32>; AXES]) -> Result<(), Error> {
+        let stray = if self.settings.cartesian { target[A] } else { target[Z] };
+        if stray.is_some() {
+            return Err(Error::BadWord);
+        }
+        Ok(())
+    }
+
+    /// Past the cross slide's soft limit, on the step the value rounds to.
+    fn past_z_max(&self, z: f32) -> bool {
+        let steps = self.settings.steps[Z];
+        let rounded = math::steps_to_units(math::units_to_steps(z, steps), steps);
+        self.settings.z_max > 0.0 && libm::fabsf(rounded) > self.settings.z_max
+    }
+
+    /// The cross slide changes hands after `cartesian` was switched: the
+    /// joints take the slide's position, or the slide the joint's, so the
+    /// slide stays at `slide_at`, its position in mm before the change,
+    /// under either. Settings change only from `Idle`, with nothing moving.
+    fn hand_over_cross_slide(&mut self, was_cartesian: bool, slide_at: f32) {
+        if was_cartesian == self.settings.cartesian {
+            return;
+        }
+        if self.settings.cartesian {
+            let mut position = self.planner.position();
+            position[Z] = math::units_to_steps(slide_at, self.settings.steps[Z]);
+            self.planner.set_position(position);
+            self.front.set_position(position);
+        } else {
+            self.slide.set_position(slide_at, &self.settings);
+        }
+    }
+
+    /// Stops whatever runs on the output: the `spindle` setting changed its
+    /// meaning, and a beam or a spindle left on would carry over into it.
+    fn stop_output(&mut self) {
+        self.spindle = None;
+        self.beam = None;
+        self.apply_laser = true;
     }
 
     fn require_idle(&self) -> Result<(), Error> {
@@ -516,6 +628,10 @@ impl<'a> Machine<'a> {
         if self.settings.r_max > 0.0 && libm::fabsf(r_units) > self.settings.r_max {
             return Err(Error::OutOfRange);
         }
+        // On a polar machine the joint's Z is not the slide and stays put.
+        if self.settings.cartesian && self.past_z_max(target[Z]) {
+            return Err(Error::OutOfRange);
+        }
         // A move longer than the stepper's Bresenham counters can carry
         // would wrap them and lose the position; refuse it instead. The
         // step count is saturated, so the difference is taken in i64.
@@ -531,7 +647,8 @@ impl<'a> Machine<'a> {
     }
 
     fn status(&self) -> Status {
-        let duty = if self.front.busy() {
+        // A spindle's output is the main loop's alone, busy or not.
+        let duty = if self.front.busy() && !self.settings.spindle {
             self.front.duty()
         } else {
             self.constant_duty().unwrap_or_else(|| self.off_duty())
@@ -550,7 +667,6 @@ impl<'a> Machine<'a> {
             line_free: LINE_SLOTS.saturating_sub(self.lines_waiting + usize::from(self.pending != Pending::None)),
             mode: self.mode,
             enabled: self.enabled,
-            slide: self.slide.position(),
             probe: self.settings.h_axis.then_some(self.probe_active),
         }
     }
@@ -633,7 +749,9 @@ impl<'a> Machine<'a> {
         if let Some(until) = self.dwell_until.take() {
             self.dwell_left_us = until.saturating_sub(self.now);
         }
-        laser.set_duty(self.off_duty());
+        // The beam goes out; a spindle keeps turning, so the resume does
+        // not drive a still tool into the work.
+        laser.set_duty(self.dark_duty());
     }
 
     /// Stops everything and forgets the modal state. True when it was
@@ -654,6 +772,7 @@ impl<'a> Machine<'a> {
         self.dwell_left_us = 0;
         self.dwell_power = None;
         self.beam = None;
+        self.spindle = None;
         laser.set_duty(self.off_duty());
         self.feed = None;
         self.power = 0.0;
@@ -704,7 +823,7 @@ impl<'a> Machine<'a> {
         if self.apply_laser {
             self.apply_laser = false;
             laser.set_frequency(self.settings.laser_hz);
-            if !self.front.busy() {
+            if !self.front.busy() || self.settings.spindle {
                 self.drive_beam(laser);
             }
         }
@@ -837,7 +956,18 @@ impl<'a> Machine<'a> {
                 self.drive_beam(laser);
             }
             Pending::LaserOff => {
+                // Off means the output off, a spindle's included.
                 self.beam = None;
+                self.spindle = None;
+                self.drive_beam(laser);
+            }
+            Pending::Spindle(power) => {
+                // A start waits out a hold, as the move behind it would;
+                // a stop never waits for one.
+                if power.is_some() && (self.state == State::Hold || self.hold_latched) {
+                    return false;
+                }
+                self.spindle = power;
                 self.drive_beam(laser);
             }
             Pending::SetPosition(value) => {
@@ -992,6 +1122,7 @@ impl<'a> Machine<'a> {
             report::alarm(2, out);
             report::error(Error::ProbeMissed, out);
             self.state = State::Alarm(2);
+            self.spindle = None;
             self.drive_beam(laser);
         }
     }
@@ -1009,7 +1140,14 @@ impl<'a> Machine<'a> {
     }
 
     fn adopt(&mut self, settings: Settings) {
+        let was_cartesian = self.settings.cartesian;
+        let was_spindle = self.settings.spindle;
+        let slide_at = self.joint()[Z];
         self.settings = settings;
+        self.hand_over_cross_slide(was_cartesian, slide_at);
+        if was_spindle != self.settings.spindle {
+            self.stop_output();
+        }
         self.events.driver_config = true;
         self.apply_laser = true;
         self.apply_enable = true;
@@ -1046,9 +1184,20 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Duty of the constant beam in effect: the dwell's `S`, else the
-    /// `laser` command's.
+    /// Duty with no beam: off, or the running spindle's.
+    fn dark_duty(&self) -> u16 {
+        match self.spindle {
+            Some(power) if self.settings.spindle => self.duty_for(power),
+            _ => self.off_duty(),
+        }
+    }
+
+    /// Duty of the constant output in effect: the spindle's, or the
+    /// dwell's `S`, else the `laser` command's.
     fn constant_duty(&self) -> Option<u16> {
+        if self.settings.spindle {
+            return self.spindle.map(|power| self.duty_for(power));
+        }
         let power = if self.dwell_until.is_some() {
             self.dwell_power.or(self.beam)
         } else {
@@ -1102,8 +1251,10 @@ impl<'a> Machine<'a> {
 
 const HELP: &str = "go [R] [A] [H] | cut [R] [A] [H] [F] [S] [M] | jog [R] [A] [H] [F] | jogto [R] [A] [H] [F]\n\
 cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z\n\
+cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A\n\
 focus axis probe (h_axis=1): probe H [F]\n\
 dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]\n\
+spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S\n\
 enable | disable | unlock | version | status | help\n\
 $ | $name | $name=value | $save | $load | $defaults | $tmc\n\
 realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel\n";
@@ -1249,15 +1400,12 @@ mod tests {
     /// near the step generator's ceiling.
     fn bench_settings() -> Settings {
         Settings {
-            steps: [256.0, 888.889, 256.0],
-            max_rate: [1000.0, 1080.0, 600.0],
-            jog_rate: [600.0, 720.0, 120.0],
-            jerk: [3.0, 10.0, 1.0],
             // The same for the cross slide: a coarse scale and a rate
             // that keep a jog a readable number of steps.
-            z_steps: 256.0,
-            z_rate: 1200.0,
-            jog_z: 600.0,
+            steps: [256.0, 888.889, 256.0, 256.0],
+            max_rate: [1000.0, 1080.0, 600.0, 1200.0],
+            jog_rate: [600.0, 720.0, 120.0, 600.0],
+            jerk: [3.0, 10.0, 1.0, 3.0],
             ..Settings::default()
         }
     }
@@ -1407,6 +1555,7 @@ mod tests {
                 math::units_to_steps(joint[R], steps[R]),
                 math::units_to_steps(joint[A], steps[A]),
                 math::units_to_steps(joint[H], steps[H]),
+                math::units_to_steps(joint[Z], steps[Z]),
             ]
         }
     }
@@ -1451,8 +1600,8 @@ mod tests {
         assert_eq!(field(&status, "E:"), "1");
         rig.run();
         assert_eq!(rig.state(), State::Idle);
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
-        assert_eq!(rig.port.count, [2 * 2560, 2 * 160_000, 0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(rig.port.count, [2 * 2560, 2 * 160_000, 0, 0]);
         assert_eq!(rig.laser.duty, 0);
         let status = rig.status_line();
         assert_eq!(status, "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
@@ -1482,7 +1631,7 @@ mod tests {
         assert_eq!(rig.line("cut A20"), "ok\n");
         assert_eq!(rig.line("cut A30 S500"), "ok\n");
         rig.run();
-        assert_eq!(rig.port.count, [0, 26667, 0]);
+        assert_eq!(rig.port.count, [0, 26667, 0, 0]);
         // A reset clears the modal words again.
         rig.realtime(Realtime::Reset);
         rig.take_out();
@@ -1513,23 +1662,23 @@ mod tests {
         assert_eq!(rig.line("dwell T10"), "error:5 not now\n");
         assert_eq!(rig.line("jog R-10"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0, 0.0]);
         // A jog may cross the axis and come out the far side: lining the
         // head up with it needs both directions through zero.
         assert_eq!(rig.line("jog R-41"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [-1.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [-1.0, 0.0, 0.0, 0.0]);
         // A cutting move may go there too: a calibration burn lands on the
         // same board point from both sides of the axis.
         assert_eq!(rig.line("go R-3"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [-3.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [-3.0, 0.0, 0.0, 0.0]);
         assert_eq!(rig.line("cut R-1 F100"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [-1.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [-1.0, 0.0, 0.0, 0.0]);
         assert_eq!(rig.line("jog R1"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
         assert_eq!(rig.line("go A1"), "ok\n");
         rig.run();
         assert_eq!(rig.line("jog R0"), "ok\n");
@@ -1568,9 +1717,9 @@ mod tests {
             rig.run();
             assert_eq!(rig.state(), State::Idle);
             // R: 0 -> 20 -> 15 -> 0; A: 0 -> 180 -> 200 -> 0.
-            assert_eq!(rig.port.count, [5120 + 1280 + 3840, 160_000 + 17_778 + 177_778, 0], "hold at {hold_at_us}");
-            assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
-            assert_eq!(rig.machine.planned_position(), [0, 0, 0]);
+            assert_eq!(rig.port.count, [5120 + 1280 + 3840, 160_000 + 17_778 + 177_778, 0, 0], "hold at {hold_at_us}");
+            assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
+            assert_eq!(rig.machine.planned_position(), [0, 0, 0, 0]);
             assert!(rig.max_duty_while_stepping > 0);
         }
     }
@@ -1593,7 +1742,7 @@ mod tests {
         rig.realtime(Realtime::Resume);
         rig.run();
         assert_eq!(rig.take_out(), "ok\n");
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
         assert_eq!(rig.port.count[R], 2 * 32 * 256);
     }
 
@@ -1625,8 +1774,8 @@ mod tests {
         assert_eq!(rig.machine.planned_position(), rig.executed_steps());
         assert_eq!(rig.line("go R0"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
-        assert_eq!(rig.machine.planned_position(), [0, 0, 0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.planned_position(), [0, 0, 0, 0]);
         assert_eq!(rig.port.count[R], 2 * stopped[R]);
     }
 
@@ -1710,11 +1859,11 @@ mod tests {
         assert_eq!(rig.take_out(), "ok\n");
         assert_eq!(rig.state(), State::Hold);
         rig.advance(500_000);
-        assert_eq!(rig.port.count, [0, 0, 0], "moved while held");
+        assert_eq!(rig.port.count, [0, 0, 0, 0], "moved while held");
         assert_eq!(rig.laser.duty, 0);
         rig.realtime(Realtime::Resume);
         rig.run();
-        assert_eq!(rig.machine.joint(), [20.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [20.0, 0.0, 0.0, 0.0]);
         // Waiting lines count too, and a hold kept for a line that is not
         // motion is forgotten once it has been read.
         rig.machine.note_lines_waiting(1);
@@ -1725,7 +1874,7 @@ mod tests {
         assert_eq!(rig.line("go R10"), "ok\n");
         assert_eq!(rig.state(), State::Run);
         rig.run();
-        assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -1775,7 +1924,7 @@ mod tests {
         assert_eq!(rig.line("go R0"), "ok\n");
         rig.run();
         assert_eq!(rig.port.count[R] as i32, 2 * steps[R]);
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
 
         // A jog waiting for planner room is answered and dropped by the cancel.
         for _ in 0..BLOCKS {
@@ -1956,16 +2105,16 @@ mod tests {
         rig.run();
         assert_eq!(rig.status_line(), "<Idle|J:10.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         assert_eq!(rig.line("set R0"), "ok\n");
-        assert_eq!(rig.executed_steps(), [0, 40000, 0]);
-        assert_eq!(rig.machine.planned_position(), [0, 40000, 0]);
+        assert_eq!(rig.executed_steps(), [0, 40000, 0, 0]);
+        assert_eq!(rig.machine.planned_position(), [0, 40000, 0, 0]);
         assert_eq!(rig.status_line(), "<Idle|J:0.000,45.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
         let before = rig.port.count;
         assert_eq!(rig.line("go R5 A0"), "ok\n");
         rig.run();
-        assert_eq!(rig.port.count, [before[R] + 1280, before[A] + 40000, 0]);
-        assert_eq!(rig.machine.joint(), [5.0, 0.0, 0.0]);
+        assert_eq!(rig.port.count, [before[R] + 1280, before[A] + 40000, 0, 0]);
+        assert_eq!(rig.machine.joint(), [5.0, 0.0, 0.0, 0.0]);
         assert_eq!(rig.line("set A-90 R1"), "ok\n");
-        assert_eq!(rig.executed_steps(), [256, -80000, 0]);
+        assert_eq!(rig.executed_steps(), [256, -80000, 0, 0]);
         assert_eq!(rig.status_line(), "<Idle|J:1.000,-90.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n");
     }
 
@@ -1985,9 +2134,10 @@ mod tests {
         assert_eq!(rig.slide.pulses, 512, "2 mm at 256 steps per mm");
         assert_eq!(rig.slide.dir, Some(true));
         assert!(rig.status_line().ends_with("|Z:2.000>\n"));
-        // The joints did not move with it.
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
-        assert_eq!(rig.port.count, [0, 0, 0]);
+        // The joints did not move with it; the joint position carries the
+        // slide's own.
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 2.0]);
+        assert_eq!(rig.port.count, [0, 0, 0, 0]);
 
         // Relative jogs add up; an absolute one goes where it says.
         assert_eq!(rig.line("jog Z-0.5"), "ok\n");
@@ -2154,7 +2304,7 @@ mod tests {
         assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("probe_ms=20\nok\n"));
+        assert!(listing.ends_with("probe_ms=20\nz_jerk=3\nz_max=0\ncartesian=0\nspindle=0\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -2226,7 +2376,7 @@ mod tests {
         assert_eq!(rig.line("unlock"), "ok\n");
         assert_eq!(rig.line("go R0"), "ok\n");
         rig.run();
-        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -2329,7 +2479,7 @@ mod tests {
             assert!(rig.laser.duty > 0, "{mode}: the resume should cut again");
             rig.run();
             assert_eq!(rig.laser.duty, 0, "{mode}");
-            assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0], "{mode}");
+            assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0, 0.0], "{mode}");
         }
     }
 
@@ -2395,7 +2545,7 @@ mod tests {
         assert_eq!(rig.line(&std::format!("jog A-{over_a:.0}")), "error:4 out of range\n");
         assert_eq!(rig.line(&std::format!("go R{over_r:.0}")), "error:4 out of range\n");
         assert_eq!(rig.line(&std::format!("cut A{over_a:.0} F600")), "error:4 out of range\n");
-        assert_eq!(rig.machine.planned_position(), [0, 0, 0]);
+        assert_eq!(rig.machine.planned_position(), [0, 0, 0, 0]);
         assert!(rig.machine.ready_for_line());
         // What fits is still taken, and the limit is on the move, not on
         // the angle reached: another one of the same size follows it.
@@ -2454,7 +2604,7 @@ mod tests {
         rig.run();
         // One change, to off, at the block boundary; nothing lights again.
         assert_eq!(duties_since(&rig, from), std::vec![0u16]);
-        assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0]);
+        assert_eq!(rig.machine.joint(), [40.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -2605,7 +2755,7 @@ mod tests {
         for line in ["go H1", "cut R1 H1 F100 S10", "jog H1", "jogto H1", "set H0", "probe H-1"] {
             assert_eq!(rig.line(line), "error:2 bad word\n", "{line}");
         }
-        assert_eq!(rig.port.count, [0, 0, 0]);
+        assert_eq!(rig.port.count, [0, 0, 0, 0]);
         assert!(rig.status_line().ends_with("|Z:0.000>\n"), "no focus fields without the axis");
     }
 
@@ -2615,8 +2765,8 @@ mod tests {
         assert_eq!(rig.line("cut R10 H0.5 F600 S100"), "ok\n");
         let start = rig.now;
         rig.run();
-        assert_eq!(rig.port.count, [2560, 0, 128]);
-        assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.5]);
+        assert_eq!(rig.port.count, [2560, 0, 128, 0]);
+        assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.5, 0.0]);
         // 10 mm on the board at 600 mm/min: the focus axis follows the cut
         // rather than setting its pace.
         let seconds = (rig.now - start) as f64 / 1e6;
@@ -2679,7 +2829,7 @@ mod tests {
         rig.surface = Some(0.5);
         rig.advance(POLL_US);
         assert_eq!(rig.line("probe H-1"), "error:10 probe active\n");
-        assert_eq!(rig.port.count, [0, 0, 0]);
+        assert_eq!(rig.port.count, [0, 0, 0, 0]);
         assert_eq!(rig.state(), State::Idle);
     }
 
@@ -2851,5 +3001,157 @@ mod tests {
         assert_eq!(rig.line("jog H1"), "ok\n");
         rig.run();
         assert!(rig.machine.joint()[H] > -0.01, "{:?}", rig.machine.joint());
+    }
+
+    #[test]
+    fn a_cartesian_machine_cuts_with_the_rail_and_the_cross_slide() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("$cartesian=1"), "ok\n");
+        assert_eq!(rig.line("set R0 Z0"), "ok\n");
+        assert_eq!(rig.line("cut R3 Z4 F300 S400"), "ok\n");
+        rig.run();
+        assert_eq!(rig.port.count, [768, 0, 0, 1024], "the interrupt stepped the slide with the rail");
+        assert_eq!(rig.slide.pulses, 0, "the setup stepper stayed idle");
+        assert_eq!(rig.machine.joint(), [3.0, 0.0, 0.0, 4.0]);
+        assert!(rig.status_line().ends_with("|Z:4.000>\n"));
+        assert_eq!(rig.max_duty_while_stepping, 400);
+        // The table holds the board still under a go or a cut, and a jog
+        // may still turn it to line the board up.
+        assert_eq!(rig.line("go A10"), "error:2 bad word\n");
+        assert_eq!(rig.line("cut R1 A10 F100"), "error:2 bad word\n");
+        assert_eq!(rig.line("jog A10"), "ok\n");
+        rig.run();
+        assert_eq!(rig.line("jogto R0 Z0 F600"), "ok\n");
+        rig.run();
+        assert_eq!(rig.executed_steps(), [0, 8889, 0, 0]);
+        assert_eq!(rig.line("jog Z-1.5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[Z], -1.5);
+        assert_eq!(rig.line("set Z10"), "ok\n");
+        assert_eq!(rig.machine.joint()[Z], 10.0);
+    }
+
+    #[test]
+    fn on_a_polar_machine_the_cross_slide_stays_off_the_joint_lines() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        for line in ["go Z1", "go R1 Z1", "cut R1 Z1 F100", "jog R1 Z1", "jogto Z1 A3", "set R0 Z0", "jog H1 Z1"] {
+            assert_eq!(rig.line(line), "error:2 bad word\n", "{line}");
+        }
+        assert_eq!(rig.port.count, [0; AXES]);
+    }
+
+    #[test]
+    fn switching_to_cartesian_hands_the_slide_position_over() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("jog Z2"), "ok\n");
+        rig.run();
+        assert_eq!(rig.slide.pulses, 512);
+        assert_eq!(rig.line("$cartesian=1"), "ok\n");
+        assert_eq!(rig.machine.joint()[Z], 2.0, "the joint took the slide's position");
+        assert_eq!(rig.line("$cartesian=1"), "ok\n");
+        assert_eq!(rig.machine.joint()[Z], 2.0, "setting it again hands nothing over");
+        assert_eq!(rig.line("jog Z1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.port.count[Z], 256);
+        assert_eq!(rig.slide.pulses, 512);
+        assert_eq!(rig.machine.joint()[Z], 3.0);
+        assert_eq!(rig.line("$cartesian=0"), "ok\n");
+        assert_eq!(rig.machine.slide_position(), 3.0, "the slide took the joint's position");
+        assert_eq!(rig.line("jog Z-1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.slide.pulses, 512 + 256);
+        assert_eq!(rig.machine.joint()[Z], 2.0);
+        // `$defaults` goes back to polar the same way.
+        assert_eq!(rig.line("$cartesian=1"), "ok\n");
+        assert_eq!(rig.line("jog Z0.5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.line("$defaults"), "ok\n");
+        assert_eq!(rig.machine.slide_position(), 2.5);
+    }
+
+    #[test]
+    fn the_cross_slide_soft_limit_holds_either_way() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("$z_max=5"), "ok\n");
+        assert_eq!(rig.line("jogto Z6"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog Z-5.5"), "error:4 out of range\n");
+        assert_eq!(rig.line("jogto Z5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.line("$cartesian=1"), "ok\n");
+        assert_eq!(rig.line("go Z-5.5"), "error:4 out of range\n");
+        assert_eq!(rig.line("jog Z0.5"), "error:4 out of range\n");
+        assert_eq!(rig.line("go R1 Z-5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.machine.joint()[Z], -5.0);
+    }
+
+    #[test]
+    fn a_spindle_turns_through_moves_and_holds_until_it_is_stopped() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("spindle S500"), "error:2 bad word\n", "a laser machine has no spindle");
+        assert_eq!(rig.line("$spindle=1"), "ok\n");
+        for line in ["laser S100", "cut R10 F100 S100", "cut R10 F100 M50", "dwell T10 S5"] {
+            assert_eq!(rig.line(line), "error:2 bad word\n", "{line}");
+        }
+        assert_eq!(rig.line("spindle S500"), "ok\n");
+        assert_eq!(rig.laser.duty, 500);
+        assert!(rig.status_line().contains("|L:500|"));
+        assert_eq!(rig.line("go R10"), "ok\n");
+        assert_eq!(rig.line("cut A90 F300"), "ok\n");
+        rig.advance(300_000);
+        rig.realtime(Realtime::Hold);
+        rig.advance(1_000_000);
+        assert_eq!(rig.state(), State::Hold);
+        assert_eq!(rig.laser.duty, 500, "a hold keeps the tool turning");
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!((rig.min_duty_while_stepping, rig.max_duty_while_stepping), (500, 500));
+        assert_eq!(rig.laser.duty, 500, "and so does the end of the motion");
+        assert!(rig.status_line().contains("|L:500|"));
+        assert_eq!(rig.line("dwell T100"), "ok\n");
+        assert_eq!(rig.laser.duty, 500);
+        assert_eq!(rig.line("spindle off"), "ok\n");
+        assert_eq!(rig.laser.duty, 0);
+
+        // A reset stops it, and so does `laser off`.
+        assert_eq!(rig.line("spindle S250"), "ok\n");
+        assert_eq!(rig.laser.duty, 250);
+        rig.realtime(Realtime::Reset);
+        assert_eq!(rig.laser.duty, 0);
+        rig.take_out();
+        assert_eq!(rig.line("spindle S250"), "ok\n");
+        assert_eq!(rig.line("laser off"), "ok\n");
+        assert_eq!(rig.laser.duty, 0);
+
+        // Taking the spindle out of the settings stops it too.
+        assert_eq!(rig.line("spindle S250"), "ok\n");
+        assert_eq!(rig.line("$spindle=1"), "ok\n");
+        assert_eq!(rig.laser.duty, 250, "setting it again changes nothing");
+        assert_eq!(rig.line("$spindle=0"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 0);
+    }
+
+    #[test]
+    fn a_spindle_keeps_its_polarity_and_stops_on_a_probe_miss() {
+        let mut settings = bench_settings();
+        settings.spindle = true;
+        settings.laser_invert = true;
+        settings.h_axis = true;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 1000, "off is full duty under laser_invert");
+        assert_eq!(rig.line("spindle S200"), "ok\n");
+        assert_eq!(rig.laser.duty, 800);
+        assert!(rig.status_line().contains("|L:800|"));
+        assert_eq!(rig.line("probe H-1"), "[PRB:-1.0000:0]\nALARM:2 probe missed, check the head before moving\nerror:11 probe missed\n");
+        assert_eq!(rig.laser.duty, 1000, "an alarm stops the tool");
+        assert_eq!(rig.line("spindle S200"), "error:5 not now\n");
     }
 }

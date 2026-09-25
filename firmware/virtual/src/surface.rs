@@ -8,7 +8,7 @@
 //! both; the board point under the tip turns with the table like the one
 //! under the beam.
 
-use spinny_core::{A, AXES, H, R};
+use spinny_core::{A, AXES, H, R, Z};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Surface {
@@ -57,11 +57,13 @@ impl Surface {
         self.base + self.slope[0] * x + self.slope[1] * y + self.curve * (x * x + y * y)
     }
 
-    /// Board point under the probe tip with the head at `joint`.
+    /// Board point under the probe tip with the head at `joint`: the rail
+    /// position and the cross slide, the tip's offset added, turned by the
+    /// table angle.
     pub fn under_probe(&self, joint: [f32; AXES]) -> (f64, f64) {
         let theta = (joint[A] as f64).to_radians();
         let radius = joint[R] as f64 + self.offset[0];
-        let across = self.offset[1];
+        let across = joint[Z] as f64 + self.offset[1];
         (radius * theta.cos() - across * theta.sin(), radius * theta.sin() + across * theta.cos())
     }
 
@@ -107,20 +109,20 @@ mod tests {
     fn the_board_turns_with_the_table() {
         let surface = Surface { slope: [0.1, 0.0], ..Surface::default() };
         // Beam at 10 mm on the rail, table at 90 degrees: board point (0, 10).
-        let (x, y) = surface.under_probe([10.0, 90.0, 0.0]);
+        let (x, y) = surface.under_probe([10.0, 90.0, 0.0, 0.0]);
         assert!(x.abs() < 1e-9 && (y - 10.0).abs() < 1e-9);
-        assert!(surface.touching([10.0, 90.0, 0.0]));
+        assert!(surface.touching([10.0, 90.0, 0.0, 0.0]));
         // At 0 degrees the same radius is board X 10, one mm up the slope.
-        assert!(!surface.touching([10.0, 0.0, 1.5]));
-        assert!(surface.touching([10.0, 0.0, 1.0]));
+        assert!(!surface.touching([10.0, 0.0, 1.5, 0.0]));
+        assert!(surface.touching([10.0, 0.0, 1.0, 0.0]));
     }
 
     #[test]
     fn the_tip_sits_off_the_beam() {
         let surface = Surface { offset: [2.0, 3.0], ..Surface::default() };
-        let (x, y) = surface.under_probe([10.0, 0.0, 0.0]);
+        let (x, y) = surface.under_probe([10.0, 0.0, 0.0, 0.0]);
         assert!((x - 12.0).abs() < 1e-9 && (y - 3.0).abs() < 1e-9);
-        let (x, y) = surface.under_probe([10.0, 90.0, 0.0]);
+        let (x, y) = surface.under_probe([10.0, 90.0, 0.0, 0.0]);
         assert!((x + 3.0).abs() < 1e-9 && (y - 12.0).abs() < 1e-9);
     }
 }
