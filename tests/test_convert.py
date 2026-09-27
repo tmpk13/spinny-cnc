@@ -91,3 +91,21 @@ def test_a_feed_on_the_spindle_line_counts():
     text = "G21\nG90\nG0 X0 Y0\nM4 S500 F900\nG1 X5 Y0\nM5\n"
     paths = read_paths(text)
     assert len(paths) == 1 and paths[0].speed == 900.0 and paths[0].power == 500.0
+
+
+def test_an_s_word_on_the_m5_line_carries_to_the_next_spindle_on():
+    # S is modal: the power set beside M5 is what a later bare M3 fires at.
+    dark = "M3 S500\nG0 X0 Y0\nG1 X10 Y0 F400\nM5 S0\nG0 X0 Y5\nM3\nG1 X10 Y5\nM5\n"
+    paths = read_paths(dark)
+    assert len(paths) == 1 and paths[0].points == [(0.0, 0.0), (10.0, 0.0)]
+    brighter = dark.replace("M5 S0", "M5 S800")
+    paths = read_paths(brighter)
+    assert [path.power for path in paths] == [500.0, 800.0]
+    assert paths[1].points == [(0.0, 5.0), (10.0, 5.0)]
+
+
+@pytest.mark.parametrize("code", ["G93", "G95"])
+def test_refuses_a_feed_that_is_not_mm_per_minute(code):
+    # Under G93 an F of 200 on a 2 mm move is 400 mm/min, not 200.
+    with pytest.raises(ConvertError, match=code):
+        read_paths(f"{code}\nM4 S500\nG0 X1 Y0\nG1 X3 Y0 F200\nM5\n")

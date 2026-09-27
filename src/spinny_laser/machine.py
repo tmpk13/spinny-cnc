@@ -210,10 +210,13 @@ def sim_document(
         "invert_rotary": options.invert_rotary,
         "axis_x": options.axis_x,
         "s_max": options.s_max,
-        "x_rapid": options.x_rapid,
-        "rotary_rapid": options.rotary_rapid,
-        "x_max_rate": options.x_max_rate,
-        "rotary_max_rate": options.rotary_max_rate,
+        # The simulator takes a rate of 0 as no limit, like the estimate; a
+        # missing one would leave it at its own default instead.
+        "x_rapid": options.x_rapid or 0.0,
+        "rotary_rapid": options.rotary_rapid or 0.0,
+        "x_max_rate": options.x_max_rate or 0.0,
+        "rotary_max_rate": options.rotary_max_rate or 0.0,
+        "rotary_scale": options.rotary_scale,
         "spot": spot,
         "radius": round(reach, 3),
         "copper": [[[round(x, 4), round(y, 4)] for x, y in contour] for contour in copper],

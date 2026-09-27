@@ -114,3 +114,31 @@ def test_the_far_side_of_the_axis_is_not_on_it():
     # A move from the far side to the axis is one radial move, not a turn.
     out = polar.subdivide((-5.0, 0.0), (0.0, 0.0), (-5.0, 0.0), Kinematics(0.005))
     assert [joint for _, joint in out] == [(0.0, 0.0)]
+
+
+def test_a_preview_of_a_huge_joint_move_stays_bounded():
+    # A move 200 m along the rail took two million points to draw.
+    points = polar.sample_joints([(-100000.0, 0.0), (100000.0, 0.0)])
+    assert len(points) <= polar.MAX_SAMPLES + 2
+    assert points[0] == pytest.approx((-100000.0, 0.0))
+    assert points[-1] == pytest.approx((100000.0, 0.0))
+    # Every point of the polyline itself is still drawn.
+    poly = [(0.0, 0.0), (50000.0, 0.0), (50000.0, 3.0), (-50000.0, 3.0)]
+    drawn = polar.sample_joints(poly)
+    assert len(drawn) <= polar.MAX_SAMPLES + len(poly)
+    for joint in poly:
+        assert any(math.dist(point, polar.cartesian(joint)) < 1e-6 for point in drawn)
+
+
+def test_a_spent_bound_still_draws_the_polyline_itself():
+    # A budget shared by the polylines of a job runs out at 0, and the
+    # polylines after that are drawn by their own points.
+    poly = [(-100000.0, 0.0), (100000.0, 0.0), (100000.0, 90.0)]
+    for limit in (0, -5, 1):
+        assert polar.interpolate_joints(poly, limit=limit) == poly
+
+
+def test_the_bound_leaves_ordinary_paths_and_the_fine_steps_alone():
+    small = [(1.0, 0.0), (5.0, 90.0), (-3.0, 400.0)]
+    assert polar.sample_joints(small) == [polar.cartesian(j) for j in polar.interpolate_joints(small)]
+    assert len(polar.interpolate_joints([(-100.0, 0.0), (100.0, 0.0)], 0.02, 0.2)) == 10001

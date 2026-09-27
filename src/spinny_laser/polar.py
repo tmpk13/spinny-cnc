@@ -95,24 +95,44 @@ def displaced(joint: Joint, along: float, across: float) -> Point:
 
 
 def interpolate_joints(
-    poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0
+    poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0, limit: int | None = None
 ) -> list[Joint]:
-    """Joints along a polyline as the firmware runs it: linear between its points."""
+    """Joints along a polyline as the firmware runs it: linear between its points.
+
+    With a `limit`, the steps widen evenly where they would come to more
+    than that many, every point of the polyline itself still kept; a limit
+    below 1 keeps only those.
+    """
     if not poly:
         return []
+    moves = list(zip(poly, poly[1:]))
+    wanted = [max(abs(b[0] - a[0]) / step_mm, abs(b[1] - a[1]) / step_deg) for a, b in moves]
+    widen = 1.0
+    if limit is not None:
+        total = sum(max(1, math.ceil(count)) for count in wanted)
+        if total > limit:
+            widen = total / max(1, limit)
     out = [poly[0]]
-    for a, b in zip(poly, poly[1:]):
+    for (a, b), count in zip(moves, wanted):
         dr, da = b[0] - a[0], b[1] - a[1]
-        steps = max(1, int(math.ceil(max(abs(dr) / step_mm, abs(da) / step_deg))))
+        steps = max(1, int(math.ceil(count / widen)))
         for i in range(1, steps + 1):
             t = i / steps
             out.append((a[0] + dr * t, a[1] + da * t))
     return out
 
 
-def sample_joints(poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0) -> list[Point]:
+# Most points a preview draws a joint polyline with, besides its own. A
+# calibration pattern's longest takes a few hundred; a job whose joints
+# span far past any machine would otherwise take millions.
+MAX_SAMPLES = 20000
+
+
+def sample_joints(
+    poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0, limit: int | None = MAX_SAMPLES
+) -> list[Point]:
     """Board points along a joint polyline, close enough to draw it."""
-    return [cartesian(joint) for joint in interpolate_joints(poly, step_mm, step_deg)]
+    return [cartesian(joint) for joint in interpolate_joints(poly, step_mm, step_deg, limit)]
 
 
 def on_axis(joint: Joint) -> bool:

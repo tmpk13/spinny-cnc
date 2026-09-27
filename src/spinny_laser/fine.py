@@ -441,9 +441,10 @@ def notes_for(design: Design, spot: float, speed: float, groups: list[JointGroup
             f" along the spirals, so its distance from that line divided by {gain:.1f}"
             " is the error. The short spiral is the one burnt from the near side:"
             " when the crossing lies toward its inner end the head at radius zero"
-            " sits past the axis by that much, and toward its outer end it is short"
-            " of it. Jog the head to R minus the error (past the axis means"
-            " a negative R) and `set R0` there. The reference line lies the"
+            " sits short of the axis by that much, out on the rail, and toward its"
+            " outer end it sits past it. Count the error positive toward the inner"
+            " end, jog the head to R minus it (short of the axis gives a negative"
+            " R) and `set R0` there. The reference line lies the"
             " cross slide error off the axis itself, which is in this reading"
             f" as the error over {gain:.0f}: nothing once the cross slide is close."
         )
@@ -532,6 +533,8 @@ def run(args, parser) -> int:
             raise ValueError(f"power {args.power:g} is over --s-max {args.s_max:g}")
         if args.speed <= 0:
             raise ValueError("--speed must be > 0")
+        if args.rotary_max_rate is not None and args.rotary_max_rate < 0:
+            raise ValueError("--rotary-max-rate cannot be negative; 0 sets no limit")
         error = parse_error(args.show_error) if args.show_error else None
         groups = build(design, args.power, args.speed, args.rotary_max_rate, args.tolerance)
     except ValueError as exc:

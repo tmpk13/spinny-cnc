@@ -89,8 +89,8 @@ def test_the_spiral_crossing_moves_by_twice_the_radius_zero_error_over_the_angle
     x, y = seen["spiral_crossings"][0]
     # The crossing turns about the axis by 360 * error / pitch degrees from
     # the reference direction, toward the short spiral's inner end when the
-    # head sits past the axis. The cross slide error turns the two spirals
-    # opposite ways and drops out.
+    # head sits short of the axis, out on the rail. The cross slide error
+    # turns the two spirals opposite ways and drops out.
     angle = 90.0 - 360.0 * along / d.pitch
     assert math.degrees(math.atan2(y, x)) == pytest.approx(angle, abs=0.05)
     assert math.hypot(x, y) == pytest.approx(d.spiral, abs=0.01)
@@ -99,6 +99,21 @@ def test_the_spiral_crossing_moves_by_twice_the_radius_zero_error_over_the_angle
     # nearly forty on the radius zero error.
     offset = d.spiral * math.sin(math.radians(360.0 * along / d.pitch)) + across
     assert seen["spiral"] == pytest.approx(offset, abs=0.01)
+
+
+def test_the_spiral_and_ring_notes_name_one_error_alike():
+    # A head out on the rail at radius zero moves the spiral crossing toward
+    # the short spiral's inner end and burns the ring wider. The spiral
+    # note called that past the axis while the ring note called it short.
+    d = design(ring=6.0)
+    groups = build(d, 400.0, 200.0, tolerance=TOLERANCE)
+    assert readings(d, groups, 0.01, 0.0)["spiral"] > 0.0
+    notes = fine.notes_for(d, 0.1, 200.0, groups)
+    spiral = next(note for note in notes if note.startswith("Radius zero"))
+    ring = next(note for note in notes if note.startswith("The ring at"))
+    assert "toward its inner end the head at radius zero sits short of the axis" in spiral
+    assert "short of the axis gives a negative R" in spiral
+    assert "wider meaning the head is short of the axis" in ring
 
 
 def test_the_gain_is_two_over_the_tangent_of_the_angle():
@@ -158,6 +173,18 @@ def test_turning_features_are_paced_by_the_table():
     inner = d.spiral - d.pitch / 2
     assert by_label["spirals"].speed == pytest.approx(fine.HEADROOM * math.radians(400.0) * inner)
     assert by_label["reference ring"].speed == pytest.approx(fine.HEADROOM * math.radians(400.0) * 8.0)
+
+
+def test_a_negative_table_rate_is_refused(tmp_path, capsys):
+    # It paced the turning features at a negative speed.
+    out = tmp_path / "fine.json"
+    with pytest.raises(SystemExit):
+        main(["--fine", "-o", str(out), "--rotary-max-rate", "-1"])
+    assert "cannot be negative" in capsys.readouterr().err
+    assert not out.exists()
+    # 0 sets no limit: nothing is paced below the speed asked for.
+    assert main(["--fine", "-o", str(out), "--rotary-max-rate", "0", "--no-map", "--no-preview"]) == 0
+    assert all(group["speed"] == 200.0 for group in json.loads(out.read_text())["groups"])
 
 
 def test_the_job_is_written_for_the_web_interface(tmp_path):

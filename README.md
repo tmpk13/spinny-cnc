@@ -72,13 +72,14 @@ The line ends carry the same reading and are on the coupon even when the
 ring is not: they lie on a circle at the reach plus the radius zero error,
 so the longest distance across the pattern from one end to another is
 twice that. Longer than twice the reach means the head at radius zero
-sits outside the axis, shorter means short of it.
+sits short of the axis, shorter means past it.
 
 The ring carries the sign the lines cannot. It is burnt at a known
-radius, so half its measured diameter less that radius is how far past
-the axis the head sits at radius zero: wider than asked for means the head
-is short of the axis there, narrower means it is past it. It is also the
-scale check, being the one feature whose size is known in advance.
+radius, so half its measured diameter less that radius is the radius zero
+error with its sign: wider than asked for means the head at radius zero
+sits short of the axis by that much, narrower means it sits past it. It is
+also the scale check, being the one feature whose size is known in
+advance.
 
 Halve the square's side and take it out on the cross slide, then re-burn.
 When the lines meet at a point the rail is over the axis; move the head
@@ -111,7 +112,7 @@ The head runs to R -7 for it, so the job is written for the web interface
 | What you see | What it means |
 | --- | --- |
 | the rail line burnt with the table at 0, crossing the two arms | the crossings sit 8 mm apart when the rail passes over the axis; each 0.01 mm it misses by moves them 0.76 mm apart or together |
-| the two spirals, crossing the rail line burnt with the table at 90 | they cross on that line when the radius zero is right; each 0.01 mm of error moves the crossing 0.38 mm along them, toward the short spiral's inner end when the head sits past the axis |
+| the two spirals, crossing the rail line burnt with the table at 90 | they cross on that line when the radius zero is right; each 0.01 mm of error moves the crossing 0.38 mm along them, toward the short spiral's inner end when the head sits short of the axis and toward its outer end when it sits past it |
 
 The map written next to the job turns each distance into a correction.
 Two lines meeting at 3 degrees merge for about 2 mm either side of their
@@ -286,8 +287,9 @@ controller without kinematics that is given the joint moves directly.
 cd sim && cargo run -- ../out/board.gcode
 ```
 
-The `.sim.json` next to the file supplies the board, controller, limits and
-axis conventions; flags override them (`--help`). For a grblHAL file the
+The `.sim.json` next to the file supplies the board, controller, limits
+(0 is no limit, as in the estimate), rotary scale and axis conventions;
+flags override them (`--help`). For a grblHAL file the
 simulator reproduces the controller's 0.5 mm segmentation, feed scaling and
 single-move rapids, so what it plays is what the machine does. Mouse drag
 orbits, the wheel zooms. Space plays, up/down change speed, left/right step
@@ -320,6 +322,7 @@ classDiagram
     class clear {
         clear(copper, keep, spot, pattern, outline) strokes
         perimeter(copper, keep, spot, outline)
+        chains(paths) outline pieces joined
         spokes / rings / rows(area, pitch)
     }
     class fine {
@@ -341,7 +344,7 @@ classDiagram
         unwrap(angle, previous)
         far_side(joint)
         displaced(joint, along, across)
-        sample_joints(poly)
+        sample_joints(poly, limit)
     }
     class gcode {
         PolarOptions  controller grblhal|joint
@@ -379,6 +382,7 @@ classDiagram
     machine --> gcode
     machine --> report
     cli --> preview
+    cli --> clear : outline pieces
     convert --> preview
     gcode --> polar
     jog --> polar

@@ -42,6 +42,9 @@ GRBLHAL_SEGMENT = 0.5
 # instead of spiralling; the point is rounded first and its real angle used,
 # since at this radius rounding turns the direction by tens of degrees.
 EXIT_QUANTA = 2
+# Letters a controller reads as an axis. Under any other the angle would go
+# out as a power, a feed, a code or a line number.
+AXIS_LETTERS = frozenset("ABCUVWYZ")
 
 
 @dataclass(frozen=True)
@@ -61,7 +64,7 @@ class PolarOptions:
     decimals: int = 3
     angle_decimals: int = 4
     # Axis limits, for the estimate and for the rotary-bound report. None
-    # means unlimited.
+    # or 0 means unlimited.
     x_rapid: float = 3000.0
     rotary_rapid: float | None = 3600.0
     x_max_rate: float | None = None
@@ -78,8 +81,17 @@ class PolarOptions:
             raise ValueError(f"feed mode must be {INVERSE} or {SCALED}")
         if len(self.rotary_axis) != 1 or not self.rotary_axis.isalpha():
             raise ValueError("rotary axis must be one letter")
-        if self.rotary_axis.upper() == "X":
+        object.__setattr__(self, "rotary_axis", self.rotary_axis.upper())
+        if self.rotary_axis == "X":
             raise ValueError("X is the radius, the rotary axis needs another letter")
+        if self.rotary_axis not in AXIS_LETTERS:
+            raise ValueError(
+                f"{self.rotary_axis} is not an axis letter; the rotary axis must be"
+                f" one of {', '.join(sorted(AXIS_LETTERS))}"
+            )
+        rates = (self.x_rapid, self.rotary_rapid, self.x_max_rate, self.rotary_max_rate)
+        if any(rate is not None and rate < 0.0 for rate in rates):
+            raise ValueError("an axis rate cannot be negative; 0 sets no limit")
         if self.controller == GRBLHAL and self.axis_x != 0.0:
             raise ValueError(
                 "grblHAL polar mode transforms around machine X 0, so the axis"
@@ -242,11 +254,12 @@ class _Writer:
         dr = abs(joint[0] - previous[0])
         da = abs(joint[1] - previous[1])
         if length < polar.AXIS_EPSILON:
-            if not polar.on_axis(previous):
+            if not polar.on_axis(previous) or da == 0.0:
                 # The same point twice, which a gcode file gives as a rapid
                 # followed by a cut to where it already is: nothing to cut
                 # and nothing to turn. Treated as a turn it would hop the
-                # head to the axis and cut its way back out.
+                # head to the axis and cut its way back out, and on the axis
+                # itself a turn through no angle would never get anywhere.
                 return first
             # Only the table moves: cross it dark rather than dwell the spot.
             self._close()
@@ -276,7 +289,9 @@ class _Writer:
         words = f"G1 {self.words(joint, point)}"
         if first:
             words += f" S{power:.2f}"
-        if first or not self.options.units_per_minute:
+        # Only the surface speed a grblHAL file gives holds for the whole
+        # path; a joint file's F changes with every segment's shape.
+        if first or not self.options.cartesian:
             words += f" F{_feed(feed)}"
         self.raw(words)
 

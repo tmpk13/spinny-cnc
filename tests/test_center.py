@@ -182,3 +182,16 @@ def test_fine_refuses_flags_that_belong_to_the_coarse_pattern(tmp_path):
     assert failed.value.code == 2
     assert not out.exists()
     assert center.main(["--fine", "-o", str(out), "--dry-run"]) == 0
+
+
+def test_fine_names_the_flag_it_refuses_as_it_was_typed(tmp_path, capsys):
+    # Flags stored under another name were reported by that name, one the
+    # command does not have.
+    from spinny_laser import center
+
+    out = tmp_path / "fine.json"
+    with pytest.raises(SystemExit):
+        center.main(["--fine", "--no-return-home", "-o", str(out), "--dry-run"])
+    assert "--no-return-home does not apply with --fine" in capsys.readouterr().err
+    # The fine pattern writes no simulator file, so leaving it out is fine.
+    assert center.main(["--fine", "--no-sim", "-o", str(out), "--dry-run"]) == 0

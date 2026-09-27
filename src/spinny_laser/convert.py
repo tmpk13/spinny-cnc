@@ -2,8 +2,9 @@
 
 Absolute millimetre `G0`/`G1` moves are read into paths with the `S` and `F`
 they ran at, and written back out as radius and angle moves through the same
-emitter the isolation command uses. Arcs, inches, relative moves and
-coordinate offsets are refused; export arcs as line segments.
+emitter the isolation command uses. Arcs, inches, relative moves, coordinate
+offsets and feeds other than mm/min are refused; export arcs as line
+segments.
 """
 
 from __future__ import annotations
@@ -58,22 +59,22 @@ def read_paths(text: str) -> list[Path2D]:
             speed = line.value("F")
         if line.motion is not None:
             modal = line.motion
+        # S is modal whatever line it shares: `M5 S0` leaves the next bare
+        # `M3` dark.
+        if line.has("S"):
+            power = line.value("S") or 0.0
+            if power == 0.0:
+                close()
         if m_code is not None:
             code = int(m_code)
             if code in (3, 4):
                 spindle_on = True
-                if line.has("S"):
-                    power = line.value("S") or 0.0
             elif code == 5:
                 spindle_on = False
             if code in (3, 4, 5) and not line.xy:
                 if power == 0.0 or not spindle_on:
                     close()
                 continue
-        if line.has("S"):
-            power = line.value("S") or 0.0
-            if power == 0.0:
-                close()
         if not line.xy:
             continue
         if modal is None:
@@ -100,10 +101,21 @@ def read_paths(text: str) -> list[Path2D]:
     return paths
 
 
+# Feed modes that change what F means; the reader takes F as mm/min.
+REFUSED_FEED = {
+    93: "inverse time feed, export in G94 mm/min",
+    95: "feed per revolution, export in G94 mm/min",
+}
+
+
 def _refuse(line: Line, index: int) -> None:
     for letter, value, _ in line.words:
-        if letter == "G" and int(value) in REFUSED_G:
-            raise ConvertError(f"line {index + 1}: G{int(value)} is {REFUSED_G[int(value)]}")
+        if letter != "G":
+            continue
+        code = int(value)
+        reason = REFUSED_G.get(code) or REFUSED_FEED.get(code)
+        if reason is not None:
+            raise ConvertError(f"line {index + 1}: G{code} is {reason}")
 
 
 def group_paths(paths: list[Path2D]) -> list[gcode.PathGroup]:

@@ -138,6 +138,65 @@ def test_an_open_outline_falls_back_to_the_rectangle():
     assert clear.perimeter(COPPER, KEEP, SPOT, [open_edge]) == clear.perimeter(COPPER, KEEP, SPOT, None)
 
 
+def pieces(path):
+    """An outline as a board file plots one drawn with lines: a stroke per
+    side, out of order, some drawn backwards, and one end a hair off."""
+    sides = [[a, b] for a, b in zip(path, path[1:])]
+    sides = sides[2:] + sides[:2]
+    sides[1] = sides[1][::-1]
+    x, y = sides[0][-1]
+    sides[0][-1] = (x + 4e-4, y - 3e-4)
+    return sides
+
+
+def same_area(a, b) -> bool:
+    # The end a hair off tilts one side of the board by as much.
+    return geom.area(geom.difference(a, b)) + geom.area(geom.difference(b, a)) < 0.01
+
+
+def test_an_outline_drawn_as_separate_pieces_is_joined():
+    frame = clear.perimeter(COPPER, KEEP, SPOT, pieces(BOARD))
+    assert same_area(frame, clear.perimeter(COPPER, KEEP, SPOT, [BOARD]))
+    strokes = clear.clear(COPPER, KEEP, SPOT, clear.LINES, outline=pieces(BOARD))
+    check_keeps_clear(strokes, COPPER, KEEP, frame)
+    check_covers(strokes, COPPER, KEEP, [BOARD[:-1]])
+
+
+def test_a_cutout_beside_an_outline_of_pieces_stays_a_cutout():
+    # With the board's pieces left unjoined, the cutout was the only closed
+    # path and the whole clearing landed inside it.
+    hole = [(-2.4, -1.6), (-1.9, -1.6), (-1.9, -1.1), (-2.4, -1.1), (-2.4, -1.6)]
+    outline = pieces(BOARD) + [hole]
+    frame = clear.perimeter(COPPER, KEEP, SPOT, outline)
+    assert same_area(frame, clear.perimeter(COPPER, KEEP, SPOT, [BOARD, hole]))
+    strokes = clear.clear(COPPER, KEEP, SPOT, clear.RADIAL, outline=outline)
+    inner = geom.offset([hole[:-1]], SPOT / 2.0 - SLACK)
+    assert not any(clear._inside(inner, p) for p in samples(strokes))
+    check_covers(strokes, COPPER, KEEP, geom.difference([BOARD[:-1]], [hole[:-1]]))
+
+
+def test_a_closed_cutout_alone_is_not_taken_for_the_board():
+    open_edge = [(-2.6, -1.8), (2.6, -1.8), (2.6, 1.8)]
+    hole = [(-2.4, -1.6), (-1.9, -1.6), (-1.9, -1.1), (-2.4, -1.1), (-2.4, -1.6)]
+    box = clear.perimeter(COPPER, KEEP, SPOT, None)
+    assert clear.perimeter(COPPER, KEEP, SPOT, [open_edge, hole]) == box
+    assert clear.perimeter(COPPER, KEEP, SPOT, [hole]) == box
+
+
+def test_pieces_join_however_they_branch():
+    # Three pieces meet at the origin; the chain goes on along one of them
+    # and the rest are left as they are, every piece used once.
+    spokes = [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (0.0, 1.0)], [(-1.0, 0.0), (0.0, 0.0)]]
+    joined = clear.chains(spokes)
+    assert sum(len(chain) - 1 for chain in joined) == 3
+    assert clear.chains([[(0.0, 0.0), (1.0, 0.0)], [(1.0, 0.0), (0.0, 0.0)]]) == [
+        [(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)]
+    ]
+    square_pieces = pieces(BOARD)
+    (loop,) = clear.chains(square_pieces)
+    assert loop[0] == loop[-1] and len(loop) == 5
+
+
 def test_ring_arcs_hold_their_radius_and_turn_each_way_in_turn():
     strokes = clear.clear(COPPER, KEEP, SPOT, clear.RINGS, outline=[BOARD])
     frame = clear.perimeter(COPPER, KEEP, SPOT, [BOARD])

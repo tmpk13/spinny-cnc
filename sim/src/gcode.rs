@@ -7,7 +7,8 @@
 //!
 //! Two controllers are modelled. `Joint` files carry the radius on X and the
 //! angle on another letter, with inverse time (G93) or units per minute
-//! feed. `Grblhal` files carry board X/Y for grblHAL's polar kinematics,
+//! feed, the angle counted at the rotary scale in the latter's sum.
+//! `Grblhal` files carry board X/Y for grblHAL's polar kinematics,
 //! which splits each cut into 0.5 mm pieces, runs every piece as one joint
 //! move with F scaled by joint over board distance, and runs rapids as a
 //! single joint move.
@@ -45,6 +46,8 @@ pub struct Move {
     pub limited: bool,
 }
 
+/// Axis rates in mm or degrees per minute; a rate that is not above zero
+/// sets no limit, as the generator's estimate takes it.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub controller: Controller,
@@ -56,6 +59,8 @@ pub struct Limits {
     pub x_max: f64,
     pub rotary_max: f64,
     pub s_max: f64,
+    /// Controller units per degree in a G94 joint move's feed sum.
+    pub rotary_scale: f64,
 }
 
 impl Default for Limits {
@@ -70,7 +75,18 @@ impl Default for Limits {
             x_max: 3000.0,
             rotary_max: 3600.0,
             s_max: 1000.0,
+            rotary_scale: 1.0,
         }
+    }
+}
+
+/// Seconds an axis needs to cover `distance` at `rate` per minute, none
+/// when the rate sets no limit.
+fn axis_seconds(distance: f64, rate: f64) -> f64 {
+    if rate > 0.0 && rate.is_finite() {
+        distance / rate * 60.0
+    } else {
+        0.0
     }
 }
 
@@ -90,7 +106,7 @@ impl Program {
         if self.moves.is_empty() {
             return None;
         }
-        let index = match self.ends.binary_search_by(|end| end.partial_cmp(&time).unwrap()) {
+        let index = match self.ends.binary_search_by(|end| end.total_cmp(&time)) {
             Ok(i) => (i + 1).min(self.moves.len() - 1),
             Err(i) => i.min(self.moves.len() - 1),
         };
@@ -205,9 +221,9 @@ pub fn parse(text: &str, limits: &Limits) -> Program {
                 let dr = (to_r - radius).abs();
                 let da = (to_a - angle).abs();
                 let wanted = match kind {
-                    Kind::Rapid => (dr / limits.x_rapid).max(da / limits.rotary_rapid) * 60.0,
+                    Kind::Rapid => axis_seconds(dr, limits.x_rapid).max(axis_seconds(da, limits.rotary_rapid)),
                     Kind::Cut if inverse => 60.0 / f,
-                    Kind::Cut => (dr * dr + da * da).sqrt() / f * 60.0,
+                    Kind::Cut => dr.hypot(da * limits.rotary_scale) / f * 60.0,
                 };
                 push(&mut program, &mut clock, limits, index + 1, &text, kind,
                      (radius, angle), (to_r, to_a), wanted, power, spindle_on, dynamic);
@@ -240,7 +256,7 @@ pub fn parse(text: &str, limits: &Limits) -> Program {
                     let da = (to.1 - angle).abs();
                     let joint_distance = (dr * dr + da * da).sqrt();
                     let wanted = match kind {
-                        Kind::Rapid => (dr / limits.x_rapid).max(da / limits.rotary_rapid) * 60.0,
+                        Kind::Rapid => axis_seconds(dr, limits.x_rapid).max(axis_seconds(da, limits.rotary_rapid)),
                         Kind::Cut => {
                             // The controller scales F by joint over board distance,
                             // never below a half, so the piece takes board length over F.
@@ -286,8 +302,8 @@ fn push(
     let seconds = match kind {
         Kind::Rapid => wanted,
         Kind::Cut => wanted
-            .max(dr / limits.x_max * 60.0)
-            .max(da / limits.rotary_max * 60.0),
+            .max(axis_seconds(dr, limits.x_max))
+            .max(axis_seconds(da, limits.rotary_max)),
     };
     // Under M4 the controller blanks the beam for rapids; M3 does not.
     let on = match kind {
@@ -446,6 +462,41 @@ mod tests {
         assert_eq!(program.moves[1].power, 200.0);
         let dynamic = parse("M4 S200\nG0 X1 A0\nG0 X2 A0\n", &joint());
         assert_eq!(dynamic.moves[1].power, 0.0);
+    }
+
+    #[test]
+    fn a_rate_of_zero_sets_no_limit() {
+        let limits = Limits {
+            x_rapid: 0.0,
+            rotary_rapid: 0.0,
+            x_max: 0.0,
+            rotary_max: 0.0,
+            ..joint()
+        };
+        // A rapid to where the head already is, then moves on both axes.
+        let program = parse("G0 X0 A0\nG0 X5 A90\nM4 S500\nG1 X6 A100 F60\n", &limits);
+        assert!(program.total.is_finite(), "{}", program.total);
+        assert_eq!(program.moves[0].seconds, 0.0);
+        assert_eq!(program.moves[1].seconds, 0.0);
+        assert!(!program.moves[2].limited);
+        assert!(program.at(program.total).is_some());
+    }
+
+    #[test]
+    fn a_scaled_feed_counts_the_angle_at_the_rotary_scale() {
+        let limits = Limits {
+            rotary_scale: 2.0,
+            ..joint()
+        };
+        // Three degrees and four mm: five units at a scale of 1, 7.2 at 2.
+        let text = "G94\nM4 S500\nG0 X10 A0\nG1 X14 A3 F60\n";
+        let plain = parse(text, &joint());
+        let scaled = parse(text, &limits);
+        assert!((plain.moves[1].seconds - 5.0).abs() < 1e-9);
+        assert!((scaled.moves[1].seconds - 52.0f64.sqrt()).abs() < 1e-9);
+        // Inverse time takes the block's time from F alone.
+        let inverse = parse("G93\nM4 S500\nG0 X10 A0\nG1 X14 A3 F60\n", &limits);
+        assert!((inverse.moves[1].seconds - 1.0).abs() < 1e-9);
     }
 
     #[test]

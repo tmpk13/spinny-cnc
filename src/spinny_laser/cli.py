@@ -33,6 +33,7 @@ from laser_sweep.isolate import (
 from laser_sweep.layout import INSIDE_OUT, OUTSIDE_IN
 
 from . import __version__, gcode, machine, preview
+from .clear import chains
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,6 +117,26 @@ def parse_offset(text: str) -> tuple[float, float]:
     return float(parts[0]), float(parts[1])
 
 
+def read_outline(path: Path, offset: float) -> list:
+    """The board profile as drawn, or a loop `offset` mm outside it.
+
+    A profile drawn as separate lines and arcs is plotted one stroke per
+    piece, and only a closed path can be grown, so the pieces are joined
+    first when there is an offset.
+    """
+    drawn = outline_paths(gerber.read(path))
+    if offset:
+        drawn = chains(drawn)
+    return outline_cut(drawn, offset)
+
+
+def check_burn(power_name: str, power: float, speed_name: str, speed: float, s_max: float) -> None:
+    if not 0.0 <= power <= s_max:
+        raise ValueError(f"{power_name} {power:g} is outside 0 to --s-max {s_max:g}")
+    if not speed > 0.0:
+        raise ValueError(f"{speed_name} must be > 0")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -137,10 +158,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         isolate.offsets_for(config)
         options = machine.options_from(args)
-        if args.power > args.s_max:
-            raise ValueError(f"power {args.power:g} is over --s-max {args.s_max:g}")
-        if args.speed <= 0:
-            raise ValueError("speed must be > 0")
+        check_burn("--power", args.power, "--speed", args.speed, args.s_max)
+        # An outline or drill setting that is not given follows the
+        # isolation's; one that is given is used as it is, 0 included.
+        outline_power = args.power if args.outline_power is None else args.outline_power
+        outline_speed = args.speed if args.outline_speed is None else args.outline_speed
+        drill_power = args.power if args.drill_power is None else args.drill_power
+        drill_speed = args.speed if args.drill_speed is None else args.drill_speed
+        check_burn("--outline-power", outline_power, "--outline-speed", outline_speed, args.s_max)
+        check_burn("--drill-power", drill_power, "--drill-speed", drill_speed, args.s_max)
+        if args.outline_passes < 1:
+            raise ValueError("--outline-passes must be at least 1; --outline none leaves the outline out")
 
         image = gerber.read(copper_path)
         copper = geom.copper(image)
@@ -148,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SourceError(f"{copper_path} draws no copper")
         outline = []
         if outline_path is not None:
-            outline = outline_cut(outline_paths(gerber.read(outline_path)), args.outline_offset)
+            outline = read_outline(outline_path, args.outline_offset)
         drills = []
         holes = 0
         if drill_path is not None:
@@ -175,13 +203,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     if plan.outline:
-        for repeat in range(max(1, args.outline_passes)):
+        for repeat in range(args.outline_passes):
             groups.append(
                 gcode.PathGroup(
                     label=f"board outline pass {repeat + 1}",
                     paths=[list(path) for path in plan.outline],
-                    power=args.outline_power or args.power,
-                    speed=args.outline_speed or args.speed,
+                    power=outline_power,
+                    speed=outline_speed,
                 )
             )
     if plan.drills:
@@ -189,8 +217,8 @@ def main(argv: list[str] | None = None) -> int:
             gcode.PathGroup(
                 label=f"drill marks ({holes} holes)",
                 paths=[list(path) for path in plan.drills],
-                power=args.drill_power or args.power,
-                speed=args.drill_speed or args.speed,
+                power=drill_power,
+                speed=drill_speed,
             )
         )
 

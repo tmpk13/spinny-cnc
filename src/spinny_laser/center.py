@@ -190,11 +190,11 @@ def build_parser() -> argparse.ArgumentParser:
 def notes_for(lines: int) -> list[str]:
     ring_only = [
         "The ring alone measures the radius zero error: half its diameter"
-        " less the radius it was cut at is how far past the axis the head"
-        " sits at radius zero, wider meaning short of it and narrower"
-        " meaning past it. Sweeping the wrong angle still sweeps one"
-        " radius, so this is the reading a table scale that is out cannot"
-        " distort.",
+        " less the radius it was cut at is the error with its sign, wider"
+        " meaning the head at radius zero sits short of the axis by that"
+        " much and narrower meaning past it. Sweeping the wrong angle still"
+        " sweeps one radius, so this is the reading a table scale that is out"
+        " cannot distort.",
     ]
     if lines == 0:
         return ring_only
@@ -213,13 +213,12 @@ def notes_for(lines: int) -> list[str]:
         " the ring is not. They lie on a circle of their own at the reach"
         " plus the radius zero error, so the longest distance across the"
         " pattern from one end to another is twice that: longer than twice"
-        " the reach means the head at radius zero sits outside the axis,"
-        " shorter means short of it.",
+        " the reach means the head at radius zero sits short of the axis,"
+        " shorter means past it.",
         "The ring measures that error with its sign, which the lines cannot:"
         " it is burnt at a known radius, so half its diameter less that"
-        " radius is how far past the axis the head sits at radius zero."
-        " Larger than asked for means the head is short of the axis there,"
-        " smaller means it is past it.",
+        " radius is the error. Larger than asked for means the head at radius"
+        " zero sits short of the axis by that much, smaller means past it.",
     ]
 
 
@@ -250,7 +249,7 @@ FINE_ARGS = frozenset(
     {
         "fine", "reach", "angle", "cross", "arm", "spiral", "ring", "power", "s_max", "speed",
         "show_error", "output", "spot", "dry_run", "want_map", "map_path", "want_preview",
-        "preview_path", "min_radius", "rotary_max_rate", "tolerance",
+        "preview_path", "min_radius", "rotary_max_rate", "tolerance", "want_sim",
     }
 )
 
@@ -266,9 +265,15 @@ def main(argv: list[str] | None = None) -> int:
         # The fine pattern has its own geometry and writes joint-space
         # lines; a flag for the coarse pattern or the gcode dialect would
         # be taken and silently ignored.
+        flags = {
+            action.dest: action.option_strings[-1]
+            for action in parser._actions
+            if action.option_strings
+        }
         for name in sorted(vars(args)):
             if name not in FINE_ARGS and getattr(args, name) != parser.get_default(name):
-                parser.error(f"--{name.replace('_', '-')} does not apply with --fine")
+                flag = flags.get(name, f"--{name.replace('_', '-')}")
+                parser.error(f"{flag} does not apply with --fine")
         return fine.run(args, parser)
     try:
         if args.lines == 0 and args.ring <= 0:

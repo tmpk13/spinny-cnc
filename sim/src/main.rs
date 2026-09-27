@@ -24,6 +24,7 @@ struct Sidecar {
     rotary_rapid: Option<f64>,
     x_max_rate: Option<f64>,
     rotary_max_rate: Option<f64>,
+    rotary_scale: Option<f64>,
     spot: Option<f64>,
     radius: Option<f64>,
     #[serde(default)]
@@ -51,10 +52,11 @@ fn usage() -> ! {
          --rotary-axis L      joint: gcode letter of the table axis (default A)\n\
          --invert-rotary      table turns the other way\n\
          --axis-x MM          machine X over the rotation axis (default 0)\n\
-         --x-rapid MM/MIN     G0 speed of X (default 3000)\n\
-         --rotary-rapid D/MIN G0 speed of the table (default 3600)\n\
-         --x-max MM/MIN       cut speed limit of X (default 3000)\n\
-         --rotary-max D/MIN   cut speed limit of the table (default 3600)\n\
+         --x-rapid MM/MIN     G0 speed of X (default 3000; 0 for no limit)\n\
+         --rotary-rapid D/MIN G0 speed of the table (default 3600; 0 for no limit)\n\
+         --x-max MM/MIN       cut speed limit of X (default 3000; 0 for no limit)\n\
+         --rotary-max D/MIN   cut speed limit of the table (default 3600; 0 for no limit)\n\
+         --rotary-scale K     joint: units per degree in a G94 feed (default 1)\n\
          --s-max S            full power (default 1000)\n\
          --screenshot PNG     render one frame to a file and exit\n\
          --at SECONDS         job time for the screenshot, or the start position\n\
@@ -76,7 +78,7 @@ fn parse_args() -> Options {
         match arg.as_str() {
             "--invert-rotary" => overrides.push((arg, String::new())),
             "--controller" | "--rotary-axis" | "--axis-x" | "--x-rapid" | "--rotary-rapid"
-            | "--x-max" | "--rotary-max" | "--s-max" => {
+            | "--x-max" | "--rotary-max" | "--s-max" | "--rotary-scale" => {
                 let value = args.next().unwrap_or_else(|| usage());
                 overrides.push((arg, value));
             }
@@ -117,6 +119,9 @@ fn parse_args() -> Options {
     if let Some(v) = sidecar.rotary_max_rate {
         limits.rotary_max = v;
     }
+    if let Some(v) = sidecar.rotary_scale {
+        limits.rotary_scale = v;
+    }
     for (key, value) in overrides {
         let number = || value.parse::<f64>().unwrap_or_else(|_| usage());
         match key.as_str() {
@@ -129,6 +134,7 @@ fn parse_args() -> Options {
             "--x-max" => limits.x_max = number(),
             "--rotary-max" => limits.rotary_max = number(),
             "--s-max" => limits.s_max = number(),
+            "--rotary-scale" => limits.rotary_scale = number(),
             _ => {}
         }
     }

@@ -2,12 +2,15 @@
 standing inside the board's perimeter, so only the traces and pads remain.
 
 The perimeter is the board outline when it has one, and otherwise the
-rectangle the isolation spans in X and Y. A beam center stays at least as
-far from the copper as the outermost isolation loop runs, so a clearing
-stroke never reaches copper that stays, and its ragged ends land in the
-trench that loop cuts. One more pass runs along the inside of the
-perimeter, since strokes that meet the edge at a slant leave slivers
-between them there.
+rectangle the isolation spans in X and Y. An outline drawn as separate
+lines and arcs comes as one stroke per piece, so the pieces are joined end
+to end first; an outline that still does not close, or that closes around
+less than half the copper, as a lone cutout does, counts as none. A beam
+center stays at least as far from the copper as the outermost isolation
+loop runs, so a clearing stroke never reaches copper that stays, and its
+ragged ends land in the trench that loop cuts. One more pass runs along
+the inside of the perimeter, since strokes that meet the edge at a slant
+leave slivers between them there.
 
 Three fills, each a family of strokes at most one pitch apart:
 
@@ -42,8 +45,14 @@ PATTERNS = (RADIAL, RINGS, LINES)
 
 Polyline = list[Point]
 
-# An outline path counts as closed when its ends are this close.
-CLOSE_EPSILON = 1e-6
+# Outline pieces whose ends are this close join into one path, and a path
+# whose ends are this close is closed. A board edge drawn as lines and arcs
+# is plotted one stroke per piece, and an interpolated arc may end a hair
+# away from where the next piece starts.
+JOIN_EPSILON = 1e-3
+# The share of the copper's area a closed outline has to hold to be taken
+# for the board, rather than for a cutout or a piece of waste.
+HOLD_SHARE = 0.5
 # A clipped piece shorter than this, where a stroke grazes a corner, would
 # go out as no move at all: it is under the radius word's quantum.
 MIN_STROKE = 0.001
@@ -101,21 +110,92 @@ def clear(
 def perimeter(copper: Polygons, keep: float, spot: float, outline: list[Polyline] | None) -> Polygons:
     """Where a beam center may go: half a spot inside the board's edge.
 
-    Without a closed outline it is the rectangle the isolation spans, less
-    half a spot, which is the copper's box grown by `keep`.
+    Without a closed outline, or with one that holds less than half the
+    copper, it is the rectangle the isolation spans, less half a spot,
+    which is the copper's box grown by `keep`.
     """
-    closed = [
-        path[:-1]
-        for path in outline or []
-        if len(path) > 3 and math.dist(path[0], path[-1]) < CLOSE_EPSILON
-    ]
+    closed = [path[:-1] for path in chains(outline or []) if _closed(path)]
     if closed:
         board = _even_odd(closed)
-        if board:
+        if board and _holds(board, copper):
             return geom.offset(board, -spot / 2.0)
     x0, y0, x1, y1 = geom.bounds(copper)
     x0, y0, x1, y1 = x0 - keep, y0 - keep, x1 + keep, y1 + keep
     return [[(x0, y0), (x1, y0), (x1, y1), (x0, y1)]]
+
+
+def chains(paths: list[Polyline], epsilon: float = JOIN_EPSILON) -> list[Polyline]:
+    """The paths joined end to end where their ends meet, reversed as needed.
+
+    A path that closes on its own stays a path of its own. A closed path
+    or chain ends on its first point exactly. Where more than two ends
+    meet, a chain goes on along the first unused piece found there.
+    """
+    out: list[Polyline] = []
+    pieces: list[Polyline] = []
+    for path in paths:
+        if len(path) < 2:
+            continue
+        if _closed(path, epsilon):
+            out.append(_shut(list(path)))
+        else:
+            pieces.append(list(path))
+
+    def cell(point: Point) -> tuple[int, int]:
+        return (math.floor(point[0] / epsilon), math.floor(point[1] / epsilon))
+
+    ends: dict[tuple[int, int], list[tuple[int, bool]]] = {}
+    for index, piece in enumerate(pieces):
+        ends.setdefault(cell(piece[0]), []).append((index, False))
+        ends.setdefault(cell(piece[-1]), []).append((index, True))
+    used = [False] * len(pieces)
+
+    def take(point: Point) -> Polyline | None:
+        """An unused piece with an end at the point, running away from it."""
+        cx, cy = cell(point)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for index, at_end in ends.get((cx + dx, cy + dy), ()):
+                    piece = pieces[index]
+                    if used[index] or math.dist(point, piece[-1] if at_end else piece[0]) > epsilon:
+                        continue
+                    used[index] = True
+                    return piece[::-1] if at_end else piece
+        return None
+
+    for index, piece in enumerate(pieces):
+        if used[index]:
+            continue
+        used[index] = True
+        chain = list(piece)
+        while not _closed(chain, epsilon):
+            after = take(chain[-1])
+            if after is None:
+                break
+            chain.extend(after[1:])
+        while not _closed(chain, epsilon):
+            before = take(chain[0])
+            if before is None:
+                break
+            chain[:0] = before[:0:-1]
+        out.append(_shut(chain) if _closed(chain, epsilon) else chain)
+    return out
+
+
+def _closed(path: Polyline, epsilon: float = JOIN_EPSILON) -> bool:
+    return len(path) > 3 and math.dist(path[0], path[-1]) <= epsilon
+
+
+def _shut(path: Polyline) -> Polyline:
+    """A closed path ending on its first point exactly."""
+    return path[:-1] + [path[0]]
+
+
+def _holds(board: Polygons, copper: Polygons) -> bool:
+    """Whether the board region holds most of the copper."""
+    solid = geom.union(copper)
+    total = geom.area(solid)
+    return total <= 0.0 or geom.area(geom.intersection(solid, board)) >= HOLD_SHARE * total
 
 
 def _even_odd(contours: Polygons) -> Polygons:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
+import signal
 
 import pytest
 
@@ -74,6 +76,19 @@ def test_scaled_mode_stays_in_g94_and_scales_feed():
     feed = float(WORD.findall(cut_lines(job3.text)[0])[-1][1])
     assert feed > 400.0
     assert cuts
+
+
+def test_scaled_mode_writes_each_segments_own_feed():
+    # F is modal in G94: written on the first segment only, every later
+    # segment ran at the first one's scaling instead of its own.
+    job = emit([[(5.0, 0.0), (7.0, 0.0), (7.0, 0.5)]], feed_mode=SCALED, rotary_scale=2.0)
+    cuts = cut_lines(job.text)
+    assert len(cuts) >= 2 and all(" F" in line for line in cuts)
+    feeds = [float(dict(WORD.findall(line))["F"]) for line in cuts]
+    assert feeds[0] == pytest.approx(400.0)
+    # A tangential move at radius 7 turns 8.2 degrees per mm, weighted twice.
+    turn = math.degrees(0.5 / 7.0)
+    assert feeds[-1] == pytest.approx(400.0 * math.hypot(0.0, 2.0 * turn) / 0.5, rel=0.02)
 
 
 def test_inverse_feed_is_speed_over_segment_length():
@@ -177,6 +192,31 @@ def test_rejects_x_as_the_rotary_letter():
         PolarOptions(rotary_axis="X")
 
 
+@pytest.mark.parametrize("letter", ["S", "F", "M", "G", "N", "s", "I", "P"])
+def test_rejects_a_rotary_letter_that_is_not_an_axis(letter):
+    # Under S the angle became the laser power, under N a line number.
+    with pytest.raises(ValueError, match="axis letter"):
+        PolarOptions(controller=JOINT, rotary_axis=letter)
+
+
+@pytest.mark.parametrize("rate", ["x_rapid", "rotary_rapid", "x_max_rate", "rotary_max_rate"])
+def test_rejects_a_negative_axis_rate(rate):
+    # A negative rapid rate gave a negative travel time, and a negative
+    # limit was taken as no limit.
+    with pytest.raises(ValueError, match="cannot be negative"):
+        PolarOptions(**{rate: -1.0})
+    # 0 is the way to ask for no limit.
+    assert getattr(PolarOptions(**{rate: 0.0}), rate) == 0.0
+
+
+def test_a_rotary_letter_is_any_other_axis_in_either_case():
+    for letter in "ABCUVWYZ":
+        assert PolarOptions(rotary_axis=letter).rotary_axis == letter
+    job = emit([[(5.0, 0.0), (5.0, 1.0)]], rotary_axis="b")
+    assert job.options.rotary_axis == "B"
+    assert all(" B" in line for line in cut_lines(job.text))
+
+
 # --- grblHAL polar kinematics: the controller transforms, the file is X/Y ---
 
 
@@ -269,6 +309,36 @@ def test_a_repeated_point_is_not_a_turn_on_the_axis():
     joint = emit([path])
     assert len(cut_lines(joint.text)) >= 1
     assert joint.cut_length == pytest.approx(1.0, abs=1e-6)
+
+
+@contextlib.contextmanager
+def deadline(seconds: float):
+    """Fail instead of hanging when the writer loops."""
+
+    def expire(signum, frame):
+        raise TimeoutError(f"still writing after {seconds:g} s")
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_a_repeated_point_on_the_axis_is_not_a_turn():
+    # A step through no angle on the axis was taken for a turn. The joint
+    # writer's turn left the head where it was, so it turned on the spot
+    # forever; the grblHAL one hopped off the axis and cut its way back.
+    twice = [(1.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 1.0)]
+    once = [(1.0, 0.0), (0.0, 0.0), (0.0, 1.0)]
+    with deadline(5.0):
+        assert emit([twice]).text == emit([once]).text
+        assert emit_grblhal([twice]).text == emit_grblhal([once]).text
+        still = emit([[(0.0, 0.0), (0.0, 0.0)]])
+    assert still.path_count == 0 and still.cut_length == 0.0
+    assert not cut_lines(still.text)
 
 
 def test_a_crossing_that_misses_the_axis_by_less_than_a_quantum_is_cut_there():
