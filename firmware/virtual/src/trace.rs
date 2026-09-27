@@ -3,8 +3,11 @@
 //! Marks are board positions sampled while the laser is on, so a plot of
 //! them is the burn the job would leave. Sampling is bounded: a mark is
 //! kept when the duty changes, when the beam has moved far enough, or
-//! after enough time, which keeps a long job to a readable file while a
-//! short burn still appears.
+//! after enough time on the move, which keeps a long job to a readable
+//! file while a short burn still appears. An output that stays on in one
+//! place, a burn in place or a spindle turning at rest, is a mark where
+//! it starts and one where it changes: sampled by time, it would fill the
+//! file with copies of one point for as long as it is left on.
 //!
 //! The board position is the head's, `R` along the rail and the cross
 //! slide `Z` across it, turned by the table angle, so it holds for a
@@ -21,7 +24,8 @@ use spinny_core::{A, AXES, H, R, Z};
 
 /// Board distance between marks along a cut, mm.
 const MIN_STEP_MM: f64 = 0.05;
-/// Longest gap between marks while the beam is on, microseconds.
+/// Longest gap between marks while the beam is on and moving,
+/// microseconds.
 const MAX_GAP_US: u64 = 2000;
 /// Marks kept before sampling stops; the file says when it did.
 const MAX_MARKS: usize = 200_000;
@@ -48,7 +52,8 @@ pub struct Command {
     pub text: String,
     pub sent_us: u64,
     pub done_us: u64,
-    /// Joints before and after; the file carries the radius and angle.
+    /// Joints when the line was sent and when it was answered; a motion
+    /// line is answered when the planner takes it, not when it ends.
     pub from: [f32; AXES],
     pub to: [f32; AXES],
 }
@@ -63,6 +68,8 @@ pub struct Trace {
     truncated: bool,
     /// Marks recorded since the file was last written.
     fresh: usize,
+    /// Marks, commands and truncation as the file last had them.
+    written: (usize, usize, bool),
     laser_on_mm: f64,
     max_radius: f64,
 }
@@ -93,8 +100,12 @@ impl Trace {
             None => (duty > 0, 0.0),
             Some(last) => {
                 let moved = ((x - last.x).powi(2) + (y - last.y).powi(2)).sqrt();
+                // Any joint, not the board distance: a slow cut covers less
+                // than a step's gate between marks, and a plunge none.
+                let still = (mark.r, mark.a, mark.h, mark.z) == (last.r, last.a, last.h, last.z);
                 let keep = duty != last.duty
-                    || (duty > 0 && (moved >= MIN_STEP_MM || us.saturating_sub(last.us) >= MAX_GAP_US));
+                    || (duty > 0
+                        && (moved >= MIN_STEP_MM || (!still && us.saturating_sub(last.us) >= MAX_GAP_US)));
                 (keep, moved)
             }
         };
@@ -125,6 +136,11 @@ impl Trace {
         self.laser_on_mm
     }
 
+    /// Marks kept so far, oldest first.
+    pub fn marks(&self) -> &[Mark] {
+        &self.marks
+    }
+
     pub fn command(&mut self, command: Command) {
         if self.path.is_none() {
             return;
@@ -150,16 +166,21 @@ impl Trace {
         self.fresh > 0
     }
 
-    /// Writes the file if anything is new since the last write.
+    /// Writes the file if anything is new since the last write. A write
+    /// that fails is tried again at the next flush, not at every pass that
+    /// asks for fresh marks.
     pub fn flush(&mut self) -> io::Result<()> {
         let Some(path) = self.path.clone() else {
             return Ok(());
         };
-        if self.fresh == 0 && self.marks.is_empty() && self.commands.is_empty() {
+        let now = (self.marks.len(), self.commands.len(), self.truncated);
+        if now == self.written {
             return Ok(());
         }
         self.fresh = 0;
-        fs::write(&path, self.render())
+        fs::write(&path, self.render())?;
+        self.written = now;
+        Ok(())
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -183,14 +204,12 @@ impl Trace {
             out.push_str(if i == 0 { "\n    " } else { ",\n    " });
             let _ = write!(
                 out,
-                "{{\"line\": \"{}\", \"sent_us\": {}, \"done_us\": {}, \"from\": [{:.4}, {:.4}], \"to\": [{:.4}, {:.4}], \"seconds\": {:.4}}}",
+                "{{\"line\": \"{}\", \"sent_us\": {}, \"done_us\": {}, \"from\": {}, \"to\": {}, \"seconds\": {:.4}}}",
                 escape(&command.text),
                 command.sent_us,
                 command.done_us,
-                command.from[0],
-                command.from[1],
-                command.to[0],
-                command.to[1],
+                joints(&command.from),
+                joints(&command.to),
                 (command.done_us.saturating_sub(command.sent_us)) as f64 / 1e6,
             );
         }
@@ -206,6 +225,16 @@ impl Trace {
         out.push_str("\n  ]\n}\n");
         out
     }
+}
+
+/// Every joint by name: on a cartesian machine the head moves in `r` and
+/// `z` with the table held, on a polar one in `r` and `a`, and `h` is the
+/// focus or the cutting depth on either.
+fn joints(joint: &[f32; AXES]) -> String {
+    format!(
+        "{{\"r\": {:.4}, \"a\": {:.4}, \"h\": {:.4}, \"z\": {:.4}}}",
+        joint[R], joint[A], joint[H], joint[Z]
+    )
 }
 
 fn escape(text: &str) -> String {
@@ -262,15 +291,42 @@ mod tests {
     }
 
     #[test]
-    fn a_still_beam_is_sampled_by_time_and_a_change_of_duty_always_lands() {
+    fn a_slow_move_is_sampled_by_time_and_a_change_of_duty_always_lands() {
         let mut trace = trace();
+        // A micron per sample is far under the distance gate.
         trace.sample(0, [5.0, 0.0, 0.0, 0.0], 800);
-        trace.sample(MAX_GAP_US / 2, [5.0, 0.0, 0.0, 0.0], 800);
-        assert_eq!(trace.marks.len(), 1, "too soon to sample a still beam again");
-        trace.sample(MAX_GAP_US, [5.0, 0.0, 0.0, 0.0], 800);
+        trace.sample(MAX_GAP_US / 2, [5.001, 0.0, 0.0, 0.0], 800);
+        assert_eq!(trace.marks.len(), 1, "too soon to sample a slow move again");
+        trace.sample(MAX_GAP_US, [5.002, 0.0, 0.0, 0.0], 800);
         assert_eq!(trace.marks.len(), 2);
-        trace.sample(MAX_GAP_US + 1, [5.0, 0.0, 0.0, 0.0], 0);
+        trace.sample(MAX_GAP_US + 1, [5.002, 0.0, 0.0, 0.0], 0);
         assert_eq!(trace.marks.len(), 3, "the beam closing is always a mark");
+        // A plunge moves no board point, and is sampled all the same.
+        trace.sample(10 * MAX_GAP_US, [5.002, 0.0, 0.0, 0.0], 600);
+        trace.sample(11 * MAX_GAP_US, [5.002, 0.0, -0.01, 0.0], 600);
+        assert_eq!(trace.marks.len(), 5);
+    }
+
+    #[test]
+    fn an_output_left_on_in_one_place_is_marked_once_until_it_changes() {
+        let mut trace = trace();
+        // A spindle turning at rest, offered at every loop pass for a
+        // second: one mark where it started, and nothing new to write.
+        for i in 0..=2000u64 {
+            trace.sample(i * 500, [5.0, 30.0, 2.0, 1.0], 600);
+        }
+        assert_eq!(trace.marks.len(), 1);
+        assert_eq!(trace.fresh, 1);
+        trace.sample(1_000_500, [5.0, 30.0, 2.0, 1.0], 300);
+        assert_eq!(trace.marks.len(), 2, "a change of speed is a mark");
+        // The last point of a move is kept once the head has stopped on
+        // it, and then nothing more.
+        trace.sample(1_001_000, [5.001, 30.0, 2.0, 1.0], 300);
+        for i in 0..100u64 {
+            trace.sample(1_001_000 + (i + 1) * MAX_GAP_US, [5.001, 30.0, 2.0, 1.0], 300);
+        }
+        assert_eq!(trace.marks.len(), 3);
+        assert_eq!(trace.marks[2].r, 5.001f32 as f64);
     }
 
     #[test]
@@ -284,11 +340,48 @@ mod tests {
             from: [0.0, 0.0, 0.0, 0.0],
             to: [1.0, 0.0, 0.0, 0.0],
         });
+        // A cartesian line: the head goes across the rail, on the slide.
+        trace.command(Command {
+            text: "cut R6 Z4 F300".into(),
+            sent_us: 0,
+            done_us: 0,
+            from: [2.0, 0.0, -0.1, 1.0],
+            to: [6.0, 0.0, -0.1, 4.0],
+        });
         let text = trace.render();
         assert!(text.contains("\"marks\": 1"));
         assert!(text.contains("\"line\": \"cut R1 F60 S500\""));
         assert!(text.contains("\"seconds\": 1.0000"));
         assert!(text.contains("\"duty\": 1000"));
+        assert!(
+            text.contains(
+                "\"from\": {\"r\": 2.0000, \"a\": 0.0000, \"h\": -0.1000, \"z\": 1.0000}, \
+                 \"to\": {\"r\": 6.0000, \"a\": 0.0000, \"h\": -0.1000, \"z\": 4.0000}"
+            ),
+            "{text}"
+        );
+        // One object per line, and only marks start with their time.
+        let commands: Vec<&str> = text.lines().filter(|line| line.trim_start().starts_with("{\"line\":")).collect();
+        assert_eq!(commands.len(), 2, "{text}");
+        assert_eq!(text.lines().filter(|line| line.trim_start().starts_with("{\"us\":")).count(), 1);
+    }
+
+    #[test]
+    fn the_file_is_written_again_only_when_something_is_new() {
+        let path = std::env::temp_dir().join(format!("spinny-virtual-trace-unit-{}.json", std::process::id()));
+        let mut trace = Trace::new(Some(path.clone()));
+        trace.flush().unwrap();
+        assert!(!path.exists(), "nothing to write yet");
+        trace.sample(0, [1.0, 0.0, 0.0, 0.0], 500);
+        trace.flush().unwrap();
+        assert!(path.exists());
+        fs::remove_file(&path).unwrap();
+        trace.flush().unwrap();
+        assert!(!path.exists(), "rewritten with nothing new");
+        trace.command(Command { text: "version".into(), sent_us: 0, done_us: 0, from: [0.0; AXES], to: [0.0; AXES] });
+        trace.flush().unwrap();
+        assert!(path.exists(), "an answered line is new");
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]

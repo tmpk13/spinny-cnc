@@ -51,8 +51,16 @@ cargo run --release -p spinny-virtual -- --listen 127.0.0.1:2323 --fast
 ```
 
 The simulator speaks the same bytes over TCP, so the backend connects to
-`socket://127.0.0.1:2323` and behaves as it would with the board. It keeps
-its position between clients, as unplugging USB does.
+`socket://127.0.0.1:2323` and behaves as it would with the board. A client
+that hangs up, or only shuts its sending side (`nc -N`), stands for a USB
+unplug: the machine stops and keeps its position, and whatever the client
+sent that the machine had not taken yet is dropped. A client more than
+16 MiB ahead of the machine is dropped the same way.
+
+That is not what the board does when a program only closes its serial
+port: it sees an unplug, a bus reset or a suspend, not a port close, so a
+queued job, a spindle or a `laser` beam runs on there. A session against
+the simulator does not show that closing the port stops anything.
 
 | Option | Effect |
 | --- | --- |
@@ -62,7 +70,7 @@ its position between clients, as unplugging USB does.
 | `--settings K=V` | set a machine setting at start, repeatable |
 | `--store PATH` | file standing in for the settings sector, so `$save` works |
 | `--surface B[,SX,SY[,C]]` | a board under the probe, its top at focus height `B + SX*x + SY*y + C*(x^2 + y^2)`; without it a probe finds nothing |
-| `--probe-offset L,C` | the probe tip `L` mm along the rail and `C` mm across it from the beam |
+| `--probe-offset L,C` | the probe tip `L` mm along the rail and `C` mm across it from the beam; it adds no board of its own |
 | `--quiet` | no periodic report on stderr |
 
 A probe on the simulator needs the focus axis too:
@@ -70,11 +78,15 @@ A probe on the simulator needs the focus axis too:
 1.5 mm below the head's zero.
 
 The trace holds the board position and focus height of every mark the
-beam would leave, with its duty as commanded (the pin level is the other way round under
-`laser_invert`), plus each line the client sent, when it was accepted and
-where the head was then: a motion line is accepted when the planner takes
-it, so its `seconds` is the wait for room, not the move. It is written
-when a client disconnects and when a run ends.
+beam would leave, with its duty as commanded (the pin level is the other
+way round under `laser_invert`). An output left on in one place, a burn
+in place or a spindle turning at rest, is a mark where it starts and one
+where it changes. It also holds each line the client sent, with when it
+was sent and answered and every joint (`r`, `a`, `h`, `z`) at both: a
+motion line is answered when the planner takes it, so its `seconds` is
+the wait for room and its `to` is where the head was then, not where the
+move ends. It is written when a client disconnects and whenever the
+machine comes to rest, a hold included.
 
 ```sh
 picocom -b 115200 /dev/ttyACM0     # or: nc 127.0.0.1 2323
@@ -131,7 +143,8 @@ On a cartesian machine (`$cartesian=1`) it is inside all of that: the
 planner and the interrupt carry it as the fourth joint, `Slide` stays idle,
 and switching the setting hands the position from one to the other so the
 slide stays where it was. A cut's board length is then `hypot(dr, dz)`,
-and the table holds its angle, since `go` and `cut` refuse `A`.
+and the table holds its angle, since `go` and `cut` refuse `A`; a jog
+that turns it sweeps the head's distance from the axis, `hypot(R, Z)`.
 
 A spindle (`$spindle=1`) is the machine's alone: `Shared::spindle` keeps
 the interrupt from writing the output, and the machine drives it at the

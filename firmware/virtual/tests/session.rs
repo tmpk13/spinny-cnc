@@ -11,19 +11,52 @@ use spinny_virtual::{server, setup};
 
 struct Server {
     port: u16,
-    trace: std::path::PathBuf,
+    trace: Option<std::path::PathBuf>,
+}
+
+impl Server {
+    fn trace(&self) -> &std::path::Path {
+        self.trace.as_deref().expect("started with a trace")
+    }
+}
+
+/// A passing test takes its trace with it. A client's session writes the
+/// file only when it has something new, so one that connected after the
+/// run, to see the file written, does not bring it back when it goes.
+/// A failing test leaves it to be looked at.
+impl Drop for Server {
+    fn drop(&mut self) {
+        if let Some(trace) = &self.trace {
+            if !thread::panicking() {
+                let _ = std::fs::remove_file(trace);
+            }
+        }
+    }
 }
 
 /// Starts a free-running simulated board on a free port.
-fn start(name: &str) -> Server {
-    let trace = std::env::temp_dir().join(format!("spinny-virtual-{name}-{:?}.json", thread::current().id()));
+fn start() -> Server {
+    launch(None)
+}
+
+/// As `start`, writing the trace to a file of its own.
+fn start_traced(name: &str) -> Server {
+    // The test name tells the tests of one run apart, the process id two
+    // runs at once; a file left by an earlier process of the same id is
+    // removed first.
+    let trace = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("spinny-virtual-{name}-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&trace);
+    launch(Some(trace))
+}
+
+fn launch(trace: Option<std::path::PathBuf>) -> Server {
     let listener = server::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let options = Options {
         fast: true,
         quiet: true,
-        trace: Some(trace.clone()),
+        trace: trace.clone(),
         ..Options::default()
     };
     let mut sim = Sim::new(setup(&options));
@@ -167,7 +200,7 @@ fn marks(path: &std::path::Path) -> Vec<Mark> {
 
 #[test]
 fn a_quarter_circle_cut_runs_and_lands_where_it_was_asked_to() {
-    let server = start("quarter");
+    let server = start_traced("quarter");
     let mut client = Client::connect(&server);
 
     let banner = client.line();
@@ -201,7 +234,7 @@ fn a_quarter_circle_cut_runs_and_lands_where_it_was_asked_to() {
     let mut next = Client::connect(&server);
     assert!(next.line().starts_with("[spinny v"));
 
-    let marks = marks(&server.trace);
+    let marks = marks(server.trace());
     let lit: Vec<&Mark> = marks.iter().filter(|m| m.duty > 0).collect();
     assert!(lit.len() > 50, "only {} lit marks", lit.len());
     // The job is an arc at radius 10 followed by a radial cut at 90
@@ -226,7 +259,7 @@ fn a_quarter_circle_cut_runs_and_lands_where_it_was_asked_to() {
 
 #[test]
 fn a_cartesian_spindle_machine_plunges_and_mills_a_straight_line() {
-    let server = start("mill");
+    let server = start_traced("mill");
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
@@ -258,7 +291,7 @@ fn a_cartesian_spindle_machine_plunges_and_mills_a_straight_line() {
     drop(client);
     let mut next = Client::connect(&server);
     assert!(next.line().starts_with("[spinny v"));
-    let marks = marks(&server.trace);
+    let marks = marks(server.trace());
     // The tool turns from the spin-up on; it is in the work only below
     // the surface at H 0, and there it follows the line (2,1)-(6,4).
     let turning: Vec<&Mark> = marks.iter().filter(|m| m.duty > 0).collect();
@@ -276,7 +309,7 @@ fn a_cartesian_spindle_machine_plunges_and_mills_a_straight_line() {
 
 #[test]
 fn realtime_bytes_stop_the_machine_and_a_reset_raises_an_alarm() {
-    let server = start("realtime");
+    let server = start();
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
@@ -312,7 +345,7 @@ fn realtime_bytes_stop_the_machine_and_a_reset_raises_an_alarm() {
 
 #[test]
 fn the_cross_slide_jogs_on_its_own_and_lands_where_it_was_asked_to() {
-    let server = start("slide");
+    let server = start();
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
@@ -347,7 +380,7 @@ fn the_cross_slide_jogs_on_its_own_and_lands_where_it_was_asked_to() {
 
 #[test]
 fn settings_round_trip_and_a_long_line_is_refused() {
-    let server = start("settings");
+    let server = start();
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
@@ -387,7 +420,7 @@ fn a_reset_throws_away_the_lines_the_host_had_already_sent() {
     // already on the machine, parsed and waiting. If they survive, the
     // machine carries on cutting the job the operator just stopped, with
     // the beam on, which is the one thing a stop has to prevent.
-    let server = start("flush");
+    let server = start();
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
@@ -438,4 +471,77 @@ fn a_reset_throws_away_the_lines_the_host_had_already_sent() {
         (after - stopped_at).abs() < 0.01,
         "the table carried on turning after the stop: {stopped_at} to {after}"
     );
+}
+
+#[test]
+fn a_client_that_hangs_up_in_a_hold_with_lines_past_its_credits_is_let_go() {
+    // A client that sends more lines than the port holds while the
+    // machine is held and takes none, then hangs up. It is gone whatever
+    // it left queued: the machine stops as for any hang up, the spindle
+    // with it, and the next client is served.
+    let server = start();
+    let mut client = Client::connect(&server);
+    assert!(client.line().starts_with("[spinny v"));
+    for line in ["$spindle=1", "set R0 A0", "spindle S600", "cut R100 F20"] {
+        assert_eq!(client.send(line).last().map(String::as_str), Some("ok"), "{line}");
+    }
+    client.stream.write_all(b"!").expect("hold");
+    let held = client.wait_for("Hold");
+    assert_eq!(status_fields(&held)[3], "L:600", "the spindle turns through a hold: {held}");
+    // The first is taken in and waits for the resume; the rest are more
+    // than the port's queue holds.
+    for step in 0..40 {
+        writeln!(client.stream, "cut R{} F20", 99 - step).expect("write");
+    }
+    client.stream.flush().expect("flush");
+    thread::sleep(Duration::from_millis(50));
+    drop(client);
+
+    let mut next = Client::connect(&server);
+    next.stream.set_read_timeout(Some(Duration::from_secs(5))).expect("read timeout");
+    assert!(next.line().starts_with("[spinny v"), "the next client got no banner");
+    let status = next.status();
+    assert!(status.starts_with("<Idle"), "{status}");
+    assert_eq!(status_fields(&status)[3], "L:0", "the spindle kept turning: {status}");
+}
+
+#[test]
+fn a_client_that_floods_the_socket_is_dropped() {
+    let server = start();
+    let mut client = Client::connect(&server);
+    assert!(client.line().starts_with("[spinny v"));
+    for line in ["set R0 A0", "go R10", "cut A3600 F10 S100"] {
+        assert_eq!(client.send(line).last().map(String::as_str), Some("ok"), "{line}");
+    }
+    client.stream.write_all(b"!").expect("hold");
+    client.wait_for("Hold");
+
+    // Far more than the reader keeps for a client ahead of the machine,
+    // with the machine taking nothing. A write that stalls for seconds
+    // means the machine is still reading nothing and keeping the client.
+    let mut writer = client.stream.try_clone().expect("clone");
+    writer.set_write_timeout(Some(Duration::from_secs(10))).expect("write timeout");
+    let chunk = "cut A1 F10\n".repeat(4096);
+    let mut sent = 0;
+    let error = loop {
+        if let Err(error) = writer.write_all(chunk.as_bytes()) {
+            break Some(error);
+        }
+        sent += chunk.len();
+        if sent > 4 * server::BACKLOG_CAP {
+            break None;
+        }
+    };
+    let error = error.expect("the machine kept every byte of the flood");
+    assert!(
+        !matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut),
+        "the machine stopped reading instead of letting the client go: {error}"
+    );
+    assert!(sent >= server::BACKLOG_CAP / 2, "dropped after only {sent} bytes");
+    drop(client);
+
+    let mut next = Client::connect(&server);
+    next.stream.set_read_timeout(Some(Duration::from_secs(5))).expect("read timeout");
+    assert!(next.line().starts_with("[spinny v"), "the next client got no banner");
+    assert!(next.status().starts_with("<Idle"));
 }

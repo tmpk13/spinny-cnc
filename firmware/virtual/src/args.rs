@@ -19,13 +19,16 @@ spinny-virtual: the spinny control core on a TCP socket
                         B + SX*x + SY*y + C*(x^2 + y^2), board mm; without
                         it a probe finds nothing
     --probe-offset L,C  the probe tip L mm along the rail and C mm across
-                        it from the beam
+                        it from the beam; it adds no board of its own
     --quiet             no periodic report on stderr
     --help              this text
 
 A client connects, gets the banner, and speaks the line protocol the board
-speaks. One client at a time; disconnecting stops the machine and keeps
-its position, as unplugging USB does.
+speaks. One client at a time. A client that hangs up, or only shuts its
+sending side, stands for unplugging USB: the machine stops and keeps its
+position, and what the client sent that the machine had not taken is
+dropped; so is a client more than 16 MiB ahead of the machine. The board
+does not stop for a program that only closes its serial port.
 ";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,6 +60,9 @@ impl Default for Options {
 /// `Ok(None)` means the usage was asked for and nothing should run.
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Options>, String> {
     let mut options = Options::default();
+    // Kept apart until the end: an offset alone describes the tip, not a
+    // board, and `--surface` may come before or after it.
+    let mut probe_offset = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -67,14 +73,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Options>,
             "--listen" => options.listen = value("--listen")?,
             "--trace" => options.trace = Some(PathBuf::from(value("--trace")?)),
             "--store" => options.store = Some(PathBuf::from(value("--store")?)),
-            "--surface" => {
-                let offset = options.surface.map_or([0.0; 2], |surface| surface.offset);
-                options.surface = Some(Surface { offset, ..Surface::parse(&value("--surface")?)? });
-            }
-            "--probe-offset" => {
-                let offset = Surface::parse_offset(&value("--probe-offset")?)?;
-                options.surface = Some(Surface { offset, ..options.surface.unwrap_or_default() });
-            }
+            "--surface" => options.surface = Some(Surface::parse(&value("--surface")?)?),
+            "--probe-offset" => probe_offset = Some(Surface::parse_offset(&value("--probe-offset")?)?),
             "--settings" => {
                 let pair = value("--settings")?;
                 let (name, text) = pair
@@ -87,6 +87,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Options>,
             }
             other => return Err(format!("unknown option {other:?}")),
         }
+    }
+    if let (Some(surface), Some(offset)) = (options.surface.as_mut(), probe_offset) {
+        surface.offset = offset;
     }
     Ok(Some(options))
 }
@@ -148,5 +151,15 @@ mod tests {
         assert_eq!(options.surface.unwrap().offset, [3.0, -1.0]);
         assert!(parse_args(&["--surface", "1,2"]).unwrap_err().contains("--surface"));
         assert_eq!(parse_args(&[]).unwrap().unwrap().surface, None);
+        // A repeated surface keeps the tip's offset.
+        let options = parse_args(&["--probe-offset", "3,-1", "--surface", "-2", "--surface", "-1"]).unwrap().unwrap();
+        assert_eq!(options.surface.unwrap().offset, [3.0, -1.0]);
+    }
+
+    #[test]
+    fn a_probe_offset_alone_puts_no_board_under_the_probe() {
+        let options = parse_args(&["--probe-offset", "2,1"]).unwrap().unwrap();
+        assert_eq!(options.surface, None, "a board at H 0 would hold the probe down from the start");
+        assert!(parse_args(&["--probe-offset", "2"]).unwrap_err().contains("--probe-offset"));
     }
 }

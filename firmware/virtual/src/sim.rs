@@ -118,6 +118,8 @@ impl Sim {
         report::banner(&mut self.out);
         self.flush(socket)?;
         loop {
+            // Counted before the realtime bytes, as on the board.
+            self.machine.note_lines_waiting(inbox.lines_waiting());
             while let Some(action) = inbox.take_realtime() {
                 let pending = !self.machine.ready_for_line();
                 self.machine.realtime(action, &mut self.laser, &mut self.out);
@@ -138,7 +140,7 @@ impl Sim {
             // On disk as soon as the machine comes to rest, not only when
             // the client goes: a trace from the run before is worse than
             // no trace at all, because it reads exactly like this one.
-            if self.trace.has_fresh() && self.machine.is_quiet() {
+            if self.trace.has_fresh() && self.is_still() {
                 self.write_trace();
             }
             // Whatever the client had queued went with it (the inbox drops
@@ -257,17 +259,45 @@ impl Sim {
         self.next_tick = next.map(|us| now + u64::from(us));
     }
 
+    /// Nothing the clock could change until the client speaks. The
+    /// core's `is_quiet` is rest; a hold braked to a stop, an alarm at
+    /// rest and a spindle turning at rest are as still, though it does
+    /// not count them: a hold freezes the dwell and closes the beam, a
+    /// spindle only keeps its speed, and the idle disable counts in
+    /// `Idle` alone, and there only while the output is off. Valid after
+    /// a `poll`, which restarts the step interrupt whenever it has
+    /// segments to run.
+    fn is_still(&self) -> bool {
+        if self.next_tick.is_some() {
+            return false;
+        }
+        if self.machine.is_quiet() {
+            return true;
+        }
+        match self.machine.state() {
+            // The interrupt has stopped with the hold in force, so the
+            // brake has run out: the poll would have kicked it otherwise.
+            report::State::Hold => true,
+            report::State::Alarm(_) => self.machine.is_settled(),
+            // A milling machine refuses `laser`, and a dwell is not
+            // settled, so an output on at rest is the spindle, which
+            // holds the idle disable off for as long as it turns. A
+            // laser's constant beam is timed and needs the clock.
+            report::State::Idle => {
+                self.machine.is_settled() && self.machine.settings().spindle && self.beam_duty() > 0
+            }
+            _ => false,
+        }
+    }
+
     /// Runs the clock to the next poll, executing the ticks that fall
-    /// before it. With nothing to do and nothing waiting, blocks instead:
-    /// free-running time then stands still until the client speaks.
+    /// before it. With nothing to do, blocks instead until the client
+    /// sends something the machine would act on: free-running time then
+    /// stands still, and a real-time loop costs nothing.
     fn advance(&mut self, inbox: Option<&Inbox>) {
         if let Some(inbox) = inbox {
-            if self.next_tick.is_none()
-                && self.machine.is_quiet()
-                && inbox.is_empty()
-                && !inbox.is_closed()
-            {
-                inbox.wait(IDLE_WAIT);
+            if self.is_still() {
+                inbox.wait(IDLE_WAIT, self.machine.ready_for_line());
                 return;
             }
         }
@@ -355,6 +385,7 @@ mod tests {
     use crate::ports::FileStore;
     use crate::trace::Trace;
     use spinny_fw_logic::line::{Event, Line};
+    use std::time::Instant;
 
     fn sim() -> Sim {
         Sim::new(Setup {
@@ -369,6 +400,30 @@ mod tests {
 
     fn line(text: &str) -> Event {
         Event::Line(text.parse::<Line>().expect("line fits"))
+    }
+
+    /// The loop as `serve` runs it, without waiting on the client, until
+    /// `done` says so after a poll.
+    fn run_until(sim: &mut Sim, inbox: &Inbox, out: &mut Vec<u8>, done: impl Fn(&Sim) -> bool) {
+        for _ in 0..4_000_000 {
+            sim.machine.note_lines_waiting(inbox.lines_waiting());
+            while let Some(action) = inbox.take_realtime() {
+                sim.machine.realtime(action, &mut sim.laser, &mut sim.out);
+            }
+            if sim.machine.ready_for_line() {
+                if let Some(Inbound::Line(text)) = inbox.take_line() {
+                    sim.submit(text.as_str());
+                }
+            }
+            sim.machine.note_lines_waiting(inbox.lines_waiting());
+            sim.poll();
+            sim.flush(out).unwrap();
+            if done(sim) {
+                return;
+            }
+            sim.advance(None);
+        }
+        panic!("never got there: {}", sim.status_line());
     }
 
     /// A socket that dies after a few writes, like a client that is killed.
@@ -392,16 +447,29 @@ mod tests {
 
     #[test]
     fn a_client_that_dies_mid_write_still_stops_the_machine() {
-        let mut sim = sim();
+        let mut sim = Sim::new(Setup {
+            settings: Settings::default(),
+            store: FileStore::default(),
+            clock: Clock::fast(),
+            trace: Trace::new(Some(std::path::PathBuf::from("/dev/null"))),
+            quiet: true,
+            surface: None,
+        });
         let inbox = Inbox::new();
-        inbox.push(line("set R0 A0"));
-        inbox.push(line("cut R20 F400 S800"));
-        // The banner and the first answer get through; the answer to the
-        // cut, by which time the machine is moving with the beam on, does
-        // not.
-        let mut socket = Dying { left: 2 };
+        inbox.try_push(line("set R0 A0")).unwrap();
+        inbox.try_push(line("cut R20 F400 S800")).unwrap();
+        inbox.try_push(line("version")).unwrap();
+        // The banner and the answers to the first two lines get through.
+        // The cut is answered when the planner takes it, before a step;
+        // `version` is answered a loop pass later, with the cut under way
+        // and the beam on, and that write fails.
+        let mut socket = Dying { left: 3 };
         let result = sim.session(&inbox, &mut socket);
         assert!(result.is_err(), "the write error should reach the caller");
+        assert!(
+            sim.trace_mut().marks().iter().any(|mark| mark.duty > 0),
+            "the beam never lit, so finding it off proves nothing"
+        );
         // Stopping a moving machine is a reset while moving, so the next
         // client finds the alarm and has to unlock before it can move.
         assert_eq!(sim.state(), report::State::Alarm(1), "the machine kept running");
@@ -409,11 +477,150 @@ mod tests {
     }
 
     #[test]
+    fn a_braked_hold_stops_the_free_running_clock() {
+        let mut sim = sim();
+        let inbox = Inbox::new();
+        let mut out = Vec::new();
+        for text in ["set R0 A0", "go R10", "cut A3600 F10 S100"] {
+            inbox.try_push(line(text)).unwrap();
+        }
+        run_until(&mut sim, &inbox, &mut out, |sim| sim.joint()[spinny_core::A] > 1.0);
+        inbox.try_push(Event::Realtime(Realtime::Hold)).unwrap();
+        run_until(&mut sim, &inbox, &mut out, |sim| sim.is_still());
+        assert_eq!(sim.state(), report::State::Hold);
+        // A line taken in during the hold waits for the resume, and the
+        // ones behind it wait in the inbox, which the loop cannot take.
+        inbox.try_push(line("cut A0")).unwrap();
+        run_until(&mut sim, &inbox, &mut out, |sim| !sim.machine.ready_for_line());
+        inbox.try_push(line("cut A10")).unwrap();
+        inbox.try_push(line("cut A20")).unwrap();
+        let at = sim.clock.now();
+        let started = Instant::now();
+        for _ in 0..3 {
+            sim.poll();
+            sim.advance(Some(&inbox));
+        }
+        assert_eq!(sim.clock.now(), at, "free-running time ran on in a hold that had stopped");
+        assert!(started.elapsed() >= IDLE_WAIT * 2, "the loop spun on lines it cannot take");
+        // A resume ends the wait and the cut carries on.
+        inbox.try_push(Event::Realtime(Realtime::Resume)).unwrap();
+        let started = Instant::now();
+        sim.advance(Some(&inbox));
+        assert!(started.elapsed() < IDLE_WAIT, "the resume did not end the wait");
+        run_until(&mut sim, &inbox, &mut out, |sim| sim.clock.now() > at + 100_000);
+        assert_eq!(sim.state(), report::State::Run);
+    }
+
+    #[test]
+    fn an_alarm_at_rest_stops_the_free_running_clock_whatever_the_idle_timer() {
+        let mut sim = Sim::new(Setup {
+            settings: Settings { idle_ms: 1000, ..Settings::default() },
+            store: FileStore::default(),
+            clock: Clock::fast(),
+            trace: Trace::new(None),
+            quiet: true,
+            surface: None,
+        });
+        let inbox = Inbox::new();
+        let mut out = Vec::new();
+        for text in ["set R0 A0", "go R10", "cut A3600 F10 S100"] {
+            inbox.try_push(line(text)).unwrap();
+        }
+        run_until(&mut sim, &inbox, &mut out, |sim| sim.joint()[spinny_core::A] > 1.0);
+        inbox.try_push(Event::Realtime(Realtime::Reset)).unwrap();
+        run_until(&mut sim, &inbox, &mut out, |sim| sim.machine.is_settled() && sim.next_tick.is_none());
+        assert_eq!(sim.state(), report::State::Alarm(1));
+        // The drivers stay on in the alarm, and the idle disable only
+        // counts in `Idle`, so nothing here waits on time.
+        inbox.try_push(Event::Realtime(Realtime::Status)).unwrap();
+        out.clear();
+        run_until(&mut sim, &inbox, &mut out, |_| true);
+        let status = String::from_utf8(out).unwrap();
+        assert!(status.contains("|E:1|"), "{status}");
+        let at = sim.clock.now();
+        for _ in 0..2 {
+            sim.poll();
+            sim.advance(Some(&inbox));
+        }
+        assert_eq!(sim.clock.now(), at, "free-running time ran on in an alarm");
+    }
+
+    #[test]
+    fn a_spindle_turning_at_rest_stops_the_free_running_clock() {
+        let mut sim = Sim::new(Setup {
+            settings: Settings { spindle: true, idle_ms: 1000, ..Settings::default() },
+            store: FileStore::default(),
+            clock: Clock::fast(),
+            trace: Trace::new(None),
+            quiet: true,
+            surface: None,
+        });
+        let inbox = Inbox::new();
+        let mut out = Vec::new();
+        // The move enables the drivers, and the spindle starts before the
+        // idle disable could turn them off again.
+        for text in ["go R1", "spindle S600"] {
+            inbox.try_push(line(text)).unwrap();
+        }
+        run_until(&mut sim, &inbox, &mut out, |sim| {
+            inbox.is_empty() && sim.machine.is_settled() && sim.next_tick.is_none() && sim.laser_duty() > 0
+        });
+        inbox.try_push(Event::Realtime(Realtime::Status)).unwrap();
+        out.clear();
+        run_until(&mut sim, &inbox, &mut out, |_| true);
+        let status = String::from_utf8(out.clone()).unwrap();
+        assert!(status.contains("<Idle|") && status.contains("|L:600|") && status.contains("|E:1|"), "{status}");
+        // The turning spindle keeps the drivers on however long it turns,
+        // so there is nothing for the clock to run toward.
+        let at = sim.clock.now();
+        for _ in 0..2 {
+            sim.poll();
+            sim.advance(Some(&inbox));
+        }
+        assert_eq!(sim.clock.now(), at, "free-running time ran on with the spindle turning at rest");
+        // Stopped, it lets the idle disable count again, which needs the
+        // clock: the drivers go off a second later.
+        inbox.try_push(line("spindle off")).unwrap();
+        run_until(&mut sim, &inbox, &mut out, |sim| inbox.is_empty() && sim.laser_duty() == 0);
+        assert!(!sim.is_still(), "the idle disable was left waiting on a clock that stood still");
+        let stopped = sim.clock.now();
+        for _ in 0..10_000 {
+            sim.poll();
+            if sim.is_still() {
+                break;
+            }
+            sim.advance(Some(&inbox));
+        }
+        assert!(sim.clock.now() >= stopped + 1_000_000, "came to rest before the idle disable");
+        inbox.try_push(Event::Realtime(Realtime::Status)).unwrap();
+        out.clear();
+        run_until(&mut sim, &inbox, &mut out, |_| true);
+        let status = String::from_utf8(out).unwrap();
+        assert!(status.contains("|E:0|"), "{status}");
+    }
+
+    #[test]
+    fn a_probe_offset_alone_leaves_nothing_for_the_probe_to_find() {
+        let args = ["--fast", "--quiet", "--settings", "h_axis=1", "--probe-offset", "2,1"];
+        let options = crate::args::parse(args.map(String::from)).unwrap().unwrap();
+        let mut sim = Sim::new(crate::setup(&options));
+        let inbox = Inbox::new();
+        let mut out = Vec::new();
+        inbox.try_push(line("probe H-5 F120")).unwrap();
+        run_until(&mut sim, &inbox, &mut out, |sim| {
+            inbox.is_empty() && sim.machine.is_settled() && sim.next_tick.is_none()
+        });
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("[PRB:-5.0000:0]") && text.contains("ALARM:2"), "{text}");
+        assert_eq!(sim.state(), report::State::Alarm(2));
+    }
+
+    #[test]
     fn a_client_that_hangs_up_takes_its_queued_lines_with_it() {
         let mut sim = sim();
         let inbox = Inbox::new();
-        inbox.push(line("set R0 A0"));
-        inbox.push(line("cut R20 F400 S800"));
+        inbox.try_push(line("set R0 A0")).unwrap();
+        inbox.try_push(line("cut R20 F400 S800")).unwrap();
         // Gone before the loop took anything: nothing of it may run, and
         // the session must end rather than wait for the queue to drain.
         inbox.close();
@@ -439,10 +646,10 @@ mod tests {
             surface: None,
         });
         let inbox = Inbox::new();
-        inbox.push(line("set R0 A0"));
-        inbox.push(line("go R10"));
-        inbox.push(line("cut A90 F300 S1000"));
-        inbox.push(line("go R0 A0"));
+        inbox.try_push(line("set R0 A0")).unwrap();
+        inbox.try_push(line("go R10")).unwrap();
+        inbox.try_push(line("cut A90 F300 S1000")).unwrap();
+        inbox.try_push(line("go R0 A0")).unwrap();
         // The loop as `serve` runs it, until the lines are taken and the
         // machine has come to rest.
         let mut out = Vec::new();
@@ -481,11 +688,11 @@ mod tests {
             surface: Some(Surface { base: -1.0, slope: [0.01, 0.0], curve: 0.0, offset: [2.0, 0.0] }),
         });
         let inbox = Inbox::new();
-        inbox.push(line("go R8"));
-        inbox.push(line("probe H-5 F120"));
-        inbox.push(line("go H1"));
-        inbox.push(line("go A180"));
-        inbox.push(line("probe H-5 F120"));
+        inbox.try_push(line("go R8")).unwrap();
+        inbox.try_push(line("probe H-5 F120")).unwrap();
+        inbox.try_push(line("go H1")).unwrap();
+        inbox.try_push(line("go A180")).unwrap();
+        inbox.try_push(line("probe H-5 F120")).unwrap();
         let mut out = Vec::new();
         for _ in 0..4_000_000 {
             if sim.machine.ready_for_line() {

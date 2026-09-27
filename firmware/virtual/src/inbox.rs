@@ -43,14 +43,19 @@ impl Inbox {
         Inbox::default()
     }
 
-    /// Queues what the line assembler produced. A repeated realtime action
-    /// is dropped when the queue is full, as on the board: acting on it
-    /// once is what matters. A line waits for room instead, which is what
-    /// a host that spends more than its credits meets on the board, where
-    /// the endpoint stops accepting packets and realtime bytes stop
-    /// getting through with them.
-    pub fn push(&self, event: Event) {
+    /// Queues what the line assembler produced, or hands it back when
+    /// there is no room for a line or no client to queue it for. A
+    /// repeated realtime action is dropped when the queue is full, as on
+    /// the board: acting on it once is what matters. The reader keeps a
+    /// line handed back, and the bytes behind it, until there is room,
+    /// which is what a host that spends more than its credits meets on
+    /// the board, where the endpoint stops accepting packets and realtime
+    /// bytes stop getting through with them.
+    pub fn try_push(&self, event: Event) -> Result<(), Event> {
         let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return Err(event);
+        }
         match event {
             Event::Realtime(action) => {
                 if action == Realtime::Reset {
@@ -64,23 +69,22 @@ impl Inbox {
                     state.realtime.push_back(action);
                 }
             }
-            Event::Line(line) => {
-                state = self.room(state);
-                state.lines.push_back(Inbound::Line(line));
-            }
-            Event::TooLong => {
-                state = self.room(state);
-                state.lines.push_back(Inbound::TooLong);
-            }
+            Event::Line(_) | Event::TooLong if state.lines.len() >= LINE_CAP => return Err(event),
+            Event::Line(line) => state.lines.push_back(Inbound::Line(line)),
+            Event::TooLong => state.lines.push_back(Inbound::TooLong),
         }
         self.signal.notify_all();
+        Ok(())
     }
 
-    fn room<'a>(&self, mut state: std::sync::MutexGuard<'a, State>) -> std::sync::MutexGuard<'a, State> {
-        while state.lines.len() >= LINE_CAP && !state.closed {
-            state = self.signal.wait(state).unwrap();
-        }
-        state
+    /// Waits until a line would fit, the client has gone, or the timeout
+    /// has passed.
+    pub fn wait_for_room(&self, timeout: Duration) {
+        let state = self.state.lock().unwrap();
+        let _ = self
+            .signal
+            .wait_timeout_while(state, timeout, |state| state.lines.len() >= LINE_CAP && !state.closed)
+            .unwrap();
     }
 
     /// The client went away. What it had sent and the loop has not taken
@@ -122,12 +126,18 @@ impl Inbox {
         state.realtime.is_empty() && state.lines.is_empty()
     }
 
-    /// Waits for something to arrive or for the client to go away.
-    pub fn wait(&self, timeout: Duration) {
+    /// Waits for a realtime action, for a line when `lines` says the
+    /// machine would take one, or for the client to go away. Lines the
+    /// machine cannot take yet do not end the wait: a machine held with a
+    /// line pending would otherwise spin on the ones queued behind it.
+    pub fn wait(&self, timeout: Duration, lines: bool) {
         let state = self.state.lock().unwrap();
-        if !state.realtime.is_empty() || !state.lines.is_empty() || state.closed {
-            return;
-        }
-        let _ = self.signal.wait_timeout(state, timeout).unwrap();
+        let _ = self
+            .signal
+            .wait_timeout_while(state, timeout, |state| {
+                let work = !state.realtime.is_empty() || (lines && !state.lines.is_empty());
+                !work && !state.closed
+            })
+            .unwrap();
     }
 }
