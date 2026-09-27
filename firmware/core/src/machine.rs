@@ -766,6 +766,19 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The drivers lost their motor supply: everything stops as a reset
+    /// stops it, and the machine is left in `Alarm:3` even from `Idle`,
+    /// because the motors held nothing meanwhile. Lines the host sent
+    /// before it heard of it, still on their way in, are then refused
+    /// rather than run from a position nobody knows.
+    pub fn power_lost(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        self.reset(laser);
+        self.state = State::Alarm(3);
+        report::message("reset", out);
+        report::alarm(3, out);
+        report::banner(out);
+    }
+
     fn enter_hold(&mut self, laser: &mut impl LaserPort) {
         self.hold_latched = false;
         self.held = self.state;
@@ -3350,6 +3363,24 @@ mod tests {
         assert_eq!(rig.line("probe H-1"), "[PRB:-1.0000:0]\nALARM:2 probe missed, check the head before moving\nerror:11 probe missed\n");
         assert_eq!(rig.laser.duty, 1000);
         assert_eq!(rig.line("spindle S200"), "error:5 not now\n", "not in an alarm");
+    }
+
+    #[test]
+    fn a_motor_power_loss_stops_everything_and_alarms_even_from_idle() {
+        let mut rig = Rig::with(Settings { spindle: true, h_axis: true, ..bench_settings() });
+        rig.take_out();
+        assert_eq!(rig.line("spindle S500"), "ok\n");
+        assert_eq!(rig.laser.duty, 500);
+        rig.machine.power_lost(&mut rig.laser, &mut rig.out);
+        let out = rig.take_out();
+        assert!(out.starts_with("[MSG:reset]\nALARM:3 motor power lost, position may be off\n[spinny v"), "{out:?}");
+        assert_eq!(rig.laser.duty, 0);
+        assert_eq!(rig.state(), State::Alarm(3));
+        // A line the host sent before it heard of it is refused.
+        assert_eq!(rig.line("go R1"), "error:5 not now\n");
+        assert_eq!(rig.port.count, [0, 0, 0, 0]);
+        assert_eq!(rig.line("unlock"), "ok\n");
+        assert_eq!(rig.state(), State::Idle);
     }
 
     #[test]

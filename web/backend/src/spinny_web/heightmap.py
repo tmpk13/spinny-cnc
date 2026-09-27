@@ -39,7 +39,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from .kinematics import joint_previews
 
 # Points per side of the grid; a probe takes seconds per point, so a grid
 # of 2500 is already most of an hour.
@@ -247,29 +246,69 @@ class Compensation:
         return scaled, min(floor * factor, scaled)
 
 
+# Degrees of table turn between the points a joint move's box is taken
+# from: the arc between two of them bows out by r * (1 - cos 1 deg), under
+# 8 um at 50 mm from the axis.
+EXTENT_STEP_DEG = 2.0
+
+
+def joint_moves_box(polys) -> tuple[float, float, float, float] | None:
+    """The board box joint polylines sweep: each move is straight in radius
+    and angle, an arc or a spiral on the board, and a full turn at one
+    radius starts and ends at the same point. The work is bounded per move,
+    whatever the moves span, and nothing is kept but the box."""
+    box = None
+
+    def take(r: float, a: float) -> None:
+        nonlocal box
+        x, y = r * math.cos(math.radians(a)), r * math.sin(math.radians(a))
+        box = (x, y, x, y) if box is None else (min(box[0], x), min(box[1], y), max(box[2], x), max(box[3], y))
+
+    for poly in polys:
+        for r, a in poly:
+            take(float(r), float(a))
+        for (r0, a0), (r1, a1) in zip(poly, poly[1:]):
+            r0, a0, r1, a1 = float(r0), float(a0), float(r1), float(a1)
+            if abs(a1 - a0) >= 360.0:
+                # A turn or more passes every angle: the circle of its
+                # larger radius holds it.
+                reach = max(abs(r0), abs(r1))
+                take(reach, 0.0)
+                take(reach, 90.0)
+                take(reach, 180.0)
+                take(reach, 270.0)
+                continue
+            steps = max(1, math.ceil(abs(a1 - a0) / EXTENT_STEP_DEG))
+            for i in range(1, steps):
+                t = i / steps
+                take(r0 + (r1 - r0) * t, a0 + (a1 - a0) * t)
+    return box
+
+
 def job_extent(job) -> tuple[float, float, float, float] | None:
     """The board box the enabled groups of a job cut inside, joint-space
-    groups included.
-
-    A joint-space move is straight in radius and angle, so on the board it
-    sweeps an arc or a spiral between its ends: a full turn at one radius
-    starts and ends at the same point. Its box is taken from points along
-    the moves, as streamed, not from the ends alone.
-    """
-    points: list[tuple[float, float]] = []
-    enabled = [group for group in job.groups if group.enabled]
-    for polys in joint_previews([group.joints for group in enabled if group.joints]):
-        for poly in polys:
-            points.extend(poly)
-    for group in enabled:
-        if not group.joints:
-            for path in group.paths:
-                points.extend((float(x), float(y)) for x, y in path)
-    if not points:
+    groups included, those by their moves rather than their ends."""
+    boxes = []
+    for group in job.groups:
+        if not group.enabled:
+            continue
+        if group.joints:
+            boxes.append(joint_moves_box(group.joints))
+        else:
+            points = [(float(x), float(y)) for path in group.paths for x, y in path]
+            if points:
+                xs = [p[0] for p in points]
+                ys = [p[1] for p in points]
+                boxes.append((min(xs), min(ys), max(xs), max(ys)))
+    boxes = [box for box in boxes if box is not None]
+    if not boxes:
         return None
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-    return min(xs), min(ys), max(xs), max(ys)
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
 
 
 def check_covers(heightmap: HeightMap, job) -> None:

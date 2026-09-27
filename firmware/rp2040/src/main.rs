@@ -169,12 +169,14 @@ async fn main(spawner: Spawner) {
         }
         // A driver that lost its motor supply forgot its configuration and
         // its motor its holding torque. Whatever runs stops as a reset
-        // stops it, with `ALARM:1` if it was moving, the beam or spindle
-        // off before the supply comes back, and the lines the host sent
-        // before it hears of the reset go with it.
+        // stops it, and the machine stays in `ALARM:3` until `unlock`: a
+        // line the host sent before it hears of it, still on its way in,
+        // is refused rather than run. The loss is seen at the next driver
+        // poll, so a supply back within one poll period drives the output
+        // at the job's duty until then.
         if tmc::take_power_lost() {
             usb::LINES.clear();
-            machine.realtime(parser::Realtime::Reset, &mut laser, &mut sink);
+            machine.power_lost(&mut laser, &mut sink);
         }
     }
 }

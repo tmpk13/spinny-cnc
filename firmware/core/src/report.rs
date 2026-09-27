@@ -46,6 +46,7 @@ pub fn alarm_text(code: u8) -> &'static str {
     match code {
         1 => "reset while moving, position may be off",
         2 => "probe missed, check the head before moving",
+        3 => "motor power lost, position may be off",
         _ => "unknown alarm",
     }
 }

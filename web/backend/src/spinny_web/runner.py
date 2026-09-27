@@ -118,6 +118,34 @@ class Runner:
 
     # --- control ----------------------------------------------------------
 
+    def reserve(self, link: Link | None) -> None:
+        """Claims the machine for a run about to start, before the caller
+        reads what it needs to get it ready: a stop, hold or reset from
+        here on keeps it from starting. `start(..., reserved=True)` takes
+        the claim over; `release` gives it back when no start follows."""
+        with self._lock:
+            self._claim(link)
+
+    def release(self) -> None:
+        """Gives back a claim `reserve` made that no `start` took over."""
+        with self._lock:
+            if self.progress.state not in (RUNNING, HOLD):
+                self._starting = False
+                self._cancel_start = None
+                self._starting_link = None
+
+    def _claim(self, link: Link | None) -> None:
+        if self.active:
+            raise RunnerError("a job is already running")
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            # Its halt is still on its way to the machine; a new run
+            # would be streamed into the reset that ends the old one.
+            raise RunnerError("the previous run is still stopping")
+        self._starting = True
+        self._cancel_start = None
+        self._starting_link = link
+
     def start(
         self,
         job: Job,
@@ -125,24 +153,23 @@ class Runner:
         streamer: Streamer,
         compensation: Compensation | None = None,
         restarts: int | None = None,
+        reserved: bool = False,
     ) -> dict:
         """Plans the run from where the machine is and starts streaming it.
 
         `restarts` is the link's restart count when the caller began to
         get the run ready (reading settings, say): a reset from then on
         refuses the start. By default it is taken as planning begins.
+        `reserved` takes over a claim `reserve` made, with whatever stop or
+        hold came since.
         """
         with self._lock:
-            if self.active:
-                raise RunnerError("a job is already running")
-            thread = self._thread
-            if thread is not None and thread.is_alive():
-                # Its halt is still on its way to the machine; a new run
-                # would be streamed into the reset that ends the old one.
-                raise RunnerError("the previous run is still stopping")
-            self._starting = True
-            self._cancel_start = None
-            self._starting_link = link
+            if reserved:
+                if not self._starting:
+                    raise RunnerError("the run was not reserved")
+                self._starting_link = link
+            else:
+                self._claim(link)
         try:
             start, stats, restarts = self._prepare(job, link, streamer, compensation, restarts)
             assert link is not None

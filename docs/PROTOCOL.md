@@ -77,17 +77,18 @@ Which commands each state takes:
 | State | Accepted |
 | --- | --- |
 | `Idle` | everything but `unlock` |
-| `Run` | `go`, `cut`, `dwell`, `probe`, `spindle` |
-| `Jog` | jogs, `probe`, `spindle off` |
+| `Run` | `go`, `cut`, `dwell`, `probe`, `spindle S` |
+| `Jog` | jogs, `probe` |
 | `Hold` | `go`, `cut`, `dwell` and `spindle S` in a hold of a run, `probe` in any hold: they are taken in and wait for the resume |
-| `Alarm` | `unlock`, `spindle off` |
+| `Alarm` | `unlock` |
 
 Queries (`?`, `status`, `version`, `help`, `$`, `$<name>`, `$tmc`) are
-answered at once in every state. `mode`, `enable` and `laser off` are taken
-in every state and answered once queued motion is done, so in a hold with
-moves queued they wait for the resume. `set`, `disable`, `laser S`,
-`$<name>=<value>`, `$save`, `$load` and `$defaults` are taken in `Idle`
-only. Anything a row does not name is `error:5` in that state.
+answered at once in every state. `mode`, `enable`, `laser off` and
+`spindle off` are taken in every state and answered once queued motion is
+done, so in a hold with moves queued they wait for the resume. `set`,
+`disable`, `laser S`, `$<name>=<value>`, `$save`, `$load` and `$defaults`
+are taken in `Idle` only. Anything a row does not name is `error:5` in
+that state.
 
 `unlock` outside `Alarm` is `error:5`, and any move is `error:5` while the
 cross slide moves or a jog cancel is still braking. Jogs are accepted in
@@ -285,7 +286,7 @@ turns off a floor below it.
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
 | `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert` and `dir_invert` keep their values, so an active-low laser is not lit by it |
-| `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 4 for each configuration. A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does (`ALARM:1` if it was moving) and configures the drivers again: the motors held nothing meanwhile, so the position may be off even from `Idle` |
+| `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 4 for each configuration. A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does, raises `ALARM:3` even from `Idle` (the motors held nothing meanwhile), and configures the drivers again; the loss is seen at the next driver poll, about every quarter second, so a supply back sooner than that drives the beam or spindle at the job's duty until then |
 
 A value outside its bounds is `error:7`; an integer setting refuses
 decimal text such as `5000.0`. Steps, rates, accelerations and jerks must
@@ -392,6 +393,7 @@ The second form is with `h_axis` set.
 | `error:11` | probe missed: a `probe` went its whole distance without contact (with `ALARM:2`) |
 | `ALARM:1` | reset while moving, the position may be off; `unlock` clears it |
 | `ALARM:2` | probe missed: the head is lower than the probe was meant to take it; `unlock` clears it |
+| `ALARM:3` | motor power lost: the drivers lost their supply and were configured again, and the motors held nothing meanwhile, so the position may be off even from `Idle`; `unlock` clears it |
 
 ## Example session
 

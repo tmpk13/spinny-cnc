@@ -12,7 +12,7 @@ Base URL: `http://<host>:8000`. Bodies and responses are JSON unless noted.
 | --- | --- | --- |
 | `GET /api/ports` | | `{"ports": [{"url": "/dev/ttyACM0", "description": "..."}]}` plus any `socket://` url last used |
 | `POST /api/connect` | `{"url": "/dev/ttyACM0"}` | state snapshot; `socket://host:port` reaches the virtual firmware; anything but a device path, a `COMn` port or a `socket://` url is refused with 400 |
-| `POST /api/disconnect` | | state snapshot; a turning spindle or a lit beam is stopped first (`laser off`, or the reset byte if that is not answered at once), since the firmware does not see a port close; the backend's shutdown does the same |
+| `POST /api/disconnect` | | state snapshot; a turning spindle or a lit beam is stopped first (`laser off` on an idle machine; one that is moving or held, or does not take `laser off` at once, is held and then reset once at rest, as a run's stop does), since the firmware does not see a port close; the backend's shutdown does the same |
 | `GET /api/state` | | state snapshot |
 
 State snapshot:

@@ -164,6 +164,9 @@ class Prober:
         self._link: Link | None = None
         # A start is checking the machine: nothing else may move it.
         self._starting = False
+        # The link's restart count when the start was claimed: a restart
+        # from then on is one the probing did not ask for.
+        self._restarts: int | None = None
         self.progress: ProbeProgress | None = None
 
     @property
@@ -175,6 +178,30 @@ class Prober:
         with self._lock:
             return self.progress.to_dict() if self.progress is not None else None
 
+    def reserve(self, link: Link | None) -> None:
+        """Claims the machine for a probing about to start, before the
+        caller reads what it needs: a stop or reset from here on keeps it
+        from starting. `start(..., reserved=True)` takes the claim over;
+        `release` gives it back when no start follows."""
+        with self._lock:
+            self._claim(link)
+
+    def release(self) -> None:
+        """Gives back a claim `reserve` made that no `start` took over."""
+        with self._lock:
+            self._starting = False
+
+    def _claim(self, link: Link | None) -> None:
+        if self.active:
+            raise ProberError("probing is already under way")
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            raise ProberError("the last probing is still stopping")
+        self._starting = True
+        # A stop from here on ends the start before anything moves.
+        self._abort.clear()
+        self._restarts = link.restarts if link is not None else None
+
     def start(
         self,
         grid: Grid,
@@ -185,26 +212,31 @@ class Prober:
         z_max: float = 0.0,
         spindle_off: int | None = None,
         keep_focus: bool = True,
+        reserved: bool = False,
     ) -> dict:
         """Starts probing `grid`. `spindle_off` is the output's duty with a
         spindle stopped, on a machine whose output drives one: probing is
         refused while the status shows any other, since the tool may be
         the probe and would be lowered onto the copper turning.
         `keep_focus` false starts the new map without the last one's focus
-        offset, which then held only for heights from another frame."""
-        grid.check()
-        settings.check()
-        if link is None or not link.is_open:
-            raise ProberError("not connected")
+        offset, which then held only for heights from another frame.
+        `reserved` takes over a claim `reserve` made, with whatever stop or
+        reset came since."""
+        try:
+            grid.check()
+            settings.check()
+            if link is None or not link.is_open:
+                raise ProberError("not connected")
+        except Exception:
+            if reserved:
+                self.release()
+            raise
         with self._lock:
-            if self.active:
-                raise ProberError("probing is already under way")
-            thread = self._thread
-            if thread is not None and thread.is_alive():
-                raise ProberError("the last probing is still stopping")
-            self._starting = True
-            # A stop from here on ends the start before anything moves.
-            self._abort.clear()
+            if reserved:
+                if not self._starting:
+                    raise ProberError("the probing was not reserved")
+            else:
+                self._claim(link)
         try:
             return self._start(grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus)
         finally:
@@ -268,6 +300,8 @@ class Prober:
         with self._lock:
             if self._abort.is_set():
                 raise ProberError("probing was stopped before it started")
+            if self._restarts is not None and link.restarts != self._restarts:
+                raise ProberError("the machine was reset while probing was being started")
             # The new map replaces the old one from the start, so the page
             # shows its grid filling in rather than the old heights.
             self.store.put(heightmap)
@@ -277,7 +311,7 @@ class Prober:
             start = streamer.start_of(status)
             self._thread = threading.Thread(
                 target=self._run,
-                args=(grid, settings, link, streamer, start, status.h, joints, heightmap, progress),
+                args=(grid, settings, link, streamer, start, status.h, joints, heightmap, progress, self._restarts),
                 name="prober",
                 daemon=True,
             )
@@ -322,8 +356,9 @@ class Prober:
 
     # --- the probing thread -----------------------------------------------
 
-    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress) -> None:
-        restarts = link.restarts
+    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress, restarts) -> None:
+        if restarts is None:
+            restarts = link.restarts
         h_rate = streamer.rates.h_rate
         # Where the head is, and how far the rise to the travel height
         # queued ahead of the next move has to go.

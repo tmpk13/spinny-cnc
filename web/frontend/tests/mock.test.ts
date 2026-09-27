@@ -956,6 +956,10 @@ describe("mock height map", () => {
         await expect(backend.focus(null)).rejects.toMatchObject(probing);
         await expect(backend.clearHeightMap()).rejects.toMatchObject(probing);
         await expect(backend.probe(grid)).rejects.toMatchObject(probing);
+        // Typed lines that change the machine wait for it too, as the backend's do.
+        for (const line of ["set H1", "disable", "$h_steps=100", "spindle S100"]) {
+            await expect(backend.command(line)).rejects.toMatchObject(probing);
+        }
         advance(backend, 0.6);
         const stopped = await backend.probeStop();
         expect(stopped.probe).toMatchObject({ state: "stopped", done: 2, error: null });
@@ -1086,6 +1090,13 @@ describe("mock height map", () => {
         // Taking the focus axis out renumbers it, so the offset is taken back and set again.
         await putFocused(backend, flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]));
         await backend.updateSettings({ values: { h_axis: 0 } });
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        await backend.focus(null);
+        // So does a setting written at the console that may turn the axes;
+        // a query does not.
+        await backend.command("$h_steps");
+        expect((await backend.heightMap()).map?.focus_set).toBe(true);
+        expect(await backend.command("$dir_invert=0")).toEqual(["ok"]);
         expect((await backend.heightMap()).map?.focus_set).toBe(false);
         await backend.focus(null);
         await expect(backend.runJob(job.id, "focus")).rejects.toMatchObject(

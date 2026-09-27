@@ -790,3 +790,26 @@ def test_disconnecting_or_stopping_the_backend_stops_the_spindle(tmp_path):
         assert client.post("/api/spindle", json={"power": 600}).status_code == 200
     # The backend's shutdown closes the link the same way.
     assert fakes[2].spindle == 0 and "laser off" in fakes[2].received_lines
+
+
+def test_a_disconnect_with_the_machine_moving_holds_before_it_resets(tmp_path):
+    fakes: list[FakeSerial] = []
+
+    def factory(url: str) -> Link:
+        fake = FakeSerial(move_time=0.5)
+        fake.settings.update(spindle=1, h_axis=1)
+        fakes.append(fake)
+        return Link(url, open_port=fake_opener(fake))
+
+    backend = Backend(root=tmp_path, link_factory=factory, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        connect(client)
+        assert client.post("/api/spindle", json={"power": 800}).status_code == 200
+        assert client.post("/api/jog", json={"kind": "joint", "dr": 20}).status_code == 200
+        client.post("/api/disconnect")
+        fake = fakes[0]
+        # `laser off` would wait for the jog; a bare reset would land on it.
+        assert fake.spindle == 0
+        assert 0x18 in fake.realtime_bytes
+        assert ord("!") in fake.realtime_bytes[: fake.realtime_bytes.index(0x18)], fake.realtime_bytes
+        assert fake.alarm is None

@@ -118,9 +118,12 @@ impl Sim {
         report::banner(&mut self.out);
         self.flush(socket)?;
         loop {
-            // Counted before the realtime bytes, as on the board.
-            self.machine.note_lines_waiting(inbox.lines_waiting());
+            // Counted before each realtime byte is acted on: the reader
+            // thread pushes a line before the byte behind it, so a hold
+            // finds the line it came with waiting. On the board the reader
+            // cannot run meanwhile, and one count before them does.
             while let Some(action) = inbox.take_realtime() {
+                self.machine.note_lines_waiting(inbox.lines_waiting());
                 let pending = !self.machine.ready_for_line();
                 self.machine.realtime(action, &mut self.laser, &mut self.out);
                 if pending && action == Realtime::Reset {
@@ -406,8 +409,8 @@ mod tests {
     /// `done` says so after a poll.
     fn run_until(sim: &mut Sim, inbox: &Inbox, out: &mut Vec<u8>, done: impl Fn(&Sim) -> bool) {
         for _ in 0..4_000_000 {
-            sim.machine.note_lines_waiting(inbox.lines_waiting());
             while let Some(action) = inbox.take_realtime() {
+                sim.machine.note_lines_waiting(inbox.lines_waiting());
                 sim.machine.realtime(action, &mut sim.laser, &mut sim.out);
             }
             if sim.machine.ready_for_line() {

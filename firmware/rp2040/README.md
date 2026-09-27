@@ -205,15 +205,18 @@ $save
   its straps, and the motors hold nothing while it is off. The firmware
   asks the drivers every quarter second: one that stops answering or
   answers reset raises `[MSG:tmc <axis> addr<n> lost motor power, position
-  may be off]` and resets the machine as Ctrl-X does (`ALARM:1` if it was
-  moving; beam and spindle off, so they stay off when the supply returns).
-  The configuration is written again as soon as the drivers answer, which
-  `[MSG:tmc configured]` announces: wait for it before the next move, then
-  check the position, which nothing measures, before running a job. The
-  `[MSG:reset]` and banner that follow the loss are those of Ctrl-X, which
-  keeps the position; after a loss it no longer holds, the focus axis a
-  height map's focus offset is tied to included, so center and focus
-  again.
+  may be off]`, resets the machine as Ctrl-X does and leaves it in
+  `ALARM:3` until `unlock`, even from Idle, so a line still on its way in
+  is refused. The beam and spindle stay off when the supply returns only
+  if a poll saw it gone: a supply back within a quarter second drives
+  FAN3 at the job's duty, and the drivers step at their strap resolution,
+  until the next poll notices. A laser on that rail needs an interlock of
+  its own that also cuts its enable. The configuration is written again
+  as soon as the drivers answer, which `[MSG:tmc configured]` announces:
+  wait for it before `unlock`, then check the position, which nothing
+  measures, before running a job. The position no longer holds after a
+  loss, the focus axis a height map's focus offset is tied to included,
+  so center and focus again.
 - The cross slide has no limit switches. It is a setup axis with a short
   travel, so drive it in small steps and watch it; a `jogto Z` to a
   position declared before the slide was moved by hand will run into the

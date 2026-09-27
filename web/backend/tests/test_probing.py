@@ -457,6 +457,68 @@ def test_console_lines_that_change_the_machine_wait_for_probing_and_move_the_fra
     assert not focused(client)
 
 
+def test_a_stop_or_a_reset_while_a_start_reads_the_settings_keeps_it_from_starting(client, fake, monkeypatch):
+    backend = client.backend
+    read = backend.read_settings
+    inside = threading.Event()
+
+    def slow_read(force: bool = False) -> dict:
+        # The start reads the settings before anything else: made slow, the
+        # stop comes in that read.
+        if threading.current_thread().name == "starter":
+            inside.set()
+            time.sleep(0.3)
+        return read(force)
+
+    monkeypatch.setattr(backend, "read_settings", slow_read)
+    job = client.post("/api/center", json={}).json()["job"]
+    grid = Grid(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
+    for start, interrupt in (
+        (lambda: backend.run_job(job["id"]), lambda: backend.runner.stop()),
+        (lambda: backend.run_job(job["id"]), lambda: backend.realtime("hold")),
+        (lambda: backend.start_probe(grid), lambda: backend.realtime("reset")),
+        (lambda: backend.start_probe(grid), lambda: backend.prober.stop()),
+    ):
+        inside.clear()
+        sent = len(fake.received_lines)
+        outcome: dict[str, str] = {}
+
+        def attempt() -> None:
+            try:
+                start()
+                outcome["start"] = "started"
+            except Exception as exc:
+                outcome["start"] = repr(exc)
+
+        starter = threading.Thread(target=attempt, name="starter")
+        starter.start()
+        assert inside.wait(2.0)
+        interrupt()
+        starter.join(5.0)
+        assert outcome["start"] != "started", outcome
+        moves = [line for line in fake.received_lines[sent:] if line.split()[0] in ("go", "cut", "probe", "jog")]
+        assert moves == [], moves
+        assert not backend.runner.active and not backend.prober.active
+
+
+def test_a_console_set_lost_unanswered_moves_the_frame_too(client, fake, monkeypatch):
+    probe(client)
+    assert client.post("/api/heightmap/focus", json={"offset": 2.0}).status_code == 200
+    link = client.backend.link
+    request = link.request
+
+    def lost(line: str, timeout: float = 5.0) -> list[str]:
+        # Taken by the machine, its answer never arrives.
+        answer = request(line, timeout)
+        if line.startswith("set"):
+            raise LinkTimeout(f"no answer to {line!r}")
+        return answer
+
+    monkeypatch.setattr(link, "request", lost)
+    assert client.post("/api/command", json={"line": "set H1"}).status_code == 502
+    assert not focused(client)
+
+
 def test_the_offset_is_taken_back_when_the_motors_lose_power(client, fake):
     probe(client)
     assert client.post("/api/heightmap/focus", json={"offset": 2.0}).status_code == 200

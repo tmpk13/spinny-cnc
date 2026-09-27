@@ -220,6 +220,15 @@ const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 const WIRING_SETTINGS = ["laser_invert", "en_invert", "probe_invert", "dir_invert"];
 /** Settings that scale or turn the axes, so the focus axis frame a height map is tied to. */
 const FRAME_SETTINGS = new Set(["r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis"]);
+
+/** A typed `$` line that may change the frame the axes count in. */
+function reframes(text: string): boolean {
+    const body = (text.slice(1).split(";")[0] ?? "").trim().toLowerCase();
+    if (body === "load" || body === "defaults") {
+        return true;
+    }
+    return FRAME_SETTINGS.has((body.split("=")[0] ?? "").trim());
+}
 /** Largest whole number and other value the backend sends as a setting. */
 const INT_SETTING_MAX = U32_MAX;
 const SETTING_MAX = 1e7;
@@ -2110,6 +2119,15 @@ export class MockBackend implements Api, EventFeed {
             await this.runStop();
             return [];
         }
+        // As the backend guards them: lines that change the machine wait for
+        // no run or probing, and a spindle start for no probing.
+        const first = words[0] ?? "";
+        const setting = text.startsWith("$") && (text.includes("=") || ["load", "defaults"].includes(text.slice(1).trim().toLowerCase()));
+        if (setting || first === "set" || first === "disable") {
+            this.notOwned();
+        } else if (first === "spindle" && words[1] !== "off") {
+            this.refuseWhileProbing();
+        }
         // A typed line may move the head, so the end of the last jog is no start to plan from.
         this.jogTracked = false;
         this.line("tx", text);
@@ -2119,6 +2137,9 @@ export class MockBackend implements Api, EventFeed {
             this.line("rx", reply);
         }
         this.later = [];
+        if (replies[replies.length - 1] === "ok" && (first === "set" || (setting && reframes(text)))) {
+            this.frameChanged("a position or setting changed at the console");
+        }
         return replies;
     }
 

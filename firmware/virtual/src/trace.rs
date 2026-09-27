@@ -68,6 +68,8 @@ pub struct Trace {
     truncated: bool,
     /// Marks recorded since the file was last written.
     fresh: usize,
+    /// Commands the file had when a write was last tried.
+    tried_commands: usize,
     /// Marks, commands and truncation as the file last had them.
     written: (usize, usize, bool),
     laser_on_mm: f64,
@@ -162,8 +164,10 @@ impl Trace {
         }
     }
 
+    /// Marks or commands recorded since a write was last tried: a session
+    /// that only moves dark (jogs, probing) is written at rest too.
     pub fn has_fresh(&self) -> bool {
-        self.fresh > 0
+        self.fresh > 0 || self.commands.len() != self.tried_commands
     }
 
     /// Writes the file if anything is new since the last write. A write
@@ -178,6 +182,7 @@ impl Trace {
             return Ok(());
         }
         self.fresh = 0;
+        self.tried_commands = self.commands.len();
         fs::write(&path, self.render())?;
         self.written = now;
         Ok(())
@@ -378,9 +383,13 @@ mod tests {
         fs::remove_file(&path).unwrap();
         trace.flush().unwrap();
         assert!(!path.exists(), "rewritten with nothing new");
+        // An answered line is new, and asks for a write at rest the way a
+        // mark does, so a session with the output off reaches the file too.
         trace.command(Command { text: "version".into(), sent_us: 0, done_us: 0, from: [0.0; AXES], to: [0.0; AXES] });
+        assert!(trace.has_fresh());
         trace.flush().unwrap();
         assert!(path.exists(), "an answered line is new");
+        assert!(!trace.has_fresh());
         fs::remove_file(&path).unwrap();
     }
 

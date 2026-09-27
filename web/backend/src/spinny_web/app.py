@@ -53,7 +53,7 @@ from .link import (
     REALTIME_STATUS,
 )
 from .prober import Prober, ProberError, ProbeSettings
-from .runner import HOLD, RUNNING, Runner, RunnerError
+from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
@@ -473,9 +473,11 @@ class Backend:
 
         The firmware does not see a port close, only the USB host going
         away, and a spindle has no timeout: left on, it would go on turning
-        with nothing connected to stop it. `laser off` stops either; one
-        that is refused or not answered in time, with motion still queued,
-        is followed by the reset byte, which stops the output at once.
+        with nothing connected to stop it. On an idle machine `laser off`
+        stops either. A machine that is moving or held, or one that does not
+        take `laser off` in time, is stopped the way a run's stop does it:
+        a hold, then the reset once it is at rest, which turns the output
+        off without the reset landing on a move.
         """
         try:
             status = link.status_now(OUTPUT_OFF_WAIT, routine=True)
@@ -486,15 +488,13 @@ class Backend:
         if status is not None and status.state.startswith("Alarm"):
             # An alarm has stopped the output already.
             return
-        try:
-            link.request_ok("laser off", timeout=OUTPUT_OFF_WAIT)
-            return
-        except LinkError:
-            pass
-        try:
-            link.reset(timeout=OUTPUT_OFF_WAIT)
-        except LinkError:
-            pass
+        if status is not None and status.state == "Idle":
+            try:
+                link.request_ok("laser off", timeout=OUTPUT_OFF_WAIT)
+                return
+            except LinkError:
+                pass
+        halt(link, self.publish_message)
 
     def _off_duty(self) -> int:
         """The output's duty with the beam dark or the spindle stopped, in
@@ -725,10 +725,10 @@ class Backend:
         return {"lines": [line]}
 
     def jog(self, body: JogBody) -> dict:
-        self._movable()
-        with self._move_lock:
-            # Again under the lock: probing claims the machine under it, and
-            # may have while this waited.
+        # Checked under both locks, as a position set is: a run or probing
+        # claims the machine under the first, so it cannot start between
+        # this check and the line going out.
+        with self._owner_lock, self._move_lock:
             link = self._movable()
             return self._jog(link, body)
 
@@ -767,10 +767,10 @@ class Backend:
         return {"lines": lines}
 
     def goto(self, body: GotoBody) -> dict:
-        self._movable()
-        with self._move_lock:
-            # Again under the lock: probing claims the machine under it, and
-            # may have while this waited.
+        # Checked under both locks, as a position set is: a run or probing
+        # claims the machine under the first, so it cannot start between
+        # this check and the line going out.
+        with self._owner_lock, self._move_lock:
             link = self._movable()
             return self._goto(link, body)
 
@@ -936,18 +936,33 @@ class Backend:
         # probing leaves it idle for a moment between its lines, and the
         # firmware takes them then. A spindle start is refused while
         # probing, as the button is: the probe may be the tool itself.
-        owned = setting or first in ("set", "disable") or (first == "spindle" and words[1:2] != ["off"])
+        owned = setting or first in ("set", "disable")
+        spindle_start = first == "spindle" and words[1:2] != ["off"]
         # A typed line may move the head or declare where it is, which
         # makes the end of the last jog meaningless as a starting point.
         self._jog_target = None
-        if owned:
+        reframes = first == "set" or (setting and self._reframes(text))
+
+        def send() -> list[str]:
+            try:
+                return link.request(text)
+            except LinkError:
+                # Lost unanswered, it may still have been taken.
+                if reframes:
+                    self._frame_changed("a position or setting changed at the console")
+                raise
+
+        if owned or spindle_start:
             with self._owner_lock:
-                self._not_owned()
-                lines = link.request(text)
+                if owned:
+                    self._not_owned()
+                elif self.prober.active:
+                    # A speed change during a run is the operator's to make.
+                    raise HTTPException(status_code=409, detail="the board is being probed")
+                lines = send()
         else:
-            lines = link.request(text)
-        accepted = bool(lines) and lines[-1] == "ok"
-        if accepted and (first == "set" or (setting and self._reframes(text))):
+            lines = send()
+        if reframes and lines and lines[-1] == "ok":
             self._frame_changed("a position or setting changed at the console")
         if setting:
             # A setting typed at the console: what this side remembers of
@@ -1250,19 +1265,24 @@ class Backend:
             raise HTTPException(status_code=404, detail="no such job")
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
-        # Counted from here: a reset while the settings are read, before the
-        # runner has anything to cancel, still keeps the run from starting.
-        restarts = self.link.restarts if self.link is not None else None
-        if self.link is not None and self.link.is_open:
-            values = self.read_settings(force=True)["values"]
-            if self.milling and not values.get("h_axis"):
-                raise ValueError("a spindle needs the focus axis as its depth axis: set $h_axis=1")
-        compensation = self.compensation(compensate, job)
-        # A cartesian plan is made in the frame of the table as it is now.
-        status = None
-        if self.cartesian and self.link is not None and self.link.is_open:
-            status = self.link.status_now(1.0, routine=True)
-        return self.runner.start(job, self.link, self.streamer(status), compensation, restarts)
+        # Claimed before the settings are read: a stop, hold or reset while
+        # they are keeps the run from starting, as one during its planning
+        # does. The restart count is taken with it for the same reason.
+        self.runner.reserve(self.link)
+        try:
+            restarts = self.link.restarts if self.link is not None else None
+            if self.link is not None and self.link.is_open:
+                values = self.read_settings(force=True)["values"]
+                if self.milling and not values.get("h_axis"):
+                    raise ValueError("a spindle needs the focus axis as its depth axis: set $h_axis=1")
+            compensation = self.compensation(compensate, job)
+            # A cartesian plan is made in the frame of the table as it is now.
+            status = None
+            if self.cartesian and self.link is not None and self.link.is_open:
+                status = self.link.status_now(1.0, routine=True)
+            return self.runner.start(job, self.link, self.streamer(status), compensation, restarts, reserved=True)
+        finally:
+            self.runner.release()
 
     # --- the height map ---------------------------------------------------------------
 
@@ -1319,29 +1339,37 @@ class Backend:
         # finds the board being probed.
         with self._owner_lock:
             link = self._movable()
-            values = self.read_settings(force=True)["values"]
+            # Claimed before the settings are read: a stop or reset while
+            # they are keeps the probing from starting.
+            self.prober.reserve(link)
             try:
-                r_max = float(values.get("r_max", 0) or 0)
-                z_max = float(values.get("z_max", 0) or 0)
-            except (TypeError, ValueError):
-                r_max, z_max = 0.0, 0.0
-            # The tool may be the probe: a spindle has to be stopped.
-            spindle_off = self._off_duty() if self.milling else None
-            with self._move_lock:
-                self._jog_target = None
-                status = link.status_now(1.0, routine=True)
-                frame = self._frame
-                self.prober.start(
-                    grid,
-                    self.probe_settings(),
-                    link,
-                    self.streamer(status),
-                    r_max,
-                    z_max,
-                    spindle_off,
-                    keep_focus=self._heights_frame == frame,
-                )
-                self._heights_frame = frame
+                values = self.read_settings(force=True)["values"]
+                try:
+                    r_max = float(values.get("r_max", 0) or 0)
+                    z_max = float(values.get("z_max", 0) or 0)
+                except (TypeError, ValueError):
+                    r_max, z_max = 0.0, 0.0
+                # The tool may be the probe: a spindle has to be stopped.
+                spindle_off = self._off_duty() if self.milling else None
+                with self._move_lock:
+                    self._jog_target = None
+                    status = link.status_now(1.0, routine=True)
+                    frame = self._frame
+                    self.prober.start(
+                        grid,
+                        self.probe_settings(),
+                        link,
+                        self.streamer(status),
+                        r_max,
+                        z_max,
+                        spindle_off,
+                        keep_focus=self._heights_frame == frame,
+                        reserved=True,
+                    )
+                    self._heights_frame = frame
+            finally:
+                # A start that went through has let go of the claim already.
+                self.prober.release()
         return self.heightmap_state()
 
     def stop_probe(self) -> dict:
