@@ -185,3 +185,9 @@
   the host keeps clearance and spin-up, and the height map is the
   autoleveling with a touch-off. The page has spindle controls and
   milling columns.
+- Third full review (2026-09-26): about 95 verified faults fixed across the
+  firmware (hold latch loop order, probe brake and cancel, short-block
+  crawl, spindle refusals, `$defaults` polarity), the board port (motor
+  power loss, `$tmc`), the virtual firmware, the backend (status counting,
+  run start cancellation, probe timeout, height map frame, console guards),
+  the page and mock, and the command line tools.
