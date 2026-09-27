@@ -41,10 +41,10 @@ part of the line.
 | Byte | Action |
 | --- | --- |
 | `?` | one status line |
-| `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a hold that finds the machine idle with a motion line taken in or waiting is kept for that line and applied as it starts; a beam lit by `laser` is closed from any state |
-| `~` | resume from `Hold` |
+| `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a hold that finds the machine idle with a motion line taken in or waiting is kept for that line and applied as it starts (a `laser S` it was kept for is answered and stays dark, a cross slide jog ends before its first step, and a `spindle S` waits in `Hold` for the resume); a beam lit by `laser` is closed from any state |
+| `~` | resume from `Hold`; a probe braking at its contact finishes the brake and ends as a contact whatever `~` asks |
 | `0x18` | reset: stop at once, flush everything, laser off, and forget the modal state (`F`, `S`, `mode` back to `dyn`); prints `[MSG:reset]`, then `ALARM:1 reset while moving, position may be off` if it was moving, then the banner; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
-| `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle` |
+| `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle`; a `probe` waiting behind the jog is ended unrun with `[PRB:<h>:0]` and `ok` |
 
 ## Motion commands
 
@@ -63,8 +63,11 @@ With `cartesian` set the moves also take `Z`, and `go` and `cut` no longer
 take `A`.
 
 Surface speed: the length of a joint move on the board is taken as
-`hypot(dr, r_mean * da_rad, dz)` with `r_mean = (r0 + r1) / 2`; `dz`, the
-cross slide, is only ever nonzero on a cartesian machine. A move whose
+`hypot(dr, r_mean * da_rad)` with `r_mean = (r0 + r1) / 2`. On a cartesian
+machine the head sits `hypot(R, Z)` from the rotation axis, so it is
+`hypot(dr, dz, hypot(r_mean, z_mean) * da_rad)` there: a jog that turns the
+table to line a board up takes `F` as the speed the board passes under the
+head, as on a polar machine. A move whose
 surface length is under 1 um (a turn on the axis) runs at the max rates with
 the laser off. Speed is capped by `r_rate` and `a_rate`; under `mode dyn`
 the laser power follows the achieved speed so the dose per mm holds.
@@ -73,11 +76,18 @@ Which commands each state takes:
 
 | State | Accepted |
 | --- | --- |
-| `Idle` | everything |
-| `Run` | `go`, `cut`, `dwell`, `probe`, `mode`, `laser`, `spindle`, `?`-style queries; jogs, `set`, `$`, `enable`, `disable` are `error:5` |
-| `Jog` | jogs, `probe`, `mode`, `laser`, `spindle off`; `go`/`cut`/`dwell`/`spindle S`/`set`/`$` are `error:5` |
-| `Hold` | `go`, `cut`, `dwell` and `spindle S` are taken in and wait for the resume (a hold of a run), and so is `probe` in any hold; jogs, `set`, `$` and the rest are `error:5` |
-| `Alarm` | `unlock`, `$`, queries; motion and `set` are `error:5` |
+| `Idle` | everything but `unlock` |
+| `Run` | `go`, `cut`, `dwell`, `probe`, `spindle` |
+| `Jog` | jogs, `probe`, `spindle off` |
+| `Hold` | `go`, `cut`, `dwell` and `spindle S` in a hold of a run, `probe` in any hold: they are taken in and wait for the resume |
+| `Alarm` | `unlock`, `spindle off` |
+
+Queries (`?`, `status`, `version`, `help`, `$`, `$<name>`, `$tmc`) are
+answered at once in every state. `mode`, `enable` and `laser off` are taken
+in every state and answered once queued motion is done, so in a hold with
+moves queued they wait for the resume. `set`, `disable`, `laser S`,
+`$<name>=<value>`, `$save`, `$load` and `$defaults` are taken in `Idle`
+only. Anything a row does not name is `error:5` in that state.
 
 `unlock` outside `Alarm` is `error:5`, and any move is `error:5` while the
 cross slide moves or a jog cancel is still braking. Jogs are accepted in
@@ -146,6 +156,8 @@ meanwhile. The state is `Jog` while it moves.
   whoever sent the line meant, and whatever they queued next would drag
   it across the board.
 - Already active at the start: `error:10 probe active`, and nothing moves.
+- A spindle turning when it would start (the probe may be the tool
+  itself): `error:5 not now`, and nothing moves.
 - `0x85` ends it like a jog: `[PRB:<h>:0]` (or `:1` if it had touched)
   and `ok`, no alarm. `!` holds it and `~` goes on with it. A reset ends
   it with no answer, as it does any line, and raises `Alarm:1` when it
@@ -197,7 +209,12 @@ setup stepper's. `r_max` and `z_max` hold it to a box around zero.
 Switching `cartesian` (from `Idle`, as any setting) hands the slide's
 position over, so it stays where it was either way. Y is measured from
 `Z0`: with `Z0` set where the rail passes over the rotation axis, board
-X/Y turned by the table angle is the same frame a polar job uses.
+X/Y turned by the table angle is the same frame a polar job uses. That
+frame needs `+Z` 90 degrees counterclockwise of `+R` seen from above: at
+`A0` with the head out on `R`, `jog Z1` carries the beam over the board
+the same way a small positive `A` turn does. The other way round mirrors
+every cartesian job and height map; bit 2 of `dir_invert` turns it, and
+`Z0` has to be set again over the axis after that.
 
 ## Spindle
 
@@ -217,8 +234,12 @@ and an alarm (a missed probe) stop it. The step interrupt never writes the
 output, and the status line's `L` is the spindle's duty. `S` and `M` on
 `cut` and `S` on `dwell` are refused (`error:2`), so a laser job sent to a
 spindle machine fails on its first cut rather than running, and so is
-`laser S`; `spindle` on a laser machine is refused the same way. The host
-waits out the spin-up with a `dwell` after `spindle S`.
+`laser S`; `spindle` on a laser machine is refused the same way. `cut` is
+refused (`error:5`) while the spindle is stopped (never started, stopped
+by `spindle off` or `laser off`, or started at `S0`): a job whose spindle
+was stopped under it ends at its next cut rather than dragging a still
+tool through the board. `go` and jogs still move. The host waits out the
+spin-up with a `dwell` after `spindle S`.
 
 ## Laser
 
@@ -233,7 +254,10 @@ The beam is off during `go`, jogs, holds, alarms, after a reset, when the
 USB host disconnects, and when the planner runs dry (a spindle is not; see
 [Spindle](#spindle)). A USB disconnect is a
 full reset: the queue is flushed, the modal state forgotten, and a machine
-that was moving is left in `Alarm:1`. `S` is 0 to `s_max`
+that was moving is left in `Alarm:1`. A disconnect is the bus going away (a
+cable pulled, the host suspended or reset); a program that only closes the
+serial port is not one, and leaves the queue, a beam or a spindle running,
+so a host stops the output itself before it closes. `S` is 0 to `s_max`
 and maps linearly to PWM duty; in `dyn` mode a computed power below `s_min`
 is set to 0. `M` holds the beam up where the head slows for a corner: an `M`
 above `S` counts as `S`, a turn on the axis stays dark, and `s_min` still
@@ -260,8 +284,8 @@ turns off a floor below it.
 | `$<name>=<value>` | set in RAM (`Idle` only) |
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
-| `$defaults` | factory values in RAM (`Idle` only) |
-| `$tmc` | one `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]` per driver, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`, then `ok`; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked |
+| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert` and `dir_invert` keep their values, so an active-low laser is not lit by it |
+| `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 4 for each configuration. A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does (`ALARM:1` if it was moving) and configures the drivers again: the motors held nothing meanwhile, so the position may be off even from `Idle` |
 
 A value outside its bounds is `error:7`; an integer setting refuses
 decimal text such as `5000.0`. Steps, rates, accelerations and jerks must
@@ -322,8 +346,10 @@ microsteps a power of two up to 256.
 Changing a `tmc_*` setting or `h_axis` re-sends the driver configuration.
 Changing `spindle` stops whatever runs on the output.
 
-The settings stored by a firmware from before the focus axis are thrown
-away at boot (the stored layout changed): set them again and `$save`.
+Settings stored by a firmware from before `probe_ms` (the stored layout
+changed, and the first focus axis firmware is one of them) are thrown away
+at boot: set them again, `laser_invert` first, and `$save`. Until then the
+output runs at the defaults' polarity, which lights an active-low module.
 Settings stored before `z_jerk`, `z_max`, `cartesian` and `spindle` are
 read, with those four at their defaults.
 

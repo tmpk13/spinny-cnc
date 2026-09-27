@@ -312,6 +312,12 @@ impl<'a> Machine<'a> {
                     return Err(Error::BadWord);
                 }
                 self.check_motion_state(false)?;
+                // A cut drags the tool through the work: with the spindle
+                // stopped under a job (a `spindle off` or `laser off` from a
+                // console, a speed of 0) the job ends at its next cut.
+                if self.settings.spindle && !self.spindle.is_some_and(|speed| speed > 0.0) {
+                    return Err(Error::State);
+                }
                 let feed = feed.or(self.feed).ok_or(Error::MissingWord)?;
                 // `M` is not modal: a cut without it has no floor.
                 let min_power = min_power.unwrap_or(0.0);
@@ -496,7 +502,17 @@ impl<'a> Machine<'a> {
             }
             Command::SettingsDefaults => {
                 self.require_idle()?;
-                self.adopt(Settings::default());
+                // The polarities describe the wiring, not a tuning: an
+                // active-low laser taken back to active high would light at
+                // full power the moment the output is driven.
+                let defaults = Settings {
+                    laser_invert: self.settings.laser_invert,
+                    en_invert: self.settings.en_invert,
+                    probe_invert: self.settings.probe_invert,
+                    dir_invert: self.settings.dir_invert,
+                    ..Settings::default()
+                };
+                self.adopt(defaults);
                 Ok(true)
             }
             Command::DriverReport => {
@@ -696,8 +712,14 @@ impl<'a> Machine<'a> {
                     // in, or still waiting to be read, starts the moment
                     // this returns and would run on as if the hold had
                     // never been asked for. It is kept for that line.
-                    let waiting = matches!(self.pending, Pending::Motion { .. } | Pending::Dwell { .. } | Pending::Probe { .. })
-                        || self.lines_waiting > 0;
+                    let waiting = matches!(
+                        self.pending,
+                        Pending::Motion { .. }
+                            | Pending::Dwell { .. }
+                            | Pending::Probe { .. }
+                            | Pending::Spindle(Some(_))
+                            | Pending::SlideMove { .. }
+                    ) || self.lines_waiting > 0;
                     if self.state == State::Idle && waiting {
                         self.hold_latched = true;
                     }
@@ -707,7 +729,10 @@ impl<'a> Machine<'a> {
             }
             Realtime::Resume => {
                 self.hold_latched = false;
-                if self.state != State::Hold || self.jog_cancel {
+                // A probe braking at its contact finishes the brake whatever
+                // is asked: resumed, the rest of its block would drive the
+                // head on through the board with nothing left to stop it.
+                if self.state != State::Hold || self.jog_cancel || self.probe_braking {
                     return;
                 }
                 self.front.resume(&mut self.planner);
@@ -865,6 +890,12 @@ impl<'a> Machine<'a> {
                 // The rest of the jog is discarded, the line still answered.
                 self.pending = Pending::None;
                 report::ok(out);
+            } else if matches!(self.pending, Pending::Probe { .. }) {
+                // A probe waiting behind the jog was to start where the jog
+                // would have ended; it ends unrun, as a canceled probe does.
+                self.pending = Pending::None;
+                self.report_probe(None, out);
+                report::ok(out);
             } else if self.pending == Pending::Probing {
                 // Canceled on purpose: the operator knows where the head
                 // is, so no alarm, but no contact either unless there was.
@@ -879,6 +910,12 @@ impl<'a> Machine<'a> {
         if self.beam.is_some() && now_us >= self.beam_until {
             self.beam = None;
             self.drive_beam(laser);
+        }
+        // A turning spindle or a lit beam keeps the drivers on: the depth
+        // axis under a turning tool keeps its holding torque, and the idle
+        // time counts from when the output stops.
+        if self.spindle.is_some_and(|speed| speed > 0.0) || self.beam.is_some() {
+            self.idle_since = now_us;
         }
         let idle_limit = self.settings.idle_ms as u64 * 1000;
         if self.state == State::Idle && self.enabled && idle_limit > 0 && now_us.saturating_sub(self.idle_since) >= idle_limit {
@@ -950,6 +987,9 @@ impl<'a> Machine<'a> {
             }
             Pending::Probe { distance, feed } => return self.start_probe(distance, feed, port, laser, out),
             Pending::Mode(mode) => self.mode = mode,
+            // A hold kept for this line closes the beam as soon as it lights,
+            // as it would a beam already lit: it is answered and stays dark.
+            Pending::LaserOn { .. } if self.hold_latched => self.hold_latched = false,
             Pending::LaserOn { power, ms } => {
                 self.beam = Some(power);
                 self.beam_until = self.now + ms.unwrap_or(self.settings.laser_ms) as u64 * 1000;
@@ -962,9 +1002,15 @@ impl<'a> Machine<'a> {
                 self.drive_beam(laser);
             }
             Pending::Spindle(power) => {
-                // A start waits out a hold, as the move behind it would;
-                // a stop never waits for one.
-                if power.is_some() && (self.state == State::Hold || self.hold_latched) {
+                // A start waits out a hold, as the move behind it would. A
+                // stop waits only for the motion queued ahead of it (which a
+                // hold of a run keeps until the resume), not for the hold
+                // itself. A hold kept for a start is applied here, so the
+                // report says Hold and `~` starts it.
+                if power.is_some() && self.hold_latched {
+                    self.enter_hold(laser);
+                }
+                if power.is_some() && self.state == State::Hold {
                     return false;
                 }
                 self.spindle = power;
@@ -981,6 +1027,9 @@ impl<'a> Machine<'a> {
                 self.front.set_position(steps);
             }
             Pending::SetSlide(value) => self.slide.set_position(value, &self.settings),
+            // A hold brakes a slide move and ends it where it is; one kept
+            // for the move ends it before its first step.
+            Pending::SlideMove { .. } if self.hold_latched => self.hold_latched = false,
             Pending::SlideMove { target, feed } => {
                 self.set_enabled(true, port);
                 // A constant beam lit by `laser` goes out before the rail
@@ -1040,6 +1089,11 @@ impl<'a> Machine<'a> {
         if self.probe_active {
             return refuse(self, Error::ProbeActive, out);
         }
+        // With a spindle the probe may be the tool itself: a turning one
+        // would cut into the copper at every touch.
+        if self.settings.spindle && self.spindle.is_some_and(|speed| speed > 0.0) {
+            return refuse(self, Error::State, out);
+        }
         let mut target = self.planner.position_units(&self.settings);
         let steps = self.settings.steps[H];
         let from = self.planner.position()[H];
@@ -1095,10 +1149,11 @@ impl<'a> Machine<'a> {
                 self.front.is_stopped()
             };
             if stopped {
-                if !self.probe_halting {
-                    self.front.flush(&mut self.planner);
-                    self.planner.clear();
-                }
+                // Also after a halt: a hold or cancel asked while its abort
+                // was still being taken left the front holding, and the next
+                // move would be answered and never run.
+                self.front.flush(&mut self.planner);
+                self.planner.clear();
                 self.finish_probe(contact, laser, out);
             }
             return;
@@ -1265,6 +1320,7 @@ mod tests {
 
     use std::boxed::Box;
     use std::string::String;
+    use std::vec;
     use std::vec::Vec;
 
     use super::*;
@@ -1516,6 +1572,23 @@ mod tests {
         fn realtime(&mut self, action: Realtime) {
             self.laser.now = self.now;
             self.machine.realtime(action, &mut self.laser, &mut self.out);
+        }
+
+        /// One pass of the board's main loop with `queue` as the lines the
+        /// reader has assembled and `bytes` as the realtime bytes that came
+        /// with them: waiting lines counted, realtime bytes, at most one
+        /// line taken, waiting lines counted again, then the polls.
+        fn pass(&mut self, queue: &mut Vec<&str>, bytes: &[Realtime]) {
+            self.machine.note_lines_waiting(queue.len());
+            for &action in bytes {
+                self.realtime(action);
+            }
+            if !queue.is_empty() && self.machine.ready_for_line() {
+                let line = queue.remove(0);
+                self.machine.submit(line, &mut self.out);
+            }
+            self.machine.note_lines_waiting(queue.len());
+            self.advance(POLL_US);
         }
 
         fn state(&self) -> State {
@@ -1850,12 +1923,12 @@ mod tests {
     fn a_hold_asked_while_a_line_waits_is_kept_for_that_line() {
         // The hold byte overtakes the line it was meant for: the machine
         // is idle when it arrives, and the line would otherwise run on.
+        // Both arrive in one pass of the loop, as they do from a host that
+        // writes the line and the hold together.
         let mut rig = Rig::new();
         rig.take_out();
-        rig.submit("go R20");
-        rig.realtime(Realtime::Hold);
-        assert_eq!(rig.state(), State::Idle);
-        rig.advance(POLL_US);
+        let mut queue = vec!["go R20"];
+        rig.pass(&mut queue, &[Realtime::Hold]);
         assert_eq!(rig.take_out(), "ok\n");
         assert_eq!(rig.state(), State::Hold);
         rig.advance(500_000);
@@ -1864,17 +1937,56 @@ mod tests {
         rig.realtime(Realtime::Resume);
         rig.run();
         assert_eq!(rig.machine.joint(), [20.0, 0.0, 0.0, 0.0]);
-        // Waiting lines count too, and a hold kept for a line that is not
-        // motion is forgotten once it has been read.
-        rig.machine.note_lines_waiting(1);
-        rig.realtime(Realtime::Hold);
-        assert_eq!(rig.line("$r_max"), "r_max=0\nok\n");
-        rig.machine.note_lines_waiting(0);
+        // A hold kept for a line that is not motion is forgotten once it
+        // has been read.
+        let mut queue = vec!["$r_max"];
+        rig.pass(&mut queue, &[Realtime::Hold]);
+        assert_eq!(rig.take_out(), "r_max=0\nok\n");
         rig.advance(POLL_US);
         assert_eq!(rig.line("go R10"), "ok\n");
         assert_eq!(rig.state(), State::Run);
         rig.run();
         assert_eq!(rig.machine.joint(), [10.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_hold_kept_for_a_line_that_is_not_a_joint_move_applies_to_it() {
+        // `laser S`: the hold closes the beam, so it never lights.
+        let mut rig = Rig::new();
+        rig.take_out();
+        let mut queue = vec!["laser S800 T5000"];
+        rig.pass(&mut queue, &[Realtime::Hold]);
+        assert_eq!(rig.take_out(), "ok\n");
+        rig.advance(100_000);
+        assert_eq!(rig.laser.duty, 0, "the beam lit under a hold");
+        assert_eq!(rig.state(), State::Idle);
+
+        // A cross slide jog ends where it started, and the hold is not
+        // left over for the next move.
+        let mut queue = vec!["jog Z5 F60"];
+        rig.pass(&mut queue, &[Realtime::Hold]);
+        assert_eq!(rig.take_out(), "ok\n");
+        rig.advance(500_000);
+        assert_eq!(rig.slide.pulses, 0, "the slide ran under a hold");
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(rig.line("go R1"), "ok\n");
+        assert_eq!(rig.state(), State::Run, "a later move started held");
+        rig.run();
+
+        // A spindle start is held: the report says so, and the resume
+        // starts it.
+        assert_eq!(rig.line("$spindle=1"), "ok\n");
+        let mut queue = vec!["spindle S500"];
+        rig.pass(&mut queue, &[Realtime::Hold]);
+        rig.advance(100_000);
+        assert_eq!(rig.take_out(), "", "answered before the resume");
+        assert_eq!(rig.laser.duty, 0);
+        assert!(rig.status_line().starts_with("<Hold|"));
+        rig.realtime(Realtime::Resume);
+        rig.advance(POLL_US);
+        assert_eq!(rig.take_out(), "ok\n");
+        assert_eq!(rig.laser.duty, 500);
+        assert_eq!(rig.state(), State::Idle);
     }
 
     #[test]
@@ -2522,7 +2634,8 @@ mod tests {
         assert_eq!(rig.line("$laser_invert=1"), "ok\n");
         assert_eq!(rig.line("$en_invert=1"), "ok\n");
         assert_eq!(rig.line("$save"), "ok\n");
-        assert_eq!(rig.line("$defaults"), "ok\n");
+        assert_eq!(rig.line("$laser_invert=0"), "ok\n");
+        assert_eq!(rig.line("$en_invert=0"), "ok\n");
         rig.advance(POLL_US);
         assert_eq!(rig.laser.duty, 0);
         assert_eq!(rig.port.enable_level, Some(true));
@@ -2882,6 +2995,64 @@ mod tests {
     }
 
     #[test]
+    fn a_resume_during_the_contact_brake_does_not_lift_the_brake() {
+        let mut rig = focus_rig();
+        rig.surface = Some(-1.25);
+        rig.submit("probe H-5 F60");
+        let mut waited = 0;
+        while rig.machine.front.probe_contact().is_none() {
+            rig.advance(POLL_US);
+            waited += 1;
+            assert!(waited < 20_000, "no contact");
+        }
+        // The operator pauses and resumes while the head brakes at the
+        // contact.
+        rig.realtime(Realtime::Hold);
+        rig.advance(1_000);
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!(rig.take_out(), "[PRB:-1.2500:1]\nok\n");
+        assert_eq!(rig.state(), State::Idle);
+        let h = rig.machine.joint()[H];
+        assert!(h <= -1.25 && h > -1.3, "stopped at {h}");
+    }
+
+    #[test]
+    fn a_jog_cancel_ends_a_probe_waiting_behind_the_jog_unrun() {
+        for hold_first in [false, true] {
+            let mut rig = focus_rig();
+            rig.surface = Some(-1.0);
+            assert_eq!(rig.line("jog R40 F600"), "ok\n");
+            rig.submit("probe H-3 F60");
+            rig.advance(200_000);
+            if hold_first {
+                rig.realtime(Realtime::Hold);
+                rig.advance(200_000);
+            }
+            rig.realtime(Realtime::JogCancel);
+            rig.run();
+            assert_eq!(rig.take_out(), "[PRB:0.0000:0]\nok\n", "hold first: {hold_first}");
+            assert_eq!(rig.state(), State::Idle);
+            assert_eq!(rig.machine.joint()[H], 0.0, "the head went down after the cancel");
+        }
+    }
+
+    #[test]
+    fn a_turning_spindle_keeps_the_drivers_on_past_the_idle_time() {
+        let mut rig = Rig::with(Settings { spindle: true, h_axis: true, idle_ms: 100, ..bench_settings() });
+        rig.take_out();
+        assert_eq!(rig.line("enable"), "ok\n");
+        assert_eq!(rig.line("spindle S300"), "ok\n");
+        rig.advance(300_000);
+        assert!(rig.status_line().contains("|E:1|"), "drivers released under a turning tool");
+        assert_eq!(rig.line("spindle off"), "ok\n");
+        rig.advance(50_000);
+        assert!(rig.status_line().contains("|E:1|"), "the idle time counts from the stop");
+        rig.advance(60_000);
+        assert!(rig.status_line().contains("|E:0|"));
+    }
+
+    #[test]
     fn a_held_probe_resumes_and_still_finds_the_board() {
         let mut rig = focus_rig();
         rig.surface = Some(-1.5);
@@ -3138,7 +3309,28 @@ mod tests {
     }
 
     #[test]
-    fn a_spindle_keeps_its_polarity_and_stops_on_a_probe_miss() {
+    fn a_spindle_machine_cuts_only_with_the_spindle_turning() {
+        let mut rig = Rig::with(Settings { spindle: true, h_axis: true, ..bench_settings() });
+        rig.take_out();
+        assert_eq!(rig.line("cut R5 F300"), "error:5 not now\n", "never started");
+        assert_eq!(rig.line("go R5"), "ok\n", "a rapid does not need it");
+        rig.run();
+        assert_eq!(rig.line("spindle S500"), "ok\n");
+        assert_eq!(rig.line("cut R10 F300"), "ok\n");
+        rig.run();
+        // Stopped under a job, from a console: the job ends at its next cut.
+        assert_eq!(rig.line("spindle off"), "ok\n");
+        assert_eq!(rig.line("cut R15 F300"), "error:5 not now\n");
+        assert_eq!(rig.line("spindle S500"), "ok\n");
+        assert_eq!(rig.line("laser off"), "ok\n");
+        assert_eq!(rig.line("cut R15 F300"), "error:5 not now\n");
+        assert_eq!(rig.line("spindle S0"), "ok\n");
+        assert_eq!(rig.line("cut R15 F300"), "error:5 not now\n", "a speed of 0 is stopped");
+        assert_eq!(rig.machine.joint()[R], 10.0);
+    }
+
+    #[test]
+    fn a_spindle_keeps_its_polarity_and_never_probes_turning() {
         let mut settings = bench_settings();
         settings.spindle = true;
         settings.laser_invert = true;
@@ -3150,8 +3342,34 @@ mod tests {
         assert_eq!(rig.line("spindle S200"), "ok\n");
         assert_eq!(rig.laser.duty, 800);
         assert!(rig.status_line().contains("|L:800|"));
+        // The probe may be the tool itself.
+        assert_eq!(rig.line("probe H-1"), "error:5 not now\n");
+        assert_eq!(rig.port.count, [0, 0, 0, 0]);
+        assert_eq!(rig.laser.duty, 800);
+        assert_eq!(rig.line("spindle off"), "ok\n");
         assert_eq!(rig.line("probe H-1"), "[PRB:-1.0000:0]\nALARM:2 probe missed, check the head before moving\nerror:11 probe missed\n");
-        assert_eq!(rig.laser.duty, 1000, "an alarm stops the tool");
-        assert_eq!(rig.line("spindle S200"), "error:5 not now\n");
+        assert_eq!(rig.laser.duty, 1000);
+        assert_eq!(rig.line("spindle S200"), "error:5 not now\n", "not in an alarm");
+    }
+
+    #[test]
+    fn defaults_keep_the_wiring_polarities() {
+        let mut settings = bench_settings();
+        settings.laser_invert = true;
+        settings.en_invert = true;
+        settings.probe_invert = true;
+        settings.dir_invert = 5;
+        settings.idle_ms = 1234;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 1000);
+        assert_eq!(rig.line("$defaults"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 1000, "an active-low laser lit by $defaults");
+        let listed = rig.line("$");
+        for line in ["laser_invert=1\n", "en_invert=1\n", "probe_invert=1\n", "dir_invert=5\n", "idle_ms=0\n"] {
+            assert!(listed.contains(line), "{line} in {listed}");
+        }
     }
 }

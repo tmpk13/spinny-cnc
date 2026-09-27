@@ -20,7 +20,7 @@ use embassy_rp::Peri;
 use spinny_core::hal::{LaserPort, SlidePort, StepPort};
 use spinny_core::settings::Settings;
 use spinny_core::Z;
-use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_params, pwm_slice};
+use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_params, pwm_slice, resting_duty};
 use spinny_fw_logic::pins::{level_masks, mask_of};
 use spinny_fw_logic::step::pulse_loops;
 
@@ -84,21 +84,28 @@ pub struct Pins {
     pub probe: Peri<'static, PIN_25>,
 }
 
-/// Claims the pins in a safe order: the laser output driven low, the
-/// drivers disabled, then step and direction low. The drivers are
+/// Claims the pins in a safe order: the laser output at its off level,
+/// the drivers disabled, then step and direction low. `laser_invert` is
+/// the stored polarity, read from flash before this runs: the laser pin is
+/// driven at its off level from the first instant it is an output (compare
+/// 0, always low, normally; `top + 1`, always high, when inverted), so an
+/// inverted module never sees the lit level while the rest boots. Until
+/// then the pad's reset pull-down holds the line low. The drivers are
 /// forgotten on purpose so they never release the pins.
-/// Claims the pins. `laser_invert` is the stored polarity: the laser pin
-/// is driven at its off level from the first instant it is an output, so
-/// an inverted module never sees the lit level while the rest boots.
 pub fn init(pins: Pins, laser_invert: bool) -> (StepPins, LaserPwm, SlidePins) {
     SYSCLK_HZ.store(clk_sys_freq(), Ordering::Relaxed);
     let params = pwm_params(sysclk(), Settings::default().laser_hz);
+    let rest = resting_duty(laser_invert);
     let mut cfg = PwmConfig::default();
     cfg.divider = params.div.into();
     cfg.top = params.top;
-    cfg.compare_a = if laser_invert { compare(params.top, 1000) } else { 0 };
+    cfg.compare_a = compare(params.top, rest);
     cfg.enable = true;
     LASER_TOP.store(params.top as u32, Ordering::Relaxed);
+    // `set_frequency` recomputes the compare from the kept duty, and the
+    // stored frequency goes in before any duty is set: kept at 0, it would
+    // write the lit compare for an inverted module.
+    LASER_DUTY.store(rest as u32, Ordering::Relaxed);
     forget(Pwm::new_output_a(pins.pwm, pins.laser, cfg));
 
     let step = [pins.r_step.pin(), pins.a_step.pin(), pins.h_step.pin(), pins.z_step.pin()];
@@ -122,7 +129,7 @@ pub fn init(pins: Pins, laser_invert: bool) -> (StepPins, LaserPwm, SlidePins) {
     forget(Input::new(pins.probe, Pull::Up));
     // The SIO masks come from the tables above, which must name the pins
     // the outputs were just made on. Checked with every line at its safe
-    // level, so a halt here leaves the drivers off and the laser low.
+    // level, so a halt here leaves the drivers off and the laser dark.
     assert!(step == STEP_PINS && dir == DIR_PINS && en == EN_PINS);
     assert!(z_step == Z_STEP_PINS && z_dir == Z_DIR_PINS && probe == PROBE_PIN);
     assert!(Z_STEP_PINS[0] == STEP_PINS[Z] && Z_DIR_PINS[0] == DIR_PINS[Z]);

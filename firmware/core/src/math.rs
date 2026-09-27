@@ -12,12 +12,19 @@ pub fn surface_length(r0: f32, a0: f32, r1: f32, a1: f32) -> f32 {
     hypot(dr, arc)
 }
 
-/// Board length of a straight joint move: the radius and table part as in
-/// `surface_length`, and the cross slide square to it. The slide moves only
-/// as a joint on a cartesian machine, where the table holds still, so
-/// this is `hypot(dx, dy)` there and `surface_length` on a polar one.
-pub fn joint_surface_length(start: &[f32; AXES], end: &[f32; AXES]) -> f32 {
-    hypot(surface_length(start[R], start[A], end[R], end[A]), end[Z] - start[Z])
+/// Board length of a straight joint move. On a polar machine the slide is
+/// not a joint, so this is `surface_length`. On a cartesian one the head
+/// sits `hypot(R, Z)` from the rotation axis, so a turn of the table (a jog
+/// lining a board up; go and cut never turn it there) sweeps that radius:
+/// `hypot(dr, dz, hypot(r_mean, z_mean) * da_rad)`, exact for a move of one
+/// joint and close for the rest. Z is only read on a cartesian machine: a
+/// polar one may still carry the value a cartesian session left in it.
+pub fn joint_surface_length(start: &[f32; AXES], end: &[f32; AXES], cartesian: bool) -> f32 {
+    if !cartesian {
+        return surface_length(start[R], start[A], end[R], end[A]);
+    }
+    let radius = hypot(0.5 * (start[R] + end[R]), 0.5 * (start[Z] + end[Z]));
+    norm(&[end[R] - start[R], end[Z] - start[Z], radius * (end[A] - start[A]).to_radians()])
 }
 
 pub fn hypot(x: f32, y: f32) -> f32 {
@@ -86,9 +93,20 @@ mod tests {
     fn the_cross_slide_adds_square_to_the_rail() {
         let start = [1.0, 30.0, 0.0, 2.0];
         let end = [4.0, 30.0, -1.0, 6.0];
-        assert!((joint_surface_length(&start, &end) - 5.0).abs() < 1e-6, "the focus axis is not on the board");
+        assert!((joint_surface_length(&start, &end, true) - 5.0).abs() < 1e-6, "the focus axis is not on the board");
+        // A polar machine ignores whatever Z holds.
         let polar = [10.0, 90.0, 0.0, 2.0];
-        assert!((joint_surface_length(&[10.0, 0.0, 0.0, 2.0], &polar) - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
+        assert!((joint_surface_length(&[10.0, 0.0, 0.0, 2.0], &polar, false) - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_table_turn_on_a_cartesian_machine_sweeps_the_heads_distance_from_the_axis() {
+        // R5 Y20: the head is hypot(5, 20) from the axis.
+        let turn = joint_surface_length(&[5.0, 0.0, 0.0, 20.0], &[5.0, 10.0, 0.0, 20.0], true);
+        let expected = libm::sqrtf(425.0) * 10.0f32.to_radians();
+        assert!((turn - expected).abs() < 1e-4, "{turn} vs {expected}");
+        // On the axis's rail line but off it along Y it is still an arc.
+        assert!(joint_surface_length(&[0.0, 0.0, 0.0, 20.0], &[0.0, 10.0, 0.0, 20.0], true) > 3.0);
     }
 
     #[test]

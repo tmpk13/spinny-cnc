@@ -4,8 +4,9 @@
 //!
 //! Tasks: the main loop below polls the core every 500 us; `usb` owns the
 //! CDC device, one task reading bytes into lines and one draining the
-//! output ring; `tmc` owns the driver UART; `step_timer` runs the stepper
-//! from TIMER alarm 1 at the highest interrupt priority.
+//! output ring; `tmc` owns the driver UART and watches the drivers for a
+//! motor supply cycle; `step_timer` runs the stepper from TIMER alarm 1 at
+//! the highest interrupt priority.
 //!
 //! The cross slide is the exception: it is stepped straight from the main
 //! loop, because it only ever moves on its own, from rest, with the beam
@@ -98,10 +99,9 @@ async fn main(spawner: Spawner) {
     step_timer::install(isr);
     step_timer::start();
 
-    // The stored settings decide the laser output's resting level: the pin
-    // was claimed low, which is the lit level once `laser_invert` is set.
-    // They are read and the output driven before the USB and driver tasks
-    // start, not left to the first poll.
+    // The stored laser frequency and the current beam, which is the off
+    // level, are applied before the USB and driver tasks start rather than
+    // left to the first poll.
     let mut sink = usb::UsbSink;
     let mut machine = Machine::new(front, Settings::default());
     machine.load_settings(&mut store);
@@ -128,9 +128,18 @@ async fn main(spawner: Spawner) {
                 usb::Event::Disconnected => {
                     usb::clear_output();
                     machine.disconnected(&mut laser, &mut port);
+                    // What the old host left queued must not act after the
+                    // reset either. The reader clears these too, but only
+                    // once it runs, which can be after this pass takes one.
+                    usb::LINES.clear();
+                    usb::REALTIME.clear();
                 }
             }
         }
+        // Counted before the realtime bytes: a hold that arrives with the
+        // line it was meant for finds that line waiting, not last pass's
+        // count, and is kept for it.
+        machine.note_lines_waiting(usb::LINES.len());
         while let Ok(action) = usb::REALTIME.try_receive() {
             machine.realtime(action, &mut laser, &mut sink);
         }
@@ -157,6 +166,15 @@ async fn main(spawner: Spawner) {
         }
         if events.driver_report {
             tmc::request_report();
+        }
+        // A driver that lost its motor supply forgot its configuration and
+        // its motor its holding torque. Whatever runs stops as a reset
+        // stops it, with `ALARM:1` if it was moving, the beam or spindle
+        // off before the supply comes back, and the lines the host sent
+        // before it hears of the reset go with it.
+        if tmc::take_power_lost() {
+            usb::LINES.clear();
+            machine.realtime(parser::Realtime::Reset, &mut laser, &mut sink);
         }
     }
 }

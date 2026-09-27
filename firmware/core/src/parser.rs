@@ -285,8 +285,8 @@ fn setting(rest: &str) -> Result<Command<'_>, Error> {
 
 /// Parses one line without its newline. Comments after `;` are dropped,
 /// keywords and letters are case-insensitive, and words are `<letter><number>`.
-/// An empty line, or one that is only a comment, parses as `Command::Empty`
-/// and is answered `ok` by the machine.
+/// An empty line, or one that is only a comment, is an `UnknownCommand`
+/// here: `Machine::submit` answers such a line `ok` before it gets this far.
 pub fn parse(line: &str) -> Result<Command<'_>, Error> {
     if line.len() > LINE_MAX - 1 {
         return Err(Error::TooLong);

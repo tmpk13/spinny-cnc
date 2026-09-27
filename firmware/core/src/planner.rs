@@ -254,7 +254,7 @@ impl Planner {
         for i in 0..AXES {
             end[i] = math::steps_to_units(target_steps[i], settings.steps[i]);
         }
-        let surface_mm = math::joint_surface_length(&start, &end);
+        let surface_mm = math::joint_surface_length(&start, &end, settings.cartesian);
         let requested_speed = match feed {
             Feed::Max => axis_limit,
             Feed::Jog => paced_speed(&unit, &effective_jog_rate(settings)),
@@ -608,7 +608,7 @@ mod tests {
     #[test]
     fn a_cartesian_cut_takes_the_board_length_from_the_rail_and_the_cross_slide() {
         let mut planner = Planner::new();
-        let s = settings();
+        let s = Settings { cartesian: true, ..settings() };
         // 3 mm along the rail and 4 mm on the cross slide: 5 mm of board at
         // 300 mm/min is 1 s, over a metric length of 5 units.
         planner.push([3.0, 0.0, 0.0, 4.0], MoveKind::Cut, Feed::Surface(300.0), 400.0, 0.0, &s).unwrap();

@@ -1,10 +1,16 @@
-//! TMC2209 register values and UART datagrams for the four drivers, and
-//! the reply parsing behind the status report.
+//! TMC2209 register values and UART datagrams for the four drivers, the
+//! reply parsing behind the status report, and which drivers hold their
+//! configuration.
 //!
 //! The SKR Pico straps the X socket to UART address 0, the Y socket to
 //! address 2, the Z socket to address 1 and the E socket to address 3,
 //! and fits 110 mOhm sense resistors. Every driver shares one wire, so every byte sent comes back
 //! on RX before any reply.
+//!
+//! The same MS1 and MS2 straps pick the microstep resolution while GCONF
+//! leaves it to them, which is where a driver is after power-up: 8 on
+//! address 0, 32 on 1, 64 on 2 and 16 on 3. The drivers run from the motor
+//! supply, so switching that off and on puts every one of them back there.
 
 use core::fmt::Write;
 
@@ -28,6 +34,15 @@ pub const TOFF: u32 = 3;
 pub const HSTRT: u32 = 5;
 pub const HEND: u32 = 0;
 pub const TBL: u32 = 2;
+
+/// GSTAT flags. `reset`: the driver came up from power-on since the flags
+/// were last cleared, with every register back at its reset value.
+/// `drv_err`: it shut down for overtemperature or a short. `uv_cp`: its
+/// charge pump is under voltage, which disables it; this one is not
+/// latched. The flags are cleared by writing ones to them.
+pub const GSTAT_RESET: u32 = 1 << 0;
+pub const GSTAT_DRV_ERR: u32 = 1 << 1;
+pub const GSTAT_UV_CP: u32 = 1 << 2;
 
 /// Full-scale sense voltages, millivolts, for VSENSE=1 and VSENSE=0.
 const VFS_HIGH_SENS_MV: u64 = 180;
@@ -95,9 +110,13 @@ fn datagram<R: reg::WritableRegister>(addr: u8, register: R) -> Datagram {
     out
 }
 
-/// The GCONF, IHOLD_IRUN and CHOPCONF writes for one axis, in that order.
-/// None when the axis is to be left alone or its microstep count is bad.
-pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 3]> {
+/// The writes for one axis: the GSTAT flags cleared, then GCONF,
+/// IHOLD_IRUN and CHOPCONF. The reset flag is set at every power-up, the
+/// first included, so it tells a driver that lost its configuration only
+/// once this has cleared it; clearing it first leaves a reset that lands
+/// while the rest is written on show. None when the axis is to be left
+/// alone or its microstep count is bad.
+pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 4]> {
     let ma = cfg.ma[axis];
     if ma == 0 {
         return None;
@@ -128,17 +147,100 @@ pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 3]
     chop.set_mres(MicroStepResolution::from_driver(mres as u32));
     chop.set_intpol(true);
 
-    Some([datagram(addr, gconf), datagram(addr, currents), datagram(addr, chop)])
+    let clear = reg::GSTAT::from(GSTAT_RESET | GSTAT_DRV_ERR | GSTAT_UV_CP);
+    Some([datagram(addr, clear), datagram(addr, gconf), datagram(addr, currents), datagram(addr, chop)])
 }
 
-/// What the driver task keeps after an attempt: the configuration when it
-/// did not land, so it is tried again once the drivers have power, and
-/// nothing when it did.
-pub fn unfinished_after(done: bool, cfg: DriverConfig) -> Option<DriverConfig> {
-    if done {
-        None
-    } else {
-        Some(cfg)
+/// Whether a GSTAT read says the driver still holds what it was written:
+/// it answered, has not come up from power-on since its flags were
+/// cleared, and its charge pump is up. `None` is no reply, which is a
+/// driver without its motor supply. A driver error is left to `$tmc`: it
+/// costs neither the configuration nor the supply.
+pub fn holds_config(gstat: Option<u32>) -> bool {
+    matches!(gstat, Some(flags) if flags & (GSTAT_RESET | GSTAT_UV_CP) == 0)
+}
+
+/// Where one driver stands with the configuration the driver task holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// Left alone: no current asked for, or a microstep count it cannot take.
+    Unused,
+    /// To be written: not yet tried, refused, or lost with its supply.
+    Pending,
+    /// Took it, and has kept it at every poll since.
+    Held,
+    /// Held the configuration before the newest one, and is to be polled
+    /// once more before that is written over it: the write clears the
+    /// reset flag a supply cycle since the last poll left behind.
+    Superseded,
+}
+
+/// The driver task's view of every driver. A configuration makes each
+/// driver it covers pending, or superseded where it was held; a write that
+/// lands makes it held; a poll of a held or superseded driver that finds
+/// it reset, unpowered or silent makes it pending and says so once, which
+/// is the moment its motor lost its holding torque and its resolution went
+/// back to the straps. A superseded driver the poll finds intact is
+/// pending as well, without a word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Links([Link; DRIVERS]);
+
+impl Default for Links {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Links {
+    pub const fn new() -> Self {
+        Self([Link::Unused; DRIVERS])
+    }
+
+    pub fn get(&self, axis: usize) -> Link {
+        self.0[axis]
+    }
+
+    /// A new configuration: every driver it covers is to be written, after
+    /// a poll for the ones that held the last one.
+    pub fn configure(&mut self, cfg: &DriverConfig) {
+        for (axis, link) in self.0.iter_mut().enumerate() {
+            *link = match (config_datagrams(axis, cfg).is_some(), *link) {
+                (false, _) => Link::Unused,
+                (true, Link::Held | Link::Superseded) => Link::Superseded,
+                (true, _) => Link::Pending,
+            };
+        }
+    }
+
+    /// A driver the next poll is to read: it holds its configuration, or
+    /// held the one before and has not been checked since.
+    pub fn watched(&self, axis: usize) -> bool {
+        matches!(self.0[axis], Link::Held | Link::Superseded)
+    }
+
+    /// A write of a pending driver: `took` when it counted every datagram
+    /// and its flags read back clear afterwards.
+    pub fn written(&mut self, axis: usize, took: bool) {
+        if took && self.0[axis] == Link::Pending {
+            self.0[axis] = Link::Held;
+        }
+    }
+
+    /// A poll of a watched driver with what its GSTAT read gave. True when
+    /// it has just lost its configuration; later polls of it, until it is
+    /// written again, say nothing more. A superseded driver is pending
+    /// afterwards either way, for the newest configuration.
+    pub fn polled(&mut self, axis: usize, gstat: Option<u32>) -> bool {
+        let lost = self.watched(axis) && !holds_config(gstat);
+        if lost || self.0[axis] == Link::Superseded {
+            self.0[axis] = Link::Pending;
+        }
+        lost
+    }
+
+    /// No driver is waiting to be checked or written.
+    pub fn settled(&self) -> bool {
+        self.0.iter().all(|link| matches!(link, Link::Unused | Link::Held))
     }
 }
 
@@ -180,36 +282,63 @@ pub fn refused_text(axis: usize) -> String<64> {
     text
 }
 
+/// Body of the `[MSG:...]` line for an axis whose driver lost the
+/// configuration it held: it stopped answering, or answered reset.
+pub fn lost_text(axis: usize) -> String<64> {
+    let mut text = String::new();
+    let letter = AXIS_LETTER[axis];
+    let addr = ADDR[axis];
+    let _ = write!(text, "tmc {letter} addr{addr} lost motor power, position may be off");
+    text
+}
+
 /// What a driver answered when asked about itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reply {
     /// Write datagrams the driver has accepted since it powered up.
     pub ifcnt: u8,
-    /// Microsteps it is actually set to, read back from CHOPCONF.
+    /// Microsteps it actually steps at, from `micro_of`.
     pub micro: u16,
     pub status: u32,
 }
 
-/// Microsteps a CHOPCONF value is set to, from its MRES field.
-pub fn micro_of(chopconf: u32) -> u16 {
-    reg::CHOPCONF::from(chopconf).mres().number_of_microsteps() as u16
+/// Microsteps a driver steps at: CHOPCONF's MRES once GCONF selects the
+/// register, the MS1 and MS2 pins (read from IOIN) otherwise. MRES reads
+/// 256 at power-up, so a driver on its straps would report 256 from
+/// CHOPCONF alone.
+pub fn micro_of(gconf: u32, chopconf: u32, ioin: u32) -> u16 {
+    if reg::GCONF::from(gconf).mstep_reg_select() {
+        return reg::CHOPCONF::from(chopconf).mres().number_of_microsteps() as u16;
+    }
+    let pins = reg::IOIN::from(ioin);
+    match (pins.ms2(), pins.ms1()) {
+        (false, false) => 8,
+        (false, true) => 32,
+        (true, false) => 64,
+        (true, true) => 16,
+    }
 }
 
 /// Body of the `[MSG:...]` line for one axis. The microstep count is the
 /// one the driver reports, not the one it was asked for: a driver that
 /// never took its configuration answers with whatever MS1 and MS2 strap
-/// it to, and that is the difference between a move and a stall.
-pub fn report_text(axis: usize, reply: Option<Reply>) -> String<64> {
+/// it to, and that is the difference between a move and a stall. A driver
+/// the configuration leaves alone (`in_use` false, the focus driver
+/// without `h_axis`) is still asked, and marked unused, so an empty socket
+/// or a strapped one is not taken for a fault.
+pub fn report_text(axis: usize, reply: Option<Reply>, in_use: bool) -> String<64> {
     let mut text = String::new();
     let letter = AXIS_LETTER[axis];
     let addr = ADDR[axis];
+    let unused = if in_use { "" } else { "unused, " };
     let _ = match reply {
         Some(reply) => write!(
             text,
-            "tmc {letter} addr{addr} ifcnt={} micro={} status=0x{:08x}",
+            "tmc {letter} addr{addr} {unused}ifcnt={} micro={} status=0x{:08x}",
             reply.ifcnt, reply.micro, reply.status
         ),
-        None => write!(text, "tmc {letter} addr{addr} no reply, is motor power on"),
+        None if in_use => write!(text, "tmc {letter} addr{addr} no reply, is motor power on"),
+        None => write!(text, "tmc {letter} addr{addr} unused, no reply"),
     };
     text
 }
@@ -217,7 +346,7 @@ pub fn report_text(axis: usize, reply: Option<Reply>) -> String<64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tmc2209::reg::{CHOPCONF, GCONF, IHOLD_IRUN};
+    use tmc2209::reg::{CHOPCONF, GCONF, GSTAT, IHOLD_IRUN, IOIN};
 
     fn data(datagram: &Datagram) -> u32 {
         u32::from_be_bytes([datagram[3], datagram[4], datagram[5], datagram[6]])
@@ -263,13 +392,14 @@ mod tests {
             micro: [16, 32, 128, 8],
             stealth: true,
         };
-        let [gconf, currents, chop] = config_datagrams(0, &cfg).unwrap();
-        for d in [&gconf, &currents, &chop] {
+        let [clear, gconf, currents, chop] = config_datagrams(0, &cfg).unwrap();
+        for d in [&clear, &gconf, &currents, &chop] {
             assert_eq!(d[0], 0x05);
             assert_eq!(d[1], 0);
             assert_eq!(d[2] & 0x80, 0x80);
             assert_eq!(d[7], tmc2209::crc(&d[..7]));
         }
+        assert_eq!(clear[2] & 0x7f, Address::GSTAT as u8);
         assert_eq!(gconf[2] & 0x7f, Address::GCONF as u8);
         assert_eq!(currents[2] & 0x7f, Address::IHOLD_IRUN as u8);
         assert_eq!(chop[2] & 0x7f, Address::CHOPCONF as u8);
@@ -295,7 +425,7 @@ mod tests {
         assert_eq!(ch.mres().number_of_microsteps(), 16);
         assert!(ch.intpol());
 
-        let [gconf, currents, chop] = config_datagrams(1, &cfg).unwrap();
+        let [_, gconf, currents, chop] = config_datagrams(1, &cfg).unwrap();
         assert_eq!(gconf[1], 2);
         let c = IHOLD_IRUN::from(data(&currents));
         assert_eq!(c.irun(), 26);
@@ -304,7 +434,7 @@ mod tests {
         assert_eq!(ch.mres().number_of_microsteps(), 32);
 
         // The cross slide is the Z socket, which straps to address 1.
-        let [gconf, _, chop] = config_datagrams(2, &cfg).unwrap();
+        let [_, gconf, _, chop] = config_datagrams(2, &cfg).unwrap();
         assert_eq!(gconf[1], 1);
         assert_eq!(CHOPCONF::from(data(&chop)).mres().number_of_microsteps(), 128);
     }
@@ -317,7 +447,7 @@ mod tests {
         // the register defaults, so a change of those must fail here
         // rather than on the machine.
         let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
-        let [gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
+        let [_, gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
         let g = GCONF::from(data(&gconf));
         assert!(!g.internal_rsense(), "the driver would ignore the sense resistors");
         assert!(!g.shaft());
@@ -347,15 +477,140 @@ mod tests {
         assert!(config_datagrams(0, &cfg).is_none());
         assert!(config_datagrams(1, &cfg).is_none());
         let cfg = DriverConfig { micro: [16; DRIVERS], ..cfg };
-        let [gconf, ..] = config_datagrams(1, &cfg).unwrap();
+        let [_, gconf, ..] = config_datagrams(1, &cfg).unwrap();
         assert!(GCONF::from(data(&gconf)).en_spread_cycle());
     }
 
     #[test]
-    fn a_configuration_is_kept_only_while_it_has_not_landed() {
+    fn a_configuration_clears_the_reset_flag_before_anything_else() {
+        // Every driver comes up with the reset flag set, and nothing but a
+        // write of ones clears it: left set, the first poll after a boot
+        // would take every driver for one that had just lost its supply.
         let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
-        assert_eq!(unfinished_after(true, cfg), None, "a landed configuration is not retried");
-        assert_eq!(unfinished_after(false, cfg), Some(cfg), "a refused one is");
+        for (axis, &addr) in ADDR.iter().enumerate() {
+            let datagrams = config_datagrams(axis, &cfg).unwrap();
+            let [clear, ..] = datagrams;
+            assert_eq!(clear[1], addr);
+            assert_eq!(clear[2], 0x80 | Address::GSTAT as u8);
+            let flags = GSTAT::from(data(&clear));
+            assert!(flags.reset() && flags.drv_err() && flags.uv_cp());
+            assert_eq!(data(&clear), GSTAT_RESET | GSTAT_DRV_ERR | GSTAT_UV_CP);
+            // The count of accepted writes the driver task checks for.
+            assert_eq!(datagrams.len(), 4);
+        }
+    }
+
+    #[test]
+    fn a_configuration_is_kept_only_while_it_has_not_landed() {
+        let cfg = DriverConfig { ma: [800, 800, 800, 0], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let mut links = Links::new();
+        assert!(links.settled());
+        links.configure(&cfg);
+        assert_eq!(links.get(0), Link::Pending);
+        assert_eq!(links.get(3), Link::Unused, "the focus driver without a current is left alone");
+        assert!(!links.settled());
+        links.written(0, true);
+        links.written(1, false);
+        links.written(2, true);
+        assert_eq!(links.get(0), Link::Held, "a landed configuration is not retried");
+        assert_eq!(links.get(1), Link::Pending, "a refused one is");
+        assert!(!links.settled());
+        links.written(1, true);
+        assert!(links.settled());
+        // An unused driver never becomes held, whatever a write says.
+        links.written(3, true);
+        assert_eq!(links.get(3), Link::Unused);
+        // A new configuration writes every driver it covers again, the
+        // ones that held the last one once a poll has found them intact.
+        links.configure(&cfg);
+        assert_eq!(links.get(0), Link::Superseded);
+        assert!(!links.settled());
+        assert!(!links.polled(0, Some(0)));
+        assert_eq!(links.get(0), Link::Pending);
+    }
+
+    #[test]
+    fn a_supply_cycle_just_before_a_new_configuration_is_still_reported() {
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let mut links = Links::new();
+        links.configure(&cfg);
+        for axis in 0..DRIVERS {
+            links.written(axis, true);
+        }
+        // The supply dropped and came back since the last poll, and a
+        // settings change arrives before the next one. Writing it would
+        // clear the reset flag unread; the drivers that held the old one
+        // are polled first.
+        links.configure(&cfg);
+        for axis in 0..DRIVERS {
+            assert!(links.watched(axis));
+            assert_ne!(links.get(axis), Link::Pending, "not written before the poll");
+        }
+        assert!(links.polled(0, Some(GSTAT_RESET)), "the reset flag is still seen");
+        // Still dark when the change came.
+        assert!(links.polled(1, None));
+        assert!(!links.polled(2, Some(0)), "intact: written without a word");
+        assert!(!links.polled(2, Some(GSTAT_RESET)), "polled once, then only written");
+        for axis in 0..3 {
+            assert_eq!(links.get(axis), Link::Pending);
+        }
+        // A driver the new configuration leaves alone is not watched.
+        let without_focus = DriverConfig { ma: [800, 800, 800, 0], ..cfg };
+        links.configure(&without_focus);
+        assert_eq!(links.get(3), Link::Unused);
+        assert!(!links.watched(3));
+        assert!(!links.polled(3, None));
+    }
+
+    #[test]
+    fn a_driver_that_loses_its_supply_is_reported_once_and_written_again() {
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let mut links = Links::new();
+        links.configure(&cfg);
+        for axis in 0..DRIVERS {
+            links.written(axis, true);
+        }
+        assert!(!links.polled(0, Some(0)), "clear flags: it holds its configuration");
+        assert!(!links.polled(0, Some(GSTAT_DRV_ERR)), "a driver error costs no configuration");
+        assert_eq!(links.get(0), Link::Held);
+
+        // The supply goes: the driver stops answering.
+        assert!(links.polled(0, None));
+        assert_eq!(links.get(0), Link::Pending);
+        assert!(!links.settled());
+        assert!(!links.polled(0, None), "said once, not at every poll while it is dark");
+
+        // The supply dropped and came back between two polls: the driver
+        // answers, with its registers back at their reset values.
+        assert!(links.polled(1, Some(GSTAT_RESET)));
+        // Its charge pump is under voltage, which disables it.
+        assert!(links.polled(2, Some(GSTAT_UV_CP)));
+        assert!(!links.polled(3, Some(0)));
+
+        // Written again once it answers, and watched as before.
+        links.written(0, false);
+        assert_eq!(links.get(0), Link::Pending);
+        for axis in 0..DRIVERS {
+            links.written(axis, true);
+        }
+        assert!(links.settled());
+        assert!(links.polled(0, Some(GSTAT_RESET)), "a second loss is said again");
+    }
+
+    #[test]
+    fn only_clear_flags_hold_a_configuration() {
+        assert!(holds_config(Some(0)));
+        assert!(holds_config(Some(GSTAT_DRV_ERR)));
+        assert!(!holds_config(None));
+        assert!(!holds_config(Some(GSTAT_RESET)));
+        assert!(!holds_config(Some(GSTAT_UV_CP)));
+        assert!(!holds_config(Some(GSTAT_RESET | GSTAT_UV_CP)));
+    }
+
+    #[test]
+    fn a_lost_axis_says_which_one() {
+        assert_eq!(lost_text(0).as_str(), "tmc R addr0 lost motor power, position may be off");
+        assert_eq!(lost_text(3).as_str(), "tmc H addr3 lost motor power, position may be off");
     }
 
     #[test]
@@ -396,29 +651,50 @@ mod tests {
 
     #[test]
     fn report_lines() {
-        let reply = Reply { ifcnt: 3, micro: 256, status: 0x8000_0000 };
-        assert_eq!(report_text(0, Some(reply)).as_str(), "tmc R addr0 ifcnt=3 micro=256 status=0x80000000");
-        assert_eq!(report_text(1, None).as_str(), "tmc A addr2 no reply, is motor power on");
-        assert_eq!(report_text(2, Some(reply)).as_str(), "tmc Z addr1 ifcnt=3 micro=256 status=0x80000000");
+        let reply = Reply { ifcnt: 4, micro: 256, status: 0x8000_0000 };
+        assert_eq!(report_text(0, Some(reply), true).as_str(), "tmc R addr0 ifcnt=4 micro=256 status=0x80000000");
+        assert_eq!(report_text(1, None, true).as_str(), "tmc A addr2 no reply, is motor power on");
+        assert_eq!(report_text(2, Some(reply), true).as_str(), "tmc Z addr1 ifcnt=4 micro=256 status=0x80000000");
         let strapped = Reply { ifcnt: 0, micro: 8, status: 0 };
-        assert_eq!(report_text(0, Some(strapped)).as_str(), "tmc R addr0 ifcnt=0 micro=8 status=0x00000000");
+        assert_eq!(report_text(0, Some(strapped), true).as_str(), "tmc R addr0 ifcnt=0 micro=8 status=0x00000000");
     }
 
     #[test]
-    fn microsteps_read_back_from_chopconf() {
-        // What each axis reports when its configuration landed, and what
-        // the sockets strap to when it did not.
+    fn a_driver_left_alone_is_reported_as_unused_not_as_a_fault() {
+        // Without a focus axis the E socket is never configured: empty, it
+        // answers nothing, and fitted, it steps at its strap.
+        assert_eq!(report_text(3, None, false).as_str(), "tmc H addr3 unused, no reply");
+        let strapped = Reply { ifcnt: 255, micro: 256, status: 0 };
+        let text = report_text(3, Some(strapped), false);
+        assert_eq!(text.as_str(), "tmc H addr3 unused, ifcnt=255 micro=256 status=0x00000000");
+        assert!(text.len() < text.capacity(), "the longest line fits");
+    }
+
+    #[test]
+    fn microsteps_read_back_from_the_driver() {
+        // What each axis reports when its configuration landed: GCONF
+        // selects the register, and MRES says the rest.
         let asked = |micro: u32| {
             let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [micro; DRIVERS], stealth: true };
-            let [_, _, chop] = config_datagrams(0, &cfg).unwrap();
-            micro_of(data(&chop))
+            let [_, gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
+            micro_of(data(&gconf), data(&chop), 0)
         };
         assert_eq!(asked(256), 256);
         assert_eq!(asked(16), 16);
-        let mut strapped = CHOPCONF::default();
-        strapped.set_mres(MicroStepResolution::from_driver(5));
-        assert_eq!(micro_of(strapped.0), 8, "the radius socket's strap");
-        strapped.set_mres(MicroStepResolution::from_driver(2));
-        assert_eq!(micro_of(strapped.0), 64, "the table socket's strap");
+        // What the sockets strap to when it did not, or when the motor
+        // supply went and came back: GCONF back at its reset value leaves
+        // the pins in charge, and MRES reads 256 all the while.
+        let reset_gconf = GCONF::default().0;
+        let reset_chop = CHOPCONF::default();
+        assert_eq!(reset_chop.mres().number_of_microsteps(), 256);
+        let pins = |ms1: bool, ms2: bool| {
+            let mut ioin = IOIN::default();
+            ioin.0 |= (ms1 as u32) << 2 | (ms2 as u32) << 3;
+            ioin.0
+        };
+        assert_eq!(micro_of(reset_gconf, reset_chop.0, pins(false, false)), 8, "the radius socket, address 0");
+        assert_eq!(micro_of(reset_gconf, reset_chop.0, pins(true, false)), 32, "the cross slide socket, address 1");
+        assert_eq!(micro_of(reset_gconf, reset_chop.0, pins(false, true)), 64, "the table socket, address 2");
+        assert_eq!(micro_of(reset_gconf, reset_chop.0, pins(true, true)), 16, "the focus socket, address 3");
     }
 }

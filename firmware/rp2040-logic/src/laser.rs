@@ -47,6 +47,19 @@ pub fn compare(top: u16, permille: u16) -> u16 {
     ((top as u32 + 1) * permille / 1000) as u16
 }
 
+/// Duty in permille that keeps the output dark at a polarity: 0 holds the
+/// pin low, 1000 holds it high for a module that fires on a low input. The
+/// pin is claimed at this level, and it is also the duty a frequency
+/// change recomputes the compare from until the first duty is set, so the
+/// two are seeded from the same value.
+pub const fn resting_duty(invert: bool) -> u16 {
+    if invert {
+        1000
+    } else {
+        0
+    }
+}
+
 /// Whether the compare goes before the wrap value when the period changes
 /// from `old_top` to `new_top`. Between the two writes the slice runs on
 /// one old and one new value; this order keeps that compare at or below
@@ -76,7 +89,7 @@ mod tests {
         assert_eq!((pwm_slice(25), pwm_is_channel_a(25)), (4, false));
         assert_eq!((pwm_slice(0), pwm_is_channel_a(0)), (0, true));
         assert_eq!((pwm_slice(16), pwm_is_channel_a(16)), (0, true));
-        // Neighbouring pins share a slice and split its two channels.
+        // Neighboring pins share a slice and split its two channels.
         for gpio in 0..30u8 {
             assert_eq!(pwm_slice(gpio), pwm_slice(gpio ^ 1));
             assert_ne!(pwm_is_channel_a(gpio), pwm_is_channel_a(gpio ^ 1));
@@ -119,6 +132,28 @@ mod tests {
         assert_eq!(compare(65534, 1000), 65535);
         assert_eq!(compare(9, 1), 0);
         assert_eq!(compare(9, 100), 1);
+    }
+
+    #[test]
+    fn a_frequency_change_before_the_first_duty_keeps_the_output_dark() {
+        // The pin is claimed at the resting duty, and the stored frequency
+        // goes in right after, its compare worked out from the duty kept
+        // with it. A duty kept at 0 for an inverted module would put a
+        // compare of 0 there, which holds the pin low: lit.
+        for invert in [false, true] {
+            let rest = resting_duty(invert);
+            let claimed = compare(pwm_params(SYSCLK, 5000).top, rest);
+            for hz in [5000, 20_000, 200, 1] {
+                let top = pwm_params(SYSCLK, hz).top;
+                let retuned = compare(top, rest);
+                if invert {
+                    assert_eq!(claimed, 25000, "always high from the claim on");
+                    assert_eq!(retuned as u32, top as u32 + 1, "always high at {hz} Hz");
+                } else {
+                    assert_eq!((claimed, retuned), (0, 0), "always low at {hz} Hz");
+                }
+            }
+        }
     }
 
     #[test]

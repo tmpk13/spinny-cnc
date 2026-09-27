@@ -386,6 +386,38 @@ fn bound_end_speed(v0: f32, v_end: f32, events: u32, events_left: u32, per_event
     v.min(math::sqrt(exit * exit + 2.0 * accel * d_after))
 }
 
+/// Constant speed for a segment of `events` events from `v0` to `v_end`.
+/// A segment that stops short of the block's end was sized from the mean
+/// of its two speeds over `SEGMENT_S`, so that mean is its speed. One that
+/// takes the rest of the block has its length set by the block instead,
+/// and its end speed by the block's exit: a short block from rest to rest
+/// would have a mean of zero and crawl at `MIN_EVENT_RATE_HZ`, the beam on
+/// one spot the whole time. Its speed is then the mean of the fastest
+/// profile the acceleration allows over its length (up toward `top` and
+/// back down), never below the mean of its ends. `top` is the block's
+/// nominal speed, or `v0` in a hold, which never speeds up.
+fn segment_speed(v0: f32, v_end: f32, events: u32, slice: &Slice, block: &Block, top: f32) -> f32 {
+    let mean = 0.5 * (v0 + v_end);
+    let distance = events as f32 * slice.per_event;
+    let accel = block.acceleration;
+    if events < slice.events_left || distance <= 0.0 || !(accel.is_finite() && accel > 0.0) {
+        return mean;
+    }
+    let peak = math::sqrt(accel * distance + 0.5 * (v0 * v0 + v_end * v_end))
+        .min(top)
+        .max(v0.max(v_end));
+    if peak <= 0.0 {
+        return mean;
+    }
+    let ramps = ((peak * peak - v0 * v0) + (peak * peak - v_end * v_end)) / (2.0 * accel);
+    let time = (peak - v0) / accel + (peak - v_end) / accel + (distance - ramps).max(0.0) / peak;
+    if time > 0.0 {
+        (distance / time).max(mean)
+    } else {
+        mean
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Timing {
     amass: u8,
@@ -580,13 +612,14 @@ impl<'a> Front<'a> {
             return false;
         };
         v_end = bound_end_speed(v0, v_end, events, slice.events_left, slice.per_event, block.acceleration, exit);
-        let mut speed = 0.5 * (v0 + v_end);
+        let top = if hold { v0 } else { block.nominal_speed };
+        let mut speed = segment_speed(v0, v_end, events, &slice, &block, top);
         let floor_us = crate::min_tick_us(settings.step_us);
         let mut timing = timing(speed / slice.per_event, events, floor_us);
         if timing.events < events {
             events = timing.events;
             v_end = bound_end_speed(v0, v_end, events, slice.events_left, slice.per_event, block.acceleration, exit);
-            speed = 0.5 * (v0 + v_end);
+            speed = segment_speed(v0, v_end, events, &slice, &block, top);
             timing = self::timing(speed / slice.per_event, events, floor_us);
         }
         let duty = segment_duty(&block, speed, settings, mode);
@@ -1378,6 +1411,36 @@ mod tests {
     }
 
     #[test]
+    fn a_short_block_from_rest_to_rest_takes_its_ramp_time() {
+        // Blocks small enough to end within their first segments, each
+        // from rest to rest: a few microns at fine microstepping. Timed at
+        // the mean of a zero start and a zero exit, the last segment ran
+        // at the event rate floor, seconds with the beam at full power.
+        for (length, mode, power, floor) in [
+            (0.002, PowerMode::Constant, 1000.0, 0.0),
+            (0.002, PowerMode::Dynamic, 1000.0, 200.0),
+            (0.02, PowerMode::Constant, 1000.0, 0.0),
+            (0.2, PowerMode::Dynamic, 1000.0, 200.0),
+        ] {
+            let mut settings = settings();
+            settings.steps[R] = 10240.0;
+            let mut rig = Rig::new(settings);
+            rig.mode = mode;
+            rig.cut_with_floor(length, 0.0, 300.0, power, floor);
+            let seconds = rig.run();
+            // Triangle (or trapezoid) at the block's acceleration.
+            let a = settings.accel[R] as f64;
+            let v = 300.0 / 60.0;
+            let d = length as f64;
+            let expected = if a * d < v * v { 2.0 * (d / a).sqrt() } else { d / v + v / a };
+            assert!(seconds < expected * 1.3 + 0.002, "{length} mm took {seconds} s, a ramp takes {expected} s");
+            assert!(rig.max_duty() > 0, "the cut burns");
+            rig.position_matches();
+            rig.check_acceleration();
+        }
+    }
+
+    #[test]
     fn axis_limited_cut_is_slower_with_less_power() {
         let mut rig = Rig::new(settings());
         rig.go(10.0, 0.0);
@@ -1450,7 +1513,7 @@ mod tests {
 
     #[test]
     fn the_cross_slide_is_stepped_with_the_rail_as_a_fourth_joint() {
-        let mut rig = Rig::new(settings());
+        let mut rig = Rig::new(Settings { cartesian: true, ..settings() });
         assert_eq!(
             rig.planner.push([3.0, 0.0, 0.0, -4.0], MoveKind::Cut, Feed::Surface(300.0), 400.0, 0.0, &rig.settings),
             Ok(true)

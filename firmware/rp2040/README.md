@@ -69,7 +69,9 @@ and `~` act at once, and Ctrl-X sends the realtime reset byte. Quit picocom
 with Ctrl-A Ctrl-X.
 
 `$tmc` prints one `[MSG:tmc ...]` line per driver with its IFCNT (the
-number of UART writes it accepted) and DRV_STATUS, or `no reply`.
+number of UART writes it accepted), the microsteps it actually steps at
+and DRV_STATUS, or `no reply`. A driver the configuration leaves alone,
+the E socket without `$h_axis=1`, is still asked and marked `unused`.
 
 ## First bring-up
 
@@ -80,15 +82,18 @@ disconnected until the last step.
    should list the settings.
 2. Motor power on, nothing coupled if you can help it. The drivers run
    from it, so they cannot answer without it; a configuration pushed
-   while they were dark is retried every two seconds until it lands.
-   `$tmc` should now report `micro=256` on all three axes (four with a
-   focus axis), read back from
-   the driver itself. Anything else means the configuration has not taken
-   and the driver is on its MS1 and MS2 straps, which is 8 microsteps on
-   the radius socket and 64 on the table: the radius would then be asked
-   for thirty-two times the speed and distance and would sit and whine,
-   while the table would turn four times too far and look like it worked.
-   `no reply` means motor power or the UART wiring.
+   while they were dark is retried every quarter second until it lands.
+   `$tmc` should now report `micro=256` on the radius, the table and the
+   cross slide, and on the focus axis with `$h_axis=1`, read back from
+   the driver itself. On those, anything else means the configuration has
+   not taken and the driver is on its MS1 and MS2 straps, which is 8
+   microsteps on the radius socket and 64 on the table: the radius would
+   then be asked for thirty-two times the speed and distance and would sit
+   and whine, while the table would turn four times too far and look like
+   it worked. `no reply` means motor power or the UART wiring. Without
+   `$h_axis=1` the H line reads `unused`, with `no reply` for an empty E
+   socket or the strap resolution (16) of a driver fitted there; neither
+   is a fault.
 3. Set the currents low for the first moves: `$tmc_r_ma=400`,
    `$tmc_a_ma=400`, `$tmc_z_ma=400`.
 4. `set R0 A0`, then `jog R1 F60`: the head must move away from the axis.
@@ -103,10 +108,21 @@ disconnected until the last step.
    steps, then back off well clear of it. `$a_rate` is what decides how close
    to the axis the machine can still cut at speed.
 8. The cross slide: `set Z0`, then `jog Z1 F60`. It must move the rail
-   across the table, not along it; if it goes the wrong way, add 4 to
-   `$dir_invert`. Check the scale the same way as the radius, over a long
-   move, and set `$z_steps`. `Z` is a setup axis: it is taken only from
-   `Idle`, it never moves with `R` or `A`, and the beam stays off.
+   across the table, not along it, and the right way across, which the
+   table decides: with the head out at a positive radius and the table at
+   A0, `jog A5` carries the beam over the board one way, and `jog Z1` must
+   carry it over the board the same way. The table moves under a still
+   head, so the head must move opposite to the table surface under it.
+   That is board +Y, 90 degrees counterclockwise of +R in the frame the
+   preview draws (y up). If it goes the other way, add 4 to `$dir_invert`
+   now, before centering: the slide counts the other way from where it
+   stands at the change, so a `Z0` found over the axis earlier no longer
+   marks it, and has to be set there again. A polar job does not depend
+   on the sign, but a cartesian one is mirrored across the rail without
+   it, and so is a height map read on one. Check the scale the same way
+   as the radius, over a long move, and set `$z_steps`. `Z` is a setup
+   axis: it is taken only from `Idle`, it never moves with `R` or `A`,
+   and the beam stays off.
 9. Find the axis before any real job: `spinny-center` burns a pattern
    whose square gives the cross slide error and whose closing gap gives
    the radius zero error. Run it in `mode const`, then move the slide by
@@ -125,9 +141,11 @@ disconnected until the last step.
     the probe during a second try must stop it with `[PRB:...:1]`. Only
     then `probe` toward the board, from a few mm above it.
 11. `$save`, then power cycle and check `$` still reads back what you set.
-    The stored blob carries a version byte, so a settings sector written by
-    an earlier firmware is discarded rather than misread and the defaults
-    come back.
+    The stored blob carries a version byte. A sector written before the
+    cartesian and spindle settings (version 4) is still read, with those
+    at their defaults; an older one (version 3 and before), or one from a
+    newer firmware, is discarded rather than misread and the defaults come
+    back.
 12. Laser last, on a scrap board. Prove the wiring at full duty first,
     where the output is simply on: `laser S1000 T2000`, measuring at the
     header if it does not strike. Then `laser S500 T2000` and `laser S100
@@ -179,7 +197,23 @@ $save
 - Verify direction and steps per unit at low speed first: `jog R1 F60`,
   `jog A5 F60`, `jog Z1 F60`, then `$dir_invert` (bit 0 radius, bit 1
   table, bit 2 cross slide), `$r_steps`, `$a_steps` and `$z_steps` as
-  needed.
+  needed. The right way for each is in the bring-up above: out from the
+  axis for `R`, counterclockwise for `A`, and for `Z` the way a positive
+  table turn carries the beam over the board (step 8).
+- Switching the motor supply off and on while the board stays on USB (to
+  move the head by hand, or an e-stop that cuts it) resets every driver to
+  its straps, and the motors hold nothing while it is off. The firmware
+  asks the drivers every quarter second: one that stops answering or
+  answers reset raises `[MSG:tmc <axis> addr<n> lost motor power, position
+  may be off]` and resets the machine as Ctrl-X does (`ALARM:1` if it was
+  moving; beam and spindle off, so they stay off when the supply returns).
+  The configuration is written again as soon as the drivers answer, which
+  `[MSG:tmc configured]` announces: wait for it before the next move, then
+  check the position, which nothing measures, before running a job. The
+  `[MSG:reset]` and banner that follow the loss are those of Ctrl-X, which
+  keeps the position; after a loss it no longer holds, the focus axis a
+  height map's focus offset is tied to included, so center and focus
+  again.
 - The cross slide has no limit switches. It is a setup axis with a short
   travel, so drive it in small steps and watch it; a `jogto Z` to a
   position declared before the slide was moved by hand will run into the
@@ -195,20 +229,35 @@ $save
   theirs.
 - A spindle on FAN3 (`$spindle=1`) keeps turning through moves and holds;
   only `spindle off`, `laser off`, a reset, a USB disconnect or an alarm
-  stop it. FAN3 is a low side switch on the fan rail, not a logic output:
-  a spindle controller's PWM or enable input needs an interface that suits
-  it (an opto-isolator, or a pull-up to the controller's own logic
-  supply), checked with a meter before the spindle is connected, and
-  `$laser_hz` set to the frequency the controller expects.
+  stop it. FAN3 is a low side switch on the fan rail, not a logic output,
+  and it is off whenever GP20 is not driven: from power-on until the
+  firmware starts, after a watchdog reset and for as long as the chip sits
+  in BOOTSEL. So the interface to a spindle controller must read stop
+  while FAN3 is off and run only while it conducts. An opto-isolator whose
+  LED is fed from the fan rail through FAN3 does that, with its transistor
+  wired so that a dark LED reads stop: from the controller's logic supply
+  to a speed input held down by a pull-down, or from an active-low enable
+  input to ground. A plain pull-up at FAN3's switched pin suits only an
+  active-low enable, which FAN3 pulls low to run; on an active-high PWM or
+  enable input it commands full speed whenever FAN3 is off.
+  `$laser_invert` stays 0 for a spindle: a wiring that needs it to read
+  stop runs the spindle at full speed at power-on, after a watchdog reset
+  and in BOOTSEL. Check the controller's input with a meter before the
+  spindle is connected, with the board unpowered, held in BOOTSEL, and
+  running after `spindle off`: all three must read stop. Set `$laser_hz`
+  to the frequency the controller expects.
 - The focus axis has no limit switches and no soft limit either. A probe
   that finds nothing goes its whole distance down and raises `ALARM:2`, so
   keep the distance to what the head can travel before anything but the
   probe meets the board. A probe that stays below the focal point once it
   has touched (a fixed pin rather than a retracting one) drags across the
   board during the cut: retract or remove it before running a job.
-- GP20 is an input from power-on until the firmware starts and again after
-  a watchdog reset. The pad's own pull-down holds the MOSFET off, but a
-  module driven from a TTL line of its own needs a pull-down there too.
+- GP20 is an input from power-on until the firmware starts, again after
+  a watchdog reset, and in BOOTSEL. The pad's own pull-down holds the
+  MOSFET off, so a laser on FAN3 must be dark while FAN3 is off, and
+  `$laser_invert` stays 0 for it as for a spindle: a wiring that needs it
+  fires the beam in all three of those windows. A module driven from a
+  TTL line of its own needs a pull-down there too.
 - The FAN3 output switches the board's fan rail, which is 12 V or 24 V
   depending on how the board is powered. Check what reaches the laser
   before connecting it to anything expecting 5 V logic.
