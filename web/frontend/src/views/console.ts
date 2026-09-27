@@ -7,6 +7,12 @@ import type { Ctx } from "./context.ts";
 
 const HISTORY = 50;
 
+/** A line that writes the machine's settings, by the backend's own test: `$name=value`, `$load` or `$defaults`. */
+export function writesSettings(line: string): boolean {
+    const text = line.trim();
+    return text.startsWith("$") && (text.includes("=") || ["load", "defaults"].includes(text.slice(1).trim().toLowerCase()));
+}
+
 export function mountConsole(root: HTMLElement, ctx: Ctx): void {
     const log = el("div", { class: "console-log", role: "log", "aria-live": "off" });
     const input = el("input", { type: "text", class: "field mono", placeholder: "command, e.g. ? or $ or jog R1", "aria-label": "Command line", autocomplete: "off" });
@@ -55,6 +61,11 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
         historyIndex = -1;
         input.value = "";
         await ctx.call(ctx.api.command(line));
+        // The settings panel, the preview's reach and the probe queue read
+        // the page's copy of the settings, which this line may have changed.
+        if (writesSettings(line) && ctx.store.get().snapshot.connected) {
+            await ctx.refreshSettings();
+        }
     }
 
     let shown: ConsoleLine[] = [];

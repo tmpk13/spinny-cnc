@@ -125,14 +125,20 @@ export function labeled(label: string, control: HTMLElement, className = "labele
     return el("label", { class: className }, el("span", { class: "labeled-text" }, label), control);
 }
 
-/** True when a text-taking control has focus, so keys should not jog. */
+/** Inputs that do nothing with the arrow keys: a checkbox and the button kinds. */
+const KEYLESS_INPUTS = new Set(["checkbox", "button", "submit", "reset", "image", "file"]);
+
+/** True when a control that uses the arrow keys has focus, so they should not jog. */
 export function inputHasFocus(): boolean {
     const active = document.activeElement;
     if (!active || active === document.body) {
         return false;
     }
     const tag = active.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    if (tag === "INPUT") {
+        return !KEYLESS_INPUTS.has((active as HTMLInputElement).type);
+    }
+    if (tag === "TEXTAREA" || tag === "SELECT") {
         return true;
     }
     return (active as HTMLElement).isContentEditable === true;

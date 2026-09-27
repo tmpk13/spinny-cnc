@@ -163,6 +163,8 @@ describe("spindle", () => {
         await ctx.selectJob(jobs[0]!.id);
         const heads = Array.from(root.querySelectorAll("table.groups thead th")).map((th) => th.textContent);
         expect(heads).toEqual(["S", "Depth", "mm/min", "Plunge", "Passes", "On"]);
+        // Six columns do not fit a narrow phone: the table scrolls in its own box.
+        expect(root.querySelector("table.groups")!.parentElement!.classList.contains("groups-scroll")).toBe(true);
         const depth = root.querySelector('table.groups input[aria-label="depth"]') as HTMLInputElement;
         expect(depth.value).toBe("0.1");
         depth.value = "0.25";
@@ -231,6 +233,11 @@ describe("cartesian", () => {
         goButtons[1]!.click();
         await settle();
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", feed: 300, r: 5, z: -2 });
+        // The rotation axis is at X 0 and Y 0.
+        calls.length = 0;
+        click(root, "Center");
+        await settle();
+        expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", r: 0, z: 0 });
         // A polar machine keeps the setup control.
         store.set({ snapshot: snapshot({}) });
         expect(slide.textContent).toContain("Setup only");

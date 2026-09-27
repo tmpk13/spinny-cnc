@@ -8,8 +8,12 @@ import type { Grid, HeightMap, HeightMapState, Job, Machine, ProbeSettings, Snap
 import { droText, mountDro } from "../src/views/dro.ts";
 import {
     cellColor,
+    focusAgainText,
     gridForJob,
     heightStats,
+    jobBox,
+    jointLineBoard,
+    legendEnds,
     LABELED_POINTS,
     mapStatus,
     mapUsable,
@@ -20,6 +24,7 @@ import {
 } from "../src/views/heightmap.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
+import { mountLaser } from "../src/views/laser.ts";
 
 const SETTINGS: ProbeSettings = { depth: 5, feed: 60, slow: 15, backoff: 0.3, offset: [0, 0], rayleigh: 0.5 };
 
@@ -155,6 +160,30 @@ describe("height map math", () => {
         expect(gridForJob(none, 2, 2)).toBeNull();
     });
 
+    test("a joint-space line is fitted all along its arc, not by its ends", () => {
+        // A ring: both ends are the same board point.
+        const ring = job();
+        ring.groups = [{ ...ring.groups[0]!, paths: [], joints: [[[10, 0], [10, 360]]] }];
+        expect(gridForJob(ring, 2, 2)).toEqual({ x0: -11, y0: -11, x1: 11, y1: 11, nx: 2, ny: 2 });
+        // A quarter turn out along a spiral bulges past both of its ends:
+        // x = (5 + 5t) cos(90t deg) peaks near 5.79 at t = 0.29.
+        const box = jobBox({ ...ring, groups: [{ ...ring.groups[0]!, joints: [[[5, 0], [10, 90]]] }] })!;
+        expect(box.x1).toBeCloseTo(5.79, 2);
+        expect(box.y1).toBeCloseTo(10, 9);
+        expect(box.x0).toBeCloseTo(0, 9);
+        expect(box.y0).toBeCloseTo(0, 9);
+        const points = jointLineBoard([10, 0], [10, 360]);
+        expect(points.length).toBe(361);
+        expect(Math.max(...points.map((p) => Math.hypot(p.x, p.y)))).toBeCloseTo(10, 9);
+    });
+
+    test("the legend's ends are the colors cells get, which a skewed map does not reach on its short side", () => {
+        // Mean 0, lowest -0.1, highest 1: the scale reaches 1 on both sides.
+        const stats = { min: -0.1, max: 1, mean: 0, probed: 3, total: 3 };
+        expect(legendEnds(stats)).toEqual({ low: "-1.000", high: "+1.000" });
+        expect(cellColor(-0.1, stats)).toBe(`color-mix(in oklab, var(--hm-low) ${Math.round(0.1 * MAX_TINT)}%, var(--hm-mid))`);
+    });
+
     test("a deviation carries its sign", () => {
         expect(signed(0.0504)).toBe("+0.050");
         expect(signed(-0.05)).toBe("-0.050");
@@ -253,6 +282,86 @@ describe("height map panel", () => {
         expect(root.querySelector("table.hm-table td")!.textContent).toBe("");
     });
 
+    test("the legend labels the ramp by its reach and names the lowest and highest beside it", () => {
+        const map = heightMap([[-0.1, 0, 0], [0, 0, 1]], { focus_set: true });
+        const { store, ctx, root } = setup({ map, probe: null, settings: SETTINGS });
+        mountHeightMap(root, ctx);
+        store.set({ snapshot: connected(), heightMap: { map, probe: null, settings: SETTINGS } });
+        const ends = Array.from(root.querySelectorAll(".hm-scale > span")).map((node) => node.textContent);
+        // The mean is 0.15: the scale reaches 0.85 either way.
+        expect(ends).toEqual(["-0.850", "", "+0.850"]);
+        expect(root.querySelector(".hm-legend")!.textContent).toContain("lowest -0.100, highest 1.000");
+    });
+
+    test("the note says the head is rising once the last point is in, not a point past the last", () => {
+        const map = heightMap([[0, 0], [0, 0]]);
+        const { store, ctx, root } = setup({ map, probe: null, settings: SETTINGS });
+        mountHeightMap(root, ctx);
+        const probe = (done: number) => ({ state: "running" as const, done, total: 4, point: [1, 1] as [number, number], seconds: 9, error: null });
+        store.set({ snapshot: connected(), heightMap: { map, probe: probe(3), settings: SETTINGS } });
+        expect(root.textContent).toContain("Probing point 4 of 4, 9 s");
+        store.set({ heightMap: { map, probe: probe(4), settings: SETTINGS } });
+        expect(root.textContent).not.toContain("point 5 of 4");
+        expect(root.textContent).toContain("Probed all 4 points, the head is rising");
+    });
+
+    test("no probing while the spindle turns, and no spindle start while probing", () => {
+        const spindle = (laser: number): Snapshot => ({ ...connected({ laser }), profile: { kinematics: "polar", tool: "spindle", h_axis: true, r_max: 60, z_max: 0 } });
+        const { store, ctx, root } = setup({ map: null, probe: null, settings: SETTINGS });
+        mountHeightMap(root, ctx);
+        const probe = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Probe")!;
+        store.set({ snapshot: spindle(0), heightMap: { map: null, probe: null, settings: SETTINGS } });
+        expect(probe.disabled).toBe(false);
+        store.set({ snapshot: spindle(400) });
+        expect(probe.disabled).toBe(true);
+        expect(root.textContent).toContain("The spindle is turning");
+        // A lit beam test is no reason to hold the probe back.
+        store.set({ snapshot: connected({ laser: 400 }) });
+        expect(probe.disabled).toBe(false);
+
+        const panel = document.createElement("section");
+        document.body.appendChild(panel);
+        mountLaser(panel, ctx);
+        store.set({ snapshot: spindle(0) });
+        const start = Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Start spindle")!;
+        const stop = Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Stop spindle")!;
+        expect(start.disabled).toBe(false);
+        store.set({ heightMap: { map: null, probe: { state: "running", done: 0, total: 4, point: [0, 0], seconds: 0, error: null }, settings: SETTINGS } });
+        expect(start.disabled).toBe(true);
+        expect(stop.disabled).toBe(false);
+        store.set({ heightMap: { map: null, probe: { state: "done", done: 4, total: 4, point: null, seconds: 9, error: null }, settings: SETTINGS } });
+        expect(start.disabled).toBe(false);
+    });
+
+    test("an active-low spindle output reports full duty on its pin when stopped", () => {
+        const spindle = (laser: number): Snapshot => ({ ...connected({ laser }), profile: { kinematics: "polar", tool: "spindle", h_axis: true, r_max: 60, z_max: 0 } });
+        const { store, ctx, root } = setup({ map: null, probe: null, settings: SETTINGS });
+        mountHeightMap(root, ctx);
+        const probe = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Probe")!;
+        store.set({
+            snapshot: spindle(1000),
+            heightMap: { map: null, probe: null, settings: SETTINGS },
+            settings: { values: { laser_invert: 1 }, schema: [], host: { tolerance: 0.01 } },
+        });
+        expect(probe.disabled).toBe(false);
+        store.set({ snapshot: spindle(0) });
+        expect(probe.disabled).toBe(true);
+        store.set({ snapshot: spindle(600) });
+        expect(probe.disabled).toBe(true);
+        expect(root.textContent).toContain("The spindle is turning");
+        // The settings arriving after the status turn the reading around too.
+        store.set({ snapshot: spindle(1000), settings: null });
+        expect(probe.disabled).toBe(true);
+        store.set({ settings: { values: { laser_invert: 1 }, schema: [], host: { tolerance: 0.01 } } });
+        expect(probe.disabled).toBe(false);
+    });
+
+    test("the hint gives the sign of the probe tip across the rail", () => {
+        const { ctx, root } = setup({ map: null, probe: null, settings: SETTINGS });
+        mountHeightMap(root, ctx);
+        expect(root.querySelector(".hm-probe-settings")!.textContent).toContain("positive to the left of outward seen from above");
+    });
+
     test("probing asks first, then sends the grid in the fields", async () => {
         const { store, ctx, root, calls } = setup({ map: null, probe: null, settings: SETTINGS });
         mountHeightMap(root, ctx);
@@ -344,5 +453,30 @@ describe("compensated runs", () => {
         click(root, "Run");
         await settle();
         expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "auto"], ["j1", "power"]]);
+    });
+
+    test("a map whose offset was dropped is not followed by default, and the page asks for the offset again", async () => {
+        const map = heightMap([[0, 0.1], [0.2, 0.3]], { focus_set: true });
+        const { store, ctx, root, calls } = setup({ map, probe: null, settings: SETTINGS });
+        mountJobs(root, ctx);
+        store.set({ snapshot: connected(), job: job(), heightMap: { map, probe: null, settings: SETTINGS } });
+        const select = root.querySelector('select[aria-label="Height map"]') as HTMLSelectElement;
+        const note = (): string => (root.querySelector(".run-row + p") as HTMLElement).textContent ?? "";
+        expect(select.value).toBe("auto");
+        expect(note()).toBe("");
+        // Set H=0, a connect or a firmware restart: the backend drops the
+        // offset, since the heights are in numbers the axis no longer has.
+        const stale = { ...map, focus_set: false };
+        store.set({ heightMap: { map: stale, probe: null, settings: SETTINGS } });
+        expect(select.value).toBe("off");
+        expect(note()).toContain("Focus here before a run follows it");
+        click(root, "Run");
+        await settle();
+        expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "off"]]);
+        // A spindle is touched off instead.
+        store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "spindle", h_axis: true, r_max: 60, z_max: 0 } } });
+        expect(note()).toContain("Touch off here before a run follows it");
+        expect(focusAgainText(heightMap([[0, null]]), false)).toBe("");
+        expect(focusAgainText(null, false)).toBe("");
     });
 });

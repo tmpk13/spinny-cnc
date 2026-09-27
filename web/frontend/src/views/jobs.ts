@@ -7,7 +7,7 @@ import { isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, ClearPattern, Compensate, Job, Progress, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
-import { mapUsable } from "./heightmap.ts";
+import { focusAgainText, mapUsable } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.kicad_pcb,.gcode,.nc";
@@ -237,8 +237,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const progressState = el("span", { class: "badge run-state" });
     const progressReason = el("span", { class: "progress-reason" });
     const runButton = button("Run", () => run(), "btn btn-primary");
-    // How the run follows the height map. It turns to auto by itself once a
-    // usable map exists, until the operator picks something.
+    // How the run follows the height map. It turns to auto by itself while a
+    // usable map exists and back to off when there is none, until the
+    // operator picks something; a choice the map cannot meet is refused by
+    // the backend rather than run without it.
     const compensate = el("select", { class: "field", "aria-label": "Height map" },
         el("option", { value: "off" }, "no height map"),
         el("option", { value: "auto" }, "height map: auto"),
@@ -255,6 +257,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
     const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
     const runRow = el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton);
+    // A map that lost its offset is not followed until it is taken again.
+    const compensateNote = el("p", { class: "muted hint hidden" });
     const progressBox = el("div", { class: "progress" },
         el("div", { class: "progress-track" }, progressBar),
         el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
@@ -292,6 +296,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 statsEl,
                 offsetRow(job),
                 runRow,
+                compensateNote,
                 progressBox,
             );
         } else if (detailsJob !== job) {
@@ -349,9 +354,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         if (milling && compensate.value === "power") {
             compensate.value = "auto";
         }
+        const map = state.heightMap?.map ?? null;
         if (!compensateTouched) {
-            compensate.value = mapUsable(state.heightMap?.map ?? null) ? "auto" : "off";
+            compensate.value = mapUsable(map) ? "auto" : "off";
         }
+        const again = focusAgainText(map, milling);
+        compensateNote.textContent = again;
+        compensateNote.classList.toggle("hidden", again === "");
         const labels = jobLabels(milling);
         relabel(powerLabel, labels.power);
         relabel(speedLabel, labels.speed);
@@ -396,7 +405,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                         enabled: enabled.checked,
                     }],
                 }));
-                await ctx.selectJob(job.id);
+                await ctx.reloadJob(job.id);
                 await ctx.refreshJobs();
             };
             for (const field of [power, minPower, speed, passes, depth, plunge, enabled]) {
@@ -433,7 +442,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 el("th", { title: "Times the group runs over all of its paths" }, "Passes"),
                 el("th", {}, "On"),
             ];
-        return el("table", { class: "groups" }, el("thead", {}, el("tr", {}, ...head)), ...rows);
+        return el("div", { class: "groups-scroll" }, el("table", { class: "groups" }, el("thead", {}, el("tr", {}, ...head)), ...rows));
     }
 
     function statsBlock(job: Job): HTMLElement {
@@ -461,7 +470,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 return;
             }
             await ctx.call(ctx.api.patchJob(job.id, { offset: { x: ox, y: oy } }));
-            await ctx.selectJob(job.id);
+            await ctx.reloadJob(job.id);
             await ctx.refreshJobs();
         };
         return el("div", { class: "goto-row" },

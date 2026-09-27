@@ -15,8 +15,13 @@ export interface Ctx {
     refreshJobs(): Promise<void>;
     refreshSettings(): Promise<void>;
     refreshHeightMap(): Promise<void>;
-    /** Loads a job in full and makes it the selected one; null clears the selection. */
+    /**
+     * Loads a job in full and makes it the selected one; null clears the
+     * selection. The last call wins, whatever order the replies come in.
+     */
     selectJob(id: string | null): Promise<void>;
+    /** Loads the selected job again after a change to it; dropped when another job is selected meanwhile. */
+    reloadJob(id: string): Promise<void>;
 }
 
 /** Radio-style button row; `format` gives each value its label. */

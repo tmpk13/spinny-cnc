@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { EventSocket, backoffDelay, backoffSchedule, parseEvent, wsUrl, type SocketLike } from "../src/ws.ts";
+import { EventSocket, STALE_MS, backoffDelay, backoffSchedule, parseEvent, wsUrl, type SocketLike } from "../src/ws.ts";
 import type { WsEvent } from "../src/types.ts";
 
 class FakeSocket implements SocketLike {
@@ -140,6 +140,85 @@ describe("reconnect", () => {
         socket.stop();
         expect(sockets[1]!.closed).toBe(true);
         expect(statuses[statuses.length - 1]).toBe("closed");
+    });
+});
+
+describe("silence", () => {
+    function silentHarness() {
+        const sockets: FakeSocket[] = [];
+        const timers: { fn: () => void; ms: number; canceled: boolean }[] = [];
+        const clock = { now: 0 };
+        const socket = new EventSocket("ws://x/ws", {
+            factory: () => {
+                const s = new FakeSocket();
+                sockets.push(s);
+                return s;
+            },
+            setTimer: (fn, ms) => {
+                const timer = { fn, ms, canceled: false };
+                timers.push(timer);
+                return timer;
+            },
+            clearTimer: (handle) => {
+                (handle as { canceled: boolean }).canceled = true;
+            },
+            now: () => clock.now,
+        });
+        const statuses: string[] = [];
+        socket.onStatus((status) => statuses.push(status));
+        return { socket, sockets, timers, clock, statuses };
+    }
+    const state = (connected: boolean): { data: string } => ({
+        data: JSON.stringify({ type: "state", data: { connected, url: null, firmware: null, machine: null, run: null } }),
+    });
+
+    test("a feed silent for too long while a machine is connected is dropped and opened again", () => {
+        const { socket, sockets, timers, clock, statuses } = silentHarness();
+        socket.start();
+        sockets[0]!.onopen?.({});
+        // No machine: the backend may say nothing for a long time.
+        sockets[0]!.onmessage?.(state(false));
+        expect(timers.length).toBe(0);
+        sockets[0]!.onmessage?.(state(true));
+        expect(timers.map((t) => t.ms)).toEqual([STALE_MS]);
+        // A frame of a type the page does not know still counts.
+        clock.now = 3000;
+        sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "ping" }) });
+        clock.now = STALE_MS;
+        timers[0]!.fn();
+        expect(socket.status).toBe("open");
+        expect(timers.map((t) => t.ms)).toEqual([STALE_MS, 3000]);
+        clock.now = 3000 + STALE_MS;
+        timers[1]!.fn();
+        expect(socket.status).toBe("closed");
+        expect(statuses).toEqual(["connecting", "open", "closed"]);
+        expect(sockets[0]!.closed).toBe(true);
+        // The retry does not wait for a close the dead socket may never send.
+        expect(timers.map((t) => t.ms)).toEqual([STALE_MS, 3000, 500]);
+        sockets[0]!.onmessage?.(state(true));
+        expect(timers.length).toBe(3);
+        timers[2]!.fn();
+        expect(sockets.length).toBe(2);
+    });
+
+    test("the check stands down when the machine goes, and with the socket", () => {
+        const { socket, sockets, timers, clock } = silentHarness();
+        socket.start();
+        sockets[0]!.onopen?.({});
+        sockets[0]!.onmessage?.(state(true));
+        sockets[0]!.onmessage?.(state(false));
+        clock.now = 60000;
+        timers[0]!.fn();
+        expect(socket.status).toBe("open");
+        expect(timers.length).toBe(1);
+        // Armed again by the next frame that says connected.
+        sockets[0]!.onmessage?.(state(true));
+        expect(timers.map((t) => t.ms)).toEqual([STALE_MS, STALE_MS]);
+        sockets[0]!.onclose?.({});
+        expect(timers[1]!.canceled).toBe(true);
+        expect(timers.map((t) => t.ms)).toEqual([STALE_MS, STALE_MS, 500]);
+        socket.stop();
+        expect(timers.every((t) => t.canceled || t === timers[0])).toBe(true);
     });
 });
 

@@ -5,7 +5,7 @@ import { askConfirm } from "../confirm.ts";
 
 /** The longest beam test the firmware accepts, ms. */
 export const MAX_BEAM_MS = 60000;
-import { button, el, labeled, numberField } from "../dom.ts";
+import { button, el, labeled, numberField, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import type { Mode } from "../types.ts";
@@ -82,5 +82,8 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
         if (mode) {
             setPressed(modes, mode);
         }
-    }, ["snapshot"]);
+        // The tool may be the probe: it must not turn while it touches down.
+        // Stop stays open whatever happens.
+        setLocked(start, state.heightMap?.probe?.state === "running");
+    }, ["snapshot", "heightMap"]);
 }

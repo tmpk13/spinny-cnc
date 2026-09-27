@@ -33,8 +33,15 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
         preview.setHead(machine?.joint ?? null, machine?.board ?? null);
     }, ["snapshot"]);
     ctx.store.subscribe((state) => {
-        preview.setRMax(state.settings?.values["r_max"] ?? 0);
-    }, ["settings"]);
+        // The profile in every state frame follows a setting changed at the
+        // console or from another page; the settings read are the fallback
+        // for a backend that sends no profile.
+        // A cartesian machine reaches a box, not a circle.
+        const profile = state.snapshot.profile;
+        preview.setLimits(profile
+            ? { kinematics: profile.kinematics, r_max: profile.r_max, z_max: profile.z_max }
+            : { kinematics: "polar", r_max: state.settings?.values["r_max"] ?? 0, z_max: 0 });
+    }, ["settings", "snapshot"]);
     ctx.store.subscribe((state) => {
         preview.setProbe(state.heightMap?.map ?? null, state.probeDraft);
     }, ["heightMap", "probeDraft"]);

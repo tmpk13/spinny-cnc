@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import {
     DEG,
+    axisSnap,
     boardOfJoint,
+    cartesianSurfaceLength,
+    headBoard,
     chordError,
     jointOfBoard,
     jointPath,
@@ -164,4 +167,39 @@ test("a board move from the far side comes back through the axis first", () => {
     expect(last?.r).toBeCloseTo(3);
     expect(last?.a).toBeCloseTo(90);
     expect(out.length).toBe(3);
+});
+
+describe("the axis snap", () => {
+    test("a line passing within the tolerance of the axis is cut there: radial in, a dark turn, radial out", () => {
+        // From (-10, 0.003) to (10, 0.003), 3 um off the axis: with a 5 um
+        // tolerance it goes through the axis, not round it in lit chords
+        // sweeping half a turn at a radius of microns.
+        const start: Joint = { r: Math.hypot(10, 0.003), a: Math.atan2(0.003, -10) / DEG };
+        const joints = segmentBoardMove(start, { x: 10, y: 0.003 }, 0.005);
+        expect(joints.length).toBe(3);
+        expect(joints[0]).toEqual({ r: 0, a: start.a });
+        expect(joints[1]!.r).toBe(0);
+        expect(joints[1]!.a).toBeCloseTo(Math.atan2(0.003, 10) / DEG, 9);
+        expect(joints[2]!.r).toBeCloseTo(Math.hypot(10, 0.003), 9);
+        expect(joints[2]!.a).toBeCloseTo(Math.atan2(0.003, 10) / DEG, 9);
+        // Farther out than the snap, the line is chords as before.
+        expect(segmentBoardMove(start, { x: 10, y: 0.5 }, 0.005).every((joint) => joint.r > 0)).toBe(true);
+        expect(axisSnap(0.005)).toBe(0.005);
+        expect(axisSnap(0.0001)).toBe(0.0005);
+    });
+
+    test("a head within the snap of the axis leaves it with a turn, and a target within it is the axis", () => {
+        const leave = segmentBoardMove({ r: 0.002, a: 0 }, { x: 0, y: 5 }, 0.005);
+        expect(leave).toEqual([{ r: 0, a: 0 }, { r: 0, a: 90 }, { r: 5, a: 90 }]);
+        expect(segmentBoardMove({ r: 7, a: 45 }, { x: 0.001, y: 0.002 }, 0.005)).toEqual([{ r: 0, a: 45 }]);
+    });
+
+    test("a cartesian machine's board point and surface length count the cross slide", () => {
+        expect(headBoard({ r: 3, a: 90 }, 4, true).x).toBeCloseTo(-4, 9);
+        expect(headBoard({ r: 3, a: 90 }, 4, true).y).toBeCloseTo(3, 9);
+        expect(headBoard({ r: 3, a: 90 }, 4, false).y).toBeCloseTo(3, 9);
+        // A turn of the table sweeps the head's distance from the axis, hypot(R, Z).
+        expect(cartesianSurfaceLength({ r: 3, a: 0 }, { r: 3, a: 90 }, 4, 4)).toBeCloseTo((5 * Math.PI) / 2, 9);
+        expect(cartesianSurfaceLength({ r: 0, a: 0 }, { r: 3, a: 0 }, 0, 4)).toBeCloseTo(5, 9);
+    });
 });

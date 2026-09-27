@@ -2,8 +2,37 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { ApiError, type Api } from "./api.ts";
-import { AXIS_EPSILON, DEG, boardOfJoint, lerpJoint, moveMinutes, segmentBoardMove, surfaceLength, unwrap } from "./kinematics.ts";
-import { MAX_VALUE, MAX_VALUE_TEXT, buildJob, centerJob, checkPasses, checkPower, checkSpeed, computeStats, demoCoupon, groupMoves, placeJob } from "./mockjobs.ts";
+import {
+    AXIS_EPSILON,
+    DEG,
+    cartesianSurfaceLength,
+    headBoard,
+    lerpJoint,
+    segmentBoardMove,
+    surfaceLength,
+    turned,
+    unwrap,
+} from "./kinematics.ts";
+import {
+    DEFAULT_DEPTH,
+    DEFAULT_PLUNGE,
+    MAX_VALUE,
+    MAX_VALUE_TEXT,
+    buildJob,
+    centerJob,
+    checkDepth,
+    checkPasses,
+    checkPower,
+    checkSpeed,
+    computeStats,
+    demoCoupon,
+    formatG,
+    groupMoves,
+    jointPreview,
+    pathMoves,
+    placeJob,
+    type PlannedMove,
+} from "./mockjobs.ts";
 import type { LinkStatus } from "./state.ts";
 import type {
     Board,
@@ -12,6 +41,7 @@ import type {
     Compensate,
     GotoRequest,
     Grid,
+    Group,
     HeightMap,
     HeightMapState,
     Job,
@@ -22,6 +52,7 @@ import type {
     Machine,
     MachineState,
     Mode,
+    Path,
     Port,
     PositionRequest,
     ProbeProgress,
@@ -105,6 +136,8 @@ export const MOCK_MACHINE_SETTINGS: Record<string, number> = { h_axis: 1 };
 export const MIN_FEED = 0.001;
 /** Longest constant beam the firmware takes, ms. */
 export const LASER_MAX_MS = 60000;
+/** Longest dwell the firmware takes, ms. */
+const DWELL_MAX_MS = 600000;
 /** A move shorter than this on the board (a turn on the axis) runs with the beam off. */
 const SURFACE_EPSILON_MM = 0.001;
 
@@ -157,19 +190,143 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "spindle", unit: "0/1", help: "1 = the laser output drives a spindle, the focus axis is its depth" },
 ];
 
-export type MoveKind = "go" | "cut" | "jog";
+/** Largest value a float setting takes, as the firmware bounds them. */
+const FLOAT_MAX = 1e7;
+/** Settings the firmware holds as 0 or 1. */
+const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle"]);
+/** Settings the firmware holds as unsigned 32-bit integers: decimal text is refused. */
+const INT_SETTINGS = new Set([
+    "dir_invert",
+    "idle_ms",
+    "step_us",
+    "laser_hz",
+    "laser_ms",
+    "tmc_r_ma",
+    "tmc_a_ma",
+    "tmc_hold_pct",
+    "tmc_r_micro",
+    "tmc_a_micro",
+    "tmc_z_ma",
+    "tmc_z_micro",
+    "tmc_h_ma",
+    "tmc_h_micro",
+    "probe_ms",
+]);
+const U32_MAX = 4294967295;
+/** Most motion a probe keeps queued, ms: the firmware's segment ring. */
+const PROBE_MS_MAX = 160;
+const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+/** The wiring, which `$defaults` leaves as it is: an active-low laser taken back to active high would light. */
+const WIRING_SETTINGS = ["laser_invert", "en_invert", "probe_invert", "dir_invert"];
+/** Settings that scale or turn the axes, so the focus axis frame a height map is tied to. */
+const FRAME_SETTINGS = new Set(["r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis"]);
+/** Largest whole number and other value the backend sends as a setting. */
+const INT_SETTING_MAX = U32_MAX;
+const SETTING_MAX = 1e7;
+/** Largest chord tolerance the backend takes, mm. */
+const MAX_TOLERANCE = 10;
+
+/**
+ * The firmware's check of a whole set of settings, so the rules that span
+ * two of them hold: every value in its range, whole numbers where the
+ * firmware keeps an integer, and `s_min` within `s_max`.
+ */
+export function settingsValid(settings: Record<string, number>): boolean {
+    const value = (name: string): number => settings[name] ?? DEFAULT_SETTINGS[name] ?? Number.NaN;
+    for (const name of Object.keys(DEFAULT_SETTINGS)) {
+        const v = value(name);
+        if (!Number.isFinite(v)) {
+            return false;
+        }
+        if (FLAG_SETTINGS.has(name) && v !== 0 && v !== 1) {
+            return false;
+        }
+        if (INT_SETTINGS.has(name) && !(Number.isInteger(v) && v >= 0 && v <= U32_MAX)) {
+            return false;
+        }
+        if (/_(steps|rate|accel|jerk)$/.test(name) || name.startsWith("jog_")) {
+            if (!(v > 0 && v <= FLOAT_MAX)) {
+                return false;
+            }
+        }
+        if (/^tmc_._ma$/.test(name) && v > 2000) {
+            return false;
+        }
+        if (/^tmc_._micro$/.test(name) && !MICROSTEPS.includes(v)) {
+            return false;
+        }
+    }
+    const within = (name: string, low: number, high: number): boolean => value(name) >= low && value(name) <= high;
+    return (
+        within("r_max", 0, FLOAT_MAX) &&
+        within("z_max", 0, FLOAT_MAX) &&
+        within("dir_invert", 0, 15) &&
+        within("probe_ms", 0, PROBE_MS_MAX) &&
+        within("step_us", 1, 20) &&
+        within("laser_hz", 100, 100000) &&
+        within("laser_ms", 1, 60000) &&
+        within("tmc_hold_pct", 0, 100) &&
+        value("s_max") > 0 &&
+        value("s_max") <= FLOAT_MAX &&
+        within("s_min", 0, value("s_max"))
+    );
+}
+
+/**
+ * The value of `$name=value` text as the firmware reads it for that
+ * setting, or null for text it refuses: 0 or 1 for a flag, digits only for
+ * an integer, and otherwise a plain decimal with no exponent.
+ */
+function settingValue(name: string, text: string): number | null {
+    if (FLAG_SETTINGS.has(name)) {
+        return text === "0" ? 0 : text === "1" ? 1 : null;
+    }
+    if (INT_SETTINGS.has(name)) {
+        return /^\d+$/.test(text) ? Number(text) : null;
+    }
+    return decimal(text);
+}
+
+/** A plain decimal as the firmware reads a word: optional sign, digits, optional fraction, no exponent. */
+function decimal(text: string): number | null {
+    return /^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(text) ? Number(text) : null;
+}
+
+/** A setting's value as the backend writes it on a line: a whole number as it is, others to six decimals. */
+function settingText(value: number): string {
+    if (Number.isInteger(value)) {
+        return String(value);
+    }
+    const text = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    return text === "" || text === "-" || text === "-0" ? "0" : text;
+}
+
+export type MoveKind = "go" | "cut" | "jog" | "dwell" | "spindle";
 
 export interface Move {
     kind: MoveKind;
+    /** Where the joints end; a dwell or a spindle line stays where the move before it ended. */
     target: Joint;
     /** Focus axis at the end, mm; left out, the head keeps the height the move before left it at. */
     h?: number;
+    /** Cross slide at the end on a cartesian machine, where it is a joint; left out, it stays. */
+    z?: number;
+    /** Only the focus axis moves, so the line carries only its word. */
+    headOnly?: boolean;
+    /** A board jog's turn on the axis: the line carries only the angle. */
+    turn?: boolean;
     /** Surface speed in mm/min for a cut, the jog feed, or null for the default rates. */
     feed: number | null;
-    /** S word for a cut. */
+    /** S word for a cut or a dwell, or the spindle's speed. */
     power: number;
     /** M word for a cut: the floor of its dynamic power, not modal. */
     minPower?: number;
+    /** A spindle's cut, which carries no S or M. */
+    milled?: boolean;
+    /** A dwell's time, ms. */
+    ms?: number;
+    /** `spindle off` rather than a speed. */
+    off?: boolean;
     /** Job group index, for progress. */
     group: number;
 }
@@ -177,8 +334,11 @@ export interface Move {
 interface Active {
     move: Move;
     from: Joint;
+    to: Joint;
     fromH: number;
     toH: number;
+    fromZ: number;
+    toZ: number;
     seconds: number;
     elapsed: number;
 }
@@ -195,8 +355,10 @@ interface Slide {
 export const HELP_LINES = [
     "go [R] [A] [H] | cut [R] [A] [H] [F] [S] [M] | jog [R] [A] [H] [F] | jogto [R] [A] [H] [F]",
     "cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z",
+    "cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A",
     "focus axis probe (h_axis=1): probe H [F]",
     "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]",
+    "spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S",
     "enable | disable | unlock | version | status | help",
     "$ | $name | $name=value | $save | $load | $defaults | $tmc",
     "realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel",
@@ -241,9 +403,11 @@ export class MockMachine {
     probeOffset: [number, number] = [0, 0];
     state: MachineState = "Idle";
     alarm: number | null = null;
+    /** What a hold stopped: a hold of a run takes moves in to wait for the resume, a hold of a jog does not. */
+    held: MachineState | null = null;
     mode: Mode = "dyn";
     enabled = false;
-    /** Laser duty in permille. */
+    /** Beam duty in permille of full power, 0 dark; status() reports it as driven on the pin. */
     laser = 0;
     /** `S` of the spindle while it turns, with `$spindle=1`; its duty is what the status shows. */
     spindle = 0;
@@ -273,7 +437,7 @@ export class MockMachine {
     /** What the machine is, as the backend reads it from the settings. */
     profile(): Profile {
         return {
-            kinematics: (this.settings["cartesian"] ?? 0) !== 0 ? "cartesian" : "polar",
+            kinematics: this.cartesian() ? "cartesian" : "polar",
             tool: this.milling() ? "spindle" : "laser",
             h_axis: this.hasFocusAxis(),
             r_max: this.settings["r_max"] ?? 0,
@@ -285,7 +449,16 @@ export class MockMachine {
         return (this.settings["spindle"] ?? 0) !== 0;
     }
 
-    /** `spindle S` / `spindle off`: refused on a laser machine, as the firmware refuses it. */
+    /** The cross slide is a joint beside the radius, and the table holds the board still. */
+    cartesian(): boolean {
+        return (this.settings["cartesian"] ?? 0) !== 0;
+    }
+
+    /**
+     * `spindle S` / `spindle off`: refused on a laser machine. A start is
+     * taken where a move would be, from rest, in a run or in a hold of one;
+     * a stop in any state. Either waits for the motion queued before it.
+     */
     spin(power: number | null): void {
         if (!this.milling()) {
             throw new MachineError(2, "bad word");
@@ -293,21 +466,43 @@ export class MockMachine {
         if (power !== null && !(power >= 0)) {
             throw new MachineError(4, "out of range");
         }
-        if (power !== null && (this.state === "Alarm" || this.state === "Jog")) {
-            throw new MachineError(5, "not now");
+        if (power !== null) {
+            this.checkMotionState(false);
+        }
+        if (this.queue.length > 0 || this.active !== null) {
+            this.queue.push({ kind: "spindle", target: this.endpoint(), power: power ?? 0, off: power === null, feed: null, group: -1 });
+            return;
         }
         this.spindle = power ?? 0;
     }
 
-    /** The board point under the probe tip with the joints at `joint`. */
-    tipBoard(joint: Joint = this.joint): Board {
+    /** The spindle's speed once the queue has run: the last speed queued, else the one it turns at. */
+    spindleEnd(): number {
+        for (let i = this.queue.length - 1; i >= 0; i--) {
+            const move = this.queue[i];
+            if (move?.kind === "spindle") {
+                return move.off ? 0 : move.power;
+            }
+        }
+        return this.spindle;
+    }
+
+    /** `laser off`: the output off, a spindle's included. */
+    outputOff(): void {
+        this.beamOff();
+        this.spindle = 0;
+    }
+
+    /** The board point under the beam with the joints at `joint`. */
+    headBoard(joint: Joint = this.joint, z: number = this.z): Board {
+        return headBoard(joint, z, this.cartesian());
+    }
+
+    /** The board point under the probe tip with the joints at `joint`: the tip is off the beam along the rail and across it. */
+    tipBoard(joint: Joint = this.joint, z: number = this.z): Board {
         const [along, across] = this.probeOffset;
-        const rad = joint.a * DEG;
-        const reach = joint.r + along;
-        return {
-            x: reach * Math.cos(rad) - across * Math.sin(rad),
-            y: reach * Math.sin(rad) + across * Math.cos(rad),
-        };
+        const slide = this.cartesian() ? z : 0;
+        return turned({ x: joint.r + along, y: slide + across }, joint.a);
     }
 
     /** The H at which the probe touches the board where the tip is now. */
@@ -357,7 +552,7 @@ export class MockMachine {
         if (last) {
             return last.target;
         }
-        return this.active ? this.active.move.target : this.joint;
+        return this.active ? this.active.to : this.joint;
     }
 
     /** The focus axis once the queue has run: the last H word, else where it is headed now. */
@@ -371,19 +566,32 @@ export class MockMachine {
         return this.active ? this.active.toH : this.h;
     }
 
+    /** The cross slide once the queue has run, on a cartesian machine where moves carry it. */
+    endpointZ(): number {
+        for (let i = this.queue.length - 1; i >= 0; i--) {
+            const z = this.queue[i]?.z;
+            if (z !== undefined) {
+                return z;
+            }
+        }
+        return this.active ? this.active.toZ : this.z;
+    }
+
     moving(): boolean {
         return this.state === "Run" || this.state === "Jog";
     }
 
     status(): Machine {
         const focus = this.hasFocusAxis();
+        const duty = this.milling() ? Math.max(0, Math.min(1000, (this.spindle / (this.settings["s_max"] ?? 1000)) * 1000)) : this.laser;
         return {
             state: this.state,
             alarm: this.alarm,
             joint: { ...this.joint, z: this.z, h: focus ? this.h : null },
-            board: boardOfJoint(this.joint),
+            board: this.headBoard(),
             rate: this.rate,
-            laser: this.milling() ? Math.max(0, Math.min(1000, (this.spindle / (this.settings["s_max"] ?? 1000)) * 1000)) : this.laser,
+            // The duty driven on the pin: an active-low output reads 1000 dark.
+            laser: (this.settings["laser_invert"] ?? 0) !== 0 ? 1000 - duty : duty,
             mode: this.mode,
             enabled: this.enabled,
             queue: this.queueFree(),
@@ -391,13 +599,21 @@ export class MockMachine {
         };
     }
 
-    /** Any move may cross the axis to the far side; the soft limit is on the distance from it, either side. */
-    private checkRadius(r: number): void {
-        if (!Number.isFinite(r)) {
+    /**
+     * The soft limits: any move may cross the axis to the far side, and
+     * `r_max` is on the distance from it, either side; on a cartesian
+     * machine `z_max` holds the cross slide the same way.
+     */
+    checkReach(r: number, z: number | undefined = undefined): void {
+        if (!Number.isFinite(r) || (z !== undefined && !Number.isFinite(z))) {
             throw new MachineError(4, "out of range");
         }
         const rMax = this.settings["r_max"] ?? 0;
         if (rMax > 0 && Math.abs(r) > rMax + 1e-9) {
+            throw new MachineError(4, "out of range");
+        }
+        const zMax = this.settings["z_max"] ?? 0;
+        if (z !== undefined && zMax > 0 && Math.abs(z) > zMax + 1e-9) {
             throw new MachineError(4, "out of range");
         }
     }
@@ -409,66 +625,108 @@ export class MockMachine {
         if (!(move.power >= 0)) {
             throw new MachineError(4, "out of range");
         }
-        this.checkRadius(move.target.r);
+        this.checkReach(move.target.r, move.z);
         if (!Number.isFinite(move.target.a)) {
             throw new MachineError(4, "out of range");
         }
     }
 
-    /** Queues a move; the firmware refuses motion in Hold and Alarm, and jogs outside Idle/Jog. */
-    push(move: Move): void {
-        this.checkFocusWord(move.h);
-        if (this.state === "Alarm" || this.state === "Hold") {
-            throw new MachineError(5, "not now");
-        }
+    /**
+     * Jogs are taken in Idle and Jog, the other motion in Idle and Run and
+     * in a hold of a run, where it waits for the resume; nothing joins a
+     * cross slide move.
+     */
+    private checkMotionState(jog: boolean): void {
         if (this.slide !== null) {
-            // The cross slide moves on its own; nothing joins it.
             throw new MachineError(5, "not now");
         }
-        if (move.kind === "jog" && this.state === "Run") {
+        const allowed = jog
+            ? this.state === "Idle" || this.state === "Jog"
+            : this.state === "Idle" || this.state === "Run" || (this.state === "Hold" && this.held === "Run");
+        if (!allowed) {
             throw new MachineError(5, "not now");
         }
-        if (move.kind !== "jog" && this.state === "Jog") {
+    }
+
+    /** A cut's checks before its words are resolved: where motion is taken, and with a spindle only while it turns. */
+    checkCut(): void {
+        this.checkMotionState(false);
+        if (this.milling() && !(this.spindleEnd() > 0)) {
             throw new MachineError(5, "not now");
         }
+    }
+
+    /** Queues a move, refused as the firmware refuses the line that asks for it. */
+    push(move: Move): void {
+        if (move.z !== undefined && !this.cartesian()) {
+            // The cross slide moves on its own on a polar machine.
+            throw new MachineError(2, "bad word");
+        }
+        const milling = this.milling();
+        if (milling && move.kind === "cut" && (move.power > 0 || (move.minPower ?? 0) > 0)) {
+            // A spindle's speed is its own command's: an S on a cut is a laser job.
+            throw new MachineError(2, "bad word");
+        }
+        if (milling && move.kind === "dwell" && move.power > 0) {
+            throw new MachineError(2, "bad word");
+        }
+        this.checkMotionState(move.kind === "jog");
+        if (milling && move.kind === "cut" && !(this.spindleEnd() > 0)) {
+            // A cut drags the tool through the work: not with it stopped.
+            throw new MachineError(5, "not now");
+        }
+        this.checkFocusWord(move.h);
         if (!this.canQueue()) {
             throw new MachineError(5, "queue full");
         }
         this.checkWords(move);
         this.queue.push(move);
         this.enabled = true;
-        this.beamSeconds = 0;
+        if (move.kind !== "spindle") {
+            this.beamSeconds = 0;
+        }
         if (this.state === "Idle") {
             this.state = move.kind === "jog" ? "Jog" : "Run";
         }
     }
 
-    /** A relative jog; a `dh` of null leaves the focus axis out of it. */
-    jog(dr: number, da: number, feed: number | null, dh: number | null = null): void {
+    /** A relative jog; a `dh` or `dz` of null leaves that axis out of it. */
+    jog(dr: number, da: number, feed: number | null, dh: number | null = null, dz: number | null = null): void {
         const from = this.endpoint();
         const h = dh !== null ? this.endpointH() + dh : undefined;
-        this.push({ kind: "jog", target: { r: from.r + dr, a: from.a + da }, h, feed, power: 0, group: -1 });
+        const z = dz !== null ? this.endpointZ() + dz : undefined;
+        this.push({ kind: "jog", target: { r: from.r + dr, a: from.a + da }, h, z, feed, power: 0, group: -1 });
     }
 
-    jogTo(r: number | null, a: number | null, feed: number | null, h: number | null = null): void {
+    jogTo(r: number | null, a: number | null, feed: number | null, h: number | null = null, z: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "jog", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, feed, power: 0, group: -1 });
+        this.push({ kind: "jog", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, z: z ?? undefined, feed, power: 0, group: -1 });
     }
 
-    go(r: number | null, a: number | null, h: number | null = null): void {
+    go(r: number | null, a: number | null, h: number | null = null, z: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "go", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, feed: null, power: 0, group: -1 });
+        this.push({ kind: "go", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, z: z ?? undefined, feed: null, power: 0, group: -1 });
     }
 
-    cut(r: number | null, a: number | null, feed: number, power: number, minPower = 0, h: number | null = null): void {
+    cut(r: number | null, a: number | null, feed: number, power: number, minPower = 0, h: number | null = null, z: number | null = null): void {
         const from = this.endpoint();
-        this.push({ kind: "cut", target: { r: r ?? from.r, a: a ?? from.a }, h: h ?? undefined, feed, power, minPower, group: -1 });
+        const target = { r: r ?? from.r, a: a ?? from.a };
+        this.push({ kind: "cut", target, h: h ?? undefined, z: z ?? undefined, feed, power, minPower, milled: this.milling(), group: -1 });
+    }
+
+    /** `dwell T [S]`: a wait once the motion before it is done, with the beam at S for a spot burn. */
+    dwell(ms: number, power: number): void {
+        this.push({ kind: "dwell", target: this.endpoint(), ms, power, feed: null, group: -1 });
     }
 
     /** Sends the cross slide to `z`; the firmware takes it in Idle only. */
     slideTo(z: number, feed: number | null): void {
         this.requireIdle();
         if (feed !== null && !(feed >= MIN_FEED)) {
+            throw new MachineError(4, "out of range");
+        }
+        const zMax = this.settings["z_max"] ?? 0;
+        if (!Number.isFinite(z) || (zMax > 0 && Math.abs(z) > zMax + 1e-9)) {
             throw new MachineError(4, "out of range");
         }
         const limit = this.settings["z_rate"] ?? 560;
@@ -489,34 +747,45 @@ export class MockMachine {
     /**
      * The focus axis moves with the joints and holds them back only when it
      * is the slower. F stays the board speed, except on a move that only
-     * raises or lowers the head, which takes it as the speed of H.
+     * raises or lowers the head, which takes it as the speed of H. On a
+     * cartesian machine the cross slide is one of the joints.
      */
-    private secondsFor(move: Move, from: Joint, fromH: number, toH: number): number {
+    private secondsFor(move: Move, from: Joint, fromH: number, toH: number, fromZ: number, toZ: number): number {
         const s = this.settings;
+        const to = move.target;
+        const length = this.cartesian() ? cartesianSurfaceLength(from, to, fromZ, toZ) : surfaceLength(from, to);
         const hRate = s["h_rate"] ?? 600;
-        const headOnly = Math.abs(move.target.r - from.r) < 1e-9 && Math.abs(move.target.a - from.a) < 1e-9;
-        let minutes: number;
+        const headOnly = Math.abs(to.r - from.r) < 1e-9 && Math.abs(to.a - from.a) < 1e-9 && Math.abs(toZ - fromZ) < 1e-9;
+        let rates = [s["r_rate"] ?? 560, s["a_rate"] ?? 400, s["z_rate"] ?? 560];
+        let feed: number | null = null;
         let focusRate = hRate;
-        if (move.kind === "go") {
-            minutes = moveMinutes(from, move.target, null, s["r_rate"] ?? 560, s["a_rate"] ?? 400);
-        } else if (move.kind === "jog" && move.feed === null) {
-            minutes = moveMinutes(from, move.target, null, s["jog_r"] ?? 300, s["jog_a"] ?? 200);
+        if (move.kind === "jog" && move.feed === null) {
+            rates = [s["jog_r"] ?? 300, s["jog_a"] ?? 200, s["jog_z"] ?? 120];
             focusRate = s["jog_h"] ?? 120;
-        } else {
-            minutes = moveMinutes(from, move.target, move.feed, s["r_rate"] ?? 560, s["a_rate"] ?? 400);
-            if (headOnly && move.feed !== null) {
-                focusRate = Math.min(move.feed, hRate);
+        } else if (move.kind !== "go") {
+            feed = move.feed;
+            if (headOnly && feed !== null) {
+                focusRate = Math.min(feed, hRate);
             }
         }
+        const [rRate = 560, aRate = 400, zRate = 560] = rates;
+        const wanted = feed !== null && feed > 0 && length >= AXIS_EPSILON ? length / feed : 0;
+        const minutes = Math.max(wanted, Math.abs(to.r - from.r) / rRate, Math.abs(to.a - from.a) / aRate, Math.abs(toZ - fromZ) / zRate);
         return Math.max(minutes, Math.abs(toH - fromH) / focusRate) * 60;
     }
 
-    /** Duty in permille for a cut of board length `length` at the achieved speed. */
+    /** Duty in permille for a move of board length `length` at the achieved speed; a spindle's output is its own. */
     private dutyFor(move: Move, achieved: number, length: number): number {
-        if (move.kind !== "cut" || move.power <= 0 || length < SURFACE_EPSILON_MM) {
+        if (this.milling()) {
             return 0;
         }
         const sMax = this.settings["s_max"] ?? 1000;
+        if (move.kind === "dwell") {
+            return Math.max(0, Math.min(1000, (move.power / sMax) * 1000));
+        }
+        if (move.kind !== "cut" || move.power <= 0 || length < SURFACE_EPSILON_MM) {
+            return 0;
+        }
         const sMin = this.settings["s_min"] ?? 0;
         let power = move.power;
         if (this.mode === "dyn") {
@@ -559,33 +828,52 @@ export class MockMachine {
                     return;
                 }
                 this.state = move.kind === "jog" ? "Jog" : "Run";
-                const toH = move.h ?? this.h;
-                const seconds = this.secondsFor(move, this.joint, this.h, toH);
-                this.active = { move, from: { ...this.joint }, fromH: this.h, toH, seconds, elapsed: 0 };
+                this.active = this.activate(move);
             }
             const active = this.active;
             if (active.seconds <= 1e-9) {
-                this.joint = { ...active.move.target };
-                this.h = active.toH;
-                this.active = null;
+                this.land(active);
                 continue;
             }
             const step = Math.min(remaining, active.seconds - active.elapsed);
             active.elapsed += step;
             remaining -= step;
             const t = Math.min(1, active.elapsed / active.seconds);
-            this.joint = lerpJoint(active.from, active.move.target, t);
+            this.joint = lerpJoint(active.from, active.to, t);
             this.h = active.fromH + (active.toH - active.fromH) * t;
-            const length = surfaceLength(active.from, active.move.target);
+            this.z = active.fromZ + (active.toZ - active.fromZ) * t;
+            const length = this.cartesian() ? cartesianSurfaceLength(active.from, active.to, active.fromZ, active.toZ) : surfaceLength(active.from, active.to);
             const achieved = (length / active.seconds) * 60;
             this.rate = achieved;
             this.laser = this.dutyFor(active.move, achieved, length);
             if (active.elapsed >= active.seconds - 1e-9) {
-                this.joint = { ...active.move.target };
-                this.h = active.toH;
-                this.active = null;
+                this.land(active);
             }
         }
+    }
+
+    /** The move taken off the queue: where it goes and how long it takes. A spindle line acts as it starts. */
+    private activate(move: Move): Active {
+        const motion = move.kind !== "dwell" && move.kind !== "spindle";
+        const to = motion ? move.target : { ...this.joint };
+        const toH = motion ? move.h ?? this.h : this.h;
+        const toZ = motion ? move.z ?? this.z : this.z;
+        let seconds = 0;
+        if (move.kind === "dwell") {
+            seconds = (move.ms ?? 0) / 1000;
+        } else if (move.kind === "spindle") {
+            this.spindle = move.off ? 0 : move.power;
+        } else {
+            seconds = this.secondsFor(move, this.joint, this.h, toH, this.z, toZ);
+        }
+        return { move, from: { ...this.joint }, to, fromH: this.h, toH, fromZ: this.z, toZ, seconds, elapsed: 0 };
+    }
+
+    private land(active: Active): void {
+        this.joint = { ...active.to };
+        this.h = active.toH;
+        this.z = active.toZ;
+        this.active = null;
     }
 
     private advanceSlide(slide: Slide, dt: number): void {
@@ -601,9 +889,10 @@ export class MockMachine {
 
     /**
      * The hold byte. A beam lit by `laser` goes out whatever the state and
-     * does not come back with the resume. The cross slide is a setup move
-     * with nothing behind it to resume into, so a hold ends it where it is
-     * and the state falls back to Idle.
+     * does not come back with the resume; a spindle keeps turning, so the
+     * resume does not drive a still tool into the work. The cross slide is
+     * a setup move with nothing behind it to resume into, so a hold ends it
+     * where it is and the state falls back to Idle.
      */
     hold(): void {
         this.laser = 0;
@@ -614,6 +903,7 @@ export class MockMachine {
             return;
         }
         if (this.moving()) {
+            this.held = this.state;
             this.state = "Hold";
             this.rate = 0;
         }
@@ -625,6 +915,7 @@ export class MockMachine {
         }
         const next = this.active?.move ?? this.queue[0];
         this.state = next ? (next.kind === "jog" ? "Jog" : "Run") : "Idle";
+        this.held = null;
     }
 
     /**
@@ -635,12 +926,17 @@ export class MockMachine {
         return this.moving() && this.slide === null;
     }
 
-    /** The reset byte: stop at once, flush, and forget the modal words; an alarm if the joints were moving. */
-    reset(): void {
+    /**
+     * The reset byte: stop at once, flush, and forget the modal words. True
+     * when the joints were moving, which raises `Alarm:1`; an alarm already
+     * raised stays as it was.
+     */
+    reset(): boolean {
         const wasMoving = this.jointsBusy();
         this.queue = [];
         this.active = null;
         this.slide = null;
+        this.held = null;
         this.laser = 0;
         this.spindle = 0;
         this.beamSeconds = 0;
@@ -654,10 +950,13 @@ export class MockMachine {
         } else if (this.state !== "Alarm") {
             this.state = "Idle";
         }
+        return wasMoving;
     }
 
+    /** The jog cancel byte: the rest of a jog, running or held, is thrown away. */
     jogCancel(): void {
-        if (this.state !== "Jog") {
+        const jogging = this.state === "Jog" || (this.state === "Hold" && this.held === "Jog");
+        if (!jogging) {
             return;
         }
         if (this.slide) {
@@ -668,15 +967,18 @@ export class MockMachine {
         }
         this.queue = this.queue.filter((move) => move.kind !== "jog");
         this.active = null;
+        this.held = null;
         this.rate = 0;
         this.state = "Idle";
     }
 
+    /** Clears an alarm; outside one there is nothing to clear, and the firmware says so. */
     unlock(): void {
-        if (this.state === "Alarm") {
-            this.state = "Idle";
-            this.alarm = null;
+        if (this.state !== "Alarm") {
+            throw new MachineError(5, "not now");
         }
+        this.state = "Idle";
+        this.alarm = null;
     }
 
     requireIdle(): void {
@@ -686,10 +988,10 @@ export class MockMachine {
     }
 
     setPosition(request: PositionRequest): void {
-        this.checkFocusWord(request.h);
         this.requireIdle();
+        this.checkFocusWord(request.h);
         if (request.r !== undefined) {
-            this.checkRadius(request.r);
+            this.checkReach(request.r);
         }
         this.joint = { r: request.r ?? this.joint.r, a: request.a ?? this.joint.a };
         this.z = request.z ?? this.z;
@@ -700,7 +1002,8 @@ export class MockMachine {
      * `probe H<distance> [F]`: moves the focus axis by up to `distance`
      * until the probe input goes active. The mock answers at once rather
      * than over time, so it takes the line only at rest where the firmware
-     * would wait for the moves queued before it. A miss is `Alarm:2`.
+     * would wait for the moves queued before it. A miss is `Alarm:2`, and
+     * like any alarm it stops a spindle.
      */
     probe(distance: number, feed: number | null): ProbeResult {
         if (!this.hasFocusAxis()) {
@@ -712,6 +1015,10 @@ export class MockMachine {
         this.requireIdle();
         if (this.probeActive()) {
             throw new MachineError(10, "probe active");
+        }
+        if (this.milling() && this.spindle > 0) {
+            // The probe may be the tool itself: a turning one would cut at every touch.
+            throw new MachineError(5, "not now");
         }
         this.enabled = true;
         this.beamOff();
@@ -725,6 +1032,7 @@ export class MockMachine {
             this.h = end;
             this.state = "Alarm";
             this.alarm = 2;
+            this.spindle = 0;
             return { h: end, contact: false };
         }
         // The head brakes a little past the contact: 20 ms of motion at the
@@ -735,8 +1043,11 @@ export class MockMachine {
         return { h: surface, contact: true };
     }
 
-    /** `laser S T`: S over `s_max` is full duty, not more; T past the maximum is refused. */
+    /** `laser S T`: S over `s_max` is full duty, not more; T past the maximum is refused; a spindle machine has no beam. */
     beam(power: number, ms: number): void {
+        if (this.milling()) {
+            throw new MachineError(2, "bad word");
+        }
         if (!(power >= 0) || !(ms >= 0) || ms > LASER_MAX_MS) {
             throw new MachineError(4, "out of range");
         }
@@ -747,38 +1058,36 @@ export class MockMachine {
         this.beamSeconds = Math.min(LASER_MAX_MS, limit) / 1000;
     }
 
+    /** The beam off; a spindle keeps turning, as it does through a probe. */
     beamOff(): void {
         this.laser = 0;
         this.beamSeconds = 0;
     }
 
+    /** `$name=value`: the whole set is checked with the value in it, and a refused value changes nothing. */
     setSetting(name: string, value: number): void {
         if (!(name in DEFAULT_SETTINGS)) {
             throw new MachineError(6, "unknown setting");
         }
-        if (!Number.isFinite(value)) {
+        const next = { ...this.settings, [name]: value };
+        if (!settingsValid(next)) {
             throw new MachineError(7, "bad setting value");
         }
-        if (/_(steps|rate|accel|jerk)$/.test(name) && value <= 0) {
-            throw new MachineError(7, "bad setting value");
-        }
-        if (["h_axis", "probe_invert", "cartesian", "spindle"].includes(name) && value !== 0 && value !== 1) {
-            throw new MachineError(7, "bad setting value");
-        }
-        if (name === "z_max" && value < 0) {
-            throw new MachineError(7, "bad setting value");
-        }
-        if (name === "spindle" && value !== this.settings["spindle"]) {
+        this.adopt(next);
+    }
+
+    /** Takes a whole set of settings, from a write, `$load` or `$defaults`. */
+    adopt(settings: Record<string, number>): void {
+        if ((settings["spindle"] ?? 0) !== (this.settings["spindle"] ?? 0)) {
             // The output changes meaning: whatever ran on it stops.
-            this.spindle = 0;
-            this.beamOff();
+            this.outputOff();
         }
-        if (name === "probe_ms" && !(Number.isInteger(value) && value >= 0 && value <= 160)) {
-            throw new MachineError(7, "bad setting value");
-        }
-        this.settings[name] = value;
+        this.settings = { ...settings };
     }
 }
+
+/** A planned move with where the cross slide ends, which moves only on a cartesian machine. */
+type Step = PlannedMove & { z: number };
 
 interface RunSession {
     job: Job;
@@ -803,11 +1112,14 @@ const COMPENSATE_MODES: readonly string[] = ["off", "auto", "focus", "power"];
 
 export const DEFAULT_PROBE_SETTINGS: ProbeSettings = { depth: 5, feed: 60, slow: 15, backoff: 0.3, offset: [0, 0], rayleigh: 0.5 };
 
+/** Where the joints go to put the probe tip over a point; the cross slide too on a cartesian machine. */
+type ProbeJoint = Joint & { z?: number };
+
 /** A probing under way: the points in the order they are visited and the joints that reach them. */
 interface ProbeSession {
     settings: ProbeSettings;
     order: [number, number][];
-    joints: Joint[];
+    joints: ProbeJoint[];
     /** Index into `order` of the point in progress. */
     next: number;
     /** Seconds spent on the point in progress. */
@@ -994,7 +1306,11 @@ function checkUsable(map: HeightMap): void {
     }
 }
 
-/** The board box the enabled groups of a job cut inside, joint-space groups included. */
+/**
+ * The board box the enabled groups of a job cut inside. A joint-space
+ * group is sampled along its moves, not only at its points: a move that
+ * turns the table sweeps an arc well outside the box of its ends.
+ */
 function jobExtent(job: Job): [number, number, number, number] | null {
     const xs: number[] = [];
     const ys: number[] = [];
@@ -1003,12 +1319,7 @@ function jobExtent(job: Job): [number, number, number, number] | null {
             continue;
         }
         const points: [number, number][] =
-            group.joints && group.joints.length > 0
-                ? group.joints.flat().map(([r, a]): [number, number] => {
-                      const board = boardOfJoint({ r, a });
-                      return [board.x, board.y];
-                  })
-                : group.paths.flat();
+            group.joints && group.joints.length > 0 ? group.joints.flatMap((poly) => jointPreview(poly)) : group.paths.flat();
         for (const [x, y] of points) {
             xs.push(x);
             ys.push(y);
@@ -1058,6 +1369,30 @@ function checkProbeSettings(settings: ProbeSettings): void {
     if (!(settings.rayleigh >= 0.001 && settings.rayleigh <= 100)) {
         throw new Error("rayleigh must be 0.001 to 100 mm");
     }
+}
+
+/** The highest point a map puts the surface at, for a spindle to travel clear of. */
+function highestSurface(map: HeightMap): number {
+    const values = probedValues(map);
+    return (values.length > 0 ? Math.max(...values) : 0) + map.focus_offset;
+}
+
+/**
+ * The letter words of a line as the firmware reads them: each letter one
+ * of `allowed` and given once, with a plain decimal value. Null when any
+ * is not, which the firmware refuses as a bad word.
+ */
+function readWords(tokens: string[], allowed: string): Map<string, number> | null {
+    const words = new Map<string, number>();
+    for (const token of tokens) {
+        const letter = (token[0] ?? "").toUpperCase();
+        const value = decimal(token.slice(1));
+        if (!/^[A-Z]$/.test(letter) || !allowed.includes(letter) || value === null || words.has(letter)) {
+            return null;
+        }
+        words.set(letter, value);
+    }
+    return words;
 }
 
 /** The firmware's answer to `probe H<distance> [F<feed>]`, a refusal thrown as a MachineError. */
@@ -1112,6 +1447,22 @@ export class MockBackend implements Api, EventFeed {
     private probeProgress: ProbeProgress | null = null;
     private probing: ProbeSession | null = null;
     private probeConfig: ProbeSettings = structuredClone(DEFAULT_PROBE_SETTINGS);
+    /**
+     * The jogs sent through this API end where they were sent, as the
+     * backend tracks them: a board move queued behind them starts from
+     * there. Anything else moving the machine leaves that end unknown.
+     */
+    private jogTracked = false;
+    /**
+     * The focus axis frame, counted up whenever it may have changed, and
+     * the frames the map's heights were probed in and its focus offset set
+     * in; null for neither.
+     */
+    private frame = 0;
+    private heightsFrame: number | null = null;
+    private focusFrame: number | null = null;
+    /** Lines the machine prints after its answer to a console line, as `$tmc` prints its report. */
+    private later: string[] = [];
 
     constructor(options: MockOptions = {}) {
         this.useTimers = options.timers ?? true;
@@ -1325,7 +1676,7 @@ export class MockBackend implements Api, EventFeed {
     /** A move or a position declaration: nothing else may move the head while the board is probed. */
     private requireMovable(): void {
         this.requireConnected();
-        this.refuseWhileProbing();
+        this.notOwned();
     }
 
     private refuseWhileProbing(): void {
@@ -1334,7 +1685,10 @@ export class MockBackend implements Api, EventFeed {
         }
     }
 
-    /** Runs a machine action and turns its refusal into the backend's error reply. */
+    /**
+     * Runs a machine action and turns its refusal into the backend's error
+     * reply: a 400 that names the line the firmware refused.
+     */
     private exchange(tx: string, action: () => void): void {
         this.requireConnected();
         this.line("tx", tx);
@@ -1343,11 +1697,45 @@ export class MockBackend implements Api, EventFeed {
         } catch (error) {
             if (error instanceof MachineError) {
                 this.line("rx", error.message);
-                throw new ApiError(409, error.message);
+                throw new ApiError(400, `'${tx}': ${error.message}`);
             }
             throw error;
         }
         this.line("rx", "ok");
+    }
+
+    /** A request that would change the machine under a run or probing that owns it. */
+    private notOwned(): void {
+        if (this.session) {
+            throw new ApiError(409, "a job is running");
+        }
+        this.refuseWhileProbing();
+    }
+
+    /**
+     * Takes back the height map's focus offset, keeping its heights: they
+     * are focus axis positions in a frame that may have changed, and the
+     * offset is what tied them to the frame in use.
+     */
+    private frameChanged(reason: string): void {
+        this.frame += 1;
+        const map = this.heightmap;
+        if (!map || !map.focus_set) {
+            return;
+        }
+        map.focus_set = false;
+        this.message("info", `${reason}: focus here again before a run follows the height map`);
+        this.emitHeightMap();
+    }
+
+    /** Takes back an offset set in a frame before this one; true when there was one. */
+    private dropStaleFocus(): boolean {
+        const map = this.heightmap;
+        if (this.focusFrame === this.frame || !map || !map.focus_set) {
+            return false;
+        }
+        map.focus_set = false;
+        return true;
     }
 
     async ports(): Promise<Port[]> {
@@ -1369,8 +1757,11 @@ export class MockBackend implements Api, EventFeed {
         }
         this.connected = true;
         this.url = url;
+        this.jogTracked = false;
         this.line("rx", `[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`);
         this.message("info", `connected to ${url} (mock)`);
+        // Whatever machine this is, its focus axis counts from where it was switched on.
+        this.frameChanged("connected");
         const snapshot = this.snapshot();
         this.emit({ type: "state", data: snapshot });
         return snapshot;
@@ -1405,32 +1796,25 @@ export class MockBackend implements Api, EventFeed {
 
     // Moving.
 
-    private boardTargets(target: { x: number; y: number }): Joint[] {
-        return segmentBoardMove(this.pendingEndpoint(), target, this.tolerance);
+    /** A jog or goto feed the firmware will take, or none. */
+    private checkFeed(feed: number | null): void {
+        if (feed !== null && !(Number.isFinite(feed) && feed >= MIN_FEED)) {
+            throw new ApiError(400, `feed must be at least ${formatG(MIN_FEED)} mm/min`);
+        }
     }
 
-    async jog(request: JogRequest): Promise<void> {
-        this.requireMovable();
-        const feed = request.feed ?? null;
-        const feedWord = feed !== null ? ` F${feed}` : "";
-        if (request.kind === "joint") {
-            const dz = request.dz;
-            if (dz !== undefined) {
-                this.exchange(`jog Z${dz.toFixed(3)}${feedWord}`, () => this.machine.slideJog(dz, feed));
-                return;
-            }
-            const dr = request.dr ?? 0;
-            const da = request.da ?? 0;
-            const dh = request.dh ?? 0;
-            const words = [dr !== 0 ? `R${dr.toFixed(3)}` : "", da !== 0 ? `A${da.toFixed(4)}` : "", dh !== 0 ? `H${dh.toFixed(4)}` : ""].filter((w) => w !== "");
-            this.exchange(`jog ${words.join(" ")}${feedWord}`.trim(), () => this.machine.jog(dr, da, feed, dh !== 0 ? dh : null));
-            return;
+    /**
+     * Whether the backend would know where the next move starts: at rest,
+     * or behind jogs it sent and tracked the end of. Anything else moving
+     * the machine is on its way to an end nobody told it.
+     */
+    private startKnown(): boolean {
+        const state = this.machine.state;
+        if (state === "Jog" && this.jogTracked) {
+            return true;
         }
-        const from = boardOfJoint(this.pendingEndpoint());
-        const target = { x: from.x + (request.dx ?? 0), y: from.y + (request.dy ?? 0) };
-        for (const joint of this.boardTargets(target)) {
-            this.send(`jogto R${joint.r.toFixed(3)} A${joint.a.toFixed(4)}${feedWord}`, { kind: "jog", target: joint, feed, power: 0, group: -1 });
-        }
+        this.jogTracked = false;
+        return state === "Idle" && this.outbox.length === 0;
     }
 
     /** Where the machine ends up once the outbox has been sent too. */
@@ -1439,33 +1823,171 @@ export class MockBackend implements Api, EventFeed {
         return last ? last.move.target : this.machine.endpoint();
     }
 
+    private pendingZ(): number {
+        for (let i = this.outbox.length - 1; i >= 0; i--) {
+            const z = this.outbox[i]?.move.z;
+            if (z !== undefined) {
+                return z;
+            }
+        }
+        return this.machine.endpointZ();
+    }
+
+    /**
+     * The jog moves to a board point from where the queued motion ends. On
+     * a cartesian machine a board point is one joint line in the frame of
+     * the table's angle; on a polar one it is cut within the chord
+     * tolerance and crosses the axis with a turn.
+     */
+    private boardMoves(target: Board, feed: number | null): Move[] {
+        const start = this.pendingEndpoint();
+        if (this.machine.cartesian()) {
+            const joint = turned(target, -this.machine.joint.a);
+            return [{ kind: "jog", target: { r: joint.x, a: start.a }, z: joint.y, feed, power: 0, group: -1 }];
+        }
+        let from = start;
+        return segmentBoardMove(start, target, this.tolerance).map((joint) => {
+            const turn = Math.abs(from.r) < AXIS_EPSILON && Math.abs(joint.r) < AXIS_EPSILON && joint.a !== from.a;
+            from = joint;
+            return { kind: "jog", target: joint, turn, feed, power: 0, group: -1 };
+        });
+    }
+
+    /** The board point the queued motion ends at. */
+    private pendingBoard(): Board {
+        return this.machine.headBoard(this.pendingEndpoint(), this.pendingZ());
+    }
+
+    /**
+     * A board move is refused whole when any of its lines would be: sent a
+     * line at a time, the ones inside the soft limit would run before the
+     * refusal came back, and leave the head at the limit.
+     */
+    private checkReach(moves: Move[]): void {
+        const rMax = this.machine.settings["r_max"] ?? 0;
+        const zMax = this.machine.settings["z_max"] ?? 0;
+        for (const move of moves) {
+            if (rMax > 0 && Math.abs(move.target.r) > rMax + 1e-9) {
+                throw new ApiError(400, `out of reach: R${move.target.r.toFixed(3)} is past the soft limit r_max=${formatG(rMax)}`);
+            }
+            if (move.z !== undefined && zMax > 0 && Math.abs(move.z) > zMax + 1e-9) {
+                throw new ApiError(400, `out of reach: Z${move.z.toFixed(3)} is past the soft limit z_max=${formatG(zMax)}`);
+            }
+        }
+    }
+
+    private sendBoard(moves: Move[]): void {
+        this.checkReach(moves);
+        for (const move of moves) {
+            this.send(formatMove(move), move);
+        }
+        this.jogTracked = true;
+    }
+
+    /** A joint line through the API; the tracked end follows the backend's rule for it. */
+    private sendJoint(line: string, action: () => void, tracked: boolean): void {
+        try {
+            this.exchange(line, action);
+        } catch (error) {
+            this.jogTracked = false;
+            throw error;
+        }
+        this.jogTracked = tracked;
+    }
+
+    async jog(request: JogRequest): Promise<void> {
+        this.requireMovable();
+        const feed = request.feed ?? null;
+        this.checkFeed(feed);
+        const feedWord = feed ? ` F${num(feed)}` : "";
+        const cartesian = this.machine.cartesian();
+        if (request.kind === "joint") {
+            const { dr, da, dh, dz } = request as { dr?: number; da?: number; dh?: number; dz?: number };
+            if (dz !== undefined && !cartesian) {
+                if (dr !== undefined || da !== undefined || dh !== undefined) {
+                    throw new ApiError(400, "the cross slide moves on its own: dz cannot be sent with dr, da or dh");
+                }
+                if (dz === 0) {
+                    throw new ApiError(400, "a cross slide jog needs a distance");
+                }
+                this.exchange(`jog Z${num(dz)}${feedWord}`, () => this.machine.slideJog(dz, feed));
+                return;
+            }
+            // The backend's words: a relative jog leaves out an axis that does not move.
+            const words = [
+                dr ? `R${num(dr)}` : "",
+                da ? `A${num(da, 4)}` : "",
+                dh ? `H${num(dh, 4)}` : "",
+                dz ? `Z${num(dz)}` : "",
+            ].filter((w) => w !== "");
+            if (words.length === 0) {
+                throw new ApiError(400, "a joint move needs a radius, an angle, a focus height or a cross slide position");
+            }
+            // A relative jog ends where its start does, moved; a turn of a
+            // cartesian table moves the frame that end is kept in.
+            const known = this.startKnown() && !(cartesian && da);
+            this.sendJoint(`jog ${words.join(" ")}${feedWord}`, () => this.machine.jog(dr ?? 0, da ?? 0, feed, dh ? dh : null, dz ? dz : null), known);
+            return;
+        }
+        if (cartesian && !this.startKnown()) {
+            throw new ApiError(409, "the table may still be turning: wait for the machine to stop before a board move");
+        }
+        const from = this.pendingBoard();
+        this.sendBoard(this.boardMoves({ x: from.x + (request.dx ?? 0), y: from.y + (request.dy ?? 0) }, feed));
+    }
+
     async goto(request: GotoRequest): Promise<void> {
         this.requireMovable();
         const feed = request.feed ?? null;
-        const feedWord = feed !== null ? ` F${feed}` : "";
+        this.checkFeed(feed);
+        const feedWord = feed ? ` F${num(feed)}` : "";
+        const cartesian = this.machine.cartesian();
         if (request.kind === "joint") {
-            const z = request.z;
-            if (z !== undefined) {
-                this.exchange(`jogto Z${z.toFixed(3)}${feedWord}`, () => this.machine.slideTo(z, feed));
+            const { r, a, h, z } = request as { r?: number; a?: number; h?: number; z?: number };
+            if (z !== undefined && !cartesian) {
+                if (r !== undefined || a !== undefined || h !== undefined) {
+                    throw new ApiError(400, "the cross slide moves on its own: z cannot be sent with r, a or h");
+                }
+                this.exchange(`jogto Z${num(z)}${feedWord}`, () => this.machine.slideTo(z, feed));
                 return;
             }
-            const r = request.r ?? null;
-            const a = request.a ?? null;
-            const h = request.h ?? null;
-            const words = [r !== null ? `R${r.toFixed(3)}` : "", a !== null ? `A${a.toFixed(4)}` : "", h !== null ? `H${h.toFixed(4)}` : ""].filter((w) => w !== "");
-            this.exchange(`jogto ${words.join(" ")}${feedWord}`.trim(), () => this.machine.jogTo(r, a, feed, h));
+            const words = [
+                r !== undefined ? `R${num(r)}` : "",
+                a !== undefined ? `A${num(a, 4)}` : "",
+                h !== undefined ? `H${num(h, 4)}` : "",
+                z !== undefined ? `Z${num(z)}` : "",
+            ].filter((w) => w !== "");
+            if (words.length === 0) {
+                throw new ApiError(400, "a joint move needs a radius, an angle, a focus height or a cross slide position");
+            }
+            const known = this.startKnown();
+            // An axis left out stays where the queued jog ends, which is
+            // known only when the start is; on a cartesian machine a goto
+            // that turns the table moves the frame that end is kept in.
+            const tracked = cartesian ? known && a === undefined : (r !== undefined && a !== undefined) || known;
+            this.sendJoint(`jogto ${words.join(" ")}${feedWord}`, () => this.machine.jogTo(r ?? null, a ?? null, feed, h ?? null, z ?? null), tracked);
             return;
         }
-        const from = boardOfJoint(this.pendingEndpoint());
-        const target = { x: request.x ?? from.x, y: request.y ?? from.y };
-        for (const joint of this.boardTargets(target)) {
-            this.send(`jogto R${joint.r.toFixed(3)} A${joint.a.toFixed(4)}${feedWord}`, { kind: "jog", target: joint, feed, power: 0, group: -1 });
+        if (request.x === undefined && request.y === undefined) {
+            throw new ApiError(400, "a board goto needs x and/or y");
         }
+        const known = this.startKnown();
+        if (cartesian && !known) {
+            throw new ApiError(409, "the table may still be turning: wait for the machine to stop before a board move");
+        }
+        if ((request.x === undefined || request.y === undefined) && !known) {
+            // The coordinate left out would be the one the head has on its
+            // way somewhere, not the one it will stop at.
+            throw new ApiError(400, "give both x and y: where the head will stop is not known");
+        }
+        const from = this.pendingBoard();
+        this.sendBoard(this.boardMoves({ x: request.x ?? from.x, y: request.y ?? from.y }, feed));
     }
 
     async jogCancel(): Promise<void> {
         this.requireConnected();
         this.outbox = [];
+        this.jogTracked = false;
         this.line("tx", "<0x85>");
         this.machine.jogCancel();
         this.emit({ type: "state", data: this.snapshot() });
@@ -1474,24 +1996,44 @@ export class MockBackend implements Api, EventFeed {
     async setPosition(request: PositionRequest): Promise<void> {
         this.requireMovable();
         const words = [
-            request.r !== undefined ? `R${request.r}` : "",
-            request.a !== undefined ? `A${request.a}` : "",
-            request.h !== undefined ? `H${request.h}` : "",
+            request.r !== undefined ? `R${num(request.r)}` : "",
+            request.a !== undefined ? `A${num(request.a, 4)}` : "",
+            request.h !== undefined ? `H${num(request.h, 4)}` : "",
         ].filter((w) => w !== "");
-        if (words.length > 0) {
-            const { r, a, h } = request;
-            this.exchange(`set ${words.join(" ")}`, () => this.machine.setPosition({ r, a, h }));
+        if (words.length === 0 && request.z === undefined) {
+            throw new ApiError(400, "give r, a, h and/or z");
         }
-        if (request.z !== undefined) {
-            // Z is declared on a line of its own, as the firmware wants it.
-            const z = request.z;
-            this.exchange(`set Z${z}`, () => this.machine.setPosition({ z }));
+        this.jogTracked = false;
+        try {
+            if (words.length > 0) {
+                const { r, a, h } = request;
+                this.exchange(`set ${words.join(" ")}`, () => this.machine.setPosition({ r, a, h }));
+            }
+            if (request.z !== undefined) {
+                // Z is declared on a line of its own, as the firmware wants it on a polar machine.
+                const z = request.z;
+                this.exchange(`set Z${num(z)}`, () => this.machine.setPosition({ z }));
+            }
+        } finally {
+            // H renumbered moves the frame the map's heights are in, and R,
+            // A or Z the board under them, whether or not a line was taken.
+            this.frameChanged("the position was set");
         }
     }
 
+    /** Motors on at any time; off only while nothing owns the machine, since the focus axis would sink with the rest. */
     async motors(enabled: boolean): Promise<void> {
-        this.exchange(enabled ? "enable" : "disable", () => {
-            this.machine.enabled = enabled;
+        if (enabled) {
+            this.exchange("enable", () => {
+                this.machine.enabled = true;
+            });
+            return;
+        }
+        this.requireConnected();
+        this.notOwned();
+        this.exchange("disable", () => {
+            this.machine.requireIdle();
+            this.machine.enabled = false;
         });
     }
 
@@ -1511,26 +2053,30 @@ export class MockBackend implements Api, EventFeed {
                 this.line("tx", "~");
                 machine.resume();
                 break;
-            case "reset":
+            case "reset": {
                 // Probing is told first, so nothing more of it goes out after the byte.
                 if (this.probing) {
                     this.probeFinish(this.probing, "stopped", "reset by the operator");
                 }
                 this.line("tx", "<0x18>");
                 this.outbox = [];
-                machine.reset();
+                this.jogTracked = false;
+                const alarmed = machine.reset();
                 if (this.session) {
-                    this.session.state = machine.state === "Alarm" ? "error" : "stopped";
+                    this.session.state = alarmed ? "error" : "stopped";
                 }
                 this.line("rx", "[MSG:reset]");
-                if (machine.state === "Alarm") {
+                // Only an alarm this reset raised is printed; one already raised stays as it was.
+                if (alarmed) {
                     this.line("rx", "ALARM:1 reset while moving, position may be off");
                 }
                 this.line("rx", `[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`);
                 break;
+            }
             case "cancel":
                 this.line("tx", "<0x85>");
                 this.outbox = [];
+                this.jogTracked = false;
                 machine.jogCancel();
                 break;
             case "status":
@@ -1541,166 +2087,53 @@ export class MockBackend implements Api, EventFeed {
         this.emit({ type: "state", data: this.snapshot() });
     }
 
+    /**
+     * A line typed at the console. A realtime byte typed on its own goes
+     * out as one and answers nothing here, a hold or resume the run's own;
+     * `laser off` or `spindle off` typed during a run stops it as its stop
+     * does, since the lines behind would go on with the output stopped.
+     */
     async command(line: string): Promise<string[]> {
         this.requireConnected();
         const text = line.trim();
+        if (text === "?") {
+            await this.realtime("status");
+            return [];
+        }
+        if (text === "!" || text === "~") {
+            await this.realtime(text === "!" ? "hold" : "resume");
+            return [];
+        }
+        const words = (text.split(";")[0] ?? "").toLowerCase().split(/\s+/).filter((word) => word !== "");
+        const output = words.length === 2 && (words[0] === "laser" || words[0] === "spindle") && words[1] === "off";
+        if (output && this.session) {
+            await this.runStop();
+            return [];
+        }
+        // A typed line may move the head, so the end of the last jog is no start to plan from.
+        this.jogTracked = false;
         this.line("tx", text);
+        this.later = [];
         const replies = this.execute(text);
-        for (const reply of replies) {
+        for (const reply of [...replies, ...this.later]) {
             this.line("rx", reply);
         }
+        this.later = [];
         return replies;
     }
 
-    /** A line of the firmware protocol against the mock machine. */
+    /** A line of the firmware protocol against the mock machine, its words read as the firmware reads them. */
     private execute(text: string): string[] {
-        const machine = this.machine;
         const clean = text.replace(/;.*$/, "").trim();
         if (clean === "") {
             return ["ok"];
         }
         if (clean.startsWith("$")) {
-            return this.executeSetting(clean.slice(1));
+            return this.executeSetting(clean.slice(1).trim());
         }
-        const [keyword = "", ...rest] = clean.split(/\s+/);
-        const words = new Map<string, number>();
-        for (const word of rest) {
-            const match = /^([a-z])(-?\d*\.?\d+)$/i.exec(word);
-            if (match) {
-                words.set((match[1] ?? "").toUpperCase(), Number(match[2]));
-            } else if (!/^[a-z]+$/i.test(word)) {
-                return ["error:2 bad word"];
-            }
-        }
-        const get = (key: string): number | null => (words.has(key) ? words.get(key) ?? null : null);
-        const noAxis = get("R") === null && get("A") === null && get("Z") === null && get("H") === null;
+        const [keyword = "", ...tokens] = clean.split(/\s+/);
         try {
-            switch (keyword.toLowerCase()) {
-                case "go":
-                    if (noAxis) {
-                        return ["error:3 missing word"];
-                    }
-                    machine.go(get("R"), get("A"), get("H"));
-                    return ["ok"];
-                case "cut": {
-                    // F and S are modal, but a reset forgets them: the first
-                    // cut after one must give F again.
-                    const feed = get("F") ?? machine.feed;
-                    if (noAxis || feed === null) {
-                        return ["error:3 missing word"];
-                    }
-                    const power = get("S") ?? machine.power;
-                    const minPower = get("M") ?? 0;
-                    if (power < 0 || minPower < 0) {
-                        return ["error:4 out of range"];
-                    }
-                    machine.cut(get("R"), get("A"), feed, power, minPower, get("H"));
-                    machine.feed = feed;
-                    machine.power = power;
-                    return ["ok"];
-                }
-                case "jog":
-                case "jogto": {
-                    const z = get("Z");
-                    const absolute = keyword.toLowerCase() === "jogto";
-                    if (noAxis) {
-                        return ["error:3 missing word"];
-                    }
-                    if (z !== null) {
-                        if (get("R") !== null || get("A") !== null || get("H") !== null) {
-                            return ["error:2 bad word"];
-                        }
-                        if (absolute) {
-                            machine.slideTo(z, get("F"));
-                        } else {
-                            machine.slideJog(z, get("F"));
-                        }
-                    } else if (absolute) {
-                        machine.jogTo(get("R"), get("A"), get("F"), get("H"));
-                    } else {
-                        machine.jog(get("R") ?? 0, get("A") ?? 0, get("F"), get("H"));
-                    }
-                    return ["ok"];
-                }
-                case "probe": {
-                    // H and F only; a missing or zero distance is refused
-                    // before the machine is asked, as the firmware parses it.
-                    if ([...words.keys()].some((key) => key !== "H" && key !== "F")) {
-                        return ["error:2 bad word"];
-                    }
-                    const distance = get("H");
-                    const feed = get("F");
-                    if (distance === null) {
-                        return ["error:3 missing word"];
-                    }
-                    if (distance === 0 || (feed !== null && !(feed >= MIN_FEED))) {
-                        return ["error:4 out of range"];
-                    }
-                    return probeReplies(machine, distance, feed);
-                }
-                case "dwell":
-                    return get("T") === null ? ["error:3 missing word"] : ["ok"];
-                case "mode": {
-                    const mode = (rest[0] ?? "").toLowerCase();
-                    if (mode !== "dyn" && mode !== "const") {
-                        return ["error:2 bad word"];
-                    }
-                    machine.mode = mode;
-                    return ["ok"];
-                }
-                case "laser":
-                    if ((rest[0] ?? "").toLowerCase() === "off") {
-                        machine.beamOff();
-                        return ["ok"];
-                    }
-                    if (get("S") === null) {
-                        return ["error:3 missing word"];
-                    }
-                    machine.beam(get("S") ?? 0, get("T") ?? 0);
-                    return ["ok"];
-                case "set": {
-                    const position: PositionRequest = {};
-                    const r = get("R");
-                    const a = get("A");
-                    const z = get("Z");
-                    const h = get("H");
-                    if (z !== null && (r !== null || a !== null || h !== null)) {
-                        return ["error:2 bad word"];
-                    }
-                    if (r !== null) {
-                        position.r = r;
-                    }
-                    if (a !== null) {
-                        position.a = a;
-                    }
-                    if (h !== null) {
-                        position.h = h;
-                    }
-                    if (z !== null) {
-                        position.z = z;
-                    }
-                    machine.setPosition(position);
-                    return ["ok"];
-                }
-                case "enable":
-                    machine.enabled = true;
-                    return ["ok"];
-                case "disable":
-                    machine.enabled = false;
-                    return ["ok"];
-                case "unlock":
-                    machine.unlock();
-                    return ["ok"];
-                case "version":
-                    return [`[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`, "ok"];
-                case "status":
-                case "?":
-                    return [statusLine(machine), "ok"];
-                case "help":
-                    return [...HELP_LINES, "ok"];
-                default:
-                    return ["error:1 unknown command"];
-            }
+            return this.executeCommand(keyword.toLowerCase(), tokens);
         } catch (error) {
             if (error instanceof MachineError) {
                 return [error.message];
@@ -1709,33 +2142,272 @@ export class MockBackend implements Api, EventFeed {
         }
     }
 
+    private executeCommand(keyword: string, tokens: string[]): string[] {
+        const machine = this.machine;
+        const cartesian = machine.cartesian();
+        const milling = machine.milling();
+        /** The words of this line; a word the keyword does not take is refused. */
+        const read = (allowed: string): Map<string, number> => {
+            const words = readWords(tokens, allowed);
+            if (words === null) {
+                throw new MachineError(2, "bad word");
+            }
+            return words;
+        };
+        const needAxis = (words: Map<string, number>): void => {
+            if (!["R", "A", "H", "Z"].some((key) => words.has(key))) {
+                throw new MachineError(3, "missing word");
+            }
+        };
+        const checkFeed = (words: Map<string, number>): void => {
+            const feed = words.get("F");
+            if (feed !== undefined && !(feed >= MIN_FEED)) {
+                throw new MachineError(4, "out of range");
+            }
+        };
+        const checkPowerWords = (words: Map<string, number>): void => {
+            if ((words.get("S") ?? 0) < 0 || (words.get("M") ?? 0) < 0) {
+                throw new MachineError(4, "out of range");
+            }
+        };
+        const bare = (): void => {
+            if (tokens.length > 0) {
+                throw new MachineError(2, "bad word");
+            }
+        };
+        /** Z is a joint on a cartesian machine and nothing on a polar one; A stays off `go` and `cut` on a cartesian one. */
+        const boardWords = (words: Map<string, number>): void => {
+            if (words.has(cartesian ? "A" : "Z")) {
+                throw new MachineError(2, "bad word");
+            }
+        };
+        const get = (words: Map<string, number>, key: string): number | null => words.get(key) ?? null;
+        switch (keyword) {
+            case "go": {
+                const words = read("RAHZ");
+                needAxis(words);
+                boardWords(words);
+                machine.go(get(words, "R"), get(words, "A"), get(words, "H"), get(words, "Z"));
+                return ["ok"];
+            }
+            case "cut": {
+                const words = read("RAHZFSM");
+                needAxis(words);
+                checkFeed(words);
+                checkPowerWords(words);
+                boardWords(words);
+                // A spindle's speed is its own command's: an S or M here is a
+                // laser job sent to a machine that has no beam.
+                if (milling && (words.has("S") || words.has("M"))) {
+                    return ["error:2 bad word"];
+                }
+                machine.checkCut();
+                // F and S are modal, but a reset forgets them: the first
+                // cut after one must give F again. A spindle leaves S alone.
+                const feed = get(words, "F") ?? machine.feed;
+                const power = milling ? 0 : get(words, "S") ?? machine.power;
+                if (feed === null) {
+                    return ["error:3 missing word"];
+                }
+                machine.cut(get(words, "R"), get(words, "A"), feed, power, get(words, "M") ?? 0, get(words, "H"), get(words, "Z"));
+                machine.feed = feed;
+                if (!milling) {
+                    machine.power = power;
+                }
+                return ["ok"];
+            }
+            case "jog":
+            case "jogto": {
+                const words = read("RAHZF");
+                needAxis(words);
+                checkFeed(words);
+                const absolute = keyword === "jogto";
+                const z = get(words, "Z");
+                if (z !== null && !cartesian) {
+                    // The slide moves alone and only from rest.
+                    if (words.has("R") || words.has("A") || words.has("H")) {
+                        return ["error:2 bad word"];
+                    }
+                    if (absolute) {
+                        machine.slideTo(z, get(words, "F"));
+                    } else {
+                        machine.slideJog(z, get(words, "F"));
+                    }
+                } else if (absolute) {
+                    machine.jogTo(get(words, "R"), get(words, "A"), get(words, "F"), get(words, "H"), z);
+                } else {
+                    machine.jog(get(words, "R") ?? 0, get(words, "A") ?? 0, get(words, "F"), get(words, "H"), z);
+                }
+                return ["ok"];
+            }
+            case "probe": {
+                const words = read("HF");
+                const distance = get(words, "H");
+                if (distance === null) {
+                    return ["error:3 missing word"];
+                }
+                if (distance === 0) {
+                    return ["error:4 out of range"];
+                }
+                checkFeed(words);
+                return probeReplies(machine, distance, get(words, "F"));
+            }
+            case "dwell": {
+                const words = read("TS");
+                const t = get(words, "T");
+                if (t === null) {
+                    return ["error:3 missing word"];
+                }
+                checkPowerWords(words);
+                if (t < 0 || t > DWELL_MAX_MS) {
+                    return ["error:4 out of range"];
+                }
+                if (milling && words.has("S")) {
+                    return ["error:2 bad word"];
+                }
+                machine.dwell(Math.floor(t + 0.5), get(words, "S") ?? 0);
+                return ["ok"];
+            }
+            case "mode": {
+                const [word, ...extra] = tokens;
+                if (word === undefined) {
+                    return ["error:3 missing word"];
+                }
+                const mode = word.toLowerCase();
+                if (extra.length > 0 || (mode !== "dyn" && mode !== "const")) {
+                    return ["error:2 bad word"];
+                }
+                machine.mode = mode;
+                return ["ok"];
+            }
+            case "laser": {
+                if ((tokens[0] ?? "").toLowerCase() === "off") {
+                    if (tokens.length > 1) {
+                        return ["error:2 bad word"];
+                    }
+                    machine.outputOff();
+                    return ["ok"];
+                }
+                const words = read("ST");
+                const power = get(words, "S");
+                if (power === null) {
+                    return ["error:3 missing word"];
+                }
+                checkPowerWords(words);
+                const t = get(words, "T");
+                if (t !== null && (t < 0 || t > LASER_MAX_MS)) {
+                    return ["error:4 out of range"];
+                }
+                machine.beam(power, t === null ? 0 : Math.floor(t + 0.5));
+                return ["ok"];
+            }
+            case "spindle": {
+                if ((tokens[0] ?? "").toLowerCase() === "off") {
+                    if (tokens.length > 1) {
+                        return ["error:2 bad word"];
+                    }
+                    machine.spin(null);
+                    return ["ok"];
+                }
+                const words = read("S");
+                const speed = get(words, "S");
+                if (speed === null) {
+                    return ["error:3 missing word"];
+                }
+                checkPowerWords(words);
+                machine.spin(speed);
+                return ["ok"];
+            }
+            case "set": {
+                const words = read("RAHZ");
+                needAxis(words);
+                const z = get(words, "Z");
+                if (z !== null && !cartesian && (words.has("R") || words.has("A") || words.has("H"))) {
+                    return ["error:2 bad word"];
+                }
+                const position: PositionRequest = {};
+                for (const [key, name] of [["R", "r"], ["A", "a"], ["H", "h"], ["Z", "z"]] as const) {
+                    const value = get(words, key);
+                    if (value !== null) {
+                        position[name] = value;
+                    }
+                }
+                machine.setPosition(position);
+                return ["ok"];
+            }
+            case "enable":
+                bare();
+                machine.enabled = true;
+                return ["ok"];
+            case "disable":
+                bare();
+                machine.requireIdle();
+                machine.enabled = false;
+                return ["ok"];
+            case "unlock":
+                bare();
+                machine.unlock();
+                return ["ok"];
+            case "version":
+                bare();
+                return [`[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`, "ok"];
+            case "status":
+                bare();
+                return [statusLine(machine), "ok"];
+            case "help":
+                bare();
+                return [...HELP_LINES, "ok"];
+            default:
+                return ["error:1 unknown command"];
+        }
+    }
+
     private executeSetting(text: string): string[] {
         const machine = this.machine;
         if (text === "") {
             return [...Object.entries(machine.settings).map(([name, value]) => `${name}=${value}`), "ok"];
         }
-        if (text === "save") {
-            machine.flash = { ...machine.settings };
-            return ["ok"];
-        }
-        if (text === "load" || text === "defaults") {
-            machine.settings = { ...(text === "load" ? machine.flash : DEFAULT_SETTINGS) };
-            return ["ok"];
-        }
-        if (text === "tmc") {
-            // What the drivers answer when asked, microsteps read back from them.
-            const axes: [string, number, string][] = [["R", 0, "tmc_r_micro"], ["A", 2, "tmc_a_micro"], ["Z", 1, "tmc_z_micro"]];
-            const lines = axes.map(([letter, addr, name]) => `[MSG:tmc ${letter} addr${addr} ifcnt=1 micro=${machine.settings[name] ?? 256} status=0x00000000]`);
-            return [...lines, "ok"];
-        }
         const eq = text.indexOf("=");
         if (eq < 0) {
-            const value = machine.settings[text];
-            return value === undefined ? ["error:6 unknown setting"] : [`${text}=${value}`, "ok"];
+            const command = text.toLowerCase();
+            try {
+                if (command === "save") {
+                    machine.requireIdle();
+                    machine.flash = { ...machine.settings };
+                    return ["ok"];
+                }
+                if (command === "load" || command === "defaults") {
+                    machine.requireIdle();
+                    const wiring = Object.fromEntries(WIRING_SETTINGS.map((name) => [name, machine.settings[name] ?? 0]));
+                    machine.adopt(command === "load" ? machine.flash : { ...DEFAULT_SETTINGS, ...wiring });
+                    return ["ok"];
+                }
+            } catch (error) {
+                return [error instanceof MachineError ? error.message : String(error)];
+            }
+            if (command === "tmc") {
+                // Answered at once; the drivers' report follows as they answer
+                // over their UART, microsteps read back from them.
+                this.later = tmcReport(machine);
+                return ["ok"];
+            }
+            const value = machine.settings[command];
+            return value === undefined ? ["error:6 unknown setting"] : [`${command}=${value}`, "ok"];
+        }
+        const name = text.slice(0, eq).trim().toLowerCase();
+        if (name === "") {
+            return ["error:6 unknown setting"];
         }
         try {
             machine.requireIdle();
-            machine.setSetting(text.slice(0, eq), Number(text.slice(eq + 1)));
+            if (!(name in DEFAULT_SETTINGS)) {
+                return ["error:6 unknown setting"];
+            }
+            const value = settingValue(name, text.slice(eq + 1).trim());
+            if (value === null) {
+                return ["error:7 bad setting value"];
+            }
+            machine.setSetting(name, value);
             return ["ok"];
         } catch (error) {
             return [error instanceof MachineError ? error.message : "error:7 bad setting value"];
@@ -1748,28 +2420,65 @@ export class MockBackend implements Api, EventFeed {
         if (this.machine.milling()) {
             throw new ApiError(400, "the output drives a spindle ($spindle=1): use the spindle controls");
         }
-        this.exchange(`laser S${power} T${ms}`, () => this.machine.beam(power, ms));
-    }
-
-    async spindle(power: number): Promise<void> {
-        if (this.session) {
-            throw new ApiError(409, "a job is running");
+        this.requireConnected();
+        if (!(power >= 0)) {
+            throw new ApiError(400, "power must be >= 0");
         }
-        this.exchange(`spindle S${power}`, () => this.machine.spin(power));
+        if (!(ms > 0)) {
+            throw new ApiError(400, "ms must be > 0");
+        }
+        const t = Math.trunc(ms);
+        this.exchange(`laser S${num(power)} T${t}`, () => this.machine.beam(power, t));
     }
 
+    /**
+     * Starts the spindle or changes its speed. A run starts and stops it
+     * itself, and probing lowers the probe, which may be the tool itself,
+     * onto the copper: it does not start during either.
+     */
+    async spindle(power: number): Promise<void> {
+        this.notOwned();
+        if (!this.machine.milling()) {
+            throw new ApiError(400, "the output drives a laser ($spindle=0)");
+        }
+        if (!(Number.isFinite(power) && power >= 0)) {
+            throw new ApiError(400, "power must be >= 0");
+        }
+        this.exchange(`spindle S${num(power)}`, () => this.machine.spin(power));
+    }
+
+    /** Stops the spindle, which on a laser machine is the beam. */
     async spindleOff(): Promise<void> {
         if (this.session) {
             throw new ApiError(409, "a job is running: stop it to stop the spindle");
         }
-        this.exchange("spindle off", () => this.machine.spin(null));
+        if (this.machine.milling()) {
+            this.exchange("spindle off", () => this.machine.spin(null));
+        } else {
+            this.exchange("laser off", () => this.machine.outputOff());
+        }
     }
 
+    /**
+     * Beam off now. During a run the beam is the run's, and the button that
+     * means that is the hold, which the run can resume; a run otherwise
+     * under way, held say, is left as it is.
+     */
     async laserOff(): Promise<void> {
-        this.exchange("laser off", () => this.machine.beamOff());
+        if (this.session?.state === "running") {
+            await this.runHold();
+            return;
+        }
+        if (this.session) {
+            return;
+        }
+        this.exchange("laser off", () => this.machine.outputOff());
     }
 
     async mode(mode: Mode): Promise<void> {
+        if (this.session) {
+            throw new ApiError(409, "a job is running");
+        }
         this.exchange(`mode ${mode}`, () => {
             this.machine.mode = mode;
         });
@@ -1785,31 +2494,98 @@ export class MockBackend implements Api, EventFeed {
         };
     }
 
+    /**
+     * The machine's settings and the host's own, all or nothing: every entry
+     * is checked before anything goes out, a value the machine still
+     * refuses has the ones sent before it put back, and the host's values
+     * are stored only once the machine's part went through.
+     */
     async updateSettings(patch: SettingsUpdate): Promise<void> {
-        if (patch.host && Number.isFinite(patch.host.tolerance) && patch.host.tolerance > 0) {
-            this.tolerance = patch.host.tolerance;
+        const host = patch.host;
+        let tolerance: number | null = null;
+        if (host && host.tolerance !== undefined) {
+            if (typeof host.tolerance !== "number" || Number.isNaN(host.tolerance)) {
+                throw new ApiError(400, "tolerance must be a number");
+            }
+            if (!(Number.isFinite(host.tolerance) && host.tolerance > 0 && host.tolerance <= MAX_TOLERANCE)) {
+                throw new ApiError(400, `tolerance must be above 0 and at most ${formatG(MAX_TOLERANCE)} mm`);
+            }
+            tolerance = host.tolerance;
         }
-        const clearance = patch.host?.clearance;
-        const spinup = patch.host?.spinup;
-        if (clearance !== undefined && !(Number.isFinite(clearance) && clearance > 0 && clearance <= 100)) {
+        const clearance = host?.clearance ?? this.clearance;
+        const spinup = host?.spinup ?? this.spinup;
+        if (!(Number.isFinite(clearance) && clearance > 0 && clearance <= 100)) {
             throw new ApiError(400, "the clearance must be above 0 and at most 100 mm");
         }
-        if (spinup !== undefined && !(Number.isFinite(spinup) && spinup >= 0 && spinup <= 600)) {
+        if (!(Number.isFinite(spinup) && spinup >= 0 && spinup <= 600)) {
             throw new ApiError(400, "the spin-up must be 0 to 600 s");
         }
-        this.clearance = clearance ?? this.clearance;
-        this.spinup = spinup ?? this.spinup;
-        const values = patch.values ?? {};
-        if (Object.keys(values).length > 0) {
-            this.requireConnected();
-            for (const [name, value] of Object.entries(values)) {
-                this.exchange(`$${name}=${value}`, () => {
-                    this.machine.requireIdle();
-                    this.machine.setSetting(name, value);
-                });
-            }
+        const values = Object.entries(patch.values ?? {});
+        if (values.length > 0) {
+            this.writeMachineSettings(values);
+        }
+        if (tolerance !== null) {
+            this.tolerance = tolerance;
+        }
+        this.clearance = clearance;
+        this.spinup = spinup;
+        if (values.length > 0 || tolerance !== null) {
             for (const job of this.jobStore.values()) {
                 job.stats = computeStats(job.groups, this.limits());
+            }
+        }
+    }
+
+    /** The machine's part of a settings write: refused while a run or probing owns the machine. */
+    private writeMachineSettings(values: [string, number][]): void {
+        this.requireConnected();
+        this.notOwned();
+        const current = this.machine.settings;
+        const texts: [string, string][] = [];
+        for (const [name, value] of values) {
+            if (!(name in current)) {
+                throw new ApiError(400, `unknown setting '${name}'`);
+            }
+            if (typeof value !== "number" || !Number.isFinite(value)) {
+                throw new ApiError(400, `${name} must be a number`);
+            }
+            // Only a whole number can be meant for a whole number setting,
+            // and those go past the float bound: an idle time in ms, say.
+            const whole = Number.isInteger(value);
+            if (Math.abs(value) > (whole ? INT_SETTING_MAX : SETTING_MAX)) {
+                throw new ApiError(400, `${name} must be within ${whole ? String(INT_SETTING_MAX) : formatG(SETTING_MAX)}`);
+            }
+            texts.push([name, settingText(value)]);
+        }
+        const applied: [string, number][] = [];
+        try {
+            for (const [name, text] of texts) {
+                const before = current[name] ?? 0;
+                if (Number(text) === before) {
+                    continue;
+                }
+                this.exchange(`$${name}=${text}`, () => {
+                    this.machine.requireIdle();
+                    this.machine.setSetting(name, Number(text));
+                });
+                applied.push([name, before]);
+            }
+        } catch (error) {
+            // Whatever went before is put back; a value that cannot be is
+            // skipped for the next.
+            for (const [name, before] of applied) {
+                try {
+                    this.exchange(`$${name}=${settingText(before)}`, () => this.machine.setSetting(name, before));
+                } catch {
+                    continue;
+                }
+            }
+            throw error;
+        } finally {
+            // A jog end tracked in one frame means nothing in another.
+            this.jogTracked = false;
+            if (applied.some(([name]) => FRAME_SETTINGS.has(name))) {
+                this.frameChanged("a setting that scales or turns the axes changed");
             }
         }
     }
@@ -1873,9 +2649,13 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async centerJob(request: CenterRequest): Promise<CenterResponse> {
+        if (this.machine.cartesian() || this.machine.milling()) {
+            throw new ApiError(400, "the centering test is a burn on the polar laser machine ($cartesian=0, $spindle=0)");
+        }
+        const sMax = this.machine.settings["s_max"] ?? 0;
         let built: CenterResponse;
         try {
-            built = centerJob(this.newId(), request, this.limits());
+            built = centerJob(this.newId(), request, this.limits(), sMax > 0 ? sMax : null);
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
@@ -1946,8 +2726,8 @@ export class MockBackend implements Api, EventFeed {
                 if (change.passes !== undefined) {
                     checkPasses(change.passes);
                 }
-                if (change.depth !== undefined && !(Number.isFinite(change.depth) && change.depth > 0 && change.depth <= 50)) {
-                    throw new Error("depth must be above 0 and at most 50 mm");
+                if (change.depth !== undefined) {
+                    checkDepth(change.depth);
                 }
                 if (change.plunge !== undefined) {
                     checkSpeed(change.plunge, "plunge");
@@ -2018,29 +2798,187 @@ export class MockBackend implements Api, EventFeed {
     }
 
     /**
-     * The move list a job streams: a rapid to each path, then cuts within
-     * the chord tolerance; a joint-space group goes out as it is written.
-     * With `focusAt`, every move also carries the focus height at its end.
+     * The steps along one board path from `joint`, `z`: the polar planner's,
+     * or on a cartesian machine one joint line per board line, in the frame
+     * of the table's angle, which holds.
      */
-    movesFor(job: Job, focusAt: ((board: Board) => number) | null = null): Move[] {
+    private pathSteps(path: Path, joint: Joint, z: number): Step[] {
+        if (!this.machine.cartesian()) {
+            return pathMoves(path, joint, this.tolerance).map((move) => ({ ...move, z }));
+        }
+        if (path.length < 2) {
+            return [];
+        }
+        const angle = this.machine.joint.a;
+        const out: Step[] = [];
+        let here = { r: joint.r, z };
+        path.forEach(([x, y], index) => {
+            const at = turned({ x, y }, -angle);
+            // Within the resolution of a word, the head is there already.
+            if (Math.abs(at.x - here.r) < 0.5e-3 && Math.abs(at.y - here.z) < 0.5e-3) {
+                return;
+            }
+            out.push({ kind: index === 0 ? "go" : "cut", target: { r: at.x, a: joint.a }, z: at.y });
+            here = { r: at.x, z: at.y };
+        });
+        return out;
+    }
+
+    /** A laser group's steps from `joint`, `z`, once per pass. */
+    private groupSteps(group: Group, joint: Joint, z: number): Step[] {
+        if (!this.machine.cartesian()) {
+            return groupMoves(group, joint, this.tolerance).map((move) => ({ ...move, z }));
+        }
+        if (group.joints && group.joints.length > 0) {
+            throw new Error(`${group.label}: a joint-space group needs the polar machine ($cartesian=0)`);
+        }
+        const out: Step[] = [];
+        for (let pass = 0; pass < Math.max(1, group.passes); pass++) {
+            for (const path of group.paths) {
+                const steps = this.pathSteps(path, joint, z);
+                const last = steps[steps.length - 1];
+                if (last) {
+                    joint = last.target;
+                    z = last.z;
+                }
+                out.push(...steps);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The move list a job streams from where the machine is: a rapid to
+     * each path, then cuts within the chord tolerance; a joint-space group
+     * goes out as it is written. With a map to follow by `focus`, every
+     * move also carries the focus height at its end, and a job whose first
+     * move is a cut, the head already over its start, gets a dark move to
+     * the focus height first so the beam does not light at another. With
+     * a spindle the job is milled instead.
+     */
+    movesFor(job: Job, focus: HeightMap | null = null): Move[] {
+        const machine = this.machine;
+        const surface = focus ? (target: Joint, z: number): number => {
+            const board = machine.headBoard(target, z);
+            return heightAt(focus, board.x, board.y) + focus.focus_offset;
+        } : null;
+        if (machine.milling()) {
+            return this.millingMoves(job, focus, surface);
+        }
+        const cartesian = machine.cartesian();
         const moves: Move[] = [];
-        let joint = this.machine.endpoint();
+        let joint = machine.endpoint();
+        let z = machine.endpointZ();
         job.groups.forEach((group, index) => {
             if (!group.enabled) {
                 return;
             }
-            for (const step of groupMoves(group, joint, this.tolerance)) {
+            for (const step of this.groupSteps(group, joint, z)) {
                 const move: Move =
                     step.kind === "go"
                         ? { kind: "go", target: step.target, feed: null, power: 0, group: index }
                         : { kind: "cut", target: step.target, feed: group.speed, power: group.power, minPower: group.min_power, group: index };
-                if (focusAt) {
-                    move.h = round4(focusAt(boardOfJoint(step.target)));
+                if (cartesian) {
+                    move.z = step.z;
+                }
+                if (surface) {
+                    move.h = round4(surface(step.target, step.z));
                 }
                 moves.push(move);
                 joint = step.target;
+                z = step.z;
             }
         });
+        const first = moves[0];
+        if (surface && first?.kind === "cut") {
+            const start = machine.endpoint();
+            const startZ = machine.endpointZ();
+            moves.unshift({ kind: "go", target: start, h: round4(surface(start, startZ)), headOnly: true, feed: null, power: 0, group: first.group });
+        }
+        return moves;
+    }
+
+    /**
+     * A job milled with the spindle, as the backend streams one: the tool
+     * rises to the travel height, the spindle starts and is given its
+     * spin-up, and each path is a rapid to its start, a plunge at the
+     * group's plunge rate, the cuts at depth and a rise back, a group's
+     * passes a step deeper each time. The spindle changes speed between
+     * groups that ask for another and stops at the end, with the tool up.
+     * With a map the depth is under the surface it gives, and the travel
+     * height over its highest point.
+     */
+    private millingMoves(job: Job, map: HeightMap | null, surface: ((target: Joint, z: number) => number) | null): Move[] {
+        // A spindle at S0 is stopped, and every plunge after it would drive
+        // a still tool into the board.
+        for (const group of job.groups) {
+            const hasCuts = group.paths.length > 0 || (group.joints?.length ?? 0) > 0;
+            if (group.enabled && hasCuts && !(group.power > 0)) {
+                throw new Error(`${group.label}: a spindle needs a speed above 0`);
+            }
+        }
+        const machine = this.machine;
+        const cartesian = machine.cartesian();
+        const travel = round4((map ? highestSurface(map) : 0) + this.clearance);
+        const spinupMs = Math.round(this.spinup * 1000);
+        const under = (target: Joint, z: number, depth: number): number => round4((surface ? surface(target, z) : 0) - depth);
+        const moves: Move[] = [];
+        let joint = machine.endpoint();
+        let z = machine.endpointZ();
+        const lift = (group: number): Move => ({ kind: "go", target: joint, h: travel, headOnly: true, feed: null, power: 0, group });
+        moves.push(lift(-1));
+        let speed: number | null = null;
+        let lastGroup = -1;
+        job.groups.forEach((group, index) => {
+            if (!group.enabled) {
+                return;
+            }
+            if (group.joints && group.joints.length > 0) {
+                throw new Error(`${group.label}: a joint-space group cannot be milled`);
+            }
+            lastGroup = index;
+            if (group.power !== speed) {
+                speed = group.power;
+                moves.push({ kind: "spindle", target: joint, power: speed, feed: null, group: index });
+                if (spinupMs > 0) {
+                    moves.push({ kind: "dwell", target: joint, ms: spinupMs, power: 0, feed: null, group: index });
+                }
+            }
+            const passes = Math.max(1, group.passes);
+            const total = group.depth ?? DEFAULT_DEPTH;
+            const plunge = group.plunge ?? DEFAULT_PLUNGE;
+            for (let pass = 1; pass <= passes; pass++) {
+                const depth = (total * pass) / passes;
+                for (const path of group.paths) {
+                    let plunged = false;
+                    for (const step of this.pathSteps(path, joint, z)) {
+                        const slide = cartesian ? { z: step.z } : {};
+                        if (step.kind === "go") {
+                            moves.push({ kind: "go", target: step.target, ...slide, feed: null, power: 0, group: index });
+                        } else {
+                            if (!plunged) {
+                                moves.push({ kind: "cut", target: joint, h: under(joint, z, depth), headOnly: true, feed: plunge, power: 0, milled: true, group: index });
+                                plunged = true;
+                            }
+                            const h = under(step.target, step.z, depth);
+                            // On the axis the tool stays on one board point while the table turns under it.
+                            const turn = !cartesian && surfaceLength(joint, step.target) < SURFACE_EPSILON_MM;
+                            moves.push(
+                                turn
+                                    ? { kind: "go", target: step.target, h, feed: null, power: 0, group: index }
+                                    : { kind: "cut", target: step.target, ...slide, h, feed: group.speed, power: 0, milled: true, group: index },
+                            );
+                        }
+                        joint = step.target;
+                        z = step.z;
+                    }
+                    if (plunged) {
+                        moves.push(lift(index));
+                    }
+                }
+            }
+        });
+        moves.push({ kind: "spindle", target: joint, power: 0, off: true, feed: null, group: lastGroup });
         return moves;
     }
 
@@ -2056,6 +2994,10 @@ export class MockBackend implements Api, EventFeed {
         if (mode === "off") {
             return null;
         }
+        // An offset set in a focus axis frame before this one is taken back first.
+        if (this.dropStaleFocus()) {
+            this.emitHeightMap();
+        }
         const map = this.heightmap;
         try {
             if (!map) {
@@ -2068,6 +3010,9 @@ export class MockBackend implements Api, EventFeed {
         }
         const hasAxis = this.machine.hasFocusAxis();
         const resolved = mode === "auto" ? (hasAxis ? "focus" : "power") : mode === "focus" ? "focus" : "power";
+        if (this.machine.milling() && resolved === "power") {
+            throw new ApiError(400, "a spindle follows the board with its depth axis: compensate by focus");
+        }
         if (resolved === "focus" && !hasAxis) {
             throw new ApiError(400, "the focus axis is not fitted ($h_axis=0): compensate by power instead");
         }
@@ -2078,6 +3023,9 @@ export class MockBackend implements Api, EventFeed {
         this.requireConnected();
         const job = this.requireJob(id);
         this.refuseWhileProbing();
+        if (this.machine.milling() && !this.machine.hasFocusAxis()) {
+            throw new ApiError(400, "a spindle needs the focus axis as its depth axis: set $h_axis=1");
+        }
         const followed = this.compensation(compensate, job);
         if (this.session) {
             throw new ApiError(409, "a job is already running");
@@ -2085,12 +3033,16 @@ export class MockBackend implements Api, EventFeed {
         if (this.machine.state !== "Idle" || this.outbox.length > 0) {
             throw new ApiError(409, "machine is not idle");
         }
-        const map = followed?.map;
-        const focusAt = map && followed.mode === "focus" ? (board: Board) => heightAt(map, board.x, board.y) + map.focus_offset : null;
-        const moves = this.movesFor(job, focusAt);
+        let moves: Move[];
+        try {
+            moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
         if (moves.length === 0) {
             throw new ApiError(400, "job has no enabled paths");
         }
+        this.jogTracked = false;
         this.session = { job, moves, next: 0, okSent: 0, state: "running", seconds: 0, group: 0 };
         this.lastProgress = null;
         const following = followed ? `, following the board by ${followed.mode}` : "";
@@ -2171,10 +3123,7 @@ export class MockBackend implements Api, EventFeed {
      */
     async probe(grid: Grid): Promise<HeightMapState> {
         this.requireConnected();
-        if (this.session) {
-            throw new ApiError(409, "a job is running");
-        }
-        this.refuseWhileProbing();
+        this.notOwned();
         try {
             checkGrid(grid);
         } catch (error) {
@@ -2190,22 +3139,44 @@ export class MockBackend implements Api, EventFeed {
         if (machine.probeActive()) {
             throw new ApiError(409, "the probe is already touching: raise the head clear of the board first");
         }
+        if (machine.milling() && machine.spindle > 0) {
+            // The tool may be the probe: a turning one would cut at every touch.
+            throw new ApiError(409, "the spindle is turning: stop it before probing");
+        }
         const settings = structuredClone(this.probeConfig);
-        // Every point is checked for reach before the first move.
+        // Every point is checked for reach before the first move, soft limits included.
         const xs = gridXs(grid);
         const ys = gridYs(grid);
         const order = gridOrder(grid);
-        const joints: Joint[] = [];
+        const joints: ProbeJoint[] = [];
+        const cartesian = machine.cartesian();
+        const rMax = machine.settings["r_max"] ?? 0;
+        const zMax = machine.settings["z_max"] ?? 0;
         let angle = machine.joint.a;
         for (const [ix, iy] of order) {
-            let joint: Joint;
-            try {
-                joint = probeJoint([xs[ix] ?? 0, ys[iy] ?? 0], settings.offset, angle, gridSpacing(grid) / 2);
-            } catch (error) {
-                throw new ApiError(409, errorText(error));
+            const x = xs[ix] ?? 0;
+            const y = ys[iy] ?? 0;
+            const where = `the probe cannot reach (${x.toFixed(2)}, ${y.toFixed(2)}): the head would go to`;
+            let joint: ProbeJoint;
+            if (cartesian) {
+                // The rail and the cross slide put the tip over the point; the table stays.
+                const head = turned({ x, y }, -machine.joint.a);
+                joint = { r: head.x - settings.offset[0], a: machine.joint.a, z: head.y - settings.offset[1] };
+                if (zMax > 0 && Math.abs(joint.z ?? 0) > zMax + 1e-9) {
+                    throw new ApiError(409, `${where} Z${(joint.z ?? 0).toFixed(3)}, past the soft limit z_max=${formatG(zMax)}`);
+                }
+            } else {
+                try {
+                    joint = probeJoint([x, y], settings.offset, angle, gridSpacing(grid) / 2);
+                } catch (error) {
+                    throw new ApiError(409, errorText(error));
+                }
+                angle = joint.a;
+            }
+            if (rMax > 0 && Math.abs(joint.r) > rMax + 1e-9) {
+                throw new ApiError(409, `${where} R${joint.r.toFixed(3)}, past the soft limit r_max=${formatG(rMax)}`);
             }
             joints.push(joint);
-            angle = joint.a;
         }
         const map: HeightMap = {
             grid: { x0: grid.x0, y0: grid.y0, x1: grid.x1, y1: grid.y1, nx: grid.nx, ny: grid.ny },
@@ -2216,12 +3187,16 @@ export class MockBackend implements Api, EventFeed {
             created: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
         };
         // A map probed before keeps its focus offset only if the probe has
-        // not moved: the offset is contact to focus for that probe.
+        // not moved, the offset being contact to focus for that probe, and
+        // its heights are in this focus axis frame.
         const previous = this.heightmap;
-        if (previous && previous.probe_offset[0] === settings.offset[0] && previous.probe_offset[1] === settings.offset[1]) {
+        const sameProbe = previous && previous.probe_offset[0] === settings.offset[0] && previous.probe_offset[1] === settings.offset[1];
+        if (previous && sameProbe && this.heightsFrame === this.frame) {
             map.focus_offset = previous.focus_offset;
             map.focus_set = previous.focus_set;
         }
+        this.heightsFrame = this.frame;
+        this.jogTracked = false;
         // The new map replaces the old one from the start, so its grid fills in.
         this.heightmap = map;
         const progress: ProbeProgress = { state: "running", done: 0, total: grid.nx * grid.ny, point: null, seconds: 0, error: null };
@@ -2244,7 +3219,13 @@ export class MockBackend implements Api, EventFeed {
         return this.heightMapState();
     }
 
-    /** Sets the focus offset: given, or the head's height less the map's height under the beam. */
+    /**
+     * Sets the focus offset: the head's height less the map's height under
+     * the beam, which ties the map to the focus axis frame in use whatever
+     * frame its heights were probed in; or given as a number, a plain
+     * distance from contact to focus that holds only for heights probed in
+     * this frame.
+     */
     async focus(offset: number | null): Promise<HeightMapState> {
         this.refuseWhileProbing();
         const map = this.heightmap;
@@ -2261,12 +3242,29 @@ export class MockBackend implements Api, EventFeed {
             // Without a focus axis the head's height is fixed, and zero is
             // as good a name for it as any: the map only needs the same one.
             const here = machine.hasFocusAxis() ? machine.h : 0;
-            const board = boardOfJoint(machine.joint);
+            const board = machine.headBoard();
+            const grid = map.grid;
+            const m = COVER_MARGIN;
+            if (!(board.x >= grid.x0 - m && board.y >= grid.y0 - m && board.x <= grid.x1 + m && board.y <= grid.y1 + m)) {
+                // The edge height would stand in for copper nobody measured.
+                const f = (v: number): string => v.toFixed(1);
+                throw new ApiError(
+                    400,
+                    `focus over the probed area: the beam is at X ${f(board.x)} Y ${f(board.y)}, the map covers` +
+                        ` X ${f(grid.x0)}..${f(grid.x1)} Y ${f(grid.y0)}..${f(grid.y1)}`,
+                );
+            }
             try {
                 value = here - heightAt(map, board.x, board.y);
             } catch (error) {
                 throw new ApiError(400, errorText(error));
             }
+        } else if (this.heightsFrame !== this.frame) {
+            throw new ApiError(
+                400,
+                "the map was probed before the focus axis was last renumbered (a connect, a restart," +
+                    " a position set or a map put back): use focus here over the map, or probe again",
+            );
         }
         if (!Number.isFinite(value)) {
             throw new ApiError(422, "offset must be a finite number");
@@ -2276,6 +3274,7 @@ export class MockBackend implements Api, EventFeed {
         }
         map.focus_offset = round4(value);
         map.focus_set = true;
+        this.focusFrame = this.frame;
         this.emitHeightMap();
         return this.heightMapState();
     }
@@ -2301,6 +3300,11 @@ export class MockBackend implements Api, EventFeed {
         return this.heightMapState();
     }
 
+    /**
+     * Puts back a map, from a file say. Its heights are from a session whose
+     * focus axis frame nothing here knows, so it needs focus here before a
+     * run follows it, whatever it says of its offset.
+     */
     async putHeightMap(map: HeightMap): Promise<HeightMapState> {
         this.refuseWhileProbing();
         const read = readHeightMap(map);
@@ -2309,7 +3313,9 @@ export class MockBackend implements Api, EventFeed {
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
+        read.focus_set = false;
         this.heightmap = read;
+        this.heightsFrame = null;
         this.emitHeightMap();
         return this.heightMapState();
     }
@@ -2317,6 +3323,7 @@ export class MockBackend implements Api, EventFeed {
     async clearHeightMap(): Promise<HeightMapState> {
         this.refuseWhileProbing();
         this.heightmap = null;
+        this.heightsFrame = null;
         this.emitHeightMap();
         return this.heightMapState();
     }
@@ -2345,7 +3352,8 @@ export class MockBackend implements Api, EventFeed {
         }
         session.progress.point = point;
         this.emitHeightMap();
-        this.probeRequest(session, `go R${coord(joint.r, 3)} A${coord(joint.a, 4)}`, () => this.probeGo(joint, null));
+        const words = joint.z !== undefined ? `R${coord(joint.r, 3)} Z${coord(joint.z, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
+        this.probeRequest(session, `go ${words}`, () => this.probeGo(joint, null));
     }
 
     /** Touches the point in progress, records it, and goes on to the next. */
@@ -2403,16 +3411,19 @@ export class MockBackend implements Api, EventFeed {
 
     /**
      * A positioning line of the probing, done at once: the mock spends its
-     * fixed time per point instead of the travel.
+     * fixed time per point instead of the travel. The soft limits hold as
+     * they hold for any line.
      */
-    private probeGo(joint: Joint | null, h: number | null): string[] {
+    private probeGo(joint: ProbeJoint | null, h: number | null): string[] {
         const machine = this.machine;
         if (h !== null && !machine.hasFocusAxis()) {
             throw new MachineError(2, "bad word");
         }
         machine.requireIdle();
         if (joint) {
-            machine.joint = { ...joint };
+            machine.checkReach(joint.r, joint.z);
+            machine.joint = { r: joint.r, a: joint.a };
+            machine.z = joint.z ?? machine.z;
         }
         if (h !== null) {
             machine.h = h;
@@ -2464,24 +3475,57 @@ export class MockBackend implements Api, EventFeed {
     }
 }
 
+/** A move as the line that asks the firmware for it. */
 export function formatMove(move: Move): string {
-    const focus = move.h !== undefined ? ` H${coord(move.h, 4)}` : "";
-    const words = `R${move.target.r.toFixed(3)} A${move.target.a.toFixed(4)}${focus}`;
+    const focus = move.h !== undefined ? `H${coord(move.h, 4)}` : "";
+    // A cartesian machine's moves carry the cross slide and hold the table.
+    const joints = move.z !== undefined ? `R${coord(move.target.r, 3)} Z${coord(move.z, 3)}` : `R${coord(move.target.r, 3)} A${coord(move.target.a, 4)}`;
+    const words = move.headOnly ? focus : move.turn ? `A${coord(move.target.a, 4)}` : [joints, focus].filter((word) => word !== "").join(" ");
     switch (move.kind) {
         case "go":
             return `go ${words}`;
         case "jog":
-            return move.feed !== null ? `jogto ${words} F${move.feed}` : `jogto ${words}`;
-        case "cut":
-            const floor = (move.minPower ?? 0) > 0 ? ` M${Math.min(move.minPower ?? 0, move.power)}` : "";
-            return `cut ${words} F${move.feed ?? 0} S${move.power}${floor}`;
+            return move.feed !== null ? `jogto ${words} F${num(move.feed)}` : `jogto ${words}`;
+        case "cut": {
+            if (move.milled) {
+                return `cut ${words} F${num(move.feed ?? 0)}`;
+            }
+            const floor = (move.minPower ?? 0) > 0 ? ` M${num(Math.min(move.minPower ?? 0, move.power))}` : "";
+            return `cut ${words} F${num(move.feed ?? 0)} S${num(move.power)}${floor}`;
+        }
+        case "dwell":
+            return move.power > 0 ? `dwell T${move.ms ?? 0} S${move.power}` : `dwell T${move.ms ?? 0}`;
+        case "spindle":
+            return move.off ? "spindle off" : `spindle S${num(move.power)}`;
     }
 }
 
+/** The status line the firmware prints for `?`, with no negative zero; L is the output's duty as driven on the pin, a spindle's included. */
 export function statusLine(machine: MockMachine): string {
     const free = machine.queueFree();
     const state = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? 1}` : machine.state;
     // The focus axis fields are there only with the axis fitted.
-    const focus = machine.hasFocusAxis() ? `|H:${machine.h.toFixed(3)}|P:${machine.probeActive() ? 1 : 0}` : "";
-    return `<${state}|J:${machine.joint.r.toFixed(3)},${machine.joint.a.toFixed(4)}|V:${Math.round(machine.rate)}|L:${Math.round(machine.laser)}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${machine.z.toFixed(3)}${focus}>`;
+    const focus = machine.hasFocusAxis() ? `|H:${coord(machine.h, 3)}|P:${machine.probeActive() ? 1 : 0}` : "";
+    const joint = `J:${coord(machine.joint.r, 3)},${coord(machine.joint.a, 4)}`;
+    const duty = Math.round(machine.status().laser);
+    return `<${state}|${joint}|V:${coord(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${coord(machine.z, 3)}${focus}>`;
+}
+
+/**
+ * What the drivers answer to `$tmc`, one line per socket with the
+ * microsteps read back from them; the focus axis socket is empty without
+ * the axis.
+ */
+function tmcReport(machine: MockMachine): string[] {
+    const sockets: [string, number, string, boolean][] = [
+        ["R", 0, "tmc_r_micro", true],
+        ["A", 2, "tmc_a_micro", true],
+        ["Z", 1, "tmc_z_micro", true],
+        ["H", 3, "tmc_h_micro", machine.hasFocusAxis()],
+    ];
+    return sockets.map(([letter, addr, name, used]) =>
+        used
+            ? `[MSG:tmc ${letter} addr${addr} ifcnt=1 micro=${machine.settings[name] ?? 256} status=0x00000000]`
+            : `[MSG:tmc ${letter} addr${addr} unused, no reply]`,
+    );
 }

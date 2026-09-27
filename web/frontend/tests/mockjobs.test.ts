@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import {
     PX_MM,
     buildJob,
+    centerJob,
+    checkSpeed,
     closestApproach,
     colorName,
     computeStats,
@@ -16,6 +18,7 @@ import {
     parseSvg,
     parseTransform,
     pathMinRadius,
+    pathMoves,
     placeJob,
 } from "../src/mockjobs.ts";
 import type { Group } from "../src/types.ts";
@@ -363,5 +366,49 @@ describe("building jobs", () => {
 
     test("unknown types are refused", () => {
         expect(() => buildJob("0004", "x.txt", "", {}, limits)).toThrow();
+    });
+});
+
+describe("checks the backend makes", () => {
+    test("a speed or plunge under 0.001 mm/min is refused like one of 0", () => {
+        expect(() => checkSpeed(0.0005)).toThrow("speed must be at least 0.001 mm/min");
+        expect(() => checkSpeed(0.0005, "plunge")).toThrow("plunge must be at least 0.001 mm/min");
+        expect(() => checkSpeed(0)).toThrow("speed must be above 0 and at most 1e+06");
+        checkSpeed(0.001);
+        const slow = JSON.stringify({ groups: [{ label: "g", speed: 0.0005, paths: [[[0, 0], [1, 1]]] }] });
+        expect(() => buildJob("0012", "slow.json", slow, {}, limits)).toThrow("group 'g': speed must be at least 0.001 mm/min");
+    });
+
+    test("a saved job keeps its depth and plunge, checked", () => {
+        const text = JSON.stringify({ groups: [{ label: "g", depth: 1.6, plunge: 30, paths: [[[0, 10], [1, 10]]] }] });
+        const group = buildJob("0013", "milled.json", text, {}, limits).job.groups[0]!;
+        expect(group.depth).toBe(1.6);
+        expect(group.plunge).toBe(30);
+        const plain = buildJob("0014", "plain.json", JSON.stringify({ groups: [{ label: "g", paths: [[[0, 10], [1, 10]]] }] }), {}, limits);
+        expect(plain.job.groups[0]!.depth).toBe(0.1);
+        expect(plain.job.groups[0]!.plunge).toBe(60);
+        const refuse = (raw: Record<string, unknown>, text: string): void => {
+            const job = JSON.stringify({ groups: [{ label: "g", paths: [[[0, 10], [1, 10]]], ...raw }] });
+            expect(() => buildJob("0015", "bad.json", job, {}, limits)).toThrow(text);
+        };
+        refuse({ depth: 0 }, "group 'g': depth must be above 0 and at most 50 mm");
+        refuse({ depth: 51 }, "group 'g': depth must be above 0 and at most 50 mm");
+        refuse({ plunge: 0.0001 }, "group 'g': plunge must be at least 0.001 mm/min");
+        refuse({ plunge: "fast" }, "must be a number");
+    });
+
+    test("the centering pattern's power stays under s_max, checked before the pattern", () => {
+        expect(() => centerJob("c", { power: 1200 }, limits, 1000)).toThrow("power 1200 is over s_max 1000");
+        expect(() => centerJob("c", { power: 1200, fine: true }, limits, 1000)).toThrow("power 1200 is over s_max 1000");
+        expect(() => centerJob("c", { power: 1200 }, limits, 1e6 + 1)).not.toThrow();
+        expect(centerJob("c", { power: 400 }, limits, 1000).job.groups.length).toBe(2);
+    });
+
+    test("a path starting within the axis snap starts on the axis and leaves it with a turn", () => {
+        const moves = pathMoves([[0.003, 0], [0, 5]], { r: 10, a: 0 }, 0.005);
+        expect(moves[0]).toEqual({ kind: "go", target: { r: 0, a: 0 } });
+        expect(moves[1]).toEqual({ kind: "cut", target: { r: 0, a: 90 } });
+        expect(moves[2]!.target.r).toBeCloseTo(5, 9);
+        expect(moves.length).toBe(3);
     });
 });

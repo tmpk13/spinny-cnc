@@ -1,7 +1,7 @@
 // Job geometry for the in-page mock backend: SVG and gcode readers, a demo
 // coupon for the formats only the real backend can read, placement and stats.
 
-import { boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "./kinematics.ts";
+import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "./kinematics.ts";
 import type { Anchor, Board, CenterRequest, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "./types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
@@ -23,15 +23,51 @@ export const MAX_VALUE_TEXT = "1e+06";
 /** Most times a group may run over its own paths. */
 export const MAX_GROUP_PASSES = 100;
 
+/**
+ * A number as the backend's refusals write one (Python's `:g`): six
+ * significant digits, trailing zeros dropped, and the exponent form below
+ * 1e-4 and from 1e6 on.
+ */
+export function formatG(value: number): string {
+    if (!Number.isFinite(value) || value === 0) {
+        return String(value === 0 ? 0 : value);
+    }
+    const rounded = Number(value.toPrecision(6));
+    const exponent = Math.floor(Math.log10(Math.abs(rounded)));
+    if (exponent < -4 || exponent >= 6) {
+        const [mantissa = "", power = "0"] = rounded.toExponential(5).split("e");
+        const e = Number(power);
+        return `${mantissa.replace(/\.?0+$/, "")}e${e < 0 ? "-" : "+"}${String(Math.abs(e)).padStart(2, "0")}`;
+    }
+    return String(rounded);
+}
+
 export function checkPower(power: number, what = "power"): void {
     if (!(power >= 0 && power <= MAX_VALUE)) {
         throw new Error(`${what} must be between 0 and ${MAX_VALUE_TEXT}`);
     }
 }
 
+/** Slowest speed or plunge a group may ask for, mm/min: written with three decimals, less would reach the firmware as F0. */
+export const MIN_SPEED = 0.001;
+/** Deepest a milled group may cut under the surface, mm. */
+export const MAX_DEPTH = 50;
+/** What a milled group cuts to and plunges at when it does not say. */
+export const DEFAULT_DEPTH = 0.1;
+export const DEFAULT_PLUNGE = 60;
+
 export function checkSpeed(speed: number, what = "speed"): void {
     if (!(speed > 0 && speed <= MAX_VALUE)) {
         throw new Error(`${what} must be above 0 and at most ${MAX_VALUE_TEXT}`);
+    }
+    if (speed < MIN_SPEED) {
+        throw new Error(`${what} must be at least ${formatG(MIN_SPEED)} mm/min`);
+    }
+}
+
+export function checkDepth(depth: number, what = "depth"): void {
+    if (!(depth > 0 && depth <= MAX_DEPTH)) {
+        throw new Error(`${what} must be above 0 and at most ${formatG(MAX_DEPTH)} mm`);
     }
 }
 
@@ -917,19 +953,38 @@ export function groupMoves(group: Group, from: Joint, tolerance: number): Planne
         return out;
     }
     for (const path of perPass(group.paths, group.passes)) {
-        const first = path[0];
-        if (!first || path.length < 2) {
-            continue;
+        for (const move of pathMoves(path, joint, tolerance)) {
+            out.push(move);
+            joint = move.target;
         }
-        const start = jointOfBoard({ x: first[0], y: first[1] }, joint);
-        if (!sameJoint(joint, start)) {
-            out.push({ kind: "go", target: start });
-            joint = start;
-        }
-        for (const target of jointPath(path.slice(1), joint, tolerance)) {
-            out.push({ kind: "cut", target });
-            joint = target;
-        }
+    }
+    return out;
+}
+
+/**
+ * The joint moves along one board path from `from`: a rapid to its start
+ * unless the head is there, then its cuts; nothing for a path of fewer
+ * than two points. A start within the axis snap is on the axis, as its
+ * radius word says, so the move away from it is a turn, not a spiral.
+ */
+export function pathMoves(path: Path, from: Joint, tolerance: number): PlannedMove[] {
+    const first = path[0];
+    if (!first || path.length < 2) {
+        return [];
+    }
+    const out: PlannedMove[] = [];
+    let joint = from;
+    let start = jointOfBoard({ x: first[0], y: first[1] }, joint);
+    if (start.r < axisSnap(tolerance)) {
+        start = { r: 0, a: start.a };
+    }
+    if (!sameJoint(joint, start)) {
+        out.push({ kind: "go", target: start });
+        joint = start;
+    }
+    for (const target of jointPath(path.slice(1), joint, tolerance)) {
+        out.push({ kind: "cut", target });
+        joint = target;
     }
     return out;
 }
@@ -1052,10 +1107,14 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
         const minPower = raw["min_power"] === undefined ? 0 : finiteNumber(raw["min_power"], `${what}: min power`);
         const speed = raw["speed"] === undefined ? DEFAULT_SPEED : finiteNumber(raw["speed"], `${what}: speed`);
         const passes = raw["passes"] === undefined ? 1 : finiteNumber(raw["passes"], `${what}: passes`);
+        const depth = raw["depth"] === undefined ? DEFAULT_DEPTH : finiteNumber(raw["depth"], `${what}: depth`);
+        const plunge = raw["plunge"] === undefined ? DEFAULT_PLUNGE : finiteNumber(raw["plunge"], `${what}: plunge`);
         checkSpeed(speed, `${what}: speed`);
         checkPower(power, `${what}: power`);
         checkPower(minPower, `${what}: min power`);
         checkPasses(passes, `${what}: passes`);
+        checkDepth(depth, `${what}: depth`);
+        checkSpeed(plunge, `${what}: plunge`);
         const paths = pathsOf(raw["paths"], what);
         const joints = pathsOf(raw["joints"], what);
         if (joints.some((poly) => poly.length < 2)) {
@@ -1068,6 +1127,8 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
             speed,
             passes,
             enabled: raw["enabled"] === undefined ? true : Boolean(raw["enabled"]),
+            depth,
+            plunge,
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
         };
         if (joints.length > 0) {
@@ -1195,9 +1256,22 @@ const RING_HEADROOM = 0.95;
 /**
  * The coarse centering pattern: radial lines from the axis and a reference
  * ring, as the backend builds them. The fine pattern needs the backend's
- * polar kinematics and is refused here.
+ * polar kinematics and is refused here. `sMax`, the machine's full power
+ * when it is known, bounds the power.
  */
-export function centerJob(id: string, request: CenterRequest, limits: RateLimits): { job: Job; summary: string[]; notes: string[] } {
+export function centerJob(
+    id: string,
+    request: CenterRequest,
+    limits: RateLimits,
+    sMax: number | null = null,
+): { job: Job; summary: string[]; notes: string[] } {
+    const power = request.power ?? 400;
+    const speed = request.speed ?? 200;
+    checkPower(power);
+    checkSpeed(speed);
+    if (sMax !== null && power > sMax) {
+        throw new Error(`power ${formatG(power)} is over s_max ${formatG(sMax)}`);
+    }
     if (request.fine) {
         throw new Error("the fine pattern is only built by the real backend");
     }
@@ -1207,11 +1281,7 @@ export function centerJob(id: string, request: CenterRequest, limits: RateLimits
     const lines = request.lines ?? 4;
     const reach = request.reach ?? 6;
     const ring = request.ring ?? 8;
-    const power = request.power ?? 400;
-    const speed = request.speed ?? 200;
     const spot = request.spot ?? DEFAULT_SPOT;
-    checkPower(power);
-    checkSpeed(speed);
     if (!Number.isInteger(lines) || lines < 0 || lines === 1) {
         throw new Error("a pattern needs at least two lines to bound anything");
     }

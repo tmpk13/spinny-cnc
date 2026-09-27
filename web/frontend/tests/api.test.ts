@@ -127,6 +127,66 @@ describe("HttpApi", () => {
         expect(calls[16]?.body).toEqual({ values: { r_rate: 800 }, host: { tolerance: 0.005 } });
     });
 
+    test("routes, methods and bodies of the spindle, the height map and a compensated run", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host:8000", fetchFn);
+        const grid = { x0: -10, y0: -5, x1: 10, y1: 5, nx: 3, ny: 2 };
+        const map = {
+            grid,
+            heights: [[0, 0.1, 0.2], [0.3, 0.4, 0.5]],
+            focus_offset: 1.5,
+            focus_set: true,
+            probe_offset: [0, 0] as [number, number],
+            created: "2026-09-23T10:00:00+00:00",
+        };
+
+        await api.spindle(300);
+        await api.spindleOff();
+        await api.heightMap();
+        await api.probe(grid);
+        await api.probeStop();
+        await api.focus(null);
+        await api.focus(1.5);
+        await api.probeSettings({ slow: 0, offset: [2, -1] });
+        await api.putHeightMap(map);
+        await api.clearHeightMap();
+        await api.runJob("a1");
+        await api.runJob("a1", "focus");
+
+        expect(calls.map((call) => `${call.method} ${call.url.replace("http://host:8000", "")}`)).toEqual([
+            "POST /api/spindle",
+            "POST /api/spindle/off",
+            "GET /api/heightmap",
+            "POST /api/heightmap/probe",
+            "POST /api/heightmap/stop",
+            "POST /api/heightmap/focus",
+            "POST /api/heightmap/focus",
+            "PUT /api/heightmap/settings",
+            "PUT /api/heightmap",
+            "DELETE /api/heightmap",
+            "POST /api/jobs/a1/run",
+            "POST /api/jobs/a1/run",
+        ]);
+        // A request with no body sends none: a stray one would be caught here.
+        expect(calls.map((call) => call.body)).toEqual([
+            { power: 300 },
+            null,
+            null,
+            grid,
+            null,
+            {},
+            { offset: 1.5 },
+            { slow: 0, offset: [2, -1] },
+            map,
+            null,
+            // The backend takes a missing or misspelt compensate as off
+            // without a word, so only this pins the key of a compensated run.
+            { compensate: "off" },
+            { compensate: "focus" },
+        ]);
+        expect(Object.keys(calls[5]!.body as object)).toEqual([]);
+    });
+
     test("the cross slide goes out through jog, goto and position", async () => {
         const { calls, fetchFn } = fakeFetch(() => ({ status: 200, body: {} }));
         const api = new HttpApi("", fetchFn);

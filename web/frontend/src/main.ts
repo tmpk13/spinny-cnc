@@ -4,7 +4,7 @@
 import { HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock.ts";
 import { appendConsole, initialState, pushToast, Store, type AppState } from "./state.ts";
-import type { MessageLevel } from "./types.ts";
+import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountConsole } from "./views/console.ts";
 import type { Ctx } from "./views/context.ts";
@@ -22,6 +22,11 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
     const toast = (level: MessageLevel, text: string): void => {
         pushToast(store, level, text);
     };
+    // Replies can overtake each other (a large job takes longer to send
+    // than a small one): only the latest selection and the latest list
+    // are applied, whatever order their replies come back in.
+    let selection = 0;
+    let listing = 0;
     const ctx: Ctx = {
         api,
         store,
@@ -52,8 +57,9 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
             }
         },
         async refreshJobs() {
+            const ticket = ++listing;
             const jobs = await ctx.call(api.jobs());
-            if (jobs) {
+            if (jobs && ticket === listing) {
                 store.set({ jobs });
                 const selected = store.get().job;
                 if (selected && !jobs.some((job) => job.id === selected.id)) {
@@ -74,17 +80,77 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
             }
         },
         async selectJob(id) {
+            const ticket = ++selection;
             if (id === null) {
                 store.set({ job: null });
                 return;
             }
             const job = await ctx.call(api.job(id));
-            if (job) {
+            if (job && ticket === selection) {
+                store.set({ job });
+            }
+        },
+        async reloadJob(id) {
+            // Not a selection of its own: it loses to any selection made
+            // while it is under way, and to a job picked since.
+            const ticket = selection;
+            const job = await ctx.call(api.job(id));
+            if (job && ticket === selection && store.get().job?.id === id) {
                 store.set({ job });
             }
         },
     };
     return ctx;
+}
+
+function sameProfile(a: Profile | undefined, b: Profile | undefined): boolean {
+    if (a === undefined || b === undefined) {
+        return a === b;
+    }
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof Profile>;
+    return [...keys].every((key) => a[key] === b[key]);
+}
+
+/**
+ * The machine's settings may be other than the page last read: it has just
+ * connected, it is another machine, or its profile (which the backend reads
+ * from the settings) moved, as it does after a setting typed at the console
+ * or changed from another page.
+ */
+export function settingsMayHaveChanged(before: Snapshot, after: Snapshot): boolean {
+    if (!after.connected) {
+        return false;
+    }
+    return !before.connected || before.url !== after.url || !sameProfile(before.profile, after.profile);
+}
+
+/** Puts one event of the feed into the store. */
+export function applyEvent(ctx: Ctx, event: WsEvent): void {
+    const store = ctx.store;
+    switch (event.type) {
+        case "state": {
+            const before = store.get().snapshot;
+            store.set({ snapshot: event.data, progress: event.data.run });
+            // Only on a change: the settings panel is rebuilt from every
+            // fresh copy, which must not happen at the frame rate.
+            if (settingsMayHaveChanged(before, event.data)) {
+                void ctx.refreshSettings();
+            }
+            break;
+        }
+        case "console":
+            appendConsole(store, event.data);
+            break;
+        case "progress":
+            store.set({ progress: event.data });
+            break;
+        case "heightmap":
+            store.set({ heightMap: event.data });
+            break;
+        case "message":
+            ctx.toast(event.data.level, event.data.text);
+            break;
+    }
 }
 
 /** Everything the page needs after a (re)connect of the event feed. */
@@ -123,25 +189,7 @@ function main(): void {
             void refreshAll(ctx);
         }
     });
-    feed.onEvent((event) => {
-        switch (event.type) {
-            case "state":
-                store.set({ snapshot: event.data, progress: event.data.run });
-                break;
-            case "console":
-                appendConsole(store, event.data);
-                break;
-            case "progress":
-                store.set({ progress: event.data });
-                break;
-            case "heightmap":
-                store.set({ heightMap: event.data });
-                break;
-            case "message":
-                ctx.toast(event.data.level, event.data.text);
-                break;
-        }
-    });
+    feed.onEvent((event) => applyEvent(ctx, event));
 
     const panel = (id: string): HTMLElement => {
         const node = document.getElementById(id);

@@ -5,6 +5,7 @@
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
+import type { AppState } from "../state.ts";
 import type { HostSettings, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
@@ -40,33 +41,81 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
 
     let edits: Record<string, number> = {};
     let shown: SettingsResponse | null = null;
+    // The machine the edits were typed for: connected to another one (or to
+    // none), what was typed is not carried over to it.
+    let editsFor: string | null = null;
+    // The host values the fields were last filled with, to tell a field the
+    // operator has typed in from one still showing the backend's value.
+    let hostShown: { tolerance: string; clearance: string; spinup: string } | null = null;
+
+    const machineOf = (state: AppState): string | null => (state.snapshot.connected ? state.snapshot.url ?? "" : null);
 
     ctx.store.subscribe((state) => {
         milling.classList.toggle("hidden", !isMilling(state.snapshot));
+        const machine = machineOf(state);
+        if (machine !== editsFor) {
+            editsFor = machine;
+            if (Object.keys(edits).length > 0 || hostShown !== null) {
+                edits = {};
+                hostShown = null;
+                render(shown);
+            }
+        }
     }, ["snapshot"]);
 
     ctx.store.subscribe((state) => {
         if (state.settings !== shown) {
             shown = state.settings;
-            edits = {};
             render(state.settings);
         }
     }, ["settings"]);
 
+    /**
+     * Builds the table from `settings`. A refresh (another panel writing a
+     * setting, the event feed coming back) keeps what the operator typed and
+     * has not applied, as long as it still differs from the machine's value.
+     */
     function render(settings: SettingsResponse | null): void {
         if (!settings) {
+            edits = {};
+            hostShown = null;
             replace(table, el("tbody", {}, el("tr", {}, el("td", { class: "muted" }, "no settings loaded"))));
             return;
         }
-        tolerance.value = String(settings.host.tolerance);
-        clearance.value = String(settings.host.clearance ?? 2);
-        spinup.value = String(settings.host.spinup ?? 2);
+        const focused = document.activeElement;
+        const host = {
+            tolerance: String(settings.host.tolerance),
+            clearance: String(settings.host.clearance ?? 2),
+            spinup: String(settings.host.spinup ?? 2),
+        };
+        const follow = (field: HTMLInputElement, key: keyof typeof host): void => {
+            const untouched = hostShown === null || field.value === hostShown[key];
+            if (untouched && field !== focused) {
+                field.value = host[key];
+            }
+        };
+        follow(tolerance, "tolerance");
+        follow(clearance, "clearance");
+        follow(spinup, "spinup");
+        hostShown = host;
+        // The field being typed in keeps its text as it is, parsed or not.
+        const typing = focused instanceof HTMLInputElement && table.contains(focused)
+            ? { name: focused.getAttribute("aria-label"), text: focused.value }
+            : null;
+        const kept: Record<string, number> = {};
+        for (const [name, edit] of Object.entries(edits)) {
+            if (name in settings.values && edit !== settings.values[name]) {
+                kept[name] = edit;
+            }
+        }
         const names = settings.schema.length > 0 ? settings.schema : Object.keys(settings.values).map((name) => ({ name, unit: "", help: "" }));
+        const inputs = new Map<string, HTMLInputElement>();
         const rows = names.map((entry) => {
             const current = settings.values[entry.name];
-            const input = numberField({ value: current ?? null, width: "6.5rem" });
+            const input = numberField({ value: entry.name in kept ? kept[entry.name] : current ?? null, width: "6.5rem" });
             input.setAttribute("aria-label", entry.name);
-            const row = el("tr", {},
+            inputs.set(entry.name, input);
+            const row = el("tr", { class: entry.name in kept ? "edited" : "" },
                 el("td", { class: "mono" }, entry.name),
                 el("td", {}, input),
                 el("td", { class: "muted" }, entry.unit),
@@ -83,10 +132,16 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             });
             return row;
         });
+        edits = kept;
         replace(table,
             el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Value"), el("th", {}, "Unit"), el("th", {}, "Help"))),
             el("tbody", {}, ...rows),
         );
+        const again = typing?.name ? inputs.get(typing.name) : undefined;
+        if (typing && again) {
+            again.value = typing.text;
+            again.focus();
+        }
     }
 
     async function applyEdits(): Promise<void> {

@@ -1,11 +1,20 @@
 // Event feed from the backend: a WebSocket that reconnects with exponential
-// backoff and reports its link status.
+// backoff and reports its link status. A feed that goes silent while a
+// machine is connected is taken for dead and opened again: a backend host
+// that loses power or its network sends no close, and the socket would
+// otherwise stay open over a frozen readout.
 
 import type { LinkStatus } from "./state.ts";
 import type { WsEvent } from "./types.ts";
 
 export const BACKOFF_BASE_MS = 500;
 export const BACKOFF_MAX_MS = 15000;
+/**
+ * Silence after which a feed that last said a machine is connected is taken
+ * for dead. The backend sends a state frame at least every 200 ms then; the
+ * margin covers a busy backend dropping frames for a slow page.
+ */
+export const STALE_MS = 5000;
 
 /** Delay before reconnect attempt `attempt` (0 for the first retry). */
 export function backoffDelay(attempt: number, base = BACKOFF_BASE_MS, max = BACKOFF_MAX_MS): number {
@@ -44,6 +53,9 @@ export interface EventSocketOptions {
     max?: number;
     setTimer?: (fn: () => void, ms: number) => unknown;
     clearTimer?: (handle: unknown) => void;
+    /** Milliseconds from any fixed point: the clock the silence is measured on. */
+    now?: () => number;
+    stale?: number;
 }
 
 type DataOf<K extends WsEvent["type"]> = Extract<WsEvent, { type: K }>["data"];
@@ -102,8 +114,14 @@ export class EventSocket implements EventFeed {
     private readonly max: number;
     private readonly setTimer: (fn: () => void, ms: number) => unknown;
     private readonly clearTimer: (handle: unknown) => void;
+    private readonly now: () => number;
+    private readonly stale: number;
     private socket: SocketLike | null = null;
     private timer: unknown = null;
+    /** The silence check, armed while the last state frame said connected. */
+    private watchdog: unknown = null;
+    private lastFrame = 0;
+    private machineConnected = false;
     private stopped = true;
     private eventListeners = new Set<(event: WsEvent) => void>();
     private statusListeners = new Set<(status: LinkStatus) => void>();
@@ -115,6 +133,8 @@ export class EventSocket implements EventFeed {
         this.max = options.max ?? BACKOFF_MAX_MS;
         this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
         this.clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+        this.now = options.now ?? (() => Date.now());
+        this.stale = options.stale ?? STALE_MS;
     }
 
     start(): void {
@@ -132,15 +152,7 @@ export class EventSocket implements EventFeed {
             this.clearTimer(this.timer);
             this.timer = null;
         }
-        const socket = this.socket;
-        this.socket = null;
-        if (socket) {
-            socket.onclose = null;
-            socket.onmessage = null;
-            socket.onopen = null;
-            socket.onerror = null;
-            socket.close();
-        }
+        this.drop();
         this.setStatus("closed");
     }
 
@@ -180,7 +192,16 @@ export class EventSocket implements EventFeed {
             if (this.socket !== socket) {
                 return;
             }
+            // Any frame is a sign of life, one of a type this page does
+            // not know included.
+            this.lastFrame = this.now();
             const parsed = parseEvent(event.data);
+            if (parsed?.type === "state") {
+                this.machineConnected = parsed.data.connected === true;
+                if (this.machineConnected) {
+                    this.armWatchdog(this.stale);
+                }
+            }
             if (parsed) {
                 for (const listener of [...this.eventListeners]) {
                     listener(parsed);
@@ -192,12 +213,60 @@ export class EventSocket implements EventFeed {
                 return;
             }
             this.socket = null;
+            this.disarmWatchdog();
             this.setStatus("closed");
             this.scheduleReconnect();
         };
         socket.onerror = () => {
             // The close event follows and drives the reconnect.
         };
+    }
+
+    /** Lets go of the socket without waiting for its close, which a dead connection may never report. */
+    private drop(): void {
+        this.disarmWatchdog();
+        const socket = this.socket;
+        this.socket = null;
+        if (socket) {
+            socket.onclose = null;
+            socket.onmessage = null;
+            socket.onopen = null;
+            socket.onerror = null;
+            socket.close();
+        }
+    }
+
+    private armWatchdog(ms: number): void {
+        if (this.watchdog !== null) {
+            return;
+        }
+        this.watchdog = this.setTimer(() => {
+            this.watchdog = null;
+            this.checkSilence();
+        }, ms);
+    }
+
+    private disarmWatchdog(): void {
+        if (this.watchdog !== null) {
+            this.clearTimer(this.watchdog);
+            this.watchdog = null;
+        }
+        this.machineConnected = false;
+    }
+
+    private checkSilence(): void {
+        if (this.socket === null || !this.machineConnected) {
+            // Armed again by the next frame that says connected.
+            return;
+        }
+        const silent = this.now() - this.lastFrame;
+        if (silent < this.stale) {
+            this.armWatchdog(this.stale - silent);
+            return;
+        }
+        this.drop();
+        this.setStatus("closed");
+        this.scheduleReconnect();
     }
 
     private scheduleReconnect(): void {

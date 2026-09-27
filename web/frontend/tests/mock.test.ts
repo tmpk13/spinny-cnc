@@ -3,7 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
 import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock.ts";
-import type { Compensate, Grid, HeightMap, HeightMapState, Job, WsEvent } from "../src/types.ts";
+import { outputDuty } from "../src/profile.ts";
+import type { Compensate, GotoRequest, Grid, HeightMap, HeightMapState, Job, JogRequest, WsEvent } from "../src/types.ts";
 
 function stepped(machine: MockMachine, seconds: number, dt = 0.01): void {
     let left = seconds;
@@ -180,8 +181,9 @@ describe("mock machine motion", () => {
         stepped(machine, 0.3);
         expect(machine.joint.r).toBeCloseTo(-1, 6);
         expect(machine.status().board.x).toBeCloseTo(-1, 6);
-        machine.reset();
-        machine.unlock();
+        // At rest a reset raises no alarm, and there is nothing to unlock.
+        expect(machine.reset()).toBe(false);
+        expect(() => machine.unlock()).toThrow("error:5 not now");
         machine.setPosition({ r: -2 });
         expect(machine.joint.r).toBe(-2);
         machine.setSetting("r_max", 20);
@@ -348,21 +350,21 @@ describe("mock backend", () => {
         expect(snapshot.firmware?.lines).toBe(16);
         expect(consoleLines()[0]).toContain("rx [spinny v");
         await backend.jog({ kind: "joint", dr: 1 });
-        expect(consoleLines().slice(-2)).toEqual(["tx jog R1.000", "rx ok"]);
+        expect(consoleLines().slice(-2)).toEqual(["tx jog R1", "rx ok"]);
         await backend.jog({ kind: "joint", da: 90, feed: 100 });
-        expect(consoleLines().slice(-2)).toEqual(["tx jog A90.0000 F100", "rx ok"]);
+        expect(consoleLines().slice(-2)).toEqual(["tx jog A90 F100", "rx ok"]);
     });
 
     test("a cross slide move is one line of its own", async () => {
         const { backend, consoleLines } = backendWithLog();
         await backend.connect("/dev/ttyACM0");
         await backend.jog({ kind: "joint", dz: 0.05 });
-        expect(consoleLines().slice(-2)).toEqual(["tx jog Z0.050", "rx ok"]);
+        expect(consoleLines().slice(-2)).toEqual(["tx jog Z0.05", "rx ok"]);
         backend.step(0.1);
         expect(backend.machine.z).toBeCloseTo(0.05, 9);
         expect(backend.snapshot().machine?.joint.z).toBeCloseTo(0.05, 9);
         await backend.goto({ kind: "joint", z: -0.2 });
-        expect(consoleLines().slice(-2)).toEqual(["tx jogto Z-0.200", "rx ok"]);
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto Z-0.2", "rx ok"]);
         backend.step(0.5);
         expect(backend.machine.z).toBeCloseTo(-0.2, 9);
         // R and A still go together; Z is declared on a line of its own.
@@ -382,7 +384,7 @@ describe("mock backend", () => {
         await backend.setPosition({ r: 10, a: 0 });
         await backend.jog({ kind: "board", dx: -20, dy: 0 });
         const tx = consoleLines().filter((line) => line.startsWith("tx jogto"));
-        expect(tx).toEqual(["tx jogto R0.000 A0.0000", "tx jogto R0.000 A180.0000", "tx jogto R10.000 A180.0000"]);
+        expect(tx).toEqual(["tx jogto R0.000 A0.0000", "tx jogto A180.0000", "tx jogto R10.000 A180.0000"]);
         // 2 s in at jog_r, 54 s for the half turn at jog_a, 2 s out.
         for (let i = 0; i < 6000; i++) {
             backend.step(0.01);
@@ -407,22 +409,26 @@ describe("mock backend", () => {
         backend.step(0.5);
         expect(backend.machine.queue.length).toBe(0);
         await backend.goto({ kind: "board", x: 0, y: 20 });
-        backend.machine.reset();
-        await expect(backend.goto({ kind: "joint", r: 1 })).rejects.toMatchObject({ status: 409 });
+        expect(backend.machine.reset()).toBe(true);
+        // The firmware's refusal comes back as the backend's 400, naming the line.
+        await expect(backend.goto({ kind: "joint", r: 1 })).rejects.toMatchObject({ status: 400, message: "'jogto R1': error:5 not now" });
         await backend.unlock();
         await backend.goto({ kind: "joint", r: 1 });
     });
 
     test("realtime, command line and settings", async () => {
-        const { backend, events } = backendWithLog();
+        const { backend, events, consoleLines } = backendWithLog();
         await backend.connect("/dev/ttyACM0");
         expect(await backend.command("version")).toEqual([`[spinny v0.1.0-mock lines:16 blocks:32]`, "ok"]);
         expect(await backend.command("$r_rate")).toEqual(["r_rate=560", "ok"]);
-        expect(await backend.command("$tmc")).toEqual([
-            "[MSG:tmc R addr0 ifcnt=1 micro=256 status=0x00000000]",
-            "[MSG:tmc A addr2 ifcnt=1 micro=256 status=0x00000000]",
-            "[MSG:tmc Z addr1 ifcnt=1 micro=256 status=0x00000000]",
-            "ok",
+        // The drivers' report follows the ok, as they answer over their UART.
+        expect(await backend.command("$tmc")).toEqual(["ok"]);
+        expect(consoleLines().slice(-5)).toEqual([
+            "rx ok",
+            "rx [MSG:tmc R addr0 ifcnt=1 micro=256 status=0x00000000]",
+            "rx [MSG:tmc A addr2 ifcnt=1 micro=256 status=0x00000000]",
+            "rx [MSG:tmc Z addr1 ifcnt=1 micro=256 status=0x00000000]",
+            "rx [MSG:tmc H addr3 ifcnt=1 micro=256 status=0x00000000]",
         ]);
         expect(await backend.command("$r_rate=800")).toEqual(["ok"]);
         expect(await backend.command("bogus")).toEqual(["error:1 unknown command"]);
@@ -589,7 +595,7 @@ describe("mock backend", () => {
         await backend.connect("/dev/ttyACM0");
         await backend.laser(1200, 1000);
         expect(backend.machine.laser).toBe(1000);
-        await expect(backend.laser(100, 70000)).rejects.toMatchObject({ status: 409 });
+        await expect(backend.laser(100, 70000)).rejects.toMatchObject({ status: 400, message: "'laser S100 T70000': error:4 out of range" });
         expect(consoleLines().slice(-1)).toEqual(["rx error:4 out of range"]);
         await backend.realtime("hold");
         expect(backend.machine.laser).toBe(0);
@@ -705,6 +711,28 @@ function flatMap(x0: number, y0: number, x1: number, y1: number, heights: number
     };
 }
 
+/**
+ * Puts a map back and focuses it over its middle, as an operator does after
+ * loading one: a map put back needs focus here before a run follows it.
+ * The head is brought to the map's own offset above the surface there.
+ */
+async function putFocused(backend: MockBackend, map: HeightMap): Promise<void> {
+    await backend.putHeightMap(map);
+    const x = (map.grid.x0 + map.grid.x1) / 2;
+    const y = (map.grid.y0 + map.grid.y1) / 2;
+    await backend.goto({ kind: "board", x, y });
+    advance(backend, 30);
+    if (backend.machine.hasFocusAxis()) {
+        await backend.goto({ kind: "joint", h: round4(heightAt(map, x, y) + map.focus_offset) });
+        advance(backend, 30);
+    }
+    await backend.focus(null);
+}
+
+function round4(value: number): number {
+    return Math.round(value * 1e4) / 1e4;
+}
+
 const SMALL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" viewBox="0 0 10 10"><path d="M0 0 L10 0 L10 10"/></svg>';
 
 describe("mock focus axis", () => {
@@ -805,11 +833,11 @@ describe("mock focus axis", () => {
         const { backend, consoleLines } = backendWithLog();
         await backend.connect("/dev/ttyACM0");
         await backend.jog({ kind: "joint", dh: 0.5 });
-        expect(consoleLines().slice(-2)).toEqual(["tx jog H0.5000", "rx ok"]);
+        expect(consoleLines().slice(-2)).toEqual(["tx jog H0.5", "rx ok"]);
         advance(backend, 0.5);
         expect(backend.snapshot().machine?.joint.h).toBeCloseTo(0.5, 9);
         await backend.goto({ kind: "joint", r: 5, h: -0.25 });
-        expect(consoleLines().slice(-2)).toEqual(["tx jogto R5.000 H-0.2500", "rx ok"]);
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto R5 H-0.25", "rx ok"]);
         advance(backend, 2);
         expect(backend.machine.joint.r).toBeCloseTo(5, 9);
         expect(backend.machine.h).toBeCloseTo(-0.25, 9);
@@ -817,7 +845,7 @@ describe("mock focus axis", () => {
         expect(consoleLines().slice(-2)).toEqual(["tx set R0 H0", "rx ok"]);
         expect(backend.machine.h).toBe(0);
         await backend.updateSettings({ values: { h_axis: 0 } });
-        await expect(backend.jog({ kind: "joint", dh: 1 })).rejects.toMatchObject({ status: 409, message: "error:2 bad word" });
+        await expect(backend.jog({ kind: "joint", dh: 1 })).rejects.toMatchObject({ status: 400, message: "'jog H1': error:2 bad word" });
     });
 });
 
@@ -1041,17 +1069,25 @@ describe("mock height map", () => {
         await expect(backend.runJob(job.id, "auto")).rejects.toMatchObject(
             refused("the focus offset is not set: focus the beam by eye over the probed area and use focus here"),
         );
+        // A map put back needs focus here, whatever it says of its offset.
         await backend.putHeightMap(flatMap(-10, 10, 10, 30, [[-4, 2], [-1.6, -1.5]]));
+        await expect(backend.runJob(job.id, "power")).rejects.toMatchObject(
+            refused("the focus offset is not set: focus the beam by eye over the probed area and use focus here"),
+        );
+        await putFocused(backend, flatMap(-10, 10, 10, 30, [[-4, 2], [-1.6, -1.5]]));
         await expect(backend.runJob(job.id, "power")).rejects.toMatchObject(
             refused("the height map spans 6.000 mm, more than 5 mm: probe again or flatten the board"),
         );
-        await backend.putHeightMap(flatMap(-3, 16, 3, 24, [[-1.5, -1.4], [-1.6, -1.5]]));
+        await putFocused(backend, flatMap(-3, 16, 3, 24, [[-1.5, -1.4], [-1.6, -1.5]]));
         await expect(backend.runJob(job.id, "power")).rejects.toMatchObject(
             refused("the height map does not cover the job: probed X -3.0..3.0 Y 16.0..24.0, the job reaches X -5.0..5.0 Y 15.0..25.0"),
         );
 
-        await backend.putHeightMap(flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]));
+        // Taking the focus axis out renumbers it, so the offset is taken back and set again.
+        await putFocused(backend, flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]));
         await backend.updateSettings({ values: { h_axis: 0 } });
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        await backend.focus(null);
         await expect(backend.runJob(job.id, "focus")).rejects.toMatchObject(
             refused("the focus axis is not fitted ($h_axis=0): compensate by power instead"),
         );
@@ -1070,7 +1106,8 @@ describe("mock height map", () => {
         await backend.connect("/dev/ttyACM0");
         const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
         const map = flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]);
-        await backend.putHeightMap(map);
+        await putFocused(backend, map);
+        expect((await backend.heightMap()).map?.focus_offset).toBe(1.5);
         await backend.runJob(job.id, "auto");
         expect(events.some((e) => e.type === "message" && e.data.text.endsWith("following the board by focus"))).toBe(true);
         const tx = consoleLines().filter((line) => line.startsWith("tx go") || line.startsWith("tx cut"));
@@ -1084,5 +1121,588 @@ describe("mock height map", () => {
         expect((await backend.run())?.state).toBe("done");
         const end = backend.machine.status().board;
         expect(backend.machine.h).toBeCloseTo(heightAt(map, end.x, end.y) + map.focus_offset, 4);
+    });
+});
+
+describe("the mock machine answers as the firmware does", () => {
+    test("a setting the firmware refuses is refused, and a refused one changes nothing", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const refused = [
+            "$jog_z=0",
+            "$jog_r=-1",
+            "$s_min=2000",
+            "$dir_invert=16",
+            "$en_invert=2",
+            "$step_us=0",
+            "$step_us=21",
+            "$laser_hz=5000.5",
+            "$laser_hz=5000.0",
+            "$laser_hz=99",
+            "$laser_ms=0",
+            "$tmc_r_micro=3",
+            "$tmc_a_ma=5000",
+            "$tmc_hold_pct=101",
+            "$probe_ms=161",
+            "$r_rate=1e3",
+            "$r_rate=20000000",
+            "$r_max=-1",
+            "$idle_ms=4294967296",
+            "$r_rate=",
+        ];
+        for (const line of refused) {
+            expect([line, await backend.command(line)]).toEqual([line, ["error:7 bad setting value"]]);
+        }
+        expect(backend.machine.settings["jog_z"]).toBe(120);
+        // A limit that spans two settings holds from either side.
+        expect(await backend.command("$s_min=500")).toEqual(["ok"]);
+        expect(await backend.command("$s_max=100")).toEqual(["error:7 bad setting value"]);
+        expect(backend.machine.settings["s_max"]).toBe(1000);
+        expect(await backend.command("$idle_ms=4294967295")).toEqual(["ok"]);
+        expect(await backend.command("$R_RATE=500")).toEqual(["ok"]);
+        expect(backend.machine.settings["r_rate"]).toBe(500);
+        // With the jog rate refused the jog still ends.
+        expect(await backend.command("jog Z1")).toEqual(["ok"]);
+        advance(backend, 1);
+        expect(backend.machine.state).toBe("Idle");
+        expect(backend.machine.z).toBeCloseTo(1, 9);
+
+        // A refused value is checked before the spindle it would stop.
+        const machine = new MockMachine({ spindle: 1 });
+        machine.spin(500);
+        expect(() => machine.setSetting("spindle", 2)).toThrow("error:7 bad setting value");
+        expect(machine.spindle).toBe(500);
+        machine.setSetting("spindle", 0);
+        expect(machine.spindle).toBe(0);
+    });
+
+    test("the spindle's words, and the laser's refused on a spindle machine", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        // A laser machine has no spindle.
+        expect(await backend.command("spindle S800")).toEqual(["error:2 bad word"]);
+        expect(await backend.command("spindle off")).toEqual(["error:2 bad word"]);
+        expect(await backend.command("spindle")).toEqual(["error:3 missing word"]);
+        expect(await backend.command("$spindle=1")).toEqual(["ok"]);
+        // A cut drags the tool through the work: not with the spindle stopped.
+        expect(await backend.command("cut R1 F100")).toEqual(["error:5 not now"]);
+        expect(await backend.command("spindle S-1")).toEqual(["error:4 out of range"]);
+        expect(await backend.command("spindle off x")).toEqual(["error:2 bad word"]);
+        expect(await backend.command("spindle S800")).toEqual(["ok"]);
+        expect(backend.machine.spindle).toBe(800);
+        expect(statusLine(backend.machine)).toContain("|L:800|");
+        // S and M belong to a laser: a laser job sent here fails on its first cut.
+        for (const line of ["cut R1 F100 S100", "cut R1 F100 S0", "cut R1 F100 M5", "dwell T10 S5", "laser S100", "laser S100 T10"]) {
+            expect([line, await backend.command(line)]).toEqual([line, ["error:2 bad word"]]);
+        }
+        expect(await backend.command("cut R1 F100")).toEqual(["ok"]);
+        expect(backend.machine.queue[0]?.power).toBe(0);
+        advance(backend, 1);
+        expect(backend.machine.joint.r).toBeCloseTo(1, 9);
+        // `laser off` is the output off, the spindle's included.
+        expect(await backend.command("laser off")).toEqual(["ok"]);
+        expect(backend.machine.spindle).toBe(0);
+        expect(backend.snapshot().machine?.laser).toBe(0);
+        expect(await backend.command("spindle S300")).toEqual(["ok"]);
+        expect(await backend.command("spindle off")).toEqual(["ok"]);
+        expect(backend.machine.spindle).toBe(0);
+    });
+
+    test("the API's laser off and a probe stop the spindle's output or refuse to run beside it", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        await backend.spindle(500);
+        expect(backend.snapshot().machine?.laser).toBe(500);
+        await backend.laserOff();
+        expect(backend.machine.spindle).toBe(0);
+        expect(backend.snapshot().machine?.laser).toBe(0);
+        // The probe may be the tool itself: not while it turns.
+        await backend.spindle(500);
+        expect(await backend.command("probe H-5")).toEqual(["error:5 not now"]);
+        await expect(backend.probe({ x0: 4, y0: 6, x1: 14, y1: 11, nx: 2, ny: 2 })).rejects.toMatchObject({
+            status: 409,
+            message: "the spindle is turning: stop it before probing",
+        });
+        await backend.spindleOff();
+        await backend.probe({ x0: 4, y0: 6, x1: 14, y1: 11, nx: 2, ny: 2 });
+        // And a spindle does not start while the board is probed.
+        await expect(backend.spindle(500)).rejects.toMatchObject({ status: 409, message: "the board is being probed" });
+    });
+
+    test("a laser machine's spindle stop is the beam's", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await expect(backend.spindle(300)).rejects.toMatchObject({ status: 400, message: "the output drives a laser ($spindle=0)" });
+        await backend.laser(100, 2000);
+        await backend.spindleOff();
+        expect(consoleLines().slice(-2)).toEqual(["tx laser off", "rx ok"]);
+        expect(backend.machine.laser).toBe(0);
+    });
+
+    test("board words: Z only on a cartesian machine, A only on a polar one", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        for (const line of ["go Z5", "cut Z5 F100", "go R1 Z1", "cut R1 A2 Z3 F100 S1"]) {
+            expect([line, await backend.command(line)]).toEqual([line, ["error:2 bad word"]]);
+        }
+        expect(backend.machine.queue.length).toBe(0);
+        expect(backend.machine.state).toBe("Idle");
+        expect(await backend.command("$cartesian=1")).toEqual(["ok"]);
+        expect(await backend.command("go A5")).toEqual(["error:2 bad word"]);
+        expect(await backend.command("cut R1 A5 F100 S1")).toEqual(["error:2 bad word"]);
+        expect(await backend.command("go R3 Z4")).toEqual(["ok"]);
+        advance(backend, 2);
+        expect(backend.machine.joint.r).toBeCloseTo(3, 9);
+        expect(backend.machine.z).toBeCloseTo(4, 9);
+        expect(backend.snapshot().machine?.board.x).toBeCloseTo(3, 9);
+        expect(backend.snapshot().machine?.board.y).toBeCloseTo(4, 9);
+        // A Z jog is a joint jog there, beside the others.
+        expect(await backend.command("jog R1 Z-1")).toEqual(["ok"]);
+        advance(backend, 2);
+        expect(backend.machine.joint.r).toBeCloseTo(4, 9);
+        expect(backend.machine.z).toBeCloseTo(3, 9);
+    });
+
+    test("unlock outside an alarm, disable while moving, and extra words are refused", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        expect(await backend.command("unlock")).toEqual(["error:5 not now"]);
+        await expect(backend.unlock()).rejects.toMatchObject({ status: 400, message: "'unlock': error:5 not now" });
+        expect(await backend.command("jog R5")).toEqual(["ok"]);
+        expect(await backend.command("disable")).toEqual(["error:5 not now"]);
+        await expect(backend.motors(false)).rejects.toMatchObject({ status: 400, message: "'disable': error:5 not now" });
+        expect(backend.machine.enabled).toBe(true);
+        for (const line of ["status x", "version x", "help me", "enable 1"]) {
+            expect([line, await backend.command(line)]).toEqual([line, ["error:2 bad word"]]);
+        }
+        advance(backend, 2);
+        expect(await backend.command("disable")).toEqual(["ok"]);
+        expect(backend.machine.enabled).toBe(false);
+    });
+
+    test("help lists what the firmware lists, in its order", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const help = await backend.command("help");
+        expect(help.at(-1)).toBe("ok");
+        expect(help[2]).toBe("cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A");
+        expect(help[5]).toBe("spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S");
+        expect(help.length).toBe(10);
+    });
+
+    test("the status line has no negative zero", () => {
+        const machine = new MockMachine({ h_axis: 1 });
+        machine.joint = { r: -0.0001, a: -0.00001 };
+        machine.z = -0.0002;
+        machine.h = -0.0003;
+        expect(statusLine(machine)).toBe("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000|H:0.000|P:0>");
+    });
+
+    test("an active-low output reports the duty driven on the pin: 1000 dark", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { laser_invert: 1 } });
+        expect(backend.snapshot().machine?.laser).toBe(1000);
+        expect((await backend.command("status"))[0]).toContain("|L:1000|");
+        await backend.laser(250, 1000);
+        const lit = backend.snapshot().machine!;
+        expect(lit.laser).toBe(750);
+        expect((await backend.command("status"))[0]).toContain("|L:750|");
+        expect(outputDuty(lit.laser, await backend.settings())).toBe(250);
+        await backend.laserOff();
+        expect(backend.snapshot().machine?.laser).toBe(1000);
+        // A spindle's duty is driven the same way round.
+        await backend.updateSettings({ values: { spindle: 1 } });
+        expect(backend.snapshot().machine?.laser).toBe(1000);
+        await backend.spindle(400);
+        expect(backend.snapshot().machine?.laser).toBe(600);
+        expect(outputDuty(backend.snapshot().machine!.laser, await backend.settings())).toBe(400);
+        await backend.spindleOff();
+        expect(backend.snapshot().machine?.laser).toBe(1000);
+    });
+
+    test("lines are spelled as the backend spells them", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.goto({ kind: "joint", r: 1.23456, a: 12.345678, feed: 150.5 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto R1.235 A12.3457 F150.5", "rx ok"]);
+        await backend.jog({ kind: "joint", dr: -0.5, da: 0, feed: 200 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jog R-0.5 F200", "rx ok"]);
+        advance(backend, 10);
+        await backend.setPosition({ r: 2.5, a: 0.00001, z: 0.1 });
+        expect(consoleLines().slice(-4)).toEqual(["tx set R2.5 A0", "rx ok", "tx set Z0.1", "rx ok"]);
+        // A board move is fixed decimals, a turn on the axis only the angle.
+        await backend.setPosition({ r: 0, a: 0 });
+        await backend.goto({ kind: "board", x: 0, y: 3, feed: 120 });
+        expect(consoleLines().filter((line) => line.startsWith("tx jogto")).slice(-2)).toEqual(["tx jogto A90.0000 F120", "tx jogto R3.000 A90.0000 F120"]);
+        advance(backend, 30);
+        // A refusal names the line as it went out.
+        await backend.updateSettings({ values: { r_max: 5 } });
+        await expect(backend.goto({ kind: "joint", r: 6.5 })).rejects.toMatchObject({ status: 400, message: "'jogto R6.5': error:4 out of range" });
+    });
+
+    test("a realtime byte typed at the console is the realtime byte", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = (await backend.jobs())[0]!;
+        await backend.runJob(job.id);
+        backend.step(0.5);
+        expect(await backend.command("!")).toEqual([]);
+        expect(backend.machine.state).toBe("Hold");
+        backend.step(0.1);
+        expect((await backend.run())?.state).toBe("hold");
+        expect(await backend.command("~")).toEqual([]);
+        backend.step(0.1);
+        expect((await backend.run())?.state).toBe("running");
+        expect(await backend.command("?")).toEqual([]);
+        expect(consoleLines().at(-2)).toBe("tx ?");
+        expect(consoleLines().at(-1)).toMatch(/^rx <Run\|/);
+        expect(await backend.command("status")).toEqual([expect.stringMatching(/^<Run\|/), "ok"]);
+        // Typed during a run, turning the output off stops the run the way its stop does.
+        expect(await backend.command("laser off")).toEqual([]);
+        expect((await backend.run())?.state).toBe("stopped");
+        expect(backend.machine.state).toBe("Idle");
+    });
+
+    test("a reset prints the alarm only when it raised one", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        expect(await backend.command("jogto H1")).toEqual(["ok"]);
+        advance(backend, 2);
+        expect(await backend.command("probe H-1 F120")).toContain("error:11 probe missed");
+        expect(backend.machine.alarm).toBe(2);
+        await backend.realtime("reset");
+        expect(consoleLines().slice(-3)).toEqual(["tx <0x18>", "rx [MSG:reset]", "rx [spinny v0.1.0-mock lines:16 blocks:32]"]);
+        expect(statusLine(backend.machine)).toMatch(/^<Alarm:2\|/);
+        await backend.unlock();
+        await backend.jog({ kind: "joint", dr: 5 });
+        await backend.realtime("reset");
+        expect(consoleLines().slice(-3)).toEqual(["rx [MSG:reset]", "rx ALARM:1 reset while moving, position may be off", "rx [spinny v0.1.0-mock lines:16 blocks:32]"]);
+        expect(backend.machine.alarm).toBe(1);
+    });
+
+    test("motion is taken in a hold of a run and waits for the resume, a jog is not", async () => {
+        const machine = new MockMachine();
+        machine.cut(10, null, 300, 100);
+        stepped(machine, 0.2);
+        machine.hold();
+        expect(machine.state).toBe("Hold");
+        machine.go(0, 0);
+        machine.dwell(10, 0);
+        expect(machine.queue.length).toBe(2);
+        expect(() => machine.jog(1, 0, null)).toThrow("error:5 not now");
+        stepped(machine, 1);
+        expect(machine.state).toBe("Hold");
+        machine.resume();
+        stepped(machine, 5);
+        expect(machine.state).toBe("Idle");
+        expect(machine.joint.r).toBeCloseTo(0, 9);
+        // A hold of a jog takes no motion in.
+        machine.jog(5, 0, null);
+        stepped(machine, 0.2);
+        machine.hold();
+        expect(() => machine.go(1, 0)).toThrow("error:5 not now");
+        machine.jogCancel();
+        expect(machine.state).toBe("Idle");
+    });
+});
+
+describe("the mock backend answers as the backend does", () => {
+    /** Steps until the run has ended, or gives up. */
+    async function runOut(backend: MockBackend): Promise<void> {
+        let guard = 0;
+        while ((await backend.run())?.state === "running" && guard < 40000) {
+            backend.step(0.05);
+            guard += 1;
+        }
+    }
+
+    test("a spindle machine mills a job: lift, spindle, spin-up, plunge, cuts at depth with no S, lift, spindle off", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
+        await backend.updateSettings({ values: { spindle: 1, h_axis: 0 } });
+        await expect(backend.runJob(job.id)).rejects.toMatchObject({ status: 400, message: "a spindle needs the focus axis as its depth axis: set $h_axis=1" });
+        // Auto without the focus axis would be power, but that refusal comes first.
+        await expect(backend.runJob(job.id, "auto")).rejects.toMatchObject({ status: 400, message: "a spindle needs the focus axis as its depth axis: set $h_axis=1" });
+        await backend.updateSettings({ values: { h_axis: 1 } });
+        await backend.patchJob(job.id, { groups: [{ index: 0, depth: 0.2, plunge: 50 }] });
+        const before = consoleLines().length;
+        await backend.runJob(job.id);
+        const tx = (): string[] => consoleLines().slice(before).filter((line) => line.startsWith("tx ")).map((line) => line.slice(3));
+        const lines = tx();
+        expect(lines.slice(0, 5)).toEqual(["go H2.0000", "spindle S400", "dwell T2000", "go R25.495 A101.3099", "cut H-0.2000 F50"]);
+        const cuts = lines.filter((line) => line.startsWith("cut R"));
+        expect(cuts.length).toBeGreaterThan(1);
+        expect(cuts.every((line) => / H-0\.2000 F300$/.test(line))).toBe(true);
+        await runOut(backend);
+        expect((await backend.run())?.state).toBe("done");
+        expect(tx().slice(-2)).toEqual(["go H2.0000", "spindle off"]);
+        expect(backend.machine.spindle).toBe(0);
+        expect(backend.machine.h).toBeCloseTo(2, 9);
+        expect(backend.machine.laser).toBe(0);
+    });
+
+    test("a milled run turns the spindle while it cuts, and refuses what the backend refuses", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
+        await backend.runJob(job.id);
+        advance(backend, 3);
+        expect(backend.machine.spindle).toBe(400);
+        expect(backend.snapshot().machine?.laser).toBe(400);
+        await backend.runStop();
+        expect(backend.machine.spindle).toBe(0);
+
+        await backend.patchJob(job.id, { groups: [{ index: 0, power: 0 }] });
+        await expect(backend.runJob(job.id)).rejects.toMatchObject({ status: 400, message: `${job.groups[0]!.label}: a spindle needs a speed above 0` });
+        const far = new File([JSON.stringify({ groups: [{ label: "rail line", speed: 300, power: 200, joints: [[[5, 0], [-5, 0]]] }] })], "far.json");
+        const joints = await backend.uploadJob(far, {});
+        await expect(backend.runJob(joints.id)).rejects.toMatchObject({ status: 400, message: "rail line: a joint-space group cannot be milled" });
+        // The mock machine refuses a laser's S on a cut here too.
+        expect(() => backend.machine.cut(1, 0, 100, 50)).toThrow("error:2 bad word");
+    });
+
+    test("a spindle follows the board with its depth axis, not by power", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
+        const map = flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]);
+        await putFocused(backend, map);
+        await expect(backend.runJob(job.id, "power")).rejects.toMatchObject({
+            status: 400,
+            message: "a spindle follows the board with its depth axis: compensate by focus",
+        });
+        const before = consoleLines().length;
+        await backend.runJob(job.id, "auto");
+        const tx = consoleLines().slice(before).filter((line) => line.startsWith("tx ")).map((line) => line.slice(3));
+        // The travel is over the map's highest point, the depth under the surface it gives.
+        expect(tx[0]).toBe("go H2.1000");
+        const [x, y] = job.groups[0]!.paths[0]![0]!;
+        expect(tx[4]).toBe(`cut H${(heightAt(map, x, y) + 1.5 - 0.1).toFixed(4)} F60`);
+        await backend.runStop();
+    });
+
+    test("a laser machine's focus run lights at focus when it starts over its first point", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = await backend.uploadJob(new File([SMALL_SVG], "small.svg"), { power: 400, speed: 300, offset_y: 20 });
+        const map = flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]);
+        await putFocused(backend, map);
+        const first = job.groups[0]!.paths[0]![0]!;
+        await backend.goto({ kind: "board", x: first[0], y: first[1] });
+        advance(backend, 30);
+        const moves = backend.movesFor(job, (await backend.heightMap()).map);
+        expect(formatMove(moves[0]!)).toBe(`go H${(heightAt(map, first[0], first[1]) + 1.5).toFixed(4)}`);
+        expect(moves[1]?.kind).toBe("cut");
+    });
+
+    test("probing refuses a grid past the soft limit before anything moves", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { r_max: 10 } });
+        await expect(backend.probe({ x0: 5, y0: -1, x1: 30, y1: 1, nx: 2, ny: 2 })).rejects.toMatchObject({
+            status: 409,
+            message: "the probe cannot reach (30.00, -1.00): the head would go to R30.017, past the soft limit r_max=10",
+        });
+        expect((await backend.heightMap()).map).toBeNull();
+        expect(backend.machine.joint).toEqual({ r: 0, a: 0 });
+    });
+
+    test("a joint move with the cross slide beside the others: refused on a polar machine, one line on a cartesian one", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await expect(backend.goto({ kind: "joint", r: 5, z: -2 } as GotoRequest)).rejects.toMatchObject({
+            status: 400,
+            message: "the cross slide moves on its own: z cannot be sent with r, a or h",
+        });
+        await expect(backend.jog({ kind: "joint", dr: 3, dz: 1 } as JogRequest)).rejects.toMatchObject({
+            status: 400,
+            message: "the cross slide moves on its own: dz cannot be sent with dr, da or dh",
+        });
+        await expect(backend.jog({ kind: "joint" })).rejects.toMatchObject({ status: 400 });
+        await expect(backend.jog({ kind: "joint", dr: 1, feed: 0 })).rejects.toMatchObject({ status: 400, message: "feed must be at least 0.001 mm/min" });
+        expect(backend.machine.queue.length).toBe(0);
+
+        await backend.updateSettings({ values: { cartesian: 1, z_max: 8 } });
+        await backend.goto({ kind: "joint", r: 5, z: -2 });
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto R5 Z-2", "rx ok"]);
+        advance(backend, 3);
+        expect(backend.machine.joint.r).toBeCloseTo(5, 9);
+        expect(backend.machine.z).toBeCloseTo(-2, 9);
+        await backend.jog({ kind: "joint", dr: 3, dz: 1 });
+        advance(backend, 3);
+        expect(backend.machine.joint.r).toBeCloseTo(8, 9);
+        expect(backend.machine.z).toBeCloseTo(-1, 9);
+        await expect(backend.goto({ kind: "joint", z: 9 })).rejects.toMatchObject({ status: 400, message: "'jogto Z9': error:4 out of range" });
+    });
+
+    test("a cartesian board move is one line in the table's frame, and waits for a turn to end", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { cartesian: 1, z_max: 8 } });
+        await backend.setPosition({ a: 90 });
+        await backend.goto({ kind: "board", x: -3, y: 4 });
+        // Turned back by the table's 90 degrees: R 4 along the rail, Z 3 across it.
+        expect(consoleLines().slice(-2)).toEqual(["tx jogto R4.000 Z3.000", "rx ok"]);
+        advance(backend, 5);
+        expect(backend.snapshot().machine?.board.x).toBeCloseTo(-3, 9);
+        expect(backend.snapshot().machine?.board.y).toBeCloseTo(4, 9);
+        // Board (-10, 0) is 10 mm across the rail with the table at 90 degrees.
+        await expect(backend.goto({ kind: "board", x: -10, y: 0 })).rejects.toMatchObject({
+            status: 400,
+            message: "out of reach: Z10.000 is past the soft limit z_max=8",
+        });
+        // A turn of the table leaves the end of the move unknown until it stops.
+        await backend.jog({ kind: "joint", da: 10 });
+        await expect(backend.jog({ kind: "board", dx: 1 })).rejects.toMatchObject({
+            status: 409,
+            message: "the table may still be turning: wait for the machine to stop before a board move",
+        });
+        advance(backend, 5);
+        await backend.jog({ kind: "board", dx: 1 });
+    });
+
+    test("a board move past r_max is refused whole before any line goes out", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { r_max: 12 } });
+        await backend.setPosition({ r: 10, a: 0 });
+        const before = consoleLines().length;
+        await expect(backend.goto({ kind: "board", x: 10, y: 10 })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^out of reach: R1\d\.\d{3} is past the soft limit r_max=12$/) });
+        expect(consoleLines().length).toBe(before);
+        expect(backend.machine.queue.length).toBe(0);
+        expect(backend.machine.state).toBe("Idle");
+    });
+
+    test("a board goto with one axis waits for a start it knows", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        expect(await backend.command("jog R20")).toEqual(["ok"]);
+        await expect(backend.goto({ kind: "board", x: 5 })).rejects.toMatchObject({ status: 400, message: "give both x and y: where the head will stop is not known" });
+        await backend.goto({ kind: "board", x: 5, y: 0 });
+        // Behind a jog sent here the end is known.
+        await backend.goto({ kind: "board", y: 3 });
+        advance(backend, 30);
+        expect(backend.machine.status().board.x).toBeCloseTo(5, 3);
+        expect(backend.machine.status().board.y).toBeCloseTo(3, 3);
+    });
+
+    test("a settings write is all or nothing and checked like the backend's", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = (await backend.jobs())[0]!;
+        const stats = (await backend.job(job.id)).stats;
+        await expect(backend.updateSettings({ host: { tolerance: 0.02, clearance: 0 } })).rejects.toMatchObject({
+            status: 400,
+            message: "the clearance must be above 0 and at most 100 mm",
+        });
+        expect(backend.tolerance).toBe(0.005);
+        await expect(backend.updateSettings({ host: { tolerance: 50 } })).rejects.toMatchObject({ status: 400, message: "tolerance must be above 0 and at most 10 mm" });
+        await expect(backend.updateSettings({ values: { r_rate: 5e9 } })).rejects.toMatchObject({ status: 400, message: "r_rate must be within 4294967295" });
+        await expect(backend.updateSettings({ values: { r_rate: 1e7 + 0.5 } })).rejects.toMatchObject({ status: 400, message: "r_rate must be within 1e+07" });
+        await expect(backend.updateSettings({ values: { nope: 1 } })).rejects.toMatchObject({ status: 400, message: "unknown setting 'nope'" });
+        // A value the machine refuses puts back the ones sent before it, and the host's are not stored.
+        await expect(backend.updateSettings({ values: { r_rate: 700, jog_z: 0 }, host: { tolerance: 0.02, clearance: 3 } })).rejects.toMatchObject({
+            status: 400,
+            message: "'$jog_z=0': error:7 bad setting value",
+        });
+        expect(backend.machine.settings["r_rate"]).toBe(560);
+        expect(backend.tolerance).toBe(0.005);
+        expect(backend.clearance).toBe(2);
+        // A tolerance alone reprices the jobs.
+        await backend.updateSettings({ host: { tolerance: 0.5 } });
+        expect((await backend.job(job.id)).stats.moves).toBeLessThan(stats.moves);
+        // Nothing of the machine changes under a run.
+        await backend.runJob(job.id);
+        await expect(backend.updateSettings({ values: { r_rate: 700 } })).rejects.toMatchObject({ status: 409, message: "a job is running" });
+        await expect(backend.motors(false)).rejects.toMatchObject({ status: 409, message: "a job is running" });
+        await expect(backend.mode("const")).rejects.toMatchObject({ status: 409, message: "a job is running" });
+        await backend.runStop();
+    });
+
+    test("laser off during a run is the run's hold, and nothing while it is held", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const job = (await backend.jobs())[0]!;
+        await backend.runJob(job.id);
+        advance(backend, 2);
+        await backend.laserOff();
+        expect((await backend.run())?.state).toBe("hold");
+        expect(backend.machine.state).toBe("Hold");
+        advance(backend, 0.5);
+        expect(backend.machine.laser).toBe(0);
+        expect(consoleLines().filter((line) => line === "tx laser off").length).toBe(0);
+        await backend.laserOff();
+        expect(consoleLines().filter((line) => line === "tx laser off").length).toBe(0);
+        await backend.runResume();
+        expect((await backend.run())?.state).toBe("running");
+        await backend.runStop();
+    });
+
+    test("the centering test is the polar laser's, and its power stays under s_max", async () => {
+        const backend = new MockBackend({ timers: false });
+        await expect(backend.centerJob({ power: 1200 })).rejects.toMatchObject({ status: 400, message: "power 1200 is over s_max 1000" });
+        await expect(backend.centerJob({ power: 1200, fine: true })).rejects.toMatchObject({ status: 400, message: "power 1200 is over s_max 1000" });
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        await expect(backend.centerJob({ lines: 4 })).rejects.toMatchObject({
+            status: 400,
+            message: "the centering test is a burn on the polar laser machine ($cartesian=0, $spindle=0)",
+        });
+    });
+
+    test("the focus offset is tied to the focus axis frame", async () => {
+        const { backend, events } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const map = flatMap(-10, 10, 10, 30, [[-1.5, -1.4], [-1.6, -1.5]]);
+        await backend.putHeightMap({ ...map, focus_set: true });
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        // Heights from another session are tied to this one only by focus here.
+        await expect(backend.focus(1.5)).rejects.toMatchObject({
+            status: 400,
+            message:
+                "the map was probed before the focus axis was last renumbered (a connect, a restart," +
+                " a position set or a map put back): use focus here over the map, or probe again",
+        });
+        await expect(backend.focus(null)).rejects.toMatchObject({
+            status: 400,
+            message: "focus over the probed area: the beam is at X 0.0 Y 0.0, the map covers X -10.0..10.0 Y 10.0..30.0",
+        });
+        await putFocused(backend, map);
+        expect((await backend.heightMap()).map?.focus_set).toBe(true);
+        await backend.setPosition({ h: 0 });
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        expect(events.some((e) => e.type === "message" && e.data.text === "the position was set: focus here again before a run follows the height map")).toBe(true);
+        await putFocused(backend, map);
+        await backend.updateSettings({ values: { h_steps: 3200 } });
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        await putFocused(backend, map);
+        await backend.connect("/dev/ttyACM0");
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        // A probing in this frame keeps its offset, and a number given then holds.
+        await backend.setPosition({ h: 0 });
+        await backend.probe({ x0: 4, y0: 6, x1: 14, y1: 11, nx: 2, ny: 2 });
+        advance(backend, 2);
+        expect((await backend.focus(1.25)).map?.focus_offset).toBe(1.25);
+    });
+
+    test("a job that turns the table is checked against the map along its moves", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        // A turn from -45 to 45 degrees at 10 mm has its ends at X 7.07 but passes X 10 on the way.
+        const arc = new File([JSON.stringify({ groups: [{ label: "arc", speed: 300, power: 200, joints: [[[10, -45], [10, 45]]] }] })], "arc.json");
+        const job = await backend.uploadJob(arc, {});
+        await putFocused(backend, flatMap(-1, -8, 8.5, 8, [[-1.5, -1.5], [-1.5, -1.5]]));
+        await expect(backend.runJob(job.id, "focus")).rejects.toMatchObject({
+            status: 400,
+            message: "the height map does not cover the job: probed X -1.0..8.5 Y -8.0..8.0, the job reaches X 7.1..10.0 Y -7.1..7.1",
+        });
+        await putFocused(backend, flatMap(-1, -8, 10, 8, [[-1.5, -1.5], [-1.5, -1.5]]));
+        await backend.runJob(job.id, "focus");
+        await backend.runStop();
     });
 });

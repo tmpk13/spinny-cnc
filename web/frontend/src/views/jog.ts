@@ -1,6 +1,8 @@
 // Jog pad for board X/Y, radius and turn buttons, the focus axis (on a
 // machine with one), the cross slide setup control, go-to fields, position
-// declaration, motors and unlock. Arrow keys jog when no input has focus.
+// declaration, motors and unlock. Arrow keys jog when no input has focus;
+// Escape cancels a jog or goto from anywhere but a dialog while a machine
+// is connected.
 // On a cartesian machine the cross slide is the Y axis instead of a setup
 // control: it steps like the rail, at the feed given, and a joint goto
 // takes it beside the radius.
@@ -190,6 +192,11 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         const request = { kind: "joint" as const, feed: feed(), ...(r !== null ? { r } : {}), ...(a !== null ? { a } : {}) };
         await ctx.call(ctx.api.goto(request));
     };
+    // The rotation axis: R 0 on the polar machine, where the slide is parked
+    // over it; on a cartesian machine the slide is Y, so Z 0 as well.
+    const goCenter = (): Promise<unknown> => ctx.call(ctx.api.goto(isCartesian(ctx.store.get().snapshot)
+        ? { kind: "joint", r: 0, z: 0 }
+        : { kind: "joint", r: 0 }));
     const goBoard = button("Go", () => gotoBoard(), "btn btn-quiet");
     const goJoint = button("Go", () => gotoJoint(), "btn btn-quiet");
     const onEnter = (target: HTMLButtonElement) => (event: Event): void => {
@@ -214,7 +221,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
             el("span", { class: "choice-label" }, "Joint"),
             gotoR, gotoA, gotoZ,
             goJoint,
-            button("Center", () => ctx.call(ctx.api.goto({ kind: "joint", r: 0 })), "btn btn-quiet"),
+            button("Center", () => goCenter(), "btn btn-quiet"),
         ),
     );
 
@@ -242,8 +249,10 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
                 : "The rail is over the axis when the centering lines meet at a point.",
             h: isMilling(ctx.store.get().snapshot)
                 ? "Touch the tool to the copper first: a milled cut without a height map goes down from H 0."
-                    + " A height map probed before keeps its heights in the old numbers: probe again after this."
-                : "A height map probed before keeps its heights in the old numbers: probe again after this.",
+                    + " A height map probed before keeps its heights in the old numbers, so a run follows it"
+                    + " only after Touch off here again (probe again for another board)."
+                : "A height map probed before keeps its heights in the old numbers, so a run follows it"
+                    + " only after Focus here again (probe again for another board).",
         }[axis];
         const ok = await askConfirm(`Declare ${what} to be 0 at the current position? ${hint}`.trim(), "Set 0");
         if (ok) {
@@ -274,20 +283,33 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
     // One key jog at a time: a held or hammered key must not queue up moves.
     let keyJog: Promise<void> | null = null;
     document.addEventListener("keydown", (event) => {
-        if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey) {
+        if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
             return;
         }
-        if (inputHasFocus() || modalOpen()) {
+        // An open dialog answers every key, Escape included.
+        if (modalOpen()) {
             return;
         }
         const action = keyAction(event.key);
         if (action === null) {
             return;
         }
-        event.preventDefault();
+        // The stop works from a field too: a goto started with Enter
+        // leaves the focus in the field it was typed in. With no machine
+        // there is nothing to stop, and the key stays the field's.
         if (action === "cancel") {
-            void controls.cancel();
-        } else if (ctx.store.get().snapshot.connected && keyJog === null) {
+            if (ctx.store.get().snapshot.connected) {
+                event.preventDefault();
+                void controls.cancel();
+            }
+            return;
+        }
+        // Arrow keys belong to a field that has the focus.
+        if (inputHasFocus()) {
+            return;
+        }
+        event.preventDefault();
+        if (ctx.store.get().snapshot.connected && keyJog === null) {
             keyJog = controls.jogBoard(action.dx * stepMm, action.dy * stepMm).finally(() => {
                 keyJog = null;
             });

@@ -4,8 +4,8 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
-import { isMilling } from "../profile.ts";
-import { boardOfJoint } from "../kinematics.ts";
+import { isMilling, outputDuty } from "../profile.ts";
+import { boardOfJoint, lerpJoint } from "../kinematics.ts";
 import type { AppState } from "../state.ts";
 import type { Grid, HeightMap, HeightMapState, Job, ProbeSettings } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -63,7 +63,42 @@ export function cellColor(value: number | null, stats: HeightStats | null): stri
     return `color-mix(in oklab, ${pole} ${tint}%, var(--hm-mid))`;
 }
 
-/** Board points of the enabled groups of a job; joint-space groups on the board. */
+/** The longest steps, in angle and in radius, a joint-space line is followed in to find where it reaches on the board. */
+export const JOINT_STEP_DEG = 1;
+export const JOINT_STEP_MM = 0.1;
+
+/**
+ * The board points a joint-space line passes through, ends included. The
+ * machine moves R and A together in proportion, so on the board the line is
+ * an arc or a spiral that can reach well past its ends: a full turn at a
+ * constant radius starts and ends at the same point.
+ */
+export function jointLineBoard(from: [number, number], to: [number, number]): { x: number; y: number }[] {
+    const start = { r: from[0], a: from[1] };
+    const end = { r: to[0], a: to[1] };
+    const steps = Math.max(1, Math.ceil(Math.max(
+        Math.abs(end.a - start.a) / JOINT_STEP_DEG,
+        Math.abs(end.r - start.r) / JOINT_STEP_MM,
+    )));
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i <= steps; i++) {
+        out.push(boardOfJoint(lerpJoint(start, end, i / steps)));
+    }
+    return out;
+}
+
+/**
+ * The labels of the legend's ramp. The colors scale alike on both sides of
+ * the mean, by the larger deviation, so the ramp's ends are that far below
+ * and above it. On a skewed map the extreme on the other side stops short of
+ * its end of the ramp, which is why the lowest and highest are listed apart.
+ */
+export function legendEnds(stats: HeightStats): { low: string; high: string } {
+    const reach = Math.max(stats.max - stats.mean, stats.mean - stats.min);
+    return { low: signed(-reach), high: signed(reach) };
+}
+
+/** Board points of the enabled groups of a job; joint-space groups on the board, all along their lines. */
 export function jobBox(job: Job): { x0: number; y0: number; x1: number; y1: number } | null {
     let x0 = Infinity;
     let y0 = Infinity;
@@ -81,9 +116,14 @@ export function jobBox(job: Job): { x0: number; y0: number; x1: number; y1: numb
         }
         if (group.joints && group.joints.length > 0) {
             for (const poly of group.joints) {
-                for (const [r, a] of poly) {
-                    const board = boardOfJoint({ r, a });
+                if (poly.length === 1) {
+                    const board = boardOfJoint({ r: poly[0]![0], a: poly[0]![1] });
                     take(board.x, board.y);
+                }
+                for (let i = 1; i < poly.length; i++) {
+                    for (const board of jointLineBoard(poly[i - 1]!, poly[i]!)) {
+                        take(board.x, board.y);
+                    }
                 }
             }
         } else {
@@ -148,7 +188,38 @@ export function signed(value: number): string {
 
 /** Probed everywhere and told its focus offset: what a compensated run needs besides covering the job. */
 export function mapUsable(map: HeightMap | null): boolean {
-    return map !== null && map.focus_set && map.heights.every((row) => row.every((value) => value !== null));
+    return map !== null && map.focus_set && mapComplete(map);
+}
+
+/** Probed at every point of its grid. */
+export function mapComplete(map: HeightMap | null): boolean {
+    return map !== null && map.heights.every((row) => row.every((value) => value !== null));
+}
+
+/**
+ * What to do before a run can follow a map that is probed everywhere but has
+ * no focus offset: the backend drops the offset whenever the focus axis may
+ * have been moved to other numbers (Set H=0, a connect, the firmware
+ * restarting, a map loaded), and taking it again puts the map in the
+ * current ones. Empty when there is nothing to do.
+ */
+export function focusAgainText(map: HeightMap | null, milling: boolean): string {
+    if (!mapComplete(map) || map!.focus_set) {
+        return "";
+    }
+    return milling
+        ? "The height map has no touch-off offset: jog the tool onto the copper and Touch off here before a run follows it."
+        : "The height map has no focus offset: focus the beam and Focus here before a run follows it.";
+}
+
+function focusStateText(map: HeightMap, milling: boolean): string {
+    if (map.focus_set) {
+        return "set";
+    }
+    if (!mapComplete(map)) {
+        return "not set yet";
+    }
+    return milling ? "not set: Touch off here" : "not set: Focus here";
 }
 
 /** What the badge says about the map and the probing. */
@@ -346,7 +417,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             ),
             el("p", { class: "muted hint" },
                 "Depth is the most the probe goes down from where the head starts. Slow 0 touches once."
-                + " The tip offset is from the beam: along the rail, outward positive, and across it."
+                + " The tip offset is from the beam: along the rail, outward positive, and across it,"
+                + " positive to the left of outward seen from above (board +Y at table angle 0, +Z on an"
+                + " X/Y machine). To check the signs, probe one point, then jog the beam over it and compare."
                 + " The brake queue is how long the head goes on past the contact before it brakes;"
                 + " the height is read at the contact either way. 0 stops it dead when the probe is"
                 + " no faster than h_jerk. It is a machine setting: Save to flash keeps it."),
@@ -509,14 +582,16 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             replace(legend);
             return;
         }
+        const ends = legendEnds(stats);
         replace(legend,
-            el("div", { class: "hm-scale" },
-                el("span", {}, `low ${formatFixed(stats.min, 3)}`),
+            el("div", { class: "hm-scale", title: "Height off the mean; the ends are the strongest colors a cell has" },
+                el("span", {}, ends.low),
                 el("span", { class: "hm-ramp", "aria-hidden": "true" }),
-                el("span", {}, `high ${formatFixed(stats.max, 3)}`),
+                el("span", {}, ends.high),
             ),
             el("span", { class: "muted" },
-                `mean ${formatFixed(stats.mean, 3)} mm, span ${formatFixed(stats.max - stats.min, 3)} mm`
+                `mean ${formatFixed(stats.mean, 3)} mm, lowest ${formatFixed(stats.min, 3)}, highest ${formatFixed(stats.max, 3)},`
+                + ` span ${formatFixed(stats.max - stats.min, 3)} mm`
                 + (showValues ? "; cells show the height above the mean" : "")),
         );
     }
@@ -533,11 +608,15 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const busy = running === "running" || running === "hold";
         const focusAxis = machine?.joint.h !== null && machine?.joint.h !== undefined;
         const idle = machine?.state === "Idle";
+        const milling = isMilling(state.snapshot);
+        // The tool can be the probe on a spindle machine: a probe run with
+        // it turning mills a hole at every point. A stopped spindle on an
+        // active-low output reports its pin at full duty.
+        const spinning = milling && machine !== null && outputDuty(machine.laser, state.settings) > 0;
         body.disabled = !connected;
-        setLocked(probeButton, !connected || !focusAxis || !idle || probing || busy);
+        setLocked(probeButton, !connected || !focusAxis || !idle || probing || busy || spinning);
         setLocked(stopButton, !probing);
         setLocked(focusHere, !connected || !heightMap?.map || !idle || probing);
-        const milling = isMilling(state.snapshot);
         focusHere.textContent = milling ? "Touch off here" : "Focus here";
         focusHint.textContent = milling ? TOUCH_HINT : FOCUS_HINT;
         const offsetText = focusLabel.querySelector(".labeled-text");
@@ -553,8 +632,13 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             probeNote.textContent = "No focus axis: set h_axis to 1 in the settings to probe.";
         } else if (probe?.state === "error" || probe?.state === "stopped") {
             probeNote.textContent = `Probing ${probe.state}${probe.error ? `: ${probe.error}` : ""}`;
+        } else if (probing && probe && probe.done >= probe.total) {
+            // The last point is in; the head rises back before probing ends.
+            probeNote.textContent = `Probed all ${probe.total} points, the head is rising, ${formatFixed(probe.seconds, 0)} s`;
         } else if (probing && probe) {
             probeNote.textContent = `Probing point ${probe.done + 1} of ${probe.total}, ${formatFixed(probe.seconds, 0)} s`;
+        } else if (spinning) {
+            probeNote.textContent = "The spindle is turning: stop it before probing.";
         } else {
             probeNote.textContent = "Raise the head so the probe clears the board: probing travels at that height.";
         }
@@ -563,7 +647,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             if (focusField !== document.activeElement) {
                 focusField.value = String(map.focus_offset);
             }
-            focusState.textContent = map.focus_set ? "set" : "not set yet";
+            focusState.textContent = focusStateText(map, milling);
         } else {
             focusState.textContent = "";
         }
@@ -577,7 +661,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     };
     ctx.store.subscribe((state) => renderData(state), ["heightMap"]);
     publishDraft();
-    ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress"]);
+    ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress", "settings"]);
     ctx.store.subscribe((state) => showQueue(state), ["settings"]);
     showQueue(ctx.store.get());
     renderData(ctx.store.get());

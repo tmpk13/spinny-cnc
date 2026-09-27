@@ -51,7 +51,7 @@ export interface Machine {
     board: Board;
     /** Surface speed of the move in progress, mm/min. */
     rate: number;
-    /** Laser duty in permille, as driven. */
+    /** Laser duty in permille, as driven on the pin: an active-low output (laser_invert) reads 1000 dark. */
     laser: number;
     mode: Mode;
     enabled: boolean;
@@ -317,7 +317,7 @@ export interface HeightMap {
     focus_offset: number;
     /** Someone has said what the focus offset is; a run needs it. */
     focus_set: boolean;
-    /** The probe tip from the beam when probed: along the rail, across it, mm. */
+    /** The probe tip from the beam when probed: along the rail, across it, mm, signed as ProbeSettings.offset. */
     probe_offset: [number, number];
     created: string;
 }
@@ -344,7 +344,11 @@ export interface ProbeSettings {
     slow: number;
     /** Rise before the second touch, mm. */
     backoff: number;
-    /** The probe tip from the beam: along the rail, across it, mm. */
+    /**
+     * The probe tip from the beam, mm: along the rail, positive outward, and
+     * across it, positive to the left of outward seen from above (board +Y
+     * at table angle 0, +Z on a cartesian machine).
+     */
     offset: [number, number];
     /** The beam's Rayleigh length for power compensation, mm. */
     rayleigh: number;

@@ -31,13 +31,30 @@ axis: it steps like the rail, at the feed given, and the joint goto takes
 the groups table has depth and plunge in place of the power floor, the
 focus axis is the depth axis, "Focus here" is "Touch off here", and the
 settings panel has the travel clearance and spin-up. The in-page mock
-takes those settings and runs a spindle, but it moves as the polar
-machine.
+takes those settings too: with `$cartesian=1` the cross slide is a joint
+and a board move is one line in the table's frame, and with `$spindle=1`
+it mills a job the way the backend streams one (lift, spindle start,
+spin-up dwell, plunge, cuts at depth, lift, spindle off). The preview draws
+a cartesian machine's soft limits as a box turned with the table.
 
 The Height map panel probes a grid (drawn on the preview before and while it
 is probed), shows the heights as a map of the board seen from above, blue
 below the mean and red above it, and sets the focus offset. The run button
-sends the chosen compensation, which turns to `auto` once a map is usable.
+sends the chosen compensation, which turns to `auto` while a map is usable
+and back to off when it is not. The backend drops the focus offset whenever
+the focus axis may have moved to other numbers (Set H=0, a connect, the
+firmware restarting, a loaded map); the page then asks for Focus here (Touch
+off here) again before a run follows the map. Probing is locked while the
+spindle turns, and the spindle start while probing. The status reports the
+output's duty as driven on the pin; the DRO and the probe lock turn it
+around on an active-low output (`laser_invert`), as the backend does.
+
+Arrow keys jog when no field that uses them has focus; Escape cancels a jog
+or goto from anywhere but a dialog while a machine is connected. The event feed is opened again when it
+goes silent for 5 s while a machine is connected, since a backend host that
+loses power sends no close. The page reads the settings again when the
+machine, or the profile in its state frames, changes, and after a setting
+typed at the console.
 
 ## Architecture
 
@@ -45,12 +62,13 @@ sends the chosen compensation, which turns to `auto` once a map is usable.
 classDiagram
     class main {
         createContext(api, store) Ctx
+        applyEvent(ctx, event)
     }
     class api {
         HttpApi  typed routes of WEB_API.md
     }
     class ws {
-        EventSocket  reconnects with backoff
+        EventSocket  reconnects with backoff, and on silence
         parseEvent(raw) WsEvent
     }
     class state {
@@ -73,7 +91,7 @@ classDiagram
     }
     class mock {
         MockBackend  Api and EventFeed in one
-        MockMachine  joint motion at the rates, cross slide on its own, focus axis and probe
+        MockMachine  joint motion at the rates, cross slide on its own or as a joint, focus axis, probe, spindle
     }
     class mockjobs {
         parseSvg parseGcode placeJob computeStats centerJob

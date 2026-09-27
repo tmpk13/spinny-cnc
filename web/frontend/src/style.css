@@ -1147,7 +1147,15 @@ table.groups input[type="checkbox"] {
 }
 
 /* The group numbers shrink with a narrow panel; without spin buttons four
-   digits still fit at the least. */
+   digits still fit at the least. The milling table has a number column more
+   than the laser's and does not fit a phone that narrow, so the table
+   scrolls inside its box rather than widening the page. */
+.groups-scroll {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+}
+
 table.groups input[type="number"] {
     width: 100%;
     min-width: 3rem;
@@ -1473,11 +1481,13 @@ dialog.confirm::backdrop {
     border-spacing: 0.125rem;
 }
 
+/* The strongest text color: the value must stay readable on the fullest
+   tint a cell gets, in either theme. */
 .hm-cell {
     padding: 0.45rem 0;
     border: thin dashed var(--border);
     border-radius: 0.3rem;
-    color: var(--text);
+    color: var(--strong);
     font: 0.7rem var(--mono);
     text-align: center;
     font-variant-numeric: tabular-nums;

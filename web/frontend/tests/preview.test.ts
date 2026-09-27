@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
-import { LABEL_GAP_PX, MIN_SCALE, Preview, labelEvery, fitView, jobReach, panBy, ringStep, screenToWorld, worldToScreen, zoomAt } from "../src/preview.ts";
+import {
+    LABEL_GAP_PX,
+    MIN_SCALE,
+    Preview,
+    labelEvery,
+    fitView,
+    jobReach,
+    limitReach,
+    limitShape,
+    panBy,
+    ringStep,
+    screenToWorld,
+    worldToScreen,
+    zoomAt,
+} from "../src/preview.ts";
 import type { Job } from "../src/types.ts";
 
 const job: Job = {
@@ -126,5 +140,51 @@ describe("ring labels", () => {
         expect(labelEvery(2, 4)).toBe(4);
         // The boundary belongs to the roomier case.
         expect(labelEvery(1, LABEL_GAP_PX)).toBe(1);
+    });
+});
+
+describe("soft limits", () => {
+    test("the polar machine's reach is a circle of r_max", () => {
+        expect(limitShape({ kinematics: "polar", r_max: 50, z_max: 20 }, 30, 100)).toEqual({ kind: "circle", radius: 50 });
+        expect(limitShape({ kinematics: "polar", r_max: 0, z_max: 20 }, 30, 100)).toBeNull();
+        expect(limitReach({ kinematics: "polar", r_max: 50, z_max: 20 })).toBe(50);
+    });
+
+    test("a cartesian machine's reach is the joint box turned by the table angle", () => {
+        const box = limitShape({ kinematics: "cartesian", r_max: 50, z_max: 20 }, 0, 100);
+        expect(box).toEqual({ kind: "outline", points: [[50, 20], [-50, 20], [-50, -20], [50, -20]] });
+        const turned = limitShape({ kinematics: "cartesian", r_max: 50, z_max: 20 }, 90, 100);
+        expect(turned?.kind).toBe("outline");
+        const corner = turned?.kind === "outline" ? turned.points[0]! : [0, 0];
+        expect(corner[0]).toBeCloseTo(-20, 9);
+        expect(corner[1]).toBeCloseTo(50, 9);
+        expect(limitReach({ kinematics: "cartesian", r_max: 50, z_max: 20 })).toBeCloseTo(Math.hypot(50, 20), 9);
+    });
+
+    test("with one cartesian limit off the reach is a strip between two lines", () => {
+        const strip = limitShape({ kinematics: "cartesian", r_max: 30, z_max: 0 }, 0, 100);
+        expect(strip).toEqual({ kind: "lines", lines: [[[30, -100], [30, 100]], [[-30, -100], [-30, 100]]] });
+        const across = limitShape({ kinematics: "cartesian", r_max: 0, z_max: 10 }, 0, 100);
+        expect(across).toEqual({ kind: "lines", lines: [[[-100, 10], [100, 10]], [[-100, -10], [100, -10]]] });
+        expect(limitShape({ kinematics: "cartesian", r_max: 0, z_max: 0 }, 0, 100)).toBeNull();
+        expect(limitReach({ kinematics: "cartesian", r_max: 30, z_max: 0 })).toBe(30);
+    });
+
+    test("the fit takes in the corners of a cartesian box", () => {
+        const canvas = document.createElement("canvas");
+        canvas.getBoundingClientRect = (() => ({ width: 400, height: 300, x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 300, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
+        document.body.appendChild(canvas);
+        const preview = new Preview(canvas);
+        preview.setLimits({ kinematics: "cartesian", r_max: 50, z_max: 20 });
+        preview.setHead({ r: 5, a: 30 }, { x: 1, y: 2 });
+        preview.resetView();
+        expect(preview.getView().scale).toBeCloseTo(fitView(Math.hypot(50, 20), 400, 300).scale, 9);
+        preview.draw();
+        // The radius alone keeps the machine as it was set.
+        preview.setRMax(10);
+        preview.resetView();
+        expect(preview.getView().scale).toBeCloseTo(fitView(jobReach(null, Math.hypot(10, 20)), 400, 300).scale, 9);
+        preview.dispose();
+        canvas.remove();
     });
 });

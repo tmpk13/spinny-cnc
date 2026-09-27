@@ -12,6 +12,18 @@ export const AXIS_EPSILON = 1e-6;
 /** Bisection stops here even when the chord error is still over the tolerance. */
 const MAX_DEPTH = 24;
 const MIN_SEGMENT = 1e-3;
+/** Half the quantum of a radius word, which is written with three decimals. */
+const HALF_WORD_MM = 0.5e-3;
+
+/**
+ * How near the axis a board line may pass before it is cut there and
+ * crosses with a turn on the spot: the chord tolerance, and at least half
+ * a word quantum. A line passing between the two would otherwise sweep half
+ * a turn of the table at a radius of microns with the beam on.
+ */
+export function axisSnap(tolerance: number): number {
+    return Math.max(HALF_WORD_MM, tolerance);
+}
 
 export function boardOfJoint(joint: Joint): Board {
     const rad = joint.a * DEG;
@@ -43,6 +55,34 @@ export function lerpJoint(from: Joint, to: Joint, t: number): Joint {
 export function surfaceLength(from: Joint, to: Joint): number {
     const rMean = (from.r + to.r) / 2;
     return Math.hypot(to.r - from.r, rMean * (to.a - from.a) * DEG);
+}
+
+/**
+ * Board length of a move on a cartesian machine, where the cross slide `z`
+ * is a joint beside the radius: the head sits hypot(R, Z) from the axis,
+ * so a turn of the table sweeps that radius.
+ */
+export function cartesianSurfaceLength(from: Joint, to: Joint, fromZ: number, toZ: number): number {
+    const rMean = (from.r + to.r) / 2;
+    const zMean = (fromZ + toZ) / 2;
+    return Math.hypot(to.r - from.r, toZ - fromZ, Math.hypot(rMean, zMean) * (to.a - from.a) * DEG);
+}
+
+/** A point turned about the rotation axis by `degrees`, counterclockwise. */
+export function turned(point: Board, degrees: number): Board {
+    const rad = degrees * DEG;
+    const c = Math.cos(rad);
+    const s = Math.sin(rad);
+    return { x: point.x * c - point.y * s, y: point.x * s + point.y * c };
+}
+
+/**
+ * The board point under the beam. On a cartesian machine the head is at R
+ * along the rail and Z across it, turned by the table angle; on a polar
+ * one the cross slide only puts the rail over the axis and is left out.
+ */
+export function headBoard(joint: Joint, z: number, cartesian: boolean): Board {
+    return cartesian ? turned({ x: joint.r, y: z }, joint.a) : boardOfJoint(joint);
 }
 
 /** Table rate in deg/min needed for a tangential cut at `speed` mm/min and radius `r`. */
@@ -99,9 +139,11 @@ function distanceToSegment(px: number, py: number, a: Board, b: Board): { distan
 
 /**
  * Splits a straight board move into joint moves that each stay within
- * `tolerance` of the line. A move through the axis becomes a radial move in,
- * a turn on the spot, and a radial move out; a move leaving the axis starts
- * with the turn. The returned list holds the joint targets in order.
+ * `tolerance` of the line. A move that passes within `axisSnap` of the axis
+ * is cut there: a radial move in, a turn on the spot, and a radial move
+ * out; a move leaving the axis starts with the turn, and one ending within
+ * the snap ends on the axis. The returned list holds the joint targets in
+ * order.
  */
 export function segmentBoardMove(from: Joint, to: Board, tolerance: number): Joint[] {
     if (![from.r, from.a, to.x, to.y].every(Number.isFinite)) {
@@ -109,26 +151,35 @@ export function segmentBoardMove(from: Joint, to: Board, tolerance: number): Joi
         // only end at its depth cap with millions of joints.
         throw new Error("coordinate is not finite");
     }
+    const snap = axisSnap(tolerance);
     const out: Joint[] = [];
+    const target: Board = Math.hypot(to.x, to.y) < snap ? { x: 0, y: 0 } : to;
+    const onAxis = (board: Board): boolean => board.x === 0 && board.y === 0;
     if (from.r < 0) {
         // The head is past the axis, where lining it up leaves it. A board
         // line from there is no joint line: it comes back to the axis along
         // the rail first, and leaves it the usual way.
         const axis: Joint = { r: 0, a: from.a };
         out.push(axis);
-        bisect(axis, to, tolerance, 0, out);
+        if (!onAxis(target)) {
+            bisect(axis, target, tolerance, 0, out);
+        }
         return out;
     }
-    const start = boardOfJoint(from);
-    const hit = distanceToSegment(0, 0, start, to);
-    if (hit.distance < AXIS_EPSILON && from.r >= AXIS_EPSILON && Math.hypot(to.x, to.y) >= AXIS_EPSILON) {
-        // Through the axis: the part before it is purely radial.
-        const inward: Joint = { r: 0, a: from.a };
-        out.push(inward);
-        bisect(inward, to, tolerance, 0, out);
-        return out;
+    if (from.r >= AXIS_EPSILON) {
+        const hit = distanceToSegment(0, 0, boardOfJoint(from), target);
+        if (hit.distance < snap) {
+            // Through the axis, or ending on it: the part before it is
+            // purely radial, and what follows leaves it with a turn.
+            const inward: Joint = { r: 0, a: from.a };
+            out.push(inward);
+            if (!onAxis(target)) {
+                bisect(inward, target, tolerance, 0, out);
+            }
+            return out;
+        }
     }
-    bisect(from, to, tolerance, 0, out);
+    bisect(from, target, tolerance, 0, out);
     return out;
 }
 

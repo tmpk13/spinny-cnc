@@ -1,18 +1,19 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Api } from "../src/api.ts";
-import { createContext } from "../src/main.ts";
+import { applyEvent, createContext, settingsMayHaveChanged } from "../src/main.ts";
 import { MockBackend } from "../src/mock.ts";
 import { button, numberField, setLocked } from "../src/dom.ts";
 import { Store, appendConsole, initialState, pushToast, type AppState } from "../src/state.ts";
-import type { Machine, Snapshot } from "../src/types.ts";
-import { mountConsole } from "../src/views/console.ts";
+import type { Job, JobSummary, Machine, Snapshot, WsEvent } from "../src/types.ts";
+import { mountConsole, writesSettings } from "../src/views/console.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs, progressText } from "../src/views/jobs.ts";
 import { keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedValues, mountSettings } from "../src/views/settings.ts";
+import { mountPreviewPanel } from "../src/views/previewpanel.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
 import { mountToasts } from "../src/views/toasts.ts";
 
@@ -149,6 +150,21 @@ describe("dro", () => {
         expect(root.querySelector('[data-dro="rate"]')?.textContent).toBe("400");
         expect(root.classList.contains("laser-on")).toBe(true);
     });
+
+    test("an active-low output shows the beam's power, not its pin", () => {
+        const inverted = { values: { laser_invert: 1 }, schema: [], host: { tolerance: 0.01 } };
+        expect(droText(machine({ laser: 1000 }), inverted).laser).toBe("0.0%");
+        expect(droText(machine({ laser: 200 }), inverted).laser).toBe("80.0%");
+        expect(droText(machine({ laser: 200 }), { ...inverted, values: { laser_invert: 0 } }).laser).toBe("20.0%");
+        const { store, ctx, root } = setup();
+        mountDro(root, ctx);
+        store.set({ snapshot: connected({ laser: 1000 }), settings: inverted });
+        expect(root.querySelector('[data-dro="laser"]')?.textContent).toBe("0.0%");
+        expect(root.classList.contains("laser-on")).toBe(false);
+        store.set({ snapshot: connected({ laser: 0 }) });
+        expect(root.querySelector('[data-dro="laser"]')?.textContent).toBe("100.0%");
+        expect(root.classList.contains("laser-on")).toBe(true);
+    });
 });
 
 describe("context", () => {
@@ -167,6 +183,119 @@ describe("context", () => {
         store.set({ link: "open", progress: { job: "j2", state: "done", sent: 9, acked: 9, total: 9, seconds: 5, estimate: 5, group: 0 } });
         await ctx.refreshState();
         expect(store.get().progress?.job).toBe("j2");
+    });
+});
+
+describe("settings follow the machine", () => {
+    test("a state frame reloads the settings when the machine or its profile changes, not on every frame", async () => {
+        const { store, ctx, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        const profile = { kinematics: "polar" as const, tool: "laser" as const, h_axis: false, r_max: 60, z_max: 5 };
+        const frame = (overrides: Partial<Snapshot> = {}): WsEvent => ({ type: "state", data: { ...connected(), profile, ...overrides } });
+        const settingsCalls = (): number => calls.filter((c) => c.name === "settings").length;
+        applyEvent(ctx, frame());
+        await settle();
+        expect(settingsCalls()).toBe(1);
+        applyEvent(ctx, frame());
+        applyEvent(ctx, frame({ machine: machine({ rate: 10 }) }));
+        await settle();
+        expect(settingsCalls()).toBe(1);
+        // $r_max=40 typed at the console, or on another page.
+        applyEvent(ctx, frame({ profile: { ...profile, r_max: 40 } }));
+        await settle();
+        expect(settingsCalls()).toBe(2);
+        // No machine: nothing to ask.
+        applyEvent(ctx, frame({ connected: false, url: null, machine: null }));
+        await settle();
+        expect(settingsCalls()).toBe(2);
+        expect(store.get().snapshot.connected).toBe(false);
+        expect(settingsMayHaveChanged(connected(), { ...connected(), url: "/dev/ttyACM1" })).toBe(true);
+        expect(settingsMayHaveChanged(connected(), connected())).toBe(false);
+    });
+
+    test("the preview's reach follows the profile of every frame", () => {
+        const { store, ctx, root } = setup();
+        const preview = mountPreviewPanel(root, ctx);
+        const reach = (): number => (preview as unknown as { rMax: number }).rMax;
+        store.set({ settings: { values: { r_max: 60 }, schema: [], host: { tolerance: 0.005 } } });
+        expect(reach()).toBe(60);
+        store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "laser", h_axis: false, r_max: 40, z_max: 0 } } });
+        expect(reach()).toBe(40);
+        // A cartesian profile reaches the preview whole: its limit is a box.
+        store.set({ snapshot: { ...connected(), profile: { kinematics: "cartesian", tool: "spindle", h_axis: true, r_max: 50, z_max: 30 } } });
+        expect(preview.getLimits()).toEqual({ kinematics: "cartesian", r_max: 50, z_max: 30 });
+        preview.dispose();
+    });
+});
+
+describe("job selection", () => {
+    /** Holds each job request open until the test answers it. */
+    function heldJobs(api: Api): Map<string, (job: Job) => void> {
+        const pending = new Map<string, (job: Job) => void>();
+        (api as unknown as { job: (id: string) => Promise<Job> }).job = (id: string) => new Promise<Job>((resolve) => {
+            pending.set(id, resolve);
+        });
+        return pending;
+    }
+    const stub = (id: string): Job => ({ id, name: id } as unknown as Job);
+
+    test("the last job picked stays selected, whatever order the replies come in", async () => {
+        const { store, ctx, api } = setup();
+        const pending = heldJobs(api);
+        const big = ctx.selectJob("big");
+        const small = ctx.selectJob("small");
+        pending.get("small")!(stub("small"));
+        await small;
+        expect(store.get().job?.id).toBe("small");
+        pending.get("big")!(stub("big"));
+        await big;
+        expect(store.get().job?.id).toBe("small");
+        // Clearing the selection wins over a reply still on its way.
+        const late = ctx.selectJob("big");
+        await ctx.selectJob(null);
+        pending.get("big")!(stub("big"));
+        await late;
+        expect(store.get().job).toBeNull();
+    });
+
+    test("a reload after a change to a job does not take the selection back from the job picked since", async () => {
+        const { store, ctx, api } = setup();
+        const pending = heldJobs(api);
+        const first = ctx.selectJob("a");
+        pending.get("a")!(stub("a"));
+        await first;
+        // A group field of job a commits on blur, as job b is clicked.
+        const reload = ctx.reloadJob("a");
+        const pick = ctx.selectJob("b");
+        pending.get("b")!(stub("b"));
+        await pick;
+        pending.get("a")!(stub("a"));
+        await reload;
+        expect(store.get().job?.id).toBe("b");
+        // With nothing picked meanwhile the reload is applied.
+        const fresh = { ...stub("b"), name: "b again" } as Job;
+        const again = ctx.reloadJob("b");
+        pending.get("b")!(fresh);
+        await again;
+        expect(store.get().job).toBe(fresh);
+    });
+
+    test("an older job list does not replace a newer one or clear the selection", async () => {
+        const { store, ctx, api } = setup();
+        const lists: ((jobs: JobSummary[]) => void)[] = [];
+        (api as unknown as { jobs: () => Promise<JobSummary[]> }).jobs = () => new Promise<JobSummary[]>((resolve) => {
+            lists.push(resolve);
+        });
+        store.set({ job: stub("new") });
+        const older = ctx.refreshJobs();
+        const newer = ctx.refreshJobs();
+        const summary = (id: string): JobSummary => ({ id, name: id } as unknown as JobSummary);
+        lists[1]!([summary("old"), summary("new")]);
+        await newer;
+        lists[0]!([summary("old")]);
+        await older;
+        expect(store.get().jobs.map((job) => job.id)).toEqual(["old", "new"]);
+        expect(store.get().job?.id).toBe("new");
     });
 });
 
@@ -333,6 +462,71 @@ describe("jog", () => {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
         await settle();
         expect(calls.some((c) => c.name === "jogCancel")).toBe(true);
+    });
+
+    // The events are not cancelable: every jog panel mounted by these tests
+    // listens on the document, and one must not keep the key from the next.
+    test("Escape stops a goto started with Enter while its field keeps the focus", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const x = root.querySelector('input[placeholder="x"]') as HTMLInputElement;
+        x.value = "60";
+        x.focus();
+        x.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        await settle();
+        expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "board", x: 60, feed: null });
+        expect(document.activeElement).toBe(x);
+        x.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jogCancel")).toBe(true);
+        // The field keeps its arrow keys.
+        calls.length = 0;
+        x.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jog")).toBe(false);
+        x.blur();
+    });
+
+    test("Escape in a field with no machine connected sends nothing and raises no error", async () => {
+        const { store, ctx, root, calls } = setup();
+        mountJog(root, ctx);
+        const x = root.querySelector('input[placeholder="x"]') as HTMLInputElement;
+        x.focus();
+        x.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jogCancel")).toBe(false);
+        expect(store.get().toasts).toEqual([]);
+        x.blur();
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jogCancel")).toBe(false);
+        expect(store.get().toasts).toEqual([]);
+    });
+
+    test("a focused checkbox leaves the arrow keys to the jog, and a dialog keeps Escape", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        document.body.appendChild(box);
+        box.focus();
+        box.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 1, dy: 0, feed: null });
+        box.blur();
+        box.remove();
+        const dialog = document.createElement("dialog");
+        document.body.appendChild(dialog);
+        dialog.showModal();
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jogCancel")).toBe(false);
+        dialog.close();
+        dialog.remove();
     });
 });
 
@@ -596,6 +790,48 @@ describe("laser and settings", () => {
     });
 });
 
+describe("settings table under the operator's hands", () => {
+    test("an edit not yet applied outlives a refresh, and goes once the machine has the value", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountSettings(root, ctx);
+        const settings = await api.settings();
+        store.set({ settings });
+        const field = (name: string): HTMLInputElement => root.querySelector(`input[aria-label="${name}"]`) as HTMLInputElement;
+        const edited = (name: string): boolean => field(name).closest("tr")!.classList.contains("edited");
+        field("r_rate").value = "900";
+        field("r_rate").dispatchEvent(new Event("input", { bubbles: true }));
+        const tolerance = root.querySelector("input[step='0.001']") as HTMLInputElement;
+        tolerance.value = "0.01";
+        // Another panel writes a setting and reads them all again.
+        store.set({ settings: { ...settings, values: { ...settings.values, probe_ms: 40 } } });
+        expect(field("r_rate").value).toBe("900");
+        expect(edited("r_rate")).toBe(true);
+        expect(field("probe_ms").value).toBe("40");
+        expect(tolerance.value).toBe("0.01");
+        // The field being typed in keeps its text and its focus.
+        field("a_rate").focus();
+        field("a_rate").value = "7";
+        store.set({ settings: { ...settings } });
+        expect(field("a_rate").value).toBe("7");
+        expect(document.activeElement).toBe(field("a_rate"));
+        field("a_rate").blur();
+        // Applied: the machine has 900 now, so it is no edit any more.
+        store.set({ settings: { ...settings, values: { ...settings.values, r_rate: 900 } } });
+        expect(field("r_rate").value).toBe("900");
+        expect(edited("r_rate")).toBe(false);
+        field("r_rate").value = "950";
+        field("r_rate").dispatchEvent(new Event("input", { bubbles: true }));
+        // Another machine: what was typed for the last one is dropped.
+        store.set({ snapshot: { ...connected(), url: "/dev/ttyACM1" } });
+        store.set({ settings: { ...settings } });
+        expect(field("r_rate").value).toBe(String(settings.values["r_rate"]));
+        expect(edited("r_rate")).toBe(false);
+        expect(tolerance.value).toBe(String(settings.host.tolerance));
+    });
+});
+
 describe("console and toasts", () => {
     test("console appends, rolls and clears", () => {
         const { store, ctx, root } = setup();
@@ -612,6 +848,31 @@ describe("console and toasts", () => {
         expect(log.children[399]?.textContent).toContain("line 499");
         click(root, "Clear");
         expect(log.children.length).toBe(0);
+    });
+
+    test("a setting typed at the console reloads the page's copy of the settings", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected(), settings: await api.settings() });
+        mountConsole(root, ctx);
+        const input = root.querySelector(".console-input input") as HTMLInputElement;
+        const send = async (line: string): Promise<void> => {
+            input.value = line;
+            click(root, "Send");
+            await settle();
+            await settle();
+        };
+        calls.length = 0;
+        await send("?");
+        expect(calls.some((c) => c.name === "settings")).toBe(false);
+        await send("$r_max=40");
+        expect(calls.filter((c) => c.name === "settings").length).toBe(1);
+        expect(store.get().settings?.values["r_max"]).toBe(40);
+        expect(writesSettings("$load")).toBe(true);
+        expect(writesSettings(" $Defaults ")).toBe(true);
+        expect(writesSettings("$")).toBe(false);
+        expect(writesSettings("$save")).toBe(false);
+        expect(writesSettings("cut R1 F1")).toBe(false);
     });
 
     test("toasts render and can be dismissed", () => {

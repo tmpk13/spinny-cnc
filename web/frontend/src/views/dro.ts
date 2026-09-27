@@ -3,8 +3,8 @@
 
 import { el } from "../dom.ts";
 import { formatDeg, formatDuty, formatMm, formatRate } from "../format.ts";
-import { isMilling } from "../profile.ts";
-import type { Machine } from "../types.ts";
+import { isMilling, outputDuty } from "../profile.ts";
+import type { Machine, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 export interface DroText {
@@ -24,7 +24,8 @@ export interface DroText {
     probe: string | null;
 }
 
-export function droText(machine: Machine | null): DroText {
+/** The settings say which way round the output is driven; see outputDuty. */
+export function droText(machine: Machine | null, settings: SettingsResponse | null = null): DroText {
     if (!machine) {
         return { r: formatMm(null), a: formatDeg(null), z: formatMm(null), h: null, x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-", probe: null };
     }
@@ -37,7 +38,7 @@ export function droText(machine: Machine | null): DroText {
         h: h === null || h === undefined ? null : formatMm(h),
         x: formatMm(machine.board.x),
         y: formatMm(machine.board.y),
-        laser: formatDuty(machine.laser),
+        laser: formatDuty(outputDuty(machine.laser, settings)),
         rate: formatRate(machine.rate),
         mode: machine.mode,
         queue: `${machine.queue.planner}/${machine.queue.lines}`,
@@ -74,7 +75,8 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
     const focusCell = cells.h.parentElement!;
 
     ctx.store.subscribe((state) => {
-        const text = droText(state.snapshot.machine);
+        const machine = state.snapshot.machine;
+        const text = droText(machine, state.settings);
         setText(cells.r, text.r);
         setText(cells.a, text.a);
         setText(cells.z, text.z);
@@ -91,8 +93,8 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         setText(smalls.mode, text.mode);
         setText(smalls.queue, text.queue);
         setText(smalls.motors, text.motors);
-        root.classList.toggle("laser-on", (state.snapshot.machine?.laser ?? 0) > 0);
-    }, ["snapshot"]);
+        root.classList.toggle("laser-on", machine !== null && outputDuty(machine.laser, state.settings) > 0);
+    }, ["snapshot", "settings"]);
 }
 
 function bigIn(row: HTMLElement, label: string, unit: string, name: string): HTMLSpanElement {

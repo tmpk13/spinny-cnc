@@ -1,11 +1,11 @@
 // Canvas preview drawn around the rotation axis in board mm: the axis cross,
-// the rail along +X, the r_max circle, copper, outline, the job's paths, the
-// probe grid and the head with a short trail. Wheel zooms, drag pans, double
-// click resets.
+// the rail, the soft limits, copper, outline, the job's paths, the probe grid
+// and the head with a short trail. Wheel zooms, drag pans, double click
+// resets.
 
 import { cssVar } from "./dom.ts";
-import { boardOfJoint } from "./kinematics.ts";
-import type { Board, Grid, HeightMap, Job, Joint, Path, Point } from "./types.ts";
+import { boardOfJoint, turned } from "./kinematics.ts";
+import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Path, Point } from "./types.ts";
 
 /** World center in mm and CSS pixels per mm. */
 export interface View {
@@ -75,9 +75,64 @@ export function panBy(view: View, dx: number, dy: number): View {
     return { cx: view.cx - dx / view.scale, cy: view.cy + dy / view.scale, scale: view.scale };
 }
 
-/** Farthest coordinate of anything drawn, in mm from the axis. */
-export function jobReach(job: Job | null, rMax: number): number {
-    let reach = rMax > 0 ? rMax : 0;
+/** What bounds the head, as the machine's profile gives it. */
+export interface Limits {
+    kinematics: Kinematics;
+    /** Soft limit of the radius either side of the axis, mm; 0 is none. */
+    r_max: number;
+    /** Soft limit of the cross slide either side of zero on a cartesian machine, mm; 0 is none. */
+    z_max: number;
+}
+
+/** The soft limits drawn on the board: a circle, a closed outline, or pairs of parallel lines. */
+export type LimitShape =
+    | { kind: "circle"; radius: number }
+    | { kind: "outline"; points: Point[] }
+    | { kind: "lines"; lines: [Point, Point][] };
+
+/**
+ * Where the soft limits put the edge of the reach on the board. On the
+ * polar machine `r_max` is the distance from the axis, a circle. On a
+ * cartesian one the limits are on the joints, |R| <= r_max along the rail
+ * and |Z| <= z_max across it, so the reach is that box turned by the table
+ * angle; with one of them off it is a strip between two lines, drawn
+ * `extent` mm long each way. Null when nothing is limited.
+ */
+export function limitShape(limits: Limits, angle: number, extent: number): LimitShape | null {
+    const r = limits.r_max > 0 ? limits.r_max : 0;
+    const z = limits.kinematics === "cartesian" && limits.z_max > 0 ? limits.z_max : 0;
+    if (limits.kinematics !== "cartesian") {
+        return r > 0 ? { kind: "circle", radius: r } : null;
+    }
+    const at = (x: number, y: number): Point => {
+        const board = turned({ x, y }, angle);
+        return [board.x, board.y];
+    };
+    if (r > 0 && z > 0) {
+        return { kind: "outline", points: [at(r, z), at(-r, z), at(-r, -z), at(r, -z)] };
+    }
+    if (r > 0) {
+        return { kind: "lines", lines: [[at(r, -extent), at(r, extent)], [at(-r, -extent), at(-r, extent)]] };
+    }
+    if (z > 0) {
+        return { kind: "lines", lines: [[at(-extent, z), at(extent, z)], [at(-extent, -z), at(extent, -z)]] };
+    }
+    return null;
+}
+
+/** How far from the axis the soft limits reach, for fitting the view: the corner of a cartesian box. */
+export function limitReach(limits: Limits): number {
+    const r = limits.r_max > 0 ? limits.r_max : 0;
+    if (limits.kinematics !== "cartesian") {
+        return r;
+    }
+    const z = limits.z_max > 0 ? limits.z_max : 0;
+    return r > 0 && z > 0 ? Math.hypot(r, z) : Math.max(r, z);
+}
+
+/** Farthest coordinate of anything drawn, in mm from the axis; `limit` is how far the soft limits reach. */
+export function jobReach(job: Job | null, limit: number): number {
+    let reach = limit > 0 ? limit : 0;
     if (job) {
         const paths: Path[] = [...job.outline, ...job.copper];
         for (const group of job.groups) {
@@ -137,7 +192,7 @@ export class Preview {
     /** The view was fitted against a canvas that had a size. */
     private fitted = false;
     private job: Job | null = null;
-    private rMax = 0;
+    private limits: Limits = { kinematics: "polar", r_max: 0, z_max: 0 };
     private head: Joint | null = null;
     private headBoard: Board | null = null;
     private trail: Point[] = [];
@@ -180,9 +235,26 @@ export class Preview {
         }
     }
 
+    /** The radius limit drawn, mm; 0 is none. */
+    get rMax(): number {
+        return this.limits.r_max;
+    }
+
+    /** What bounds the head as drawn. */
+    getLimits(): Limits {
+        return { ...this.limits };
+    }
+
+    /** The radius limit alone, the machine otherwise as it was set. */
     setRMax(mm: number): void {
-        if (this.rMax !== mm) {
-            this.rMax = mm;
+        this.setLimits({ ...this.limits, r_max: mm });
+    }
+
+    /** What bounds the head: the machine's kinematics and its soft limits, as its profile gives them. */
+    setLimits(limits: Limits): void {
+        const current = this.limits;
+        if (current.kinematics !== limits.kinematics || current.r_max !== limits.r_max || current.z_max !== limits.z_max) {
+            this.limits = { kinematics: limits.kinematics, r_max: limits.r_max, z_max: limits.z_max };
             this.requestDraw();
         }
     }
@@ -223,7 +295,7 @@ export class Preview {
     }
 
     resetView(): void {
-        this.view = fitView(jobReach(this.job, this.rMax), this.width || 1, this.height || 1);
+        this.view = fitView(jobReach(this.job, limitReach(this.limits)), this.width || 1, this.height || 1);
         // A canvas measures 0 by 0 until it is laid out, so a fit before
         // that is against nothing and the next real size has to redo it.
         this.fitted = this.width > 1 && this.height > 1;
@@ -282,8 +354,11 @@ export class Preview {
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, width, height);
 
-        const reach = jobReach(this.job, this.rMax);
+        const reach = jobReach(this.job, limitReach(this.limits));
         const px = 1 / view.scale;
+        const cartesian = this.limits.kinematics === "cartesian";
+        // Long enough for a line to cross the whole view wherever it is panned.
+        const extent = Math.hypot(width, height) / view.scale + Math.hypot(view.cx, view.cy) + reach;
 
         // World transform: mm to CSS px, y up.
         ctx.setTransform(
@@ -307,17 +382,37 @@ export class Preview {
         ctx.lineWidth = 2 * px;
         ctx.setLineDash([8 * px, 6 * px]);
         ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.max(reach * 1.5, 10), 0);
+        if (cartesian) {
+            // The rail is X, carried across the table by the cross slide, so
+            // it runs through the head along the table's turned X direction.
+            const through = this.headBoard ?? { x: 0, y: 0 };
+            const along = turned({ x: extent, y: 0 }, this.head?.a ?? 0);
+            ctx.moveTo(through.x - along.x, through.y - along.y);
+            ctx.lineTo(through.x + along.x, through.y + along.y);
+        } else {
+            ctx.moveTo(0, 0);
+            ctx.lineTo(Math.max(reach * 1.5, 10), 0);
+        }
         ctx.stroke();
         ctx.setLineDash([]);
 
-        if (this.rMax > 0) {
+        const limit = limitShape(this.limits, this.head?.a ?? 0, extent);
+        if (limit) {
             ctx.strokeStyle = colors.rmax;
             ctx.lineWidth = 1.5 * px;
             ctx.setLineDash([4 * px, 4 * px]);
             ctx.beginPath();
-            ctx.arc(0, 0, this.rMax, 0, Math.PI * 2);
+            if (limit.kind === "circle") {
+                ctx.arc(0, 0, limit.radius, 0, Math.PI * 2);
+            } else if (limit.kind === "outline") {
+                limit.points.forEach(([x, y], index) => (index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+                ctx.closePath();
+            } else {
+                for (const [[x0, y0], [x1, y1]] of limit.lines) {
+                    ctx.moveTo(x0, y0);
+                    ctx.lineTo(x1, y1);
+                }
+            }
             ctx.stroke();
             ctx.setLineDash([]);
         }
@@ -385,13 +480,16 @@ export class Preview {
             ctx.beginPath();
             ctx.arc(board.x, board.y, 2 * px, 0, Math.PI * 2);
             ctx.fill();
-            // The radius line from the axis to the head.
-            ctx.globalAlpha = 0.5;
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(board.x, board.y);
-            ctx.stroke();
-            ctx.globalAlpha = 1;
+            // The radius line from the axis to the head, which on a
+            // cartesian machine is no joint of it.
+            if (!cartesian) {
+                ctx.globalAlpha = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(board.x, board.y);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
         }
 
         // Labels in screen space.
