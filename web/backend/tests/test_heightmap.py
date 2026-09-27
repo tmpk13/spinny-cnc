@@ -149,6 +149,20 @@ def test_a_joint_space_group_is_measured_on_the_board():
     assert (y0, y1) == pytest.approx((-5.0, 5.0))
 
 
+def test_a_joint_space_turn_is_measured_along_its_sweep():
+    # A full turn at one radius starts and ends at (8, 0) and sweeps the
+    # whole circle between: a map around its ends does not cover it.
+    job = Job(groups=[Group(label="ring", joints=[[(8.0, 0.0), (8.0, 360.0)]])])
+    x0, y0, x1, y1 = job_extent(job)
+    assert (x0, y0, x1, y1) == pytest.approx((-8.0, -8.0, 8.0, 8.0), abs=0.01)
+    corner = Grid(x0=6, y0=-2, x1=12, y1=2, nx=2, ny=2)
+    heightmap = HeightMap(grid=corner, heights=[[0.0, 0.0], [0.0, 0.0]], focus_set=True)
+    with pytest.raises(ValueError, match="does not cover"):
+        check_covers(heightmap, job)
+    whole = Grid(x0=-8, y0=-8, x1=8, y1=8, nx=2, ny=2)
+    check_covers(HeightMap(grid=whole, heights=[[0.0, 0.0], [0.0, 0.0]], focus_set=True), job)
+
+
 # --- compensation --------------------------------------------------------------
 
 

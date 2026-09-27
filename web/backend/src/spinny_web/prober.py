@@ -9,8 +9,11 @@ height before moving on, so the probe never drags across the board.
 
 Every line is sent and answered before the next, so a failed probe stops
 the routine before anything else moves: a miss raises the firmware's
-`Alarm:2`, which also refuses whatever might still be queued. A stop holds
-and resets the machine the way a run's stop does.
+`Alarm:2`, which also refuses whatever might still be queued. Each probe
+starts from rest: a move is answered once it is queued, and a probe only
+once the motion ahead of it has run as well, so the rise and the move to a
+point are waited out first and the probe's answer time covers its descent
+alone. A stop holds and resets the machine the way a run's stop does.
 """
 
 from __future__ import annotations
@@ -29,11 +32,13 @@ from .link import Link, LinkError, parse_probe
 from .runner import halt
 
 RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
-# Answer time allowed for a positioning line, and on top of a probe's own
-# travel time.
+# Answer time allowed for a positioning line, on top of the time a move
+# should take to come to rest, and on top of a probe's own travel time.
 LINE_TIMEOUT = 10.0
 PROBE_MARGIN = 10.0
 JOIN_WAIT = 2.0
+# Between status requests while waiting for the head to come to rest, s.
+SETTLE_POLL = 0.02
 
 
 class ProberError(Exception):
@@ -178,7 +183,15 @@ class Prober:
         streamer: Streamer,
         r_max: float = 0.0,
         z_max: float = 0.0,
+        spindle_off: int | None = None,
+        keep_focus: bool = True,
     ) -> dict:
+        """Starts probing `grid`. `spindle_off` is the output's duty with a
+        spindle stopped, on a machine whose output drives one: probing is
+        refused while the status shows any other, since the tool may be
+        the probe and would be lowered onto the copper turning.
+        `keep_focus` false starts the new map without the last one's focus
+        offset, which then held only for heights from another frame."""
         grid.check()
         settings.check()
         if link is None or not link.is_open:
@@ -190,13 +203,23 @@ class Prober:
             if thread is not None and thread.is_alive():
                 raise ProberError("the last probing is still stopping")
             self._starting = True
+            # A stop from here on ends the start before anything moves.
+            self._abort.clear()
         try:
-            return self._start(grid, settings, link, streamer, r_max, z_max)
+            return self._start(grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus)
         finally:
             self._starting = False
 
     def _start(
-        self, grid: Grid, settings: ProbeSettings, link: Link, streamer: Streamer, r_max: float, z_max: float
+        self,
+        grid: Grid,
+        settings: ProbeSettings,
+        link: Link,
+        streamer: Streamer,
+        r_max: float,
+        z_max: float,
+        spindle_off: int | None,
+        keep_focus: bool,
     ) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
@@ -208,6 +231,8 @@ class Prober:
             raise ProberError("the machine has no focus axis: set $h_axis=1 to probe")
         if status.probe:
             raise ProberError("the probe is already touching: raise the head clear of the board first")
+        if spindle_off is not None and status.laser != spindle_off:
+            raise ProberError("the spindle is turning: stop it before probing")
         # Every point is checked for reach before the first move.
         angle = status.a
         joints = {}
@@ -237,20 +262,22 @@ class Prober:
         # A map probed before keeps its focus offset only if the probe has
         # not changed: the offset is contact to focus for that probe.
         previous = self.store.get()
-        if previous is not None and tuple(previous.probe_offset) == tuple(settings.offset):
+        if keep_focus and previous is not None and tuple(previous.probe_offset) == tuple(settings.offset):
             heightmap.focus_offset = previous.focus_offset
             heightmap.focus_set = previous.focus_set
-        # The new map replaces the old one from the start, so the page shows
-        # its grid filling in rather than the old heights.
-        self.store.put(heightmap)
         with self._lock:
+            if self._abort.is_set():
+                raise ProberError("probing was stopped before it started")
+            # The new map replaces the old one from the start, so the page
+            # shows its grid filling in rather than the old heights.
+            self.store.put(heightmap)
             self.progress = ProbeProgress(total=grid.nx * grid.ny)
             progress = self.progress
             self._link = link
-            self._abort.clear()
+            start = streamer.start_of(status)
             self._thread = threading.Thread(
                 target=self._run,
-                args=(grid, settings, link, streamer, status.h, joints, heightmap, progress),
+                args=(grid, settings, link, streamer, start, status.h, joints, heightmap, progress),
                 name="prober",
                 daemon=True,
             )
@@ -262,6 +289,11 @@ class Prober:
         with self._lock:
             progress = self.progress
             if progress is None or progress.state != RUNNING:
+                if self._starting:
+                    # Nothing has moved yet: the start sees the flag before
+                    # its first line and gives up.
+                    self._abort.set()
+                    return ProbeProgress(state=STOPPED, error="stopped before it started").to_dict()
                 raise ProberError("nothing is being probed")
             link = self._link
         assert link is not None
@@ -282,14 +314,21 @@ class Prober:
         with self._lock:
             progress = self.progress
             if progress is None or progress.state != RUNNING:
+                if self._starting:
+                    self._abort.set()
                 return
         self._abort.set()
         self._finish(progress, STOPPED, reason)
 
     # --- the probing thread -----------------------------------------------
 
-    def _run(self, grid, settings, link, streamer, travel, joints, heightmap, progress) -> None:
+    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress) -> None:
         restarts = link.restarts
+        h_rate = streamer.rates.h_rate
+        # Where the head is, and how far the rise to the travel height
+        # queued ahead of the next move has to go.
+        joint = start
+        rise = 0.0
         try:
             for ix, iy in grid.order():
                 if self._abort.is_set():
@@ -297,13 +336,17 @@ class Prober:
                 with self._lock:
                     progress.point = (ix, iy)
                 self._emit(progress, None)
-                r, a = joints[(ix, iy)]
-                self._request(link, f"go {streamer.words((r, a))}", LINE_TIMEOUT)
-                height = self._touch(link, settings.feed, settings.depth)
+                target = joints[(ix, iy)]
+                self._request(link, f"go {streamer.words(target)}", LINE_TIMEOUT)
+                self._settle(link, rise / h_rate * 60.0 + streamer._rapid_seconds(joint, target), restarts)
+                joint = target
+                height = self._touch(link, settings.feed, settings.depth, h_rate)
                 if settings.slow > 0.0:
                     self._request(link, f"go H{coord(height + settings.backoff, FOCUS_DECIMALS)}", LINE_TIMEOUT)
-                    height = self._touch(link, settings.slow, 2.0 * settings.backoff)
+                    self._settle(link, settings.backoff / h_rate * 60.0, restarts)
+                    height = self._touch(link, settings.slow, 2.0 * settings.backoff, h_rate)
                 self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
+                rise = abs(travel - height)
                 heightmap.heights[iy][ix] = round(height, 4)
                 with self._lock:
                     progress.done += 1
@@ -314,7 +357,7 @@ class Prober:
             # The last rise is answered once it is queued, not once it is
             # done; the map is finished when the head is back up and still,
             # so a run started on it finds the machine at rest.
-            self._settle(link)
+            self._settle(link, rise / h_rate * 60.0, restarts)
             with self._lock:
                 progress.point = None
             self._finish(progress, DONE, None, heightmap)
@@ -324,6 +367,11 @@ class Prober:
                 return
             reason = str(exc)
             self._abort.set()
+            if link.restarts != restarts:
+                # The machine came back up with its focus axis wherever the
+                # head was: the offset kept from the last map belongs to
+                # the old numbers.
+                heightmap.focus_set = False
             if link.restarts == restarts and link.is_open:
                 # A missed probe has already raised the alarm and stopped;
                 # anything else is halted the way a stop would halt it.
@@ -342,21 +390,37 @@ class Prober:
             self._message("error", f"probing failed: {exc!r}")
             self._finish(progress, ERROR, f"probing failed: {exc!r}", heightmap)
 
-    def _settle(self, link: Link) -> None:
-        deadline = time.monotonic() + LINE_TIMEOUT
-        while not self._abort.is_set():
+    def _settle(self, link: Link, seconds: float, restarts: int) -> None:
+        """Waits for the head to come to rest: the motion queued should take
+        `seconds`, and LINE_TIMEOUT more is allowed. A hold extends the
+        wait, as it does a line's.
+
+        A machine that started over since `restarts` is at rest too, with
+        its motion gone and its focus axis renumbered: that is an error,
+        not the end of the move, whether a probe or the finished map
+        would come next."""
+        allowed = seconds + LINE_TIMEOUT
+        deadline = time.monotonic() + allowed
+        while True:
+            if self._abort.is_set():
+                raise LinkError("stopped")
             status = link.status_now(1.0, routine=True)
+            if link.restarts != restarts:
+                raise LinkError("the machine reset during probing")
             if status.state == "Idle":
                 return
             if status.state == "Alarm":
                 raise LinkError(f"the machine raised an alarm: {status.raw}")
+            if status.state == "Hold":
+                deadline = time.monotonic() + allowed
             if time.monotonic() > deadline:
                 raise LinkError(f"the head did not come to rest: {status.raw}")
-            time.sleep(0.01)
+            time.sleep(SETTLE_POLL)
 
-    def _touch(self, link: Link, feed: float, distance: float) -> float:
-        """One probe down; the height at contact."""
-        timeout = distance / feed * 60.0 + PROBE_MARGIN
+    def _touch(self, link: Link, feed: float, distance: float, h_rate: float) -> float:
+        """One probe down from rest; the height at contact. The focus axis
+        goes no faster than its rate, whatever the feed asks."""
+        timeout = distance / min(feed, h_rate) * 60.0 + PROBE_MARGIN
         lines = self._request(link, f"probe H-{num(distance, FOCUS_DECIMALS)} F{num(feed)}", timeout)
         result = parse_probe(lines)
         if result is None:

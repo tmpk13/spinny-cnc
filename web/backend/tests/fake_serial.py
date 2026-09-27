@@ -3,7 +3,9 @@
 Everything the host reads is delivered by a background thread one byte at a
 time, so read boundaries fall anywhere, including inside lines. Lines are
 answered in order after a settable delay, realtime bytes act at once, and
-motion lines move a joint position and keep the state at Run for a moment.
+motion lines move a joint position and keep the state at Run for a moment;
+a probe waits for that moment to pass before it is answered, holding up
+the lines behind it as the firmware does.
 """
 
 from __future__ import annotations
@@ -127,6 +129,10 @@ class FakeSerial:
         self.alarm: int | None = None
         self.busy_until = 0.0
         self.jogging = False
+        # Counted so a probe waiting behind motion can tell that a jog
+        # cancel or a reset came while it waited.
+        self._jog_cancels = 0
+        self._resets = 0
         self._lock = threading.Lock()
         self._outstanding: deque[str] = deque()
         self._line = bytearray()
@@ -225,7 +231,7 @@ class FakeSerial:
         rate = 300 if moving else 0
         laser = self.laser if moving else 0
         if self.settings["spindle"]:
-            laser = self.spindle
+            laser = self.duty(self.spindle)
         focus = f"|H:{self.h:.3f}|P:{int(self.touching())}" if self.settings["h_axis"] else ""
         return (
             f"<{self.state()}|J:{r:.3f},{a:.4f}|V:{rate}|L:{laser}"
@@ -246,6 +252,14 @@ class FakeSerial:
         x = (r + along) * math.cos(theta) - across * math.sin(theta)
         y = (r + along) * math.sin(theta) + across * math.cos(theta)
         return self.surface(x, y)
+
+    def duty(self, power: float) -> int:
+        """The output's duty for a spindle speed, as the status reports it:
+        scaled by `s_max`, and inverted under `laser_invert`, where a
+        stopped spindle is full duty."""
+        s_max = self.settings["s_max"] or 1
+        duty = int(min(max(power / s_max * 1000.0, 0.0), 1000.0))
+        return 1000 - duty if self.settings["laser_invert"] else duty
 
     def touching(self) -> bool:
         top = self.top()
@@ -275,14 +289,18 @@ class FakeSerial:
                 if not self._outstanding or self._outstanding[0] != text:
                     # Flushed by a reset: no answer.
                     continue
-            for line in self._execute(text):
+            lines = self._execute(text)
+            if lines is None:
+                # Flushed by a reset while it waited: no answer.
+                continue
+            for line in lines:
                 self._emit(line)
             self.answered_lines.append(text)
             with self._lock:
                 if self._outstanding and self._outstanding[0] == text:
                     self._outstanding.popleft()
 
-    def _execute(self, text: str) -> list[str]:
+    def _execute(self, text: str) -> list[str] | None:
         words = text.split(";", 1)[0].split()
         if not words:
             # An empty or comment-only line is answered like any other.
@@ -290,6 +308,20 @@ class FakeSerial:
         keyword = words[0].lower()
         rest = " ".join(words[1:])
         values = {k.upper(): float(v) for k, v in WORD.findall(rest)}
+        spindle = bool(self.settings["spindle"])
+        if spindle and (
+            (keyword == "cut" and ("S" in values or "M" in values))
+            or (keyword == "dwell" and "S" in values)
+            or (keyword == "laser" and "S" in values)
+        ):
+            # The output drives a spindle: the laser's words are refused in
+            # both modes, before any state is looked at, so a laser job sent
+            # to a spindle machine fails on its first line.
+            return ["error:2 bad word"]
+        if keyword in ("version", "status") and rest:
+            # They take no words: one after them is refused, and nothing
+            # but the error is printed.
+            return ["error:2 bad word"]
         if keyword == "version":
             return [self.banner(), "ok"]
         if keyword == "status":
@@ -301,19 +333,26 @@ class FakeSerial:
         if keyword == "probe":
             return self._probe(values)
         if keyword == "spindle":
-            if not self.settings["spindle"]:
+            if not spindle:
                 return ["error:2 bad word"]
             if rest.lower() == "off":
                 self.spindle = 0
                 return ["ok"]
             if "S" not in values:
                 return ["error:3 missing word"]
+            # Started from rest, in a run or in a hold of one, never in an
+            # alarm or a jog.
+            if self.alarm is not None or self.state() == "Jog":
+                return ["error:5 not now"]
             self.spindle = int(values["S"])
             return ["ok"]
         if keyword in ("go", "cut", "jog", "jogto") and self.settings["cartesian"]:
             return self._cartesian(keyword, values)
         if keyword in ("go", "cut", "jog", "jogto"):
             if self.alarm is not None:
+                return ["error:5 not now"]
+            if keyword == "cut" and spindle and self.spindle <= 0:
+                # A cut with the spindle stopped would drag a still tool.
                 return ["error:5 not now"]
             r = values.get("R")
             a = values.get("A")
@@ -322,7 +361,7 @@ class FakeSerial:
             if h is not None:
                 if not self.settings["h_axis"] or z is not None:
                     return ["error:2 bad word"]
-                self.h = self.h + h if keyword == "jog" else h
+                h = self.h + h if keyword == "jog" else h
             if z is not None:
                 if keyword not in ("jog", "jogto") or r is not None or a is not None:
                     return ["error:2 bad word"]
@@ -338,6 +377,8 @@ class FakeSerial:
             # move; the soft limit is on the distance from the axis.
             if r is not None and self.settings["r_max"] and abs(r) > self.settings["r_max"]:
                 return ["error:4 out of range"]
+            if h is not None:
+                self.h = h
             if r is not None:
                 self.joint[0] = r
             if a is not None:
@@ -358,7 +399,9 @@ class FakeSerial:
             return ["ok"]
         if keyword == "laser":
             if rest.lower() == "off":
+                # It stops whatever the output drives, a spindle as well.
                 self.laser = 0
+                self.spindle = 0
                 return ["ok"]
             if "S" not in values:
                 return ["error:3 missing word"]
@@ -388,14 +431,15 @@ class FakeSerial:
 
     def _cartesian(self, keyword: str, values: dict) -> list[str]:
         """A move with the cross slide as a joint beside the others."""
-        if self.alarm is not None:
-            return ["error:5 not now"]
         if keyword in ("go", "cut") and "A" in values:
-            return ["error:2 bad word"]
-        if self.settings["spindle"] and keyword == "cut" and ("S" in values or "M" in values):
             return ["error:2 bad word"]
         if "H" in values and not self.settings["h_axis"]:
             return ["error:2 bad word"]
+        if self.alarm is not None:
+            return ["error:5 not now"]
+        if keyword == "cut" and self.settings["spindle"] and self.spindle <= 0:
+            # A cut with the spindle stopped would drag a still tool.
+            return ["error:5 not now"]
         relative = keyword == "jog"
         target = {
             "R": self.joint[0],
@@ -420,9 +464,9 @@ class FakeSerial:
         self.busy_until = max(self.busy_until, time.monotonic()) + self.move_time
         return ["ok"]
 
-    def _probe(self, values: dict) -> list[str]:
+    def _probe(self, values: dict) -> list[str] | None:
         """The focus axis down (or up) by at most H until the board is met,
-        answered at once with where."""
+        once the motion queued before it is done, answered with where."""
         if not self.settings["h_axis"]:
             return ["error:2 bad word"]
         if self.alarm is not None:
@@ -430,17 +474,43 @@ class FakeSerial:
         distance = values.get("H")
         if distance is None:
             return ["error:3 missing word"]
+        # The probe may be the tool itself: a turning one would cut.
+        if self.settings.get("spindle") and self.spindle > 0:
+            return ["error:5 not now"]
+        # It waits for the motion ahead of it, a hold included. A jog
+        # cancel meanwhile discards the jog and ends the probe unrun, with
+        # no alarm; a reset flushes it unanswered.
+        cancels, resets = self._jog_cancels, self._resets
+        while self.hold or time.monotonic() < self.busy_until:
+            if self._resets != resets:
+                return None
+            if self._jog_cancels != cancels:
+                return [f"[PRB:{self.h:.4f}:0]", "ok"]
+            if not self.is_open:
+                return None
+            time.sleep(0.002)
+        if self._resets != resets:
+            return None
+        if self._jog_cancels != cancels:
+            return [f"[PRB:{self.h:.4f}:0]", "ok"]
         if self.touching():
             return ["error:10 probe active"]
+        if self.settings["spindle"] and self.spindle > 0:
+            # The probe may be the tool itself, which would cut at the touch.
+            return ["error:5 not now"]
         target = self.h + distance
         top = self.top()
         self.enabled = True
+        self.jogging = True
         self.busy_until = max(self.busy_until, time.monotonic()) + self.move_time
         if top is not None and target <= top:
             self.h = top
             return [f"[PRB:{top:.4f}:1]", "ok"]
         self.h = target
         self.alarm = 2
+        # The alarm stops the output, a spindle as well.
+        self.laser = 0
+        self.spindle = 0
         return [f"[PRB:{target:.4f}:0]", "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"]
 
     def _setting(self, text: str) -> list[str]:
@@ -465,6 +535,10 @@ class FakeSerial:
             return ["error:7 bad setting value"]
         if number < 0:
             return ["error:7 bad setting value"]
+        if name == "spindle" and number != self.settings[name]:
+            # What runs on the output stops with the change of what it is.
+            self.laser = 0
+            self.spindle = 0
         self.settings[name] = int(number) if number == int(number) else number
         return ["ok"]
 
@@ -486,6 +560,7 @@ class FakeSerial:
             # follows it costs no steps and raises no alarm.
             moving = self.state() in ("Run", "Jog")
             self.received_at_reset.append(len(self.received_lines))
+            self._resets += 1
             with self._lock:
                 self._outstanding.clear()
             self.hold = False
@@ -502,6 +577,7 @@ class FakeSerial:
             self._emit(self.banner())
         elif byte == 0x85:
             if self.jogging:
+                self._jog_cancels += 1
                 self.busy_until = 0.0
 
     # --- output, one byte at a time ------------------------------------

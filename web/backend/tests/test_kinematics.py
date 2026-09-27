@@ -8,8 +8,10 @@ import pytest
 from polar_sim import deviation
 from replay import board, parse, replay
 
+from spinny_web.heightmap import Compensation, Grid, HeightMap
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import (
+    CartesianStreamer,
     Rates,
     Streamer,
     coord,
@@ -393,3 +395,46 @@ def test_rates_follow_the_step_pulse_width_and_default_to_the_firmwares():
     assert wide.a_rate == pytest.approx(1.0e6 / 33 * 60 / 14222.222, rel=1e-4)
     with pytest.raises(ValueError):
         Streamer().board_goto((5.0, 0.0), float("nan"), 0.0)
+
+
+def flat_focus(focus: float, head_h: float = 0.0, mode: str = "focus"):
+    """A flat, complete map whose focus height is `focus` everywhere."""
+    grid = Grid(x0=-20, y0=-20, x1=20, y1=20, nx=3, ny=3)
+    heightmap = HeightMap.empty(grid)
+    heightmap.heights = [[focus - 1.0] * 3 for _ in range(3)]
+    heightmap.focus_offset = 1.0
+    heightmap.focus_set = True
+    return Compensation(heightmap=heightmap, mode=mode, head_h=head_h)
+
+
+def test_focus_compensation_sets_the_height_before_a_first_cut_from_the_start():
+    # The head already over the job's first point: the first line would be
+    # a lit cut ramping H from wherever it was left.
+    comp = flat_focus(-0.5, head_h=3.0)
+    for streamer in (Streamer(), CartesianStreamer(angle=30.0)):
+        start = streamer._path_start((5.0, 0.0), (5.0, 0.0))
+        pieces = list(streamer.job_pieces(job_of([(5.0, 0.0), (8.0, 0.0)]), start, comp))
+        assert pieces[0].line == "go H-0.5000"
+        assert pieces[0].seconds == pytest.approx(3.5 / streamer.rates.h_rate * 60.0)
+        assert pieces[1].line.startswith("cut ") and pieces[1].line.split()[-3] == "H-0.5000"
+        assert sum(1 for piece in pieces if piece.line.startswith("go H")) == 1
+        # The estimate counts the same lines as the run streams.
+        assert streamer.estimate(job_of([(5.0, 0.0), (8.0, 0.0)]), start, comp).moves == len(pieces)
+
+
+def test_focus_compensation_sets_the_height_before_a_joint_group_starting_under_the_head():
+    comp = flat_focus(-0.5)
+    job = Job(name="t", groups=[Group(label="j", power=300, speed=100, joints=[[(5.0, 0.0), (8.0, 0.0)]])])
+    lines = [piece.line for piece in Streamer().job_pieces(job, (5.0, 0.0), comp)]
+    assert lines[0] == "go H-0.5000"
+    assert lines[1].startswith("cut R")
+
+
+def test_a_rapid_first_carries_the_height_and_power_compensation_adds_nothing():
+    comp = flat_focus(-0.5)
+    lines = [piece.line for piece in Streamer().job_pieces(job_of([(5.0, 0.0), (8.0, 0.0)]), (0.0, 0.0), comp)]
+    assert lines[0].startswith("go R") and lines[0].endswith("H-0.5000")
+    assert not any(line.startswith("go H") for line in lines)
+    power = flat_focus(-0.5, mode="power")
+    lines = [piece.line for piece in Streamer().job_pieces(job_of([(5.0, 0.0), (8.0, 0.0)]), (5.0, 0.0), power)]
+    assert lines[0].startswith("cut R") and "H" not in lines[0]

@@ -358,8 +358,9 @@ def from_json(text: str, name: str) -> Job:
             for point in poly:
                 if any(abs(v) > MAX_VALUE for v in point):
                     raise JobImportError(f"group {group.label!r}: a coordinate is past {MAX_VALUE:g}")
-        if group.joints and not group.paths:
-            group.paths = [kinematics.joint_preview(poly) for poly in group.joints]
+    drawn = [group for group in job.groups if group.joints and not group.paths]
+    for group, paths in zip(drawn, kinematics.joint_previews([group.joints for group in drawn])):
+        group.paths = paths
     return job
 
 

@@ -7,8 +7,10 @@ import time
 
 import pytest
 from fake_serial import FakeSerial, fake_opener
+from fastapi.testclient import TestClient
 from replay import parse
 
+from spinny_web.app import Backend, create_app
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
 from spinny_web.link import REALTIME_RESET, Link, LinkClosed
@@ -559,3 +561,260 @@ def test_a_run_starts_with_the_table_angle_renumbered_within_a_turn():
         assert "A" in first and float(first.split("A")[1].split()[0]) < 360.0
     finally:
         link.close()
+
+
+def motion_lines(fake: FakeSerial) -> list[str]:
+    return [line for line in fake.received_lines if line.split()[0] in ("go", "cut", "jog", "jogto")]
+
+
+@pytest.mark.parametrize("action", ["stop", "hold", "abort", "reset"])
+def test_a_run_stopped_while_it_is_being_prepared_never_starts(action):
+    # The machine is idle while the plan is made, so a hold or a reset
+    # leaves it where it was: only the runner can keep the run from
+    # streaming afterwards.
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+
+        class SlowStreamer(Streamer):
+            def estimate(self, job, start, compensation=None):
+                if action == "stop":
+                    runner.stop()
+                elif action == "hold":
+                    runner.hold()
+                elif action == "abort":
+                    # What the console's reset does: the run, then the byte.
+                    runner.abort("reset by the operator")
+                    link.reset()
+                else:
+                    # A reset nobody told the runner of but its banner.
+                    link.reset()
+                return super().estimate(job, start, compensation)
+
+        with pytest.raises(RunnerError, match="not started|reset while"):
+            runner.start(small_job(), link, SlowStreamer())
+        assert not runner.active
+        assert motion_lines(fake) == []
+        # The refusal was that start's alone: the next one runs.
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: runner.progress.state == DONE, 10.0)
+    finally:
+        link.close()
+
+
+def test_a_reset_before_the_runner_was_asked_refuses_the_start():
+    # The caller counts from when it began to get the run ready.
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        before = link.restarts
+        assert link.reset()
+        with pytest.raises(RunnerError, match="reset while"):
+            runner.start(small_job(), link, Streamer(), None, before)
+        assert motion_lines(fake) == []
+    finally:
+        link.close()
+
+
+class TrippedEvent(threading.Event):
+    """An abort flag that, once armed, has an abort come from another
+    thread at the next look at it, waiting a moment for it to land."""
+
+    def __init__(self, trip) -> None:
+        super().__init__()
+        self.trip = trip
+        self.armed = False
+
+    def is_set(self) -> bool:
+        if self.armed:
+            self.armed = False
+            other = threading.Thread(target=self.trip, daemon=True)
+            other.start()
+            other.join(0.3)
+        return super().is_set()
+
+
+def test_an_abort_as_the_run_ends_never_leaves_it_marked_running():
+    fake, link, sink, runner = setup(move_time=0.002)
+    try:
+        runner._abort = TrippedEvent(lambda: runner.abort("reset by the operator"))
+        drain = runner._drain
+
+        def drained(*args):
+            drain(*args)
+            runner._abort.armed = True
+
+        runner._drain = drained
+        runner.start(small_job(), link, Streamer())
+        assert wait_for(lambda: not runner.active, 10.0), runner.snapshot()
+        assert runner.progress.state in (DONE, STOPPED)
+    finally:
+        link.close()
+
+
+# --- through the backend -------------------------------------------------------
+
+
+@pytest.fixture
+def backend(tmp_path):
+    fake = FakeSerial(move_time=0.002)
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    app = create_app(backend, frontend=tmp_path / "no-dist")
+    with TestClient(app) as client:
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        backend.fake = fake
+        backend.client = client
+        yield backend
+
+
+def stored(backend, job: Job) -> str:
+    response = backend.client.post("/api/jobs", files={"file": ("job.json", job.model_dump_json(), "application/json")})
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+@pytest.mark.parametrize("action", ["reset", "hold", "stop", "laser off", "console laser off", "console hold"])
+def test_the_operators_stop_reaches_a_run_still_being_prepared(backend, monkeypatch, action):
+    fake = backend.fake
+    job_id = stored(backend, small_job())
+    planning = threading.Event()
+    acted = threading.Event()
+    estimate = Streamer.estimate
+
+    def slow(self, job, start=(0.0, 0.0), compensation=None):
+        # The runner's plan: held until the operator has acted.
+        if backend.runner.active:
+            planning.set()
+            acted.wait(3.0)
+        return estimate(self, job, start, compensation)
+
+    monkeypatch.setattr(Streamer, "estimate", slow)
+    outcome: list = []
+
+    def run() -> None:
+        try:
+            outcome.append(backend.run_job(job_id))
+        except Exception as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert planning.wait(5.0)
+    if action == "reset":
+        backend.realtime("reset")
+    elif action == "hold":
+        backend.realtime("hold")
+    elif action == "stop":
+        backend.client.post("/api/run/stop").raise_for_status()
+    elif action == "laser off":
+        backend.laser_off()
+    elif action == "console laser off":
+        backend.command("laser off")
+    else:
+        backend.command("!")
+    acted.set()
+    thread.join(5.0)
+    assert len(outcome) == 1 and isinstance(outcome[0], RunnerError), outcome
+    assert not backend.runner.active
+    assert motion_lines(fake) == []
+
+
+@pytest.mark.parametrize("action", ["hold", "console hold", "run hold"])
+def test_a_hold_during_preparation_still_holds_a_moving_machine(backend, monkeypatch, action):
+    # The run has sent nothing yet, but a jog typed just before it is still
+    # moving the machine: the hold that keeps the run from starting holds
+    # the jog too.
+    fake = backend.fake
+    job_id = stored(backend, small_job())
+    planning = threading.Event()
+    acted = threading.Event()
+    estimate = Streamer.estimate
+
+    def slow(self, job, start=(0.0, 0.0), compensation=None):
+        if backend.runner.active:
+            planning.set()
+            acted.wait(3.0)
+        return estimate(self, job, start, compensation)
+
+    monkeypatch.setattr(Streamer, "estimate", slow)
+    outcome: list = []
+
+    def run() -> None:
+        try:
+            outcome.append(backend.run_job(job_id))
+        except Exception as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert planning.wait(5.0)
+    fake.move_time = 3.0
+    backend.command("jog R5 F10")
+    assert fake.state() == "Jog"
+    if action == "hold":
+        backend.realtime("hold")
+    elif action == "console hold":
+        backend.command("!")
+    else:
+        backend.client.post("/api/run/hold").raise_for_status()
+    acted.set()
+    thread.join(5.0)
+    assert len(outcome) == 1 and isinstance(outcome[0], RunnerError), outcome
+    assert fake.realtime_bytes.count(0x21) == 1
+    assert fake.hold
+    assert not backend.runner.active
+    assert [line for line in fake.received_lines if line.split()[0] in ("go", "cut")] == []
+
+
+def test_a_reset_while_the_run_reads_the_settings_keeps_it_from_starting(backend, monkeypatch):
+    # The reset lands before the runner has a run to cancel: the restart
+    # count the start is checked against was taken before the settings.
+    fake = backend.fake
+    job_id = stored(backend, small_job())
+    read_settings = Backend.read_settings
+
+    def and_reset(self, force: bool = False) -> dict:
+        values = read_settings(self, force)
+        assert self.link.reset(timeout=1.0)
+        return values
+
+    monkeypatch.setattr(Backend, "read_settings", and_reset)
+    with pytest.raises(RunnerError, match="reset while"):
+        backend.run_job(job_id)
+    assert not backend.runner.active
+    assert motion_lines(fake) == []
+
+
+def test_a_typed_status_is_asked_for_as_a_realtime_report(backend):
+    fake = backend.fake
+    response = backend.client.post("/api/command", json={"line": "status"})
+    assert response.status_code == 200, response.text
+    lines = response.json()["lines"]
+    assert len(lines) == 2 and lines[0].startswith("<") and lines[1] == "ok"
+    assert "status" not in fake.received_lines
+    # A report printed by a line would have put every later request one
+    # report behind.
+    fake.joint = [8.0, 0.0]
+    assert backend.link.status_now(1.0).r == 8.0
+
+
+def test_a_typed_laser_off_during_a_run_stops_it_through_the_run(backend):
+    fake = backend.fake
+    fake.move_time = 0.5
+    job_id = stored(backend, small_job())
+    response = backend.client.post(f"/api/jobs/{job_id}/run")
+    assert response.status_code == 200, response.text
+    assert wait_for(lambda: fake.state() == "Run", 5.0)
+    response = backend.client.post("/api/command", json={"line": "laser off"})
+    assert response.status_code == 200, response.text
+    assert backend.runner.progress.state == STOPPED
+    # Not the sync command, which would wait for the queue and let the
+    # lines behind it run on: a hold, then the reset.
+    assert "laser off" not in fake.received_lines
+    assert 0x21 in fake.realtime_bytes and 0x18 in fake.realtime_bytes
+    assert fake.realtime_bytes.index(0x21) < fake.realtime_bytes.index(0x18)
+    # With nothing running it is the operator's line again.
+    assert backend.client.post("/api/command", json={"line": "laser off"}).json()["lines"] == ["ok"]

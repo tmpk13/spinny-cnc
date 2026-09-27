@@ -14,7 +14,7 @@ from spinny_web.app import Backend, create_app, profile_of
 from spinny_web.heightmap import Compensation, Grid, HeightMap
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import CartesianStreamer, Rates, Spindle, Streamer, head_board, turned
-from spinny_web.link import Link
+from spinny_web.link import REALTIME_JOG_CANCEL, Link
 from spinny_web.prober import cartesian_probe_joint
 
 WORD = re.compile(r"([A-Z])(-?\d+(?:\.\d+)?)")
@@ -325,8 +325,19 @@ def test_a_milling_run_needs_the_depth_axis_and_streams_the_plunges(client, fake
     assert response.status_code == 400
     assert "h_axis" in response.json()["detail"]
     fake.settings["h_axis"] = 1
+    # A map the job could run on, so the refusal is the spindle's own and
+    # not the want of a map.
+    grid = Grid(x0=0, y0=-1, x1=4, y1=1, nx=3, ny=3)
+    heightmap = HeightMap.empty(grid)
+    heightmap.heights = [[0.0] * 3 for _ in range(3)]
+    assert client.put("/api/heightmap", json=heightmap.model_dump()).status_code == 200
+    # Focused here, with the head over the map at rest.
+    response = client.post("/api/heightmap/focus", json={})
+    assert response.status_code == 200, response.text
     response = client.post(f"/api/jobs/{job_id}/run", json={"compensate": "power"})
-    assert response.status_code == 400, "a spindle does not compensate by power"
+    assert response.status_code == 400
+    assert "compensate by focus" in response.json()["detail"], "a spindle does not compensate by power"
+    assert client.backend.compensation("auto", client.backend.store.get(job_id)).mode == "focus"
     response = client.post(f"/api/jobs/{job_id}/run")
     assert response.status_code == 200, response.text
     deadline = time.monotonic() + 10.0
@@ -355,3 +366,218 @@ def test_the_centering_test_is_the_polar_lasers(client, fake):
     connect(client)
     response = client.post("/api/center", json={})
     assert response.status_code == 400
+
+
+@pytest.fixture
+def quiet_client(tmp_path, fake):
+    """A client whose link sends no status poll: the backend knows only
+    the reports it asks for."""
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake), poll=False),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    app = create_app(backend, frontend=tmp_path / "no-dist")
+    with TestClient(app) as client:
+        client.backend = backend
+        yield client
+
+
+def test_a_cartesian_board_goto_is_planned_at_the_angle_the_table_has_now(quiet_client, fake):
+    fake.settings["cartesian"] = 1
+    connect(quiet_client)
+    # The table turned after the last report the backend has.
+    fake.joint = [0.0, 90.0]
+    response = quiet_client.post("/api/goto", json={"kind": "board", "x": 10, "y": 0})
+    assert response.status_code == 200, response.text
+    (line,) = response.json()["lines"]
+    target = words(line)
+    assert (target["R"], target["Z"]) == pytest.approx((0.0, -10.0), abs=1e-3)
+
+
+def test_a_cartesian_board_move_waits_for_a_turn_of_the_table(client, fake):
+    # The board frame turns with the table: a board point planned partway
+    # through a turn is another point once the turn has ended.
+    fake.settings["cartesian"] = 1
+    connect(client)
+    fake.move_time = 3.0
+    response = client.post("/api/jog", json={"kind": "joint", "da": 90})
+    assert response.status_code == 200, response.text
+    assert fake.state() == "Jog"
+    response = client.post("/api/goto", json={"kind": "board", "x": 10, "y": 0})
+    assert response.status_code == 409
+    assert "turning" in response.json()["detail"]
+    assert client.post("/api/jog", json={"kind": "board", "dx": 1}).status_code == 409
+    assert not any(line.startswith("jogto") for line in fake.received_lines)
+    assert sum(line.startswith("jog ") for line in fake.received_lines) == 1
+    # A joint goto that leaves the angle alone is queued behind the turn:
+    # where it ends in joints is known, but not in which frame.
+    response = client.post("/api/goto", json={"kind": "joint", "r": 10, "z": 0})
+    assert response.status_code == 200, response.text
+    response = client.post("/api/goto", json={"kind": "board", "x": 10, "y": 0})
+    assert response.status_code == 409
+    assert "turning" in response.json()["detail"]
+    assert client.post("/api/jog", json={"kind": "board", "dx": 1}).status_code == 409
+    assert sum(line.startswith("jogto") for line in fake.received_lines) == 1
+
+
+@pytest.mark.parametrize("cartesian", [False, True])
+def test_a_milling_group_at_speed_0_is_refused_before_a_line_is_made(cartesian):
+    kinds = CartesianStreamer if cartesian else Streamer
+    streamer = kinds(spindle=Spindle(spinup=0.0))
+    job = job_of(
+        Group(label="iso", power=500, speed=100, paths=[[(10.0, 0.0), (11.0, 0.0)]]),
+        Group(label="still", power=0, speed=100, paths=[[(12.0, 0.0), (13.0, 0.0)]]),
+    )
+    with pytest.raises(ValueError, match="still: a spindle needs a speed above 0"):
+        next(iter(streamer.job_pieces(job, (0.0, 0.0))))
+    # A disabled one is not run, and a laser's power 0 is only a trace.
+    job.groups[1].enabled = False
+    assert mill(streamer, job)[-1] == "spindle off"
+    job.groups[1].enabled = True
+    assert any(line.endswith("S0") for line in mill(kinds(), job))
+
+
+def test_a_milling_run_at_speed_0_is_refused_before_anything_is_sent(client, fake):
+    fake.settings["spindle"] = 1
+    fake.settings["h_axis"] = 1
+    connect(client)
+    job = job_of(Group(label="iso", power=0, speed=100, paths=[[(10.0, 0.0), (11.0, 0.0)]]))
+    response = client.post("/api/jobs", files={"file": ("mill.json", job.model_dump_json(), "application/json")})
+    assert response.status_code == 200, response.text
+    response = client.post(f"/api/jobs/{response.json()['id']}/run")
+    assert response.status_code == 400
+    assert "speed above 0" in response.json()["detail"]
+    assert not any(line.split()[0] in ("go", "cut", "spindle", "dwell") for line in fake.received_lines)
+
+
+def test_a_polar_milling_run_sends_no_laser_words(client, fake):
+    fake.settings["spindle"] = 1
+    fake.settings["h_axis"] = 1
+    connect(client)
+    job = job_of(Group(label="iso", power=600, speed=150, paths=[[(10.0, 0.0), (0.0, 10.0)]]))
+    response = client.post("/api/jobs", files={"file": ("mill.json", job.model_dump_json(), "application/json")})
+    assert response.status_code == 200, response.text
+    response = client.post(f"/api/jobs/{response.json()['id']}/run")
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 10.0
+    while client.get("/api/run").json()["state"] == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert client.get("/api/run").json()["state"] == "done", client.get("/api/run").json()
+    cuts = [line for line in fake.received_lines if line.startswith("cut R")]
+    assert len(cuts) > 3
+    assert not any("S" in words(line) or "M" in words(line) for line in cuts)
+    assert fake.spindle == 0
+
+
+# --- the fake keeps the firmware's rules -----------------------------------------
+
+
+def fake_link(fake: FakeSerial) -> Link:
+    link = Link("fake://", open_port=fake_opener(fake), poll=False)
+    link.open()
+    return link
+
+
+@pytest.mark.parametrize("cartesian", [0, 1])
+def test_the_fake_keeps_the_spindle_rules_in_both_modes(cartesian):
+    fake = FakeSerial(move_time=0.002)
+    fake.settings.update(spindle=1, h_axis=1, cartesian=cartesian)
+    link = fake_link(fake)
+    try:
+        assert link.request("cut R5 F100")[-1] == "error:5 not now", "never started"
+        assert link.request("cut R5 F100 S500")[-1] == "error:2 bad word"
+        assert link.request("dwell T10 S5")[-1] == "error:2 bad word"
+        assert link.request("laser S5")[-1] == "error:2 bad word"
+        assert link.request("spindle S500")[-1] == "ok"
+        assert link.request("cut R5 F100")[-1] == "ok"
+        assert link.request("cut R6 F100 M10")[-1] == "error:2 bad word"
+        assert link.request("laser off")[-1] == "ok"
+        assert fake.spindle == 0, "laser off stops the spindle"
+        assert link.request("cut R7 F100")[-1] == "error:5 not now"
+        assert link.request("spindle S0")[-1] == "ok"
+        assert link.request("cut R7 F100")[-1] == "error:5 not now", "a speed of 0 is stopped"
+        assert fake.joint[0] == 5.0
+        assert link.request("spindle S300")[-1] == "ok"
+        assert link.request("$spindle=0")[-1] == "ok"
+        assert fake.spindle == 0, "a change of what the output drives stops it"
+    finally:
+        link.close()
+
+
+def test_the_fake_reports_the_spindle_as_its_duty_and_stops_it_on_an_alarm():
+    fake = FakeSerial(move_time=0.002)
+    fake.settings.update(spindle=1, h_axis=1, s_max=500)
+    link = fake_link(fake)
+    try:
+        assert link.request("spindle S100")[-1] == "ok"
+        assert link.status_now(1.0).laser == 200
+        fake.settings["laser_invert"] = 1
+        assert link.status_now(1.0).laser == 800
+        # The probe may be the tool: not while it turns.
+        assert link.request("probe H-1")[-1] == "error:5 not now"
+        assert link.request("spindle off")[-1] == "ok"
+        assert link.status_now(1.0).laser == 1000, "stopped is full duty on an inverted output"
+        fake.spindle = 100
+        fake.settings["spindle"] = 1
+        assert link.request("probe H-1")[-1] == "error:5 not now"
+        fake.spindle = 0
+        assert link.request("probe H-1")[-1] == "error:11 probe missed"
+        assert link.request("spindle S100")[-1] == "error:5 not now", "not in an alarm"
+        assert link.request("spindle off")[-1] == "ok"
+    finally:
+        link.close()
+
+
+def test_the_fake_ends_a_probe_waiting_behind_a_cancelled_jog():
+    fake = FakeSerial(move_time=2.0)
+    fake.settings["h_axis"] = 1
+    fake.surface = lambda x, y: -5.0
+    link = fake_link(fake)
+    try:
+        assert link.request("jog R5")[-1] == "ok"
+        probe = link.send("probe H-1")
+        assert not probe.wait(0.2), "a probe waits for the jog ahead of it"
+        link.realtime(REALTIME_JOG_CANCEL)
+        assert probe.wait(1.0)
+        assert probe.lines == ["[PRB:0.0000:0]"] and probe.response == "ok"
+        assert fake.alarm is None and fake.h == 0.0
+    finally:
+        link.close()
+
+
+def test_the_fake_moves_no_axis_for_a_line_it_refuses():
+    fake = FakeSerial(move_time=0.002)
+    fake.settings.update(h_axis=1, r_max=50)
+    link = fake_link(fake)
+    try:
+        assert link.request("go R100 H1")[-1] == "error:4 out of range"
+        assert fake.h == 0.0
+    finally:
+        link.close()
+
+
+def test_a_typed_spindle_off_during_a_milling_run_stops_the_run(client, fake):
+    # Sent as typed it would wait for the queue, stop the spindle part way
+    # through the job, and leave the cuts behind it to a still tool.
+    fake.settings["spindle"] = 1
+    fake.settings["h_axis"] = 1
+    connect(client)
+    # Answered slowly, so the job is still streaming when the line is typed.
+    fake.ok_delay = 0.03
+    fake.move_time = 0.2
+    job = job_of(Group(label="iso", power=600, speed=150, passes=4, paths=[square(10.0, 0.0, 4.0)]))
+    response = client.post("/api/jobs", files={"file": ("mill.json", job.model_dump_json(), "application/json")})
+    job_id = response.json()["id"]
+    assert client.post(f"/api/jobs/{job_id}/run").status_code == 200
+    deadline = time.monotonic() + 5.0
+    while fake.spindle == 0:
+        assert time.monotonic() < deadline, "the run never started the spindle"
+        time.sleep(0.005)
+    response = client.post("/api/command", json={"line": "spindle off ; now"})
+    assert response.status_code == 200, response.text
+    assert client.get("/api/run").json()["state"] == "stopped"
+    assert "spindle off ; now" not in fake.received_lines and "spindle off" not in fake.received_lines
+    assert 0x18 in fake.realtime_bytes and fake.spindle == 0

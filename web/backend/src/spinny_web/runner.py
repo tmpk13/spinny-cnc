@@ -96,6 +96,12 @@ class Runner:
         # A run is being prepared: the plan is made from where the machine
         # is, and nothing may move it before the first line goes out.
         self._starting = False
+        # Why the run being prepared is not to start: a stop, a hold or a
+        # reset that came while it was being planned. It is checked under
+        # the lock that starts the thread, so none can slip in between.
+        self._cancel_start: str | None = None
+        # The link the run being prepared is for, which a hold then reaches.
+        self._starting_link: Link | None = None
         self.progress = Progress()
 
     # --- state ------------------------------------------------------------
@@ -112,7 +118,20 @@ class Runner:
 
     # --- control ----------------------------------------------------------
 
-    def start(self, job: Job, link: Link | None, streamer: Streamer, compensation: Compensation | None = None) -> dict:
+    def start(
+        self,
+        job: Job,
+        link: Link | None,
+        streamer: Streamer,
+        compensation: Compensation | None = None,
+        restarts: int | None = None,
+    ) -> dict:
+        """Plans the run from where the machine is and starts streaming it.
+
+        `restarts` is the link's restart count when the caller began to
+        get the run ready (reading settings, say): a reset from then on
+        refuses the start. By default it is taken as planning begins.
+        """
         with self._lock:
             if self.active:
                 raise RunnerError("a job is already running")
@@ -122,10 +141,18 @@ class Runner:
                 # would be streamed into the reset that ends the old one.
                 raise RunnerError("the previous run is still stopping")
             self._starting = True
+            self._cancel_start = None
+            self._starting_link = link
         try:
-            start, stats = self._prepare(job, link, streamer, compensation)
+            start, stats, restarts = self._prepare(job, link, streamer, compensation, restarts)
             assert link is not None
             with self._lock:
+                if self._cancel_start is not None:
+                    raise RunnerError(f"the run was not started: {self._cancel_start}")
+                if link.restarts != restarts:
+                    # A reset leaves an idle machine where it was, so only
+                    # its banner tells that one went by.
+                    raise RunnerError("the machine was reset while the run was being prepared")
                 self.progress = Progress(
                     job=job.id,
                     state=RUNNING,
@@ -141,19 +168,35 @@ class Runner:
                 self._last_publish = 0.0
                 self._thread = threading.Thread(
                     target=self._run,
-                    args=(job, link, streamer, start, progress, compensation),
+                    args=(job, link, streamer, start, progress, compensation, restarts),
                     name="runner",
                     daemon=True,
                 )
                 self._thread.start()
         finally:
-            self._starting = False
+            with self._lock:
+                self._starting = False
+                self._cancel_start = None
+                self._starting_link = None
         self._emit(force=True)
         return progress.to_dict()
 
-    def _prepare(self, job: Job, link: Link | None, streamer: Streamer, compensation: Compensation | None):
+    def _prepare(
+        self,
+        job: Job,
+        link: Link | None,
+        streamer: Streamer,
+        compensation: Compensation | None,
+        restarts: int | None = None,
+    ):
         if link is None or not link.is_open:
             raise RunnerError("not connected")
+        # A job the machine must not run is refused before anything is sent.
+        streamer.check_job(job)
+        # Taken before anything is read: the run counts every restart from
+        # here as one under it, a reset while it is being planned included.
+        if restarts is None:
+            restarts = link.restarts
         # The status and the estimate run outside the lock: the reader thread
         # takes it for every snapshot, and the status answer arrives on that
         # thread.
@@ -180,7 +223,7 @@ class Runner:
         after = self._idle_status(link)
         if (after.r, after.a, after.z, after.h) != (status.r, status.a, status.z, status.h):
             raise RunnerError("the machine moved while the run was being prepared")
-        return start, stats
+        return start, stats, restarts
 
     @staticmethod
     def _idle_status(link: Link):
@@ -192,7 +235,28 @@ class Runner:
             raise RunnerError(f"the machine is {status.raw or status.state}, not Idle")
         return status
 
+    def cancel_start(self, reason: str) -> bool:
+        """Keeps the run being prepared from starting; False when no run is
+        being prepared. Nothing has been sent for it yet, so there is
+        nothing to halt: the start refuses with `reason` instead of
+        streaming."""
+        with self._lock:
+            if not self._starting or self.progress.state in (RUNNING, HOLD):
+                return False
+            if self._cancel_start is None:
+                self._cancel_start = reason
+            return True
+
     def hold(self) -> dict:
+        with self._lock:
+            starting = self._starting_link
+        if self.cancel_start("held before it started"):
+            # The run has sent nothing, but a line sent before it may still
+            # be moving the machine: the byte holds that, and an idle
+            # machine drops it.
+            if starting is not None and starting.is_open:
+                starting.realtime(REALTIME_HOLD)
+            return self.progress.to_dict()
         link = self._require(RUNNING)
         link.realtime(REALTIME_HOLD)
         self._switch(RUNNING, HOLD)
@@ -216,6 +280,8 @@ class Runner:
             self.progress.state = after
 
     def stop(self) -> dict:
+        if self.cancel_start("stopped before it started"):
+            return self.progress.to_dict()
         with self._lock:
             if self.progress.state not in (RUNNING, HOLD):
                 raise RunnerError("nothing is running")
@@ -242,15 +308,20 @@ class Runner:
         """Ends the run from outside, before another line goes out.
 
         The streaming thread halts the machine and reports the run as
-        `state` with `reason`. Nothing happens when no run is active.
+        `state` with `reason`. A run still being prepared is not started.
+        Nothing happens when no run is active.
         """
+        if self.cancel_start(reason):
+            return
         with self._lock:
             if self.progress.state not in (RUNNING, HOLD):
                 return
             if self._error is None:
                 self._error = reason
             self._end_state = state
-        self._abort.set()
+            # Set with the error, so the thread's closing snapshot sees
+            # both or neither.
+            self._abort.set()
 
     def _require(self, state: str) -> Link:
         with self._lock:
@@ -273,9 +344,11 @@ class Runner:
         streamer: Streamer,
         start: tuple[float, float],
         progress: Progress,
-        compensation: Compensation | None = None,
+        compensation: Compensation | None,
+        restarts: int,
     ) -> None:
-        restarts = link.restarts
+        # `restarts` is the count from before the plan was made, so a reset
+        # between the plan and this thread is one under the run too.
         on_ack = functools.partial(self._on_ack, progress)
         try:
             for piece in streamer.job_pieces(job, start, compensation):
@@ -313,10 +386,17 @@ class Runner:
             if self._error is None:
                 self._error = f"streaming failed: {exc!r}"
             self._abort.set()
-        if self._error is not None:
+        # One reading of the outcome: an abort landing between two separate
+        # reads could leave neither branch taken and the run marked running
+        # with no thread behind it. An error always ends the run here; an
+        # abort with none is a stop, which finishes the run itself.
+        with self._lock:
+            error, end_state = self._error, self._end_state
+            aborted = self._abort.is_set()
+        if error is not None:
             self._abort.set()
-            reason = self._error
-            state = self._end_state
+            reason = error
+            state = end_state
             # A machine that has announced itself again has nothing queued
             # and nothing to halt; a second reset would only take an alarm
             # it raised for the operator as this run's doing.
@@ -326,7 +406,7 @@ class Runner:
                     reason = f"{reason}; the machine could not be stopped: {note}"
                     state = ERROR
             self._fail(reason, progress, state)
-        elif not self._abort.is_set():
+        elif not aborted:
             self._finish(DONE, progress)
 
     def _on_ack(self, progress: Progress, pending: Pending) -> None:

@@ -46,6 +46,7 @@ from .link import (
     Event,
     Link,
     LinkError,
+    MAX_LINE,
     REALTIME_HOLD,
     REALTIME_JOG_CANCEL,
     REALTIME_RESUME,
@@ -64,6 +65,17 @@ MAX_TOLERANCE = 10.0
 # well under it, and the whole of it is held in memory while it is read.
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 CLIENT_QUEUE = 256
+# The largest values the firmware's settings take: a float one, and a
+# whole number one (u32). One past its bound is refused before anything of
+# the same write is sent.
+SETTING_MAX = 1.0e7
+INT_SETTING_MAX = 2**32 - 1
+# How long the output-off line may take on the way out of a connection
+# before the reset byte stops the output instead, s.
+OUTPUT_OFF_WAIT = 1.0
+# Settings that change what a position means: the height map's heights
+# and board points were measured under the ones in force then.
+FRAME_SETTINGS = frozenset({"r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis"})
 
 SETTINGS_SCHEMA = [
     {"name": "r_steps", "unit": "steps/mm", "help": "radius motor"},
@@ -298,6 +310,33 @@ class Backend:
         # Where the jog in progress ends, so the next board move starts from
         # there rather than from a position the machine has already left.
         self._jog_target: tuple[float, float] | None = None
+        # A run and probing each claim the whole machine: the check that
+        # the other is not under way and the claim are made under this, so
+        # two starts that overlap cannot both pass. Taken before
+        # `_move_lock` where both are held.
+        self._owner_lock = threading.Lock()
+        # The height map's read, change and write, one at a time.
+        self._map_lock = threading.Lock()
+        # Resets the firmware has announced on this link (`[MSG:reset]`
+        # comes before the banner of a reset byte), and the restarts
+        # without one already acted on; None until the link is open. A
+        # banner with no reset before it is a machine that started over,
+        # its focus axis at zero wherever the head was.
+        self._soft_resets = 0
+        self._restarts_seen: int | None = None
+        # The focus axis frame, counted up whenever it may have changed, and
+        # the frame the stored map's heights were probed in (None for a map
+        # from before). Focus here ties heights from another frame to this
+        # one through the offset, so an offset given as a number holds only
+        # for heights probed in this frame, and only then does probing
+        # again keep the offset.
+        self._frame = 0
+        self._heights_frame: int | None = None
+        # The frame the focus offset was set in. Every frame change takes
+        # the offset back as it happens, but probing writes its own copy of
+        # the map as it goes: one made just before a restart it had not yet
+        # seen would bring an offset from the old frame back.
+        self._focus_frame: int | None = None
 
     # --- config -------------------------------------------------------------
 
@@ -377,12 +416,15 @@ class Backend:
             self._close_link()
             link = self.link_factory(url)
             link.subscribe(self._on_link_event)
+            self._soft_resets = 0
+            self._restarts_seen = None
             self.link = link
             try:
                 link.open()
             except LinkError:
                 self.link = None
                 raise
+            self._restarts_seen = link.restarts - self._soft_resets
             self.url = url
             self.config["last_url"] = url
             self._save_config()
@@ -391,6 +433,9 @@ class Backend:
             self.publish_message("error", f"no banner from {url}: is that the firmware?")
         else:
             self.publish_message("info", f"connected to {url}, firmware v{link.banner.version}")
+        # Nothing says the focus axis is where it was: the machine may have
+        # been powered off, or moved by hand, since the offset was set.
+        self._frame_changed("connected")
         try:
             link.status_now(1.0, routine=True)
             self.read_settings(force=True)
@@ -417,9 +462,46 @@ class Backend:
                 self.prober.stop()
             except ProberError:
                 pass
+        if link.is_open:
+            self._output_off(link)
         link.close("disconnected")
         self.link = None
         self._jog_target = None
+
+    def _output_off(self, link: Link) -> None:
+        """Stops a turning spindle or a lit beam before the port closes.
+
+        The firmware does not see a port close, only the USB host going
+        away, and a spindle has no timeout: left on, it would go on turning
+        with nothing connected to stop it. `laser off` stops either; one
+        that is refused or not answered in time, with motion still queued,
+        is followed by the reset byte, which stops the output at once.
+        """
+        try:
+            status = link.status_now(OUTPUT_OFF_WAIT, routine=True)
+        except LinkError:
+            status = None
+        if status is not None and status.laser == self._off_duty():
+            return
+        if status is not None and status.state.startswith("Alarm"):
+            # An alarm has stopped the output already.
+            return
+        try:
+            link.request_ok("laser off", timeout=OUTPUT_OFF_WAIT)
+            return
+        except LinkError:
+            pass
+        try:
+            link.reset(timeout=OUTPUT_OFF_WAIT)
+        except LinkError:
+            pass
+
+    def _off_duty(self) -> int:
+        """The output's duty with the beam dark or the spindle stopped, in
+        the status report's permille, from the settings last read."""
+        cached = self._settings_cache
+        invert = cached[1].get("laser_invert") if cached is not None else None
+        return 1000 if isinstance(invert, (int, float)) and invert else 0
 
     def shutdown(self) -> None:
         self.disconnect()
@@ -441,20 +523,46 @@ class Backend:
             raise HTTPException(status_code=409, detail="the board is being probed")
         return link
 
-    def move_start(self, link: Link, streamer: Streamer) -> tuple[tuple[float, float], bool]:
+    def move_start(self, link: Link, streamer: Streamer, status=None) -> tuple[tuple[float, float], bool]:
         """Where the next move starts, and whether that is certain.
 
         While a jog is still running the reported position is on its way
         somewhere, so the end of that jog is the start of the next one; the
         firmware resolves a relative jog queued behind it from that same
         planned end. The start is uncertain only while the machine jogs
-        toward an end this backend did not send.
+        toward an end this backend did not send. `status` is a report just
+        read, or None to read one.
         """
-        status = link.status_now(1.0, routine=True)
+        if status is None:
+            status = link.status_now(1.0, routine=True)
         if status.state == "Jog" and self._jog_target is not None:
             return self._jog_target, True
         self._jog_target = None
         return streamer.start_of(status), status.state == "Idle"
+
+    def _move_frame(self, link: Link):
+        """The streamer a jog or a goto is planned with, and the report it
+        was made from (None on a polar machine, whose board frame does not
+        turn). A cartesian one works in the frame of the table angle, read
+        now: the last poll may be from before, or partway through, a turn."""
+        if not self.cartesian:
+            return self.streamer(), None
+        status = link.status_now(1.0, routine=True)
+        return self.streamer(status), status
+
+    def _board_start(self, link: Link, streamer: Streamer, status) -> tuple[tuple[float, float], bool]:
+        """The start of a board move. On a cartesian machine a board point
+        is a joint target only in the frame of the angle the table stops
+        at, and a move toward an end this backend did not track may be a
+        turn still under way: the frame read now is not the one the move
+        queued behind it would run in."""
+        start, known = self.move_start(link, streamer, status)
+        if streamer.cartesian and not known:
+            raise HTTPException(
+                status_code=409,
+                detail="the table may still be turning: wait for the machine to stop before a board move",
+            )
+        return start, known
 
     def _send_jog(self, link: Link, lines: list[str], end: tuple[float, float] | None) -> None:
         try:
@@ -526,11 +634,21 @@ class Backend:
 
     def _on_link_event(self, event: Event) -> None:
         if event.kind == "status":
+            self._check_restart()
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "console":
             self.broadcast.publish_threadsafe({"type": "console", **event.data})
         elif event.kind == "message":
+            text = event.data.get("text", "")
+            if text == "reset":
+                self._soft_resets += 1
             self.broadcast.publish_threadsafe({"type": "message", **event.data})
+            # The board resets itself after this one, and a reset keeps the
+            # position, but a driver without its supply may have let its
+            # motor slip: the focus axis frame is no longer the one the map
+            # was focused in.
+            if text.startswith("tmc ") and text.endswith(" lost motor power, position may be off"):
+                self._frame_changed("the motors lost power")
         elif event.kind == "banner":
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "disconnect":
@@ -539,11 +657,58 @@ class Backend:
             self.publish_message("info" if reason == "disconnected" else "error", f"link closed: {reason}")
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
 
+    def _check_restart(self) -> None:
+        """Takes the focus offset back when the machine has started over
+        since the last look: a banner that no reset came before. A reset
+        byte keeps the position, and a banner that answers `version` is
+        not counted by the link at all."""
+        link = self.link
+        seen = self._restarts_seen
+        if link is None or seen is None:
+            return
+        unasked = link.restarts - self._soft_resets
+        if unasked > seen:
+            self._restarts_seen = unasked
+            self._frame_changed("the machine restarted")
+
+    def _frame_changed(self, reason: str) -> None:
+        """Takes back the height map's focus offset, keeping its heights.
+
+        The heights are focus axis positions in the frame of the session
+        that probed them, and the offset is what ties them to the frame in
+        use: once that frame may have changed, a run would follow the board
+        at heights that mean something else. Focus here again sets the
+        offset in the new frame, which is all a shift of H needs.
+        """
+        with self._map_lock:
+            self._frame += 1
+            heightmap = self.heightmaps.get()
+            if heightmap is None or not heightmap.focus_set:
+                return
+            heightmap.focus_set = False
+            self.heightmaps.put(heightmap)
+        self.publish_message("info", f"{reason}: focus here again before a run follows the height map")
+        self.publish_heightmap()
+
     def _publish_progress(self, progress: dict) -> None:
         self.broadcast.publish_threadsafe({"type": "progress", **progress})
 
     def _publish_probe(self, progress: dict | None, heightmap: dict | None) -> None:
+        self._drop_stale_focus()
         self.publish_heightmap()
+
+    def _drop_stale_focus(self) -> bool:
+        """Takes back an offset set in a focus axis frame before this one;
+        True if there was one. The caller publishes the map."""
+        with self._map_lock:
+            if self._focus_frame == self._frame:
+                return False
+            heightmap = self.heightmaps.get()
+            if heightmap is None or not heightmap.focus_set:
+                return False
+            heightmap.focus_set = False
+            self.heightmaps.put(heightmap)
+        return True
 
     def publish_heightmap(self) -> None:
         self.broadcast.publish_threadsafe({"type": "heightmap", **self.heightmap_state()})
@@ -560,20 +725,23 @@ class Backend:
         return {"lines": [line]}
 
     def jog(self, body: JogBody) -> dict:
-        link = self._movable()
+        self._movable()
         with self._move_lock:
+            # Again under the lock: probing claims the machine under it, and
+            # may have while this waited.
+            link = self._movable()
             return self._jog(link, body)
 
     def _jog(self, link: Link, body: JogBody) -> dict:
         check_feed(body.feed)
-        streamer = self.streamer()
+        streamer, status = self._move_frame(link)
         if body.kind == "joint":
             if streamer.cartesian:
                 # The cross slide is a joint: it goes on the line with the
                 # others. A turn of the table moves the frame the tracked
                 # end is kept in, so after one the end is not known.
                 lines = [streamer.joint_jog(body.dr, body.da, body.feed, body.dh, body.dz)]
-                start, known = self.move_start(link, streamer)
+                start, known = self.move_start(link, streamer, status)
                 known = known and not body.da
                 end = (start[0] + (body.dr or 0.0), start[1] + (body.dz or 0.0)) if known else None
                 self._send_jog(link, lines, end)
@@ -583,11 +751,11 @@ class Backend:
                     raise ValueError("the cross slide moves on its own: dz cannot be sent with dr, da or dh")
                 return self._slide_move(link, streamer.slide_jog(body.dz, body.feed))
             lines = [streamer.joint_jog(body.dr, body.da, body.feed, body.dh)]
-            start, known = self.move_start(link, streamer)
+            start, known = self.move_start(link, streamer, status)
             # A relative jog's end is known when its start is.
             end = (start[0] + (body.dr or 0.0), start[1] + (body.da or 0.0)) if known else None
         elif body.kind == "board":
-            start, _ = self.move_start(link, streamer)
+            start, _ = self._board_start(link, streamer, status)
             here = streamer.board_of(start)
             targets = streamer.board_targets(start, (here[0] + (body.dx or 0.0), here[1] + (body.dy or 0.0)))
             self._check_reach(targets, streamer.cartesian)
@@ -599,20 +767,23 @@ class Backend:
         return {"lines": lines}
 
     def goto(self, body: GotoBody) -> dict:
-        link = self._movable()
+        self._movable()
         with self._move_lock:
+            # Again under the lock: probing claims the machine under it, and
+            # may have while this waited.
+            link = self._movable()
             return self._goto(link, body)
 
     def _goto(self, link: Link, body: GotoBody) -> dict:
         check_feed(body.feed)
-        streamer = self.streamer()
+        streamer, status = self._move_frame(link)
         if body.kind == "joint" and streamer.cartesian:
             lines = [streamer.joint_goto(body.r, body.a, body.feed, body.h, body.z)]
-            start, known = self.move_start(link, streamer)
-            known = known and body.a is None
-            if body.r is not None and body.z is not None and body.a is None:
-                end = (body.r, body.z)
-            elif known:
+            start, known = self.move_start(link, streamer, status)
+            # The tracked end is kept in the frame of the table angle: it is
+            # known only when the goto leaves the angle alone and nothing
+            # ahead of it can turn the table, which an unknown start may.
+            if known and body.a is None:
                 end = (start[0] if body.r is None else body.r, start[1] if body.z is None else body.z)
             else:
                 end = None
@@ -622,7 +793,7 @@ class Backend:
                     raise ValueError("the cross slide moves on its own: z cannot be sent with r, a or h")
                 return self._slide_move(link, streamer.slide_goto(body.z, body.feed))
             lines = [streamer.joint_goto(body.r, body.a, body.feed, body.h)]
-            start, known = self.move_start(link, streamer)
+            start, known = self.move_start(link, streamer, status)
             # An axis left out stays where the queued jog ends, which is
             # only known when the start is.
             if body.r is not None and body.a is not None:
@@ -634,7 +805,7 @@ class Backend:
         elif body.kind == "board":
             if body.x is None and body.y is None:
                 raise ValueError("a board goto needs x and/or y")
-            start, known = self.move_start(link, streamer)
+            start, known = self._board_start(link, streamer, status)
             # An axis left out keeps the coordinate the head will have
             # once the jog in progress ends, which is only known when the
             # start is: the reported position is one it is passing through.
@@ -652,8 +823,10 @@ class Backend:
         return {"lines": lines}
 
     def set_position(self, body: PositionBody) -> dict:
-        link = self._movable()
-        with self._move_lock:
+        # Checked under both locks: a run or probing that starts meanwhile
+        # plans from the position this would renumber.
+        with self._owner_lock, self._move_lock:
+            link = self._movable()
             return self._set_position(link, body)
 
     def _set_position(self, link: Link, body: PositionBody) -> dict:
@@ -669,12 +842,19 @@ class Backend:
         if not words and body.z is None:
             raise ValueError("give r, a, h and/or z")
         self._jog_target = None
-        if words:
-            link.request_ok("set " + " ".join(words))
-        if body.z is not None:
-            # Z goes on a line of its own: on a polar machine it is never a
-            # word beside R or A, and on a cartesian one it may be.
-            link.request_ok(f"set Z{num(body.z)}")
+        try:
+            if words:
+                link.request_ok("set " + " ".join(words))
+            if body.z is not None:
+                # Z goes on a line of its own: on a polar machine it is never
+                # a word beside R or A, and on a cartesian one it may be.
+                link.request_ok(f"set Z{num(body.z)}")
+        finally:
+            # H renumbered moves the frame the map's heights are in, and R,
+            # A or Z the board under them. Taken back whether or not the
+            # machine answered: a line that timed out may still have gone
+            # through.
+            self._frame_changed("the position was set")
         link.status_now(1.0, routine=True)
         return self.snapshot()
 
@@ -682,8 +862,13 @@ class Backend:
         link = self.require_link()
         if action == "hold":
             # A running job's hold goes through the runner so the run's own
-            # state follows the machine's.
-            if self.runner.progress.state == RUNNING:
+            # state follows the machine's. A run still being planned is not
+            # started, and the byte goes out all the same: the run has sent
+            # nothing, but a line typed before it may still be moving the
+            # machine, and an idle machine drops the byte.
+            if self.runner.cancel_start("held before it started"):
+                link.realtime(REALTIME_HOLD)
+            elif self.runner.progress.state == RUNNING:
                 self.runner.hold()
             else:
                 link.realtime(REALTIME_HOLD)
@@ -698,7 +883,7 @@ class Backend:
             # A run in progress is told first, so its thread stops
             # streaming before the byte goes out rather than sending the
             # next lines into a machine that is Idle again and would run
-            # them.
+            # them; a run still being planned is not started.
             self.runner.abort("reset by the operator")
             self.prober.cancel("reset by the operator")
             link.reset(timeout=1.0)
@@ -723,11 +908,48 @@ class Backend:
         if text in ("!", "~"):
             self.realtime("hold" if text == "!" else "resume")
             return {"lines": []}
+        words = text.split(";", 1)[0].lower().split()
+        if words == ["status"]:
+            # The same report as `?`, asked for the same way: a report the
+            # `status` line printed would come on top of those the `?`
+            # bytes asked for.
+            status = link.status_now(1.0)
+            return {"lines": [status.raw, "ok"]}
+        if words in (["laser", "off"], ["spindle", "off"]) and self.runner.active:
+            # During a run the output is the run's. Both are sync commands
+            # the firmware takes up only once the moves ahead have run, and
+            # the lines behind would go on with the output stopped, or not
+            # at all in a hold until the resume. Typed then, they stop the
+            # run the way its stop does: hold, then reset, which turns the
+            # output off. A run still being planned is not started, and
+            # the line goes out as typed.
+            if not self.runner.cancel_start("the output was turned off before it started"):
+                try:
+                    self.runner.stop()
+                    return {"lines": []}
+                except RunnerError:
+                    # The run ended in between: the line is the operator's.
+                    pass
+        first = words[0] if words else ""
+        setting = text.startswith("$") and ("=" in text or text[1:].strip().lower() in ("load", "defaults"))
+        # Lines that change the machine under whoever owns it: a run or a
+        # probing leaves it idle for a moment between its lines, and the
+        # firmware takes them then. A spindle start is refused while
+        # probing, as the button is: the probe may be the tool itself.
+        owned = setting or first in ("set", "disable") or (first == "spindle" and words[1:2] != ["off"])
         # A typed line may move the head or declare where it is, which
         # makes the end of the last jog meaningless as a starting point.
         self._jog_target = None
-        lines = link.request(text)
-        if text.startswith("$") and ("=" in text or text[1:].strip().lower() in ("load", "defaults")):
+        if owned:
+            with self._owner_lock:
+                self._not_owned()
+                lines = link.request(text)
+        else:
+            lines = link.request(text)
+        accepted = bool(lines) and lines[-1] == "ok"
+        if accepted and (first == "set" or (setting and self._reframes(text))):
+            self._frame_changed("a position or setting changed at the console")
+        if setting:
             # A setting typed at the console: what this side remembers of
             # the machine's settings is stale, and the page's idea of what
             # the machine is (cartesian, spindle) with it.
@@ -737,6 +959,14 @@ class Backend:
             except LinkError:
                 pass
         return {"lines": lines}
+
+    @staticmethod
+    def _reframes(text: str) -> bool:
+        """A typed `$` line that may change the frame the axes count in."""
+        body = text[1:].split(";", 1)[0].strip().lower()
+        if body in ("load", "defaults"):
+            return True
+        return body.split("=", 1)[0].strip() in FRAME_SETTINGS
 
     def laser(self, power: float, ms: int | None) -> dict:
         if self.milling:
@@ -759,7 +989,10 @@ class Backend:
         if self.runner.progress.state == RUNNING:
             self.runner.hold()
             return self.snapshot()
-        if self.runner.active:
+        # A run still being planned has sent nothing: it is not started,
+        # and the line goes out as it would with no run.
+        cancelled = self.runner.cancel_start("the laser was turned off before it started")
+        if self.runner.active and not cancelled:
             return self.snapshot()
         self.require_link().request_ok("laser off")
         return self.snapshot()
@@ -767,15 +1000,22 @@ class Backend:
     def spindle_on(self, power: float) -> dict:
         """Starts the spindle, or changes its speed, from the page. A run
         starts and stops it itself, and a stop while one is under way would
-        stall the tool in the work while the lines behind went on."""
-        if self.runner.active:
-            raise HTTPException(status_code=409, detail="a job is running")
-        if not self.milling:
-            raise ValueError("the output drives a laser ($spindle=0)")
-        if not (math.isfinite(power) and power >= 0):
-            raise ValueError("power must be >= 0")
-        link = self.require_link()
-        link.request_ok(f"spindle S{num(power)}")
+        stall the tool in the work while the lines behind went on. Probing
+        lowers the probe, which may be the tool itself, onto the copper:
+        the spindle does not start while it is under way."""
+        # Under the owner lock, so a probing that starts meanwhile sees the
+        # spindle turning in its first status report.
+        with self._owner_lock:
+            if self.runner.active:
+                raise HTTPException(status_code=409, detail="a job is running")
+            if self.prober.active:
+                raise HTTPException(status_code=409, detail="the board is being probed")
+            if not self.milling:
+                raise ValueError("the output drives a laser ($spindle=0)")
+            if not (math.isfinite(power) and power >= 0):
+                raise ValueError("power must be >= 0")
+            link = self.require_link()
+            link.request_ok(f"spindle S{num(power)}")
         link.status_now(1.0, routine=True)
         return self.snapshot()
 
@@ -799,9 +1039,26 @@ class Backend:
 
     def motors(self, enabled: bool) -> dict:
         link = self.require_link()
-        link.request_ok("enable" if enabled else "disable")
+        if enabled:
+            link.request_ok("enable")
+        else:
+            # The drivers share their enable line: `disable` lets the focus
+            # axis go too, and a head that sinks in an idle moment between
+            # a run's lines or two probe points loses its height unseen. A
+            # run or probing asked for at the same moment waits for this.
+            with self._owner_lock:
+                self._not_owned()
+                link.request_ok("disable")
         link.status_now(1.0, routine=True)
         return self.snapshot()
+
+    def _not_owned(self) -> None:
+        """Refuses a request that would change the machine under a run or
+        probing that owns it."""
+        if self.runner.active:
+            raise HTTPException(status_code=409, detail="a job is running")
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
 
     def unlock(self) -> dict:
         link = self.require_link()
@@ -847,27 +1104,11 @@ class Backend:
             except (TypeError, ValueError) as exc:
                 raise ValueError(str(exc)) from exc
         if values:
-            link = self.require_link()
-            current = self.read_settings(force=True)["values"]
-            texts = {}
-            for name, value in values.items():
-                if name not in current:
-                    raise ValueError(f"unknown setting {name!r}")
-                texts[name] = _setting_text(name, value)
-            applied: list[str] = []
-            try:
-                for name, text in texts.items():
-                    if _number(text) == current[name]:
-                        continue
-                    link.request_ok(f"${name}={text}")
-                    applied.append(name)
-            except CommandError:
-                self._restore_settings(link, {name: current[name] for name in applied})
-                raise
-            finally:
-                self._settings_cache = None
-                # A jog end tracked in one frame means nothing in another.
-                self._jog_target = None
+            # A setting changed between a run's lines, or two probe points,
+            # would change what the rest of them mean; a run or probing
+            # asked for meanwhile waits for the write.
+            with self._owner_lock:
+                self._write_machine_settings(values)
         if tolerance is not None:
             self.config["tolerance"] = tolerance
         if milling is not None:
@@ -879,11 +1120,60 @@ class Backend:
             return self.read_settings(force=True)
         return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings()}
 
+    def _write_machine_settings(self, values: dict) -> None:
+        """The machine's part of a settings write; the caller holds the
+        owner lock."""
+        self._not_owned()
+        link = self.require_link()
+        current = self.read_settings(force=True)["values"]
+        texts = {}
+        for name, value in values.items():
+            if name not in current:
+                raise ValueError(f"unknown setting {name!r}")
+            texts[name] = _setting_text(name, value)
+        applied: list[str] = []
+        # The line on its way: one lost unanswered may still have been
+        # taken, as a refused one was not.
+        sending: str | None = None
+        try:
+            for name, text in texts.items():
+                if _number(text) == current[name]:
+                    continue
+                sending = name
+                link.request_ok(f"${name}={text}")
+                applied.append(name)
+                sending = None
+        except Exception as exc:
+            if isinstance(exc, CommandError):
+                sending = None
+            elif sending is not None:
+                applied.append(sending)
+            # Refused, or lost on the way: whatever went before is put
+            # back, so the write is all or nothing as far as the link
+            # allows, and what the machine is read again.
+            self._restore_settings(link, {name: current[name] for name in applied})
+            self._settings_cache = None
+            try:
+                self.read_settings(force=True)
+            except (LinkError, HTTPException):
+                pass
+            raise
+        finally:
+            self._settings_cache = None
+            # A jog end tracked in one frame means nothing in another.
+            self._jog_target = None
+            if FRAME_SETTINGS.intersection(applied):
+                self._frame_changed("a setting that scales or turns the axes changed")
+
     def _restore_settings(self, link: Link, previous: dict) -> None:
-        """Put back settings a refused write had already changed."""
+        """Put back settings a refused write had already changed. A link
+        that fails ends it; a value that cannot be sent, or is refused, is
+        skipped for the next."""
         for name, value in previous.items():
             try:
                 link.request_ok(f"${name}={_setting_text(name, value)}")
+            except (ValueError, CommandError) as exc:
+                self.publish_message("error", f"could not put {name} back to {value}: {exc}")
             except LinkError as exc:
                 self.publish_message("error", f"could not put {name} back to {value}: {exc}")
                 return
@@ -948,11 +1238,21 @@ class Backend:
         return job
 
     def run_job(self, job_id: str, compensate: str = OFF) -> dict:
+        # The check that nothing is being probed and the runner's claim are
+        # one step: probing asked for at the same moment waits for this,
+        # then finds the run under way.
+        with self._owner_lock:
+            return self._run_job(job_id, compensate)
+
+    def _run_job(self, job_id: str, compensate: str = OFF) -> dict:
         job = self.store.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="no such job")
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
+        # Counted from here: a reset while the settings are read, before the
+        # runner has anything to cancel, still keeps the run from starting.
+        restarts = self.link.restarts if self.link is not None else None
         if self.link is not None and self.link.is_open:
             values = self.read_settings(force=True)["values"]
             if self.milling and not values.get("h_axis"):
@@ -962,7 +1262,7 @@ class Backend:
         status = None
         if self.cartesian and self.link is not None and self.link.is_open:
             status = self.link.status_now(1.0, routine=True)
-        return self.runner.start(job, self.link, self.streamer(status), compensation)
+        return self.runner.start(job, self.link, self.streamer(status), compensation, restarts)
 
     # --- the height map ---------------------------------------------------------------
 
@@ -983,16 +1283,24 @@ class Backend:
         }
 
     def put_heightmap(self, heightmap: HeightMap) -> dict:
+        """Puts back a map, from a file say. Its heights are from a session
+        whose focus axis frame nothing here knows, so it needs focus here
+        before a run follows it, whatever it says of its offset."""
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
-        self.heightmaps.put(heightmap)
+        heightmap.focus_set = False
+        with self._map_lock:
+            self.heightmaps.put(heightmap)
+            self._heights_frame = None
         self.publish_heightmap()
         return self.heightmap_state()
 
     def clear_heightmap(self) -> dict:
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
-        self.heightmaps.put(None)
+        with self._map_lock:
+            self.heightmaps.put(None)
+            self._heights_frame = None
         self.publish_heightmap()
         return self.heightmap_state()
 
@@ -1006,17 +1314,34 @@ class Backend:
         return self.heightmap_state()
 
     def start_probe(self, grid: Grid) -> dict:
-        link = self._movable()
-        values = self.read_settings(force=True)["values"]
-        try:
-            r_max = float(values.get("r_max", 0) or 0)
-            z_max = float(values.get("z_max", 0) or 0)
-        except (TypeError, ValueError):
-            r_max, z_max = 0.0, 0.0
-        with self._move_lock:
-            self._jog_target = None
-            status = link.status_now(1.0, routine=True)
-            self.prober.start(grid, self.probe_settings(), link, self.streamer(status), r_max, z_max)
+        # The check that no run is under way and the prober's claim are one
+        # step: a run asked for at the same moment waits for this, then
+        # finds the board being probed.
+        with self._owner_lock:
+            link = self._movable()
+            values = self.read_settings(force=True)["values"]
+            try:
+                r_max = float(values.get("r_max", 0) or 0)
+                z_max = float(values.get("z_max", 0) or 0)
+            except (TypeError, ValueError):
+                r_max, z_max = 0.0, 0.0
+            # The tool may be the probe: a spindle has to be stopped.
+            spindle_off = self._off_duty() if self.milling else None
+            with self._move_lock:
+                self._jog_target = None
+                status = link.status_now(1.0, routine=True)
+                frame = self._frame
+                self.prober.start(
+                    grid,
+                    self.probe_settings(),
+                    link,
+                    self.streamer(status),
+                    r_max,
+                    z_max,
+                    spindle_off,
+                    keep_focus=self._heights_frame == frame,
+                )
+                self._heights_frame = frame
         return self.heightmap_state()
 
     def stop_probe(self) -> dict:
@@ -1025,24 +1350,57 @@ class Backend:
 
     def focus(self, offset: float | None) -> dict:
         """Sets the focus offset: given, or from the head's height over the
-        board point under the beam, which the operator has just focused."""
+        board point under the beam, which the operator has just focused.
+
+        Taken from the head, it ties the map to the focus axis frame in use
+        whatever frame the heights were probed in. Given as a number, it is
+        a plain distance from contact to focus, which holds only for
+        heights probed in this frame.
+        """
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
-        heightmap = self.heightmaps.get()
-        if heightmap is None:
+        if self.heightmaps.get() is None:
             raise ValueError("there is no height map: probe the board first")
+        self._check_restart()
+        frame = self._frame
+        status = None
         if offset is None:
             status = self.require_link().status_now(1.0, routine=True)
             if status.state != "Idle":
                 raise ValueError(f"the machine is {status.state}: focus with the head at rest")
-            # Without a focus axis the head's height is fixed, and zero is
-            # as good a name for it as any: the map only needs the same one.
-            here = status.h if status.h is not None else 0.0
-            x, y = head_board(status.r, status.a, status.z, self.cartesian)
-            offset = here - heightmap.height_at(x, y)
-        heightmap.focus_offset = round(offset, 4)
-        heightmap.focus_set = True
-        self.heightmaps.put(heightmap)
+            # The report may be the first after a restart.
+            self._check_restart()
+        with self._map_lock:
+            heightmap = self.heightmaps.get()
+            if heightmap is None:
+                raise ValueError("there is no height map: probe the board first")
+            if self._frame != frame:
+                raise ValueError("the focus axis frame changed meanwhile: focus again")
+            if status is not None:
+                # Without a focus axis the head's height is fixed, and zero
+                # is as good a name for it as any: the map only needs the
+                # same one.
+                here = status.h if status.h is not None else 0.0
+                x, y = head_board(status.r, status.a, status.z, self.cartesian)
+                grid = heightmap.grid
+                if not grid.covers((x, y, x, y)):
+                    # The edge height would stand in for copper nobody
+                    # measured, and every compensated line would be off by
+                    # the difference.
+                    raise ValueError(
+                        f"focus over the probed area: the beam is at X {x:.1f} Y {y:.1f}, the map covers"
+                        f" X {grid.x0:.1f}..{grid.x1:.1f} Y {grid.y0:.1f}..{grid.y1:.1f}"
+                    )
+                offset = here - heightmap.height_at(x, y)
+            elif self._heights_frame != frame:
+                raise ValueError(
+                    "the map was probed before the focus axis was last renumbered (a connect, a restart,"
+                    " a position set or a map put back): use focus here over the map, or probe again"
+                )
+            heightmap.focus_offset = round(offset, 4)
+            heightmap.focus_set = True
+            self.heightmaps.put(heightmap)
+            self._focus_frame = frame
         self.publish_heightmap()
         return self.heightmap_state()
 
@@ -1052,6 +1410,11 @@ class Backend:
             raise ValueError(f"compensate must be one of {', '.join(MODES)}")
         if mode == OFF:
             return None
+        # A restart not yet seen in a status report takes the offset back
+        # before the map is looked at, and so does one probing missed.
+        self._check_restart()
+        if self._drop_stale_focus():
+            self.publish_heightmap()
         heightmap = self.heightmaps.get()
         if heightmap is None:
             raise ValueError("there is no height map: probe the board first")
@@ -1090,27 +1453,36 @@ def _number(text: str):
 
 
 def _setting_text(name: str, value) -> str:
-    """The value of a `$name=value` line: a finite number, or a bool as 0/1.
+    """The value of a `$name=value` line: a finite number the firmware can
+    hold, or a bool as 0/1.
 
     Anything else is refused here rather than sent for the machine to
-    refuse after the entries before it have been applied.
+    refuse, or the link to refuse as too long, after the entries before it
+    have been applied.
     """
     if isinstance(value, bool):
         return "1" if value else "0"
-    if isinstance(value, int):
-        return str(value)
     if isinstance(value, str):
         value = _number(value.strip())
-        if isinstance(value, str):
-            raise ValueError(f"{name} must be a number")
-        if isinstance(value, int):
-            return str(value)
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError(f"{name} must be a number")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a number")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{name} must be a number")
+    # Only a whole number can be meant for a whole number setting, and
+    # those go past the float bound: an idle time in ms, say.
+    whole = isinstance(value, int) or value.is_integer()
+    limit = INT_SETTING_MAX if whole else SETTING_MAX
+    if abs(value) > limit:
+        shown = str(INT_SETTING_MAX) if whole else f"{SETTING_MAX:g}"
+        raise ValueError(f"{name} must be within {shown}")
+    if isinstance(value, int):
+        text = str(value)
+    else:
         text = f"{value:.6f}".rstrip("0").rstrip(".")
-        return text if text not in ("", "-") else "0"
-    raise ValueError(f"{name} must be a number")
+        text = text if text not in ("", "-") else "0"
+    if len(f"${name}={text}\n".encode("ascii")) > MAX_LINE:
+        raise ValueError(f"{name}={text} is longer than a line the machine takes")
+    return text
 
 
 def profile_of(values: dict) -> dict:
@@ -1134,7 +1506,11 @@ def _host_number(host: dict, name: str, default: float) -> float:
     value = host.get(name, default)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a number")
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError as exc:
+        # An integer too large for a float.
+        raise ValueError(f"{name} must be a number") from exc
 
 
 def _tolerance(value) -> float:
@@ -1143,7 +1519,7 @@ def _tolerance(value) -> float:
         raise ValueError("tolerance must be a number")
     try:
         tolerance = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("tolerance must be a number") from exc
     if not (math.isfinite(tolerance) and 0.0 < tolerance <= MAX_TOLERANCE):
         raise ValueError(f"tolerance must be above 0 and at most {MAX_TOLERANCE:g} mm")

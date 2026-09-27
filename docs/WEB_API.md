@@ -12,7 +12,7 @@ Base URL: `http://<host>:8000`. Bodies and responses are JSON unless noted.
 | --- | --- | --- |
 | `GET /api/ports` | | `{"ports": [{"url": "/dev/ttyACM0", "description": "..."}]}` plus any `socket://` url last used |
 | `POST /api/connect` | `{"url": "/dev/ttyACM0"}` | state snapshot; `socket://host:port` reaches the virtual firmware; anything but a device path, a `COMn` port or a `socket://` url is refused with 400 |
-| `POST /api/disconnect` | | state snapshot |
+| `POST /api/disconnect` | | state snapshot; a turning spindle or a lit beam is stopped first (`laser off`, or the reset byte if that is not answered at once), since the firmware does not see a port close; the backend's shutdown does the same |
 | `GET /api/state` | | state snapshot |
 
 State snapshot:
@@ -50,7 +50,7 @@ active) are `null` on a machine without a focus axis (`$h_axis=0`).
 | Method and path | Body |
 | --- | --- |
 | `POST /api/jog` | `{"kind": "joint", "dr": 1.0, "da": 0.0, "dh": 0.0, "feed": null}` or `{"kind": "board", "dx": 0.0, "dy": -1.0, "feed": 500}` relative; `dh` is the focus axis, alone or with the joints (the firmware refuses it without one fitted); `{"kind": "joint", "dz": 0.5}` moves the cross slide, which on the polar machine cannot be combined with `dr`, `da` or `dh`, and on a cartesian one is a joint beside them |
-| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0, "h": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r`, `a` or `h` on the polar machine |
+| `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0, "h": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r`, `a` or `h` on the polar machine. On a cartesian machine a board jog or goto is planned in the table's frame from a fresh status, and answers 409 while the table may still be turning under a move in progress |
 | `POST /api/jog/cancel` | |
 | `POST /api/position` | `{"r": 0}`, `{"a": 0}`, `{"h": 0}` and/or `{"z": 0}`: declare the current position |
 
@@ -60,10 +60,10 @@ being probed. A board move whose
 lines would pass the firmware's `r_max` is refused whole with 400 before
 any of them goes out; a move within the limit chains from the end of the
 jog in progress. Move requests are served one at a time.
-| `POST /api/motors` | `{"enabled": false}` |
+| `POST /api/motors` | `{"enabled": false}`; turning them off answers 409 while a run or probing owns the machine: the drivers share one enable line, so `disable` (and `$idle_ms`) lets go of the focus axis too, and a head that is not self-locking sinks unseen |
 | `POST /api/unlock` | |
-| `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out |
-| `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a `status` command's own report is in its `lines` |
+| `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out; while a run is still being prepared, `hold` and `reset` cancel its start (and still go out) |
+| `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a bare `status` returns its report in `lines` (asked for with the `?` byte); a typed `laser off` or `spindle off` during a run stops the run (hold, then reset) and returns `{"lines": []}`, and while a run is still being prepared cancels its start and goes out as typed; `set`, `disable`, `$<name>=<value>`, `$load`, `$defaults` and `spindle S` answer 409 while a run or probing owns the machine (`spindle S` only while probing); an accepted `set`, or a `$` line that may rescale or turn the axes, takes the height map's focus offset back |
 
 Board jogs and gotos are turned into joint moves on the host with the chord
 tolerance from the settings page, so a board move through the axis becomes
@@ -86,7 +86,7 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/spindle` | `{"power": 800}` starts it at that `S`, or changes its speed; 400 on a laser machine, 409 while a run is active (a run starts and stops it itself) |
+| `POST /api/spindle` | `{"power": 800}` starts it at that `S`, or changes its speed; 400 on a laser machine, 409 while a run is active (a run starts and stops it itself) and while the board is probed (the probe may be the tool) |
 | `POST /api/spindle/off` | stops it; 409 while a run is active, where the stop is the run's stop |
 
 ## Settings
@@ -94,7 +94,7 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 | Method and path | Body |
 | --- | --- |
 | `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}` |
-| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value the firmware refuses has the ones sent before it put back; the host settings are stored only once the values went through |
+| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
 
 `clearance` and `spinup` are for milling: the tool travels `clearance` mm
 over the surface (H 0 without a height map, the map's highest point with
@@ -106,14 +106,14 @@ changing its speed.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, not the group passes below), `clear` (`off`, `radial`, `rings` or `lines`: gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, or the X/Y box the isolation spans when there is none, placed before the outline group); a file over 64 MB answers 413 |
+| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, not the group passes below), `clear` (`off`, `radial`, `rings` or `lines`: gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead); a file over 64 MB answers 413 |
 | `POST /api/center` | the polar laser's only (400 on a cartesian or spindle machine); JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
 | `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm |
 | `DELETE /api/jobs/{id}` | |
-| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, and for a spindle without the focus axis (`$h_axis=0`), which is its depth axis |
-| `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | |
+| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, and for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less |
+| `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | while a run is still being prepared (its checks and estimate), `hold` and `stop` cancel its start, and the pending `POST /api/jobs/{id}/run` answers 409 with the reason; `POST /api/laser/off` and a reset do the same, and a reset in that window is also seen by the preparation itself |
 | `GET /api/run` | progress, or `null` before any job has run |
 
 Every refusal is `{"detail": "<text>"}`; a body or field that does not
@@ -192,14 +192,32 @@ run can follow the result. Heights are the focus axis position at
 contact, mm, at grid points in board mm; `focus_offset` is focus height
 minus contact height, which `focus` sets.
 
+The heights are focus axis positions in the frame of the session that
+probed them, and the focus axis has no home: it reads 0 wherever the head
+was when the machine started. So `focus_set` is cleared, the heights kept,
+whenever that frame may have changed: a `POST /api/position` (H renumbered,
+or R, A or Z, which move the board under the map), a `PUT /api/settings`
+that changes `r_steps`, `a_steps`, `z_steps`, `h_steps`, `dir_invert`,
+`cartesian` or `h_axis`, a connect, a restart the link sees (a banner no
+reset byte came before; a reset keeps the position), and a map put back
+with `PUT /api/heightmap`. A `heightmap` event says so. A restart during
+probing ends it with an error, and an offset set before a frame change is
+never followed, even if a map written back over the change still says
+`focus_set`.
+`focus` with `{}` then ties the map to the new frame: the offset takes the
+difference with it. An offset given as a number holds only for heights
+probed in the frame in use, so it is refused (400) for any other map, and
+probing again keeps the last offset only when that offset was not taken
+across a frame change.
+
 | Method and path | Body |
 | --- | --- |
 | `GET /api/heightmap` | returns `{"map": map or null, "probe": probing progress or null, "settings": probe settings}` |
-| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, or while a run or another probing is under way; a point the probe tip cannot reach, or one that would take the head past `r_max` (or `z_max` on a cartesian machine, where the rail and the cross slide put the tip over each point), is 409 before anything moves; the map is done once the head is back at the travel height and still |
-| `POST /api/heightmap/stop` | holds and resets like a run's stop; 409 when nothing is being probed |
-| `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset; `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam |
-| `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail and across it (mm), and the beam's Rayleigh length for power compensation (mm) |
-| `PUT /api/heightmap` | a map, to put one back from a file |
+| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, with a spindle turning, or while a run or another probing is under way (a run and probing asked for at once: one starts, the other is 409); a point the probe tip cannot reach, or one that would take the head past `r_max` (or `z_max` on a cartesian machine, where the rail and the cross slide put the tip over each point), is 409 before anything moves; the map is done once the head is back at the travel height and still |
+| `POST /api/heightmap/stop` | holds and resets like a run's stop; a probing still starting (checking the machine) ends before anything moves, and so it does on `POST /api/realtime` `reset`; 409 when nothing is being probed |
+| `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset, for a map probed in the focus axis frame in use (400 otherwise); `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam; 400 with the beam more than 1 mm outside the grid, where the map would only guess |
+| `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail (outward positive) and across it (positive to the left of outward seen from above: board +Y at table angle 0, +Z on a cartesian machine), in mm, and the beam's Rayleigh length for power compensation (mm) |
+| `PUT /api/heightmap` | a map, to put one back from a file; stored with `focus_set` false, whatever it says, until `focus` with `{}` |
 | `DELETE /api/heightmap` | clears it |
 
 Map:
@@ -225,7 +243,12 @@ half a grid spacing, and refused otherwise. A miss leaves the firmware in
 `Alarm:2` and the probing in `error`.
 
 One point, as the lines go out (each answered before the next; the times
-are for the default settings with the board 2 mm under the travel height):
+are for the default settings with the board 2 mm under the travel height).
+A move is answered once it is queued, and a probe only once the motion
+ahead of it has run as well, so each probe waits for the head to come to
+rest first: its answer time is then its own descent at the lower of its
+feed and `h_rate`, plus 10 s, however long the table takes to turn to the
+point. A hold stretches every wait:
 
 ```mermaid
 gantt
@@ -244,11 +267,15 @@ With a spindle the probe may be the tool itself, touching grounded copper
 (probe offset `[0, 0]`), and `focus` is the touch-off: jog the tool down
 until it just touches the copper over the probed area, then `{}`. The map
 plus the offset is then the surface under the tool, a cut goes to that
-less its depth, and `power` compensation is refused.
+less its depth, and `power` compensation is refused. Probing is refused
+while the spindle turns (the status's `L` is not the off duty), and the
+spindle is not started while probing.
 
 A compensated run is refused with 400 unless the map is complete, its
 focus offset has been set, it spans at most 5 mm top to bottom, and it
-covers every enabled group of the job to within 1 mm. `focus` needs the
+covers every enabled group of the job to within 1 mm (a joint-space
+group by points along its moves, which sweep arcs on the board, not by its
+vertices alone). `focus` needs the
 focus axis: each line carries the focus height (map plus offset) at its
 end, and cuts are split to a quarter of the grid spacing, 0.25 to 2 mm.
 `power` leaves the head where it is and raises each cut piece's `S` and
@@ -265,7 +292,10 @@ well.
 
 `WS /ws` sends JSON events; the client sends nothing. The payload's fields
 sit next to `type` in one flat object: `{"type": "console", "dir": "rx",
-"text": "ok"}`.
+"text": "ok"}`. While the last `state` said connected, the page takes 5 s
+with no event as a dead socket (a network gone quiet sends no close) and
+reconnects; with no machine connected nothing is sent between changes, so
+it does not watch then.
 
 | `type` | Payload |
 | --- | --- |

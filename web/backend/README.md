@@ -53,7 +53,7 @@ state is `error`.
 ## Files
 
 - `config.json` (ignored): the host tolerance, the milling clearance and spin-up, the last url and the probe settings.
-- `heightmap.json` (ignored): the last probed height map and its focus offset.
+- `heightmap.json` (ignored): the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
 - `jobs/*.json` (ignored): one file per imported job.
 
 ## Architecture
@@ -64,6 +64,8 @@ classDiagram
         Backend
         Backend.profile polar or cartesian, laser or spindle
         Backend.streamer(status) Streamer
+        Backend owner lock, a run or probing
+        Backend focus axis frame, height map anchoring
         Broadcast
         create_app(backend) FastAPI
     }
@@ -102,8 +104,8 @@ classDiagram
         check_covers(map, job)
     }
     class prober {
-        Prober.start(grid, settings, link)
-        Prober.stop / cancel
+        Prober.start(grid, settings, link, spindle_off, keep_focus)
+        Prober.stop / cancel, also while starting
         probe_joint(point, offset)
         cartesian_probe_joint(point, offset, angle)
     }
@@ -147,4 +149,4 @@ classDiagram
 feeds bytes one at a time. The end-to-end test is marked `e2e` and runs
 only when `SPINNY_VIRTUAL` names a built virtual firmware binary that takes
 `--listen 127.0.0.1:PORT --fast`; the probing one also gives it a board
-surface and a probe offset.
+surface and a probe offset, and one probing test runs it in real time.

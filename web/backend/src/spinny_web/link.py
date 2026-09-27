@@ -218,10 +218,11 @@ def parse_banner(text: str) -> Banner | None:
     return banner
 
 
-def _keyword(line: str) -> str:
-    """The command word of a line, comment stripped, lower case."""
-    body = line.split(";", 1)[0].split()
-    return body[0].lower() if body else ""
+def _is_bare(line: str, word: str) -> bool:
+    """Whether a line is the command `word` with nothing after it, the only
+    form the firmware answers with more than `ok`: with any word after it,
+    the line is refused and prints nothing else."""
+    return line.split(";", 1)[0].lower().split() == [word]
 
 
 # A device path, a Windows COM port, or a TCP socket: the only urls the
@@ -359,6 +360,7 @@ class Link:
         with self._status_cond:
             self._polls_out = 0
             self._status_asked = 0
+            self._status_seq = 0
         with self._credit:
             self._credit.notify_all()
         with self._banner_cond:
@@ -603,18 +605,27 @@ class Link:
 
     def _handle_line(self, text: str) -> None:
         routine = False
+        # A report taken as a `status` line's answer is not counted as the
+        # answer to a `?`: whichever of the two arrives first, the other
+        # one follows, and the count stays one report per `?`. That holds
+        # only for a line the firmware answers with a report: one it
+        # refuses prints none, and taking a `?`'s answer for it would leave
+        # the count one short.
+        answers_line = False
         if text.startswith("<") and text.endswith(">"):
-            with self._status_cond:
-                routine = self._polls_out > 0
-                if routine:
-                    self._polls_out -= 1
-            if not routine:
-                # The `status` command prints the same report before its
-                # `ok`; it belongs to that line's answer as well.
-                with self._credit:
-                    oldest = self._pending[0] if self._pending else None
-                if oldest is not None and _keyword(oldest.line) == "status":
-                    oldest.lines.append(text)
+            # The `status` command prints the same report before its `ok`;
+            # it belongs to that line's answer, and is looked for before a
+            # poll can claim it. The line takes one report.
+            with self._credit:
+                oldest = self._pending[0] if self._pending else None
+            if oldest is not None and _is_bare(oldest.line, "status") and not oldest.lines:
+                oldest.lines.append(text)
+                answers_line = True
+            else:
+                with self._status_cond:
+                    routine = self._polls_out > 0
+                    if routine:
+                        self._polls_out -= 1
         self._publish(Event("console", {"dir": "rx", "text": text, "poll": routine}))
         if text == "ok" or text.startswith("error:"):
             self._complete(text)
@@ -623,13 +634,20 @@ class Link:
             if status is not None:
                 self.status = status
                 with self._status_cond:
-                    self._status_seq += 1
+                    # Never more reports counted than `?` bytes sent: one
+                    # nobody asked for with `?` (a late one, after its
+                    # request gave up and resynced) would leave every later
+                    # request satisfied by the report before its own.
+                    if not answers_line and self._status_seq < self._status_asked:
+                        self._status_seq += 1
                     self._status_cond.notify_all()
                 self._publish(Event("status", status))
         elif text.startswith("[spinny v"):
             self._handle_banner(text)
         elif text.startswith("[MSG:") and text.endswith("]"):
-            self._publish(Event("message", {"level": "info", "text": text[5:-1]}))
+            # A message that says the position may be off is a fault, not news.
+            level = "error" if text.endswith("position may be off]") else "info"
+            self._publish(Event("message", {"level": level, "text": text[5:-1]}))
         elif text.startswith("ALARM:"):
             self._publish(Event("message", {"level": "error", "text": text}))
         else:
@@ -650,7 +668,9 @@ class Link:
         if not expected:
             with self._credit:
                 oldest = self._pending[0] if self._pending else None
-            answer = oldest is not None and _keyword(oldest.line) == "version"
+            # A refused `version` line prints no banner: one arriving while
+            # it waits is a restart all the same.
+            answer = oldest is not None and _is_bare(oldest.line, "version") and not oldest.lines
             if answer:
                 oldest.lines.append(text)
             else:

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from polar_sim import deviation
 
-from spinny_web import jobs
+from spinny_web import jobs, kinematics
 from spinny_web.jobs import (
     Group,
     ImportOptions,
@@ -340,6 +340,18 @@ def test_marks_of_an_imported_drawing_follow_it():
     assert len(marks) == len(paths)
     for mark, path in zip(marks, paths):
         assert deviation(mark, path) <= 0.0075
+
+
+def test_the_joint_previews_of_a_whole_job_share_one_bound():
+    # A few kilobytes of upload whose previews would come to millions of
+    # points at the drawing step: every polyline spans 2e5 mm of rail.
+    span = [[-1.0e5, 0.0], [1.0e5, 0.0]]
+    groups = [{"label": f"g{i}", "power": 400, "speed": 200, "joints": [span] * 10} for i in range(10)]
+    job = from_json(json.dumps({"name": "big", "groups": groups}), "big")
+    drawn = sum(len(path) for group in job.groups for path in group.paths)
+    assert drawn <= kinematics.PREVIEW_BUDGET + 2 * 100
+    # Past the budget a polyline is still drawn, through its own points.
+    assert all(len(path) >= 2 for group in job.groups for path in group.paths)
 
 
 def test_a_json_job_with_joints_gets_drawn_paths_and_stays_on_the_axis():

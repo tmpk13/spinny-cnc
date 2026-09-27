@@ -11,7 +11,7 @@ from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, Broadcast, create_app
-from spinny_web.link import Link
+from spinny_web.link import Link, LinkTimeout
 
 SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" viewBox="0 0 40 40">
     <rect x="5" y="5" width="10" height="10" stroke="#ff0000" fill="none"/>
@@ -604,6 +604,12 @@ def test_moves_are_refused_while_a_run_owns_the_machine(client, fake):
         response = client.post(route, json=body)
         assert response.status_code == 409 and "running" in response.text, (route, response.text)
     assert not [line for line in fake.received_lines[before:] if line.split()[0] in ("jog", "jogto", "set")]
+    # Nor is the machine changed under it in an idle moment between lines:
+    # the drivers let go of the focus axis, or a setting changes what the
+    # rest of the stream means.
+    assert client.post("/api/motors", json={"enabled": False}).status_code == 409
+    assert client.put("/api/settings", json={"values": {"r_rate": 900}}).status_code == 409
+    assert not [line for line in fake.received_lines[before:] if line in ("disable", "$r_rate=900")]
     assert client.post("/api/run/stop").status_code == 200
 
 
@@ -705,3 +711,82 @@ def test_laser_off_during_a_run_is_the_runs_hold_and_mode_is_refused(client, fak
     assert response.status_code == 409
     assert "mode const" not in fake.received_lines[before:]
     assert client.post("/api/run/stop").status_code == 200
+
+
+def test_a_setting_past_what_the_machine_or_a_line_takes_is_refused_before_anything_is_sent(client, fake):
+    connect(client)
+    before = len(fake.received_lines)
+    raw = {"content-type": "application/json"}
+    for bad in ("1e90", "1" + "0" * 100, "10000000.5", "4294967296", '"1e90"'):
+        body = ('{"values": {"r_rate": 800, "a_rate": %s}}' % bad).encode()
+        response = client.put("/api/settings", content=body, headers=raw)
+        assert response.status_code == 400, (bad, response.text)
+    assert not [line for line in fake.received_lines[before:] if line.startswith(("$r_rate=", "$a_rate="))]
+    assert fake.settings["r_rate"] == 1000
+    # A whole number setting holds a u32: an idle time of hours is taken.
+    for good in (20000000, 4294967295):
+        response = client.put("/api/settings", json={"values": {"idle_ms": good}})
+        assert response.status_code == 200, (good, response.text)
+        assert fake.settings["idle_ms"] == good
+    # A host number too large for a float is refused like any other bad one.
+    for name in ("tolerance", "clearance", "spinup"):
+        body = ('{"host": {"%s": 1%s}}' % (name, "0" * 400)).encode()
+        response = client.put("/api/settings", content=body, headers=raw)
+        assert response.status_code == 400, (name, response.text)
+
+
+def test_a_setting_lost_on_the_link_puts_back_the_ones_already_applied(client, fake, monkeypatch):
+    connect(client)
+    link = client.backend.link
+    request_ok = link.request_ok
+
+    def lossy(line: str, timeout: float = 5.0) -> list[str]:
+        if line.startswith("$a_rate="):
+            raise LinkTimeout(f"no answer to {line!r}")
+        return request_ok(line, timeout)
+
+    monkeypatch.setattr(link, "request_ok", lossy)
+    response = client.put("/api/settings", json={"values": {"r_rate": 777, "a_rate": 900}})
+    assert response.status_code == 502
+    assert fake.settings["r_rate"] == 1000
+    assert [line for line in fake.received_lines if line.startswith("$r_rate")] == ["$r_rate=777", "$r_rate=1000"]
+
+
+def test_a_refused_setting_puts_back_one_past_the_float_bound(client, fake):
+    connect(client)
+    # An idle time set from the console, larger than any float setting.
+    fake.settings["idle_ms"] = 3000000000
+    response = client.put("/api/settings", json={"values": {"idle_ms": 5, "r_rate": 800, "a_rate": -1}})
+    assert response.status_code == 400
+    assert fake.settings["idle_ms"] == 3000000000
+    assert fake.settings["r_rate"] == 1000
+
+
+def test_disconnecting_or_stopping_the_backend_stops_the_spindle(tmp_path):
+    fakes: list[FakeSerial] = []
+
+    def factory(url: str) -> Link:
+        fake = FakeSerial(move_time=0.002)
+        fake.settings.update(spindle=1, h_axis=1)
+        fakes.append(fake)
+        return Link(url, open_port=fake_opener(fake))
+
+    backend = Backend(root=tmp_path, link_factory=factory, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        connect(client)
+        assert client.post("/api/spindle", json={"power": 800}).status_code == 200
+        assert fakes[0].spindle == 800
+        # Nothing would be connected to stop it once the port is closed.
+        client.post("/api/disconnect")
+        assert fakes[0].spindle == 0 and "laser off" in fakes[0].received_lines
+        connect(client)
+        assert client.post("/api/spindle", json={"power": 600}).status_code == 200
+        # A machine with its output off is left as it is.
+        assert client.post("/api/spindle/off").status_code == 200
+        before = len(fakes[1].received_lines)
+        client.post("/api/disconnect")
+        assert fakes[1].received_lines[before:] == []
+        connect(client)
+        assert client.post("/api/spindle", json={"power": 600}).status_code == 200
+    # The backend's shutdown closes the link the same way.
+    assert fakes[2].spindle == 0 and "laser off" in fakes[2].received_lines

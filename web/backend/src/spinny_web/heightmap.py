@@ -39,7 +39,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from .kinematics import board_of
+from .kinematics import joint_previews
 
 # Points per side of the grid; a probe takes seconds per point, so a grid
 # of 2500 is already most of an hour.
@@ -249,15 +249,20 @@ class Compensation:
 
 def job_extent(job) -> tuple[float, float, float, float] | None:
     """The board box the enabled groups of a job cut inside, joint-space
-    groups included."""
+    groups included.
+
+    A joint-space move is straight in radius and angle, so on the board it
+    sweeps an arc or a spiral between its ends: a full turn at one radius
+    starts and ends at the same point. Its box is taken from points along
+    the moves, as streamed, not from the ends alone.
+    """
     points: list[tuple[float, float]] = []
-    for group in job.groups:
-        if not group.enabled:
-            continue
-        if group.joints:
-            for poly in group.joints:
-                points.extend(board_of((float(r), float(a))) for r, a in poly)
-        else:
+    enabled = [group for group in job.groups if group.enabled]
+    for polys in joint_previews([group.joints for group in enabled if group.joints]):
+        for poly in polys:
+            points.extend(poly)
+    for group in enabled:
+        if not group.joints:
             for path in group.paths:
                 points.extend((float(x), float(y)) for x, y in path)
     if not points:

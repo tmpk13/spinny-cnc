@@ -219,9 +219,33 @@ def joint_min_radius(poly: list[Joint]) -> float:
     return min(abs(r) for r, _ in poly)
 
 
-def joint_preview(poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0) -> list[Point]:
+def joint_preview(
+    poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0, limit: int | None = polar.MAX_SAMPLES
+) -> list[Point]:
     """Board points along a joint polyline, close enough to draw it."""
-    return polar.sample_joints([(float(r), float(a)) for r, a in poly], step_mm, step_deg)
+    return polar.sample_joints([(float(r), float(a)) for r, a in poly], step_mm, step_deg, limit)
+
+
+# Most points the previews of one job's joint polylines add to their own.
+# Each polyline is bounded on its own as well, but an upload of many would
+# still come to millions of points.
+PREVIEW_BUDGET = 100_000
+
+
+def joint_previews(groups: list[list[list[Joint]]], budget: int = PREVIEW_BUDGET) -> list[list[list[Point]]]:
+    """`joint_preview` of every polyline of every group, with one budget for
+    all of them: once it is spent, a polyline is drawn through its own
+    points only."""
+    out = []
+    remaining = budget
+    for polys in groups:
+        drawn = []
+        for poly in polys:
+            points = joint_preview(poly, limit=min(polar.MAX_SAMPLES, max(0, remaining)))
+            remaining -= len(points) - len(poly)
+            drawn.append(points)
+        out.append(drawn)
+    return out
 
 
 # Shared with the command line tools, which cut a path at the axis the
@@ -389,7 +413,23 @@ class Streamer:
         left as they are.
         """
         focus = compensation.mode == "focus"
+        # Whether a line has set the focus height yet. A job whose first
+        # line is a cut, the head already over its first point, would light
+        # the beam with the head at whatever height it was left and bring
+        # it to focus only along that first piece; a dark move to the focus
+        # height goes first instead.
+        placed = not focus
         for piece in pieces:
+            if not placed and piece.kind == "cut" and piece.start is not None:
+                h = compensation.focus(self.board_of(piece.start))
+                yield Piece(
+                    line=f"go H{coord(h, FOCUS_DECIMALS)}",
+                    kind="lift",
+                    joint=piece.start,
+                    seconds=abs(h - compensation.head_h) / self.rates.h_rate * 60.0,
+                    group=piece.group,
+                )
+            placed = True
             if piece.kind == "cut" and piece.start is not None:
                 a, b = piece.start, piece.joint
                 parts = max(1, math.ceil(piece.length / compensation.step - 1e-9))
@@ -533,6 +573,20 @@ class Streamer:
         seconds = abs(h - frm) / self.rates.h_rate * 60.0 if frm is not None else 0.0
         return Piece(line=f"go H{coord(h, FOCUS_DECIMALS)}", kind="lift", joint=(0.0, 0.0), seconds=seconds, group=group)
 
+    def check_job(self, job: "Job") -> None:
+        """Refuses, with a ValueError, a job this streamer would make into
+        lines the machine must not run, before any line of it is made.
+
+        A spindle at S0 is stopped, and every plunge and cut after it would
+        drive a still tool into the board: a milling group must ask for a
+        speed. A laser group may have power 0, which is a harmless trace.
+        """
+        if self.spindle is None:
+            return
+        for group in job.groups:
+            if group.enabled and group.has_cuts and not group.power > 0:
+                raise ValueError(f"{group.label}: a spindle needs a speed above 0")
+
     def _spindle_pieces(self, job: "Job", start: Joint, compensation: "Compensation | None") -> Iterator[Piece]:
         """Every line of a milling job.
 
@@ -545,6 +599,7 @@ class Streamer:
         the end, with the tool up.
         """
         assert self.spindle is not None
+        self.check_job(job)
         travel = self.travel_height(compensation)
         spinup_ms = int(round(self.spindle.spinup * 1000.0))
 

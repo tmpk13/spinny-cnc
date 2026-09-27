@@ -565,3 +565,83 @@ def test_a_status_request_waits_for_its_own_report_not_a_polls():
         assert status.r == 7.0
     finally:
         lk.close()
+
+
+@pytest.mark.parametrize("poll", [False, True])
+def test_a_status_line_does_not_leave_later_requests_a_report_behind(poll):
+    # The `status` command prints a report that no `?` asked for. Counted
+    # as the answer to one, every later request would take the report
+    # before its own and see the machine as it was.
+    fake = FakeSerial()
+    lk = make_link(fake, poll=poll)
+    try:
+        lines = lk.request("status")
+        assert len(lines) == 2 and lines[0].startswith("<") and lines[-1] == "ok"
+        for r in (3.0, 5.0, 7.0):
+            fake.joint = [r, 0.0]
+            assert lk.status_now(2.0).r == r
+    finally:
+        lk.close()
+
+
+def test_a_report_nobody_asked_for_does_not_answer_the_next_request():
+    # A report arriving after its request gave up on it is one no request
+    # is waiting for; it must not stand in for the next request's own.
+    fake = FakeSerial()
+    events = Collector()
+    lk = make_link(fake, poll=False)
+    lk.subscribe(events)
+    try:
+        lk.status_now(2.0)
+        fake._emit(fake.status())
+        assert wait_for(lambda: len(events.of("status")) == 2)
+        fake.joint = [4.0, 0.0]
+        assert lk.status_now(2.0).r == 4.0
+    finally:
+        lk.close()
+
+
+def test_a_status_line_takes_one_report_while_a_poll_is_out():
+    fake = FakeSerial(byte_delay=0.001)
+    lk = make_link(fake, poll=False)
+    try:
+        lk.realtime(REALTIME_STATUS, routine=True)
+        lines = lk.request("status")
+        assert len(lines) == 2 and lines[0].startswith("<")
+        fake.joint = [6.0, 0.0]
+        assert lk.status_now(2.0).r == 6.0
+    finally:
+        lk.close()
+
+
+def test_a_refused_status_line_leaves_the_report_to_its_request():
+    # `status` with a word after it is refused and prints no report: the
+    # report arriving while it waits is the one a request asked for.
+    fake = FakeSerial(ok_delay=0.3)
+    lk = make_link(fake, poll=False)
+    try:
+        pending = lk.send("status now")
+        fake.joint = [2.0, 0.0]
+        assert lk.status_now(1.0).r == 2.0
+        assert pending.wait(2.0) and not pending.ok
+        assert pending.lines == []
+        fake.ok_delay = 0.0
+        fake.joint = [3.0, 0.0]
+        assert lk.status_now(1.0).r == 3.0
+    finally:
+        lk.close()
+
+
+def test_a_restart_while_a_refused_version_line_waits_is_a_restart():
+    # `version` with a word after it prints no banner: one arriving while
+    # it waits is the firmware starting over.
+    fake = FakeSerial(ok_delay=0.5)
+    lk = make_link(fake, poll=False)
+    try:
+        before = lk.restarts
+        pending = lk.send("version please")
+        fake._emit(fake.banner())
+        assert wait_for(lambda: lk.restarts == before + 1)
+        assert pending.wait(2.0) and not pending.ok
+    finally:
+        lk.close()

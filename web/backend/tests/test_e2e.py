@@ -18,7 +18,10 @@ from spinny_web.runner import DONE, STOPPED, Runner
 
 BINARY = os.environ.get("SPINNY_VIRTUAL", "")
 
-pytestmark = pytest.mark.e2e
+# The debug build of the virtual firmware steps every microstep, and a
+# probed grid takes tens of seconds of it: each test's own deadlines are
+# the limit, not the suite's default timeout.
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(300)]
 
 
 def free_port() -> int:
