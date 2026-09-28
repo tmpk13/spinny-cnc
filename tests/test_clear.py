@@ -240,15 +240,140 @@ def test_spokes_are_radial_and_alternate_out_and_in():
     assert any(outward) and not all(outward)
 
 
-@pytest.mark.parametrize("outer", [0.3, 2.0, 17.0, 60.0])
-def test_spokes_are_never_more_than_a_pitch_apart(outer):
-    count, levels = clear.spoke_plan(outer, SPOT)
-    inner = [clear.spoke_inner(i, outer, levels, SPOT) for i in range(count)]
+# Areas to lay spokes over: about the axis, long and narrow across it, with
+# a notch, and off to one side.
+SPOKE_AREAS = {
+    "disc": [pad(0.0, 0.0, 17.0, 256)],
+    "strip": [[(-6.0, -0.8), (6.0, -0.8), (6.0, 0.8), (-6.0, 0.8)]],
+    "notched": [[(-2.0, -2.0), (2.0, -2.0), (2.0, -0.2), (0.3, -0.2), (0.3, 0.2), (2.0, 0.2), (2.0, 2.0), (-2.0, 2.0)]],
+    "aside": [square(5.0, 1.0, 1.5)],
+    "speck": [square(0.0, 0.0, 0.15)],
+}
+
+
+def spoke_plan(area):
+    """The profile, wedges, angles and start radii the fill lays spokes by."""
+    _, reach = clear.radial_extent(area)
+    wedges = max(8, math.ceil(2 * math.pi * (reach + SPOT) / SPOT))
+    far = clear.far_profile(area, wedges)
+    angles = clear.spoke_angles(far, SPOT)
+    levels = clear.spoke_levels(len(angles), reach, SPOT)
+    inner = [clear.spoke_inner(angles, i, levels, SPOT) for i in range(len(angles))]
+    return reach, far, angles, inner
+
+
+def reach_between(far, low: float, high: float) -> float:
+    width = 2 * math.pi / len(far)
+    return max(far[k % len(far)] for k in range(math.floor(low / width), math.floor(high / width) + 1))
+
+
+@pytest.mark.parametrize("name", SPOKE_AREAS)
+def test_spokes_are_never_more_than_a_pitch_apart_where_the_area_reaches(name):
+    reach, far, angles, inner = spoke_plan(SPOKE_AREAS[name])
     for step in range(1, 200):
-        radius = SPOT / 2.0 + (outer - SPOT / 2.0) * step / 200.0
-        present = [i for i in range(count) if inner[i] <= radius]
-        gaps = [(b - a) for a, b in zip(present, present[1:])] + [present[0] + count - present[-1]]
-        assert max(gaps) * 2 * math.pi / count * radius <= SPOT * (1 + 1e-9)
+        radius = SPOT / 2.0 + (reach - SPOT / 2.0) * step / 200.0
+        present = [i for i in range(len(angles)) if inner[i] <= radius]
+        assert present
+        for a, b in zip(present, present[1:] + present[:1]):
+            gap = (angles[b] - angles[a]) % (2 * math.pi) or 2 * math.pi
+            if radius <= reach_between(far, angles[a], angles[a] + gap):
+                assert gap * radius <= SPOT * (1 + 1e-9), (radius, angles[a], gap)
+
+
+def test_the_far_profile_is_how_far_the_area_reaches_in_each_wedge():
+    far = clear.far_profile(SPOKE_AREAS["strip"], 360)
+    # A wedge reaches farthest at its side further from square to the edge
+    # it meets: up the strip at 91 degrees, along it at 1.
+    assert far[90] == pytest.approx(0.8 / math.cos(math.radians(1.0)), rel=1e-9)
+    assert far[0] == pytest.approx(6.0 / math.cos(math.radians(1.0)), rel=1e-9)
+    assert max(far) == pytest.approx(math.hypot(6.0, 0.8), rel=1e-9)
+    # Off to one side the far side of the circle holds nothing.
+    aside = clear.far_profile(SPOKE_AREAS["aside"], 360)
+    assert aside[180] == 0.0 and aside[10] > 6.0
+
+
+def test_spokes_are_as_sparse_as_a_narrow_board_allows():
+    """Across a strip the spokes only have to reach its edge, so there are
+    fewer of them than a circle through its corners would need."""
+    strip = SPOKE_AREAS["strip"]
+    _, _, angles, _ = spoke_plan(strip)
+    corner = math.hypot(6.0, 0.8)
+    assert len(angles) < 0.5 * 2 * math.pi * corner / SPOT
+    across = [b - a for a, b in zip(angles, angles[1:]) if abs(math.cos(a)) < 0.05]
+    along = [b - a for a, b in zip(angles, angles[1:]) if abs(math.sin(a)) < 0.01]
+    assert min(across) > 5 * max(along)
+
+
+@pytest.mark.parametrize(
+    "board",
+    [
+        [(-6.0, -1.8), (6.0, -1.8), (6.0, 1.8), (-6.0, 1.8), (-6.0, -1.8)],
+        [(-2.6, -1.8), (8.0, -1.8), (8.0, -1.0), (2.6, -1.0), (2.6, 1.8), (-2.6, 1.8), (-2.6, -1.8)],
+    ],
+    ids=["strip", "ell"],
+)
+def test_shaped_spokes_clear_a_long_or_bent_board(board):
+    strokes = clear.clear(COPPER, KEEP, SPOT, clear.RADIAL, outline=[board])
+    frame = clear.perimeter(COPPER, KEEP, SPOT, [board])
+    check_keeps_clear(strokes, COPPER, KEEP, frame)
+    check_covers(strokes, COPPER, KEEP, [board[:-1]])
+
+
+def ray(degrees: float, low: float, high: float):
+    c, s = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return [(low * c, low * s), (high * c, high * s)]
+
+
+def test_travel_order_takes_the_end_the_head_reaches_first():
+    # From the axis the inner end of the spoke at 10 degrees is nearest;
+    # its outer end is then beside the outer end of the one at 11.
+    strokes = [ray(11.0, 1.0, 5.0), ray(200.0, 0.5, 5.0), ray(10.0, 0.5, 5.0)]
+    ordered = clear.by_travel(strokes, clear.DEFAULT_PACE)
+    assert ordered[0] == strokes[2]
+    assert ordered[1] == strokes[0][::-1]
+    assert ordered[2] == strokes[1]
+    assert sorted(map(sorted, ordered)) == sorted(map(sorted, strokes))
+
+
+def test_travel_order_weighs_the_table_by_its_pace():
+    # A slow table favours a longer run along the rail over a turn, and a
+    # fast one the turn.
+    strokes = [ray(0.0, 1.0, 2.0), ray(0.0, 5.0, 6.0), ray(10.0, 2.0, 3.0)]
+    slow = clear.by_travel(strokes, 1.4)
+    fast = clear.by_travel(strokes, 0.1)
+    assert slow[1] == strokes[1]
+    assert fast[1] == strokes[2]
+
+
+def swept_in_turn(spokes):
+    """The spokes by angle, out and in in strict turn: once round."""
+    swept = []
+    outward = True
+    for stroke in sorted(spokes, key=lambda p: (round(clear._angle(p[0]), 9), min(map(math.hypot, *zip(*p))))):
+        if (math.hypot(*stroke[0]) > math.hypot(*stroke[-1])) == outward:
+            stroke = stroke[::-1]
+        swept.append(stroke)
+        outward = not outward
+    return swept
+
+
+@pytest.mark.parametrize("half", [2.0, 5.0, 14.0])
+def test_spokes_travel_no_more_than_once_round_in_turn(half):
+    spokes = clear.spokes([square(0.0, 0.0, half)], SPOT)
+    once_round = clear.travel(swept_in_turn(spokes), clear.DEFAULT_PACE)
+    assert clear.travel(spokes, clear.DEFAULT_PACE) <= once_round
+    if half > 10.0:
+        # Many sets of spokes: going once round, the rail would run back
+        # from every short spoke's end to the next long one's.
+        assert clear.travel(spokes, clear.DEFAULT_PACE) < 0.7 * once_round
+
+
+def test_a_sweep_turns_each_spoke_to_meet_the_one_before():
+    # Out along the first, in along the second from beside where the first
+    # ends, and out along the short third, whose inner end is the nearer.
+    spokes = [[ray(0.0, 0.5, 2.0)], [ray(1.0, 0.5, 2.0)], [ray(2.0, 1.0, 2.0)]]
+    order = clear.sweep(spokes, clear.DEFAULT_PACE)
+    assert order == [spokes[0][0], spokes[1][0][::-1], spokes[2][0]]
 
 
 def test_copper_that_covers_the_board_leaves_nothing_to_clear():
@@ -261,4 +386,6 @@ def test_refuses_what_it_cannot_do():
         clear.clear(COPPER, KEEP, SPOT, "zigzag")
     with pytest.raises(ValueError, match="pitch"):
         clear.clear(COPPER, KEEP, SPOT, clear.LINES, pitch=2 * SPOT)
+    with pytest.raises(ValueError):
+        clear.clear(COPPER, KEEP, SPOT, clear.RADIAL, pace=0.0)
     assert clear.clear([], KEEP, SPOT, clear.LINES) == []

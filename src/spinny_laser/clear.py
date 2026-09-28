@@ -17,9 +17,13 @@ Three fills, each a family of strokes at most one pitch apart:
 - radial: spokes out from the axis. The table stands still while the head
   runs along the rail, and near the axis that is the fast direction of
   this machine, where the table's rate caps the surface speed of anything
-  that turns it. Spokes spread apart going out, so one only starts where
-  its neighbours have drifted a whole pitch apart, and the spacing stays
-  between half the pitch and the pitch.
+  that turns it. Any straight stroke that misses the axis turns the table
+  through the angle it spans, most of it where it passes closest, so a
+  row near the axis crawls however it is laid. Spokes spread apart going
+  out, so one only starts where its neighbours have drifted a whole pitch
+  apart, and the spacing stays between half the pitch and the pitch.
+  Spokes are packed only as tightly as the area's reach in each direction
+  needs, and cut in whichever order and direction the head reaches soonest.
 - rings: arcs about the axis. The head stands still while the table turns:
   smooth, and the rail never reverses, but slow where the table's rate
   binds.
@@ -32,6 +36,7 @@ own axes.
 
 from __future__ import annotations
 
+import bisect
 import math
 
 import pyclipper
@@ -59,6 +64,12 @@ MIN_STROKE = 0.001
 # Spokes are halved inwards until the innermost set reaches no further than
 # this many pitches from the axis; that set runs all the way in.
 CORE_PITCHES = 4.0
+# No two spokes are further apart than this, in radians, however little of
+# the area lies between them.
+WIDEST_GAP = math.pi / 4.0
+# Rail millimeters the head runs in the time the table turns one degree,
+# each at its max rate: the firmware's defaults, 560 mm/min and 400 deg/min.
+DEFAULT_PACE = 560.0 / 400.0
 
 
 def clear(
@@ -69,6 +80,7 @@ def clear(
     outline: list[Polyline] | None = None,
     pitch: float | None = None,
     tolerance: float = 0.005,
+    pace: float = DEFAULT_PACE,
 ) -> list[Polyline]:
     """Clearing strokes in cutting order, board mm about the axis.
 
@@ -77,7 +89,9 @@ def clear(
     is the largest spacing between strokes, the spot when not given.
     `tolerance` is the chord tolerance the paths are streamed at: a ring
     is drawn with chords that stay within half of it, so each chord goes
-    out as one move at a constant radius.
+    out as one move at a constant radius. `pace` is how many millimeters
+    the rail runs while the table turns a degree, both at their max rates,
+    which is what the spokes are ordered by.
     """
     if pattern not in PATTERNS:
         raise ValueError(f"clearing pattern must be one of {', '.join(PATTERNS)}")
@@ -90,6 +104,8 @@ def clear(
         raise ValueError("pitch must be above 0 and at most the spot")
     if not tolerance > 0.0:
         raise ValueError("tolerance must be > 0")
+    if not (pace > 0.0 and math.isfinite(pace)):
+        raise ValueError("pace must be a finite number above 0")
     if not copper:
         return []
 
@@ -99,7 +115,7 @@ def clear(
     if not area:
         return []
     if pattern == RADIAL:
-        strokes = spokes(area, pitch)
+        strokes = spokes(area, pitch, pace)
     elif pattern == RINGS:
         strokes = rings(area, pitch, tolerance)
     else:
@@ -270,59 +286,266 @@ def _segment_distance(point: Point, a: Point, b: Point) -> float:
 # --- the fills ----------------------------------------------------------------
 
 
-def spoke_plan(outer: float, pitch: float) -> tuple[int, int]:
-    """How many spokes there are at the outer radius, and how many times
-    the set halves on the way in."""
+def far_profile(area: Polygons, wedges: int) -> list[float]:
+    """How far the area reaches from the axis in each of `wedges` equal
+    wedges round it, the first starting at angle zero.
+
+    The farthest point of the area in a wedge lies on its boundary, and the
+    farthest point of a straight edge is one of its ends, so each edge is
+    cut where it crosses from one wedge into the next and every piece
+    counts by its ends.
+    """
+    width = 2.0 * math.pi / wedges
+    far = [0.0] * wedges
+
+    def reach(wedge: int, radius: float) -> None:
+        wedge %= wedges
+        if radius > far[wedge]:
+            far[wedge] = radius
+
+    for contour in area:
+        for a, b in zip(contour, contour[1:] + contour[:1]):
+            start = _angle(a)
+            first = math.floor(start / width)
+            reach(first, math.hypot(*a))
+            reach(math.floor(_angle(b) / width), math.hypot(*b))
+            cross = a[0] * b[1] - a[1] * b[0]
+            if cross == 0.0:
+                # Along a ray, or through the axis: each half keeps to the
+                # wedge its end is in.
+                continue
+            sweep = math.atan2(cross, a[0] * b[0] + a[1] * b[1])
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            # The rays between wedges that the edge crosses, in its turn.
+            if sweep > 0.0:
+                boundaries = range(first + 1, math.floor((start + sweep) / width) + 1)
+            else:
+                boundaries = range(first, math.ceil((start + sweep) / width) - 1, -1)
+            for boundary in boundaries:
+                c, s = math.cos(boundary * width), math.sin(boundary * width)
+                across = c * dy - s * dx
+                if across == 0.0:
+                    continue
+                radius = cross / across
+                reach(boundary - 1, radius)
+                reach(boundary, radius)
+    return far
+
+
+def spoke_angles(far: list[float], pitch: float) -> list[float]:
+    """Spoke angles from zero round the axis, each gap only as wide as lets
+    one pitch span it at the farthest the area reaches within it."""
+    wedges = len(far)
+    width = 2.0 * math.pi / wedges
+
+    def reach(low: float, high: float) -> float:
+        return max(far[k % wedges] for k in range(math.floor(low / width), math.floor(high / width) + 1))
+
+    angles = []
+    theta = 0.0
+    while theta < 2.0 * math.pi:
+        angles.append(theta)
+        here = far[math.floor(theta / width) % wedges]
+        gap = min(WIDEST_GAP, pitch / here) if here > 0.0 else WIDEST_GAP
+        # A narrower gap can only reach less far, so this settles once the
+        # reach stops falling (a pitch over the reach and back may round up).
+        radius = reach(theta, theta + gap)
+        while radius * gap > pitch:
+            gap = pitch / radius
+            narrower = reach(theta, theta + gap)
+            if narrower >= radius:
+                break
+            radius = narrower
+        theta += gap
+    return angles
+
+
+def spoke_levels(count: int, far: float, pitch: float) -> int:
+    """How many times the set of spokes halves on the way in, keeping at
+    least four in the innermost set."""
     levels = 0
-    while outer / 2.0**levels > CORE_PITCHES * pitch:
+    while far / 2.0**levels > CORE_PITCHES * pitch:
         levels += 1
-    core = max(4, math.ceil(2.0 * math.pi * (outer / 2.0**levels) / pitch))
-    return core * 2**levels, levels
+    while levels > 0 and count < 4 * 2**levels:
+        levels -= 1
+    return levels
 
 
-def spoke_inner(index: int, outer: float, levels: int, pitch: float) -> float:
-    """Where spoke `index` starts: the spokes that are left after halving
-    the set `level` times reach in to half the radius where that set is
-    first needed, and the last set runs in to half a pitch off the axis."""
+def spoke_level(index: int, levels: int) -> int:
+    """The coarsest set spoke `index` belongs to: every 2**level-th spoke
+    is in set `level`, and the last set runs all the way in."""
     level = 0
     while level < levels and index % 2 ** (level + 1) == 0:
         level += 1
+    return level
+
+
+def spoke_inner(angles: list[float], index: int, levels: int, pitch: float) -> float:
+    """Where spoke `index` starts: where the gap it splits, between the
+    nearest spokes of a coarser set on either side, grows to a pitch. The
+    innermost set runs in to half a pitch off the axis."""
+    level = spoke_level(index, levels)
     if level >= levels:
         return pitch / 2.0
-    return outer / 2.0 ** (level + 1)
+    count = len(angles)
+    left = index - 1
+    while spoke_level(left % count, levels) <= level:
+        left -= 1
+    right = index + 1
+    while spoke_level(right % count, levels) <= level:
+        right += 1
+    gap = (angles[right % count] - angles[left % count]) % (2.0 * math.pi)
+    return max(pitch / 2.0, pitch / gap)
 
 
-def spokes(area: Polygons, pitch: float) -> list[Polyline]:
-    """Radial strokes, out and back in turn, once round the table."""
+def spokes(area: Polygons, pitch: float, pace: float = DEFAULT_PACE) -> list[Polyline]:
+    """Radial strokes, in the order the head reaches them soonest."""
     _, far = radial_extent(area)
     outer = far + pitch
-    count, levels = spoke_plan(outer, pitch)
-    step = 2.0 * math.pi / count
+    # Wedges no wider than the closest spokes can be, so a gap between two
+    # spans no more than a wedge or two beyond itself.
+    angles = spoke_angles(far_profile(area, max(8, math.ceil(2.0 * math.pi * outer / pitch))), pitch)
+    levels = spoke_levels(len(angles), far, pitch)
     rays = []
-    for index in range(count):
-        theta = (index + 0.5) * step
-        inner = spoke_inner(index, outer, levels, pitch)
+    for index, theta in enumerate(angles):
+        inner = spoke_inner(angles, index, levels, pitch)
         c, s = math.cos(theta), math.sin(theta)
         rays.append([(inner * c, inner * s), (outer * c, outer * s)])
     by_spoke: dict[int, list[Polyline]] = {}
     for piece in _clip_open(rays, area):
-        mid = _midpoint(piece)
-        index = round(_angle(mid) / step - 0.5) % count
+        index = _nearest(angles, _angle(_midpoint(piece)))
         # Back on the ray exactly, out from the axis side: clipping rounds
         # an end to a nanometre, which near the axis tilts a short spoke
         # enough to change its angle word.
-        theta = (index + 0.5) * step
-        c, s = math.cos(theta), math.sin(theta)
+        c, s = math.cos(angles[index]), math.sin(angles[index])
         low, high = sorted((math.hypot(*piece[0]), math.hypot(*piece[-1])))
         by_spoke.setdefault(index, []).append([(low * c, low * s), (high * c, high * s)])
+    # Once round the table suits a few sets of spokes, where the rail runs
+    # little between a short spoke's end and a long one's; nearest first
+    # suits many, taking each set round in turn.
+    orders = [
+        sweep([sorted(by_spoke[i], key=lambda p: math.hypot(*p[0])) for i in sorted(by_spoke)], pace),
+        by_travel([piece for i in sorted(by_spoke) for piece in by_spoke[i]], pace),
+    ]
+    return min(orders, key=lambda order: travel(order, pace))
+
+
+def _nearest(angles: list[float], theta: float) -> int:
+    """The index of the angle round the circle nearest `theta`."""
+    count = len(angles)
+    after = bisect.bisect_left(angles, theta)
+    return min(
+        ((after - 1) % count, after % count),
+        key=lambda i: abs(math.remainder(angles[i] - theta, 2.0 * math.pi)),
+    )
+
+
+def _joint(point: Point) -> tuple[float, float]:
+    """Radius and angle in degrees, [0, 360)."""
+    return math.hypot(*point), math.degrees(_angle(point))
+
+
+def _move(a: tuple[float, float], b: tuple[float, float], pace: float) -> float:
+    """The time between two joints, in rail millimeters at `pace` to the
+    degree: the longer of the rail's run and the table's turn."""
+    turn = abs(b[1] - a[1]) % 360.0
+    return max(abs(b[0] - a[0]), min(turn, 360.0 - turn) * pace)
+
+
+def travel(strokes: list[Polyline], pace: float, start: Point = (0.0, 0.0)) -> float:
+    """The time the head spends between strokes, in rail millimeters."""
+    total = 0.0
+    at = _joint(start)
+    for stroke in strokes:
+        total += _move(at, _joint(stroke[0]), pace)
+        at = _joint(stroke[-1])
+    return total
+
+
+def sweep(spokes: list[list[Polyline]], pace: float, start: Point = (0.0, 0.0)) -> list[Polyline]:
+    """Spokes in the order given, their pieces out from the axis, each
+    spoke cut out or in as makes the least travel over the whole round."""
+    if not spokes:
+        return []
+
+    def ends(pieces: list[Polyline], way: int) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Where the head starts and ends the spoke, out (0) or in (1)."""
+        if way == 0:
+            return _joint(pieces[0][0]), _joint(pieces[-1][-1])
+        return _joint(pieces[-1][-1]), _joint(pieces[0][0])
+
+    # For each way the last spoke went, the least travel so far, and for
+    # each spoke after the first, the way the one before it went on that
+    # path.
+    at = _joint(start)
+    best = [_move(at, ends(spokes[0], way)[0], pace) for way in (0, 1)]
+    back: list[tuple[int, int]] = []
+    for before, pieces in zip(spokes, spokes[1:]):
+        step = []
+        came = []
+        for way in (0, 1):
+            entry = ends(pieces, way)[0]
+            costs = [best[w] + _move(ends(before, w)[1], entry, pace) for w in (0, 1)]
+            w = 0 if costs[0] <= costs[1] else 1
+            step.append(costs[w])
+            came.append(w)
+        best = step
+        back.append((came[0], came[1]))
+    way = 0 if best[0] <= best[1] else 1
+    chosen = [way]
+    for came in reversed(back):
+        way = came[way]
+        chosen.append(way)
+    chosen.reverse()
     out: list[Polyline] = []
-    outward = True
-    for index in sorted(by_spoke):
-        pieces = sorted(by_spoke[index], key=lambda p: math.hypot(*p[0]))
-        if not outward:
-            pieces = [p[::-1] for p in reversed(pieces)]
-        out.extend(pieces)
-        outward = not outward
+    for pieces, way in zip(spokes, chosen):
+        out.extend(pieces if way == 0 else [p[::-1] for p in reversed(pieces)])
+    return out
+
+
+def by_travel(strokes: list[Polyline], pace: float, start: Point = (0.0, 0.0)) -> list[Polyline]:
+    """The strokes taken in turn by whichever end the head reaches soonest
+    from where the last one left it, each cut from that end.
+
+    The head's time to a point is the longer of the rail's run and the
+    table's turn, counted in rail millimeters at `pace` to the degree: a
+    move between two strokes is a straight line in the joints.
+    """
+    if not strokes:
+        return []
+    wedges = max(1, min(3600, 2 * len(strokes)))
+    width = 360.0 / wedges
+    buckets: list[dict[tuple[int, int], tuple[float, float]]] = [{} for _ in range(wedges)]
+
+    def wedge(degrees: float) -> int:
+        return int(degrees / width) % wedges
+
+    for index, stroke in enumerate(strokes):
+        for side, point in ((0, stroke[0]), (1, stroke[-1])):
+            end = _joint(point)
+            buckets[wedge(end[1])][(index, side)] = end
+    at = _joint(start)
+    out = []
+    for _ in range(len(strokes)):
+        best: tuple[float, int, int] | None = None
+        home = wedge(at[1])
+        for step in range(wedges // 2 + 1):
+            # Nothing a wedge this far round is nearer in angle than this.
+            if best is not None and (step - 1) * width * pace >= best[0]:
+                break
+            for k in sorted({(home + step) % wedges, (home - step) % wedges}):
+                for (index, side), end in buckets[k].items():
+                    cost = _move(at, end, pace)
+                    if best is None or cost < best[0]:
+                        best = (cost, index, side)
+        assert best is not None
+        _, index, side = best
+        stroke = strokes[index]
+        for end_side, point in ((0, stroke[0]), (1, stroke[-1])):
+            del buckets[wedge(_joint(point)[1])][(index, end_side)]
+        stroke = stroke if side == 0 else stroke[::-1]
+        out.append(stroke)
+        at = _joint(stroke[-1])
     return out
 
 

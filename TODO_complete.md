@@ -191,3 +191,7 @@
   power loss, `$tmc`), the virtual firmware, the backend (status counting,
   run start cancellation, probe timeout, height map frame, console guards),
   the page and mock, and the command line tools.
+- Faster radial clearing (2026-09-28): spokes spaced by how far the area
+  reaches in each direction, and cut in whichever order travels least in
+  the machine's own time (rail rate over table rate from its settings).
+  The 28.5 mm test board: 62.7 to 48.4 min, against 154.5 for lines.

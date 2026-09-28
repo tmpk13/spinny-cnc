@@ -320,7 +320,7 @@ def import_file(path: Path, name: str, options: ImportOptions, streamer: Streame
     elif suffix in (".gcode", ".nc", ".ngc"):
         job = from_gcode(path.read_text(encoding="utf-8", errors="replace"), name, options)
     elif suffix == ".kicad_pcb" or suffix in GERBER_SUFFIXES:
-        job = from_board(path, name, options)
+        job = from_board(path, name, options, pace=streamer.rates.r_rate / streamer.rates.a_rate)
     else:
         raise JobImportError(f"cannot import {path.name}: unknown file type {suffix!r}")
     job.refresh_stats(streamer)
@@ -520,8 +520,11 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
     )
 
 
-def from_board(path: Path, name: str, options: ImportOptions) -> Job:
-    """Isolation loops for a copper gerber or a KiCad board, with the outline when found."""
+def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE) -> Job:
+    """Isolation loops for a copper gerber or a KiCad board, with the outline when found.
+
+    `pace` is the machine's rail rate in mm/min over its table rate in
+    deg/min, which a radial clearing orders its spokes by."""
     from laser_sweep import geom, gerber, isocli, isolate
 
     temporary: tempfile.TemporaryDirectory | None = None
@@ -566,6 +569,7 @@ def from_board(path: Path, name: str, options: ImportOptions) -> Job:
                 options.clear,
                 outline=plan.outline,
                 tolerance=options.tolerance,
+                pace=pace,
             )
     except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
         raise JobImportError(str(exc)) from exc

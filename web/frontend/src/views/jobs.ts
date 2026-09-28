@@ -79,7 +79,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const clearField = el("select", {
         class: "field",
         "aria-label": "Clear copper",
-        title: "Burn away the copper the isolation leaves, inside the board outline or else the job's X/Y box (gerber and KiCad only)",
+        title: "Burn away the copper the isolation leaves, inside the board outline or else the job's X/Y box (gerber and KiCad only). Radial is the fastest: its spokes run on the rail alone, while rings and lines turn the table",
     },
         el("option", { value: "off" }, "off"),
         el("option", { value: "radial" }, "radial"),

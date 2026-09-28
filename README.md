@@ -320,10 +320,11 @@ classDiagram
         ring(radius)
     }
     class clear {
-        clear(copper, keep, spot, pattern, outline) strokes
+        clear(copper, keep, spot, pattern, outline, pace) strokes
         perimeter(copper, keep, spot, outline)
         chains(paths) outline pieces joined
-        spokes / rings / rows(area, pitch)
+        spokes(area, pitch, pace) shaped to the area, ordered by travel
+        rings / rows(area, pitch)
     }
     class fine {
         Design  reach, angle, cross, arm, spiral
