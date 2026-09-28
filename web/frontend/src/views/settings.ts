@@ -20,6 +20,26 @@ export function changedValues(settings: SettingsResponse, edits: Record<string, 
     return out;
 }
 
+// Whether the panel is folded is a per-browser convenience; storage that is
+// blocked or empty leaves the panel open.
+const FOLD_KEY = "spinny.settings.open";
+
+function readFoldOpen(): boolean {
+    try {
+        return globalThis.localStorage?.getItem(FOLD_KEY) !== "0";
+    } catch {
+        return true;
+    }
+}
+
+function writeFoldOpen(open: boolean): void {
+    try {
+        globalThis.localStorage?.setItem(FOLD_KEY, open ? "1" : "0");
+    } catch {
+        // Not remembered; the panel still folds.
+    }
+}
+
 export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });
     const clearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
@@ -37,7 +57,12 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         milling,
         table,
     );
-    root.append(el("h2", {}, "Settings"), body);
+    const fold = el("details", { class: "panel-fold", open: readFoldOpen() },
+        el("summary", { class: "panel-head" }, el("h2", {}, "Settings")),
+        body,
+    );
+    fold.addEventListener("toggle", () => writeFoldOpen(fold.open));
+    root.append(fold);
 
     let edits: Record<string, number> = {};
     let shown: SettingsResponse | null = null;

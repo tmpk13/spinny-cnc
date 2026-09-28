@@ -203,25 +203,59 @@ input[type="checkbox"] {
     transition: opacity 0.2s, filter 0.2s;
 }
 
+/* On a narrow screen the columns fall away and their panels stack in the
+   one-column order above. */
+.column {
+    display: contents;
+}
+
+/* On a wide screen the page is one screen tall and each column scrolls on
+   its own. The gap is split between the grid and the columns so that panel
+   shadows sit inside each column's scroll box instead of being clipped. */
 @media (min-width: 64rem) {
+    #app {
+        height: 100vh;
+        height: 100dvh;
+    }
+
     .grid {
         grid-template-columns: minmax(20rem, 1fr) minmax(0, 2fr) minmax(20rem, 1fr);
-        /* Height the tall jobs and preview panels need beyond the position
-           readout goes to the jog row, so the readout never stretches. */
-        grid-template-rows: auto 1fr auto auto;
-        grid-template-areas:
-            "dro preview jobs"
-            "jog preview jobs"
-            "jog console jobs"
-            "jog console heightmap"
-            "laser console settings";
+        grid-template-rows: minmax(0, 1fr);
+        grid-template-areas: none;
+        gap: 0;
+        padding: 0 calc(var(--gap) / 2);
+        min-height: 0;
+    }
+
+    .column {
+        display: flex;
+        flex-direction: column;
+        gap: var(--gap);
+        padding: var(--gap) calc(var(--gap) / 2);
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+    }
+
+    .column > .panel {
+        flex: none;
+    }
+
+    /* The jog pad, the preview and the job list take the height their
+       column has left, so the short panels beside them never stretch. */
+    .column > #jog,
+    .column > #preview,
+    .column > #jobs {
+        flex: 1 0 auto;
     }
 }
 
 #dro { grid-area: dro; }
 #preview { grid-area: preview; }
 #jog { grid-area: jog; }
-#laser { grid-area: laser; align-self: start; }
+#laser { grid-area: laser; }
 #jobs { grid-area: jobs; }
 #heightmap { grid-area: heightmap; }
 #console { grid-area: console; }
@@ -950,7 +984,8 @@ input[type="number"].field {
 
 /* Disclosures draw their own chevron in place of the marker. */
 .center-test > summary,
-.hm-probe-settings > summary {
+.hm-probe-settings > summary,
+.panel-fold > summary {
     display: flex;
     align-items: center;
     gap: 0.55rem;
@@ -959,12 +994,14 @@ input[type="number"].field {
 }
 
 .center-test > summary::-webkit-details-marker,
-.hm-probe-settings > summary::-webkit-details-marker {
+.hm-probe-settings > summary::-webkit-details-marker,
+.panel-fold > summary::-webkit-details-marker {
     display: none;
 }
 
 .center-test > summary::before,
-.hm-probe-settings > summary::before {
+.hm-probe-settings > summary::before,
+.panel-fold > summary::before {
     content: "";
     flex: none;
     width: 0.4rem;
@@ -977,8 +1014,20 @@ input[type="number"].field {
 }
 
 .center-test[open] > summary::before,
-.hm-probe-settings[open] > summary::before {
+.hm-probe-settings[open] > summary::before,
+.panel-fold[open] > summary::before {
     transform: rotate(45deg);
+}
+
+/* A panel that folds away to its title line. */
+.panel-fold > summary {
+    justify-content: flex-start;
+}
+
+.panel-fold:not([open]) > summary {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
 }
 
 .center-test {

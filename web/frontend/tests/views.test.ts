@@ -228,6 +228,23 @@ describe("settings follow the machine", () => {
     });
 });
 
+describe("settings fold", () => {
+    test("the settings panel opens by default and remembers being folded", () => {
+        localStorage.removeItem("spinny.settings.open");
+        const first = setup();
+        mountSettings(first.root, first.ctx);
+        const fold = first.root.querySelector("details.panel-fold") as HTMLDetailsElement;
+        expect(fold.open).toBe(true);
+        expect(fold.querySelector("summary h2")?.textContent).toBe("Settings");
+        fold.open = false;
+        fold.dispatchEvent(new Event("toggle"));
+        const second = setup();
+        mountSettings(second.root, second.ctx);
+        expect((second.root.querySelector("details.panel-fold") as HTMLDetailsElement).open).toBe(false);
+        localStorage.removeItem("spinny.settings.open");
+    });
+});
+
 describe("job selection", () => {
     /** Holds each job request open until the test answers it. */
     function heldJobs(api: Api): Map<string, (job: Job) => void> {
