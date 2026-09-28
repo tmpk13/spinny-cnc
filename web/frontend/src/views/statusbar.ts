@@ -23,7 +23,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const mock = ctx.store.get().mock ? el("span", { class: "badge mock" }, "mock") : null;
 
     root.append(
-        el("div", { class: "brand" }, "Spinny laser"),
+        el("div", { class: "brand" }, "Spinny Laser"),
         el("div", { class: "connection" }, select, urlInput, refresh, connect),
         el("div", { class: "status" }, stateBadge, profile, firmware, link, mock),
     );

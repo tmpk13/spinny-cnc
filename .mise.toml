@@ -1,3 +1,44 @@
 [tools]
 python = "3.12"
 uv = "latest"
+
+[tasks.web]
+description = "Run web ui"
+run = """
+(cd web/frontend && bun install && bun run build)
+(cd web/backend && uv sync && uv run spinny-web)
+"""
+
+[tasks.flash]
+description = "Build the board firmware and copy it to an SKR Pico held in BOOTSEL mode"
+run = """
+(cd firmware/rp2040/ && cargo run --release)
+"""
+
+[tasks.live-dev]
+description = "Run web ui in development mode"
+run = """
+(cd web/frontend && bun run dev)
+"""
+
+[tasks.virtual]
+description = "Virtual firmware on socket://127.0.0.1:2323, polar laser"
+run = """
+(cd firmware && cargo run -p spinny-virtual -- --listen 127.0.0.1:2323)
+"""
+
+[tasks.virtual-mill]
+description = "Virtual firmware on socket://127.0.0.1:2323 as a cartesian spindle machine over a tilted board"
+run = """
+(cd firmware && cargo run -p spinny-virtual -- --listen 127.0.0.1:2323 --settings h_axis=1 --settings cartesian=1 --settings spindle=1 --settings z_max=30 --surface -1.5,0.01,-0.02)
+"""
+
+[tasks.test]
+description = "Every suite: firmware, backend with the end to end runs, frontend, command line tools, simulator"
+run = """
+(cd firmware && cargo test -q && cargo build -q -p spinny-virtual)
+(cd web/backend && SPINNY_VIRTUAL=../../firmware/target/debug/spinny-virtual uv run pytest -q)
+(cd web/frontend && bun run check && bun test)
+uv run pytest -q tests
+(cd sim && cargo test -q)
+"""

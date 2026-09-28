@@ -212,8 +212,9 @@ input[type="checkbox"] {
         grid-template-areas:
             "dro preview jobs"
             "jog preview jobs"
-            "laser preview heightmap"
-            "console console settings";
+            "jog console jobs"
+            "jog console heightmap"
+            "laser console settings";
     }
 }
 

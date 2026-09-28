@@ -19,3 +19,6 @@ web/backend/jobs/
 web/backend/config.json
 web/backend/heightmap.json
 .claude/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
