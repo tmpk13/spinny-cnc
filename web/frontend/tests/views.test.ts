@@ -687,6 +687,42 @@ describe("jobs", () => {
         expect(uploads.map((options) => options.clear)).toEqual([undefined, "rings"]);
     });
 
+    test("a deposit sends its fill in place of the clear choice, which it hides", async () => {
+        const { ctx, root, calls } = setup();
+        mountJobs(root, ctx);
+        const mode = root.querySelector('select[aria-label="Board mode"]') as HTMLSelectElement;
+        const clear = root.querySelector('select[aria-label="Clear copper"]') as HTMLSelectElement;
+        const fill = root.querySelector('select[aria-label="Fill copper"]') as HTMLSelectElement;
+        const drop = root.querySelector(".drop") as HTMLElement;
+        const send = async (): Promise<void> => {
+            const event = new Event("drop", { cancelable: true });
+            Object.defineProperty(event, "dataTransfer", { value: { files: [new File(["G04 x*"], "board-F_Cu.gbr")] } });
+            drop.dispatchEvent(event);
+            for (let i = 0; i < 5; i++) {
+                await settle();
+            }
+        };
+        const shown = (select: HTMLSelectElement): boolean => !select.closest("label")!.classList.contains("hidden");
+        expect([shown(clear), shown(fill)]).toEqual([true, false]);
+        clear.value = "rings";
+        mode.value = "deposit";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        expect([shown(clear), shown(fill)]).toEqual([false, true]);
+        await send();
+        fill.value = "radial";
+        await send();
+        mode.value = "isolate";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        expect([shown(clear), shown(fill)]).toEqual([true, false]);
+        await send();
+        const uploads = calls.filter((c) => c.name === "uploadJob").map((c) => c.args[1] as { mode?: string; clear?: string; fill?: string });
+        expect(uploads.map(({ mode, clear, fill }) => ({ mode, clear, fill }))).toEqual([
+            { mode: "deposit", clear: undefined, fill: "contour" },
+            { mode: "deposit", clear: undefined, fill: "radial" },
+            { mode: undefined, clear: "rings", fill: undefined },
+        ]);
+    });
+
     test("list and groups of the selected job", async () => {
         const { store, ctx, root, api } = setup();
         mountJobs(root, ctx);

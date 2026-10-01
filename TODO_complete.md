@@ -195,3 +195,10 @@
   reaches in each direction, and cut in whichever order travels least in
   the machine's own time (rail rate over table rate from its settings).
   The 28.5 mm test board: 62.7 to 48.4 min, against 154.5 for lines.
+- Deposit mode for board imports (2026-09-30), for laser deposition, where
+  the beam lays copper down: only the copper is burnt. An edge loop half a
+  spot inside every outline, then a fill (contour loops in to the middle,
+  or the radial, rings or lines clearing fills clipped to the copper),
+  with the corners and middles the loops miss found and burnt; traces
+  narrower than the spot run along their gerber centerline. The outline
+  group comes in off. Page: Board isolate/deposit and Fill copper.

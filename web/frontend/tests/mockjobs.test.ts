@@ -310,6 +310,8 @@ describe("building jobs", () => {
         expect(built.job.copper.length).toBe(demoCoupon().copper.length);
         const cleared = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", { clear: "radial" }, limits);
         expect(cleared.note).toContain("clearing need the real backend");
+        const deposited = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", { mode: "deposit", fill: "radial" }, limits);
+        expect(deposited.note).toContain("deposition need the real backend");
     });
 
     test("json is taken as a job", () => {
@@ -362,6 +364,10 @@ describe("building jobs", () => {
         expect(() => buildJob("0011", "a.svg", svg, { spot: 0 }, limits)).toThrow("spot must be above 0");
         expect(() => buildJob("0011", "a.svg", svg, { offset_x: Number.NaN }, limits)).toThrow("offset must be within");
         expect(() => buildJob("0011", "a.svg", svg, { clear: "zigzag" as never }, limits)).toThrow("clear must be one of off, radial, rings, lines");
+        expect(() => buildJob("0011", "a.svg", svg, { mode: "print" as never }, limits)).toThrow("mode must be one of isolate, deposit");
+        expect(() => buildJob("0011", "a.svg", svg, { mode: "deposit", fill: "zigzag" as never }, limits)).toThrow("fill must be one of contour, radial, rings, lines");
+        expect(() => buildJob("0011", "a.svg", svg, { mode: "deposit", clear: "radial" }, limits)).toThrow("clear is for isolation");
+        expect(() => buildJob("0011", "a.svg", svg, { fill: "contour" }, limits)).toThrow("fill is for a deposit");
     });
 
     test("unknown types are refused", () => {

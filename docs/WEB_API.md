@@ -106,7 +106,7 @@ changing its speed.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, not the group passes below), `clear` (`off`, `radial`, `rings` or `lines`: gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead); a file over 64 MB answers 413 |
+| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, or with `mode` `deposit` edge loops inside it, not the group passes below), `mode` (`isolate`, the default, or `deposit`: gerber and KiCad only, see below), `clear` (`off`, `radial`, `rings` or `lines`: isolation only, gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead), `fill` (`contour`, the default, `radial`, `rings` or `lines`: a deposit only); `clear` other than `off` with a deposit, or `fill` with isolation, answers 400; a file over 64 MB answers 413 |
 | `POST /api/center` | the polar laser's only (400 on a cartesian or spindle machine); JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
@@ -124,6 +124,20 @@ Accepted uploads: `.svg` (paths, lines, polylines, polygons, rects,
 circles; curves flattened; mm from the viewBox), `.gcode`/`.nc` (absolute
 X/Y `G0`/`G1` with `S` and `F`), `.json` (a job), `.gbr` (copper layer,
 isolation loops through the sibling geometry engine), `.kicad_pcb`.
+
+A board with `mode` `deposit` is for a process that lays copper down: the
+beam burns the copper and nothing past its edge. Its groups, in order:
+
+| Group | Paths |
+| --- | --- |
+| `copper edge loop N at X mm in` | one per `passes`, X = spot/2 + (N - 1) spot: the first loop's beam edge lies on the copper's edge |
+| `copper fill, <fill>, <spot> mm pitch` | the rest of the copper: `contour` goes on with loops in to the middle, the others are the clearing fills clipped to the copper; a short stroke wherever loops a pitch apart leave copper (a corner, the middle of a pad no whole number of spots wide) |
+| `copper narrower than the spot, along its middle` | traces the beam cannot fit inside, burnt along the line the gerber strokes them with, half a spot on into the copper the loops reach; they come out the spot's width |
+| `board outline pass 1` | `enabled: false`: off until the copper is down, to cut the board free with a power of its own |
+
+Copper narrower than the spot that is not a stroke (a thin neck of a
+zone) is left, as are the corners of copper sharper than the beam. A
+deposit is placed where isolation of the same board would be.
 
 Job:
 

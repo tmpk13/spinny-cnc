@@ -153,6 +153,9 @@ same few line commands.
 | `web/frontend` | the page | `cd web/frontend && bun install && bun run build` |
 
 The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
+A board upload isolates its copper by default; with Board set to deposit,
+for a process that lays copper down, it burns the copper itself and
+nothing past its edge.
 Open `http://localhost:8000`, connect to the board (or to
 `socket://127.0.0.1:2323` for the virtual firmware), jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table
@@ -325,6 +328,12 @@ classDiagram
         chains(paths) outline pieces joined
         spokes(area, pitch, pace) shaped to the area, ordered by travel
         rings / rows(area, pitch)
+        clip_open(lines, area)
+    }
+    class deposit {
+        deposit(copper, spot, fill, passes, centers, pace) Deposition
+        Deposition  edges, fill, thin
+        centerlines(image) the strokes' middles
     }
     class fine {
         Design  reach, angle, cross, arm, spiral
@@ -388,6 +397,9 @@ classDiagram
     gcode --> polar
     jog --> polar
     clear --> laser_sweep : offsets
+    deposit --> clear : fills, travel order
+    deposit --> laser_sweep : offsets, loops
+    deposit ..> web_backend : board import, deposit mode
     center --> machine
     center --> preview
     center --> fine : --fine

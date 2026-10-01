@@ -230,6 +230,83 @@ def test_a_ring_arc_goes_out_one_cut_per_chord_at_one_radius():
         assert len({words(piece.line)["R"] for piece in pieces}) == 1
 
 
+def inside_of(contours):
+    """Whether a point is on the copper, the contours scaled once."""
+    import pyclipper
+    from laser_sweep.geom import SCALE
+
+    scaled = [[(round(x * SCALE), round(y * SCALE)) for x, y in contour] for contour in contours]
+    solid = [pyclipper.Orientation(contour) for contour in scaled]
+
+    def inside(point) -> bool:
+        probe = (round(point[0] * SCALE), round(point[1] * SCALE))
+        winding = sum(
+            (1 if ccw else -1) for contour, ccw in zip(scaled, solid) if pyclipper.PointInPolygon(probe, contour) != 0
+        )
+        return winding != 0
+
+    return inside
+
+
+@pytest.mark.parametrize("fill", [None, "contour", "radial", "rings", "lines"])
+def test_a_deposit_burns_the_copper_and_leaves_the_outline_off(fill):
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, mode="deposit", fill=fill))
+    assert [group.label for group in job.groups] == [
+        "copper edge loop 1 at 0.050 mm in",
+        f"copper fill, {fill or 'contour'}, 0.100 mm pitch",
+        "board outline pass 1",
+    ]
+    assert [group.enabled for group in job.groups] == [True, True, False]
+    # Every beam center is on the copper, none on the bare board.
+    inside = inside_of(job.copper)
+    for group in job.groups[:2]:
+        assert all(inside(point) for path in group.paths for point in path)
+    job.refresh_stats(Streamer())
+    assert job.stats.seconds > 0
+
+
+def test_a_deposit_sits_where_the_isolation_of_the_same_board_would():
+    isolated = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1))
+    deposited = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, mode="deposit"))
+    assert deposited.copper == isolated.copper
+    assert deposited.outline == isolated.outline
+
+
+def test_a_deposit_with_more_passes_has_a_group_per_edge_loop():
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, mode="deposit", passes=2, fill="radial"))
+    labels = [group.label for group in job.groups]
+    assert labels[:2] == ["copper edge loop 1 at 0.050 mm in", "copper edge loop 2 at 0.150 mm in"]
+    assert labels[2:] == ["copper fill, radial, 0.100 mm pitch", "board outline pass 1"]
+
+
+def test_traces_narrower_than_the_spot_are_deposited_along_their_middle():
+    # The board's traces are 0.2 mm wide.
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.25, mode="deposit"))
+    labels = [group.label for group in job.groups]
+    assert "copper narrower than the spot, along its middle" in labels
+    middle = job.groups[labels.index("copper narrower than the spot, along its middle")]
+    assert len(middle.paths) == 10
+    inside = inside_of(job.copper)
+    assert all(inside(point) for path in middle.paths for point in path)
+
+
+def test_isolation_and_deposit_options_are_not_mixed():
+    with pytest.raises(JobImportError, match="mode must be one of isolate, deposit"):
+        ImportOptions(mode="print").check()
+    with pytest.raises(JobImportError, match="fill must be one of contour, radial, rings, lines"):
+        ImportOptions(mode="deposit", fill="zigzag").check()
+    with pytest.raises(JobImportError, match="clear is for isolation"):
+        ImportOptions(mode="deposit", clear="radial").check()
+    with pytest.raises(JobImportError, match="fill is for a deposit"):
+        ImportOptions(fill="contour").check()
+    ImportOptions(mode="deposit", fill="lines").check()
+
+
+def test_a_drawing_is_burnt_as_drawn_in_either_mode():
+    drawn = from_svg(SVG, "drawing", ImportOptions())
+    assert from_svg(SVG, "drawing", ImportOptions(mode="deposit")).groups == drawn.groups
+
+
 def test_an_unknown_clearing_is_refused():
     with pytest.raises(JobImportError, match="clear"):
         ImportOptions(clear="zigzag").check()

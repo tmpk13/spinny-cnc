@@ -229,7 +229,7 @@ def _down(paths) -> list[Polyline]:
     return [[(x / SCALE, y / SCALE) for x, y in path] for path in paths]
 
 
-def _clip_open(
+def clip_open(
     lines: list[Polyline],
     clip: Polygons,
     operation: int = pyclipper.CT_INTERSECTION,
@@ -412,7 +412,7 @@ def spokes(area: Polygons, pitch: float, pace: float = DEFAULT_PACE) -> list[Pol
         c, s = math.cos(theta), math.sin(theta)
         rays.append([(inner * c, inner * s), (outer * c, outer * s)])
     by_spoke: dict[int, list[Polyline]] = {}
-    for piece in _clip_open(rays, area):
+    for piece in clip_open(rays, area):
         index = _nearest(angles, _angle(_midpoint(piece)))
         # Back on the ray exactly, out from the axis side: clipping rounds
         # an end to a nanometre, which near the axis tilts a short spoke
@@ -577,7 +577,7 @@ def rings(area: Polygons, pitch: float, tolerance: float) -> list[Polyline]:
     # keeps the arc, and an end put back on the ring, inside the real one.
     inner = geom.offset(area, -tolerance / 2.0)
     by_ring: dict[int, list[Polyline]] = {}
-    for piece in _clip_open([ring_points(r, tolerance) for r in radii], inner):
+    for piece in clip_open([ring_points(r, tolerance) for r in radii], inner):
         mid = _midpoint(piece)
         index = min(range(len(radii)), key=lambda i: abs(radii[i] - math.hypot(*mid)))
         radius = radii[index]
@@ -643,7 +643,7 @@ def rows(area: Polygons, pitch: float) -> list[Polyline]:
     heights = spaced(y0, y1, pitch)
     lines = [[(x0 - pitch, y), (x1 + pitch, y)] for y in heights]
     by_row: dict[int, list[Polyline]] = {}
-    for piece in _clip_open(lines, area):
+    for piece in clip_open(lines, area):
         mid = _midpoint(piece)
         index = min(range(len(heights)), key=lambda i: abs(heights[i] - mid[1]))
         y = heights[index]
@@ -662,7 +662,7 @@ def edge(frame: Polygons, kept: Polygons, near: Point) -> list[Polyline]:
     """The inside of the perimeter, where the copper to keep does not reach,
     starting from the loop nearest `near`."""
     loops = [contour + contour[:1] for contour in frame if len(contour) >= 3]
-    pieces = _clip_open(loops, kept, pyclipper.CT_DIFFERENCE)
+    pieces = clip_open(loops, kept, pyclipper.CT_DIFFERENCE)
     out: list[Polyline] = []
     position = near
     while pieces:

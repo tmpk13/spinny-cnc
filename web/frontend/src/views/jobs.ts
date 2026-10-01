@@ -5,7 +5,7 @@ import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts"
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, ClearPattern, Compensate, Job, Progress, UploadOptions } from "../types.ts";
+import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
@@ -86,6 +86,24 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         el("option", { value: "rings" }, "rings"),
         el("option", { value: "lines" }, "lines"),
     );
+    const modeField = el("select", {
+        class: "field",
+        "aria-label": "Board mode",
+        title: "Isolate burns around the copper to take it away; deposit burns the copper itself and nothing else, for a process that lays copper down (gerber and KiCad only). A deposit leaves the board outline off",
+    },
+        el("option", { value: "isolate" }, "isolate"),
+        el("option", { value: "deposit" }, "deposit"),
+    );
+    const fillField = el("select", {
+        class: "field",
+        "aria-label": "Fill copper",
+        title: "How a deposit fills the copper inside the loop that follows its edge. Contour goes on with loops in to the middle, along each trace and round each pad; radial is the fastest: its spokes run on the rail alone, while rings and lines turn the table",
+    },
+        el("option", { value: "contour" }, "contour"),
+        el("option", { value: "radial" }, "radial"),
+        el("option", { value: "rings" }, "rings"),
+        el("option", { value: "lines" }, "lines"),
+    );
     const drop = el("div", { class: "drop" },
         el("p", {}, "Drop a file here (svg, json, gerber, kicad_pcb, gcode) or"),
         el("label", { class: "btn btn-quiet" }, "pick a file", fileInput),
@@ -93,6 +111,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const powerLabel = labeled("Power S", powerField);
     const speedLabel = labeled("Speed mm/min", speedField);
     const spotLabel = labeled("Spot mm", spotField);
+    const clearLabel = labeled("Clear copper", clearField);
+    const fillLabel = labeled("Fill copper", fillField);
     const options = el("div", { class: "field-grid" },
         powerLabel,
         speedLabel,
@@ -100,8 +120,19 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         labeled("Anchor", anchorField),
         labeled("Offset x", offsetX),
         labeled("Offset y", offsetY),
-        labeled("Clear copper", clearField),
+        labeled("Board", modeField),
+        clearLabel,
+        fillLabel,
     );
+    // A deposit has no copper around its own to clear, and isolation
+    // nothing inside the copper to fill: only the one that applies shows.
+    const showMode = (): void => {
+        const deposit = modeField.value === "deposit";
+        clearLabel.classList.toggle("hidden", deposit);
+        fillLabel.classList.toggle("hidden", !deposit);
+    };
+    modeField.addEventListener("change", showMode);
+    showMode();
     const list = el("ul", { class: "job-list" });
     const details = el("div", { class: "job-details" });
     root.append(el("h2", {}, "Jobs"), drop, options, centerTest(ctx), list, details);
@@ -128,7 +159,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         if (oy !== null) {
             out.offset_y = oy;
         }
-        if (clearField.value !== "off") {
+        if (modeField.value === "deposit") {
+            out.mode = modeField.value as BoardMode;
+            out.fill = fillField.value as DepositFill;
+        } else if (clearField.value !== "off") {
             out.clear = clearField.value as ClearPattern;
         }
         return out;

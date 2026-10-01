@@ -186,6 +186,12 @@ export type Anchor = "center" | "keep";
 /** How a board import clears the copper the isolation leaves: spokes from the axis, rings about it, or rows along X. */
 export type ClearPattern = "radial" | "rings" | "lines";
 
+/** What a board import burns: around the copper, taking it away, or the copper itself, for a process that lays it down. */
+export type BoardMode = "isolate" | "deposit";
+
+/** How a deposit fills the copper inside its edge loops: loops on in to the middle, or one of the clearing fills. */
+export type DepositFill = "contour" | ClearPattern;
+
 export interface Job {
     id: string;
     name: string;
@@ -252,8 +258,12 @@ export interface UploadOptions {
     anchor?: Anchor;
     offset_x?: number;
     offset_y?: number;
-    /** Gerber and KiCad boards only; left out, no copper is cleared. */
+    /** Gerber and KiCad boards only; left out, the board is isolated. */
+    mode?: BoardMode;
+    /** Isolation only; left out, no copper is cleared. */
     clear?: ClearPattern;
+    /** A deposit only; left out, the loops go on in to the middle. */
+    fill?: DepositFill;
 }
 
 /** The options of the centering test burn; a missing reach or ring takes the pattern's default. */

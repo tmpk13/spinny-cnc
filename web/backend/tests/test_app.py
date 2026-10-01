@@ -613,6 +613,22 @@ def test_moves_are_refused_while_a_run_owns_the_machine(client, fake):
     assert client.post("/api/run/stop").status_code == 200
 
 
+def test_a_board_upload_can_deposit_its_copper(client):
+    board = Path(__file__).resolve().parents[3] / "tests" / "data" / "board-F_Cu.gbr"
+    files = {"file": ("board-F_Cu.gbr", board.read_bytes(), "application/octet-stream")}
+    response = client.post("/api/jobs", files=files, data={"mode": "deposit", "fill": "radial"})
+    assert response.status_code == 200, response.text
+    # A gerber uploaded alone has no outline beside it.
+    assert [group["label"] for group in response.json()["groups"]] == [
+        "copper edge loop 1 at 0.050 mm in",
+        "copper fill, radial, 0.100 mm pitch",
+    ]
+    response = client.post("/api/jobs", files=files, data={"mode": "deposit", "clear": "radial"})
+    assert response.status_code == 400 and "clear is for isolation" in response.text
+    response = client.post("/api/jobs", files=files, data={"fill": "radial"})
+    assert response.status_code == 400 and "fill is for a deposit" in response.text
+
+
 def test_passes_and_upload_size_are_bounded(client, monkeypatch):
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0" stroke="#000"/></svg>'
     response = client.post("/api/jobs", files={"file": ("a.svg", svg, "image/svg+xml")}, data={"passes": "1000"})

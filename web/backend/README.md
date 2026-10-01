@@ -118,6 +118,10 @@ classDiagram
     class spinny_laser_clear {
         clear(copper, keep, spot, pattern, outline)
     }
+    class spinny_laser_deposit {
+        deposit(copper, spot, fill, passes, centers)
+        centerlines(image)
+    }
     class laser_sweep {
         gerber, geom, isolate, isocli
     }
@@ -140,6 +144,8 @@ classDiagram
     jobs --> kinematics
     jobs --> laser_sweep
     jobs --> spinny_laser_clear
+    jobs --> spinny_laser_deposit
+    spinny_laser_deposit --> spinny_laser_clear
     kinematics --> spinny_laser_polar
 ```
 

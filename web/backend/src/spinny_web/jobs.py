@@ -19,6 +19,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import clear as copper_clearing
+from spinny_laser import deposit as copper_deposition
 
 from . import kinematics
 from .kinematics import Streamer
@@ -54,6 +55,10 @@ MAX_GROUP_PASSES = 100
 # then with one of the clearing fills.
 CLEAR_OFF = "off"
 CLEAR_CHOICES = (CLEAR_OFF, *copper_clearing.PATTERNS)
+# What a board import burns: around the copper, taking it away, or the
+# copper itself, for a process that lays it down.
+MODE_ISOLATE, MODE_DEPOSIT = "isolate", "deposit"
+MODES = (MODE_ISOLATE, MODE_DEPOSIT)
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -286,14 +291,27 @@ class ImportOptions:
     tolerance: float = kinematics.DEFAULT_TOLERANCE
     passes: int = 1
     layer: str = "F.Cu"
-    # Only a board has copper to clear; other files ignore it.
+    # Only a board has copper to isolate, clear or deposit; other files
+    # ignore all three.
+    mode: str = MODE_ISOLATE
     clear: str = CLEAR_OFF
+    # How a deposit fills the copper inside its edge loops; left out, with
+    # loops on in to the middle.
+    fill: str | None = None
 
     def check(self) -> None:
         if self.anchor not in (ANCHOR_CENTER, ANCHOR_KEEP):
             raise JobImportError(f"anchor must be {ANCHOR_CENTER} or {ANCHOR_KEEP}")
+        if self.mode not in MODES:
+            raise JobImportError(f"mode must be one of {', '.join(MODES)}")
         if self.clear not in CLEAR_CHOICES:
             raise JobImportError(f"clear must be one of {', '.join(CLEAR_CHOICES)}")
+        if self.fill is not None and self.fill not in copper_deposition.FILLS:
+            raise JobImportError(f"fill must be one of {', '.join(copper_deposition.FILLS)}")
+        if self.mode == MODE_DEPOSIT and self.clear != CLEAR_OFF:
+            raise JobImportError("clear is for isolation; a deposit takes fill instead")
+        if self.mode == MODE_ISOLATE and self.fill is not None:
+            raise JobImportError("fill is for a deposit; isolation takes clear instead")
         try:
             check_power(self.power)
             check_speed(self.speed)
@@ -521,10 +539,11 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
 
 
 def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE) -> Job:
-    """Isolation loops for a copper gerber or a KiCad board, with the outline when found.
+    """Isolation loops for a copper gerber or a KiCad board, with the outline when found,
+    or with `mode` deposit the copper itself burnt and the outline switched off.
 
     `pace` is the machine's rail rate in mm/min over its table rate in
-    deg/min, which a radial clearing orders its spokes by."""
+    deg/min, which a radial clearing or fill orders its spokes by."""
     from laser_sweep import geom, gerber, isocli, isolate
 
     temporary: tempfile.TemporaryDirectory | None = None
@@ -557,26 +576,72 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             origin=options.offset,
         )
         isolate.offsets_for(config)
-        plan = isolate.build(copper, config, outline=outline)
-        cleared: list = []
-        if options.clear != CLEAR_OFF:
-            # The clearing keeps its beam outside the outermost loop, and
-            # runs its rings in chords the streamer sends out whole.
-            cleared = copper_clearing.clear(
-                plan.copper,
-                max(plan.offsets),
+        if options.mode == MODE_DEPOSIT:
+            # The beam keeps inside the copper, but over a trace narrower
+            # than itself it reaches half a spot past the middle.
+            reach = options.spot / 2.0
+            shift = isolate.placement(copper, config, reach, [(outline, reach)])
+            placed = isolate.transform(copper, config, shift)
+            outline = [list(p) for p in isolate.transform(outline, config, shift)]
+            deposition = copper_deposition.deposit(
+                placed,
                 options.spot,
-                options.clear,
-                outline=plan.outline,
+                options.fill or copper_deposition.CONTOUR,
+                passes=options.passes,
+                centers=isolate.transform(copper_deposition.centerlines(image), config, shift),
                 tolerance=options.tolerance,
                 pace=pace,
             )
+            groups = deposit_groups(deposition, options)
+        else:
+            plan = isolate.build(copper, config, outline=outline)
+            placed, outline = plan.copper, plan.outline
+            cleared: list = []
+            if options.clear != CLEAR_OFF:
+                # The clearing keeps its beam outside the outermost loop, and
+                # runs its rings in chords the streamer sends out whole.
+                cleared = copper_clearing.clear(
+                    plan.copper,
+                    max(plan.offsets),
+                    options.spot,
+                    options.clear,
+                    outline=plan.outline,
+                    tolerance=options.tolerance,
+                    pace=pace,
+                )
+            groups = isolation_groups(plan, cleared, options)
     except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
         raise JobImportError(str(exc)) from exc
     finally:
         if temporary is not None:
             temporary.cleanup()
 
+    if outline:
+        groups.append(
+            Group(
+                label="board outline pass 1",
+                power=options.power,
+                speed=options.speed,
+                # A deposit burns copper wherever the beam goes, so the
+                # outline is there to cut the board free with a power of its
+                # own once the copper is down, and is off until then.
+                enabled=options.mode != MODE_DEPOSIT,
+                paths=[[tuple(p) for p in path] for path in outline],
+            )
+        )
+    return Job(
+        name=name,
+        source=source,
+        spot=options.spot,
+        offset=Offset(x=options.offset[0], y=options.offset[1]),
+        groups=groups,
+        outline=[[tuple(p) for p in path] for path in outline],
+        copper=[[tuple(p) for p in contour] for contour in placed],
+    )
+
+
+def isolation_groups(plan, cleared: list, options: ImportOptions) -> list[Group]:
+    """A group per isolation loop offset, then the clearing, if any."""
     groups: list[Group] = []
     for index in sorted({loop.index for loop in plan.loops}):
         members = [loop for loop in plan.loops if loop.index == index]
@@ -598,24 +663,40 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                 paths=[[tuple(p) for p in path] for path in cleared],
             )
         )
-    if plan.outline:
+    return groups
+
+
+def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOptions) -> list[Group]:
+    """A group per edge loop offset, then the fill and the narrow traces."""
+    groups = [
+        Group(
+            label=f"copper edge loop {index + 1} at {offset:.3f} mm in",
+            power=options.power,
+            speed=options.speed,
+            paths=[[tuple(p) for p in loop] for loop in loops],
+        )
+        for index, (offset, loops) in enumerate(zip(deposition.offsets, deposition.edges))
+        if loops
+    ]
+    if deposition.fill:
         groups.append(
             Group(
-                label="board outline pass 1",
+                label=f"copper fill, {options.fill or copper_deposition.CONTOUR}, {options.spot:.3f} mm pitch",
                 power=options.power,
                 speed=options.speed,
-                paths=[[tuple(p) for p in path] for path in plan.outline],
+                paths=[[tuple(p) for p in path] for path in deposition.fill],
             )
         )
-    return Job(
-        name=name,
-        source=source,
-        spot=options.spot,
-        offset=Offset(x=options.offset[0], y=options.offset[1]),
-        groups=groups,
-        outline=[[tuple(p) for p in path] for path in plan.outline],
-        copper=[[tuple(p) for p in contour] for contour in plan.copper],
-    )
+    if deposition.thin:
+        groups.append(
+            Group(
+                label="copper narrower than the spot, along its middle",
+                power=options.power,
+                speed=options.speed,
+                paths=[[tuple(p) for p in path] for path in deposition.thin],
+            )
+        )
+    return groups
 
 
 # --- the store ----------------------------------------------------------------

@@ -1167,6 +1167,9 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
 
 /** What a board import may clear with, as the backend names them. */
 const CLEAR_CHOICES: string[] = ["off", "radial", "rings", "lines"];
+/** What a board import burns, and what a deposit may fill with, as the backend names them. */
+const MODES: string[] = ["isolate", "deposit"];
+const FILL_CHOICES: string[] = ["contour", "radial", "rings", "lines"];
 
 /** Turns an uploaded file into a job the way the backend would, as far as the browser can. */
 export function buildJob(id: string, name: string, text: string, options: UploadOptions, limits: RateLimits): BuiltJob {
@@ -1185,9 +1188,22 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     if (![offset.x, offset.y].every((v) => Number.isFinite(v) && Math.abs(v) <= MAX_VALUE)) {
         throw new Error(`offset must be within ${MAX_VALUE_TEXT} mm`);
     }
+    const mode: string = options.mode ?? "isolate";
+    if (!MODES.includes(mode)) {
+        throw new Error(`mode must be one of ${MODES.join(", ")}`);
+    }
     const clear: string = options.clear ?? "off";
     if (!CLEAR_CHOICES.includes(clear)) {
         throw new Error(`clear must be one of ${CLEAR_CHOICES.join(", ")}`);
+    }
+    if (options.fill !== undefined && !FILL_CHOICES.includes(options.fill)) {
+        throw new Error(`fill must be one of ${FILL_CHOICES.join(", ")}`);
+    }
+    if (mode === "deposit" && clear !== "off") {
+        throw new Error("clear is for isolation; a deposit takes fill instead");
+    }
+    if (mode === "isolate" && options.fill !== undefined) {
+        throw new Error("fill is for a deposit; isolation takes clear instead");
     }
 
     if (extension === "json") {
@@ -1217,9 +1233,11 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         case "kicad_pcb":
             geometry = demoCoupon();
             source = extension === "gbr" ? "gerber" : "kicad";
-            note = clear === "off"
-                ? "mock backend: copper geometry needs the real backend, showing a demo coupon"
-                : "mock backend: copper geometry and clearing need the real backend, showing a demo coupon";
+            note = mode === "deposit"
+                ? "mock backend: copper geometry and deposition need the real backend, showing a demo coupon"
+                : clear === "off"
+                    ? "mock backend: copper geometry needs the real backend, showing a demo coupon"
+                    : "mock backend: copper geometry and clearing need the real backend, showing a demo coupon";
             break;
         default:
             throw new Error(`unsupported file type: .${extension || "?"}`);
