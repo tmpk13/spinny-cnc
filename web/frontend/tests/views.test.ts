@@ -843,6 +843,61 @@ describe("laser and settings", () => {
     });
 });
 
+describe("machine files", () => {
+    test("the settings panel lists the files, names the loaded one, and loads another on confirm", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountSettings(root, ctx);
+        await settle();
+        const pick = root.querySelector("select[aria-label='Machine']") as HTMLSelectElement;
+        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["", "polar-laser", "polar-laser-focus", "cartesian-laser", "cartesian-mill"]);
+        const load = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Load")!;
+        // Before the settings are read nothing is known to be loaded.
+        expect(pick.value).toBe("");
+        store.set({ settings: await api.settings() });
+        await settle();
+        // The mock boots as the polar laser with its focus axis: that is the one loaded, and there is nothing to load.
+        expect(pick.value).toBe("polar-laser-focus");
+        expect(root.textContent).toContain("loaded");
+        expect(load.disabled).toBe(true);
+        pick.value = "cartesian-mill";
+        pick.dispatchEvent(new Event("change"));
+        expect(load.disabled).toBe(false);
+        expect(root.textContent).toContain("spindle on the output");
+        // A settings refresh does not take the pick away.
+        store.set({ settings: await api.settings() });
+        await settle();
+        expect(pick.value).toBe("cartesian-mill");
+        load.click();
+        await settle();
+        dialogButton("Cancel").click();
+        await settle();
+        expect(calls.some((c) => c.name === "applyMachine")).toBe(false);
+        load.click();
+        await settle();
+        dialogButton("Load").click();
+        await settle();
+        expect(calls.filter((c) => c.name === "applyMachine").map((c) => c.args)).toEqual([["cartesian-mill", false]]);
+        const settings = store.get().settings!;
+        expect(settings.machine).toBe("cartesian-mill");
+        expect(settings.values["cartesian"]).toBe(1);
+        expect(pick.value).toBe("cartesian-mill");
+        expect(load.disabled).toBe(true);
+        // A setting changed by hand: the settings are no file's any more.
+        await api.updateSettings({ values: { a_rate: 123 } });
+        await ctx.refreshSettings();
+        await settle();
+        expect(pick.value).toBe("");
+        expect(root.textContent).toContain("no file");
+        // Not connected: nothing to load.
+        store.set({ snapshot: { ...connected(), connected: false, machine: null } });
+        await settle();
+        expect(load.disabled).toBe(true);
+        expect(root.textContent).toContain("connect to load one");
+    });
+});
+
 describe("settings table under the operator's hands", () => {
     test("an edit not yet applied outlives a refresh, and goes once the machine has the value", async () => {
         const { store, ctx, root, api } = setup();

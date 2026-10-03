@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
-import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock/backend.ts";
+import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, machineOf, statusLine } from "../src/mock/backend.ts";
 import { outputDuty } from "../src/profile.ts";
 import type { Compensate, GotoRequest, Grid, HeightMap, HeightMapState, Job, JogRequest, WsEvent } from "../src/types.ts";
 
@@ -1715,5 +1715,38 @@ describe("the mock backend answers as the backend does", () => {
         await putFocused(backend, flatMap(-1, -8, 10, 8, [[-1.5, -1.5], [-1.5, -1.5]]));
         await backend.runJob(job.id, "focus");
         await backend.runStop();
+    });
+});
+
+describe("machine files in the mock", () => {
+    test("the shipped files are listed, the loaded one is named, and loading one writes its settings", async () => {
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM0");
+        const listed = await backend.machines();
+        expect(listed.machines.map((m) => m.id)).toEqual(["polar-laser", "polar-laser-focus", "cartesian-laser", "cartesian-mill"]);
+        expect(listed.problems).toEqual([]);
+        // The mock boots with its focus axis fitted and all else at the defaults.
+        expect(listed.current).toBe("polar-laser-focus");
+        expect((await backend.settings()).machine).toBe("polar-laser-focus");
+
+        const applied = await backend.applyMachine("cartesian-mill");
+        expect(applied.machine).toBe("cartesian-mill");
+        expect([applied.values["cartesian"], applied.values["spindle"], applied.values["h_axis"], applied.values["z_max"]]).toEqual([1, 1, 1, 30]);
+        expect(applied.host).toEqual({ tolerance: 0.005, clearance: 2, spinup: 2 });
+        expect((await backend.state()).profile).toMatchObject({ kinematics: "cartesian", tool: "spindle", h_axis: true });
+        expect((await backend.machines()).current).toBe("cartesian-mill");
+
+        // One setting changed by hand and the settings are no file's.
+        await backend.updateSettings({ values: { a_rate: 123 } });
+        expect((await backend.settings()).machine).toBeNull();
+        expect((await backend.machines()).current).toBeNull();
+        await expect(backend.applyMachine("nope")).rejects.toBeInstanceOf(ApiError);
+
+        // Back to the polar laser, saved when asked.
+        const back = await backend.applyMachine("polar-laser", true);
+        expect(back.machine).toBe("polar-laser");
+        expect(back.values["cartesian"]).toBe(0);
+        expect((await backend.state()).profile).toMatchObject({ kinematics: "polar", tool: "laser", h_axis: false });
+        expect(machineOf({})).toBeNull();
     });
 });

@@ -258,3 +258,27 @@ describe("HttpApi", () => {
         expect(errorMessage(null, 503, "")).toBe("HTTP 503");
     });
 });
+
+describe("machine files", () => {
+    test("the list and the load go to their routes", async () => {
+        const { calls, fetchFn } = fakeFetch((call) => {
+            if (call.url.endsWith("/api/machines")) {
+                return { status: 200, body: { machines: [], current: null, problems: ["bad.toml: [rail] max_rate must be above 0"] } };
+            }
+            return { status: 200, body: { values: { cartesian: 1 }, schema: [], host: { tolerance: 0.005 }, machine: "cartesian mill" } };
+        });
+        const api = new HttpApi("http://host:8000/", fetchFn);
+        expect(await api.machines()).toEqual({ machines: [], current: null, problems: ["bad.toml: [rail] max_rate must be above 0"] });
+        const applied = await api.applyMachine("cartesian mill", true);
+        expect(applied.machine).toBe("cartesian mill");
+        expect(calls.length).toBe(2);
+        expect(calls[0]!.method).toBe("GET");
+        expect(calls[1]!.method).toBe("POST");
+        // The id is a path segment: a space in it is escaped.
+        expect(calls[1]!.url.endsWith("/api/machines/cartesian%20mill/apply")).toBe(true);
+        expect(calls[1]!.body).toEqual({ save: true });
+        const { calls: more, fetchFn: fetchMore } = fakeFetch(() => ({ status: 200, body: { values: {}, schema: [], host: { tolerance: 0.005 }, machine: null } }));
+        await new HttpApi("http://host:8000/", fetchMore).applyMachine("polar-laser");
+        expect(more[0]!.body).toEqual({ save: false });
+    });
+});

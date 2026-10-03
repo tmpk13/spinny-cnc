@@ -93,7 +93,7 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}` |
+| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}, "machine": "polar-laser"}`; `machine` is the machine file the values are, every one of them, or `null` |
 | `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
 
 `clearance` and `spinup` are for milling: the tool travels `clearance` mm
@@ -101,6 +101,18 @@ over the surface (H 0 without a height map, the map's highest point with
 one), and a run dwells `spinup` seconds after starting the spindle or
 changing its speed.
 | `POST /api/settings/save` | writes the firmware settings to flash |
+
+## Machines
+
+The machine files in `machines/` ([MACHINES.md](MACHINES.md)), one TOML
+file per axis arrangement, each a complete set of firmware settings plus
+the host's own.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser", "focus": false}, ...], "current": "polar-laser", "problems": []}`; `current` is the file the connected machine's settings are, `null` with no machine connected or settings of no file's; `problems` names each file that could not be read, the others are listed |
+| `GET /api/machines/{id}` | the entry above plus `settings` (all 46 values) and `host`; 404 for a file that is not there or cannot be read |
+| `POST /api/machines/{id}/apply` | `{"save": false}` (the body is optional); writes the file's settings and host values as `PUT /api/settings` does, all or nothing, and with `save` writes the flash afterwards; answers the settings response, `machine` naming the file; 404 for no such file, 409 while a run or probing owns the machine |
 
 ## Jobs
 

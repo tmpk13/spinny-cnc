@@ -256,7 +256,7 @@ FINE_ARGS = frozenset(
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = machine.parse_args(parser, argv)
     if args.reach is None:
         args.reach = fine.Design.reach if args.fine else 6.0
     if args.ring is None:

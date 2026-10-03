@@ -1,0 +1,23 @@
+# The polar laser with the focus axis fitted on the E socket, its touch
+# probe on the Z-STOP input. Loading this is what $h_axis=1 was.
+
+name = "Polar laser with focus axis"
+description = "The polar laser with a motorized focus axis and a touch probe"
+kinematics = "polar"
+tool = "laser"
+
+[focus]
+fitted = true
+steps_per_mm = 6400
+max_rate = 600
+accel = 50
+jerk = 1
+jog_rate = 120
+current_ma = 600
+
+[probe]
+invert = false
+brake_ms = 20
+
+[host]
+tolerance = 0.005

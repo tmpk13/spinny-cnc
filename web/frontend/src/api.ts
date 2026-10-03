@@ -14,6 +14,7 @@ import type {
     JobSummary,
     JobsResponse,
     JogRequest,
+    MachinesResponse,
     Mode,
     Port,
     PortsResponse,
@@ -62,6 +63,9 @@ export interface Api {
     settings(): Promise<SettingsResponse>;
     updateSettings(patch: SettingsUpdate): Promise<void>;
     saveSettings(): Promise<void>;
+    machines(): Promise<MachinesResponse>;
+    /** Writes a machine file's every setting, and saves them to flash when asked; answers the settings as they are then. */
+    applyMachine(id: string, save?: boolean): Promise<SettingsResponse>;
 
     uploadJob(file: File, options: UploadOptions): Promise<Job>;
     /** Builds and stores the centering test burn. */
@@ -229,6 +233,14 @@ export class HttpApi implements Api {
 
     async saveSettings(): Promise<void> {
         await this.request("POST", "/api/settings/save");
+    }
+
+    machines(): Promise<MachinesResponse> {
+        return this.request<MachinesResponse>("GET", "/api/machines");
+    }
+
+    applyMachine(id: string, save = false): Promise<SettingsResponse> {
+        return this.request<SettingsResponse>("POST", `/api/machines/${encodeURIComponent(id)}/apply`, { save });
     }
 
     uploadJob(file: File, options: UploadOptions): Promise<Job> {

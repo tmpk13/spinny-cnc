@@ -6,6 +6,7 @@
 pub mod args;
 pub mod clock;
 pub mod inbox;
+pub mod machine;
 pub mod ports;
 pub mod server;
 pub mod sim;

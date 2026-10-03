@@ -139,7 +139,7 @@ def check_burn(power_name: str, power: float, speed_name: str, speed: float, s_m
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = machine.parse_args(parser, argv)
     temporary: list = []
 
     try:

@@ -1,0 +1,19 @@
+# The same machine as an X/Y one: the rail is X, the cross slide is Y,
+# interpolated together, and the table holds its angle. The slide's travel
+# either side of its zero is the Y limit; set it to yours.
+
+name = "Cartesian laser"
+description = "Rail as X and cross slide as Y, the table holding still"
+kinematics = "cartesian"
+tool = "laser"
+
+[slide]
+steps_per_mm = 10240
+max_rate = 560
+accel = 50
+jerk = 3
+jog_rate = 120
+limit = 30
+
+[host]
+tolerance = 0.005

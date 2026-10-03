@@ -12,7 +12,10 @@ spinny-virtual: the spinny control core on a TCP socket
     --listen ADDR       address to serve, default 127.0.0.1:2323
     --fast              run time as fast as the machine allows
     --trace PATH        write the beam's marks and the command log as JSON
-    --settings K=V      set a machine setting at start, repeatable
+    --machine PATH      a machine file from machines/: its axes, kinematics
+                        and tool, applied to the settings at start
+    --settings K=V      set a machine setting at start, repeatable; after
+                        --machine, it overrides the file
     --store PATH        file standing in for the settings sector
     --surface B[,SX,SY[,C]]
                         a board under the probe: its top at focus height
@@ -74,6 +77,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Options>,
             "--trace" => options.trace = Some(PathBuf::from(value("--trace")?)),
             "--store" => options.store = Some(PathBuf::from(value("--store")?)),
             "--surface" => options.surface = Some(Surface::parse(&value("--surface")?)?),
+            "--machine" => {
+                let path = value("--machine")?;
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+                crate::machine::apply(&mut options.settings, &text).map_err(|e| format!("{path}: {e}"))?;
+            }
             "--probe-offset" => probe_offset = Some(Surface::parse_offset(&value("--probe-offset")?)?),
             "--settings" => {
                 let pair = value("--settings")?;
@@ -100,6 +108,18 @@ mod tests {
 
     fn parse_args(args: &[&str]) -> Result<Option<Options>, String> {
         parse(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn a_machine_file_sets_the_settings_and_later_flags_override_it() {
+        let path = format!("{}/../../machines/cartesian-mill.toml", env!("CARGO_MANIFEST_DIR"));
+        let options = parse_args(&["--machine", &path]).unwrap().unwrap();
+        assert!(options.settings.cartesian && options.settings.spindle && options.settings.h_axis);
+        assert_eq!(options.settings.z_max, 30.0);
+        let options = parse_args(&["--machine", &path, "--settings", "z_max=12"]).unwrap().unwrap();
+        assert_eq!(options.settings.z_max, 12.0);
+        assert!(parse_args(&["--machine", "/nonexistent/machine.toml"]).unwrap_err().contains("machine.toml"));
+        assert!(parse_args(&["--machine"]).unwrap_err().contains("--machine"));
     }
 
     #[test]

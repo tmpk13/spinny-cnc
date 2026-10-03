@@ -44,6 +44,7 @@ import type {
     Group,
     HeightMap,
     HeightMapState,
+    HostSettings,
     Job,
     JobPatch,
     JobSummary,
@@ -51,6 +52,8 @@ import type {
     Joint,
     Machine,
     MachineState,
+    MachineSummary,
+    MachinesResponse,
     Mode,
     Path,
     Port,
@@ -240,6 +243,46 @@ const MAX_TOLERANCE = 10;
  * two of them hold: every value in its range, whole numbers where the
  * firmware keeps an integer, and `s_min` within `s_max`.
  */
+/**
+ * The machine files the mock stands in for: the ones shipped in machines/,
+ * each as its settings differ from the defaults, with the host values the
+ * file names.
+ */
+export const MOCK_MACHINES: { summary: MachineSummary; values: Record<string, number>; host: HostSettings }[] = [
+    {
+        summary: { id: "polar-laser", name: "Polar laser", description: "UV laser on the rail, the board turning under it on the table", kinematics: "polar", tool: "laser", focus: false },
+        values: {},
+        host: { tolerance: 0.005 },
+    },
+    {
+        summary: { id: "polar-laser-focus", name: "Polar laser with focus axis", description: "The polar laser with a motorized focus axis and a touch probe", kinematics: "polar", tool: "laser", focus: true },
+        values: { h_axis: 1 },
+        host: { tolerance: 0.005 },
+    },
+    {
+        summary: { id: "cartesian-laser", name: "Cartesian laser", description: "Rail as X and cross slide as Y, the table holding still", kinematics: "cartesian", tool: "laser", focus: false },
+        values: { cartesian: 1, z_max: 30 },
+        host: { tolerance: 0.005 },
+    },
+    {
+        summary: { id: "cartesian-mill", name: "Cartesian mill", description: "X/Y machine with a spindle on the output and the focus axis as depth", kinematics: "cartesian", tool: "spindle", focus: true },
+        values: { cartesian: 1, spindle: 1, h_axis: 1, z_max: 30 },
+        host: { tolerance: 0.005, clearance: 2, spinup: 2 },
+    },
+];
+
+/** The machine file these settings are, every one of them, or null. */
+export function machineOf(settings: Record<string, number>): string | null {
+    for (const { summary, values } of MOCK_MACHINES) {
+        const expected: Record<string, number> = { ...DEFAULT_SETTINGS, ...values };
+        const same = Object.keys(expected).every((name) => Math.abs((settings[name] ?? Number.NaN) - (expected[name] ?? Number.NaN)) <= 5e-4);
+        if (same) {
+            return summary.id;
+        }
+    }
+    return null;
+}
+
 export function settingsValid(settings: Record<string, number>): boolean {
     const value = (name: string): number => settings[name] ?? DEFAULT_SETTINGS[name] ?? Number.NaN;
     for (const name of Object.keys(DEFAULT_SETTINGS)) {
@@ -2512,7 +2555,29 @@ export class MockBackend implements Api, EventFeed {
             values: { ...this.machine.settings },
             schema: SETTINGS_SCHEMA,
             host: { tolerance: this.tolerance, clearance: this.clearance, spinup: this.spinup },
+            machine: machineOf(this.machine.settings),
         };
+    }
+
+    async machines(): Promise<MachinesResponse> {
+        return {
+            machines: MOCK_MACHINES.map((entry) => ({ ...entry.summary })),
+            current: this.connected ? machineOf(this.machine.settings) : null,
+            problems: [],
+        };
+    }
+
+    /** A machine file's every setting, as the backend writes them: all or nothing, then saved to flash when asked. */
+    async applyMachine(id: string, save = false): Promise<SettingsResponse> {
+        const found = MOCK_MACHINES.find((entry) => entry.summary.id === id);
+        if (!found) {
+            throw new ApiError(404, `no machine file '${id}'`);
+        }
+        await this.updateSettings({ values: { ...DEFAULT_SETTINGS, ...found.values }, host: { ...found.host } });
+        if (save) {
+            await this.saveSettings();
+        }
+        return this.settings();
     }
 
     /**

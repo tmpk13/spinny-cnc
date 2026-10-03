@@ -33,7 +33,7 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
 | `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
-| `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
+| `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine files in `machines/` (listed, matched against the live settings, loaded whole), the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
 
 ## Events
 

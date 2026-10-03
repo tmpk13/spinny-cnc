@@ -6,12 +6,19 @@ import argparse
 import json
 from pathlib import Path
 
-from . import gcode, report
+from . import gcode, machines, report
 from .gcode import GRBLHAL, INVERSE, JOINT, SCALED, Job, PolarOptions
 
 
 def add_machine_arguments(parser: argparse.ArgumentParser) -> None:
     machine = parser.add_argument_group("machine")
+    machine.add_argument(
+        "--machine",
+        type=Path,
+        metavar="FILE",
+        help="a machine file, as in machines/: its axis rates, power scale and chord tolerance"
+        " stand in for the defaults of the options below, which still win when given",
+    )
     machine.add_argument(
         "--controller",
         choices=(GRBLHAL, JOINT),
@@ -90,6 +97,20 @@ def add_machine_arguments(parser: argparse.ArgumentParser) -> None:
     machine.add_argument("--no-return-home", dest="return_home", action="store_false")
     machine.add_argument("--preamble", action="append", default=[])
     machine.add_argument("--postamble", action="append", default=[])
+
+
+def parse_args(parser: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Namespace:
+    """Parses the command line with the machine file's values, when one is
+    named, as the defaults: a flag given beats the file, the file beats
+    the built-in defaults."""
+    args = parser.parse_args(argv)
+    if getattr(args, "machine", None) is not None:
+        try:
+            parser.set_defaults(**machines.cli_defaults(machines.load(args.machine)))
+        except machines.MachineError as exc:
+            parser.error(str(exc))
+        args = parser.parse_args(argv)
+    return args
 
 
 def add_output_arguments(parser: argparse.ArgumentParser, default: str) -> None:

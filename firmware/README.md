@@ -67,15 +67,16 @@ the simulator does not show that closing the port stops anything.
 | `--listen ADDR` | address to serve, default `127.0.0.1:2323` |
 | `--fast` | run time as fast as the host can step it |
 | `--trace PATH` | write the beam's marks and the command log as JSON |
-| `--settings K=V` | set a machine setting at start, repeatable |
+| `--machine PATH` | a machine file from `machines/` (`docs/MACHINES.md`): its axes, kinematics and tool applied to the settings at start |
+| `--settings K=V` | set a machine setting at start, repeatable; after `--machine` it overrides the file |
 | `--store PATH` | file standing in for the settings sector, so `$save` works |
 | `--surface B[,SX,SY[,C]]` | a board under the probe, its top at focus height `B + SX*x + SY*y + C*(x^2 + y^2)`; without it a probe finds nothing |
 | `--probe-offset L,C` | the probe tip `L` mm along the rail and `C` mm across it from the beam; it adds no board of its own |
 | `--quiet` | no periodic report on stderr |
 
 A probe on the simulator needs the focus axis too:
-`--settings h_axis=1 --surface -1.5,0.002,-0.001` gives a tilted board
-1.5 mm below the head's zero.
+`--machine ../machines/polar-laser-focus.toml --surface -1.5,0.002,-0.001`
+gives a tilted board 1.5 mm below the head's zero.
 
 The trace holds the board position and focus height of every mark the
 beam would leave, with its duty as commanded (the pin level is the other

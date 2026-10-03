@@ -170,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = machine.parse_args(parser, argv)
     try:
         if not args.input.exists():
             raise ConvertError(f"{args.input} does not exist")

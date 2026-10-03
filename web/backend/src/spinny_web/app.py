@@ -27,6 +27,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
+from spinny_laser import machines as machine_files
+
 from . import __version__, center
 from .heightmap import AUTO, FOCUS, MODES, OFF, POWER, Compensation, Grid, HeightMap, HeightMapStore, check_covers
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
@@ -60,6 +62,7 @@ from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 # root, out of the source tree.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = REPO_ROOT / "var"
+MACHINES_DIR = REPO_ROOT / "machines"
 FRONTEND_DIST = REPO_ROOT / "web" / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
@@ -213,6 +216,12 @@ class ModeBody(BaseModel):
     mode: str
 
 
+class ApplyMachineBody(BaseModel):
+    """Also write the settings to flash once they are applied."""
+
+    save: bool = False
+
+
 class SettingsBody(BaseModel):
     values: dict[str, Any] | None = None
     host: dict[str, Any] | None = None
@@ -290,8 +299,10 @@ class Backend:
         jobs_dir: Path | None = None,
         config_path: Path | None = None,
         heightmap_path: Path | None = None,
+        machines_dir: Path | None = None,
     ) -> None:
         self.root = root
+        self.machines_dir = machines_dir if machines_dir is not None else MACHINES_DIR
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
@@ -1103,7 +1114,12 @@ class Backend:
             self._settings_cache = (now, values)
             self.rates = Rates.from_settings(values)
             self.profile = profile_of(values)
-        return {"values": values, "schema": SETTINGS_SCHEMA, "host": self.host_settings()}
+        return {
+            "values": values,
+            "schema": SETTINGS_SCHEMA,
+            "host": self.host_settings(),
+            "machine": machine_files.current(self.machine_list()[0], values),
+        }
 
     def write_settings(self, values: dict | None, host: dict | None) -> dict:
         """Settings to the machine and the host's own, all or nothing.
@@ -1138,7 +1154,42 @@ class Backend:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
-        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings()}
+        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings(), "machine": None}
+
+    # --- machines -----------------------------------------------------------------
+
+    def machine_list(self) -> tuple[list[machine_files.Machine], list[str]]:
+        """The machine files, read afresh so an edit shows at once, and a
+        message for each one that cannot be taken."""
+        return machine_files.load_all(self.machines_dir)
+
+    def machines(self) -> dict:
+        """Every machine file, and which one the connected machine's
+        settings are; `None` with no machine connected or settings of no
+        file's."""
+        found, problems = self.machine_list()
+        current = None
+        if self.link is not None and self.link.is_open:
+            try:
+                current = self.read_settings()["machine"]
+            except (LinkError, CommandError, HTTPException):
+                current = None
+        return {"machines": [machine.summary() for machine in found], "current": current, "problems": problems}
+
+    def machine(self, machine_id: str) -> machine_files.Machine:
+        for machine in self.machine_list()[0]:
+            if machine.id == machine_id:
+                return machine
+        raise HTTPException(status_code=404, detail=f"no machine file {machine_id!r}")
+
+    def apply_machine(self, machine_id: str, save: bool = False) -> dict:
+        """Writes a machine file's every setting and its host values, all or
+        nothing as a settings write is, and saves them to flash if asked."""
+        machine = self.machine(machine_id)
+        result = self.write_settings(dict(machine.settings), dict(machine.host) or None)
+        if save:
+            self.save_settings()
+        return result
 
     def _write_machine_settings(self, values: dict) -> None:
         """The machine's part of a settings write; the caller holds the
@@ -1759,6 +1810,18 @@ def create_app(
     def put_settings(body: SettingsBody):
         return guarded(lambda: backend.write_settings(body.values, body.host))
 
+    @app.get("/api/machines")
+    def machines():
+        return guarded(backend.machines)
+
+    @app.get("/api/machines/{machine_id}")
+    def machine(machine_id: str):
+        return backend.machine(machine_id).document()
+
+    @app.post("/api/machines/{machine_id}/apply")
+    def apply_machine(machine_id: str, body: ApplyMachineBody | None = None):
+        return guarded(lambda: backend.apply_machine(machine_id, bool(body and body.save)))
+
     @app.post("/api/settings/save")
     def save_settings():
         return guarded(backend.save_settings)
@@ -1951,10 +2014,20 @@ def main(argv: list[str] | None = None) -> int:
         default=DATA_DIR,
         help=f"directory for the jobs, the config and the height map (default: {DATA_DIR})",
     )
+    parser.add_argument(
+        "--machines",
+        type=Path,
+        default=MACHINES_DIR,
+        help=f"directory of machine files, one TOML file per machine (default: {MACHINES_DIR})",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     uvicorn.run(
-        create_app(backend=Backend(root=args.data), cors_origins=args.cors_origin, allowed_hosts=args.allowed_host),
+        create_app(
+            backend=Backend(root=args.data, machines_dir=args.machines),
+            cors_origins=args.cors_origin,
+            allowed_hosts=args.allowed_host,
+        ),
         host=args.host,
         port=args.port,
         log_level="info",

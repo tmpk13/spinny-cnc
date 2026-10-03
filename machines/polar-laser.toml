@@ -1,0 +1,73 @@
+# The polar laser: the head on the rail over the rotation axis, the board
+# on the harmonic drive table. Every value here is the firmware's default,
+# so this file is the machine as it boots; edit it to describe yours. What
+# a file leaves out stays at the firmware's default.
+
+name = "Polar laser"
+description = "UV laser on the rail, the board turning under it on the table"
+kinematics = "polar"
+tool = "laser"
+
+[rail]                      # R: the radius, mm
+steps_per_mm = 10240        # 200 steps, 256 microsteps, 5 mm per turn
+max_rate = 560              # mm/min; the step generator runs out before the motor does
+accel = 50                  # mm/s^2
+jerk = 3                    # mm/s allowed at a corner
+jog_rate = 300              # mm/min for a jog without F
+limit = 0                   # soft limit either side of the axis, mm; 0 is none
+invert = false
+current_ma = 800
+microsteps = 256
+
+[table]                     # A: the table, degrees
+steps_per_deg = 14222.222   # 200 steps, 256 microsteps, 100:1
+max_rate = 400              # deg/min
+accel = 50                  # deg/s^2
+jerk = 2                    # deg/s allowed at a corner
+jog_rate = 200
+invert = false
+current_ma = 800
+microsteps = 256
+
+[slide]                     # Z: the cross slide, mm; a setup axis here
+steps_per_mm = 10240
+max_rate = 560
+accel = 50
+jerk = 3
+jog_rate = 120
+limit = 0
+invert = false
+current_ma = 800
+microsteps = 256
+
+[focus]                     # H: the focus axis, mm; not fitted here
+fitted = false
+steps_per_mm = 6400         # 200 steps, 256 microsteps, 8 mm per turn
+max_rate = 600
+accel = 50
+jerk = 1
+jog_rate = 120
+invert = false
+current_ma = 600
+microsteps = 256
+
+[probe]
+invert = false              # true: the probe input is active high
+brake_ms = 20               # motion queued during a probe, 0 to 160
+
+[output]                    # the laser PWM
+pwm_hz = 5000
+s_max = 1000                # S for full duty
+s_min = 0                   # dyn mode: below this the beam is off
+invert = false              # true: active low output
+test_ms = 5000              # default T for a manual beam
+
+[drivers]
+enable_invert = false
+idle_ms = 0                 # motors off after this long idle; 0 is never
+step_us = 2
+hold_pct = 50
+stealth = true
+
+[host]
+tolerance = 0.005           # chord tolerance of the streamed path, mm

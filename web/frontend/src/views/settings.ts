@@ -2,11 +2,12 @@
 // host chord tolerance; on a spindle machine also the host's milling travel
 // clearance and spin-up.
 
-import { button, el, labeled, numberField, replace } from "../dom.ts";
+import { askConfirm } from "../confirm.ts";
+import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
-import type { HostSettings, SettingsResponse } from "../types.ts";
+import type { HostSettings, MachineSummary, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** The values that differ from what the backend reported. */
@@ -40,7 +41,13 @@ function writeFoldOpen(open: boolean): void {
     }
 }
 
+/** The machine select's value for settings that are no file's. */
+export const NO_MACHINE_FILE = "";
+
 export function mountSettings(root: HTMLElement, ctx: Ctx): void {
+    const machinePick = el("select", { class: "machine-pick", "aria-label": "Machine" });
+    const load = button("Load", () => loadMachine(), "btn");
+    const machineNote = el("span", { class: "muted machine-note" });
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });
     const clearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
     const spinup = numberField({ value: 2, min: 0, step: 0.5, width: "6rem" });
@@ -50,9 +57,10 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     );
     const apply = button("Apply", () => applyEdits(), "btn btn-primary");
     const save = button("Save to flash", () => saveFlash(), "btn");
-    const reload = button("Reload", () => ctx.refreshSettings(), "btn btn-quiet");
+    const reload = button("Reload", () => Promise.all([ctx.refreshSettings(), refreshMachines()]), "btn btn-quiet");
     const table = el("table", { class: "settings" });
     const body = el("fieldset", { class: "panel-body" },
+        el("div", { class: "button-row" }, labeled("Machine", machinePick, "labeled inline"), load, machineNote),
         el("div", { class: "button-row" }, labeled("Chord tolerance mm", tolerance, "labeled inline"), apply, save, reload),
         milling,
         table,
@@ -75,8 +83,18 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
 
     const machineOf = (state: AppState): string | null => (state.snapshot.connected ? state.snapshot.url ?? "" : null);
 
+    // The machine files, and the one the operator picked to load, kept
+    // until it is loaded or the settings come from another machine.
+    let files: MachineSummary[] = [];
+    let picked: string | null = null;
+    machinePick.addEventListener("change", () => {
+        picked = machinePick.value;
+        showMachine();
+    });
+
     ctx.store.subscribe((state) => {
         milling.classList.toggle("hidden", !isMilling(state.snapshot));
+        showMachine();
         const machine = machineOf(state);
         if (machine !== editsFor) {
             editsFor = machine;
@@ -92,8 +110,73 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         if (state.settings !== shown) {
             shown = state.settings;
             render(state.settings);
+            renderMachines();
         }
     }, ["settings"]);
+    void refreshMachines();
+
+    async function refreshMachines(): Promise<void> {
+        const listed = await ctx.call(ctx.api.machines());
+        if (!listed) {
+            return;
+        }
+        files = listed.machines;
+        for (const problem of listed.problems) {
+            ctx.toast("error", problem);
+        }
+        renderMachines();
+    }
+
+    /** The select: the files by name, and first the entry for settings that are no file's. */
+    function renderMachines(): void {
+        const current = shown?.machine ?? null;
+        const want = picked ?? current ?? NO_MACHINE_FILE;
+        replace(machinePick,
+            el("option", { value: NO_MACHINE_FILE, disabled: true }, "settings of no file"),
+            ...files.map((file) => el("option", { value: file.id }, file.name)),
+        );
+        machinePick.value = files.some((file) => file.id === want) ? want : NO_MACHINE_FILE;
+        showMachine();
+    }
+
+    /** The note beside the select, and whether Load has anything to do. */
+    function showMachine(): void {
+        const connected = ctx.store.get().snapshot.connected;
+        const current = shown?.machine ?? null;
+        const file = files.find((entry) => entry.id === machinePick.value);
+        if (!connected) {
+            machineNote.textContent = files.length > 0 ? "connect to load one" : "no machine files";
+        } else if (file && file.id === current) {
+            machineNote.textContent = "loaded";
+        } else if (file) {
+            machineNote.textContent = file.description;
+        } else {
+            machineNote.textContent = "the settings are no file's";
+        }
+        setLocked(load, !connected || !file || file.id === current);
+    }
+
+    async function loadMachine(): Promise<void> {
+        const file = files.find((entry) => entry.id === machinePick.value);
+        if (!file) {
+            return;
+        }
+        const ok = await askConfirm(
+            `Load ${file.name}? Every firmware setting is written from its file; the ones changed by hand are lost. Save to flash afterwards keeps it over a restart.`,
+            "Load",
+        );
+        if (!ok) {
+            return;
+        }
+        const done = await ctx.call(ctx.api.applyMachine(file.id, false));
+        if (done) {
+            picked = null;
+            ctx.toast("info", `${file.name} loaded; Save to flash keeps it over a restart`);
+        }
+        // Refreshed either way: a refused write may still have changed
+        // the values before the one refused.
+        await ctx.refreshSettings();
+    }
 
     /**
      * Builds the table from `settings`. A refresh (another panel writing a

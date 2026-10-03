@@ -26,7 +26,10 @@ steps a centering burn is measured into.
 
 The page follows what the machine is (`profile` in the backend's state,
 from `$cartesian` and `$spindle`), with a badge in the status bar when it
-is not the polar laser. On a cartesian machine the cross slide is the Y
+is not the polar laser. The Settings panel's *Machine* pick lists the
+machine files in `machines/`, names the one the live settings are (or says
+they are no file's), and loads another after a confirmation, every
+firmware setting from the file; *Save to flash* keeps it over a restart. On a cartesian machine the cross slide is the Y
 axis: it steps like the rail, at the feed given, and the joint goto takes
 `r` and `z`. With a spindle the laser panel starts and stops the spindle,
 the groups table has depth and plunge in place of the power floor, the

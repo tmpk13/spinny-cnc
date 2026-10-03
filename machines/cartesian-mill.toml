@@ -1,0 +1,34 @@
+# The X/Y machine milling with a spindle on the laser output and the
+# focus axis as its depth. The host keeps the travel clearance over the
+# surface and the spin-up dwell.
+
+name = "Cartesian mill"
+description = "X/Y machine with a spindle on the output and the focus axis as depth"
+kinematics = "cartesian"
+tool = "spindle"
+
+[slide]
+steps_per_mm = 10240
+max_rate = 560
+accel = 50
+jerk = 3
+jog_rate = 120
+limit = 30
+
+[focus]
+fitted = true
+steps_per_mm = 6400
+max_rate = 600
+accel = 50
+jerk = 1
+jog_rate = 120
+current_ma = 600
+
+[probe]
+invert = false
+brake_ms = 20
+
+[host]
+tolerance = 0.005
+clearance = 2.0             # mm over the surface for travel between cuts
+spinup = 2.0                # s of dwell after the spindle starts or changes speed

@@ -38,7 +38,12 @@ run on hardware yet.
 ### Cartesian and spindle
 
 Two optional modes use the same machine; both are firmware settings, off
-by default, and the page follows them.
+by default, and the page follows them. The quickest way between them is
+the *Machine* pick in the Settings panel, which loads a whole file from
+`machines/` ([MACHINES.md](MACHINES.md)): `cartesian-laser` and
+`cartesian-mill` are the two modes below with the slide's travel set to
+30 mm either side; copy one and change the limit to yours. The settings
+named below are what such a file writes.
 
 `$cartesian=1` makes it an X/Y machine: the rail is X, the cross slide Y,
 interpolated together, and the table holds its angle. Board X/Y is turned

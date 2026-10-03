@@ -138,6 +138,27 @@ export interface SettingsResponse {
     values: Record<string, number>;
     schema: SettingSchema[];
     host: HostSettings;
+    /** The machine file these settings are, every one of them; null for settings of no file's. */
+    machine?: string | null;
+}
+
+/** A machine file in machines/, as the backend lists it: the axes, their scales and limits, the kinematics and the tool. */
+export interface MachineSummary {
+    id: string;
+    name: string;
+    description: string;
+    kinematics: Kinematics;
+    tool: Tool;
+    /** The file fits a focus axis. */
+    focus: boolean;
+}
+
+export interface MachinesResponse {
+    machines: MachineSummary[];
+    /** The file the connected machine's settings are; null with no machine connected, or settings of no file's. */
+    current: string | null;
+    /** Files that could not be read, one message each. */
+    problems: string[];
 }
 
 export interface SettingsUpdate {
