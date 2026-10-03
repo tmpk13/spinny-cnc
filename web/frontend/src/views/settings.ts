@@ -45,7 +45,7 @@ function writeFoldOpen(open: boolean): void {
 export const NO_MACHINE_FILE = "";
 
 export function mountSettings(root: HTMLElement, ctx: Ctx): void {
-    const machinePick = el("select", { class: "machine-pick", "aria-label": "Machine" });
+    const machinePick = el("select", { class: "field machine-pick", "aria-label": "Machine" });
     const load = button("Load", () => loadMachine(), "btn");
     const machineNote = el("span", { class: "muted machine-note" });
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });

@@ -114,6 +114,10 @@ classDiagram
     class spinny_laser_polar {
         subdivide(start, end, joint, kin)
     }
+    class spinny_laser_machines {
+        load_all(directory) the machine files
+        current(machines, values) which one is loaded
+    }
     class spinny_laser_center {
         center.build / fine.build
     }
@@ -134,6 +138,7 @@ classDiagram
     app --> center
     app --> heightmap
     app --> prober
+    app --> spinny_laser_machines
     prober --> link
     prober --> heightmap
     prober --> runner

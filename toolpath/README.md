@@ -64,8 +64,15 @@ classDiagram
         readings(design, groups, along, across)
         job_document(groups, name, spot)
     }
+    class machines {
+        load(path) Machine
+        load_all(directory) machines, problems
+        current(machines, values) id
+        cli_defaults(machine)
+    }
     class machine {
-        add_machine_arguments(parser)
+        add_machine_arguments(parser)  --machine FILE
+        parse_args(parser, argv)
         options_from(args)
         sim_document(...)
         write_outputs(...)
@@ -113,6 +120,8 @@ classDiagram
     convert --> machine
     machine --> gcode
     machine --> report
+    machine --> machines : defaults from a file
+    machines ..> web_backend : listed, matched, loaded
     cli --> preview
     cli --> clear : outline pieces
     convert --> preview

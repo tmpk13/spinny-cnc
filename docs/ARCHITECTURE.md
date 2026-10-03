@@ -31,7 +31,9 @@ flowchart LR
         BE --> KIN[spinny_laser.polar, or R Z in the table frame when cartesian]
         BE --> LS[laser_sweep: gerber, isolation]
         BE --> HM[height map: probing, focus or power compensation, spindle depth]
+        MF[machines/*.toml: axes, kinematics, tool] --> BE
     end
+    MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
         RP[rp2040: embassy, USB, step timer, laser or spindle PWM, TMC2209, flash, probe input] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, spindle, machine]

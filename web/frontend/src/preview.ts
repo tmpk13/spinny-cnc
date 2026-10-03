@@ -670,11 +670,14 @@ export class Preview {
     private tracePolyline(ctx: CanvasRenderingContext2D, frame: Frame, points: (Vec3 | null)[], closed: boolean): boolean {
         let pen = false;
         let drawn = false;
+        let broken = false;
         let first: { x: number; y: number } | null = null;
         for (const point of points) {
             const p = point ? project(frame, this.width, this.height, point) : null;
             if (!p) {
+                // Closing across a gap would draw a chord through the view.
                 pen = false;
+                broken = true;
                 continue;
             }
             if (!pen) {
@@ -686,7 +689,7 @@ export class Preview {
                 drawn = true;
             }
         }
-        if (closed && pen && first) {
+        if (closed && pen && first && !broken) {
             ctx.lineTo(first.x, first.y);
             drawn = true;
         }
