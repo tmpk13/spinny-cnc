@@ -180,7 +180,7 @@ def test_focus_here_takes_the_offset_from_the_head_over_the_board(client, fake):
     probe(client)
     assert client.post("/api/heightmap/focus", json={}).status_code == 200
     # The beam over board (5, 0), focused by eye 2 mm above the contact.
-    client.post("/api/goto", json={"kind": "joint", "r": 5, "a": 0})
+    goto(client, r=5, a=0)
     fake.h = surface(5, 0) + 2.0
     response = client.post("/api/heightmap/focus", json={})
     assert response.status_code == 200, response.text
@@ -297,6 +297,14 @@ def wait_until(predicate, timeout: float = 3.0) -> bool:
     return predicate()
 
 
+def goto(client, **joint) -> None:
+    """A joint goto, waited for: its ok means queued, and focusing or probing
+    wants the head at rest."""
+    response = client.post("/api/goto", json={"kind": "joint", **joint})
+    assert response.status_code == 200, response.text
+    assert wait_until(lambda: client.get("/api/state").json()["machine"]["state"] == "Idle"), "the goto did not come to rest"
+
+
 def backend_for(tmp_path, make_fake) -> tuple[Backend, list[FakeSerial]]:
     """A backend whose every connect opens a fresh fake from `make_fake`."""
     fakes: list[FakeSerial] = []
@@ -394,12 +402,12 @@ def test_focus_here_is_refused_with_the_beam_off_the_map(client, fake):
     probe(client)
     # Past the grid and its margin, the edge height would stand in for the
     # copper under the beam.
-    client.post("/api/goto", json={"kind": "joint", "r": 20, "a": 0})
+    goto(client, r=20, a=0)
     response = client.post("/api/heightmap/focus", json={})
     assert response.status_code == 400 and "probed area" in response.json()["detail"]
     assert client.get("/api/heightmap").json()["map"]["focus_set"] is False
     # Within the margin a run may reach, it is taken.
-    client.post("/api/goto", json={"kind": "joint", "r": 10.5, "a": 0})
+    goto(client, r=10.5, a=0)
     assert client.post("/api/heightmap/focus", json={}).status_code == 200
 
 
@@ -421,7 +429,7 @@ def test_the_offset_is_taken_back_when_the_focus_axis_is_renumbered(client, fake
     # the difference with it.
     response = client.post("/api/heightmap/focus", json={"offset": 2.0})
     assert response.status_code == 400 and "renumbered" in response.json()["detail"]
-    client.post("/api/goto", json={"kind": "joint", "r": 0, "a": 0})
+    goto(client, r=0, a=0)
     fake.h = surface(0, 0) + 5 + 2.0
     response = client.post("/api/heightmap/focus", json={})
     assert response.status_code == 200, response.text
