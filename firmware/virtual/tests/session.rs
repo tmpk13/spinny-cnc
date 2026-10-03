@@ -36,7 +36,14 @@ impl Drop for Server {
 
 /// Starts a free-running simulated board on a free port.
 fn start() -> Server {
-    launch(None)
+    launch(None, true)
+}
+
+/// As `start`, on the real clock: for a test that must catch the machine
+/// in flight, since under a free-running clock a loaded host can run a
+/// whole move between two status polls.
+fn start_real() -> Server {
+    launch(None, false)
 }
 
 /// As `start`, writing the trace to a file of its own.
@@ -47,14 +54,14 @@ fn start_traced(name: &str) -> Server {
     let trace = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("spinny-virtual-{name}-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&trace);
-    launch(Some(trace))
+    launch(Some(trace), true)
 }
 
-fn launch(trace: Option<std::path::PathBuf>) -> Server {
+fn launch(trace: Option<std::path::PathBuf>, fast: bool) -> Server {
     let listener = server::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let options = Options {
-        fast: true,
+        fast,
         quiet: true,
         trace: trace.clone(),
         ..Options::default()
@@ -345,15 +352,16 @@ fn realtime_bytes_stop_the_machine_and_a_reset_raises_an_alarm() {
 
 #[test]
 fn the_cross_slide_jogs_on_its_own_and_lands_where_it_was_asked_to() {
-    let server = start();
+    // On the real clock: the test has to see the jog in flight, and the
+    // slide is coarse and the jog paced so that it lasts a second and a
+    // half of that clock, which the status polls every few milliseconds
+    // cannot miss. Under the free-running clock a loaded host ran the
+    // whole jog between two polls now and then, and the wait for Jog
+    // timed out on a slide that had long since arrived.
+    let server = start_real();
     let mut client = Client::connect(&server);
     assert!(client.line().starts_with("[spinny v"));
 
-    // The slide is coarse, and the jog is paced so that it lasts long
-    // enough to be seen in flight even when the machine is loaded: the
-    // status is polled every few milliseconds, and a jog over in a tenth
-    // of a second was missed now and then, leaving the wait for Jog to
-    // time out on a slide that had long since arrived.
     assert_eq!(client.send("$z_steps=256").last().map(String::as_str), Some("ok"));
     assert_eq!(client.send("$jog_z=60").last().map(String::as_str), Some("ok"));
     assert_eq!(client.send("set Z0").last().map(String::as_str), Some("ok"));
