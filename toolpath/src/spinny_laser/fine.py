@@ -541,7 +541,7 @@ def run(args, parser) -> int:
         parser.error(str(exc))
         return 2
 
-    out = args.output or Path("out") / "center-fine.json"
+    out = args.output or Path("var", "out") / "center-fine.json"
     notes = notes_for(design, args.spot, args.speed, groups)
     summary = [
         f"pattern    fine: rail lines {design.reach:g} mm each way, arms crossing at"

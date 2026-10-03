@@ -614,7 +614,7 @@ def test_moves_are_refused_while_a_run_owns_the_machine(client, fake):
 
 
 def test_a_board_upload_can_deposit_its_copper(client):
-    board = Path(__file__).resolve().parents[3] / "tests" / "data" / "board-F_Cu.gbr"
+    board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board-F_Cu.gbr"
     files = {"file": ("board-F_Cu.gbr", board.read_bytes(), "application/octet-stream")}
     response = client.post("/api/jobs", files=files, data={"mode": "deposit", "fill": "radial"})
     assert response.status_code == 200, response.text

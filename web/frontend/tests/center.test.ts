@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { HttpApi } from "../src/api.ts";
 import { createContext } from "../src/main.ts";
-import { MockBackend } from "../src/mock.ts";
+import { MockBackend } from "../src/mock/backend.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
 import { centerRequest, type CenterFields } from "../src/views/center.ts";
 import { mountJobs } from "../src/views/jobs.ts";

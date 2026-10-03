@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Api } from "../src/api.ts";
 import { createContext } from "../src/main.ts";
-import { MockBackend } from "../src/mock.ts";
+import { MockBackend } from "../src/mock/backend.ts";
 import { POLAR_LASER, isCartesian, isMilling, profileBadge, profileOf } from "../src/profile.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
 import type { Machine, Profile, Snapshot } from "../src/types.ts";

@@ -183,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     burn.add_argument("--power", type=float, default=400.0, help="S for the pattern")
     burn.add_argument("--speed", type=float, default=200.0, help="surface speed, mm/min")
     machine.add_machine_arguments(parser)
-    machine.add_output_arguments(parser, "out/center.gcode, or out/center-fine.json with --fine")
+    machine.add_output_arguments(parser, "var/out/center.gcode, or var/out/center-fine.json with --fine")
     return parser
 
 
@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
 
     written: list[Path] = []
     if not args.dry_run:
-        out = args.output or Path("out") / "center.gcode"
+        out = args.output or Path("var", "out") / "center.gcode"
         svg = preview.render(
             [],
             [(group.label, group.paths) for group in groups],

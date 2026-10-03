@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
+import sys
 
 from laser_sweep.backlash import format_coord
 
@@ -137,9 +139,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# A board point with a negative X, such as "-10,0": argparse before Python
+# 3.13 takes anything that begins with a minus and is not a plain number
+# for an option, so such a point is marked as a value with a leading space,
+# which parse_point strips.
+COORDINATE = re.compile(r"^-\d*\.?\d+,-?\d*\.?\d+$")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
+    args = parser.parse_args([" " + arg if COORDINATE.match(arg) else arg for arg in argv])
     try:
         start = parse_point(args.start)
         if args.command == "radius":

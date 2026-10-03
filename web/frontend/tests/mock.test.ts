@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
-import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock.ts";
+import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock/backend.ts";
 import { outputDuty } from "../src/profile.ts";
 import type { Compensate, GotoRequest, Grid, HeightMap, HeightMapState, Job, JogRequest, WsEvent } from "../src/types.ts";
 

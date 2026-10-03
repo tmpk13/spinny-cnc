@@ -11,7 +11,8 @@ bun run dev            # serves index.html with the sources
 ```
 
 `bun run build` writes `dist/`, which the backend serves at `/`. Open
-`?mock=1` for an in-page machine that needs no backend; `?api=http://host:8000`
+`?mock=1` for an in-page machine that needs no backend (`src/mock/`);
+`?api=http://host:8000`
 points the page at a backend elsewhere, which must have been started with
 that page's origin allowed: `spinny-web --cors-origin http://localhost:3000`
 for the dev server. Without it the browser refuses every call.
@@ -89,11 +90,11 @@ classDiagram
         segmentBoardMove(from, to, tolerance)
         moveMinutes(from, to, feed, rRate, aRate)
     }
-    class mock {
+    class mock_backend {
         MockBackend  Api and EventFeed in one
         MockMachine  joint motion at the rates, cross slide on its own or as a joint, focus axis, probe, spindle
     }
-    class mockjobs {
+    class mock_jobs {
         parseSvg parseGcode placeJob computeStats centerJob
     }
     main --> api
@@ -102,7 +103,7 @@ classDiagram
     main --> views
     views --> preview
     views --> profile
-    mock --> kinematics
-    mock --> mockjobs
-    main ..> mock : ?mock=1
+    mock_backend --> kinematics
+    mock_backend --> mock_jobs
+    main ..> mock_backend : ?mock=1
 ```

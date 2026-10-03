@@ -1,8 +1,8 @@
 // Job geometry for the in-page mock backend: SVG and gcode readers, a demo
 // coupon for the formats only the real backend can read, placement and stats.
 
-import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "./kinematics.ts";
-import type { Anchor, Board, CenterRequest, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "./types.ts";
+import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
+import type { Anchor, Board, CenterRequest, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
 type Matrix = [number, number, number, number, number, number];

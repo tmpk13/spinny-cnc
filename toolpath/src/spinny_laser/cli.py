@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     holes.add_argument("--drill-speed", type=float, help="default: --speed")
 
     machine.add_machine_arguments(parser)
-    machine.add_output_arguments(parser, "out/<board>.gcode")
+    machine.add_output_arguments(parser, "var/out/<board>.gcode")
     parser.add_argument(
         "--gerber-dir", type=Path,
         help="where to leave gerbers exported from a board file, default: a temporary directory",
@@ -271,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
 
     written: list[Path] = []
     if not args.dry_run:
-        out = args.output or Path("out") / f"{copper_path.stem}.gcode"
+        out = args.output or Path("var", "out") / f"{copper_path.stem}.gcode"
         svg = preview.render(
             plan.copper,
             [(group.label, group.paths) for group in groups],

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Api } from "../src/api.ts";
 import { applyEvent, createContext, settingsMayHaveChanged } from "../src/main.ts";
-import { MockBackend } from "../src/mock.ts";
+import { MockBackend } from "../src/mock/backend.ts";
 import { button, numberField, setLocked } from "../src/dom.ts";
 import { Store, appendConsole, initialState, pushToast, type AppState } from "../src/state.ts";
 import type { Job, JobSummary, Machine, Snapshot, WsEvent } from "../src/types.ts";

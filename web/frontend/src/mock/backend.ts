@@ -1,7 +1,7 @@
 // In-page fake backend for `?mock=1`: a machine that moves at the firmware's
 // rates, the job store, and the event feed the real WebSocket would carry.
 
-import { ApiError, type Api } from "./api.ts";
+import { ApiError, type Api } from "../api.ts";
 import {
     AXIS_EPSILON,
     DEG,
@@ -12,7 +12,7 @@ import {
     surfaceLength,
     turned,
     unwrap,
-} from "./kinematics.ts";
+} from "../kinematics.ts";
 import {
     DEFAULT_DEPTH,
     DEFAULT_PLUNGE,
@@ -32,8 +32,8 @@ import {
     pathMoves,
     placeJob,
     type PlannedMove,
-} from "./mockjobs.ts";
-import type { LinkStatus } from "./state.ts";
+} from "./jobs.ts";
+import type { LinkStatus } from "../state.ts";
 import type {
     Board,
     CenterRequest,
@@ -67,8 +67,8 @@ import type {
     Snapshot,
     UploadOptions,
     WsEvent,
-} from "./types.ts";
-import type { EventFeed } from "./ws.ts";
+} from "../types.ts";
+import type { EventFeed } from "../ws.ts";
 
 export const MOCK_VERSION = "0.1.0-mock";
 const CLOCK_EPSILON = 1e-9;

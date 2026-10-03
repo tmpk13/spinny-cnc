@@ -1,24 +1,30 @@
+# Local notes
 NOTES.md
+
+# Runtime data of the backend and the command line tools
+var/
+
+# Python
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-dist/
-build/
-out/
+.ruff_cache/
 *.egg-info/
-sim/target/
-*.kicad_prl
+build/
+
+# Rust
 firmware/target/
 firmware/rp2040/target/
+sim/target/
 *.uf2
+
+# Frontend
 web/frontend/node_modules/
 web/frontend/dist/
-web/backend/.venv/
-web/backend/jobs/
-web/backend/config.json
-web/backend/heightmap.json
+
+# KiCad local state in test data
+*.kicad_prl
+
+# Agent worktrees
 .claude/
-# pixi environments
-.pixi/*
-!.pixi/config.toml

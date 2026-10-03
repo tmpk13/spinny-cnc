@@ -5,10 +5,9 @@ serial link to the firmware, turns board geometry into joint-space lines,
 streams jobs, and serves the frontend. The firmware does no kinematics.
 
 ```sh
-cd web/backend
-uv sync
+uv sync                                     # once, at the repository root
 uv run spinny-web --host 0.0.0.0 --port 8000
-uv run pytest
+uv run pytest web/backend/tests
 ```
 
 A page from another origin cannot drive the machine: its posts and
@@ -52,9 +51,12 @@ state is `error`.
 
 ## Files
 
-- `config.json` (ignored): the host tolerance, the milling clearance and spin-up, the last url and the probe settings.
-- `heightmap.json` (ignored): the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
-- `jobs/*.json` (ignored): one file per imported job.
+Runtime files go to `var/` at the repository root, or wherever `--data`
+points; none of them is tracked.
+
+- `config.json`: the host tolerance, the milling clearance and spin-up, the last url and the probe settings.
+- `heightmap.json`: the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
+- `jobs/*.json`: one file per imported job.
 
 ## Architecture
 
@@ -151,7 +153,7 @@ classDiagram
 
 ## Tests
 
-`uv run pytest` runs everything on the host against a fake serial port that
+`uv run pytest web/backend/tests` runs everything on the host against a fake serial port that
 feeds bytes one at a time. The end-to-end test is marked `e2e` and runs
 only when `SPINNY_VIRTUAL` names a built virtual firmware binary that takes
 `--listen 127.0.0.1:PORT --fast`; the probing one also gives it a board

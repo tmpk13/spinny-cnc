@@ -20,7 +20,7 @@ import {
     pathMinRadius,
     pathMoves,
     placeJob,
-} from "../src/mockjobs.ts";
+} from "../src/mock/jobs.ts";
 import type { Group } from "../src/types.ts";
 
 const limits = { rRate: 1000, aRate: 1080, tolerance: 0.005 };

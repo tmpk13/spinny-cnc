@@ -28,11 +28,11 @@ from spinny_web.kinematics import Streamer
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-GCODE_SAMPLE = REPO / "out" / "board.gcode"
+GCODE_SAMPLE = REPO / "var" / "out" / "board.gcode"
 GERBER_DIR = REPO.parent / "test-gerbers"
 GERBER_SAMPLES = [GERBER_DIR / "test-gerbers-F_Cu.gbr", GERBER_DIR / "smaller-test" / "smaller-test-F_Cu.gbr"]
-BOARD_SAMPLE = REPO / "tests" / "data" / "board.kicad_pcb"
-BOARD_COPPER = REPO / "tests" / "data" / "board-F_Cu.gbr"
+BOARD_SAMPLE = REPO / "toolpath" / "tests" / "data" / "board.kicad_pcb"
+BOARD_COPPER = REPO / "toolpath" / "tests" / "data" / "board-F_Cu.gbr"
 
 SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="60mm" viewBox="0 0 100 60">
     <g transform="translate(10,10)">
@@ -134,7 +134,7 @@ M5
         from_gcode("G0 X1 Y1\n", "nocuts", ImportOptions())
 
 
-@pytest.mark.skipif(not GCODE_SAMPLE.exists(), reason="out/board.gcode is not there")
+@pytest.mark.skipif(not GCODE_SAMPLE.exists(), reason="var/out/board.gcode is not there")
 def test_gcode_sample_from_out(tmp_path):
     job = import_file(GCODE_SAMPLE, "board", ImportOptions(anchor="keep"), Streamer())
     assert job.source == "gcode"
@@ -168,7 +168,7 @@ def test_gerber_import_builds_isolation_loops(sample):
 
 @pytest.mark.skipif(
     not BOARD_SAMPLE.exists() or shutil.which("kicad-cli") is None,
-    reason="needs tests/data/board.kicad_pcb and kicad-cli",
+    reason="needs toolpath/tests/data/board.kicad_pcb and kicad-cli",
 )
 def test_kicad_board_import_exports_gerbers():
     job = jobs.from_board(BOARD_SAMPLE, "board", ImportOptions())

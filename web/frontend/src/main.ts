@@ -2,7 +2,7 @@
 // feed into the store, and mounts the views.
 
 import { HttpApi, type Api } from "./api.ts";
-import { MockBackend } from "./mock.ts";
+import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, initialState, pushToast, Store, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";

@@ -55,8 +55,12 @@ from .link import (
 from .prober import Prober, ProberError, ProbeSettings
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
+# The repository's layout gives the defaults: the page's build beside this
+# package, and the runtime files (jobs, config, height map) in var/ at the
+# root, out of the source tree.
+REPO_ROOT = Path(__file__).resolve().parents[4]
+DATA_DIR = REPO_ROOT / "var"
+FRONTEND_DIST = REPO_ROOT / "web" / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
 # line is streamed as one joint line, which is an arc on the board.
@@ -133,8 +137,8 @@ NO_FRONTEND = """<!doctype html>
 <html><head><meta charset="utf-8"><title>spinny</title></head>
 <body style="font-family: sans-serif; margin: 2em">
 <h1>spinny-web</h1>
-<p>The frontend is not built. Run the build in <code>web/frontend</code>,
-then restart the backend; the API is up at <code>/api</code>.</p>
+<p>The page is not built. Run <code>bun run build</code> in <code>web/frontend</code>
+(or <code>mise run web</code>) and restart the backend; the API is up at <code>/api</code>.</p>
 </body></html>
 """
 
@@ -281,7 +285,7 @@ class Broadcast:
 class Backend:
     def __init__(
         self,
-        root: Path = BACKEND_ROOT,
+        root: Path = DATA_DIR,
         link_factory: Callable[[str], Link] | None = None,
         jobs_dir: Path | None = None,
         config_path: Path | None = None,
@@ -353,6 +357,7 @@ class Backend:
     def _save_config(self) -> None:
         try:
             text = json.dumps(self.config, indent=4, allow_nan=False)
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
             self.config_path.write_text(text + "\n", encoding="utf-8")
         except (OSError, ValueError) as exc:
             # The value is in force for this process; say that it will not
@@ -1940,10 +1945,16 @@ def main(argv: list[str] | None = None) -> int:
         help="a host name this server answers to, such as spinny.local or 192.168.1.20;"
         " repeatable; any other Host header is refused (default: all)",
     )
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=DATA_DIR,
+        help=f"directory for the jobs, the config and the height map (default: {DATA_DIR})",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     uvicorn.run(
-        create_app(cors_origins=args.cors_origin, allowed_hosts=args.allowed_host),
+        create_app(backend=Backend(root=args.data), cors_origins=args.cors_origin, allowed_hosts=args.allowed_host),
         host=args.host,
         port=args.port,
         log_level="info",
