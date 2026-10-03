@@ -202,3 +202,29 @@
   with the corners and middles the loops miss found and burnt; traces
   narrower than the spot run along their gerber centerline. The outline
   group comes in off. Page: Board isolate/deposit and Fill copper.
+- Repository reorganized (2026-10-03): one uv workspace at the root for
+  the toolpath library (`toolpath/`, moved out of the root) and the web
+  backend, one environment and lock file; runtime files (jobs, config,
+  height map, tool output) under an ignored `var/`, with `spinny-web
+  --data`; the in-page mock in `web/frontend/src/mock/`; pixi removed;
+  the README cut to a map and a quick start with the calibration,
+  operating, gcode toolchain and architecture material in `docs/`; mise
+  tasks per suite.
+- Machine configuration files (2026-10-03): a TOML file per machine in
+  `machines/` (axes with scales, rates, limits and direction; polar or
+  cartesian; laser or spindle; probe, output, drivers; the host's own
+  values), mapped onto all 46 firmware settings. Listed, matched against
+  the live settings and loaded whole by the backend (`/api/machines`),
+  picked and loaded from the page's Settings panel, read by the virtual
+  firmware (`--machine`) and by the gcode tools (`--machine`); an end to
+  end test checks the Rust and Python readings agree on every shipped
+  file. Four files ship: polar laser, polar laser with focus axis,
+  cartesian laser, cartesian mill.
+- 3D preview (2026-10-03): the page's preview is a 3D view on the plain
+  canvas, projected by `camera.ts`: rings and the rail at the head's
+  height, soft limits, copper, outline, the job, the probe grid with its
+  heights raised and stretched to be seen, the head over its board point
+  with the beam and a trail. Drag orbits or, with the rotation locked,
+  pans (the lock is kept between visits); shift or right drag pans, the
+  wheel zooms about the cursor, Reset view and a double click return to
+  the overview.

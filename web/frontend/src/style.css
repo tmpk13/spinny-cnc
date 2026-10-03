@@ -397,7 +397,9 @@ input[type="checkbox"] {
 }
 
 .btn-choice[aria-pressed="true"],
-.btn-choice[aria-pressed="true"]:hover:not(:disabled) {
+.btn-choice[aria-pressed="true"]:hover:not(:disabled),
+.btn-toggle[aria-pressed="true"],
+.btn-toggle[aria-pressed="true"]:hover:not(:disabled) {
     background: var(--accent-fill);
     color: var(--on-fill);
     border-color: var(--accent-fill);

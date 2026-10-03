@@ -18,7 +18,15 @@ that page's origin allowed: `spinny-web --cors-origin http://localhost:3000`
 for the dev server. Without it the browser refuses every call.
 
 Board coordinates are mm with the rotation axis at the origin: `x = r cos a`,
-`y = r sin a`, y up in the preview. The DRO shows the joint (`R` mm, `A` deg),
+`y = r sin a`. The preview is a 3D view of the working area drawn on a
+plain canvas (`camera.ts` projects, no WebGL): the rings and the rail
+floating at the head's height, the soft limits, copper, outline and the
+job's paths on the board, the probe grid with its heights raised and
+stretched to be seen, and the head over its board point with the beam.
+Drag orbits, or pans with *Lock rotation* pressed (kept between visits);
+shift or right drag pans, the wheel zooms about the cursor, *Reset view*
+and a double click return to the overview, tilted with the axis in the
+middle and everything in view. The DRO shows the joint (`R` mm, `A` deg),
 the cross slide (`Z` mm), the focus axis (`H` mm) and the probe on a machine
 with one, and the board position the backend derives from the joint. The
 cross slide is a setup axis: the jog panel moves it on its own, in the small
@@ -83,7 +91,13 @@ classDiagram
         statusbar dro jog laser jobs center heightmap previewpanel console settings toasts
     }
     class preview {
-        Preview  canvas around the axis, y up, probe grid
+        Preview  3D scene on the 2D canvas: rings, rail, limits, job, probe heights, head
+        dragMode(locked, pointer) orbit or pan
+    }
+    class camera {
+        Camera target, distance, yaw, pitch
+        project / unproject  board mm to canvas px and back
+        orbit / pan / zoomAt / overview
     }
     class profile {
         profileOf(snapshot) Profile
@@ -105,6 +119,7 @@ classDiagram
     main --> state
     main --> views
     views --> preview
+    preview --> camera
     views --> profile
     mock_backend --> kinematics
     mock_backend --> mock_jobs

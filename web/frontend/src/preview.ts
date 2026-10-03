@@ -1,18 +1,29 @@
-// Canvas preview drawn around the rotation axis in board mm: the axis cross,
-// the rail, the soft limits, copper, outline, the job's paths, the probe grid
-// and the head with a short trail. Wheel zooms, drag pans, double click
-// resets.
+// 3D canvas preview of the machine's working area, in board mm around the
+// rotation axis: the rings and the rail, the soft limits, copper, outline,
+// the job's paths, the probe grid with its heights stretched to be seen,
+// and the head over the board with its beam and a short trail. An orbit
+// camera: drag orbits (or pans when the rotation is locked), shift or a
+// second button pans, the wheel zooms about the cursor, double click
+// returns to the overview. Everything is projected by camera.ts and drawn
+// with the plain 2D context, so the page needs no WebGL and the view math
+// tests without a canvas.
 
+import {
+    type Camera,
+    type Frame,
+    type Vec3,
+    circlePoints,
+    frameOf,
+    orbit,
+    overview,
+    pan,
+    project,
+    pxPerMm,
+    zoomAt,
+} from "./camera.ts";
 import { cssVar } from "./dom.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
 import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Path, Point } from "./types.ts";
-
-/** World center in mm and CSS pixels per mm. */
-export interface View {
-    cx: number;
-    cy: number;
-    scale: number;
-}
 
 /** Every point of a probe grid, row by row from the lowest Y. */
 export function gridPoints(grid: Grid): Point[] {
@@ -37,43 +48,13 @@ export function sameGrid(a: Grid | null, b: Grid | null): boolean {
 
 /** Screen room a ring label needs before the next one is drawn. */
 export const LABEL_GAP_PX = 44;
-export const MIN_SCALE = 0.05;
-export const MAX_SCALE = 400;
-const FIT_MARGIN = 1.15;
 const TRAIL_LENGTH = 240;
-
-export function fitView(reach: number, width: number, height: number): View {
-    const span = Math.max(reach, 1) * 2 * FIT_MARGIN;
-    const scale = Math.min(width, height) / span;
-    return { cx: 0, cy: 0, scale: clampScale(scale) };
-}
-
-export function clampScale(scale: number): number {
-    return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
-}
-
-export function worldToScreen(view: View, width: number, height: number, x: number, y: number): Point {
-    return [width / 2 + (x - view.cx) * view.scale, height / 2 - (y - view.cy) * view.scale];
-}
-
-export function screenToWorld(view: View, width: number, height: number, sx: number, sy: number): Point {
-    return [view.cx + (sx - width / 2) / view.scale, view.cy - (sy - height / 2) / view.scale];
-}
-
-/** Zoom by `factor` keeping the world point under the cursor still. */
-export function zoomAt(view: View, width: number, height: number, sx: number, sy: number, factor: number): View {
-    const [wx, wy] = screenToWorld(view, width, height, sx, sy);
-    const scale = clampScale(view.scale * factor);
-    return {
-        cx: wx - (sx - width / 2) / scale,
-        cy: wy + (sy - height / 2) / scale,
-        scale,
-    };
-}
-
-export function panBy(view: View, dx: number, dy: number): View {
-    return { cx: view.cx - dx / view.scale, cy: view.cy + dy / view.scale, scale: view.scale };
-}
+/** Where the rotation lock is remembered between visits. */
+export const LOCK_KEY = "spinny.preview.lock";
+/** The head marker and the rail float this share of the reach over the board. */
+const HEAD_HEIGHT = 0.15;
+const MIN_EXAGGERATION = 1;
+const MAX_EXAGGERATION = 200;
 
 /** What bounds the head, as the machine's profile gives it. */
 export interface Limits {
@@ -167,6 +148,63 @@ export function ringStep(reach: number): number {
     return 1000;
 }
 
+export type DragMode = "orbit" | "pan";
+
+/** What a one-pointer drag does: it pans under the rotation lock, with shift, or with any button but the first; else it orbits. */
+export function dragMode(locked: boolean, pointer: { button?: number; shiftKey?: boolean }): DragMode {
+    if (locked || pointer.shiftKey || (pointer.button !== undefined && pointer.button !== 0)) {
+        return "pan";
+    }
+    return "orbit";
+}
+
+/**
+ * How much the probed heights are stretched to be seen at all: a tenth of
+ * a millimeter of warp beside a 30 mm board is nothing to the eye, so the
+ * map's spread is drawn as a tenth of the reach, within bounds.
+ */
+export function heightExaggeration(range: number, reach: number): number {
+    if (!(range > 0) || !(reach > 0)) {
+        return MIN_EXAGGERATION;
+    }
+    return Math.min(MAX_EXAGGERATION, Math.max(MIN_EXAGGERATION, (reach * 0.1) / range));
+}
+
+/** The probed heights' mean and spread; null until two points are probed. */
+export function heightSpread(map: HeightMap): { mean: number; range: number } | null {
+    const heights: number[] = [];
+    for (const row of map.heights) {
+        for (const height of row) {
+            if (height !== null && Number.isFinite(height)) {
+                heights.push(height);
+            }
+        }
+    }
+    if (heights.length < 2) {
+        return null;
+    }
+    const mean = heights.reduce((sum, h) => sum + h, 0) / heights.length;
+    return { mean, range: Math.max(...heights) - Math.min(...heights) };
+}
+
+function readLock(): boolean {
+    try {
+        return typeof localStorage !== "undefined" && localStorage.getItem(LOCK_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function writeLock(locked: boolean): void {
+    try {
+        if (typeof localStorage !== "undefined") {
+            localStorage.setItem(LOCK_KEY, locked ? "1" : "0");
+        }
+    } catch {
+        // Nothing to remember into; the lock holds for this page.
+    }
+}
+
 interface Colors {
     bg: string;
     grid: string;
@@ -180,12 +218,21 @@ interface Colors {
     text: string;
     groups: string[];
     probe: string;
+    low: string;
+    high: string;
+}
+
+interface Pointer {
+    x: number;
+    y: number;
+    button: number;
+    shiftKey: boolean;
 }
 
 export class Preview {
     private readonly canvas: HTMLCanvasElement;
     private readonly ctx: CanvasRenderingContext2D | null;
-    private view: View = { cx: 0, cy: 0, scale: 4 };
+    private camera: Camera = overview(10, 1, 1);
     private width = 0;
     private height = 0;
     private dpr = 1;
@@ -198,12 +245,10 @@ export class Preview {
     private trail: Point[] = [];
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
-    private groupShapes: (Path2D | null)[] = [];
-    private copperShape: Path2D | null = null;
-    private outlineShape: Path2D | null = null;
     private pending = false;
     private observer: ResizeObserver | null = null;
-    private drag: { id: number; x: number; y: number } | null = null;
+    private pointers = new Map<number, Pointer>();
+    private locked = readLock();
     private disposers: (() => void)[] = [];
 
     constructor(canvas: HTMLCanvasElement) {
@@ -216,9 +261,6 @@ export class Preview {
     /** Shows a job; the view refits unless `keepView` is set, as for an edit of the same job. */
     setJob(job: Job | null, keepView = false): void {
         this.job = job;
-        this.groupShapes = job ? job.groups.map((group) => makeShape(group.paths)) : [];
-        this.copperShape = job ? makeShape(job.copper) : null;
-        this.outlineShape = job ? makeShape(job.outline) : null;
         if (keepView) {
             this.requestDraw();
         } else {
@@ -285,20 +327,53 @@ export class Preview {
         this.requestDraw();
     }
 
-    getView(): View {
-        return this.view;
+    getCamera(): Camera {
+        return { ...this.camera, target: [...this.camera.target] as Vec3 };
     }
 
-    setView(view: View): void {
-        this.view = view;
+    setCamera(camera: Camera): void {
+        this.camera = { ...camera, target: [...camera.target] as Vec3 };
         this.requestDraw();
     }
 
+    /** With the rotation locked a plain drag pans instead of orbiting; the choice is kept between visits. */
+    get rotationLocked(): boolean {
+        return this.locked;
+    }
+
+    setRotationLocked(locked: boolean): void {
+        this.locked = locked;
+        writeLock(locked);
+        this.requestDraw();
+    }
+
+    toggleRotationLock(): boolean {
+        this.setRotationLocked(!this.locked);
+        return this.locked;
+    }
+
+    /** Back to the overview: the axis in the middle, tilted, everything drawn in view. */
     resetView(): void {
-        this.view = fitView(jobReach(this.job, limitReach(this.limits)), this.width || 1, this.height || 1);
+        this.camera = overview(jobReach(this.job, limitReach(this.limits)), this.width || 1, this.height || 1);
         // A canvas measures 0 by 0 until it is laid out, so a fit before
         // that is against nothing and the next real size has to redo it.
         this.fitted = this.width > 1 && this.height > 1;
+        this.requestDraw();
+    }
+
+    /** One pointer dragged from `from` to `to` in canvas px: orbits, or pans. */
+    dragBy(from: [number, number], to: [number, number], mode: DragMode): void {
+        if (mode === "orbit") {
+            this.camera = orbit(this.camera, to[0] - from[0], to[1] - from[1]);
+        } else {
+            this.camera = pan(this.camera, this.width || 1, this.height || 1, from, to);
+        }
+        this.requestDraw();
+    }
+
+    /** The wheel, or a pinch: zoom by `factor` about a canvas point. */
+    zoomBy(at: [number, number], factor: number): void {
+        this.camera = zoomAt(this.camera, this.width || 1, this.height || 1, at[0], at[1], factor);
         this.requestDraw();
     }
 
@@ -349,71 +424,67 @@ export class Preview {
             return;
         }
         const colors = this.colors();
-        const { width, height, dpr, view } = this;
+        const { width, height, dpr, camera } = this;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, width, height);
-
-        const reach = jobReach(this.job, limitReach(this.limits));
-        const px = 1 / view.scale;
-        const cartesian = this.limits.kinematics === "cartesian";
-        // Long enough for a line to cross the whole view wherever it is panned.
-        const extent = Math.hypot(width, height) / view.scale + Math.hypot(view.cx, view.cy) + reach;
-
-        // World transform: mm to CSS px, y up.
-        ctx.setTransform(
-            dpr * view.scale, 0, 0, -dpr * view.scale,
-            dpr * (width / 2 - view.cx * view.scale),
-            dpr * (height / 2 + view.cy * view.scale),
-        );
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
 
-        // Rings and the rail.
+        const reach = jobReach(this.job, limitReach(this.limits));
+        const frame = frameOf(camera);
+        const scale = pxPerMm(camera, height);
+        const cartesian = this.limits.kinematics === "cartesian";
+        const extent = Math.max(reach * 1.5, 10);
+        const headHeight = Math.max(1, reach * HEAD_HEIGHT);
+        const at = (x: number, y: number, z = 0) => project(frame, width, height, [x, y, z]);
+
+        // Rings on the board.
         const step = ringStep(reach);
         ctx.strokeStyle = colors.grid;
-        ctx.lineWidth = px;
+        ctx.lineWidth = 1;
         for (let ring = step; ring <= reach * 1.5; ring += step) {
-            ctx.beginPath();
-            ctx.arc(0, 0, ring, 0, Math.PI * 2);
-            ctx.stroke();
+            this.polyline(ctx, frame, circlePoints(ring, 96), true);
         }
+
+        // The rail, floating at the head's height: along +X from the axis
+        // on the polar machine, where it is the radius; through the head
+        // along the table's turned X on a cartesian one, which carries it
+        // across the table on the cross slide.
         ctx.strokeStyle = colors.rail;
-        ctx.lineWidth = 2 * px;
-        ctx.setLineDash([8 * px, 6 * px]);
-        ctx.beginPath();
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
         if (cartesian) {
-            // The rail is X, carried across the table by the cross slide, so
-            // it runs through the head along the table's turned X direction.
             const through = this.headBoard ?? { x: 0, y: 0 };
             const along = turned({ x: extent, y: 0 }, this.head?.a ?? 0);
-            ctx.moveTo(through.x - along.x, through.y - along.y);
-            ctx.lineTo(through.x + along.x, through.y + along.y);
+            this.polyline(ctx, frame, [
+                [through.x - along.x, through.y - along.y, headHeight],
+                [through.x + along.x, through.y + along.y, headHeight],
+            ]);
         } else {
-            ctx.moveTo(0, 0);
-            ctx.lineTo(Math.max(reach * 1.5, 10), 0);
+            this.polyline(ctx, frame, [[0, 0, headHeight], [extent, 0, headHeight]]);
         }
-        ctx.stroke();
         ctx.setLineDash([]);
+        // The column from the axis up to the rail, so the height reads.
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 1;
+        this.polyline(ctx, frame, [[0, 0, 0], [0, 0, headHeight]]);
+        ctx.globalAlpha = 1;
 
         const limit = limitShape(this.limits, this.head?.a ?? 0, extent);
         if (limit) {
             ctx.strokeStyle = colors.rmax;
-            ctx.lineWidth = 1.5 * px;
-            ctx.setLineDash([4 * px, 4 * px]);
-            ctx.beginPath();
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 4]);
             if (limit.kind === "circle") {
-                ctx.arc(0, 0, limit.radius, 0, Math.PI * 2);
+                this.polyline(ctx, frame, circlePoints(limit.radius, 96), true);
             } else if (limit.kind === "outline") {
-                limit.points.forEach(([x, y], index) => (index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
-                ctx.closePath();
+                this.polyline(ctx, frame, limit.points.map(([x, y]) => [x, y, 0] as Vec3), true);
             } else {
                 for (const [[x0, y0], [x1, y1]] of limit.lines) {
-                    ctx.moveTo(x0, y0);
-                    ctx.lineTo(x1, y1);
+                    this.polyline(ctx, frame, [[x0, y0, 0], [x1, y1, 0]]);
                 }
             }
-            ctx.stroke();
             ctx.setLineDash([]);
         }
 
@@ -422,103 +493,112 @@ export class Preview {
             if (job.copper.length > 0) {
                 ctx.fillStyle = colors.copper;
                 ctx.globalAlpha = 0.35;
-                fillPaths(ctx, job.copper, this.copperShape);
+                this.fillPaths(ctx, frame, job.copper);
                 ctx.globalAlpha = 1;
             }
             const spot = job.spot > 0 ? job.spot : 0.1;
             job.groups.forEach((group, index) => {
                 ctx.strokeStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
                 ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
-                ctx.lineWidth = Math.max(spot, 1.2 * px);
-                strokePaths(ctx, group.paths, this.groupShapes[index] ?? null);
+                ctx.lineWidth = Math.max(spot * scale, 1.2);
+                this.strokePaths(ctx, frame, group.paths);
             });
             ctx.globalAlpha = 1;
             if (job.outline.length > 0) {
                 ctx.strokeStyle = colors.outline;
-                ctx.lineWidth = Math.max(spot / 2, px);
-                strokePaths(ctx, job.outline, this.outlineShape);
+                ctx.lineWidth = Math.max(spot * scale / 2, 1);
+                this.strokePaths(ctx, frame, job.outline);
             }
         }
 
-        this.drawProbe(ctx, colors, px);
+        const exaggeration = this.drawProbe(ctx, frame, colors, reach);
 
-        // Axis cross.
-        const cross = 10 * px;
+        // Axis cross, ten px wide whatever the zoom.
+        const cross = 10 / scale;
         ctx.strokeStyle = colors.axis;
-        ctx.lineWidth = 1.5 * px;
-        ctx.beginPath();
-        ctx.moveTo(-cross, 0);
-        ctx.lineTo(cross, 0);
-        ctx.moveTo(0, -cross);
-        ctx.lineTo(0, cross);
-        ctx.stroke();
+        ctx.lineWidth = 1.5;
+        this.polyline(ctx, frame, [[-cross, 0, 0], [cross, 0, 0]]);
+        this.polyline(ctx, frame, [[0, -cross, 0], [0, cross, 0]]);
 
         // Trail and head.
         if (this.trail.length > 1) {
             ctx.strokeStyle = colors.trail;
-            ctx.lineWidth = 2 * px;
+            ctx.lineWidth = 2;
             ctx.globalAlpha = 0.7;
-            ctx.beginPath();
-            this.trail.forEach(([x, y], index) => {
-                if (index === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            });
-            ctx.stroke();
+            this.polyline(ctx, frame, this.trail.map(([x, y]) => [x, y, 0] as Vec3));
             ctx.globalAlpha = 1;
         }
         if (this.head && this.headBoard) {
             const board = this.headBoard;
             ctx.strokeStyle = colors.head;
             ctx.fillStyle = colors.head;
-            ctx.lineWidth = 1.5 * px;
-            ctx.beginPath();
-            ctx.arc(board.x, board.y, 6 * px, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(board.x, board.y, 2 * px, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.lineWidth = 1.5;
             // The radius line from the axis to the head, which on a
             // cartesian machine is no joint of it.
             if (!cartesian) {
                 ctx.globalAlpha = 0.5;
-                ctx.beginPath();
-                ctx.moveTo(0, 0);
-                ctx.lineTo(board.x, board.y);
-                ctx.stroke();
+                this.polyline(ctx, frame, [[0, 0, 0], [board.x, board.y, 0]]);
                 ctx.globalAlpha = 1;
+            }
+            // The beam from the head down to the board.
+            ctx.globalAlpha = 0.6;
+            this.polyline(ctx, frame, [[board.x, board.y, 0], [board.x, board.y, headHeight]]);
+            ctx.globalAlpha = 1;
+            const spot = at(board.x, board.y, 0);
+            if (spot) {
+                ctx.beginPath();
+                ctx.arc(spot.x, spot.y, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            const marker = at(board.x, board.y, headHeight);
+            if (marker) {
+                ctx.beginPath();
+                ctx.arc(marker.x, marker.y, 6, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(marker.x, marker.y, 2, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
 
-        // Labels in screen space.
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // Labels in screen space: the rings along the rail, every one while
+        // they are far enough apart to read, every second or fourth beyond.
         ctx.fillStyle = colors.text;
         ctx.font = "0.75rem system-ui, sans-serif";
         ctx.textBaseline = "top";
         ctx.textAlign = "left";
-        // Every ring gets a label only while they are far enough apart to
-        // read; closer than that, every second or fourth one is labelled.
-        const every = labelEvery(step, view.scale);
+        const every = labelEvery(step, scale);
         let index = 0;
         for (let ring = step; ring <= reach * 1.5; ring += step) {
             index += 1;
             if (index % every !== 0) {
                 continue;
             }
-            const [sx, sy] = worldToScreen(view, width, height, ring, 0);
-            if (sx > 0 && sx < width && sy > 0 && sy < height) {
-                ctx.fillText(`${ring} mm`, sx + 3, sy + 3);
+            const p = at(ring, 0, 0);
+            if (p && p.x > 0 && p.x < width && p.y > 0 && p.y < height) {
+                ctx.fillText(`${ring} mm`, p.x + 3, p.y + 3);
             }
         }
         ctx.textAlign = "right";
         ctx.textBaseline = "bottom";
-        ctx.fillText(`${(view.scale).toFixed(1)} px/mm`, width - 6, height - 4);
+        const notes = [`elev ${Math.round(camera.pitch)} deg`];
+        if (this.locked) {
+            notes.unshift("rotation locked");
+        }
+        if (exaggeration !== null) {
+            notes.unshift(`heights x${exaggeration >= 10 ? Math.round(exaggeration) : exaggeration.toFixed(1)}`);
+        }
+        ctx.fillText(notes.join("   "), width - 6, height - 4);
     }
 
-    /** The probe grid: its outline and points, solid and filled where the map is probed, dashed and hollow for a grid not probed yet. */
-    private drawProbe(ctx: CanvasRenderingContext2D, colors: Colors, px: number): void {
+    /**
+     * The probe grid: its outline and points, solid and filled where the
+     * map is probed, dashed and hollow for a grid not probed yet; the
+     * probed heights raised out of the board, stretched to be seen, as a
+     * mesh with each point colored below or above the mean. Returns the
+     * stretch, or null when no surface was drawn.
+     */
+    private drawProbe(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number): number | null {
         const map = this.probeMap;
         const draft = this.probeDraft;
         const grids: { grid: Grid; heights: (number | null)[][] | null }[] = [];
@@ -528,19 +608,47 @@ export class Preview {
         if (map !== null) {
             grids.push({ grid: map.grid, heights: map.heights });
         }
-        ctx.strokeStyle = colors.probe;
-        ctx.fillStyle = colors.probe;
-        ctx.lineWidth = 1.2 * px;
+        let exaggeration: number | null = null;
+        ctx.lineWidth = 1.2;
         for (const { grid, heights } of grids) {
-            ctx.setLineDash(heights === null ? [5 * px, 4 * px] : []);
+            ctx.strokeStyle = colors.probe;
+            ctx.fillStyle = colors.probe;
+            ctx.setLineDash(heights === null ? [5, 4] : []);
             ctx.globalAlpha = heights === null ? 0.7 : 0.9;
-            ctx.strokeRect(grid.x0, grid.y0, grid.x1 - grid.x0, grid.y1 - grid.y0);
+            this.polyline(ctx, frame, [[grid.x0, grid.y0, 0], [grid.x1, grid.y0, 0], [grid.x1, grid.y1, 0], [grid.x0, grid.y1, 0]], true);
             ctx.setLineDash([]);
-            gridPoints(grid).forEach(([x, y], index) => {
+            const points = gridPoints(grid);
+            const spread = map !== null && heights !== null ? heightSpread(map) : null;
+            const stretch = spread ? heightExaggeration(spread.range, reach) : 1;
+            const raised = (index: number): Vec3 | null => {
+                const height = heights?.[Math.floor(index / grid.nx)]?.[index % grid.nx] ?? null;
+                if (height === null || !spread) {
+                    return null;
+                }
+                const [x, y] = points[index]!;
+                return [x, y, (height - spread.mean) * stretch];
+            };
+            if (spread) {
+                exaggeration = stretch;
+                // Rows, then columns, pen up where a point is not probed.
+                for (let iy = 0; iy < grid.ny; iy++) {
+                    this.polyline(ctx, frame, Array.from({ length: grid.nx }, (_, ix) => raised(iy * grid.nx + ix)));
+                }
+                for (let ix = 0; ix < grid.nx; ix++) {
+                    this.polyline(ctx, frame, Array.from({ length: grid.ny }, (_, iy) => raised(iy * grid.nx + ix)));
+                }
+            }
+            points.forEach(([x, y], index) => {
+                const top = raised(index);
                 const probed = heights !== null && (heights[Math.floor(index / grid.nx)]?.[index % grid.nx] ?? null) !== null;
+                const p = project(frame, this.width, this.height, top ?? [x, y, 0]);
+                if (!p) {
+                    return;
+                }
                 ctx.beginPath();
-                ctx.arc(x, y, 3 * px, 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
                 if (probed) {
+                    ctx.fillStyle = top && top[2] !== 0 ? (top[2] < 0 ? colors.low : colors.high) : colors.probe;
                     ctx.fill();
                 } else {
                     ctx.stroke();
@@ -548,6 +656,77 @@ export class Preview {
             });
         }
         ctx.globalAlpha = 1;
+        return exaggeration;
+    }
+
+    /** Strokes world points as one line, the pen up across a point behind the eye or a null; `closed` joins the last to the first. */
+    private polyline(ctx: CanvasRenderingContext2D, frame: Frame, points: (Vec3 | null)[], closed = false): void {
+        ctx.beginPath();
+        if (this.tracePolyline(ctx, frame, points, closed)) {
+            ctx.stroke();
+        }
+    }
+
+    private tracePolyline(ctx: CanvasRenderingContext2D, frame: Frame, points: (Vec3 | null)[], closed: boolean): boolean {
+        let pen = false;
+        let drawn = false;
+        let first: { x: number; y: number } | null = null;
+        for (const point of points) {
+            const p = point ? project(frame, this.width, this.height, point) : null;
+            if (!p) {
+                pen = false;
+                continue;
+            }
+            if (!pen) {
+                ctx.moveTo(p.x, p.y);
+                pen = true;
+                first = first ?? p;
+            } else {
+                ctx.lineTo(p.x, p.y);
+                drawn = true;
+            }
+        }
+        if (closed && pen && first) {
+            ctx.lineTo(first.x, first.y);
+            drawn = true;
+        }
+        return drawn;
+    }
+
+    private strokePaths(ctx: CanvasRenderingContext2D, frame: Frame, paths: Path[]): void {
+        ctx.beginPath();
+        let drawn = false;
+        for (const path of paths) {
+            drawn = this.tracePolyline(ctx, frame, path.map(([x, y]) => [x, y, 0] as Vec3), false) || drawn;
+        }
+        if (drawn) {
+            ctx.stroke();
+        }
+    }
+
+    /** Fills closed board shapes, even-odd so holes stay holes; a path with a point behind the eye is left out. */
+    private fillPaths(ctx: CanvasRenderingContext2D, frame: Frame, paths: Path[]): void {
+        ctx.beginPath();
+        let drawn = false;
+        for (const path of paths) {
+            const projected: { x: number; y: number }[] = [];
+            for (const [x, y] of path) {
+                const p = project(frame, this.width, this.height, [x, y, 0]);
+                if (!p) {
+                    break;
+                }
+                projected.push(p);
+            }
+            if (projected.length < path.length || projected.length < 3) {
+                continue;
+            }
+            projected.forEach((p, index) => (index === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+            ctx.closePath();
+            drawn = true;
+        }
+        if (drawn) {
+            ctx.fill("evenodd");
+        }
     }
 
     private colors(): Colors {
@@ -570,7 +749,14 @@ export class Preview {
                 cssVar(node, "--pv-g3", "#806000"),
             ],
             probe: cssVar(node, "--pv-probe", "#7a3fb0"),
+            low: cssVar(node, "--hm-low", "#268bd2"),
+            high: cssVar(node, "--hm-high", "#dc322f"),
         };
+    }
+
+    private canvasPoint(event: { clientX: number; clientY: number }): [number, number] {
+        const rect = this.canvas.getBoundingClientRect();
+        return [event.clientX - rect.left, event.clientY - rect.top];
     }
 
     private bind(): void {
@@ -581,31 +767,41 @@ export class Preview {
         };
         on("wheel", (event) => {
             event.preventDefault();
-            const rect = canvas.getBoundingClientRect();
-            const factor = event.deltaY < 0 ? 1.2 : 1 / 1.2;
-            this.view = zoomAt(this.view, this.width, this.height, event.clientX - rect.left, event.clientY - rect.top, factor);
-            this.requestDraw();
+            this.zoomBy(this.canvasPoint(event), event.deltaY < 0 ? 1.2 : 1 / 1.2);
         }, { passive: false });
+        on("contextmenu", (event) => event.preventDefault());
         on("pointerdown", (event) => {
-            if (event.button !== 0 && event.pointerType === "mouse") {
-                return;
-            }
-            this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+            const [x, y] = this.canvasPoint(event);
+            this.pointers.set(event.pointerId, { x, y, button: event.button, shiftKey: event.shiftKey });
             canvas.setPointerCapture?.(event.pointerId);
         });
         on("pointermove", (event) => {
-            if (!this.drag || this.drag.id !== event.pointerId) {
+            const pointer = this.pointers.get(event.pointerId);
+            if (!pointer) {
                 return;
             }
-            this.view = panBy(this.view, event.clientX - this.drag.x, event.clientY - this.drag.y);
-            this.drag.x = event.clientX;
-            this.drag.y = event.clientY;
-            this.requestDraw();
+            const [x, y] = this.canvasPoint(event);
+            const others = Array.from(this.pointers.entries()).filter(([id]) => id !== event.pointerId);
+            if (others.length > 0) {
+                // Two fingers: zoom by how their distance changed, about
+                // their middle, and pan by how the middle moved.
+                const other = others[0]![1];
+                const before = Math.hypot(pointer.x - other.x, pointer.y - other.y);
+                const after = Math.hypot(x - other.x, y - other.y);
+                const midBefore: [number, number] = [(pointer.x + other.x) / 2, (pointer.y + other.y) / 2];
+                const midAfter: [number, number] = [(x + other.x) / 2, (y + other.y) / 2];
+                if (before > 0 && after > 0) {
+                    this.zoomBy(midAfter, after / before);
+                }
+                this.dragBy(midBefore, midAfter, "pan");
+            } else {
+                this.dragBy([pointer.x, pointer.y], [x, y], dragMode(this.locked, { button: pointer.button, shiftKey: event.shiftKey || pointer.shiftKey }));
+            }
+            pointer.x = x;
+            pointer.y = y;
         });
         const end = (event: PointerEvent): void => {
-            if (this.drag && this.drag.id === event.pointerId) {
-                this.drag = null;
-            }
+            this.pointers.delete(event.pointerId);
         };
         on("pointerup", end);
         on("pointercancel", end);
@@ -626,45 +822,4 @@ export class Preview {
             this.disposers.push(() => media.removeEventListener?.("change", handler));
         }
     }
-}
-
-function makeShape(paths: Path[]): Path2D | null {
-    if (typeof Path2D !== "function") {
-        return null;
-    }
-    const shape = new Path2D();
-    tracePaths(shape, paths);
-    return shape;
-}
-
-function tracePaths(target: { moveTo(x: number, y: number): void; lineTo(x: number, y: number): void }, paths: Path[]): void {
-    for (const path of paths) {
-        path.forEach(([x, y], index) => {
-            if (index === 0) {
-                target.moveTo(x, y);
-            } else {
-                target.lineTo(x, y);
-            }
-        });
-    }
-}
-
-function strokePaths(ctx: CanvasRenderingContext2D, paths: Path[], shape: Path2D | null): void {
-    if (shape) {
-        ctx.stroke(shape);
-        return;
-    }
-    ctx.beginPath();
-    tracePaths(ctx, paths);
-    ctx.stroke();
-}
-
-function fillPaths(ctx: CanvasRenderingContext2D, paths: Path[], shape: Path2D | null): void {
-    if (shape) {
-        ctx.fill(shape, "evenodd");
-        return;
-    }
-    ctx.beginPath();
-    tracePaths(ctx, paths);
-    ctx.fill("evenodd");
 }
