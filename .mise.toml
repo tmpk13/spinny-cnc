@@ -31,24 +31,24 @@ run = "cd firmware && cargo build -q -p spinny-virtual"
 
 [tasks.test-firmware]
 description = "Firmware crates"
-run = "cd firmware && cargo test -q 2>&1 | tail -n 40"
+run = "cd firmware && cargo test -q"
 
 [tasks.test-toolpath]
 description = "Toolpath library and command line tools"
-run = "uv run pytest -q toolpath/tests 2>&1 | tail -n 40"
+run = "uv run pytest -q toolpath/tests"
 
 [tasks.test-backend]
 description = "Web backend, with the end to end runs on the virtual firmware"
 depends = ["build-virtual"]
-run = "SPINNY_VIRTUAL=firmware/target/debug/spinny-virtual uv run pytest -q web/backend/tests 2>&1 | tail -n 40"
+run = "SPINNY_VIRTUAL=firmware/target/debug/spinny-virtual uv run pytest -q web/backend/tests"
 
 [tasks.test-frontend]
 description = "Page: type check and tests"
-run = "cd web/frontend && bun run --silent check && bun test 2>&1 | tail -n 40"
+run = "cd web/frontend && bun run --silent check && bun test"
 
 [tasks.test-sim]
 description = "Gcode simulator"
-run = "cd sim && cargo test -q 2>&1 | tail -n 40"
+run = "cd sim && cargo test -q"
 
 [tasks.test]
 description = "Every suite"
