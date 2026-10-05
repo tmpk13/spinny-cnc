@@ -183,6 +183,8 @@ export interface Group {
     depth?: number;
     /** Milling: how fast the tool goes down into the cut, mm/min. */
     plunge?: number;
+    /** What a CAM profile made the group for; a run refuses a group made for the other tool. Missing or null runs on either. */
+    tool?: Tool | null;
     paths: Path[];
     /**
      * Joint-space polylines, radius mm and angle degrees, streamed as they
@@ -235,6 +237,7 @@ export interface GroupSummary {
     enabled: boolean;
     depth?: number;
     plunge?: number;
+    tool?: Tool | null;
     paths: number;
     joints?: number;
 }
@@ -413,3 +416,141 @@ export type WsEvent =
     | { type: "progress"; data: Progress }
     | { type: "heightmap"; data: HeightMapState }
     | { type: "message"; data: Message };
+
+// --- CAM profiles -----------------------------------------------------------
+
+export type CamAxisKind = "linear" | "rotary";
+
+/** What the CAM uses an axis for: the board plane, the depth, a polar pair, or a setup axis parked before the cuts. */
+export type CamAxisRole = "x" | "y" | "depth" | "radius" | "angle" | "setup";
+
+export interface CamAxis {
+    letter: string;
+    kind: CamAxisKind;
+    role: CamAxisRole;
+    min: number | null;
+    max: number | null;
+    /** The fastest feed, units per minute. */
+    rate: number | null;
+    rapid: number | null;
+    /** Machine coordinate of board 0. */
+    offset: number;
+    home: number | null;
+    /** Depth axis: travel height over the surface. */
+    safe: number | null;
+    /** Setup axis: where it is put first. */
+    park: number | null;
+}
+
+export interface CamTool {
+    id: string;
+    kind: Tool;
+    name: string;
+    /** The width of the cut: a bit's diameter or a beam's spot, mm. */
+    width: number;
+    /** The cutting settings the file gives the tool, by key. */
+    settings: Record<string, number>;
+}
+
+export type CamSource = "isolation" | "clearing" | "outline" | "drills" | "deposit" | "paths";
+
+export type CamSettingValue = number | string | boolean;
+
+export interface CamOperation {
+    name: string;
+    source: CamSource;
+    tool: string;
+    enabled: boolean;
+    /** Every key the operation gives itself. */
+    settings: Record<string, CamSettingValue>;
+    /** What it cuts with: the tool's settings under its own, and the pass count. */
+    cutting: Record<string, number>;
+}
+
+export interface CamPost {
+    header: string[];
+    footer: string[];
+    spindle_on: string;
+    laser_on: string;
+    spinup: number;
+    decimals: number;
+    return_home: boolean;
+}
+
+export type CamAnchor = "center" | "corner" | "keep";
+
+export interface CamPlacement {
+    anchor: CamAnchor;
+    offset: [number, number];
+    layer: string;
+    mirror: "none" | "x" | "y";
+}
+
+/** A profile as the list shows it. */
+export interface CamSummary {
+    id: string;
+    name: string;
+    description: string;
+    /** The machines/ file whose firmware runs the profile's jobs; null for one that only takes the gcode. */
+    machine: string | null;
+    kinematics: Kinematics;
+    /** The kinds of tool the enabled operations use. */
+    tools: Tool[];
+    /** The axis letters. */
+    axes: string;
+    /** Enabled operations. */
+    operations: number;
+}
+
+export interface CamProfile {
+    id: string;
+    name: string;
+    description: string;
+    machine: string | null;
+    kinematics: Kinematics;
+    axes: CamAxis[];
+    tools: CamTool[];
+    operations: CamOperation[];
+    post: CamPost;
+    placement: CamPlacement;
+}
+
+export interface CamProfilesResponse {
+    profiles: CamSummary[];
+    /** Files that could not be read, one message each. */
+    problems: string[];
+}
+
+export interface CamProfileResponse {
+    document: CamProfile;
+    /** The file as written. */
+    text: string;
+}
+
+/** The table and the key of one value in a profile file: ["operations", 2, "depth"]. */
+export type CamPath = (string | number)[];
+
+/** A value to write; null takes the key out. */
+export type CamValue = number | string | boolean | string[] | null;
+
+export interface CamJobResponse {
+    job: Job;
+    /** What was left out or changed on the way. */
+    notes: string[];
+}
+
+export interface CamGcodeReport {
+    lines: number;
+    cuts: number;
+    length_mm: number;
+    seconds: number;
+    /** Machine coordinates reached, by axis letter. */
+    extents: Record<string, [number, number]>;
+    warnings: string[];
+}
+
+export interface CamGcodeResponse {
+    text: string;
+    report: CamGcodeReport;
+    filename: string;
+}

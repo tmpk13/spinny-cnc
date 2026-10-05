@@ -577,10 +577,27 @@ class Streamer:
         """Refuses, with a ValueError, a job this streamer would make into
         lines the machine must not run, before any line of it is made.
 
-        A spindle at S0 is stopped, and every plunge and cut after it would
-        drive a still tool into the board: a milling group must ask for a
-        speed. A laser group may have power 0, which is a harmless trace.
+        A group a CAM profile made for the other tool is refused: its
+        power is a spindle speed or a laser duty, its depth means nothing
+        to a laser. A spindle at S0 is stopped, and every plunge and cut
+        after it would drive a still tool into the board: a milling group
+        must ask for a speed. A laser group may have power 0, which is a
+        harmless trace.
         """
+        self.check_tools(job)
+        self._check_speeds(job)
+
+    def check_tools(self, job: "Job") -> None:
+        mine = "spindle" if self.spindle is not None else "laser"
+        for group in job.groups:
+            if group.enabled and group.has_cuts and group.tool not in (None, mine):
+                other = "a spindle" if group.tool == "spindle" else "a laser"
+                raise ValueError(
+                    f"{group.label} was made for {other} and this machine has {'a spindle' if mine == 'spindle' else 'a laser'}:"
+                    f" disable the group, or load the machine file the profile names"
+                )
+
+    def _check_speeds(self, job: "Job") -> None:
         if self.spindle is None:
             return
         for group in job.groups:
@@ -599,7 +616,7 @@ class Streamer:
         the end, with the tool up.
         """
         assert self.spindle is not None
-        self.check_job(job)
+        self._check_speeds(job)
         travel = self.travel_height(compensation)
         spinup_ms = int(round(self.spindle.spinup * 1000.0))
 
@@ -630,7 +647,30 @@ class Streamer:
                 depth = float(group.depth) * k / passes
                 for path in group.paths:
                     points = [tuple(p) for p in path]
-                    if len(points) < 2:
+                    if not points:
+                        continue
+                    if len(points) == 1 or all(p == points[0] for p in points):
+                        # A drill: the bit goes down at the point and up.
+                        first = self._path_start(points[0], joint)
+                        if not self._same(joint, first):
+                            yield Piece(
+                                line=f"go {self.words(first)}",
+                                kind="go",
+                                joint=first,
+                                seconds=self._rapid_seconds(joint, first),
+                                group=index,
+                            )
+                            joint = first
+                        bottom = surface(self.board_of(joint)) - depth
+                        yield Piece(
+                            line=f"cut H{coord(bottom, FOCUS_DECIMALS)} F{num(plunge)}",
+                            kind="plunge",
+                            joint=joint,
+                            seconds=abs((h if h is not None else bottom) - bottom) / plunge * 60.0,
+                            group=index,
+                        )
+                        yield self._lift(travel, bottom, index)
+                        h = travel
                         continue
                     plunged = False
                     for kind, a, b, p, q in self._path_moves(points, joint):

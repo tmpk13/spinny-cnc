@@ -1,0 +1,80 @@
+# The polar laser: the beam on the rail over the rotation axis, the board on
+# the table. Its jobs run through the web backend on the machine file named
+# below; the gcode written here is joint-space (X the radius, A the angle in
+# degrees) for a controller that takes it as two linear axes.
+
+name = "Polar laser"
+description = "UV laser on the rail over the turning table; jobs run through the backend"
+machine = "polar-laser"
+
+[[axes]]
+letter = "X"
+kind = "linear"
+role = "radius"
+min = 0
+max = 50
+rate = 560              # mm/min
+rapid = 560
+
+[[axes]]
+letter = "A"
+kind = "rotary"
+role = "angle"
+rate = 400              # deg/min
+rapid = 400
+
+[[axes]]
+letter = "Z"
+kind = "linear"
+role = "setup"          # the cross slide, found by the centering burns and left alone
+park = 0
+
+[[tools]]
+id = "uv"
+kind = "laser"
+name = "UV laser"
+spot = 0.1              # mm, the beam
+power = 500             # S for the cut, out of s_max
+min_power = 0           # the floor the firmware's dynamic mode slows down to
+speed = 400             # mm/min over the board
+passes = 1
+
+[[operations]]
+name = "isolation"
+source = "isolation"
+tool = "uv"
+loops = 1
+
+[[operations]]
+name = "clearing"
+source = "clearing"
+tool = "uv"
+enabled = false
+pattern = "radial"      # the spokes run on the rail alone, the fastest fill here
+
+[[operations]]
+name = "drills"
+source = "drills"
+tool = "uv"
+enabled = false
+marks = "circle"        # a laser marks a hole: circle | cross | dot
+
+[[operations]]
+name = "outline"
+source = "outline"
+tool = "uv"
+power = 800             # cuts the board free: more than the copper takes
+speed = 200
+passes = 3
+
+[post]
+header = []
+footer = []
+laser_on = "M4"
+decimals = 3
+return_home = true
+
+[placement]
+anchor = "center"       # the middle of the board on the rotation axis
+offset = [0, 0]
+layer = "F.Cu"

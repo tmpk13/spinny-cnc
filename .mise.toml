@@ -13,6 +13,10 @@ uv run spinny-web
 description = "The page from the dev server with live reload; point it at a backend with ?api=http://localhost:8000"
 run = "cd web/frontend && bun run dev"
 
+[tasks.cam]
+description = "A design through a CAM profile to gcode: mise run cam -- cam/mill-3axis.toml board.kicad_pcb"
+run = "uv run spinny-cam"
+
 [tasks.virtual]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the polar laser"
 run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/polar-laser.toml"

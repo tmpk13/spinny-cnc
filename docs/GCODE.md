@@ -18,6 +18,7 @@ dependency. The package is `toolpath/` (`spinny_laser`).
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
 | `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
 | `spinny-sim` | play a job back on a model of the machine |
+| `spinny-cam` | a board or an X/Y gcode design through a CAM profile in `cam/`, gcode for that profile's controller ([CAM.md](CAM.md)) |
 
 ## Usage
 

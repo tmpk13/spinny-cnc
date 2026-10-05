@@ -1,0 +1,145 @@
+# A standard three axis mill with a spindle: X and Y carry the board plane,
+# Z is the depth, gcode goes to a grbl-style controller. Zero the work
+# coordinates with the bit touching the copper at the board's lower left
+# corner, and every number below reads in those coordinates.
+#
+# Every table here is read whole and refused whole: a wrong key or value is
+# named with its table. A key left out takes the default written beside it.
+
+name = "3 axis mill"
+description = "X/Y/Z mill with a spindle, gcode out for a grbl-style controller"
+# machine = "cartesian-mill"      # the machines/ file whose firmware also runs these jobs; none here
+
+# --- axes: letter, kind (linear | rotary), role, travel and rates ----------
+# Roles: x and y carry the board plane (or radius and angle on a polar
+# machine), depth is the axis the tool goes down, setup axes are put at
+# their park value before anything moves. Travel is checked, not clamped:
+# a program that reaches past min or max is written with a warning.
+
+[[axes]]
+letter = "X"
+kind = "linear"
+role = "x"
+min = 0                 # mm; leave min and max out for no check
+max = 300
+rate = 1500             # mm/min, the fastest feed; a cut asking for more is capped and reported
+rapid = 3000            # mm/min for G0, for the time estimate
+offset = 0              # machine coordinate of board X 0
+home = 0                # where the program ends; leave out to stay at the last cut
+
+[[axes]]
+letter = "Y"
+kind = "linear"
+role = "y"
+min = 0
+max = 200
+rate = 1500
+rapid = 3000
+offset = 0
+home = 0
+
+[[axes]]
+letter = "Z"
+kind = "linear"
+role = "depth"
+min = -40
+max = 30                # travel up from the surface, after touching off
+rate = 500
+rapid = 1000
+offset = 0              # machine Z of the board surface, 0 after touching off
+safe = 5                # mm over the surface for every move between cuts
+home = 20               # raised at the end, after the X/Y home
+
+# --- tools: what cuts, and the settings an operation takes from it --------
+# kind = "mill" (a spindle) or "laser". A mill has diameter, rpm, feed,
+# plunge, step_down (mm per pass, 0 is the whole depth at once) and
+# stepover (of the diameter, between clearing strokes). A laser has spot,
+# power, min_power, speed, passes and height (where Z holds the beam in
+# focus; left out, Z is not moved for it).
+
+[[tools]]
+id = "vbit"
+kind = "mill"
+name = "30 degree V bit"
+diameter = 0.2          # mm, the width of the cut at depth
+rpm = 12000             # S word
+feed = 300              # mm/min along the cut
+plunge = 60             # mm/min down into it
+step_down = 0           # the whole depth in one pass
+
+[[tools]]
+id = "endmill"
+kind = "mill"
+name = "1 mm end mill"
+diameter = 1.0
+rpm = 10000
+feed = 200
+plunge = 40
+step_down = 0.6
+stepover = 0.4
+
+[[tools]]
+id = "drill"
+kind = "mill"
+name = "0.8 mm drill"
+diameter = 0.8
+rpm = 8000
+feed = 100
+plunge = 50
+
+# --- operations: the design's geometry, in cutting order --------------------
+# source: isolation (loops around the copper), clearing (the copper left
+# between them), outline (Edge.Cuts), drills (the drill file), deposit
+# (the copper itself, for a process that lays copper down), paths (an SVG or
+# gcode design's own paths, picked by `match` on their label). Any cutting
+# setting of the tool may be given again here and wins for the operation;
+# depth is how far under the surface a mill cuts.
+
+[[operations]]
+name = "isolation"
+source = "isolation"
+tool = "vbit"
+enabled = true
+loops = 1               # loops around every copper feature
+depth = 0.1
+
+[[operations]]
+name = "clearing"
+source = "clearing"
+tool = "endmill"
+enabled = false
+pattern = "lines"       # radial | rings | lines
+depth = 0.1
+
+[[operations]]
+name = "drills"
+source = "drills"
+tool = "drill"
+depth = 1.8             # through a 1.6 mm board
+# a hole wider than the drill is milled round, one its size is drilled at its center
+
+[[operations]]
+name = "outline"
+source = "outline"
+tool = "endmill"
+depth = 1.7
+step_down = 0.6         # three passes
+
+# --- how the gcode is written -------------------------------------------------
+
+[post]
+header = ["G21", "G90", "G94", "G17"]
+footer = ["M5", "M2"]
+spindle_on = "M3"       # with S on the same line
+laser_on = "M4"         # M4 scales the beam with the speed, M3 holds it
+spinup = 2              # s after the spindle starts or changes speed
+decimals = 3
+return_home = true      # G0 to each axis' home after the last cut
+
+# --- where the design lands ----------------------------------------------------
+
+[placement]
+anchor = "corner"       # corner: lower left at the origin; center: the middle; keep: as drawn
+offset = [0, 0]         # mm, added after the anchor
+layer = "F.Cu"          # the copper layer of a board
+mirror = "none"         # x or y flips the layer, for a bottom layer cut through the board

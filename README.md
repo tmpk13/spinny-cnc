@@ -11,9 +11,10 @@ make it an X/Y machine, with a spindle on the laser output for milling.
 | --- | --- | --- |
 | `firmware/` | the controller: portable core, SKR Pico port, virtual firmware on TCP | Rust |
 | `web/backend/` | serial link, job import, streaming, probing, API, serves the page | Python, FastAPI |
-| `web/frontend/` | the page: position, jog, jobs, height map, 3D preview, settings | TypeScript, Bun |
+| `web/frontend/` | the page: position, jog, jobs, height map, 3D preview, settings, and the CAM tab | TypeScript, Bun |
 | `toolpath/` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering coupons, machine configs, gcode tools | Python |
 | `machines/` | machine configurations in TOML, one file per axis setup | |
+| `cam/` | CAM profiles in TOML: a machine's axes, its tools with every cutting setting, the operations, the gcode post | |
 | `sim/` | plays gcode jobs back on a model of the machine | Rust |
 | `docs/` | protocol, web API, architecture, machine configs, operating, calibration, gcode toolchain | |
 | `var/` | runtime files: jobs, config, height map, tool output (not tracked) | |
@@ -31,18 +32,24 @@ toolpath library pulls in `laser-sweep` from `../kicad-to-gcode`.
 | `mise run virtual-mill` | the same as the cartesian spindle machine over a tilted board |
 | `mise run flash` | build the board firmware and copy it to an SKR Pico in BOOTSEL mode |
 | `mise run dev` | the page from Bun's dev server with live reload |
+| `mise run cam -- cam/mill-3axis.toml board.kicad_pcb` | a design through a CAM profile, gcode for its controller in `var/out/` |
 | `mise run test` | every suite; `test-firmware`, `test-toolpath`, `test-backend`, `test-frontend`, `test-sim` run one |
 
 Connect the page to the board, or to the virtual firmware's socket, and
 pick the machine in the Settings panel: a file in `machines/` describes
 the axes, their scales and limits, the kinematics (polar or cartesian) and
 the tool (laser or spindle), and loading it writes every firmware setting.
+The *CAM* tab takes a design through a profile in `cam/` (axes, tools,
+operations with every cutting setting, in TOML meant to be edited by hand
+or by a language model) into a job for this machine, or into gcode for a
+standard three axis mill or laser.
 
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts, how they talk, where the files go
 - [docs/OPERATING.md](docs/OPERATING.md): first moves, probing and the height map, cartesian and spindle
 - [docs/MACHINES.md](docs/MACHINES.md): the machine configuration files
+- [docs/CAM.md](docs/CAM.md): the CAM profiles, the CAM tab, and gcode for a standard mill or laser controller
 - [docs/CALIBRATION.md](docs/CALIBRATION.md): finding the rotation axis with the centering coupons
 - [docs/PROTOCOL.md](docs/PROTOCOL.md): the firmware's line protocol
 - [docs/WEB_API.md](docs/WEB_API.md): the backend's API and events

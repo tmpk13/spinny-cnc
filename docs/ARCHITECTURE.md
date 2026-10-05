@@ -18,11 +18,12 @@ and turn jogs, and whole jobs all arrive as the same few line commands.
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup | `docs/MACHINES.md` |
+| `cam` | CAM profiles in TOML: axes, tools with their cutting settings, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
 
 The line protocol is [PROTOCOL.md](PROTOCOL.md), the web API
 [WEB_API.md](WEB_API.md), the machine configuration files
-[MACHINES.md](MACHINES.md).
+[MACHINES.md](MACHINES.md), the CAM profiles [CAM.md](CAM.md).
 
 ```mermaid
 flowchart LR
@@ -31,7 +32,10 @@ flowchart LR
         BE --> KIN[spinny_laser.polar, or R Z in the table frame when cartesian]
         BE --> LS[laser_sweep: gerber, isolation]
         BE --> HM[height map: probing, focus or power compensation, spindle depth]
+        BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         MF[machines/*.toml: axes, kinematics, tool] --> BE
+        CF[cam/*.toml: axes, tools, operations, post] --> CAM
+        CF --> CLI[spinny-cam]
     end
     MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE

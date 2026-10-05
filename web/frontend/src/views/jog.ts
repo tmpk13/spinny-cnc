@@ -8,7 +8,7 @@
 // takes it beside the radius.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, inputHasFocus, labeled, modalOpen, numberField } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { isCartesian, isMilling } from "../profile.ts";
 import { choiceRow, type Ctx } from "./context.ts";
@@ -304,8 +304,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
             }
             return;
         }
-        // Arrow keys belong to a field that has the focus.
-        if (inputHasFocus()) {
+        // Arrow keys belong to a field that has the focus, and jog only
+        // from the machine's page: on the CAM page nothing should move.
+        if (inputHasFocus() || activePage() !== "machine") {
             return;
         }
         event.preventDefault();

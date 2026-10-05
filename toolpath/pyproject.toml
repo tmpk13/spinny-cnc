@@ -10,6 +10,7 @@ spinny-iso = "spinny_laser.cli:main"
 spinny-polar = "spinny_laser.convert:main"
 spinny-jog = "spinny_laser.jog:main"
 spinny-center = "spinny_laser.center:main"
+spinny-cam = "spinny_laser.camcli:main"
 
 [build-system]
 requires = ["hatchling"]

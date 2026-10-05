@@ -6,6 +6,7 @@ import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, initialState, pushToast, Store, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
+import { mountCam } from "./views/cam.ts";
 import { mountConsole } from "./views/console.ts";
 import type { Ctx } from "./views/context.ts";
 import { mountDro } from "./views/dro.ts";
@@ -16,6 +17,7 @@ import { mountLaser } from "./views/laser.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountSettings } from "./views/settings.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
+import { mountTabs } from "./views/tabs.ts";
 import { mountToasts } from "./views/toasts.ts";
 
 export function createContext(api: Api, store: Store<AppState>): Ctx {
@@ -199,6 +201,7 @@ function main(): void {
         return node;
     };
     mountStatusBar(panel("status"), ctx);
+    mountTabs(panel("tabs"));
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);
     mountLaser(panel("laser"), ctx);
@@ -207,6 +210,10 @@ function main(): void {
     mountPreviewPanel(panel("preview"), ctx);
     mountConsole(panel("console"), ctx);
     mountSettings(panel("settings"), ctx);
+    // The CAM page has a preview of its own, since the panels of the
+    // machine's page are not shown beside it.
+    mountCam(panel("cam"), ctx, panel("cam-file"));
+    mountPreviewPanel(panel("cam-preview"), ctx);
     mountToasts(panel("toasts"), ctx);
 
     if (mock) {

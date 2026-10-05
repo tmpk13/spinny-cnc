@@ -114,6 +114,22 @@ the host's own.
 | `GET /api/machines/{id}` | the entry above plus `settings` (all 46 values) and `host`; 404 for a file that is not there or cannot be read |
 | `POST /api/machines/{id}/apply` | `{"save": false}` (the body is optional); writes the file's settings and host values as `PUT /api/settings` does, all or nothing, and with `save` writes the flash afterwards; answers the settings response, `machine` naming the file; 404 for no such file, 409 while a run or probing owns the machine |
 
+## CAM
+
+The CAM profiles in `cam/` ([CAM.md](CAM.md)), one TOML file per machine
+and tool set: its axes, its tools with their cutting settings, the
+operations a design goes through, and how the gcode is written.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/cam` | `{"profiles": [{"id": "mill-3axis", "name", "description", "machine": null, "kinematics": "cartesian", "tools": ["spindle"], "axes": "XYZ", "operations": 3}, ...], "problems": []}`; `machine` is the machine file the profile's jobs run on, or null; `tools` the kinds the enabled operations use; `operations` how many are enabled; `problems` names each file that could not be read |
+| `GET /api/cam/{id}` | `{"document": {...}, "text": "..."}`: the profile read (`axes`, `tools`, `operations` each with `settings`, its own keys, and `cutting`, what it cuts with, `post`, `placement`) and the file as written; 404 for no such file, 400 for one that cannot be read, with the table and the key named |
+| `PUT /api/cam/{id}` | `{"text": "..."}`: writes the text as the profile once it reads as one, creating the file when it is new; answers as `GET`; 400 names what is wrong and leaves the file as it was; the id is lower case letters, digits, `-` and `_` |
+| `PATCH /api/cam/{id}` | `{"path": ["operations", 2, "depth"], "value": 1.6}`: changes one value in the file and keeps the rest, comments included; `path` is a top level key, a table and a key, or an array table's name, index and key; `null` takes the key out; a key not there is added at its table's end; answers as `GET`; 400 for a table that is not there or a value the profile refuses |
+| `DELETE /api/cam/{id}` | removes the file; `{"deleted": id}`, 404 when it is not there |
+| `POST /api/cam/{id}/jobs` | multipart: `files` (one or more) plus optional `name`; a `.kicad_pcb`, or a copper gerber with its `Edge.Cuts` gerber and `.drl` drill file beside it in the same upload, an `.svg`, a `.gcode`/`.nc` or a job `.json`, through every operation of the profile into a stored job; answers `{"job": job, "notes": [what was left out: no drill file, holes narrower than the bit, an operation the design has nothing for]}`; 400 for a design the profile makes nothing of, 404 for no such profile, 413 over 64 MB |
+| `POST /api/cam/{id}/gcode` | `{"job": "a1b2"}`: the stored job as gcode for the profile's controller: `{"text": "...", "filename": "board.nc", "report": {"lines", "cuts", "length_mm", "seconds", "extents": {"X": [min, max], ...}, "warnings": [...]}}`; the extents are machine coordinates; a reach past an axis' travel and a feed over an axis' rate are warnings; 400 for a spindle group with no depth axis in the profile, a joint-space group, or a spindle group on a polar profile; 404 for no such profile or job |
+
 ## Jobs
 
 | Method and path | Body |
@@ -124,7 +140,7 @@ the host's own.
 | `GET /api/jobs/{id}` | the job |
 | `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm |
 | `DELETE /api/jobs/{id}` | |
-| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, and for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less |
+| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less, and for an enabled group whose `tool` is the other than the machine's |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | while a run is still being prepared (its checks and estimate), `hold` and `stop` cancel its start, and the pending `POST /api/jobs/{id}/run` answers 409 with the reason; `POST /api/laser/off` and a reset do the same, and a reset in that window is also seen by the preparation itself |
 | `GET /api/run` | progress, or `null` before any job has run |
 
@@ -159,7 +175,7 @@ Job:
   "spot": 0.1, "offset": {"x": 0, "y": 14},
   "groups": [
     {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "passes": 1, "enabled": true,
-     "depth": 0.1, "plunge": 60, "paths": [[[x, y], ...], ...]},
+     "depth": 0.1, "plunge": 60, "tool": null, "paths": [[[x, y], ...], ...]},
     {"label": "rail line through the axis", "power": 400, "min_power": 0, "speed": 200, "passes": 1, "enabled": true,
      "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]}
   ],
@@ -198,7 +214,12 @@ for every path goes to its start at the travel height, plunges, cuts at
 depth (H on every cut) and rises back; the spindle changes speed between
 groups that ask for another and stops at the end. Without a height map
 the surface is H 0, so zero H with the tool touching the copper first.
-A job without `depth` or `plunge` loads with 0.1 mm and 60 mm/min.
+A job without `depth` or `plunge` loads with 0.1 mm and 60 mm/min. A
+path of one point is a drill on a spindle machine: the bit goes down at
+the point to the depth and up again; a laser skips it. `tool` is `laser`
+or `spindle` for a group a CAM profile made ([CAM.md](CAM.md)), and a run
+refuses an enabled group made for the other tool than the machine has;
+null, or missing, runs on either.
 
 `group` is `null` until the first line has gone out. `state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
 the reason when it is `error`, why a run was stopped from outside (a reset

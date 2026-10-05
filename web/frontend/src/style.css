@@ -181,8 +181,48 @@ input[type="checkbox"] {
 
 #app {
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto auto 1fr;
     min-height: 100vh;
+}
+
+/* Two pages under one status bar; the tabs set which is up on #app. */
+#app[data-page="cam"] > #page-machine {
+    display: none;
+}
+
+#app:not([data-page="cam"]) > #page-cam {
+    display: none;
+}
+
+.tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 var(--gap);
+    background: var(--panel);
+    border-bottom: thin solid var(--border);
+}
+
+.tabs .tab {
+    font: inherit;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    background: transparent;
+    border: 0;
+    border-bottom: 0.2rem solid transparent;
+    color: var(--muted);
+    padding: 0.55rem 1.1rem 0.4rem;
+    min-height: var(--touch);
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+}
+
+.tabs .tab:hover {
+    color: var(--strong);
+}
+
+.tabs .tab[aria-selected="true"] {
+    color: var(--strong);
+    border-bottom-color: var(--accent);
 }
 
 .grid {
@@ -247,8 +287,15 @@ input[type="checkbox"] {
        column has left, so the short panels beside them never stretch. */
     .column > #jog,
     .column > #preview,
-    .column > #jobs {
+    .column > #jobs,
+    .column > #cam,
+    .column > #cam-file {
         flex: 1 0 auto;
+    }
+
+    /* The CAM page: the profile on the left, its preview and its file on the right. */
+    .cam-grid {
+        grid-template-columns: minmax(0, 3fr) minmax(22rem, 2fr);
     }
 }
 
@@ -1599,4 +1646,148 @@ dialog.confirm::backdrop {
         animation: none !important;
         transition: none !important;
     }
+}
+
+/* CAM page */
+
+.cam-summary {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+}
+
+.cam-problems, .cam-notes {
+    margin: 0 0 0.75rem;
+    padding-left: 1.2rem;
+    font-size: 0.9rem;
+}
+
+.cam-problems li, .cam-status.error {
+    color: var(--danger);
+}
+
+.cam-section {
+    margin-top: 1rem;
+}
+
+.cam-section h3 {
+    margin-bottom: 0.35rem;
+}
+
+table.cam-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.5rem;
+    font-size: 0.88rem;
+}
+
+table.cam-table th {
+    text-align: left;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.35rem;
+}
+
+table.cam-table td {
+    padding: 0.3rem 0.35rem;
+    border-top: thin solid var(--border);
+    vertical-align: top;
+}
+
+table.cam-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+table.cam-table tbody.disabled td {
+    color: var(--muted);
+}
+
+table.cam-table input[type="checkbox"] {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+/* An operation's cutting settings sit in one cell as small labeled fields. */
+.cam-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.6rem;
+}
+
+.cam-fields .labeled {
+    gap: 0.1rem;
+}
+
+.cam-fields .labeled-text {
+    font-size: 0.68rem;
+}
+
+.cam-fields input.field, .cam-fields select.field {
+    width: 6rem;
+    padding-inline: 0.35rem;
+}
+
+.cam-fields input.field[type="text"] {
+    width: 8rem;
+}
+
+/* A value the operation takes from its tool rather than giving itself. */
+.cam-fields input.inherited {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.cam-passes {
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.cam-op-name {
+    font-weight: 600;
+    color: var(--strong);
+}
+
+.cam-text {
+    width: 100%;
+    min-height: 20rem;
+    height: 55vh;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.35;
+    white-space: pre;
+    overflow: auto;
+    tab-size: 4;
+}
+
+.cam-status {
+    font-size: 0.85rem;
+}
+
+.cam-report {
+    font-size: 0.88rem;
+}
+
+.cam-report dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.15rem 0.75rem;
+    margin: 0.5rem 0;
+}
+
+.cam-report dt {
+    color: var(--muted);
+}
+
+.cam-report dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.cam-report .warning {
+    color: var(--yellow);
 }

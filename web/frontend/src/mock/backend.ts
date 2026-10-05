@@ -33,8 +33,15 @@ import {
     placeJob,
     type PlannedMove,
 } from "./jobs.ts";
+import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
+    CamGcodeResponse,
+    CamJobResponse,
+    CamPath,
+    CamProfileResponse,
+    CamProfilesResponse,
+    CamValue,
     Board,
     CenterRequest,
     CenterResponse,
@@ -1478,6 +1485,8 @@ export class MockBackend implements Api, EventFeed {
     status: LinkStatus = "closed";
 
     private jobStore = new Map<string, Job>();
+    /** The CAM profiles, by id, as their files read; the shipped ones to start with. */
+    private camTexts = new Map<string, string>(SHIPPED_PROFILES.map((profile) => [profile.id, profile.text]));
     private order: string[] = [];
     private nextId = 1;
     private session: RunSession | null = null;
@@ -2718,6 +2727,101 @@ export class MockBackend implements Api, EventFeed {
         return id;
     }
 
+    // CAM profiles.
+
+    async camProfiles(): Promise<CamProfilesResponse> {
+        const profiles: CamProfilesResponse["profiles"] = [];
+        const problems: string[] = [];
+        for (const [id, text] of [...this.camTexts.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+            try {
+                profiles.push(summaryOf(parseProfile(text, id)));
+            } catch (error) {
+                problems.push(error instanceof Error ? error.message : String(error));
+            }
+        }
+        return { profiles, problems };
+    }
+
+    private camText(id: string): string {
+        if (!ID_PATTERN.test(id)) {
+            throw new ApiError(400, `'${id}' is not a profile id: lower case letters, digits, - and _`);
+        }
+        const text = this.camTexts.get(id);
+        if (text === undefined) {
+            throw new ApiError(404, `no profile '${id}'`);
+        }
+        return text;
+    }
+
+    private camDocument(id: string, text: string): CamProfileResponse {
+        try {
+            return { document: parseProfile(text, id), text };
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    async camProfile(id: string): Promise<CamProfileResponse> {
+        return this.camDocument(id, this.camText(id));
+    }
+
+    /** Kept once it reads as a profile, as the backend writes the file. */
+    async saveCamProfile(id: string, text: string): Promise<CamProfileResponse> {
+        if (!ID_PATTERN.test(id)) {
+            throw new ApiError(400, `'${id}' is not a profile id: lower case letters, digits, - and _`);
+        }
+        const kept = text.endsWith("\n") ? text : text + "\n";
+        const response = this.camDocument(id, kept);
+        this.camTexts.set(id, kept);
+        return response;
+    }
+
+    async patchCamProfile(id: string, path: CamPath, value: CamValue): Promise<CamProfileResponse> {
+        const text = this.camText(id);
+        let changed: string;
+        try {
+            changed = setValue(text, path, value);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        return this.saveCamProfile(id, changed);
+    }
+
+    async deleteCamProfile(id: string): Promise<void> {
+        this.camText(id);
+        this.camTexts.delete(id);
+    }
+
+    /** The first design file through the profile; a board's siblings are not read here. */
+    async camJob(id: string, files: File[], name?: string): Promise<CamJobResponse> {
+        const profile = this.camDocument(id, this.camText(id)).document;
+        const design = files.find((file) => !/\.drl$/i.test(file.name) && !/Edge[._-]?Cuts/i.test(file.name)) ?? files[0];
+        if (!design) {
+            throw new ApiError(400, "the upload holds no file");
+        }
+        const text = await design.text();
+        let built: ReturnType<typeof buildCamJob>;
+        try {
+            built = buildCamJob(this.newId(), profile, name?.trim() || design.name.replace(/\.[^.]+$/, ""), design.name, text, this.limits());
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        this.jobStore.set(built.job.id, built.job);
+        this.order.push(built.job.id);
+        const notes = [...built.notes, ...files.filter((file) => file !== design).map((file) => `${file.name} is not read by the mock`)];
+        return { job: built.job, notes };
+    }
+
+    async camGcode(id: string, jobId: string): Promise<CamGcodeResponse> {
+        const profile = this.camDocument(id, this.camText(id)).document;
+        const job = this.requireJob(jobId);
+        try {
+            return camGcode(profile, job);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+    }
+
     async uploadJob(file: File, options: UploadOptions): Promise<Job> {
         const text = await file.text();
         let built: ReturnType<typeof buildJob>;
@@ -2769,6 +2873,7 @@ export class MockBackend implements Api, EventFeed {
                     speed: group.speed,
                     passes: group.passes,
                     enabled: group.enabled,
+                    tool: group.tool ?? null,
                     paths: group.paths.length,
                     joints: group.joints?.length ?? 0,
                 })),

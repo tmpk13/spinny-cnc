@@ -700,7 +700,10 @@ export class Preview {
         ctx.beginPath();
         let drawn = false;
         for (const path of paths) {
-            drawn = this.tracePolyline(ctx, frame, path.map(([x, y]) => [x, y, 0] as Vec3), false) || drawn;
+            // A path of one point is a drill: the round cap of a zero
+            // length stroke draws it as a dot of the spot's width.
+            const points = path.length === 1 ? [path[0]!, path[0]!] : path;
+            drawn = this.tracePolyline(ctx, frame, points.map(([x, y]) => [x, y, 0] as Vec3), false) || drawn;
         }
         if (drawn) {
             ctx.stroke();

@@ -3,8 +3,10 @@
 The Python library behind the web backend and the command line tools:
 polar kinematics (`polar`), copper clearing (`clear`) and deposition
 (`deposit`), the centering coupons (`center`, `fine`), the machine
-configuration files (`machines`), and the gcode emitter for a grblHAL
-controller (`gcode`, `machine`, `report`, `preview`).
+configuration files (`machines`), the CAM profiles (`cam`, `camjob`,
+`post`: a design through a profile's operations, gcode for the profile's
+controller), and the gcode emitter for a grblHAL controller (`gcode`,
+`machine`, `report`, `preview`).
 
 | Command | Job |
 | --- | --- |
@@ -13,11 +15,13 @@ controller (`gcode`, `machine`, `report`, `preview`).
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
 | `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
 | `spinny-sim` | play a job back on a model of the machine |
+| `spinny-cam` | a board or an X/Y gcode design through a CAM profile in `cam/`, gcode for that profile's controller |
 
 Usage, the grblHAL setup and what the files contain are in
 [docs/GCODE.md](../docs/GCODE.md); reading the coupons is in
-[docs/CALIBRATION.md](../docs/CALIBRATION.md). The outputs go to
-`var/out/` unless `-o` says otherwise.
+[docs/CALIBRATION.md](../docs/CALIBRATION.md); the CAM profiles are
+[docs/CAM.md](../docs/CAM.md). The outputs go to `var/out/` unless `-o`
+says otherwise.
 
 ```sh
 uv run pytest toolpath/tests
@@ -70,6 +74,25 @@ classDiagram
         current(machines, values) id
         cli_defaults(machine)
     }
+    class cam {
+        Profile  axes, tools, operations, post, placement
+        load / load_all(directory) / parse(text, id)
+        resolve(tool, settings) cutting
+        set_value(text, path, value) text, comments kept
+    }
+    class camjob {
+        read_board(path, layer) Design
+        read_gcode(text) / place_paths(sets, anchor, offset)
+        build(profile, design) BuiltJob  groups per operation, notes
+    }
+    class post {
+        post(built, profile) Program  text, Report
+        _Cartesian  safe height, parks, spindle or laser, passes, homes
+        _polar  through gcode.generate
+    }
+    class camcli {
+        main(argv)  spinny-cam
+    }
     class machine {
         add_machine_arguments(parser)  --machine FILE
         parse_args(parser, argv)
@@ -114,6 +137,17 @@ classDiagram
         scene, camera, playback
     }
 
+    camcli --> cam
+    camcli --> camjob
+    camcli --> post
+    camjob --> cam
+    camjob --> clear : clearing strokes
+    camjob --> deposit : edges, fill, thin
+    camjob --> laser_sweep : copper, loops, outline, drills
+    camjob --> convert : gcode paths
+    post --> cam
+    post --> gcode : a polar profile
+    cam ..> web_backend : listed, saved, patched; a design through a profile
     cli --> laser_sweep : copper, loops
     cli --> machine
     convert --> laser_sweep : line parser

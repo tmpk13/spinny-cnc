@@ -33,6 +33,7 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
 | `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
+| `cam.py` | the CAM profiles in `cam/` (listed, read, saved whole, patched one value at a time), the uploaded files through a profile into a job (`spinny_laser.camjob`), a stored job as gcode for the profile's controller (`spinny_laser.post`) |
 | `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine files in `machines/` (listed, matched against the live settings, loaded whole), the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
 
 ## Events
@@ -118,6 +119,16 @@ classDiagram
         load_all(directory) the machine files
         current(machines, values) which one is loaded
     }
+    class cam {
+        ProfileStore list / document / save / patch / remove
+        build_job(profile, folder, name, streamer) Job, notes
+        gcode_of(job, profile) text, report
+    }
+    class spinny_laser_cam {
+        cam.parse / set_value
+        camjob.read_board / build
+        post.post(built, profile) Program
+    }
     class spinny_laser_center {
         center.build / fine.build
     }
@@ -139,6 +150,9 @@ classDiagram
     app --> heightmap
     app --> prober
     app --> spinny_laser_machines
+    app --> cam
+    cam --> jobs
+    cam --> spinny_laser_cam
     prober --> link
     prober --> heightmap
     prober --> runner

@@ -12,7 +12,8 @@
 <body>
     <div id="app">
         <header id="status" class="statusbar"></header>
-        <main class="grid">
+        <nav id="tabs" class="tabs" aria-label="Pages"></nav>
+        <main id="page-machine" class="grid page">
             <div class="column">
                 <section id="dro" class="panel dro" aria-label="Position"></section>
                 <section id="jog" class="panel" aria-label="Jog"></section>
@@ -26,6 +27,15 @@
                 <section id="jobs" class="panel" aria-label="Jobs"></section>
                 <section id="heightmap" class="panel" aria-label="Height map"></section>
                 <section id="settings" class="panel" aria-label="Settings"></section>
+            </div>
+        </main>
+        <main id="page-cam" class="grid cam-grid page">
+            <div class="column">
+                <section id="cam" class="panel" aria-label="CAM"></section>
+            </div>
+            <div class="column">
+                <section id="cam-preview" class="panel preview-panel" aria-label="CAM preview"></section>
+                <section id="cam-file" class="panel" aria-label="Profile file"></section>
             </div>
         </main>
         <div id="toasts" class="toasts" aria-live="polite"></div>

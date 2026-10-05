@@ -92,6 +92,10 @@ class Group(Finite):
     # speed is `power`, its feed `speed`.
     depth: float = DEFAULT_DEPTH
     plunge: float = DEFAULT_PLUNGE
+    # What the group was made for, `laser` or `spindle`, when a CAM profile
+    # said; None runs on either. A run refuses a group made for the other
+    # tool, since its numbers mean something else there.
+    tool: str | None = None
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
     # Joint-space polylines, radius mm and angle degrees, streamed as they
     # are with no kinematics in between: a negative radius is the far side
@@ -147,6 +151,7 @@ class Job(Finite):
                     "enabled": group.enabled,
                     "depth": group.depth,
                     "plunge": group.plunge,
+                    "tool": group.tool,
                     "paths": len(group.paths),
                     "joints": len(group.joints),
                 }

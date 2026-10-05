@@ -28,8 +28,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
+from spinny_laser.cam import CamError
 
 from . import __version__, center
+from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .heightmap import AUTO, FOCUS, MODES, OFF, POWER, Compensation, Grid, HeightMap, HeightMapStore, check_covers
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
 from .kinematics import (
@@ -63,6 +65,7 @@ from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = REPO_ROOT / "var"
 MACHINES_DIR = REPO_ROOT / "machines"
+CAM_DIR = REPO_ROOT / "cam"
 FRONTEND_DIST = REPO_ROOT / "web" / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
@@ -222,6 +225,20 @@ class ApplyMachineBody(BaseModel):
     save: bool = False
 
 
+class CamTextBody(BaseModel):
+    text: str
+
+
+class CamPatchBody(BaseModel):
+    # The table and the key: ["operations", 2, "depth"]; null takes the key out.
+    path: list[str | int]
+    value: Any = None
+
+
+class CamGcodeBody(BaseModel):
+    job: str
+
+
 class SettingsBody(BaseModel):
     values: dict[str, Any] | None = None
     host: dict[str, Any] | None = None
@@ -300,9 +317,11 @@ class Backend:
         config_path: Path | None = None,
         heightmap_path: Path | None = None,
         machines_dir: Path | None = None,
+        cam_dir: Path | None = None,
     ) -> None:
         self.root = root
         self.machines_dir = machines_dir if machines_dir is not None else MACHINES_DIR
+        self.cam = ProfileStore(cam_dir if cam_dir is not None else CAM_DIR)
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
@@ -1284,6 +1303,32 @@ class Backend:
             raise JobImportError(f"cannot store the upload {name!r}: {exc}") from exc
         return self.store.add(job)
 
+    def cam_import(self, profile_id: str, files: list[tuple[str, bytes]], name: str | None) -> dict:
+        """The uploaded files through a CAM profile into a stored job: a board
+        (a KiCad file, or a copper gerber with its outline and drill file
+        beside it), an SVG, an X/Y gcode file or a job."""
+        import tempfile
+
+        profile = self.cam.get(profile_id)
+        names = [Path(filename or "upload").name for filename, _ in files]
+        if not files or any(not n or n.startswith(".") for n in names):
+            raise JobImportError("the upload needs file names with suffixes")
+        try:
+            with tempfile.TemporaryDirectory(prefix="spinny-cam-") as folder:
+                for filename, data in zip(names, (data for _, data in files)):
+                    (Path(folder) / filename).write_bytes(data)
+                job, notes = build_job(profile, Path(folder), name, self.streamer())
+        except OSError as exc:
+            raise JobImportError(f"cannot store the upload: {exc}") from exc
+        return {"job": self.store.add(job).model_dump(), "notes": notes}
+
+    def cam_gcode(self, profile_id: str, job_id: str) -> dict:
+        profile = self.cam.get(profile_id)
+        job = self.store.get(job_id)
+        if job is None:
+            raise NotFound(f"no job {job_id!r}")
+        return gcode_of(job, profile)
+
     def center_job(self, request: center.CenterRequest) -> dict:
         if self.cartesian or self.milling:
             raise ValueError("the centering test is a burn on the polar laser machine ($cartesian=0, $spindle=0)")
@@ -1721,8 +1766,10 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except (RunnerError, ProberError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (JobImportError, ValueError) as exc:
+        except (JobImportError, CamError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except LinkError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -1825,6 +1872,47 @@ def create_app(
     @app.post("/api/settings/save")
     def save_settings():
         return guarded(backend.save_settings)
+
+    # --- CAM profiles ---
+
+    @app.get("/api/cam")
+    def cam_profiles():
+        return guarded(backend.cam.list)
+
+    @app.get("/api/cam/{profile_id}")
+    def cam_profile(profile_id: str):
+        return guarded(lambda: backend.cam.document(profile_id))
+
+    @app.put("/api/cam/{profile_id}")
+    def cam_save(profile_id: str, body: CamTextBody):
+        return guarded(lambda: backend.cam.save(profile_id, body.text))
+
+    @app.patch("/api/cam/{profile_id}")
+    def cam_patch(profile_id: str, body: CamPatchBody):
+        return guarded(lambda: backend.cam.patch(profile_id, body.path, body.value))
+
+    @app.delete("/api/cam/{profile_id}")
+    def cam_delete(profile_id: str):
+        guarded(lambda: backend.cam.remove(profile_id))
+        return {"deleted": profile_id}
+
+    @app.post("/api/cam/{profile_id}/jobs")
+    async def cam_job(profile_id: str, files: list[UploadFile] = File(...), name: str | None = Form(None)):
+        uploads: list[tuple[str, bytes]] = []
+        size = 0
+        for upload in files:
+            chunks: list[bytes] = []
+            while chunk := await upload.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail=f"the upload is over {MAX_UPLOAD_BYTES >> 20} MB")
+                chunks.append(chunk)
+            uploads.append((upload.filename or "", b"".join(chunks)))
+        return await run_in_threadpool(guarded, lambda: backend.cam_import(profile_id, uploads, name))
+
+    @app.post("/api/cam/{profile_id}/gcode")
+    def cam_gcode(profile_id: str, body: CamGcodeBody):
+        return guarded(lambda: backend.cam_gcode(profile_id, body.job))
 
     # --- jobs ---
 
@@ -2020,11 +2108,17 @@ def main(argv: list[str] | None = None) -> int:
         default=MACHINES_DIR,
         help=f"directory of machine files, one TOML file per machine (default: {MACHINES_DIR})",
     )
+    parser.add_argument(
+        "--cam",
+        type=Path,
+        default=CAM_DIR,
+        help=f"directory of CAM profiles, one TOML file per machine and tool set (default: {CAM_DIR})",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     uvicorn.run(
         create_app(
-            backend=Backend(root=args.data, machines_dir=args.machines),
+            backend=Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam),
             cors_origins=args.cors_origin,
             allowed_hosts=args.allowed_host,
         ),

@@ -61,7 +61,23 @@ spindle turns, and the spindle start while probing. The status reports the
 output's duty as driven on the pin; the DRO and the probe lock turn it
 around on an active-low output (`laser_invert`), as the backend does.
 
-Arrow keys jog when no field that uses them has focus; Escape cancels a jog
+The page has two tabs under the status bar, remembered per browser and
+set by `?page=cam` in the address: *Machine*, the panels above, and
+*CAM*. The CAM page shows a profile from `cam/` (`docs/CAM.md`): its axes,
+its tools and its operations, every cutting setting of an operation in a
+field that writes the one value back into the file (a field left empty is
+the tool's value again), the file's text in an editor that saves it whole
+and shows what is wrong with a text that does not read, a drop zone that
+takes a design (a board with its outline and drill file in one drop, an
+SVG, gcode or a job) through the profile into a job, and *Export gcode*,
+which downloads the picked job as a program for the profile's controller
+with a report of what each axis reaches. The CAM page has a preview of
+its own. The mock reads the shipped profiles itself (`src/mock/toml.ts`,
+`src/mock/cam.ts`): copper geometry is the demo coupon's, and its gcode
+follows the backend's post for a cartesian profile.
+
+Arrow keys jog when no field that uses them has focus and the machine's
+page is up; Escape cancels a jog
 or goto from anywhere but a dialog while a machine is connected. The event feed is opened again when it
 goes silent for 5 s while a machine is connected, since a backend host that
 loses power sends no close. The page reads the settings again when the
@@ -88,7 +104,7 @@ classDiagram
         AppState
     }
     class views {
-        statusbar dro jog laser jobs center heightmap previewpanel console settings toasts
+        statusbar tabs dro jog laser jobs center heightmap previewpanel console settings cam toasts
     }
     class preview {
         Preview  3D scene on the 2D canvas: rings, rail, limits, job, probe heights, head
@@ -114,6 +130,14 @@ classDiagram
     class mock_jobs {
         parseSvg parseGcode placeJob computeStats centerJob
     }
+    class mock_cam {
+        parseProfile(text, id) CamProfile
+        setValue(text, path, value) text
+        buildCamJob / camGcode
+    }
+    class mock_toml {
+        parseToml(text) tables, arrays of tables, scalars, arrays
+    }
     main --> api
     main --> ws
     main --> state
@@ -123,5 +147,8 @@ classDiagram
     views --> profile
     mock_backend --> kinematics
     mock_backend --> mock_jobs
+    mock_backend --> mock_cam
+    mock_cam --> mock_toml
+    mock_cam --> mock_jobs
     main ..> mock_backend : ?mock=1
 ```

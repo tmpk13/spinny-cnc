@@ -1,0 +1,78 @@
+# A laser on a standard X/Y machine (a diode engraver, or this machine with
+# the rail as X and the cross slide as Y), gcode out for a grbl controller in
+# laser mode ($32=1). No depth axis: the beam is focused by hand.
+
+name = "X/Y laser"
+description = "Laser on an X/Y machine, grbl laser mode gcode"
+machine = "cartesian-laser"
+
+[[axes]]
+letter = "X"
+kind = "linear"
+role = "x"
+min = 0
+max = 400
+rate = 3000
+rapid = 6000
+home = 0
+
+[[axes]]
+letter = "Y"
+kind = "linear"
+role = "y"
+min = 0
+max = 400
+rate = 3000
+rapid = 6000
+home = 0
+
+[[tools]]
+id = "diode"
+kind = "laser"
+name = "Diode laser"
+spot = 0.08
+power = 600             # S, out of the controller's $30
+min_power = 0
+speed = 600
+passes = 1
+
+[[operations]]
+name = "isolation"
+source = "isolation"
+tool = "diode"
+loops = 2
+
+[[operations]]
+name = "clearing"
+source = "clearing"
+tool = "diode"
+enabled = false
+pattern = "lines"
+
+[[operations]]
+name = "outline"
+source = "outline"
+tool = "diode"
+power = 1000
+speed = 150
+passes = 6
+
+[[operations]]
+name = "engraving"
+source = "paths"        # an SVG or gcode design's own paths
+tool = "diode"
+match = ""              # a part of the paths' label to pick them by; empty takes every one
+power = 300
+speed = 1200
+
+[post]
+header = ["G21", "G90", "G94"]
+footer = ["M5", "M2"]
+laser_on = "M4"
+decimals = 3
+return_home = true
+
+[placement]
+anchor = "corner"
+offset = [10, 10]       # mm in from the machine's origin
+layer = "F.Cu"

@@ -1,6 +1,12 @@
 // Typed wrappers over the backend routes.
 
 import type {
+    CamGcodeResponse,
+    CamJobResponse,
+    CamPath,
+    CamProfileResponse,
+    CamProfilesResponse,
+    CamValue,
     CenterRequest,
     CenterResponse,
     CommandResponse,
@@ -66,6 +72,19 @@ export interface Api {
     machines(): Promise<MachinesResponse>;
     /** Writes a machine file's every setting, and saves them to flash when asked; answers the settings as they are then. */
     applyMachine(id: string, save?: boolean): Promise<SettingsResponse>;
+
+    /** The CAM profiles in cam/, and the files that could not be read. */
+    camProfiles(): Promise<CamProfilesResponse>;
+    camProfile(id: string): Promise<CamProfileResponse>;
+    /** Writes the text as the profile once it reads as one; creates the profile when it is new. */
+    saveCamProfile(id: string, text: string): Promise<CamProfileResponse>;
+    /** Changes one value in the file and keeps the rest, comments included. */
+    patchCamProfile(id: string, path: CamPath, value: CamValue): Promise<CamProfileResponse>;
+    deleteCamProfile(id: string): Promise<void>;
+    /** The design files (a board with its outline and drill file, an SVG, gcode or a job) through the profile into a stored job. */
+    camJob(id: string, files: File[], name?: string): Promise<CamJobResponse>;
+    /** A stored job as gcode for the profile's controller. */
+    camGcode(id: string, jobId: string): Promise<CamGcodeResponse>;
 
     uploadJob(file: File, options: UploadOptions): Promise<Job>;
     /** Builds and stores the centering test burn. */
@@ -241,6 +260,41 @@ export class HttpApi implements Api {
 
     applyMachine(id: string, save = false): Promise<SettingsResponse> {
         return this.request<SettingsResponse>("POST", `/api/machines/${encodeURIComponent(id)}/apply`, { save });
+    }
+
+    camProfiles(): Promise<CamProfilesResponse> {
+        return this.request<CamProfilesResponse>("GET", "/api/cam");
+    }
+
+    camProfile(id: string): Promise<CamProfileResponse> {
+        return this.request<CamProfileResponse>("GET", `/api/cam/${encodeURIComponent(id)}`);
+    }
+
+    saveCamProfile(id: string, text: string): Promise<CamProfileResponse> {
+        return this.request<CamProfileResponse>("PUT", `/api/cam/${encodeURIComponent(id)}`, { text });
+    }
+
+    patchCamProfile(id: string, path: CamPath, value: CamValue): Promise<CamProfileResponse> {
+        return this.request<CamProfileResponse>("PATCH", `/api/cam/${encodeURIComponent(id)}`, { path, value });
+    }
+
+    async deleteCamProfile(id: string): Promise<void> {
+        await this.request("DELETE", `/api/cam/${encodeURIComponent(id)}`);
+    }
+
+    camJob(id: string, files: File[], name?: string): Promise<CamJobResponse> {
+        const form = new FormData();
+        for (const file of files) {
+            form.append("files", file, file.name);
+        }
+        if (name && name.trim() !== "") {
+            form.append("name", name.trim());
+        }
+        return this.request<CamJobResponse>("POST", `/api/cam/${encodeURIComponent(id)}/jobs`, form);
+    }
+
+    camGcode(id: string, jobId: string): Promise<CamGcodeResponse> {
+        return this.request<CamGcodeResponse>("POST", `/api/cam/${encodeURIComponent(id)}/gcode`, { job: jobId });
     }
 
     uploadJob(file: File, options: UploadOptions): Promise<Job> {

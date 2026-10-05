@@ -154,3 +154,8 @@ export function cssVar(node: Element, name: string, fallback: string): string {
     const value = getComputedStyle(node).getPropertyValue(name).trim();
     return value !== "" ? value : fallback;
 }
+
+/** Which page is up: the machine's, or the CAM page, as the tabs set it on #app. */
+export function activePage(): string {
+    return document.getElementById("app")?.getAttribute("data-page") ?? "machine";
+}
