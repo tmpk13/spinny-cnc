@@ -13,6 +13,10 @@ uv run spinny-web
 description = "The page from the dev server with live reload; point it at a backend with ?api=http://localhost:8000"
 run = "cd web/frontend && bun run dev"
 
+[tasks.deploy-pi]
+description = "Install the backend and the built page on a Raspberry Pi as a service: mise run deploy-pi -- pi@spinny.local"
+run = "deploy/deploy-pi.sh"
+
 [tasks.cam]
 description = "A design through a CAM profile to gcode: mise run cam -- cam/mill-3axis.toml board.kicad_pcb"
 run = "uv run spinny-cam"

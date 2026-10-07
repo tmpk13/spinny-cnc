@@ -51,6 +51,23 @@ Each part keeps its own module diagram next to its code:
 [web/frontend/README.md](../web/frontend/README.md),
 [toolpath/README.md](../toolpath/README.md).
 
+## Deployment on a Raspberry Pi
+
+`mise run deploy-pi -- user@host` builds the page here and copies the
+repository, its sibling `kicad-to-gcode` and the page to the Pi, where uv
+installs Python 3.12 and the dependencies and a systemd unit runs the
+backend. The Pi needs no bun or Rust, and `firmware/` and `sim/` stay behind.
+
+```mermaid
+flowchart LR
+    PC[dev machine: bun build] -->|rsync, ssh| PI
+    subgraph PI[Raspberry Pi, 64 bit]
+        SVC[systemd spinny-web] --> BE2[backend serving web/frontend/dist, var/]
+    end
+    BE2 <-->|USB serial, dialout| BOARD[SKR Pico]
+    BR[browser] <-->|HTTP, WebSocket :8000| BE2
+```
+
 ## Runtime files
 
 Everything the programs write at run time sits under `var/` at the
