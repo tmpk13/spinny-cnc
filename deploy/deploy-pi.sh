@@ -6,7 +6,8 @@
 #
 # The Pi needs a 64 bit OS, ssh access and passwordless sudo. The repository
 # and its sibling kicad-to-gcode are copied to ~/spinny on the Pi (override
-# with SPINNY_PI_DIR), Python 3.12 comes from uv, and the page is built here
+# with SPINNY_PI_DIR, a path relative to the Pi user's home or an absolute
+# one), Python 3.12 comes from uv, and the page is built here
 # so the Pi needs neither bun nor a compiler.
 set -euo pipefail
 
@@ -35,15 +36,20 @@ if [[ ! -f "$here/web/frontend/dist/index.html" ]]; then
     exit 1
 fi
 
+# rsync creates only the last directory of a destination, not its parents.
+ssh "$target" mkdir -p "$remote_dir"
+
 # Virtual environments and build output are for this machine's architecture.
+# A leading slash anchors a pattern to the top of the copied tree. Excluded
+# paths are also kept from --delete, so the Pi's var/ survives a deploy.
 rsync -az --delete \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
-    --exclude 'node_modules/' --exclude 'var/' --exclude 'target/' \
-    --exclude 'firmware/' --exclude 'sim/' --exclude '.claude/' \
+    --exclude 'node_modules/' --exclude 'target/' --exclude '/var/' \
+    --exclude '/firmware/' --exclude '/sim/' --exclude '/.claude/' \
     "$here/" "$target:$remote_dir/spinny-laser-pcb/"
 rsync -az --delete \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
-    --exclude 'out/' --exclude '*.egg-info/' \
+    --exclude '/out/' --exclude '*.egg-info/' \
     "$sibling/" "$target:$remote_dir/kicad-to-gcode/"
 
 # The unit is a template; the remote side fills in its own user, paths and host
@@ -60,7 +66,7 @@ if ! command -v uv >/dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 uv python install 3.12
-(cd "$dir/spinny-laser-pcb" && uv sync --no-dev --python 3.12)
+(cd "$dir/spinny-laser-pcb" && uv sync --no-dev --frozen --python 3.12)
 
 allowed=""
 for host in "$@" "$(hostname)" "$(hostname).local" localhost $(hostname -I); do
