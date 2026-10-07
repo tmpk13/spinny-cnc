@@ -178,6 +178,18 @@ def test_a_file_that_goes_bad_after_listing_is_refused_whole(client, fake):
     assert [m["id"] for m in client.get("/api/machines").json()["machines"]] == ["bare"]
 
 
+def test_old_firmware_without_a_files_settings_is_named_and_nothing_is_written(client, fake):
+    connect(client)
+    # Settings the fake itself never reads, so it still answers.
+    for name in ("h_jerk", "probe_ms", "z_jerk"):
+        del fake.settings[name]
+    response = client.post("/api/machines/rig/apply")
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "h_jerk" in detail and "probe_ms" in detail and "z_jerk" in detail and "firmware" in detail
+    assert not any(line.startswith("$") and "=" in line for line in fake.received_lines)
+
+
 def test_loading_needs_a_connected_machine(client):
     response = client.post("/api/machines/rig/apply")
     assert response.status_code in (400, 409, 502), response.text

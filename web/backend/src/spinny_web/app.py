@@ -1209,6 +1209,15 @@ class Backend:
         """Writes a machine file's every setting and its host values, all or
         nothing as a settings write is, and saves them to flash if asked."""
         machine = self.machine(machine_id)
+        # A controller that lists none of a file's settings runs firmware
+        # older than the file: name them all, not just the first refused.
+        known = self.read_settings(force=True)["values"]
+        missing = [name for name in machine.settings if name not in known]
+        if missing:
+            raise ValueError(
+                f"the controller does not have the settings {', '.join(missing)}: "
+                f"its firmware predates them, flash the current firmware to load {machine_id!r}"
+            )
         result = self.write_settings(dict(machine.settings), dict(machine.host) or None)
         if save:
             self.save_settings()
