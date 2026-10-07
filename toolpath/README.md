@@ -74,6 +74,11 @@ classDiagram
         current(machines, values) id
         cli_defaults(machine)
     }
+    class controls {
+        default_controls(kinematics, tool, focus) the page's controls for a machine file that says nothing
+        parse_controls(reader, top, ...) the [controls] table, filled in from the defaults
+    }
+    machines --> controls
     class cam {
         Profile  axes, tools, operations, post, placement
         load / load_all(directory) / parse(text, id)

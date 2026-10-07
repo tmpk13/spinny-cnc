@@ -17,3 +17,50 @@ limit = 30
 
 [host]
 tolerance = 0.005
+
+# The page's controls, as the defaults draw them for a cartesian laser:
+# the cross slide is the Y axis, stepping with the pad at the feed given,
+# and the table has no goto field since a cut leaves it alone.
+# polar-laser.toml says what each key means.
+[controls]
+pad = true
+pad_steps = [0.1, 1, 10]
+pad_step = 1
+feed = true
+center = { r = 0, z = 0 }   # the rail and the slide over the rotation axis
+
+[[controls.axes]]
+axis = "r"
+letter = "R"
+label = "Radius"
+buttons = ["Radius -", "Radius +"]
+place = "buttons"
+feed = true
+goto = true
+zero = true
+zero_hint = "The beam must be over the rotation axis."
+
+[[controls.axes]]
+axis = "a"
+letter = "A"
+label = "Table"
+steps = [1, 10, 90]
+step = 10
+buttons = ["Turn -", "Turn +"]
+place = "buttons"
+feed = true
+goto = false
+zero = true
+zero_hint = ""
+
+[[controls.axes]]
+axis = "z"
+letter = "Z"
+label = "Cross slide (Y)"
+buttons = ["Z-", "Z+"]
+place = "frame"
+feed = true
+goto = true
+zero = true
+zero_hint = "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it."
+note = "Y axis: moves across the rail, which is X; steps and feed as the rail's"

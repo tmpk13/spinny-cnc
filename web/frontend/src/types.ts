@@ -140,6 +140,52 @@ export interface SettingsResponse {
     host: HostSettings;
     /** The machine file these settings are, every one of them; null for settings of no file's. */
     machine?: string | null;
+    /** The page's controls: the file's, or the defaults for what the settings say the machine is. Missing from a backend that predates it. */
+    controls?: Controls;
+}
+
+/** The firmware's joint letters: the radius, the table angle, the cross slide and the focus axis. */
+export type JointAxis = "r" | "a" | "z" | "h";
+
+/** One joint's control in the jog panel and the readout, as the machine file lays it out. */
+export interface AxisControl {
+    axis: JointAxis;
+    /** In the readout and in "Set R=0 here". */
+    letter: string;
+    label: string;
+    /** The step choices (degrees for the table, mm otherwise); null: the pad's step. */
+    steps: number[] | null;
+    /** The step picked at the start; null with the pad's steps. */
+    step: number | null;
+    /** The minus and the plus button. */
+    buttons: [string, string];
+    /** buttons: beside the pad; frame: a block of its own with the note and the steps. */
+    place: "buttons" | "frame";
+    /** The feed field applies; false: the firmware's own jog rate for the axis. */
+    feed: boolean;
+    /** A field in the joint goto row. */
+    goto: boolean;
+    /** A "Set R=0 here" button, which asks with the hint. */
+    zero: boolean;
+    zero_hint: string;
+    /** Two key names for minus and plus, or none. */
+    keys: string[];
+    /** Under the title of a framed control. */
+    note: string;
+}
+
+/** What the jog panel and the readout draw, from the machine file or the defaults for the profile. */
+export interface Controls {
+    /** A board X/Y pad, on the arrow keys. */
+    pad: boolean;
+    /** mm; an axis without steps of its own uses the pad's. */
+    pad_steps: number[];
+    pad_step: number;
+    /** A feed field for the pad and the axes that take it. */
+    feed: boolean;
+    /** Where Center sends the joints; null: no button. */
+    center: Partial<Record<JointAxis, number>> | null;
+    axes: AxisControl[];
 }
 
 /** A machine file in machines/, as the backend lists it: the axes, their scales and limits, the kinematics and the tool. */

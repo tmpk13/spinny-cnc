@@ -21,7 +21,7 @@ const AXES: [(&str, &str, &str, u8); 4] = [
 pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     let top: Table = text.parse().map_err(|e| format!("{e}"))?;
     let mut writes: Vec<(String, String)> = Vec::new();
-    let mut known_top = vec!["name", "description", "kinematics", "tool", "probe", "output", "drivers", "host"];
+    let mut known_top = vec!["name", "description", "kinematics", "tool", "probe", "output", "drivers", "host", "controls"];
 
     if let Some(value) = top.get("name") {
         value.as_str().ok_or("name must be a string")?;
@@ -138,6 +138,9 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
         number(&host, key, "host")?;
     }
     only(&host, "host", &["tolerance", "clearance", "spinup"])?;
+    // The page's controls (the pad, the jog buttons, the readout) are the
+    // host's business: only their shape is checked here.
+    table_of(&top, "controls")?;
     only(&top, "", &known_top)?;
 
     // Applied in one go on a copy: a value the firmware refuses leaves
@@ -289,6 +292,13 @@ mod tests {
         assert_eq!(settings.step_us, 4);
         assert_eq!(settings.tmc_hold_pct, 30);
         assert!(!settings.tmc_stealth);
+    }
+
+    #[test]
+    fn the_controls_are_the_hosts_and_leave_the_settings_alone() {
+        let text = "[controls]\npad = false\ncenter = { r = 0 }\n[[controls.axes]]\naxis = \"r\"\nlabel = \"X\"\nsteps = [1, 5]\n";
+        assert_eq!(applied(text), Settings::default());
+        assert!(apply(&mut Settings::default(), "controls = 5\n").unwrap_err().contains("controls must be a table"));
     }
 
     #[test]

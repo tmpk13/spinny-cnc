@@ -47,6 +47,23 @@ fitted = true
 tolerance = 0.02
 clearance = 3
 spinup = 1
+
+[controls]
+pad = false
+center = { r = 0, z = 0 }
+
+[[controls.axes]]
+axis = "r"
+label = "X"
+steps = [1, 10]
+
+[[controls.axes]]
+axis = "z"
+label = "Y"
+steps = [1, 10]
+
+[[controls.axes]]
+axis = "h"
 """
 
 
@@ -98,6 +115,12 @@ def test_the_files_are_listed_with_the_broken_one_named(client):
     assert document["settings"]["cartesian"] == 1 and document["settings"]["z_max"] == 25.0
     assert document["settings"]["a_rate"] == 270.0 and document["settings"]["dir_invert"] == 0
     assert document["host"] == {"tolerance": 0.02, "clearance": 3.0, "spinup": 1.0}
+    # The page's controls as the file lays them out, filled in from the defaults for a cartesian spindle machine.
+    controls = document["controls"]
+    assert not controls["pad"] and controls["center"] == {"r": 0.0, "z": 0.0}
+    assert [(axis["axis"], axis["label"], axis["buttons"]) for axis in controls["axes"]] == [
+        ("r", "X", ["R-", "R+"]), ("z", "Y", ["Z-", "Z+"]), ("h", "Depth axis", ["Down", "Up"]),
+    ]
     assert client.get("/api/machines/nope").status_code == 404
     assert client.post("/api/machines/nope/apply").status_code == 404
 
@@ -107,6 +130,8 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     # The fake boots with settings that are no file's.
     settings = client.get("/api/settings").json()
     assert settings["machine"] is None
+    # No file's settings: the controls are the defaults for what the settings say the machine is.
+    assert settings["controls"]["pad"] and [axis["axis"] for axis in settings["controls"]["axes"]][:2] == ["r", "a"]
     assert client.get("/api/machines").json()["current"] is None
 
     response = client.post("/api/machines/rig/apply")
@@ -124,12 +149,18 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     assert fake.saved == 0
     assert fake.settings["cartesian"] == 1 and fake.settings["z_max"] == 25
     assert client.get("/api/machines").json()["current"] == "rig"
-    assert client.get("/api/settings").json()["machine"] == "rig"
+    loaded = client.get("/api/settings").json()
+    assert loaded["machine"] == "rig"
+    # The loaded file's controls come with the settings.
+    assert not loaded["controls"]["pad"] and [axis["label"] for axis in loaded["controls"]["axes"]] == ["X", "Y", "Depth axis"]
     assert client.get("/api/state").json()["profile"] == {"kinematics": "cartesian", "tool": "spindle", "h_axis": True, "r_max": 0.0, "z_max": 25.0}
 
     # One setting changed by hand and it is no file's machine any more.
     assert client.put("/api/settings", json={"values": {"a_rate": 300}}).status_code == 200
-    assert client.get("/api/settings").json()["machine"] is None
+    changed = client.get("/api/settings").json()
+    assert changed["machine"] is None
+    # Back to the defaults, for the cartesian spindle machine the settings now describe.
+    assert changed["controls"]["pad"] and [axis["label"] for axis in changed["controls"]["axes"]] == ["Radius", "Table", "Cross slide (Y)", "Depth axis"]
 
     # Loading with save writes the flash too.
     response = client.post("/api/machines/rig/apply", json={"save": True})

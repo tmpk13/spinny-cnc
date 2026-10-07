@@ -1,10 +1,12 @@
-// Digital readout: joint R, A, the cross slide Z and the focus axis H (on a
-// machine with one), board X and Y, laser duty, speed, mode and the probe.
+// Digital readout: one cell per joint the machine's controls show, with
+// the letter the machine file gives it, board X and Y when the machine has
+// a board pad, laser duty or spindle speed, speed, mode and the probe.
 
-import { el } from "../dom.ts";
+import { controlsOf, sameControls, UNITS } from "../controls.ts";
+import { el, replace } from "../dom.ts";
 import { formatDeg, formatDuty, formatMm, formatRate } from "../format.ts";
 import { isMilling, outputDuty } from "../profile.ts";
-import type { Machine, SettingsResponse } from "../types.ts";
+import type { Controls, JointAxis, Machine, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 export interface DroText {
@@ -51,14 +53,9 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
     const joint = el("div", { class: "dro-row dro-row-joint" });
     const board = el("div", { class: "dro-row" });
     root.append(el("h2", {}, "Position"), joint, board);
-    const cells = {
-        r: bigIn(joint, "R", "mm", "r"),
-        a: bigIn(joint, "A", "deg", "a"),
-        z: bigIn(joint, "Z", "mm", "z"),
-        h: bigIn(joint, "H", "mm", "h"),
-        x: bigIn(board, "X", "mm", "x"),
-        y: bigIn(board, "Y", "mm", "y"),
-    };
+    const cells = new Map<JointAxis, HTMLSpanElement>();
+    const boardCells = { x: bigCell("X", "mm", "x"), y: bigCell("Y", "mm", "y") };
+    board.append(boardCells.x.parentElement!, boardCells.y.parentElement!);
     const small = (name: string): HTMLSpanElement => el("span", { class: "dro-small-value", "data-dro": name }, "-");
     const smalls = { laser: small("laser"), rate: small("rate"), mode: small("mode"), queue: small("queue"), motors: small("motors"), probe: small("probe") };
     const probeBox = el("div", {}, el("span", { class: "dro-label" }, "Probe"), smalls.probe);
@@ -72,21 +69,36 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         el("div", {}, el("span", { class: "dro-label" }, "Motors"), smalls.motors),
         probeBox,
     ));
-    const focusCell = cells.h.parentElement!;
+    let drawn: Controls | null = null;
+
+    /** The joint cells, one per control, in the controls' order; the board row only with a pad. */
+    function draw(controls: Controls): void {
+        drawn = controls;
+        cells.clear();
+        const nodes = controls.axes.map((axis) => {
+            const value = bigCell(axis.letter, UNITS[axis.axis], axis.axis);
+            cells.set(axis.axis, value);
+            return value.parentElement!;
+        });
+        replace(joint, ...nodes);
+        board.classList.toggle("hidden", !controls.pad);
+    }
 
     ctx.store.subscribe((state) => {
+        const controls = controlsOf(state);
+        if (drawn === null || !sameControls(drawn, controls)) {
+            draw(controls);
+        }
         const machine = state.snapshot.machine;
         const text = droText(machine, state.settings);
-        setText(cells.r, text.r);
-        setText(cells.a, text.a);
-        setText(cells.z, text.z);
-        setText(cells.h, text.h ?? "-.---");
-        focusCell.classList.toggle("hidden", text.h === null);
+        for (const [axis, cell] of cells) {
+            setText(cell, text[axis] ?? "-.---");
+        }
         setText(smalls.probe, text.probe ?? "-");
         probeBox.classList.toggle("hidden", text.probe === null);
         smalls.probe.toggleAttribute("data-down", text.probe === "down");
-        setText(cells.x, text.x);
-        setText(cells.y, text.y);
+        setText(boardCells.x, text.x);
+        setText(boardCells.y, text.y);
         setText(smalls.laser, text.laser);
         setText(outputLabel, isMilling(state.snapshot) ? "Spindle" : "Laser");
         setText(smalls.rate, text.rate);
@@ -95,11 +107,13 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         setText(smalls.motors, text.motors);
         root.classList.toggle("laser-on", machine !== null && outputDuty(machine.laser, state.settings) > 0);
     }, ["snapshot", "settings"]);
+    draw(controlsOf(ctx.store.get()));
 }
 
-function bigIn(row: HTMLElement, label: string, unit: string, name: string): HTMLSpanElement {
+/** A big cell: the label, the value and its unit; returns the value span, inside its cell. */
+function bigCell(label: string, unit: string, name: string): HTMLSpanElement {
     const value = el("span", { class: "dro-value", "data-dro": name }, "-.---");
-    row.append(el("div", { class: "dro-cell" }, el("span", { class: "dro-label" }, label), value, el("span", { class: "dro-unit" }, unit)));
+    el("div", { class: "dro-cell" }, el("span", { class: "dro-label" }, label), value, el("span", { class: "dro-unit" }, unit));
     return value;
 }
 

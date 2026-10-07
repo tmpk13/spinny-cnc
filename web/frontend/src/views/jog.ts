@@ -1,287 +1,275 @@
-// Jog pad for board X/Y, radius and turn buttons, the focus axis (on a
-// machine with one), the cross slide setup control, go-to fields, position
-// declaration, motors and unlock. Arrow keys jog when no input has focus;
-// Escape cancels a jog or goto from anywhere but a dialog while a machine
-// is connected.
-// On a cartesian machine the cross slide is the Y axis instead of a setup
-// control: it steps like the rail, at the feed given, and a joint goto
-// takes it beside the radius.
+// Jog panel, drawn from the machine's controls (controls.ts): a board X/Y
+// pad on the arrow keys, a button pair beside it or a framed block with its
+// own steps per joint, goto fields, zero buttons, Center, motors and
+// unlock. Which joints there are, what they are called, how they step and
+// whether the feed applies is the machine file's; the panel only draws it,
+// and draws it again when the controls change. Escape cancels a jog or
+// goto from anywhere but a dialog while a machine is connected.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField } from "../dom.ts";
+import { controlOf, controlsOf, sameControls, UNITS } from "../controls.ts";
+import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
-import { isCartesian, isMilling } from "../profile.ts";
+import type { AppState } from "../state.ts";
+import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis } from "../types.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 
-export const STEPS_MM = [0.1, 1, 10];
-export const STEPS_DEG = [1, 10, 90];
-// The cross slide is set from a measured centering burn, so its steps are the
-// small corrections that reading calls for.
-export const STEPS_Z = [0.05, 0.1, 0.5];
-// The focus axis: fine steps to find focus by eye, a coarse one to clear the board.
-export const STEPS_H = [0.05, 0.1, 1];
+export type KeyAction = { dx: number; dy: number } | { axis: JointAxis; sign: 1 | -1 } | "cancel" | null;
 
-export interface JogControls {
-    jogBoard(dx: number, dy: number): Promise<void>;
-    jogJoint(dr: number, da: number): Promise<void>;
-    jogSlide(dz: number): Promise<void>;
-    jogFocus(dh: number): Promise<void>;
-    cancel(): Promise<void>;
-    stepMm(): number;
-    stepDeg(): number;
-    stepZ(): number;
-}
-
-/** Maps a key to a board jog in step units, or a cancel; null when the key is not bound. */
-export function keyAction(key: string): { dx: number; dy: number } | "cancel" | null {
-    switch (key) {
-        case "ArrowLeft":
-            return { dx: -1, dy: 0 };
-        case "ArrowRight":
-            return { dx: 1, dy: 0 };
-        case "ArrowUp":
-            return { dx: 0, dy: 1 };
-        case "ArrowDown":
-            return { dx: 0, dy: -1 };
-        case "Escape":
-            return "cancel";
-        default:
-            return null;
+/**
+ * Maps a key to a board jog in step units, a joint jog by its step, or a
+ * cancel; null when the key is not bound. Without controls the pad's arrow
+ * keys are assumed.
+ */
+export function keyAction(key: string, controls?: Controls): KeyAction {
+    if (key === "Escape") {
+        return "cancel";
     }
+    if (controls === undefined || controls.pad) {
+        switch (key) {
+            case "ArrowLeft":
+                return { dx: -1, dy: 0 };
+            case "ArrowRight":
+                return { dx: 1, dy: 0 };
+            case "ArrowUp":
+                return { dx: 0, dy: 1 };
+            case "ArrowDown":
+                return { dx: 0, dy: -1 };
+        }
+    }
+    for (const axis of controls?.axes ?? []) {
+        const at = axis.keys.indexOf(key);
+        if (at === 0) {
+            return { axis: axis.axis, sign: -1 };
+        }
+        if (at === 1) {
+            return { axis: axis.axis, sign: 1 };
+        }
+    }
+    return null;
 }
 
-export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
-    let stepMm = 1;
-    let stepDeg = 10;
-    let stepZ = 0.1;
-    let stepH = 0.1;
+/** "r", "r and/or a", "r, a and/or h": the fields a goto row wants at least one of. */
+export function anyOf(names: string[]): string {
+    if (names.length <= 1) {
+        return names[0] ?? "";
+    }
+    return `${names.slice(0, -1).join(", ")} and/or ${names[names.length - 1]}`;
+}
+
+export function mountJog(root: HTMLElement, ctx: Ctx): void {
+    // The step picked per control, kept across a redraw: "pad", or the joint
+    // of an axis with steps of its own.
+    const picks = new Map<string, number>();
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
-
-    const controls: JogControls = {
-        async jogBoard(dx, dy) {
-            await ctx.call(ctx.api.jog({ kind: "board", dx, dy, feed: feed() }));
-        },
-        async jogJoint(dr, da) {
-            const request = dr !== 0 && da !== 0
-                ? { kind: "joint" as const, dr, da, feed: feed() }
-                : dr !== 0
-                    ? { kind: "joint" as const, dr, feed: feed() }
-                    : { kind: "joint" as const, da, feed: feed() };
-            await ctx.call(ctx.api.jog(request));
-        },
-        async jogSlide(dz) {
-            // As a setup axis the slide keeps the firmware's own jog rate:
-            // the feed field belongs to the moves that carry the beam over
-            // the board, which on a cartesian machine it is one of.
-            const cartesian = isCartesian(ctx.store.get().snapshot);
-            await ctx.call(ctx.api.jog({ kind: "joint", dz, feed: cartesian ? feed() : null }));
-        },
-        async jogFocus(dh) {
-            // Its own rate too: the firmware's jog_h, not a surface speed.
-            await ctx.call(ctx.api.jog({ kind: "joint", dh, feed: null }));
-        },
-        async cancel() {
-            await ctx.call(ctx.api.jogCancel());
-        },
-        stepMm: () => stepMm,
-        stepDeg: () => stepDeg,
-        stepZ: () => stepZ,
-    };
-
     const body = el("fieldset", { class: "panel-body" });
     root.append(el("h2", {}, "Jog"), body);
 
-    body.append(
-        el("div", { class: "steps" },
-            choiceRow(STEPS_MM, stepMm, (value) => { stepMm = value; }, (value) => `${value} mm`, "Step"),
-            choiceRow(STEPS_DEG, stepDeg, (value) => { stepDeg = value; }, (value) => `${value} deg`, "Turn"),
-            labeled("Feed mm/min", feedInput),
-        ),
-    );
+    let controls: Controls = controlsOf(ctx.store.get());
+    let drawn: Controls | null = null;
+    let motors: HTMLButtonElement | null = null;
 
-    const padButton = (label: string, area: string, onClick: () => Promise<void>, extra = ""): HTMLButtonElement => {
-        const node = button(label, onClick, `btn btn-pad ${extra}`.trim());
-        node.style.gridArea = area;
-        return node;
+    const remembered = (key: string, choices: number[], fallback: number): number => {
+        const pick = picks.get(key);
+        return pick !== undefined && choices.includes(pick) ? pick : fallback;
     };
-    const pad = el("div", { class: "pad" },
-        padButton("Y+", "up", () => controls.jogBoard(0, stepMm)),
-        padButton("X-", "left", () => controls.jogBoard(-stepMm, 0)),
-        padButton("Cancel", "mid", () => controls.cancel(), "btn-cancel"),
-        padButton("X+", "right", () => controls.jogBoard(stepMm, 0)),
-        padButton("Y-", "down", () => controls.jogBoard(0, -stepMm)),
-    );
-    const axes = el("div", { class: "axis-buttons" },
-        button("Radius -", () => controls.jogJoint(-stepMm, 0), "btn btn-axis"),
-        button("Radius +", () => controls.jogJoint(stepMm, 0), "btn btn-axis"),
-        button("Turn -", () => controls.jogJoint(0, -stepDeg), "btn btn-axis"),
-        button("Turn +", () => controls.jogJoint(0, stepDeg), "btn btn-axis"),
-    );
-    // The cross slide is not a board move: it is kept in its own frame so it
-    // reads as the setup control it is. On a cartesian machine it is an axis
-    // like the rail and steps with the main step.
-    const slideTitle = el("span", { class: "slide-title" }, "Cross slide");
-    const slideNote = el("span", { class: "slide-note" }, "Setup only: carries the rail across the rotation axis");
-    const slideSteps = choiceRow(STEPS_Z, stepZ, (value) => { stepZ = value; }, (value) => `${value} mm`, "Step");
-    const slideStep = (): number => (isCartesian(ctx.store.get().snapshot) ? stepMm : stepZ);
-    const slide = el("div", { class: "slide" },
-        slideTitle,
-        slideNote,
-        slideSteps,
-        el("div", { class: "slide-buttons" },
-            button("Z-", () => controls.jogSlide(-slideStep()), "btn btn-slide"),
-            button("Z+", () => controls.jogSlide(slideStep()), "btn btn-slide"),
-        ),
-        button("Set Z=0 here", () => declare("z"), "btn btn-quiet"),
-    );
-    // The focus axis moves the head up and down over the board; it is shown
-    // only on a machine that reports one.
-    const focusTitle = el("span", { class: "slide-title" }, "Focus axis");
-    const focusNote = el("span", { class: "slide-note" }, "Raises and lowers the head; up is positive");
-    const focus = el("div", { class: "slide focus-axis hidden" },
-        focusTitle,
-        focusNote,
-        choiceRow(STEPS_H, stepH, (value) => { stepH = value; }, (value) => `${value} mm`, "Step"),
-        el("div", { class: "slide-buttons" },
-            button("Down", () => controls.jogFocus(-stepH), "btn btn-slide"),
-            button("Up", () => controls.jogFocus(stepH), "btn btn-slide"),
-        ),
-        button("Set H=0 here", () => declare("h"), "btn btn-quiet"),
-    );
-    body.append(el("div", { class: "jog-main" }, pad, axes, slide, focus));
+    const padStep = (): number => remembered("pad", controls.pad_steps, controls.pad_step);
+    const stepOf = (axis: AxisControl): number =>
+        axis.steps ? remembered(axis.axis, axis.steps, axis.step ?? axis.steps[0]!) : padStep();
 
-    const gotoX = numberField({ placeholder: "x" });
-    const gotoY = numberField({ placeholder: "y" });
-    // A negative radius is the far side of the axis, which the machine
-    // takes on a jog: it is how the head is lined up with the axis.
-    const gotoR = numberField({ placeholder: "r" });
-    const gotoA = numberField({ placeholder: "a" });
-    // On a cartesian machine the joint goto takes the cross slide instead of
-    // the table, which holds the board still under a cut.
-    const gotoZ = numberField({ placeholder: "z" });
-    gotoZ.classList.add("hidden");
-    const gotoBoard = async (): Promise<void> => {
-        const x = parseNumber(gotoX.value);
-        const y = parseNumber(gotoY.value);
-        if (x === null && y === null) {
-            ctx.toast("error", "enter x and/or y");
-            return;
-        }
-        // A blank axis is left to the backend, which keeps the coordinate
-        // the head will have once the jog in progress ends; the readout
-        // here is a point it is passing through.
-        await ctx.call(ctx.api.goto({ kind: "board", ...(x !== null ? { x } : {}), ...(y !== null ? { y } : {}), feed: feed() }));
+    const jogBoard = (dx: number, dy: number): Promise<unknown> =>
+        ctx.call(ctx.api.jog({ kind: "board", dx, dy, feed: controls.feed ? feed() : null }));
+    // An axis that does not take the feed runs at the firmware's own jog
+    // rate for it: the feed field belongs to the moves that carry the beam
+    // over the board.
+    const jogAxis = (axis: AxisControl, sign: 1 | -1): Promise<unknown> => {
+        const request = { kind: "joint", [`d${axis.axis}`]: sign * stepOf(axis), feed: axis.feed && controls.feed ? feed() : null } as JogRequest;
+        return ctx.call(ctx.api.jog(request));
     };
-    const gotoJoint = async (): Promise<void> => {
-        const r = parseNumber(gotoR.value);
-        if (isCartesian(ctx.store.get().snapshot)) {
-            const z = parseNumber(gotoZ.value);
-            if (r === null && z === null) {
-                ctx.toast("error", "enter r and/or z");
-                return;
-            }
-            await ctx.call(ctx.api.goto({ kind: "joint", feed: feed(), ...(r !== null ? { r } : {}), ...(z !== null ? { z } : {}) }));
-            return;
+    const cancel = (): Promise<unknown> => ctx.call(ctx.api.jogCancel());
+
+    async function declare(axis: AxisControl): Promise<void> {
+        const ok = await askConfirm(`Declare ${axis.letter} (${axis.label}) to be 0 at the current position? ${axis.zero_hint}`.trim(), "Set 0");
+        if (ok) {
+            await ctx.call(ctx.api.setPosition({ [axis.axis]: 0 }));
         }
-        const a = parseNumber(gotoA.value);
-        if (r === null && a === null) {
-            ctx.toast("error", "enter r and/or a");
-            return;
-        }
-        const request = { kind: "joint" as const, feed: feed(), ...(r !== null ? { r } : {}), ...(a !== null ? { a } : {}) };
-        await ctx.call(ctx.api.goto(request));
+    }
+
+    const toggleMotors = async (): Promise<void> => {
+        const enabled = ctx.store.get().snapshot.machine?.enabled ?? false;
+        await ctx.call(ctx.api.motors(!enabled));
     };
-    // The rotation axis: R 0 on the polar machine, where the slide is parked
-    // over it; on a cartesian machine the slide is Y, so Z 0 as well.
-    const goCenter = (): Promise<unknown> => ctx.call(ctx.api.goto(isCartesian(ctx.store.get().snapshot)
-        ? { kind: "joint", r: 0, z: 0 }
-        : { kind: "joint", r: 0 }));
-    const goBoard = button("Go", () => gotoBoard(), "btn btn-quiet");
-    const goJoint = button("Go", () => gotoJoint(), "btn btn-quiet");
+
     const onEnter = (target: HTMLButtonElement) => (event: Event): void => {
         if ((event as KeyboardEvent).key === "Enter") {
             event.preventDefault();
             target.click();
         }
     };
-    gotoX.addEventListener("keydown", onEnter(goBoard));
-    gotoY.addEventListener("keydown", onEnter(goBoard));
-    gotoR.addEventListener("keydown", onEnter(goJoint));
-    gotoA.addEventListener("keydown", onEnter(goJoint));
-    gotoZ.addEventListener("keydown", onEnter(goJoint));
 
-    body.append(
-        el("div", { class: "goto-row" },
-            el("span", { class: "choice-label" }, "Board"),
-            gotoX, gotoY,
-            goBoard,
-        ),
-        el("div", { class: "goto-row" },
-            el("span", { class: "choice-label" }, "Joint"),
-            gotoR, gotoA, gotoZ,
-            goJoint,
-            button("Center", () => goCenter(), "btn btn-quiet"),
-        ),
-    );
+    function stepRow(axis: AxisControl): HTMLDivElement {
+        const steps = axis.steps!;
+        const unit = UNITS[axis.axis];
+        return choiceRow(
+            steps,
+            remembered(axis.axis, steps, axis.step ?? steps[0]!),
+            (value) => { picks.set(axis.axis, value); },
+            (value) => `${value} ${unit}`,
+            axis.place === "frame" ? "Step" : axis.label,
+        );
+    }
 
-    const toggleMotors = async (): Promise<void> => {
-        const enabled = ctx.store.get().snapshot.machine?.enabled ?? false;
-        await ctx.call(ctx.api.motors(!enabled));
-    };
-    const motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
-    body.append(
-        el("div", { class: "button-row" },
-            button("Set R=0 here", () => declare("r"), "btn btn-quiet"),
-            button("Set A=0 here", () => declare("a"), "btn btn-quiet"),
+    function pad(): HTMLDivElement {
+        const padButton = (label: string, area: string, onClick: () => Promise<unknown>, extra = ""): HTMLButtonElement => {
+            const node = button(label, onClick, `btn btn-pad ${extra}`.trim());
+            node.style.gridArea = area;
+            return node;
+        };
+        return el("div", { class: "pad" },
+            padButton("Y+", "up", () => jogBoard(0, padStep())),
+            padButton("X-", "left", () => jogBoard(-padStep(), 0)),
+            padButton("Cancel", "mid", () => cancel(), "btn-cancel"),
+            padButton("X+", "right", () => jogBoard(padStep(), 0)),
+            padButton("Y-", "down", () => jogBoard(0, -padStep())),
+        );
+    }
+
+    function pair(axis: AxisControl, className: string): HTMLButtonElement[] {
+        return [
+            button(axis.buttons[0], () => jogAxis(axis, -1), className),
+            button(axis.buttons[1], () => jogAxis(axis, 1), className),
+        ];
+    }
+
+    // A framed control is kept in its own block so it reads as what it is:
+    // a setup axis, or one that moves the head up and down.
+    function frame(axis: AxisControl): HTMLDivElement {
+        return el("div", { class: "axis-frame", "data-axis": axis.axis },
+            el("span", { class: "axis-frame-title" }, axis.label),
+            axis.note ? el("span", { class: "axis-frame-note" }, axis.note) : null,
+            axis.steps ? stepRow(axis) : null,
+            el("div", { class: "axis-frame-buttons" }, ...pair(axis, "btn btn-frame")),
+            axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet") : null,
+        );
+    }
+
+    function boardGotoRow(): HTMLDivElement {
+        const x = numberField({ placeholder: "x" });
+        const y = numberField({ placeholder: "y" });
+        const go = button("Go", async () => {
+            const xv = parseNumber(x.value);
+            const yv = parseNumber(y.value);
+            if (xv === null && yv === null) {
+                ctx.toast("error", "enter x and/or y");
+                return;
+            }
+            // A blank axis is left to the backend, which keeps the coordinate
+            // the head will have once the jog in progress ends; the readout
+            // here is a point it is passing through.
+            await ctx.call(ctx.api.goto({ kind: "board", ...(xv !== null ? { x: xv } : {}), ...(yv !== null ? { y: yv } : {}), feed: controls.feed ? feed() : null }));
+        }, "btn btn-quiet");
+        x.addEventListener("keydown", onEnter(go));
+        y.addEventListener("keydown", onEnter(go));
+        return el("div", { class: "goto-row" }, el("span", { class: "choice-label" }, "Board"), x, y, go);
+    }
+
+    function jointGotoRow(axes: AxisControl[]): HTMLDivElement {
+        const fields = axes.map((axis) => ({ axis, input: numberField({ placeholder: axis.letter.toLowerCase() }) }));
+        const go = button("Go", async () => {
+            const given = fields
+                .map((field) => [field.axis.axis, parseNumber(field.input.value)] as const)
+                .filter((entry): entry is readonly [JointAxis, number] => entry[1] !== null);
+            if (given.length === 0) {
+                ctx.toast("error", `enter ${anyOf(fields.map((field) => field.axis.letter.toLowerCase()))}`);
+                return;
+            }
+            const request = { kind: "joint", feed: controls.feed ? feed() : null, ...Object.fromEntries(given) } as GotoRequest;
+            await ctx.call(ctx.api.goto(request));
+        }, "btn btn-quiet");
+        for (const field of fields) {
+            field.input.addEventListener("keydown", onEnter(go));
+        }
+        const center = controls.center;
+        return el("div", { class: "goto-row" },
+            el("span", { class: "choice-label" }, "JointAxis"),
+            ...fields.map((field) => field.input),
+            fields.length > 0 ? go : null,
+            center ? button("Center", () => ctx.call(ctx.api.goto({ kind: "joint", ...center } as GotoRequest)), "btn btn-quiet") : null,
+        );
+    }
+
+    function draw(): void {
+        drawn = controls;
+        const steps = el("div", { class: "steps" });
+        // The pad's step row serves the pad and every axis without steps of its own.
+        if (controls.pad || controls.axes.some((axis) => axis.steps === null)) {
+            steps.append(choiceRow(controls.pad_steps, padStep(), (value) => { picks.set("pad", value); }, (value) => `${value} mm`, "Step"));
+        }
+        for (const axis of controls.axes) {
+            if (axis.place === "buttons" && axis.steps) {
+                steps.append(stepRow(axis));
+            }
+        }
+        if (controls.feed) {
+            steps.append(labeled("Feed mm/min", feedInput));
+        }
+
+        const main = el("div", { class: "jog-main" });
+        if (controls.pad) {
+            main.append(pad());
+        }
+        const beside = controls.axes.filter((axis) => axis.place === "buttons");
+        if (beside.length > 0) {
+            main.append(el("div", { class: "axis-buttons" }, ...beside.flatMap((axis) => pair(axis, "btn btn-axis"))));
+        }
+        for (const axis of controls.axes) {
+            if (axis.place === "frame") {
+                main.append(frame(axis));
+            }
+        }
+
+        const rows: HTMLElement[] = [];
+        if (controls.pad) {
+            rows.push(boardGotoRow());
+        }
+        const gotoAxes = controls.axes.filter((axis) => axis.goto);
+        if (gotoAxes.length > 0 || controls.center) {
+            rows.push(jointGotoRow(gotoAxes));
+        }
+
+        motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
+        const bottom = el("div", { class: "button-row" },
+            ...beside.filter((axis) => axis.zero).map((axis) => button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet")),
             motors,
             button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet"),
-        ),
-    );
+            // The pad carries the cancel button; without one it goes here.
+            controls.pad ? null : button("Cancel", () => cancel(), "btn btn-quiet"),
+        );
+        replace(body, steps, main, ...rows, bottom);
+        show(ctx.store.get());
+    }
 
-    async function declare(axis: "r" | "a" | "z" | "h"): Promise<void> {
-        const what = { r: "the radius", a: "the table angle", z: "the cross slide", h: "the focus axis" }[axis];
-        const hint = {
-            r: "The beam must be over the rotation axis.",
-            a: "",
-            z: isCartesian(ctx.store.get().snapshot)
-                ? "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it."
-                : "The rail is over the axis when the centering lines meet at a point.",
-            h: isMilling(ctx.store.get().snapshot)
-                ? "Touch the tool to the copper first: a milled cut without a height map goes down from H 0."
-                    + " A height map probed before keeps its heights in the old numbers, so a run follows it"
-                    + " only after Touch off here again (probe again for another board)."
-                : "A height map probed before keeps its heights in the old numbers, so a run follows it"
-                    + " only after Focus here again (probe again for another board).",
-        }[axis];
-        const ok = await askConfirm(`Declare ${what} to be 0 at the current position? ${hint}`.trim(), "Set 0");
-        if (ok) {
-            await ctx.call(ctx.api.setPosition({ [axis]: 0 }));
+    function show(state: AppState): void {
+        body.disabled = !state.snapshot.connected;
+        if (motors) {
+            motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
         }
     }
 
     ctx.store.subscribe((state) => {
-        const machine = state.snapshot.machine;
-        body.disabled = !state.snapshot.connected;
-        motors.textContent = machine?.enabled ? "Motors off" : "Motors on";
-        focus.classList.toggle("hidden", machine?.joint.h === null || machine?.joint.h === undefined);
-        const cartesian = isCartesian(state.snapshot);
-        slideNote.textContent = cartesian
-            ? "Y axis: moves across the rail, which is X; steps and feed as the rail's"
-            : "Setup only: carries the rail across the rotation axis";
-        slideTitle.textContent = cartesian ? "Cross slide (Y)" : "Cross slide";
-        slideSteps.classList.toggle("hidden", cartesian);
-        gotoA.classList.toggle("hidden", cartesian);
-        gotoZ.classList.toggle("hidden", !cartesian);
-        const milling = isMilling(state.snapshot);
-        focusTitle.textContent = milling ? "Depth axis" : "Focus axis";
-        focusNote.textContent = milling
-            ? "Raises and lowers the tool; up is positive, H 0 is the board's surface"
-            : "Raises and lowers the head; up is positive";
-    }, ["snapshot"]);
+        const next = controlsOf(state);
+        if (drawn === null || !sameControls(drawn, next)) {
+            controls = next;
+            draw();
+        } else {
+            show(state);
+        }
+    }, ["snapshot", "settings"]);
+    draw();
 
     // One key jog at a time: a held or hammered key must not queue up moves.
-    let keyJog: Promise<void> | null = null;
+    let keyJog: Promise<unknown> | null = null;
     document.addEventListener("keydown", (event) => {
         if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
             return;
@@ -290,7 +278,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         if (modalOpen()) {
             return;
         }
-        const action = keyAction(event.key);
+        const action = keyAction(event.key, controls);
         if (action === null) {
             return;
         }
@@ -300,22 +288,24 @@ export function mountJog(root: HTMLElement, ctx: Ctx): JogControls {
         if (action === "cancel") {
             if (ctx.store.get().snapshot.connected) {
                 event.preventDefault();
-                void controls.cancel();
+                void cancel();
             }
             return;
         }
-        // Arrow keys belong to a field that has the focus, and jog only
-        // from the machine's page: on the CAM page nothing should move.
+        // Jog keys belong to a field that has the focus, and jog only from
+        // the machine's page: on the CAM page nothing should move.
         if (inputHasFocus() || activePage() !== "machine") {
             return;
         }
         event.preventDefault();
         if (ctx.store.get().snapshot.connected && keyJog === null) {
-            keyJog = controls.jogBoard(action.dx * stepMm, action.dy * stepMm).finally(() => {
+            const axis = "axis" in action ? controlOf(controls, action.axis) : undefined;
+            const move = "axis" in action
+                ? (axis ? jogAxis(axis, action.sign) : Promise.resolve())
+                : jogBoard(action.dx * padStep(), action.dy * padStep());
+            keyJog = move.finally(() => {
                 keyJog = null;
             });
         }
     });
-
-    return controls;
 }

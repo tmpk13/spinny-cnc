@@ -26,11 +26,18 @@ stretched to be seen, and the head over its board point with the beam.
 Drag orbits, or pans with *Lock rotation* pressed (kept between visits);
 shift or right drag pans, the wheel zooms about the cursor, *Reset view*
 and a double click return to the overview, tilted with the axis in the
-middle and everything in view. The DRO shows the joint (`R` mm, `A` deg),
-the cross slide (`Z` mm), the focus axis (`H` mm) and the probe on a machine
-with one, and the board position the backend derives from the joint. The
-cross slide is a setup axis: the jog panel moves it on its own, in the small
-steps a centering burn is measured into.
+middle and everything in view. The DRO and the jog panel draw the
+machine's controls (`controls` in the settings the backend sends, from
+the machine file's `[controls]` or the defaults for what the machine is;
+`src/controls.ts` holds the page's copy of those defaults for the moment
+before the settings arrive and for the mock): one readout cell and one
+control per joint the file names, with its letter, label, steps, buttons,
+keys and zero button, a board X/Y pad on the arrow keys when the file has
+one, a feed field, goto fields and Center. The polar laser's defaults are
+the joint (`R` mm, `A` deg), the cross slide (`Z` mm) as a setup axis in
+a frame of its own, moved in the small steps a centering burn is measured
+into, and the focus axis (`H` mm) with the probe on a machine with one.
+Both panels are drawn again when the controls change.
 
 The page follows what the machine is (`profile` in the backend's state,
 from `$cartesian` and `$spindle`), with a badge in the status bar when it
@@ -119,6 +126,10 @@ classDiagram
         profileOf(snapshot) Profile
         isCartesian / isMilling
     }
+    class controls {
+        defaultControls(profile) Controls  the backend's defaults, word for word
+        controlsOf(state) the settings' or the profile's defaults
+    }
     class kinematics {
         segmentBoardMove(from, to, tolerance)
         moveMinutes(from, to, feed, rRate, aRate)
@@ -136,7 +147,7 @@ classDiagram
         buildCamJob / camGcode
     }
     class mock_toml {
-        parseToml(text) tables, arrays of tables, scalars, arrays
+        parseToml(text) tables, arrays of tables, dotted names, inline tables, scalars, arrays
     }
     main --> api
     main --> ws
@@ -145,6 +156,9 @@ classDiagram
     views --> preview
     preview --> camera
     views --> profile
+    views --> controls
+    controls --> profile
+    mock_backend --> controls
     mock_backend --> kinematics
     mock_backend --> mock_jobs
     mock_backend --> mock_cam

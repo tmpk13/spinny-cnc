@@ -1,7 +1,9 @@
 // A small TOML reader for the in-page mock: enough of the format for the
-// CAM profiles (tables, arrays of tables, strings, numbers, booleans and
-// arrays of those), the line named in every refusal. The backend reads the
-// language in full; this reads what the shipped files and the page write.
+// CAM profiles and the machine files (tables, arrays of tables, dotted
+// table names one level deep, inline tables, strings, numbers, booleans
+// and arrays of those), the line named in every refusal. The backend reads
+// the language in full; this reads what the shipped files and the page
+// write.
 
 export class TomlError extends Error {
     constructor(line: number, text: string) {
@@ -74,32 +76,26 @@ export function parseToml(text: string): TomlTable {
         }
         let header = /^\[\[\s*([^\]]+?)\s*\]\]$/.exec(line);
         if (header) {
-            const name = header[1]!;
-            if (!BARE_KEY.test(name)) {
-                throw new TomlError(number, `the mock reads plain table names only, not [[${name}]]`);
-            }
-            const list = root[name];
+            const [parent, name] = tablePath(root, header[1]!, number);
+            const list = parent[name];
             if (list === undefined) {
-                root[name] = [];
+                parent[name] = [];
             } else if (!Array.isArray(list)) {
                 throw new TomlError(number, `${name} is a key and a table at once`);
             }
             const table: TomlTable = {};
-            (root[name] as TomlValue[]).push(table);
+            (parent[name] as TomlValue[]).push(table);
             current = table;
             continue;
         }
         header = /^\[\s*([^\]]+?)\s*\]$/.exec(line);
         if (header) {
-            const name = header[1]!;
-            if (!BARE_KEY.test(name)) {
-                throw new TomlError(number, `the mock reads plain table names only, not [${name}]`);
-            }
-            if (root[name] !== undefined) {
-                throw new TomlError(number, `[${name}] is defined twice`);
+            const [parent, name] = tablePath(root, header[1]!, number);
+            if (parent[name] !== undefined) {
+                throw new TomlError(number, `[${header[1]}] is defined twice`);
             }
             const table: TomlTable = {};
-            root[name] = table;
+            parent[name] = table;
             current = table;
             continue;
         }
@@ -129,6 +125,31 @@ export function parseToml(text: string): TomlTable {
     return root;
 }
 
+/**
+ * Where a table header lands: its parent table and its last name. A dotted
+ * name, `[[controls.axes]]`, goes one level down into a table that must be
+ * there already or is made; deeper names are not read.
+ */
+function tablePath(root: TomlTable, header: string, line: number): [TomlTable, string] {
+    const parts = header.split(".").map((part) => part.trim());
+    if (parts.length > 2 || !parts.every((part) => BARE_KEY.test(part))) {
+        throw new TomlError(line, `the mock reads plain table names only, not [${header}]`);
+    }
+    if (parts.length === 1) {
+        return [root, parts[0]!];
+    }
+    const outer = root[parts[0]!];
+    if (outer === undefined) {
+        const made: TomlTable = {};
+        root[parts[0]!] = made;
+        return [made, parts[1]!];
+    }
+    if (Array.isArray(outer) || typeof outer !== "object") {
+        throw new TomlError(line, `${parts[0]} is not a table to put ${parts[1]} in`);
+    }
+    return [outer, parts[1]!];
+}
+
 function parseValue(text: string, line: number): TomlValue {
     text = text.trim();
     if (text === "true" || text === "false") {
@@ -148,6 +169,24 @@ function parseValue(text: string, line: number): TomlValue {
             throw new TomlError(line, "an array is not closed");
         }
         return splitArray(text.slice(1, -1), line).map((item) => parseValue(item, line));
+    }
+    // An inline table, { key = value, ... }, on one line.
+    if (text.startsWith("{")) {
+        if (!text.endsWith("}")) {
+            throw new TomlError(line, "an inline table is not closed");
+        }
+        const table: TomlTable = {};
+        for (const item of splitArray(text.slice(1, -1), line)) {
+            const pair = /^\s*([^=]+?)\s*=\s*(.*)$/.exec(item);
+            if (!pair || !BARE_KEY.test(pair[1]!)) {
+                throw new TomlError(line, `expected key = value in the inline table, not ${item.trim()}`);
+            }
+            if (pair[1]! in table) {
+                throw new TomlError(line, `${pair[1]} is given twice`);
+            }
+            table[pair[1]!] = parseValue(pair[2]!, line);
+        }
+        return table;
     }
     if (NUMBER.test(text)) {
         const value = Number(text.replace(/_/g, ""));
@@ -197,9 +236,9 @@ function splitArray(inner: string, line: number): string[] {
             }
         } else if (char === '"' || char === "'") {
             quote = char;
-        } else if (char === "[") {
+        } else if (char === "[" || char === "{") {
             depth++;
-        } else if (char === "]") {
+        } else if (char === "]" || char === "}") {
             depth--;
             if (depth < 0) {
                 throw new TomlError(line, "an array closes before it opens");

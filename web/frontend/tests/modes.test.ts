@@ -211,7 +211,7 @@ describe("cartesian", () => {
         await api.connect("/dev/ttyACM0");
         mountJog(root, ctx);
         store.set({ snapshot: snapshot({ kinematics: "cartesian" }) });
-        const slide = root.querySelector(".slide")!;
+        const slide = root.querySelector('.axis-frame[data-axis="z"]')!;
         expect(slide.textContent).toContain("Cross slide (Y)");
         click(slide, "Z+");
         await settle();
@@ -223,10 +223,10 @@ describe("cartesian", () => {
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dz: -1, feed: 300 });
         calls.length = 0;
+        // The joint goto takes r and z; the table, which a cut leaves alone, has no field.
         const z = root.querySelector('input[placeholder="z"]') as HTMLInputElement;
-        const a = root.querySelector('input[placeholder="a"]') as HTMLInputElement;
-        expect(z.classList.contains("hidden")).toBe(false);
-        expect(a.classList.contains("hidden")).toBe(true);
+        expect(z).not.toBeNull();
+        expect(root.querySelector('input[placeholder="a"]')).toBeNull();
         (root.querySelector('input[placeholder="r"]') as HTMLInputElement).value = "5";
         z.value = "-2";
         const goButtons = Array.from(root.querySelectorAll(".goto-row")).map((row) => row.querySelector("button")!);
@@ -238,19 +238,22 @@ describe("cartesian", () => {
         click(root, "Center");
         await settle();
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", r: 0, z: 0 });
-        // A polar machine keeps the setup control.
+        // A polar machine draws the setup control again, with no z goto.
         store.set({ snapshot: snapshot({}) });
-        expect(slide.textContent).toContain("Setup only");
-        expect(z.classList.contains("hidden")).toBe(true);
+        expect(root.querySelector('.axis-frame[data-axis="z"]')!.textContent).toContain("Setup only");
+        expect(root.querySelector('input[placeholder="z"]')).toBeNull();
+        expect(root.querySelector('input[placeholder="a"]')).not.toBeNull();
     });
 
     test("the depth axis is named as such on a spindle machine", () => {
         const { store, ctx, root } = setup();
         mountJog(root, ctx);
+        expect(root.querySelector('.axis-frame[data-axis="h"]')).toBeNull();
         store.set({ snapshot: snapshot({ tool: "spindle", h_axis: true }) });
-        const focus = root.querySelector(".focus-axis")!;
-        expect(focus.classList.contains("hidden")).toBe(false);
+        const focus = root.querySelector('.axis-frame[data-axis="h"]')!;
         expect(focus.textContent).toContain("Depth axis");
+        store.set({ snapshot: snapshot({ h_axis: true }) });
+        expect(root.querySelector('.axis-frame[data-axis="h"]')!.textContent).toContain("Focus axis");
     });
 });
 

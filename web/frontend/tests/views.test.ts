@@ -5,11 +5,11 @@ import { applyEvent, createContext, settingsMayHaveChanged } from "../src/main.t
 import { MockBackend } from "../src/mock/backend.ts";
 import { button, numberField, setLocked } from "../src/dom.ts";
 import { Store, appendConsole, initialState, pushToast, type AppState } from "../src/state.ts";
-import type { Job, JobSummary, Machine, Snapshot, WsEvent } from "../src/types.ts";
+import type { Controls, Job, JobSummary, Machine, SettingsResponse, Snapshot, WsEvent } from "../src/types.ts";
 import { mountConsole, writesSettings } from "../src/views/console.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs, progressText } from "../src/views/jobs.ts";
-import { keyAction, mountJog } from "../src/views/jog.ts";
+import { anyOf, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedValues, mountSettings } from "../src/views/settings.ts";
@@ -360,7 +360,7 @@ describe("jog", () => {
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
         mountJog(root, ctx);
-        const slide = root.querySelector(".slide")!;
+        const slide = root.querySelector(".axis-frame")!;
         expect(slide.textContent).toContain("Cross slide");
 
         click(slide, "Set Z=0 here");
@@ -990,5 +990,99 @@ describe("console and toasts", () => {
         expect(root.querySelector(".toast.error")?.textContent).toBe("oops");
         (root.querySelector(".toast") as HTMLElement).click();
         expect(root.children.length).toBe(0);
+    });
+});
+
+describe("controls from the machine file", () => {
+    // A rig of its own: no pad, no feed, no Center, the rail as X with
+    // keys, and a depth axis in a frame without a zero button.
+    const rig: Controls = {
+        pad: false,
+        pad_steps: [1],
+        pad_step: 1,
+        feed: false,
+        center: null,
+        axes: [
+            { axis: "r", letter: "X", label: "Rail", steps: [0.5, 5], step: 5, buttons: ["Left", "Right"], place: "buttons", feed: false, goto: true, zero: true, zero_hint: "", keys: ["PageDown", "PageUp"], note: "" },
+            { axis: "h", letter: "Z", label: "Depth", steps: [0.1, 1], step: 1, buttons: ["Down", "Up"], place: "frame", feed: false, goto: false, zero: false, zero_hint: "", keys: [], note: "Up is positive" },
+        ],
+    };
+    const settingsWith = (controls: Controls): SettingsResponse => ({ values: {}, schema: [], host: { tolerance: 0.01 }, controls });
+
+    test("keys and the goto wording follow the controls", () => {
+        expect(keyAction("ArrowLeft", rig)).toBeNull();
+        expect(keyAction("PageUp", rig)).toEqual({ axis: "r", sign: 1 });
+        expect(keyAction("PageDown", rig)).toEqual({ axis: "r", sign: -1 });
+        expect(keyAction("Escape", rig)).toBe("cancel");
+        expect(anyOf(["r"])).toBe("r");
+        expect(anyOf(["r", "a"])).toBe("r and/or a");
+        expect(anyOf(["r", "a", "h"])).toBe("r, a and/or h");
+    });
+
+    test("the jog panel draws what the file says, and again when it changes", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const labels = (): (string | null)[] => Array.from(root.querySelectorAll("button")).map((b) => b.textContent);
+        expect(labels()).toContain("Radius -");
+        store.set({ settings: settingsWith(rig) });
+        expect(labels()).not.toContain("Radius -");
+        expect(labels()).not.toContain("X+");
+        expect(labels()).not.toContain("Center");
+        // Without a pad the cancel button moves to the bottom row.
+        expect(labels()).toContain("Cancel");
+        expect(labels()).toContain("Set X=0 here");
+        expect(labels()).not.toContain("Set Z=0 here");
+        expect(root.textContent).not.toContain("Feed mm/min");
+        expect(root.querySelector(".axis-frame")?.textContent).toContain("Up is positive");
+        click(root, "Right");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: 5, feed: null });
+        calls.length = 0;
+        click(root, "0.5 mm");
+        click(root, "Left");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -0.5, feed: null });
+        calls.length = 0;
+        click(root, "Up");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dh: 1, feed: null });
+        calls.length = 0;
+        // The goto row has the axes that take one, by their letters.
+        const fields = Array.from(root.querySelectorAll("input[placeholder]")).filter((f) => f !== null) as HTMLInputElement[];
+        expect(fields.filter((f) => f.placeholder !== "default").map((f) => f.placeholder)).toEqual(["x"]);
+        fields.find((f) => f.placeholder === "x")!.value = "2";
+        click(root, "Go");
+        await settle();
+        expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", feed: null, r: 2 });
+        calls.length = 0;
+        // Its keys jog it by the step picked.
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -0.5, feed: null });
+        calls.length = 0;
+        // The same controls again: nothing is redrawn, so the step pick stays.
+        store.set({ settings: settingsWith(JSON.parse(JSON.stringify(rig)) as Controls) });
+        click(root, "Left");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -0.5, feed: null });
+    });
+
+    test("the readout shows the joints the controls name", () => {
+        const { store, ctx, root } = setup();
+        mountDro(root, ctx);
+        store.set({ snapshot: connected({ joint: { r: 1.5, a: 0, z: 0, h: -0.25 } }), settings: settingsWith(rig) });
+        const labels = Array.from(root.querySelectorAll(".dro-row-joint .dro-label")).map((n) => n.textContent);
+        expect(labels).toEqual(["X", "Z"]);
+        expect(root.querySelector('[data-dro="r"]')?.textContent).toBe("1.500");
+        expect(root.querySelector('[data-dro="h"]')?.textContent).toBe("-0.250");
+        expect(root.querySelector('[data-dro="a"]')).toBeNull();
+        // No pad: the board row is hidden.
+        expect(root.querySelector('[data-dro="x"]')?.closest(".dro-row")?.classList.contains("hidden")).toBe(true);
+        // Back to the defaults: the polar laser's joints and the board.
+        store.set({ settings: null });
+        expect(Array.from(root.querySelectorAll(".dro-row-joint .dro-label")).map((n) => n.textContent)).toEqual(["R", "A", "Z"]);
+        expect(root.querySelector('[data-dro="x"]')?.closest(".dro-row")?.classList.contains("hidden")).toBe(false);
     });
 });

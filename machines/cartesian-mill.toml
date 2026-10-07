@@ -32,3 +32,63 @@ brake_ms = 20
 tolerance = 0.005
 clearance = 2.0             # mm over the surface for travel between cuts
 spinup = 2.0                # s of dwell after the spindle starts or changes speed
+
+# The page's controls, as the defaults draw them for a cartesian spindle
+# machine: the cross slide is the Y axis and the focus axis is the depth
+# axis. polar-laser.toml says what each key means.
+[controls]
+pad = true
+pad_steps = [0.1, 1, 10]
+pad_step = 1
+feed = true
+center = { r = 0, z = 0 }
+
+[[controls.axes]]
+axis = "r"
+letter = "R"
+label = "Radius"
+buttons = ["Radius -", "Radius +"]
+place = "buttons"
+feed = true
+goto = true
+zero = true
+zero_hint = "The beam must be over the rotation axis."
+
+[[controls.axes]]
+axis = "a"
+letter = "A"
+label = "Table"
+steps = [1, 10, 90]
+step = 10
+buttons = ["Turn -", "Turn +"]
+place = "buttons"
+feed = true
+goto = false
+zero = true
+zero_hint = ""
+
+[[controls.axes]]
+axis = "z"
+letter = "Z"
+label = "Cross slide (Y)"
+buttons = ["Z-", "Z+"]
+place = "frame"
+feed = true
+goto = true
+zero = true
+zero_hint = "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it."
+note = "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+
+[[controls.axes]]
+axis = "h"
+letter = "H"
+label = "Depth axis"
+steps = [0.05, 0.1, 1]
+step = 0.1
+buttons = ["Down", "Up"]
+place = "frame"
+feed = false
+goto = false
+zero = true
+zero_hint = "Touch the tool to the copper first: a milled cut without a height map goes down from H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board)."
+note = "Raises and lowers the tool; up is positive, H 0 is the board's surface"

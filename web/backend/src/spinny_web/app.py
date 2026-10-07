@@ -1133,11 +1133,15 @@ class Backend:
             self._settings_cache = (now, values)
             self.rates = Rates.from_settings(values)
             self.profile = profile_of(values)
+        # The page's controls are the loaded file's, or the defaults for
+        # what the settings say the machine is when they are no file's.
+        found = machine_files.matching(self.machine_list()[0], values)
         return {
             "values": values,
             "schema": SETTINGS_SCHEMA,
             "host": self.host_settings(),
-            "machine": machine_files.current(self.machine_list()[0], values),
+            "machine": found.id if found is not None else None,
+            "controls": found.controls if found is not None else controls_of(self.profile),
         }
 
     def write_settings(self, values: dict | None, host: dict | None) -> dict:
@@ -1173,7 +1177,7 @@ class Backend:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
-        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings(), "machine": None}
+        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings(), "machine": None, "controls": controls_of(self.profile)}
 
     # --- machines -----------------------------------------------------------------
 
@@ -1629,6 +1633,12 @@ def profile_of(values: dict) -> dict:
         "r_max": number("r_max"),
         "z_max": number("z_max"),
     }
+
+
+def controls_of(profile: dict) -> dict:
+    """The page's controls for a machine whose settings are no file's: the
+    defaults for what the profile says it is."""
+    return machine_files.default_controls(profile["kinematics"], profile["tool"], profile["h_axis"])
 
 
 def _host_number(host: dict, name: str, default: float) -> float:

@@ -2,6 +2,7 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { ApiError, type Api } from "../api.ts";
+import { defaultControls } from "../controls.ts";
 import {
     AXIS_EPSILON,
     DEG,
@@ -2565,6 +2566,9 @@ export class MockBackend implements Api, EventFeed {
             schema: SETTINGS_SCHEMA,
             host: { tolerance: this.tolerance, clearance: this.clearance, spinup: this.spinup },
             machine: machineOf(this.machine.settings),
+            // The shipped files spell out the defaults for what they are, so
+            // the defaults serve for a loaded file and for settings of no file's alike.
+            controls: defaultControls(this.machine.profile()),
         };
     }
 

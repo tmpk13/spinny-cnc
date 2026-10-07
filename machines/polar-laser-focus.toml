@@ -21,3 +21,64 @@ brake_ms = 20
 
 [host]
 tolerance = 0.005
+
+# The page's controls, as the defaults draw them for a polar laser with a
+# focus axis; polar-laser.toml says what each key means.
+[controls]
+pad = true
+pad_steps = [0.1, 1, 10]
+pad_step = 1
+feed = true
+center = { r = 0 }
+
+[[controls.axes]]
+axis = "r"
+letter = "R"
+label = "Radius"
+buttons = ["Radius -", "Radius +"]
+place = "buttons"
+feed = true
+goto = true
+zero = true
+zero_hint = "The beam must be over the rotation axis."
+
+[[controls.axes]]
+axis = "a"
+letter = "A"
+label = "Table"
+steps = [1, 10, 90]
+step = 10
+buttons = ["Turn -", "Turn +"]
+place = "buttons"
+feed = true
+goto = true
+zero = true
+zero_hint = ""
+
+[[controls.axes]]
+axis = "z"
+letter = "Z"
+label = "Cross slide"
+steps = [0.05, 0.1, 0.5]
+step = 0.1
+buttons = ["Z-", "Z+"]
+place = "frame"
+feed = false
+goto = false
+zero = true
+zero_hint = "The rail is over the axis when the centering lines meet at a point."
+note = "Setup only: carries the rail across the rotation axis"
+
+[[controls.axes]]
+axis = "h"
+letter = "H"
+label = "Focus axis"
+steps = [0.05, 0.1, 1]      # fine steps to find focus by eye, a coarse one to clear the board
+step = 0.1
+buttons = ["Down", "Up"]
+place = "frame"
+feed = false
+goto = false
+zero = true
+zero_hint = "A height map probed before keeps its heights in the old numbers, so a run follows it only after Focus here again (probe again for another board)."
+note = "Raises and lowers the head; up is positive"

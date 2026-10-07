@@ -228,3 +228,15 @@
   pans (the lock is kept between visits); shift or right drag pans, the
   wheel zooms about the cursor, Reset view and a double click return to
   the overview.
+- Config defined controls (2026-10-06): the jog panel and the position
+  readout draw a `[controls]` section of the machine file (a board pad on
+  the arrow keys, a feed field, Center, and one control per joint with its
+  letter, label, steps, button labels, place beside the pad or in a frame,
+  feed, goto field, zero button and hint, keys, note) instead of a fixed
+  R/A/Z/H layout switched by profile. The backend sends the loaded file's
+  controls with the settings, or the defaults for what the settings say
+  the machine is; `spinny_laser.controls` holds the defaults and the
+  parser, `src/controls.ts` the page's twin, checked against the shipped
+  files, which spell the defaults out. The virtual firmware reads past the
+  section; the mock's TOML reader learned dotted table names and inline
+  tables for the check.

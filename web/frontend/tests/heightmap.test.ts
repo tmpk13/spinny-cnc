@@ -231,25 +231,26 @@ describe("focus axis readout and jog", () => {
         expect(none.h).toBeNull();
         expect(none.probe).toBeNull();
 
+        // The H cell is drawn for a machine whose profile has the axis.
         const { store, ctx, root } = setup({ map: null, probe: null, settings: SETTINGS });
         mountDro(root, ctx);
-        store.set({ snapshot: connected() });
+        const focus: Snapshot["profile"] = { kinematics: "polar", tool: "laser", h_axis: true, r_max: 60, z_max: 0 };
+        store.set({ snapshot: { ...connected(), profile: focus } });
         const cell = root.querySelector('[data-dro="h"]')!;
         expect(cell.textContent).toBe("-1.250");
-        expect(cell.parentElement!.classList.contains("hidden")).toBe(false);
         expect(root.querySelector('[data-dro="probe"]')!.textContent).toBe("up");
-        store.set({ snapshot: connected({ joint: { r: 1, a: 2, z: 0, h: null }, probe: null }) });
-        expect(cell.parentElement!.classList.contains("hidden")).toBe(true);
+        store.set({ snapshot: { ...connected({ joint: { r: 1, a: 2, z: 0, h: null }, probe: null }), profile: { ...focus, h_axis: false } } });
+        expect(root.querySelector('[data-dro="h"]')).toBeNull();
+        expect(root.querySelector('[data-dro="probe"]')!.closest("div")!.classList.contains("hidden")).toBe(true);
     });
 
     test("the focus jog is there with the axis and moves it at its own rate", async () => {
         const { store, ctx, root, calls } = setup({ map: null, probe: null, settings: SETTINGS });
         mountJog(root, ctx);
-        const frame = root.querySelector(".focus-axis")!;
         store.set({ snapshot: connected({ joint: { r: 0, a: 0, z: 0, h: null } }) });
-        expect(frame.classList.contains("hidden")).toBe(true);
-        store.set({ snapshot: connected() });
-        expect(frame.classList.contains("hidden")).toBe(false);
+        expect(root.querySelector('.axis-frame[data-axis="h"]')).toBeNull();
+        store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "laser", h_axis: true, r_max: 60, z_max: 0 } } });
+        const frame = root.querySelector('.axis-frame[data-axis="h"]')!;
         click(frame, "Up");
         click(frame, "Down");
         await settle();

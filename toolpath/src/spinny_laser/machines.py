@@ -18,6 +18,7 @@ The sections and keys, with the firmware setting each one sets:
     [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms)
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth
     [host]    tolerance, clearance, spinup: the host's own settings, not the firmware's
+    [controls] the page's jog panel and readout (spinny_laser.controls); left out, drawn from the kinematics, tool and focus axis
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+from spinny_laser.controls import default_controls, parse_controls
 
 KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle")
@@ -83,6 +86,8 @@ class Machine:
     focus: bool
     settings: dict[str, float | int]
     host: dict[str, float]
+    # The page's controls, as spinny_laser.controls lays them out.
+    controls: dict
 
     def summary(self) -> dict:
         return {
@@ -95,7 +100,7 @@ class Machine:
         }
 
     def document(self) -> dict:
-        return {**self.summary(), "settings": dict(self.settings), "host": dict(self.host)}
+        return {**self.summary(), "settings": dict(self.settings), "host": dict(self.host), "controls": self.controls}
 
 
 def load(path: Path | str) -> Machine:
@@ -200,7 +205,8 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
                 raise MachineError(f"{where}: [host] {key} must be above {low:g} and at most {high:g}")
             host[key] = value
     reader.done(host_table, "host", set(HOST_KEYS))
-    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "probe", "output", "drivers", "host"})
+    controls = parse_controls(reader, top, kinematics, tool, bool(settings["h_axis"]))
+    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "probe", "output", "drivers", "host", "controls"})
 
     return Machine(
         id=machine_id,
@@ -211,6 +217,7 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         focus=bool(settings["h_axis"]),
         settings=settings,
         host=host,
+        controls=controls,
     )
 
 
@@ -302,13 +309,20 @@ def matches(machine: Machine, values: dict) -> bool:
     return True
 
 
+def matching(machines: list[Machine], values: dict) -> Machine | None:
+    """The machine the live settings are, or None for a machine that is no
+    file's."""
+    for machine in machines:
+        if matches(machine, values):
+            return machine
+    return None
+
+
 def current(machines: list[Machine], values: dict) -> str | None:
     """The id of the machine the live settings are, or None for a machine
     that is no file's."""
-    for machine in machines:
-        if matches(machine, values):
-            return machine.id
-    return None
+    found = matching(machines, values)
+    return found.id if found is not None else None
 
 
 def cli_defaults(machine: Machine) -> dict:

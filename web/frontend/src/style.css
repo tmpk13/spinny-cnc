@@ -950,9 +950,9 @@ input[type="number"].field {
     min-height: 3.25rem;
 }
 
-/* Cross slide: a setup control, framed apart from the board jog pad. */
+/* A framed axis control (the cross slide, the focus axis), apart from the board jog pad. */
 
-.slide {
+.axis-frame {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -963,7 +963,7 @@ input[type="number"].field {
     border-radius: var(--radius);
 }
 
-.slide-title {
+.axis-frame-title {
     font-size: 0.8rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -971,22 +971,22 @@ input[type="number"].field {
     color: var(--strong);
 }
 
-.slide-note {
+.axis-frame-note {
     color: var(--muted);
     font-size: 0.78rem;
 }
 
-.slide .choice-row {
+.axis-frame .choice-row {
     margin-bottom: 0;
 }
 
-.slide-buttons {
+.axis-frame-buttons {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.4rem;
 }
 
-.btn-slide {
+.btn-frame {
     font-weight: 600;
 }
 

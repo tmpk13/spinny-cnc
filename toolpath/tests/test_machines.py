@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from spinny_laser import machine, machines
-from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, current, load, load_all, matches, parse
+from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, current, default_controls, load, load_all, matches, matching, parse
 
 REPO = Path(__file__).resolve().parents[2]
 SHIPPED = REPO / "machines"
@@ -192,6 +192,7 @@ def test_a_bad_file_is_reported_beside_the_good_ones(tmp_path):
 def test_the_live_settings_name_their_machine():
     found, _ = load_all(SHIPPED)
     assert current(found, FIRMWARE_DEFAULTS) == "polar-laser"
+    assert matching(found, FIRMWARE_DEFAULTS).id == "polar-laser" and matching(found, {}) is None
     mill = next(m for m in found if m.id == "cartesian-mill")
     assert current(found, mill.settings) == "cartesian-mill"
     # As the firmware prints them: three decimals, ints for whole numbers.
@@ -223,3 +224,106 @@ def test_the_gcode_tools_take_their_defaults_from_a_file(tmp_path):
     bad.write_text("[rail]\nmax_rate = -1\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         machine.parse_args(parser, ["--machine", str(bad)])
+
+
+# --- the page's controls -----------------------------------------------------
+
+
+def test_the_controls_default_from_the_profile():
+    polar = default_controls("polar", "laser", False)
+    assert [axis["axis"] for axis in polar["axes"]] == ["r", "a", "z"]
+    assert polar["pad"] and polar["feed"] and polar["pad_steps"] == [0.1, 1, 10] and polar["pad_step"] == 1
+    assert polar["center"] == {"r": 0.0}
+    rail, table, slide = polar["axes"]
+    assert (rail["letter"], rail["label"], rail["steps"], rail["step"], rail["buttons"], rail["place"]) == ("R", "Radius", None, None, ["Radius -", "Radius +"], "buttons")
+    assert (table["steps"], table["step"], table["goto"]) == ([1, 10, 90], 10, True)
+    assert (slide["label"], slide["steps"], slide["step"], slide["place"], slide["feed"], slide["goto"]) == ("Cross slide", [0.05, 0.1, 0.5], 0.1, "frame", False, False)
+    assert all(axis["zero"] and axis["keys"] == [] for axis in polar["axes"])
+    focus = default_controls("polar", "laser", True)
+    assert [axis["axis"] for axis in focus["axes"]] == ["r", "a", "z", "h"]
+    assert (focus["axes"][3]["label"], focus["axes"][3]["buttons"], focus["axes"][3]["place"]) == ("Focus axis", ["Down", "Up"], "frame")
+    mill = default_controls("cartesian", "spindle", True)
+    assert mill["center"] == {"r": 0.0, "z": 0.0}
+    assert [axis["goto"] for axis in mill["axes"]] == [True, False, True, False]
+    slide_y = mill["axes"][2]
+    assert (slide_y["label"], slide_y["steps"], slide_y["step"], slide_y["feed"]) == ("Cross slide (Y)", None, None, True)
+    assert mill["axes"][3]["label"] == "Depth axis" and "Touch the tool" in mill["axes"][3]["zero_hint"]
+
+
+def test_the_shipped_files_spell_out_their_default_controls():
+    found, _ = load_all(SHIPPED)
+    for found_machine in found:
+        assert found_machine.controls == default_controls(found_machine.kinematics, found_machine.tool, found_machine.focus), found_machine.id
+    assert parse("", "bare").controls == default_controls("polar", "laser", False)
+    assert parse("[controls]\n", "bare").controls == default_controls("polar", "laser", False)
+    assert parse("[focus]\nfitted = true\n", "bare").controls == default_controls("polar", "laser", True)
+
+
+def test_a_controls_entry_fills_in_from_its_default():
+    found = parse(
+        "[focus]\nfitted = true\n[controls]\npad = false\n"
+        "[[controls.axes]]\naxis = \"h\"\nlabel = \"Lift\"\nsteps = [0.5, 2]\nkeys = [\"PageDown\", \"PageUp\"]\n"
+        "[[controls.axes]]\naxis = \"r\"\n",
+        "rig",
+    )
+    controls = found.controls
+    assert (controls["pad"], controls["pad_steps"], controls["pad_step"], controls["feed"]) == (False, [0.1, 1, 10], 1, True)
+    # The default center keeps the joints the file lists.
+    assert controls["center"] == {"r": 0.0}
+    lift, rail = controls["axes"]
+    assert (lift["axis"], lift["letter"], lift["label"], lift["steps"], lift["step"]) == ("h", "H", "Lift", [0.5, 2], 2.0)
+    # Renamed without buttons: the letter's, not the default's words.
+    assert lift["buttons"] == ["H-", "H+"] and lift["place"] == "frame" and lift["keys"] == ["PageDown", "PageUp"]
+    assert lift["note"] == "Raises and lowers the head; up is positive" and lift["zero"] and not lift["feed"]
+    assert rail == default_controls("polar", "laser", True)["axes"][0]
+    assert found.document()["controls"] == controls
+
+    # Other steps without a pick: the middle one; steps = [] is the pad's step.
+    assert parse("[controls]\npad_steps = [0.2, 0.5, 2, 5]\n", "rig").controls["pad_step"] == 2
+    table = parse("[controls]\n[[controls.axes]]\naxis = \"a\"\nsteps = []\nbuttons = [\"CCW\", \"CW\"]\n", "rig").controls["axes"][0]
+    assert (table["steps"], table["step"], table["buttons"], table["label"]) == (None, None, ["CCW", "CW"], "Table")
+    assert parse("[controls]\n[[controls.axes]]\naxis = \"a\"\nstep = 90\n", "rig").controls["axes"][0]["step"] == 90
+    # The center is the file's when given, and none for an empty table.
+    assert parse("[controls]\ncenter = { a = 90 }\n", "rig").controls["center"] == {"a": 90.0}
+    assert parse("[controls]\ncenter = {}\n", "rig").controls["center"] is None
+    # Axes without the rail: no default center.
+    assert parse("[controls]\n[[controls.axes]]\naxis = \"a\"\n", "rig").controls["center"] is None
+
+
+@pytest.mark.parametrize(
+    "text, said",
+    [
+        ("[controls]\n[[controls.axes]]\nlabel = \"X\"\n", "[controls.axes] axis is missing"),
+        ("[controls]\n[[controls.axes]]\naxis = \"x\"\n", "[controls.axes] axis must be one of r, a, z, h"),
+        ("[controls]\n[[controls.axes]]\naxis = \"h\"\n", "[controls.axes] axis h is the focus axis, which [focus] fitted = false leaves out"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\n[[controls.axes]]\naxis = \"r\"\n", "[controls.axes] axis r is listed twice"),
+        ("[controls]\n[[controls.axes]]\naxis = \"a\"\nstep = 5\n", "[controls.axes] step must be one of the steps: 1, 10, 90"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nsteps = [0, 1]\n", "[controls.axes] steps must be a list of 1 to 8 different numbers above 0"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nsteps = [1, 1]\n", "[controls.axes] steps must be a list of 1 to 8 different numbers"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nbuttons = [\"a\", \"b\", \"c\"]\n", "[controls.axes] buttons must be a list of 2 words"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nplace = \"left\"\n", "[controls.axes] place must be one of buttons, frame"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"a\"]\n", "[controls.axes] keys must be a list of 2 words or an empty list"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"a\", \"a\"]\n", "[controls.axes] keys must name two different keys"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"Escape\", \"a\"]\n", "[controls.axes] keys Escape is the cancel key"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"ArrowUp\", \"a\"]\n", "[controls.axes] keys ArrowUp is the pad's while pad = true"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nletter = \"\"\n", "[controls.axes] letter must be 1 to 3 characters"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nlabel = \" \"\n", "[controls.axes] label must not be empty"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nnote = 5\n", "[controls.axes] note must be a string"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\ngoto = 1\n", "[controls.axes] goto must be true or false"),
+        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nspeed = 5\n", "[controls.axes] speed is not a key here"),
+        ("[controls]\naxes = 5\n", "[controls] axes must be an array of tables"),
+        ("[controls]\ncenter = 5\n", "[controls] center must be a table of joints"),
+        ("[controls]\ncenter = { h = 0 }\n", "[controls] center names h, which the axes leave out"),
+        ("[controls]\ncenter = { x = 0 }\n", "[controls] center names x, which is not one of r, a, z, h"),
+        ("[controls]\ncenter = { r = \"here\" }\n", "[controls] center r must be a number"),
+        ("[controls]\npad_step = 5\n", "[controls] pad_step must be one of the steps: 0.1, 1, 10"),
+        ("[controls]\npad_steps = []\n", "[controls] pad_steps must be a list of 1 to 8"),
+        ("[controls]\npad = 1\n", "[controls] pad must be true or false"),
+        ("[controls]\nknob = 1\n", "[controls] knob is not a key here"),
+        ("controls = 5\n", "controls must be a table"),
+    ],
+)
+def test_control_mistakes_are_named(text, said):
+    with pytest.raises(MachineError) as caught:
+        parse(text, "rig", "rig")
+    assert said in str(caught.value), str(caught.value)

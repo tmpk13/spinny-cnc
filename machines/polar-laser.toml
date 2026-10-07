@@ -71,3 +71,55 @@ stealth = true
 
 [host]
 tolerance = 0.005           # chord tolerance of the streamed path, mm
+
+# The page's controls: what the jog panel and the readout draw for this
+# machine. Left out, they are drawn from the kinematics, the tool and the
+# focus axis, which is what is spelled out here. Every joint shown is one
+# [[controls.axes]] entry, in the order drawn; a key an entry leaves out is
+# the default for that joint.
+[controls]
+pad = true                  # a board X/Y pad, on the arrow keys when no field has the focus
+pad_steps = [0.1, 1, 10]    # mm; an axis without steps of its own uses the pad's step
+pad_step = 1                # the step picked at the start
+feed = true                 # a feed field, mm/min, for the pad and the axes that take it; blank is the firmware's jog rate
+center = { r = 0 }          # where Center sends the joints: the rail over the rotation axis; left out, no button
+
+[[controls.axes]]
+axis = "r"                  # the firmware's joint: r, a, z or h
+letter = "R"                # in the readout, and in "Set R=0 here"
+label = "Radius"
+# steps left out: the pad's step
+buttons = ["Radius -", "Radius +"]
+place = "buttons"           # beside the pad; "frame" is a block of its own with its note and steps
+feed = true                 # the feed field applies; false runs at the firmware's jog rate for the axis
+goto = true                 # a field in the joint goto row
+zero = true                 # a "Set R=0 here" button, which asks with the hint
+zero_hint = "The beam must be over the rotation axis."
+keys = []                   # two key names for minus and plus, such as ["PageDown", "PageUp"]
+
+[[controls.axes]]
+axis = "a"
+letter = "A"
+label = "Table"
+steps = [1, 10, 90]         # degrees
+step = 10
+buttons = ["Turn -", "Turn +"]
+place = "buttons"
+feed = true
+goto = true
+zero = true
+zero_hint = ""
+
+[[controls.axes]]
+axis = "z"
+letter = "Z"
+label = "Cross slide"
+steps = [0.05, 0.1, 0.5]    # the small corrections a centering burn is read into
+step = 0.1
+buttons = ["Z-", "Z+"]
+place = "frame"
+feed = false                # a setup axis: the firmware's own jog rate
+goto = false
+zero = true
+zero_hint = "The rail is over the axis when the centering lines meet at a point."
+note = "Setup only: carries the rail across the rotation axis"

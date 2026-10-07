@@ -2,8 +2,9 @@
 
 A machine is a TOML file in `machines/`: its axes with their scales,
 rates and limits, the kinematics (the rail as the radius over a turning
-table, or as X beside the cross slide as Y) and the tool on the output (a
-laser, or a spindle with the focus axis as its depth). Loading a file
+table, or as X beside the cross slide as Y), the tool on the output (a
+laser, or a spindle with the focus axis as its depth) and the controls
+the page draws for it. Loading a file
 writes every firmware setting, so swapping files swaps machines. The same
 files start the virtual firmware, and give the gcode tools their defaults.
 
@@ -101,7 +102,53 @@ stealth = true                  # stealthChop              -> tmc_stealth
 tolerance = 0.005               # chord tolerance, mm, (0, 10]
 clearance = 2.0                 # milling: travel height over the surface, mm, (0, 100]
 spinup = 2.0                    # milling: dwell after the spindle starts, s, [0, 600]
+
+[controls]                      # the page's jog panel and readout; left out: the defaults below
+pad = true                      # a board X/Y pad, on the arrow keys when no field has the focus
+pad_steps = [0.1, 1, 10]        # mm, 1 to 8 steps; an axis without steps of its own uses the pad's
+pad_step = 1                    # picked at the start; left out: the middle one
+feed = true                     # a feed field (mm/min, blank = the firmware's jog rate) for the pad and the axes that take it
+center = { r = 0 }              # where Center sends the joints; left out: no button
+
+[[controls.axes]]               # one per joint shown, in this order
+axis = "r"                      # the firmware's joint: r, a, z or h (h needs [focus] fitted)
+letter = "R"                    # 1 to 3 characters: the readout's, and in "Set R=0 here"
+label = "Radius"                # the step row's or the frame's title
+steps = [0.1, 1, 10]            # deg for a, mm otherwise; left out or []: the pad's step
+step = 1                        # left out: the middle one
+buttons = ["Radius -", "Radius +"]  # minus and plus
+place = "buttons"               # buttons: beside the pad; frame: its own block with the note and steps
+feed = true                     # the feed field applies; false: the firmware's jog rate for the axis
+goto = true                     # a field in the joint goto row
+zero = true                     # a "Set R=0 here" button, which asks with the hint
+zero_hint = "..."
+keys = []                       # two key names for minus and plus, such as ["PageDown", "PageUp"]
+note = ""                       # under the title of a framed control
 ```
+
+## The controls
+
+The jog panel and the position readout draw what `[controls]` says, so
+a machine with other joints, names, steps or keys needs no change to the
+page. The backend sends the controls with the settings (`GET
+/api/settings`): the loaded file's, or, for settings that are no file's,
+the defaults for what the settings say the machine is. The defaults are
+the controls the page always drew: a pad on the arrow keys, *Radius* and
+*Turn* buttons, the cross slide in a frame of its own (as the Y axis,
+stepping with the pad at the feed given, when cartesian; a setup axis at
+the firmware's rate otherwise, with no goto field), the focus axis in a
+frame when fitted (the depth axis with a spindle), a Center button to
+`R 0` (and `Z 0` when cartesian), and a zero button per joint. The shipped
+files spell those defaults out, which is where to start a file of your
+own.
+
+An entry fills in what it leaves out from the default for its joint; an
+entry given a `letter` or a `label` but no `buttons` is labeled
+`<letter>-` and `<letter>+` rather than with the default's words. The
+step picked with a control is kept while the page is up; the keys of an
+axis jog it by that step, and `Escape` cancels whatever the controls are.
+The virtual firmware checks only that `[controls]` is a table: the
+controls are the page's, not the machine's.
 
 ## How a load works
 
