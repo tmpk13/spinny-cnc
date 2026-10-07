@@ -7,7 +7,18 @@ description = "X/Y machine with a spindle on the output and the focus axis as de
 kinematics = "cartesian"
 tool = "spindle"
 
+# Wired as a three axis mill: the rail on the X socket, the slide on Y
+# and the depth on Z. Nothing drives the table here, so it sits on the E
+# socket with its driver left alone.
+[rail]
+socket = "X"
+
+[table]
+socket = "E"
+current_ma = 0
+
 [slide]
+socket = "Y"
 steps_per_mm = 10240
 max_rate = 560
 accel = 50
@@ -16,6 +27,7 @@ jog_rate = 120
 limit = 30
 
 [focus]
+socket = "Z"
 fitted = true
 steps_per_mm = 6400
 max_rate = 600

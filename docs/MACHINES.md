@@ -47,6 +47,7 @@ limit = 0                       # mm either side, 0 = none -> r_max
 invert = false                  # direction                -> dir_invert bit 0
 current_ma = 800                # -> tmc_r_ma
 microsteps = 256                # 1, 2, 4 ... 256          -> tmc_r_micro
+socket = "X"                    # driver socket: X, Y, Z or E, each once -> sockets
 
 [table]                         # A, degrees
 steps_per_deg = 14222.222       # -> a_steps
@@ -69,7 +70,7 @@ invert = false                  # -> dir_invert bit 2
 current_ma = 800                # -> tmc_z_ma
 microsteps = 256                # -> tmc_z_micro
 
-[focus]                         # H, mm: optional, on the E socket
+[focus]                         # H, mm: optional, on the E socket unless socket says otherwise
 fitted = false                  # -> h_axis
 steps_per_mm = 6400             # -> h_steps
 max_rate = 600                  # -> h_rate
@@ -125,6 +126,17 @@ zero_hint = "..."
 keys = []                       # two key names for minus and plus, such as ["PageDown", "PageUp"]
 note = ""                       # under the title of a framed control
 ```
+
+## Driver sockets
+
+Each axis section takes `socket`, the SKR Pico driver socket its motor is
+plugged into. Left out, an axis is on its labeled socket: rail X, table Y,
+slide Z, focus E. Every socket is used once, so moving one axis means
+moving whichever axis held that socket too. The four go to the firmware as
+one setting, `sockets`, a digit per axis (rail, table, slide, focus;
+1 X, 2 Y, 3 Z, 4 E). `cartesian-mill` is wired as a three axis mill:
+rail X, slide Y, focus Z as depth, and the table on E with `current_ma = 0`
+so its empty driver is left alone.
 
 ## The controls
 

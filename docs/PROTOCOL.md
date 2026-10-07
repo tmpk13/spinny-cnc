@@ -343,8 +343,11 @@ microsteps a power of two up to 256.
 | `z_max` | mm | 0 | soft limit on the cross slide, either side of zero; 0 = off |
 | `cartesian` | 0/1 | 0 | the cross slide is a joint: Y of an X/Y machine with the radius as X |
 | `spindle` | 0/1 | 0 | the laser output drives a spindle |
+| `sockets` | digits | 1234 | driver socket of the radius, table, cross slide and focus axis, in that order: 1 X, 2 Y, 3 Z, 4 E, each socket once; 1423 is a three axis mill (radius X, slide Y, focus Z, table E) |
 
-Changing a `tmc_*` setting or `h_axis` re-sends the driver configuration.
+Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
+configuration; a `tmc_*` value and `dir_invert` follow the axis to its
+socket.
 Changing `spindle` stops whatever runs on the output.
 
 Settings stored by a firmware from before `probe_ms` (the stored layout
@@ -352,7 +355,8 @@ changed, and the first focus axis firmware is one of them) are thrown away
 at boot: set them again, `laser_invert` first, and `$save`. Until then the
 output runs at the defaults' polarity, which lights an active-low module.
 Settings stored before `z_jerk`, `z_max`, `cartesian` and `spindle` are
-read, with those four at their defaults.
+read, with those four at their defaults, and settings stored before
+`sockets` with it at 1234.
 
 ## Status line
 

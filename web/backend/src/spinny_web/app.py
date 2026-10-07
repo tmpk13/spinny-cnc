@@ -85,7 +85,7 @@ INT_SETTING_MAX = 2**32 - 1
 OUTPUT_OFF_WAIT = 1.0
 # Settings that change what a position means: the height map's heights
 # and board points were measured under the ones in force then.
-FRAME_SETTINGS = frozenset({"r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis"})
+FRAME_SETTINGS = frozenset({"r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis", "sockets"})
 
 SETTINGS_SCHEMA = [
     {"name": "r_steps", "unit": "steps/mm", "help": "radius motor"},
@@ -120,7 +120,7 @@ SETTINGS_SCHEMA = [
     {"name": "tmc_z_ma", "unit": "mA", "help": "cross slide run current"},
     {"name": "tmc_z_micro", "unit": "", "help": "microsteps"},
     {"name": "tmc_stealth", "unit": "0/1", "help": "stealthChop, else spreadCycle"},
-    {"name": "h_axis", "unit": "0/1", "help": "1 = a focus axis is fitted, on the E socket"},
+    {"name": "h_axis", "unit": "0/1", "help": "1 = a focus axis is fitted, on its socket in sockets"},
     {"name": "h_steps", "unit": "steps/mm", "help": "focus axis motor"},
     {"name": "h_rate", "unit": "mm/min", "help": "max focus axis rate"},
     {"name": "h_accel", "unit": "mm/s^2", "help": "focus axis acceleration"},
@@ -134,6 +134,7 @@ SETTINGS_SCHEMA = [
     {"name": "z_max", "unit": "mm", "help": "cross slide soft limit either side of zero, 0 = off"},
     {"name": "cartesian", "unit": "0/1", "help": "1 = X/Y machine: the rail is X, the cross slide Y, the table holds"},
     {"name": "spindle", "unit": "0/1", "help": "1 = the laser output drives a spindle, the focus axis is its depth"},
+    {"name": "sockets", "unit": "RAZH", "help": "driver socket per axis, rail, table, slide, focus: 1 X, 2 Y, 3 Z, 4 E, each once; 1234 as labeled"},
 ]
 
 POLAR, CARTESIAN = "polar", "cartesian"

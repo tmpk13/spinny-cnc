@@ -15,7 +15,7 @@ SHIPPED = REPO / "machines"
 
 
 def test_the_defaults_cover_every_setting_once():
-    assert len(FIRMWARE_DEFAULTS) == 46
+    assert len(FIRMWARE_DEFAULTS) == 47
     assert machines.FLAGS <= set(FIRMWARE_DEFAULTS) and machines.INTEGERS <= set(FIRMWARE_DEFAULTS)
     for name in machines.FLAGS | machines.INTEGERS:
         assert isinstance(FIRMWARE_DEFAULTS[name], int)
@@ -47,6 +47,15 @@ def test_the_shipped_files_load_and_say_what_they_are():
         "kinematics": "cartesian", "tool": "spindle", "focus": True,
     }
     assert mill.document()["settings"]["z_max"] == 30.0
+    # Wired as a three axis mill: rail on X, table on E, slide on Y, depth on Z.
+    assert mill.settings["sockets"] == 1423 and mill.settings["tmc_a_ma"] == 0
+    assert {m.settings["sockets"] for m in found if m.id != "cartesian-mill"} == {1234}
+
+
+def test_sockets_are_named_per_axis():
+    swapped = parse('[rail]\nsocket = "Y"\n[table]\nsocket = "X"\n', "rig")
+    assert swapped.settings["sockets"] == 2134
+    assert parse("", "rig").settings["sockets"] == 1234
 
 
 FULL = """
@@ -168,6 +177,9 @@ def test_every_key_lands_on_its_setting():
         ("[host]\nclearance = 200\n", "[host] clearance must be above 0 and at most 100"),
         ("[host]\nfeed = 1\n", "[host] feed is not a key here"),
         ("rail = 5\n", "rail must be a table"),
+        ('[slide]\nsocket = "Y"\n', "[slide] socket Y is the [table] socket too"),
+        ('[focus]\nsocket = "W"\n', "[focus] socket must be one of X, Y, Z, E"),
+        ("[focus]\nsocket = 4\n", "[focus] socket must be one of X, Y, Z, E"),
         ("[rail\n", "rig:"),
     ],
 )

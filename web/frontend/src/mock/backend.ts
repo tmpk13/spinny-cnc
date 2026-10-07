@@ -134,6 +134,7 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     z_max: 0,
     cartesian: 0,
     spindle: 0,
+    sockets: 1234,
 };
 
 /**
@@ -185,7 +186,7 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tmc_z_ma", unit: "mA", help: "cross slide run current" },
     { name: "tmc_z_micro", unit: "", help: "microsteps" },
     { name: "tmc_stealth", unit: "0/1", help: "stealthChop, else spreadCycle" },
-    { name: "h_axis", unit: "0/1", help: "1 = a focus axis is fitted, on the E socket" },
+    { name: "h_axis", unit: "0/1", help: "1 = a focus axis is fitted, on its socket in sockets" },
     { name: "h_steps", unit: "steps/mm", help: "focus axis motor" },
     { name: "h_rate", unit: "mm/min", help: "max focus axis rate" },
     { name: "h_accel", unit: "mm/s^2", help: "focus axis acceleration" },
@@ -199,6 +200,7 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "z_max", unit: "mm", help: "cross slide soft limit either side of zero, 0 = off" },
     { name: "cartesian", unit: "0/1", help: "1 = X/Y machine: the rail is X, the cross slide Y, the table holds" },
     { name: "spindle", unit: "0/1", help: "1 = the laser output drives a spindle, the focus axis is its depth" },
+    { name: "sockets", unit: "RAZH", help: "driver socket per axis, rail, table, slide, focus: 1 X, 2 Y, 3 Z, 4 E, each once; 1234 as labeled" },
 ];
 
 /** Largest value a float setting takes, as the firmware bounds them. */
@@ -274,7 +276,7 @@ export const MOCK_MACHINES: { summary: MachineSummary; values: Record<string, nu
     },
     {
         summary: { id: "cartesian-mill", name: "Cartesian mill", description: "X/Y machine with a spindle on the output and the focus axis as depth", kinematics: "cartesian", tool: "spindle", focus: true },
-        values: { cartesian: 1, spindle: 1, h_axis: 1, z_max: 30 },
+        values: { cartesian: 1, spindle: 1, h_axis: 1, z_max: 30, sockets: 1423, tmc_a_ma: 0 },
         host: { tolerance: 0.005, clearance: 2, spinup: 2 },
     },
 ];

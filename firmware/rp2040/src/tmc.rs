@@ -19,7 +19,7 @@ use spinny_core::settings::Settings;
 use spinny_core::{A, H, R, Z};
 use spinny_fw_logic::tmc::{
     config_datagrams, holds_config, lost_text, micro_of, parse_reply, read_request, refused_text, report_text,
-    Datagram, DriverConfig, Link, Links, Reply, ADDR, DRIVERS,
+    Datagram, DriverConfig, Link, Links, Reply, ADDR, AXIS_LETTER, DRIVERS,
 };
 use static_cell::StaticCell;
 use tmc2209::reg::Address;
@@ -64,18 +64,30 @@ pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PI
     spawner.spawn(tmc_task(uart).expect("tmc task"));
 }
 
-/// Queues a reconfiguration from the current settings. The axis order is
-/// the one `ADDR` and `AXIS_LETTER` use: radius, table, cross slide, focus.
-/// The focus driver is left alone without `h_axis`: a board with nothing
-/// in the E socket would otherwise report it refused, and retry, forever.
+/// Queues a reconfiguration from the current settings, each joint's
+/// current and microsteps on the socket `sockets` puts it on. The focus
+/// driver is left alone without `h_axis`: a board with nothing in its
+/// socket would otherwise report it refused, and retry, forever.
 pub fn configure_from(settings: &Settings) {
     let focus_ma = if settings.h_axis { settings.tmc_ma[H] } else { 0 };
-    let cfg = DriverConfig {
-        ma: [settings.tmc_ma[R], settings.tmc_ma[A], settings.tmc_ma[Z], focus_ma],
+    let mut cfg = DriverConfig {
+        ma: [0; DRIVERS],
         hold_pct: settings.tmc_hold_pct,
-        micro: [settings.tmc_micro[R], settings.tmc_micro[A], settings.tmc_micro[Z], settings.tmc_micro[H]],
+        micro: [256; DRIVERS],
         stealth: settings.tmc_stealth,
+        letters: AXIS_LETTER,
     };
+    for (joint, letter, ma) in [
+        (R, 'R', settings.tmc_ma[R]),
+        (A, 'A', settings.tmc_ma[A]),
+        (Z, 'Z', settings.tmc_ma[Z]),
+        (H, 'H', focus_ma),
+    ] {
+        let socket = settings.socket_of(joint);
+        cfg.ma[socket] = ma;
+        cfg.micro[socket] = settings.tmc_micro[joint];
+        cfg.letters[socket] = letter;
+    }
     CONFIG.signal(cfg);
 }
 
@@ -105,19 +117,23 @@ pub fn take_power_lost() -> bool {
 async fn tmc_task(mut uart: BufferedUart) {
     let mut cfg: Option<DriverConfig> = None;
     let mut links = Links::new();
+    // The joint on each socket, for the messages; the board's labels
+    // until the first configuration says otherwise.
+    let mut letters = AXIS_LETTER;
     // A refusal or a loss is on the console, so the landing is said too.
     let mut told = false;
     loop {
         match select3(CONFIG.wait(), REPORT.wait(), Timer::after(POLL_EVERY)).await {
             Either3::First(new) => {
                 links.configure(&new);
+                letters = new.letters;
                 cfg = Some(new);
                 told = false;
             }
-            Either3::Second(()) => report(&mut uart, &links).await,
+            Either3::Second(()) => report(&mut uart, &links, &letters).await,
             Either3::Third(()) => {}
         }
-        if poll(&mut uart, &mut links).await {
+        if poll(&mut uart, &mut links, &letters).await {
             POWER_LOST.signal(());
             // The loss was said; refusals while the supply is off would
             // only repeat it.
@@ -178,7 +194,7 @@ async fn configure(uart: &mut BufferedUart, cfg: &DriverConfig, links: &mut Link
         if !took {
             refused = true;
             if !*told {
-                report::message(refused_text(axis).as_str(), &mut UsbSink);
+                report::message(refused_text(axis, cfg.letters[axis]).as_str(), &mut UsbSink);
             }
         }
     }
@@ -191,7 +207,7 @@ async fn configure(uart: &mut BufferedUart, cfg: &DriverConfig, links: &mut Link
 /// one before the newest. True when one of them has just lost it: no reply
 /// after a few tries, which is a driver without its supply, or the reset
 /// flag its supply coming back sets.
-async fn poll(uart: &mut BufferedUart, links: &mut Links) -> bool {
+async fn poll(uart: &mut BufferedUart, links: &mut Links, letters: &[char; DRIVERS]) -> bool {
     let mut lost = false;
     for (axis, &addr) in ADDR.iter().enumerate() {
         if !links.watched(axis) {
@@ -206,7 +222,7 @@ async fn poll(uart: &mut BufferedUart, links: &mut Links) -> bool {
         }
         if links.polled(axis, gstat) {
             lost = true;
-            report::message(lost_text(axis).as_str(), &mut UsbSink);
+            report::message(lost_text(axis, letters[axis]).as_str(), &mut UsbSink);
         }
     }
     lost
@@ -258,7 +274,7 @@ async fn read_register(uart: &mut BufferedUart, addr: u8, register: Address) -> 
     parse_reply(&buf[..n], register)
 }
 
-async fn report(uart: &mut BufferedUart, links: &Links) {
+async fn report(uart: &mut BufferedUart, links: &Links, letters: &[char; DRIVERS]) {
     for (axis, &addr) in ADDR.iter().enumerate() {
         let reply = match read_register(uart, addr, Address::IFCNT).await {
             // A silent driver would only time out on the rest as well.
@@ -278,7 +294,7 @@ async fn report(uart: &mut BufferedUart, links: &Links) {
                 }
             }
         };
-        let text = report_text(axis, reply, links.get(axis) != Link::Unused);
+        let text = report_text(axis, letters[axis], reply, links.get(axis) != Link::Unused);
         report::message(text.as_str(), &mut UsbSink);
     }
 }

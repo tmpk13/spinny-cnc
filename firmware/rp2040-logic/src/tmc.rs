@@ -21,11 +21,13 @@ use tmc2209::{ReadRequest, Reader, WriteRequest};
 
 /// Sense resistor on the SKR Pico, milliohms.
 pub const RSENSE_MOHM: u64 = 110;
-/// Driver sockets in use.
+/// Driver sockets in use. Everything here is indexed by socket, X, Y, Z
+/// and E, and the `sockets` setting says which joint each one drives.
 pub const DRIVERS: usize = 4;
-/// UART address per axis: radius on the X socket, table on the Y socket,
-/// cross slide on the Z socket, focus axis on the E socket.
+/// UART address per socket.
 pub const ADDR: [u8; DRIVERS] = [0, 2, 1, 3];
+/// The joint on each socket when the board is wired as labeled: radius on
+/// X, table on Y, cross slide on Z, focus axis on E.
 pub const AXIS_LETTER: [char; DRIVERS] = ['R', 'A', 'Z', 'H'];
 /// IHOLD_IRUN.IHOLDDELAY: power-down ramp in units of 2^18 clocks.
 pub const IHOLD_DELAY: u8 = 10;
@@ -51,11 +53,13 @@ const VFS_LOW_SENS_MV: u64 = 325;
 /// What the drivers are configured with, copied from the settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DriverConfig {
-    /// Run current per axis, mA; 0 leaves that driver untouched.
+    /// Run current per socket, mA; 0 leaves that driver untouched.
     pub ma: [u32; DRIVERS],
     pub hold_pct: u32,
     pub micro: [u32; DRIVERS],
     pub stealth: bool,
+    /// Letter of the joint on each socket, for the messages.
+    pub letters: [char; DRIVERS],
 }
 
 pub type Datagram = [u8; WriteRequest::LEN_BYTES];
@@ -272,22 +276,20 @@ pub fn parse_reply(bytes: &[u8], register: Address) -> Option<u32> {
     None
 }
 
-/// Body of the `[MSG:...]` line for an axis whose driver did not take its
-/// configuration.
-pub fn refused_text(axis: usize) -> String<64> {
+/// Body of the `[MSG:...]` line for a socket whose driver did not take
+/// its configuration, named by the joint on it.
+pub fn refused_text(socket: usize, letter: char) -> String<64> {
     let mut text = String::new();
-    let letter = AXIS_LETTER[axis];
-    let addr = ADDR[axis];
+    let addr = ADDR[socket];
     let _ = write!(text, "tmc {letter} addr{addr} refused config, retrying");
     text
 }
 
 /// Body of the `[MSG:...]` line for an axis whose driver lost the
 /// configuration it held: it stopped answering, or answered reset.
-pub fn lost_text(axis: usize) -> String<64> {
+pub fn lost_text(socket: usize, letter: char) -> String<64> {
     let mut text = String::new();
-    let letter = AXIS_LETTER[axis];
-    let addr = ADDR[axis];
+    let addr = ADDR[socket];
     let _ = write!(text, "tmc {letter} addr{addr} lost motor power, position may be off");
     text
 }
@@ -326,10 +328,9 @@ pub fn micro_of(gconf: u32, chopconf: u32, ioin: u32) -> u16 {
 /// the configuration leaves alone (`in_use` false, the focus driver
 /// without `h_axis`) is still asked, and marked unused, so an empty socket
 /// or a strapped one is not taken for a fault.
-pub fn report_text(axis: usize, reply: Option<Reply>, in_use: bool) -> String<64> {
+pub fn report_text(socket: usize, letter: char, reply: Option<Reply>, in_use: bool) -> String<64> {
     let mut text = String::new();
-    let letter = AXIS_LETTER[axis];
-    let addr = ADDR[axis];
+    let addr = ADDR[socket];
     let unused = if in_use { "" } else { "unused, " };
     let _ = match reply {
         Some(reply) => write!(
@@ -391,6 +392,7 @@ mod tests {
             hold_pct: 50,
             micro: [16, 32, 128, 8],
             stealth: true,
+            letters: AXIS_LETTER,
         };
         let [clear, gconf, currents, chop] = config_datagrams(0, &cfg).unwrap();
         for d in [&clear, &gconf, &currents, &chop] {
@@ -446,7 +448,7 @@ mod tests {
         // protection runs. None is ours to set, and all of them ride on
         // the register defaults, so a change of those must fail here
         // rather than on the machine.
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
         let [_, gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
         let g = GCONF::from(data(&gconf));
         assert!(!g.internal_rsense(), "the driver would ignore the sense resistors");
@@ -461,9 +463,9 @@ mod tests {
 
     #[test]
     fn a_refused_axis_says_which_one() {
-        assert_eq!(refused_text(0).as_str(), "tmc R addr0 refused config, retrying");
-        assert_eq!(refused_text(1).as_str(), "tmc A addr2 refused config, retrying");
-        assert_eq!(refused_text(2).as_str(), "tmc Z addr1 refused config, retrying");
+        assert_eq!(refused_text(0, AXIS_LETTER[0]).as_str(), "tmc R addr0 refused config, retrying");
+        assert_eq!(refused_text(1, AXIS_LETTER[1]).as_str(), "tmc A addr2 refused config, retrying");
+        assert_eq!(refused_text(2, AXIS_LETTER[2]).as_str(), "tmc Z addr1 refused config, retrying");
     }
 
     #[test]
@@ -473,6 +475,7 @@ mod tests {
             hold_pct: 30,
             micro: [16, 12, 16, 16],
             stealth: false,
+            letters: AXIS_LETTER,
         };
         assert!(config_datagrams(0, &cfg).is_none());
         assert!(config_datagrams(1, &cfg).is_none());
@@ -486,7 +489,7 @@ mod tests {
         // Every driver comes up with the reset flag set, and nothing but a
         // write of ones clears it: left set, the first poll after a boot
         // would take every driver for one that had just lost its supply.
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
         for (axis, &addr) in ADDR.iter().enumerate() {
             let datagrams = config_datagrams(axis, &cfg).unwrap();
             let [clear, ..] = datagrams;
@@ -502,7 +505,7 @@ mod tests {
 
     #[test]
     fn a_configuration_is_kept_only_while_it_has_not_landed() {
-        let cfg = DriverConfig { ma: [800, 800, 800, 0], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let cfg = DriverConfig { ma: [800, 800, 800, 0], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
         let mut links = Links::new();
         assert!(links.settled());
         links.configure(&cfg);
@@ -531,7 +534,7 @@ mod tests {
 
     #[test]
     fn a_supply_cycle_just_before_a_new_configuration_is_still_reported() {
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
         let mut links = Links::new();
         links.configure(&cfg);
         for axis in 0..DRIVERS {
@@ -564,7 +567,7 @@ mod tests {
 
     #[test]
     fn a_driver_that_loses_its_supply_is_reported_once_and_written_again() {
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
         let mut links = Links::new();
         links.configure(&cfg);
         for axis in 0..DRIVERS {
@@ -609,8 +612,8 @@ mod tests {
 
     #[test]
     fn a_lost_axis_says_which_one() {
-        assert_eq!(lost_text(0).as_str(), "tmc R addr0 lost motor power, position may be off");
-        assert_eq!(lost_text(3).as_str(), "tmc H addr3 lost motor power, position may be off");
+        assert_eq!(lost_text(0, AXIS_LETTER[0]).as_str(), "tmc R addr0 lost motor power, position may be off");
+        assert_eq!(lost_text(3, AXIS_LETTER[3]).as_str(), "tmc H addr3 lost motor power, position may be off");
     }
 
     #[test]
@@ -652,20 +655,20 @@ mod tests {
     #[test]
     fn report_lines() {
         let reply = Reply { ifcnt: 4, micro: 256, status: 0x8000_0000 };
-        assert_eq!(report_text(0, Some(reply), true).as_str(), "tmc R addr0 ifcnt=4 micro=256 status=0x80000000");
-        assert_eq!(report_text(1, None, true).as_str(), "tmc A addr2 no reply, is motor power on");
-        assert_eq!(report_text(2, Some(reply), true).as_str(), "tmc Z addr1 ifcnt=4 micro=256 status=0x80000000");
+        assert_eq!(report_text(0, AXIS_LETTER[0], Some(reply), true).as_str(), "tmc R addr0 ifcnt=4 micro=256 status=0x80000000");
+        assert_eq!(report_text(1, AXIS_LETTER[1], None, true).as_str(), "tmc A addr2 no reply, is motor power on");
+        assert_eq!(report_text(2, AXIS_LETTER[2], Some(reply), true).as_str(), "tmc Z addr1 ifcnt=4 micro=256 status=0x80000000");
         let strapped = Reply { ifcnt: 0, micro: 8, status: 0 };
-        assert_eq!(report_text(0, Some(strapped), true).as_str(), "tmc R addr0 ifcnt=0 micro=8 status=0x00000000");
+        assert_eq!(report_text(0, AXIS_LETTER[0], Some(strapped), true).as_str(), "tmc R addr0 ifcnt=0 micro=8 status=0x00000000");
     }
 
     #[test]
     fn a_driver_left_alone_is_reported_as_unused_not_as_a_fault() {
         // Without a focus axis the E socket is never configured: empty, it
         // answers nothing, and fitted, it steps at its strap.
-        assert_eq!(report_text(3, None, false).as_str(), "tmc H addr3 unused, no reply");
+        assert_eq!(report_text(3, AXIS_LETTER[3], None, false).as_str(), "tmc H addr3 unused, no reply");
         let strapped = Reply { ifcnt: 255, micro: 256, status: 0 };
-        let text = report_text(3, Some(strapped), false);
+        let text = report_text(3, AXIS_LETTER[3], Some(strapped), false);
         assert_eq!(text.as_str(), "tmc H addr3 unused, ifcnt=255 micro=256 status=0x00000000");
         assert!(text.len() < text.capacity(), "the longest line fits");
     }
@@ -675,7 +678,7 @@ mod tests {
         // What each axis reports when its configuration landed: GCONF
         // selects the register, and MRES says the rest.
         let asked = |micro: u32| {
-            let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [micro; DRIVERS], stealth: true };
+            let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [micro; DRIVERS], stealth: true, letters: AXIS_LETTER };
             let [_, gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
             micro_of(data(&gconf), data(&chop), 0)
         };

@@ -19,7 +19,8 @@ per unit at low speed before the first job.
 
 ### Probing and the height map
 
-An optional focus axis (`H`, the E driver socket, `$h_axis=1`) carries a
+An optional focus axis (`H`, the E driver socket unless `$sockets` moves
+it, `$h_axis=1`) carries a
 touch probe on the Z-STOP input. The Height map panel probes a grid over
 the board, and a run can then follow it: the focus axis tracks the board
 under the beam, or, without a focus axis, the power is raised where the

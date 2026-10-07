@@ -6,7 +6,7 @@
 //! same types without sharing any state but a few atomics.
 
 use core::mem::forget;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use embassy_rp::clocks::clk_sys_freq;
 use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
@@ -18,29 +18,25 @@ use embassy_rp::peripherals::{
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
 use embassy_rp::Peri;
 use spinny_core::hal::{LaserPort, SlidePort, StepPort};
-use spinny_core::settings::Settings;
-use spinny_core::Z;
+use spinny_core::settings::{Settings, SOCKETS};
+use spinny_core::{AXES, Z};
 use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_params, pwm_slice, resting_duty};
 use spinny_fw_logic::pins::{level_masks, mask_of};
 use spinny_fw_logic::step::pulse_loops;
 
-/// STEP pins: radius on the X driver, table on the Y driver, focus axis
-/// on the E driver and the cross slide on the Z driver, in the core's
-/// joint order. The step interrupt drives the cross slide's pins only on
-/// a cartesian machine, where it is a joint; elsewhere its direction pin
-/// is written with every block and never stepped, and `SlidePins` moves
-/// it from the main loop while the joints are at rest.
-pub const STEP_PINS: [u8; 4] = [11, 6, 14, 19];
-pub const DIR_PINS: [u8; 4] = [10, 5, 13, 28];
-/// The cross slide on the Z driver socket, as the setup axis. It is a
-/// single axis, so its pins are one-element tables for the same SIO mask
-/// helpers.
-pub const Z_STEP_PINS: [u8; 1] = [19];
-pub const Z_DIR_PINS: [u8; 1] = [28];
-/// Driver enable pins, active low on the TMC2209 sockets: radius, table,
-/// cross slide, focus axis. They are driven together, so a move energizes
-/// all four; an empty socket takes no harm from its line.
-pub const EN_PINS: [u8; 4] = [12, 7, 2, 15];
+/// STEP and DIR pins of the X, Y, Z and E driver sockets. Which joint
+/// drives which socket is the `sockets` setting, copied into the joint
+/// tables below by `set_sockets`. The step interrupt drives the cross
+/// slide's pins only on a cartesian machine, where it is a joint;
+/// elsewhere its direction pin is written with every block and never
+/// stepped, and `SlidePins` moves it from the main loop while the joints
+/// are at rest.
+pub const SOCKET_STEP_PINS: [u8; SOCKETS] = [11, 6, 19, 14];
+pub const SOCKET_DIR_PINS: [u8; SOCKETS] = [10, 5, 28, 13];
+/// Driver enable pins, active low, of the X, Y, Z and E sockets. They are
+/// driven together, so a move energizes all four; an empty socket takes
+/// no harm from its line.
+pub const EN_PINS: [u8; SOCKETS] = [12, 7, 2, 15];
 /// Every axis selected in an enable write.
 const EN_ALL: u8 = 0b1111;
 /// Probe input, GP25 on the Z-STOP header, with the internal pull-up: a
@@ -65,22 +61,37 @@ static PULSE_LOOPS: AtomicU32 = AtomicU32::new(125);
 static LASER_TOP: AtomicU32 = AtomicU32::new(0);
 /// Last duty asked for, reapplied when the frequency changes.
 static LASER_DUTY: AtomicU32 = AtomicU32::new(0);
+/// STEP and DIR pin of each joint in the core's order, from `sockets`;
+/// the board as labeled until the settings are applied.
+static JOINT_STEP_PINS: [AtomicU8; AXES] = [
+    AtomicU8::new(SOCKET_STEP_PINS[0]),
+    AtomicU8::new(SOCKET_STEP_PINS[1]),
+    AtomicU8::new(SOCKET_STEP_PINS[3]),
+    AtomicU8::new(SOCKET_STEP_PINS[2]),
+];
+static JOINT_DIR_PINS: [AtomicU8; AXES] = [
+    AtomicU8::new(SOCKET_DIR_PINS[0]),
+    AtomicU8::new(SOCKET_DIR_PINS[1]),
+    AtomicU8::new(SOCKET_DIR_PINS[3]),
+    AtomicU8::new(SOCKET_DIR_PINS[2]),
+];
 
+/// The pins by driver socket, X, Y, Z and E.
 pub struct Pins {
     pub pwm: Peri<'static, PWM_SLICE2>,
     pub laser: Peri<'static, PIN_20>,
-    pub r_step: Peri<'static, PIN_11>,
-    pub r_dir: Peri<'static, PIN_10>,
-    pub r_en: Peri<'static, PIN_12>,
-    pub a_step: Peri<'static, PIN_6>,
-    pub a_dir: Peri<'static, PIN_5>,
-    pub a_en: Peri<'static, PIN_7>,
+    pub x_step: Peri<'static, PIN_11>,
+    pub x_dir: Peri<'static, PIN_10>,
+    pub x_en: Peri<'static, PIN_12>,
+    pub y_step: Peri<'static, PIN_6>,
+    pub y_dir: Peri<'static, PIN_5>,
+    pub y_en: Peri<'static, PIN_7>,
     pub z_step: Peri<'static, PIN_19>,
     pub z_dir: Peri<'static, PIN_28>,
     pub z_en: Peri<'static, PIN_2>,
-    pub h_step: Peri<'static, PIN_14>,
-    pub h_dir: Peri<'static, PIN_13>,
-    pub h_en: Peri<'static, PIN_15>,
+    pub e_step: Peri<'static, PIN_14>,
+    pub e_dir: Peri<'static, PIN_13>,
+    pub e_en: Peri<'static, PIN_15>,
     pub probe: Peri<'static, PIN_25>,
 }
 
@@ -108,31 +119,27 @@ pub fn init(pins: Pins, laser_invert: bool) -> (StepPins, LaserPwm, SlidePins) {
     LASER_DUTY.store(rest as u32, Ordering::Relaxed);
     forget(Pwm::new_output_a(pins.pwm, pins.laser, cfg));
 
-    let step = [pins.r_step.pin(), pins.a_step.pin(), pins.h_step.pin(), pins.z_step.pin()];
-    let dir = [pins.r_dir.pin(), pins.a_dir.pin(), pins.h_dir.pin(), pins.z_dir.pin()];
-    let en = [pins.r_en.pin(), pins.a_en.pin(), pins.z_en.pin(), pins.h_en.pin()];
+    let step = [pins.x_step.pin(), pins.y_step.pin(), pins.z_step.pin(), pins.e_step.pin()];
+    let dir = [pins.x_dir.pin(), pins.y_dir.pin(), pins.z_dir.pin(), pins.e_dir.pin()];
+    let en = [pins.x_en.pin(), pins.y_en.pin(), pins.z_en.pin(), pins.e_en.pin()];
     let probe = pins.probe.pin();
-    let z_step = [pins.z_step.pin()];
-    let z_dir = [pins.z_dir.pin()];
-    forget(Output::new(pins.r_en, Level::High));
-    forget(Output::new(pins.a_en, Level::High));
+    forget(Output::new(pins.x_en, Level::High));
+    forget(Output::new(pins.y_en, Level::High));
     forget(Output::new(pins.z_en, Level::High));
-    forget(Output::new(pins.h_en, Level::High));
-    forget(Output::new(pins.r_step, Level::Low));
-    forget(Output::new(pins.a_step, Level::Low));
+    forget(Output::new(pins.e_en, Level::High));
+    forget(Output::new(pins.x_step, Level::Low));
+    forget(Output::new(pins.y_step, Level::Low));
     forget(Output::new(pins.z_step, Level::Low));
-    forget(Output::new(pins.h_step, Level::Low));
-    forget(Output::new(pins.r_dir, Level::Low));
-    forget(Output::new(pins.a_dir, Level::Low));
+    forget(Output::new(pins.e_step, Level::Low));
+    forget(Output::new(pins.x_dir, Level::Low));
+    forget(Output::new(pins.y_dir, Level::Low));
     forget(Output::new(pins.z_dir, Level::Low));
-    forget(Output::new(pins.h_dir, Level::Low));
+    forget(Output::new(pins.e_dir, Level::Low));
     forget(Input::new(pins.probe, Pull::Up));
     // The SIO masks come from the tables above, which must name the pins
     // the outputs were just made on. Checked with every line at its safe
     // level, so a halt here leaves the drivers off and the laser dark.
-    assert!(step == STEP_PINS && dir == DIR_PINS && en == EN_PINS);
-    assert!(z_step == Z_STEP_PINS && z_dir == Z_DIR_PINS && probe == PROBE_PIN);
-    assert!(Z_STEP_PINS[0] == STEP_PINS[Z] && Z_DIR_PINS[0] == DIR_PINS[Z]);
+    assert!(step == SOCKET_STEP_PINS && dir == SOCKET_DIR_PINS && en == EN_PINS && probe == PROBE_PIN);
 
     set_step_width(Settings::default().step_us);
     (StepPins, LaserPwm, SlidePins)
@@ -140,6 +147,22 @@ pub fn init(pins: Pins, laser_invert: bool) -> (StepPins, LaserPwm, SlidePins) {
 
 fn sysclk() -> u32 {
     SYSCLK_HZ.load(Ordering::Relaxed)
+}
+
+/// Points each joint at the socket `sockets` gives it. The machine takes a
+/// settings change only at rest, so no block is being stepped while the
+/// tables change; a direction pin a joint has just moved to is written
+/// with its next block, before any step.
+pub fn set_sockets(settings: &Settings) {
+    for joint in 0..AXES {
+        let socket = settings.socket_of(joint);
+        JOINT_STEP_PINS[joint].store(SOCKET_STEP_PINS[socket], Ordering::Relaxed);
+        JOINT_DIR_PINS[joint].store(SOCKET_DIR_PINS[socket], Ordering::Relaxed);
+    }
+}
+
+fn joint_pins(table: &[AtomicU8; AXES]) -> [u8; AXES] {
+    core::array::from_fn(|joint| table[joint].load(Ordering::Relaxed))
 }
 
 /// Step pulse width for the interrupt, from the `step_us` setting.
@@ -153,7 +176,7 @@ pub struct StepPins;
 
 impl StepPort for StepPins {
     fn set_dir(&mut self, levels: u8) {
-        let (set, clr) = level_masks(levels, &DIR_PINS);
+        let (set, clr) = level_masks(levels, &joint_pins(&JOINT_DIR_PINS));
         let out = SIO.gpio_out(0);
         out.value_set().write_value(set);
         out.value_clr().write_value(clr);
@@ -161,7 +184,7 @@ impl StepPort for StepPins {
     }
 
     fn step(&mut self, mask: u8) {
-        let bits = mask_of(mask, &STEP_PINS);
+        let bits = mask_of(mask, &joint_pins(&JOINT_STEP_PINS));
         if bits == 0 {
             return;
         }
@@ -186,15 +209,16 @@ impl StepPort for StepPins {
     }
 }
 
-/// The cross slide's step and direction lines, through the same SIO
-/// registers. Its enable is `StepPins::set_enable`, which drives every
-/// driver socket together.
+/// The cross slide's step and direction lines, on whichever socket
+/// `sockets` gives it, through the same SIO registers. Its enable is
+/// `StepPins::set_enable`, which drives every driver socket together.
 #[derive(Clone, Copy, Default)]
 pub struct SlidePins;
 
 impl SlidePort for SlidePins {
     fn set_dir(&mut self, high: bool) {
-        let (set, clr) = level_masks(high as u8, &Z_DIR_PINS);
+        let pin = JOINT_DIR_PINS[Z].load(Ordering::Relaxed);
+        let (set, clr) = level_masks(high as u8, &[pin]);
         let out = SIO.gpio_out(0);
         out.value_set().write_value(set);
         out.value_clr().write_value(clr);
@@ -202,7 +226,7 @@ impl SlidePort for SlidePins {
     }
 
     fn step(&mut self) {
-        let bits = mask_of(1, &Z_STEP_PINS);
+        let bits = mask_of(1, &[JOINT_STEP_PINS[Z].load(Ordering::Relaxed)]);
         let out = SIO.gpio_out(0);
         out.value_set().write_value(bits);
         cortex_m::asm::delay(PULSE_LOOPS.load(Ordering::Relaxed));

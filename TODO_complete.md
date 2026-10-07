@@ -240,3 +240,14 @@
   files, which spell the defaults out. The virtual firmware reads past the
   section; the mock's TOML reader learned dotted table names and inline
   tables for the check.
+
+## Driver sockets as a setting (2026-10-07)
+
+- `$sockets` (four digits, rail/table/slide/focus, 1 X 2 Y 3 Z 4 E, each
+  once; 1234 as labeled) picks the driver socket of each joint. The board
+  steps each joint on its socket's pins and sends each joint's current and
+  microsteps to its socket's UART address; settings blob version 6.
+- Machine files take `socket = "X"` per axis section; `cartesian-mill` is
+  wired as a three axis mill (1423, table driver left alone).
+- Loading a machine file names every setting the controller lacks and
+  blames old firmware.

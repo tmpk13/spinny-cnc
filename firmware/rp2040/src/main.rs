@@ -72,18 +72,18 @@ async fn main(spawner: Spawner) {
     let (mut port, mut laser, mut slide) = board::init(board::Pins {
         pwm: p.PWM_SLICE2,
         laser: p.PIN_20,
-        r_step: p.PIN_11,
-        r_dir: p.PIN_10,
-        r_en: p.PIN_12,
-        a_step: p.PIN_6,
-        a_dir: p.PIN_5,
-        a_en: p.PIN_7,
+        x_step: p.PIN_11,
+        x_dir: p.PIN_10,
+        x_en: p.PIN_12,
+        y_step: p.PIN_6,
+        y_dir: p.PIN_5,
+        y_en: p.PIN_7,
         z_step: p.PIN_19,
         z_dir: p.PIN_28,
         z_en: p.PIN_2,
-        h_step: p.PIN_14,
-        h_dir: p.PIN_13,
-        h_en: p.PIN_15,
+        e_step: p.PIN_14,
+        e_dir: p.PIN_13,
+        e_en: p.PIN_15,
         probe: p.PIN_25,
     }, laser_invert);
 
@@ -105,6 +105,7 @@ async fn main(spawner: Spawner) {
     let mut sink = usb::UsbSink;
     let mut machine = Machine::new(front, Settings::default());
     machine.load_settings(&mut store);
+    board::set_sockets(machine.settings());
     laser.set_frequency(machine.settings().laser_hz);
     machine.drive_laser(&mut laser);
 
@@ -121,6 +122,7 @@ async fn main(spawner: Spawner) {
         ticker.next().await;
         watchdog.feed(WATCHDOG_TIMEOUT);
         board::set_step_width(machine.settings().step_us);
+        board::set_sockets(machine.settings());
 
         while let Ok(event) = usb::EVENTS.try_receive() {
             match event {

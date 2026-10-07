@@ -2429,7 +2429,7 @@ mod tests {
         assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("probe_ms=20\nz_jerk=3\nz_max=0\ncartesian=0\nspindle=0\nok\n"));
+        assert!(listing.ends_with("probe_ms=20\nz_jerk=3\nz_max=0\ncartesian=0\nspindle=0\nsockets=1234\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 

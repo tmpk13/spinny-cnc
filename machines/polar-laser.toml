@@ -18,6 +18,7 @@ limit = 0                   # soft limit either side of the axis, mm; 0 is none
 invert = false
 current_ma = 800
 microsteps = 256
+socket = "X"                # driver socket: X, Y, Z or E, each used once
 
 [table]                     # A: the table, degrees
 steps_per_deg = 14222.222   # 200 steps, 256 microsteps, 100:1
@@ -28,6 +29,7 @@ jog_rate = 200
 invert = false
 current_ma = 800
 microsteps = 256
+socket = "Y"
 
 [slide]                     # Z: the cross slide, mm; a setup axis here
 steps_per_mm = 10240
@@ -39,6 +41,7 @@ limit = 0
 invert = false
 current_ma = 800
 microsteps = 256
+socket = "Z"
 
 [focus]                     # H: the focus axis, mm; not fitted here
 fitted = false
@@ -50,6 +53,7 @@ jog_rate = 120
 invert = false
 current_ma = 600
 microsteps = 256
+socket = "E"
 
 [probe]
 invert = false              # true: the probe input is active high

@@ -69,6 +69,7 @@ DEFAULT_SETTINGS = {
     "z_max": 0,
     "cartesian": 0,
     "spindle": 0,
+    "sockets": 1234,
 }
 
 

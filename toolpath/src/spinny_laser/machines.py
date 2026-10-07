@@ -14,6 +14,7 @@ The sections and keys, with the firmware setting each one sets:
     [table]   A, deg: steps_per_deg, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
     [slide]   Z, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (z_max), invert, current_ma, microsteps
     [focus]   H, mm: fitted (h_axis), steps_per_mm, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
+              each axis also takes socket, the driver socket it is wired to (X, Y, Z or E, each once: sockets)
     [probe]   invert, brake_ms (probe_ms)
     [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms)
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth
@@ -34,7 +35,7 @@ KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle")
 
 # The firmware's defaults, in the order it lists them. A file sets what it
-# names and leaves the rest here, so a machine is always all 46 settings.
+# names and leaves the rest here, so a machine is always all 47 settings.
 FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "r_steps": 10240.0, "a_steps": 14222.222, "r_rate": 560.0, "a_rate": 400.0,
     "r_accel": 50.0, "a_accel": 50.0, "r_jerk": 3.0, "a_jerk": 2.0,
@@ -46,13 +47,14 @@ FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "tmc_z_ma": 800, "tmc_z_micro": 256, "tmc_stealth": 1,
     "h_axis": 0, "h_steps": 6400.0, "h_rate": 600.0, "h_accel": 50.0, "h_jerk": 1.0, "jog_h": 120.0,
     "probe_invert": 0, "tmc_h_ma": 600, "tmc_h_micro": 256, "probe_ms": 20,
-    "z_jerk": 3.0, "z_max": 0.0, "cartesian": 0, "spindle": 0,
+    "z_jerk": 3.0, "z_max": 0.0, "cartesian": 0, "spindle": 0, "sockets": 1234,
 }
 
 FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle"})
 INTEGERS = frozenset({
     "dir_invert", "idle_ms", "step_us", "laser_hz", "laser_ms", "tmc_hold_pct", "probe_ms",
     "tmc_r_ma", "tmc_a_ma", "tmc_z_ma", "tmc_h_ma", "tmc_r_micro", "tmc_a_micro", "tmc_z_micro", "tmc_h_micro",
+    "sockets",
 })
 MICROSTEPS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 # The largest float the firmware holds, and the longest probe brake.
@@ -68,6 +70,9 @@ AXES = {
     "slide": ("z", "steps_per_mm", 2),
     "focus": ("h", "steps_per_mm", 3),
 }
+# Driver sockets as the board labels them. The sockets setting is a digit
+# per axis, in dir_invert bit order, each the socket's place here from 1.
+SOCKETS = ("X", "Y", "Z", "E")
 # What a machine file may say about the host's own settings, and their bounds.
 HOST_KEYS = {"tolerance": (0.0, 10.0), "clearance": (0.0, 100.0), "spinup": (0.0, 600.0)}
 
@@ -144,8 +149,12 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     settings["cartesian"] = int(kinematics == "cartesian")
     settings["spindle"] = int(tool == "spindle")
     dir_invert = 0
+    # The socket of each axis, as labeled unless the file says otherwise.
+    sockets = list(SOCKETS)
     for section, (axis, scale_key, bit) in AXES.items():
         table = reader.table(top, section)
+        if "socket" in table:
+            sockets[bit] = reader.text_choice(table, "socket", section, SOCKETS)
         if axis == "h":
             settings["h_axis"] = int(reader.flag(table, "fitted", bool(settings["h_axis"]), section))
         if scale_key in table:
@@ -161,9 +170,15 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             settings[f"tmc_{axis}_ma"] = reader.integer(table, "current_ma", section, 0, 2000)
         if "microsteps" in table:
             settings[f"tmc_{axis}_micro"] = reader.one_of(table, "microsteps", section, MICROSTEPS)
-        reader.done(table, section, {scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps"}
+        reader.done(table, section, {scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket"}
                     | ({"limit"} if axis in ("r", "z") else set()) | ({"fitted"} if axis == "h" else set()))
     settings["dir_invert"] = dir_invert
+    sections = list(AXES)
+    for i, socket in enumerate(sockets):
+        if socket in sockets[:i]:
+            other = sections[sockets.index(socket)]
+            raise MachineError(f"{where}: [{sections[i]}] socket {socket} is the [{other}] socket too")
+    settings["sockets"] = int("".join(str(SOCKETS.index(socket) + 1) for socket in sockets))
 
     probe = reader.table(top, "probe")
     settings["probe_invert"] = int(reader.flag(probe, "invert", False, "probe"))
@@ -248,6 +263,12 @@ class _Reader:
         value = self.text(top, key, default)
         if value not in choices:
             raise self.fail(None, key, f"must be one of {', '.join(choices)}")
+        return value
+
+    def text_choice(self, table: dict, key: str, section: str, choices: tuple[str, ...]) -> str:
+        value = table[key]
+        if not isinstance(value, str) or value not in choices:
+            raise self.fail(section, key, f"must be one of {', '.join(choices)}")
         return value
 
     def flag(self, table: dict, key: str, default: bool, section: str) -> bool:

@@ -70,10 +70,38 @@ pub struct Settings {
     /// set until `spindle off`, a reset or an alarm, through every move
     /// and hold, and `S` is its speed rather than a beam power.
     pub spindle: bool,
+    /// The driver socket of each joint as four digits, radius, table,
+    /// cross slide and focus axis from the left (the `dir_invert` bit
+    /// order), each 1 for the X socket, 2 for Y, 3 for Z and 4 for E: 1234
+    /// is the board as labeled. Always each socket once.
+    pub sockets: u32,
 }
 
 /// Largest `probe_ms`: the whole segment ring.
 pub const PROBE_MS_MAX: u32 = SEGMENTS as u32 * SEGMENT_MS;
+
+/// Driver sockets in use, in the order `sockets` numbers them from 1.
+pub const SOCKETS: usize = 4;
+/// Radius on X, table on Y, cross slide on Z, focus axis on E.
+pub const SOCKETS_DEFAULT: u32 = 1234;
+
+/// `sockets` names each socket exactly once.
+fn sockets_valid(sockets: u32) -> bool {
+    if !(1000..=9999).contains(&sockets) {
+        return false;
+    }
+    let mut seen = 0u8;
+    let mut rest = sockets;
+    for _ in 0..SOCKETS {
+        let digit = rest % 10;
+        rest /= 10;
+        if !(1..=SOCKETS as u32).contains(&digit) {
+            return false;
+        }
+        seen |= 1 << (digit - 1);
+    }
+    seen == 0b1111
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -112,12 +140,13 @@ impl Default for Settings {
             probe_ms: 20,
             cartesian: false,
             spindle: false,
+            sockets: SOCKETS_DEFAULT,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 46] = [
+pub const NAMES: [&str; 47] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -126,7 +155,7 @@ pub const NAMES: [&str; 46] = [
     "tmc_z_ma", "tmc_z_micro", "tmc_stealth",
     "h_axis", "h_steps", "h_rate", "h_accel", "h_jerk", "jog_h", "probe_invert",
     "tmc_h_ma", "tmc_h_micro", "probe_ms",
-    "z_jerk", "z_max", "cartesian", "spindle",
+    "z_jerk", "z_max", "cartesian", "spindle", "sockets",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,10 +187,10 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
-/// older firmware is thrown away rather than read as this layout. Version
-/// 5 is version 4 with fields appended, so a version 4 blob is still read,
-/// with those fields at their defaults.
-const BLOB_VERSION: u8 = 5;
+/// older firmware is thrown away rather than read as this layout. Versions
+/// 5 and 6 are version 4 with fields appended, so a blob from version 4 on
+/// is still read, with the fields added after it at their defaults.
+const BLOB_VERSION: u8 = 6;
 /// Oldest version whose fields are a prefix of this layout.
 const BLOB_VERSION_PREFIX: u8 = 4;
 /// Bytes before the first field: magic and version.
@@ -175,8 +204,9 @@ const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
     + 4 * 3 + 4 + 4 * 3 + 4 + 4 + 1
     + 1 + 1 + 4;
 /// Serialized size of the fields, in blob order: the version 4 fields,
-/// then `z_jerk`, `z_max`, `cartesian` and `spindle`.
-const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1;
+/// then `z_jerk`, `z_max`, `cartesian` and `spindle` (version 5), then
+/// `sockets` (version 6).
+const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -202,7 +232,7 @@ fn group(index: usize) -> Changed {
         44 => Changed::Kinematics,
         45 => Changed::Tool,
         // Whether the focus axis is fitted decides whether its driver is
-        // configured.
+        // configured; `sockets` moves every axis to its driver.
         _ => Changed::Driver,
     }
 }
@@ -348,7 +378,8 @@ impl Settings {
             42 => Slot::Float(&mut self.jerk[Z]),
             43 => Slot::Float(&mut self.z_max),
             44 => Slot::Flag(&mut self.cartesian),
-            _ => Slot::Flag(&mut self.spindle),
+            45 => Slot::Flag(&mut self.spindle),
+            _ => Slot::Int(&mut self.sockets),
         }
     }
 
@@ -358,6 +389,20 @@ impl Settings {
     /// `dir_invert` numbered them before either was a joint.
     pub fn joint_dir_invert(&self) -> u8 {
         (self.dir_invert & 0b0011) | ((self.dir_invert >> 1) & (1 << H)) | ((self.dir_invert << 1) & (1 << Z))
+    }
+
+    /// Driver socket of a joint (`R`, `A`, `H` or `Z`): 0 for the X
+    /// socket, 1 for Y, 2 for Z, 3 for E.
+    pub fn socket_of(&self, joint: usize) -> usize {
+        // Digit place from the left, in the `dir_invert` order.
+        let place = match joint {
+            R => 0,
+            A => 1,
+            Z => 2,
+            _ => 3,
+        };
+        let digit = self.sockets / 10u32.pow((SOCKETS - 1 - place) as u32) % 10;
+        digit as usize - 1
     }
 
     /// Every field within its range.
@@ -383,6 +428,7 @@ impl Settings {
             && self.tmc_ma.iter().all(|&ma| ma <= 2000)
             && self.tmc_hold_pct <= 100
             && self.tmc_micro.iter().all(|&m| microsteps(m))
+            && sockets_valid(self.sockets)
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -487,6 +533,7 @@ impl Settings {
         w.f32(self.z_max);
         w.flag(self.cartesian);
         w.flag(self.spindle);
+        w.u32(self.sockets);
         debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -494,8 +541,8 @@ impl Settings {
 
     /// `None` when the blob is short, or the magic, version or CRC do not
     /// match, or a stored field is out of range. Bytes past `BLOB_LEN`
-    /// are ignored. A version 4 blob keeps the defaults of the fields
-    /// added after it.
+    /// are ignored. A blob older than this version keeps the defaults of
+    /// the fields added after it.
     pub fn from_blob(buf: &[u8]) -> Option<Settings> {
         let buf = buf.get(..BLOB_LEN)?;
         let version = buf[MAGIC.len()];
@@ -548,6 +595,9 @@ impl Settings {
             s.z_max = r.f32();
             s.cartesian = r.flag()?;
             s.spindle = r.flag()?;
+        }
+        if version >= 6 {
+            s.sockets = r.u32();
         }
         if !s.is_valid() {
             return None;
@@ -629,7 +679,8 @@ mod tests {
         z_jerk=3\n\
         z_max=0\n\
         cartesian=0\n\
-        spindle=0\n";
+        spindle=0\n\
+        sockets=1234\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -638,7 +689,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 46> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 47> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -657,7 +708,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 46] = [
+        let table: [(&str, &str, &str, Changed); 47] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -704,6 +755,7 @@ mod tests {
             ("z_max", "8", "8", Changed::Motion),
             ("cartesian", "1", "1", Changed::Kinematics),
             ("spindle", "1", "1", Changed::Tool),
+            ("sockets", "1432", "1432", Changed::Driver),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -1009,6 +1061,39 @@ mod tests {
         assert_eq!(read.z_max, 0.0);
     }
 
+    #[test]
+    fn a_version_5_blob_is_read_with_the_sockets_as_labeled() {
+        let stored = Settings { z_max: 4.0, cartesian: true, sockets: 4321, ..Settings::default() };
+        let mut blob = [0u8; BLOB_LEN];
+        stored.to_blob(&mut blob);
+        blob[MAGIC.len()] = 5;
+        blob[HEADER_LEN + FIELDS_LEN - 4..CRC_OFFSET].fill(0);
+        let crc = crc32(&blob[..CRC_OFFSET]);
+        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        let read = Settings::from_blob(&blob).expect("a version 5 blob is read");
+        assert_eq!(read, Settings { sockets: SOCKETS_DEFAULT, ..stored });
+    }
+
+    #[test]
+    fn sockets_name_each_socket_once() {
+        for bad in ["0", "123", "12345", "1123", "1235", "0123", "1204", "12.34", "-1234"] {
+            rejects("sockets", bad);
+        }
+        for good in ["1234", "4321", "1423", "2143"] {
+            accepts("sockets", good);
+        }
+    }
+
+    #[test]
+    fn each_joint_finds_its_socket_by_digit_place() {
+        let labeled = Settings::default();
+        assert_eq!([R, A, Z, H].map(|j| labeled.socket_of(j)), [0, 1, 2, 3]);
+        // A three axis mill: radius on X, cross slide on Y, focus axis on
+        // Z, the table on E.
+        let mill = Settings { sockets: 1423, ..Settings::default() };
+        assert_eq!([R, A, Z, H].map(|j| mill.socket_of(j)), [0, 3, 1, 2]);
+    }
+
     /// A version 4 blob as the firmware before the cross slide joint and
     /// the spindle wrote it, with a distinct value in every field.
     const VERSION_4_BLOB: [u8; BLOB_LEN] = [
@@ -1078,15 +1163,17 @@ mod tests {
         assert_eq!(blob[end - 6..end - 4], [1, 1]);
         assert_eq!(blob[end - 4..end], 160u32.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), Some(focus));
-        // Then the cross slide's jerk and limit and the two mode flags,
-        // just before the padding.
-        let modes = Settings { z_max: 9.5, cartesian: true, spindle: true, ..Settings::default() };
+        // Then the cross slide's jerk and limit, the two mode flags and
+        // the sockets, just before the padding.
+        let modes = Settings { z_max: 9.5, cartesian: true, spindle: true, sockets: 1423, ..Settings::default() };
         modes.to_blob(&mut blob);
         let tail = HEADER_LEN + FIELDS_LEN;
         assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
         assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
-        assert_eq!(blob[tail - 2..tail], [1, 1]);
+        assert_eq!(blob[tail - 6..tail - 4], [1, 1]);
+        assert_eq!(blob[tail - 4..tail], 1423u32.to_le_bytes());
         assert!(blob[tail..CRC_OFFSET].iter().all(|&b| b == 0));
+        assert_eq!(Settings::from_blob(&blob), Some(modes));
     }
 
     #[test]

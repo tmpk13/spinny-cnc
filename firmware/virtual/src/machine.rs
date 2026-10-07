@@ -16,6 +16,9 @@ const AXES: [(&str, &str, &str, u8); 4] = [
     ("focus", "h", "steps_per_mm", 3),
 ];
 
+/// Driver socket letters, numbered from 1 in the `sockets` setting.
+const SOCKETS: [&str; 4] = ["X", "Y", "Z", "E"];
+
 /// Applies a machine file's text to `settings`; what the file leaves out
 /// stays as it was. The error names the key.
 pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
@@ -43,10 +46,23 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     }
 
     let mut dir_invert = 0u8;
+    // The socket of each axis, as labeled unless the file says otherwise.
+    let mut sockets = [0usize, 1, 2, 3];
     for (section, axis, scale_key, bit) in AXES {
         known_top.push(section);
         let table = table_of(&top, section)?;
-        let mut known = vec![scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps"];
+        let mut known =
+            vec![scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket"];
+        match table.get("socket") {
+            None => {}
+            Some(Value::String(letter)) => {
+                sockets[bit as usize] = SOCKETS
+                    .iter()
+                    .position(|known| known == letter)
+                    .ok_or(format!("[{section}] socket must be one of X, Y, Z, E"))?;
+            }
+            Some(_) => return Err(format!("[{section}] socket must be one of X, Y, Z, E")),
+        }
         if axis == "h" {
             known.push("fitted");
             if let Some(fitted) = flag(&table, "fitted", section)? {
@@ -84,6 +100,15 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
         only(&table, section, &known)?;
     }
     writes.push(("dir_invert".into(), dir_invert.to_string()));
+    for (i, socket) in sockets.iter().enumerate() {
+        if let Some(other) = sockets[..i].iter().position(|s| s == socket) {
+            return Err(format!(
+                "[{}] socket {} is the [{}] socket too",
+                AXES[i].0, SOCKETS[*socket], AXES[other].0
+            ));
+        }
+    }
+    writes.push(("sockets".into(), sockets.iter().map(|s| (s + 1).to_string()).collect()));
 
     let probe = table_of(&top, "probe")?;
     if let Some(invert) = flag(&probe, "invert", "probe")? {
@@ -249,6 +274,23 @@ mod tests {
         let mill = applied(&shipped("cartesian-mill"));
         assert!(mill.cartesian && mill.spindle && mill.h_axis);
         assert_eq!(mill.z_max, 30.0);
+        // A three axis mill wired as labeled: X, Y and Z drive the rail,
+        // the slide and the depth, and the table is on E.
+        assert_eq!(mill.sockets, 1423);
+        assert_eq!([R, A, Z, H].map(|j| mill.socket_of(j)), [0, 3, 1, 2]);
+        for name in ["polar-laser", "polar-laser-focus", "cartesian-laser"] {
+            assert_eq!(applied(&shipped(name)).sockets, 1234, "{name}");
+        }
+    }
+
+    #[test]
+    fn sockets_are_named_per_axis_and_each_used_once() {
+        let swapped = applied("[rail]\nsocket = \"Y\"\n[table]\nsocket = \"X\"\n");
+        assert_eq!(swapped.sockets, 2134);
+        let refused = |text: &str| apply(&mut Settings::default(), text).unwrap_err();
+        assert_eq!(refused("[slide]\nsocket = \"Y\"\n"), "[slide] socket Y is the [table] socket too");
+        assert!(refused("[focus]\nsocket = \"W\"\n").contains("[focus] socket must be one of X, Y, Z, E"));
+        assert!(refused("[focus]\nsocket = 4\n").contains("[focus] socket must be one of"));
     }
 
     #[test]
