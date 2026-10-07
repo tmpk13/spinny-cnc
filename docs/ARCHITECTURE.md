@@ -51,21 +51,20 @@ Each part keeps its own module diagram next to its code:
 [web/frontend/README.md](../web/frontend/README.md),
 [toolpath/README.md](../toolpath/README.md).
 
-## Deployment on a Raspberry Pi
+## Controller on a Raspberry Pi
 
-`mise run deploy-pi -- user@host` builds the page here and copies the
-repository, its sibling `kicad-to-gcode` and the page to the Pi, where uv
-installs Python 3.12 and the dependencies and a systemd unit runs the
-backend. The Pi needs no bun or Rust, and `firmware/` and `sim/` stay behind.
+The backend runs here; `mise run relay-pi -- user@host` makes a controller
+plugged into a Pi look local. socat on the Pi bridges the tty to a port on
+the Pi's loopback, ssh forwards that port here, and the page connects to
+`socket://127.0.0.1:2324`. Nothing is installed on the Pi.
 
 ```mermaid
 flowchart LR
-    PC[dev machine: bun build] -->|rsync, ssh| PI
-    subgraph PI[Raspberry Pi, 64 bit]
-        SVC[systemd spinny-web] --> BE2[backend serving web/frontend/dist, var/]
+    BE2[backend here] <-->|socket://127.0.0.1:2324| SSH[ssh -L]
+    SSH <-->|ssh session| SOC
+    subgraph PI[Raspberry Pi]
+        SOC[socat, Pi loopback :2324] <-->|/dev/serial/by-id, raw tty| BOARD[SKR Pico]
     end
-    BE2 <-->|USB serial, dialout| BOARD[SKR Pico]
-    BR[browser] <-->|HTTP, WebSocket :8000| BE2
 ```
 
 ## Runtime files
