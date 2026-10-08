@@ -186,11 +186,16 @@ input[type="checkbox"] {
 }
 
 /* Two pages under one status bar; the tabs set which is up on #app. */
-#app[data-page="cam"] > #page-machine {
+#app[data-page="cam"] > #page-machine,
+#app[data-page="config"] > #page-machine {
     display: none;
 }
 
 #app:not([data-page="cam"]) > #page-cam {
+    display: none;
+}
+
+#app:not([data-page="config"]) > #page-config {
     display: none;
 }
 
@@ -237,8 +242,7 @@ input[type="checkbox"] {
         "laser"
         "jobs"
         "heightmap"
-        "console"
-        "settings";
+        "console";
     align-content: start;
     transition: opacity 0.2s, filter 0.2s;
 }
@@ -289,13 +293,19 @@ input[type="checkbox"] {
     .column > #preview,
     .column > #jobs,
     .column > #cam,
-    .column > #cam-file {
+    .column > #cam-file,
+    .column > #machine-file {
         flex: 1 0 auto;
     }
 
     /* The CAM page: the profile on the left, its preview and its file on the right. */
     .cam-grid {
         grid-template-columns: minmax(0, 3fr) minmax(22rem, 2fr);
+    }
+
+    /* The Config page: the machine file on the left, the live settings on the right. */
+    .config-grid {
+        grid-template-columns: minmax(0, 3fr) minmax(24rem, 2fr);
     }
 }
 
@@ -306,7 +316,6 @@ input[type="checkbox"] {
 #jobs { grid-area: jobs; }
 #heightmap { grid-area: heightmap; }
 #console { grid-area: console; }
-#settings { grid-area: settings; }
 
 .panel {
     background: var(--panel);
@@ -898,72 +907,43 @@ input[type="number"].field {
     width: 7.5rem;
 }
 
-.jog-main {
+/* One bar per axis: its letter and title, a note, the step choices with a
+   field for any other step, the two move buttons and the zero button. The
+   head takes a line of its own; the rest wraps as the panel's width allows. */
+
+.axis-bars {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem 1rem;
-    align-items: center;
-    justify-content: center;
+    flex-direction: column;
+    gap: 0.5rem;
     margin-bottom: 0.75rem;
 }
 
-.pad {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(3.5rem, 4.75rem));
-    grid-template-rows: repeat(3, minmax(3.5rem, 4.75rem));
-    grid-template-areas:
-        ". up ."
-        "left mid right"
-        ". down .";
-    gap: 0.4rem;
-    padding: 0.5rem;
-    background: var(--panel-2);
-    border: thin solid var(--border);
-    border-radius: var(--radius-lg);
-}
-
-.btn-pad {
-    font-size: 1.1rem;
-    font-weight: 700;
-    padding: 0;
-}
-
-.btn-cancel {
-    font-size: 0.8rem;
-    color: var(--danger);
-    border-radius: 50%;
-}
-
-.btn-cancel:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--danger) 12%, var(--btn));
-    border-color: var(--danger);
-}
-
-.axis-buttons {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(6rem, 1fr));
-    gap: 0.4rem;
-    flex: 1 1 12rem;
-}
-
-.btn-axis {
-    min-height: 3.25rem;
-}
-
-/* A framed axis control (the cross slide, the focus axis), apart from the board jog pad. */
-
-.axis-frame {
+.axis-bar {
     display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    flex: 1 1 12rem;
-    padding: 0.6rem 0.7rem;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
+    padding: 0.5rem 0.7rem;
     background: var(--panel-2);
     border: thin solid var(--border);
     border-radius: var(--radius);
 }
 
-.axis-frame-title {
+.axis-bar-head {
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.6rem;
+}
+
+.axis-bar-letter {
+    font-weight: 700;
+    color: var(--accent);
+    min-width: 1.4rem;
+}
+
+.axis-bar-title {
     font-size: 0.8rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -971,22 +951,40 @@ input[type="number"].field {
     color: var(--strong);
 }
 
-.axis-frame-note {
+.axis-bar-note {
+    flex-basis: 100%;
     color: var(--muted);
     font-size: 0.78rem;
 }
 
-.axis-frame .choice-row {
-    margin-bottom: 0;
-}
-
-.axis-frame-buttons {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+.axis-bar-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 0.4rem;
+    flex: 1 1 14rem;
+    min-width: 0;
 }
 
-.btn-frame {
+.axis-bar-steps .choice-row {
+    margin: 0;
+    flex: 1 1 auto;
+}
+
+/* The typed step keeps its width; it wraps under the choices when the bar is narrow. */
+.axis-bar-steps input {
+    flex: none;
+}
+
+.axis-bar-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(5rem, 1fr));
+    gap: 0.4rem;
+    flex: 1 1 11rem;
+}
+
+.btn-axis {
+    min-height: 2.75rem;
     font-weight: 600;
 }
 
@@ -1655,13 +1653,13 @@ dialog.confirm::backdrop {
     font-size: 0.9rem;
 }
 
-.cam-problems, .cam-notes {
+.cam-problems, .cam-notes, .config-problems {
     margin: 0 0 0.75rem;
     padding-left: 1.2rem;
     font-size: 0.9rem;
 }
 
-.cam-problems li, .cam-status.error {
+.cam-problems li, .cam-status.error, .config-problems li, .config-status.error {
     color: var(--danger);
 }
 
@@ -1751,17 +1749,81 @@ table.cam-table input[type="checkbox"] {
     color: var(--strong);
 }
 
-.cam-text {
+/* A TOML editor: the text field's text is transparent and the colored copy
+   under it shows through; the two share every metric so they line up, and
+   the layer scrolls with the field. */
+
+.code-editor {
+    position: relative;
     width: 100%;
-    min-height: 20rem;
-    height: 55vh;
-    resize: vertical;
+    background: var(--field);
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.code-editor:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.125rem var(--ring);
+}
+
+.code-layer,
+.code-input {
+    margin: 0;
+    padding: 0.5rem 0.6rem;
+    border: 0;
     font-family: var(--mono);
     font-size: 0.82rem;
     line-height: 1.35;
     white-space: pre;
-    overflow: auto;
     tab-size: 4;
+    overflow-wrap: normal;
+    word-break: normal;
+}
+
+.code-layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    color: var(--text);
+}
+
+.code-text {
+    font: inherit;
+}
+
+.code-input {
+    position: relative;
+    display: block;
+    width: 100%;
+    min-height: 20rem;
+    height: 55vh;
+    resize: vertical;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+    overflow: auto;
+    outline: none;
+}
+
+.code-input::selection {
+    background: color-mix(in oklab, var(--accent) 30%, transparent);
+    color: transparent;
+}
+
+/* The tokens, in the Solarized accents. */
+.tk-comment { color: var(--muted); font-style: italic; }
+.tk-table { color: var(--orange); font-weight: 600; }
+.tk-key { color: var(--blue); }
+.tk-string { color: var(--cyan); }
+.tk-number { color: var(--magenta); }
+.tk-bool { color: var(--green); }
+.tk-punct { color: var(--muted); }
+.tk-error { background: color-mix(in oklab, var(--red) 18%, transparent); }
+
+.config-note, .config-status {
+    font-size: 0.85rem;
 }
 
 .cam-status {

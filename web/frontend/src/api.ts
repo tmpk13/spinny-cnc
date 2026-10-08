@@ -44,6 +44,8 @@ export class ApiError extends Error {
     }
 }
 
+import type { MachineCheck, MachineResponse } from "./types.ts";
+
 export interface Api {
     ports(): Promise<Port[]>;
     connect(url: string): Promise<Snapshot>;
@@ -74,6 +76,13 @@ export interface Api {
     applyMachine(id: string, save?: boolean): Promise<SettingsResponse>;
 
     /** The CAM profiles in cam/, and the files that could not be read. */
+    /** A machine file as written, with what it reads as or why it does not. */
+    machineFile(id: string): Promise<MachineResponse>;
+    /** Writes a text as the file once it reads as a machine; refused with what is wrong otherwise. */
+    saveMachineFile(id: string, text: string): Promise<MachineResponse>;
+    /** What a text would read as, and what is wrong with it, without writing it. */
+    checkMachineFile(id: string, text: string): Promise<MachineCheck>;
+    deleteMachineFile(id: string): Promise<void>;
     camProfiles(): Promise<CamProfilesResponse>;
     camProfile(id: string): Promise<CamProfileResponse>;
     /** Writes the text as the profile once it reads as one; creates the profile when it is new. */
@@ -260,6 +269,22 @@ export class HttpApi implements Api {
 
     applyMachine(id: string, save = false): Promise<SettingsResponse> {
         return this.request<SettingsResponse>("POST", `/api/machines/${encodeURIComponent(id)}/apply`, { save });
+    }
+
+    machineFile(id: string): Promise<MachineResponse> {
+        return this.request<MachineResponse>("GET", `/api/machines/${encodeURIComponent(id)}`);
+    }
+
+    saveMachineFile(id: string, text: string): Promise<MachineResponse> {
+        return this.request<MachineResponse>("PUT", `/api/machines/${encodeURIComponent(id)}`, { text });
+    }
+
+    checkMachineFile(id: string, text: string): Promise<MachineCheck> {
+        return this.request<MachineCheck>("POST", `/api/machines/${encodeURIComponent(id)}/check`, { text });
+    }
+
+    async deleteMachineFile(id: string): Promise<void> {
+        await this.request("DELETE", `/api/machines/${encodeURIComponent(id)}`);
     }
 
     camProfiles(): Promise<CamProfilesResponse> {

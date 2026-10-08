@@ -15,7 +15,7 @@ SHIPPED = REPO / "machines"
 
 
 def test_the_defaults_cover_every_setting_once():
-    assert len(FIRMWARE_DEFAULTS) == 47
+    assert len(FIRMWARE_DEFAULTS) == 52
     assert machines.FLAGS <= set(FIRMWARE_DEFAULTS) and machines.INTEGERS <= set(FIRMWARE_DEFAULTS)
     for name in machines.FLAGS | machines.INTEGERS:
         assert isinstance(FIRMWARE_DEFAULTS[name], int)
@@ -109,6 +109,7 @@ microsteps = 64
 [probe]
 invert = true
 brake_ms = 0
+pin = 22
 
 [output]
 pwm_hz = 1000
@@ -116,6 +117,12 @@ s_max = 255
 s_min = 10
 invert = true
 test_ms = 7000
+pin = 23
+
+[enable]
+fitted = true
+pin = 18
+invert = true
 
 [drivers]
 enable_invert = true
@@ -146,6 +153,7 @@ def test_every_key_lands_on_its_setting():
     assert (s["probe_invert"], s["probe_ms"]) == (1, 0)
     assert (s["laser_hz"], s["s_max"], s["s_min"], s["laser_invert"], s["laser_ms"]) == (1000, 255, 10, 1, 7000)
     assert (s["en_invert"], s["idle_ms"], s["step_us"], s["tmc_hold_pct"], s["tmc_stealth"]) == (1, 30000, 4, 30, 0)
+    assert (s["laser_pin"], s["probe_pin"], s["tool_out"], s["tool_pin"], s["tool_invert"]) == (23, 22, 1, 18, 1)
     assert found.host == {"tolerance": 0.01, "clearance": 3.0, "spinup": 1.5}
     assert set(s) == set(FIRMWARE_DEFAULTS)
 
@@ -180,6 +188,14 @@ def test_every_key_lands_on_its_setting():
         ('[slide]\nsocket = "Y"\n', "[slide] socket Y is the [table] socket too"),
         ('[focus]\nsocket = "W"\n', "[focus] socket must be one of X, Y, Z, E"),
         ("[focus]\nsocket = 4\n", "[focus] socket must be one of X, Y, Z, E"),
+        ("[output]\npin = 11\n", "[output] pin 11 is a driver socket's or the driver UART's"),
+        ("[probe]\npin = 30\n", "[probe] pin must be 0 to 29"),
+        ("[probe]\npin = 9\n", "[probe] pin 9 is a driver socket's"),
+        ("[enable]\npin = -1\n", "[enable] pin must be 0 to 29"),
+        ("[enable]\nfitted = 1\n", "[enable] fitted must be true or false"),
+        ("[probe]\npin = 20\n", "[probe] pin 20 (FAN3) is the [output] pin too"),
+        ("[enable]\nfitted = true\npin = 20\n", "[enable] pin 20 (FAN3) is the [output] pin too"),
+        ("[enable]\nfitted = true\npin = 25\n", "[enable] pin 25 (Z-STOP) is the [probe] pin too"),
         ("[rail\n", "rig:"),
     ],
 )
@@ -247,13 +263,13 @@ def test_the_controls_default_from_the_profile():
     assert polar["pad"] and polar["feed"] and polar["pad_steps"] == [0.1, 1, 10] and polar["pad_step"] == 1
     assert polar["center"] == {"r": 0.0}
     rail, table, slide = polar["axes"]
-    assert (rail["letter"], rail["label"], rail["steps"], rail["step"], rail["buttons"], rail["place"]) == ("R", "Radius", None, None, ["Radius -", "Radius +"], "buttons")
+    assert (rail["letter"], rail["label"], rail["steps"], rail["step"], rail["buttons"]) == ("R", "Radius", None, None, ["Radius -", "Radius +"])
     assert (table["steps"], table["step"], table["goto"]) == ([1, 10, 90], 10, True)
-    assert (slide["label"], slide["steps"], slide["step"], slide["place"], slide["feed"], slide["goto"]) == ("Cross slide", [0.05, 0.1, 0.5], 0.1, "frame", False, False)
+    assert (slide["label"], slide["steps"], slide["step"], slide["feed"], slide["goto"]) == ("Cross slide", [0.05, 0.1, 0.5], 0.1, False, False)
     assert all(axis["zero"] and axis["keys"] == [] for axis in polar["axes"])
     focus = default_controls("polar", "laser", True)
     assert [axis["axis"] for axis in focus["axes"]] == ["r", "a", "z", "h"]
-    assert (focus["axes"][3]["label"], focus["axes"][3]["buttons"], focus["axes"][3]["place"]) == ("Focus axis", ["Down", "Up"], "frame")
+    assert (focus["axes"][3]["label"], focus["axes"][3]["buttons"]) == ("Focus axis", ["Down", "Up"])
     mill = default_controls("cartesian", "spindle", True)
     assert mill["center"] == {"r": 0.0, "z": 0.0}
     assert [axis["goto"] for axis in mill["axes"]] == [True, False, True, False]
@@ -285,7 +301,7 @@ def test_a_controls_entry_fills_in_from_its_default():
     lift, rail = controls["axes"]
     assert (lift["axis"], lift["letter"], lift["label"], lift["steps"], lift["step"]) == ("h", "H", "Lift", [0.5, 2], 2.0)
     # Renamed without buttons: the letter's, not the default's words.
-    assert lift["buttons"] == ["H-", "H+"] and lift["place"] == "frame" and lift["keys"] == ["PageDown", "PageUp"]
+    assert lift["buttons"] == ["H-", "H+"] and lift["keys"] == ["PageDown", "PageUp"]
     assert lift["note"] == "Raises and lowers the head; up is positive" and lift["zero"] and not lift["feed"]
     assert rail == default_controls("polar", "laser", True)["axes"][0]
     assert found.document()["controls"] == controls
@@ -313,7 +329,6 @@ def test_a_controls_entry_fills_in_from_its_default():
         ("[controls]\n[[controls.axes]]\naxis = \"r\"\nsteps = [0, 1]\n", "[controls.axes] steps must be a list of 1 to 8 different numbers above 0"),
         ("[controls]\n[[controls.axes]]\naxis = \"r\"\nsteps = [1, 1]\n", "[controls.axes] steps must be a list of 1 to 8 different numbers"),
         ("[controls]\n[[controls.axes]]\naxis = \"r\"\nbuttons = [\"a\", \"b\", \"c\"]\n", "[controls.axes] buttons must be a list of 2 words"),
-        ("[controls]\n[[controls.axes]]\naxis = \"r\"\nplace = \"left\"\n", "[controls.axes] place must be one of buttons, frame"),
         ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"a\"]\n", "[controls.axes] keys must be a list of 2 words or an empty list"),
         ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"a\", \"a\"]\n", "[controls.axes] keys must name two different keys"),
         ("[controls]\n[[controls.axes]]\naxis = \"r\"\nkeys = [\"Escape\", \"a\"]\n", "[controls.axes] keys Escape is the cancel key"),
@@ -339,3 +354,21 @@ def test_control_mistakes_are_named(text, said):
     with pytest.raises(MachineError) as caught:
         parse(text, "rig", "rig")
     assert said in str(caught.value), str(caught.value)
+
+
+def test_a_tool_output_pin_matters_only_when_it_is_fitted():
+    # Left out of use, the output's pin may be anything, the laser's included.
+    found = parse('[output]\npin = 17\n', "rig")
+    assert (found.settings["laser_pin"], found.settings["tool_pin"], found.settings["tool_out"]) == (17, 17, 0)
+    moved = parse('[output]\npin = 17\n[enable]\nfitted = true\npin = 23\ninvert = true\n', "rig")
+    assert (moved.settings["tool_out"], moved.settings["tool_pin"], moved.settings["tool_invert"]) == (1, 23, 1)
+    assert machines.check_id("my-mill_2") == "my-mill_2"
+    for bad in ("My Mill", "", "a/b", "-x", "x" * 65):
+        with pytest.raises(MachineError):
+            machines.check_id(bad)
+
+
+def test_an_older_file_may_still_say_where_a_control_went():
+    found = parse('[controls]\n[[controls.axes]]\naxis = "r"\nplace = "frame"\n', "rig")
+    assert "place" not in found.controls["axes"][0]
+    assert all("place" not in axis for axis in default_controls("polar", "laser", True)["axes"])

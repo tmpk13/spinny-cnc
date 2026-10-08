@@ -159,8 +159,6 @@ export interface AxisControl {
     step: number | null;
     /** The minus and the plus button. */
     buttons: [string, string];
-    /** buttons: beside the pad; frame: a block of its own with the note and the steps. */
-    place: "buttons" | "frame";
     /** The feed field applies; false: the firmware's own jog rate for the axis. */
     feed: boolean;
     /** A field in the joint goto row. */
@@ -170,13 +168,13 @@ export interface AxisControl {
     zero_hint: string;
     /** Two key names for minus and plus, or none. */
     keys: string[];
-    /** Under the title of a framed control. */
+    /** Under the bar's title. */
     note: string;
 }
 
 /** What the jog panel and the readout draw, from the machine file or the defaults for the profile. */
 export interface Controls {
-    /** A board X/Y pad, on the arrow keys. */
+    /** Board X and Y bars, on the arrow keys. */
     pad: boolean;
     /** mm; an axis without steps of its own uses the pad's. */
     pad_steps: number[];
@@ -203,7 +201,32 @@ export interface MachinesResponse {
     machines: MachineSummary[];
     /** The file the connected machine's settings are; null with no machine connected, or settings of no file's. */
     current: string | null;
-    /** Files that could not be read, one message each. */
+    /** Files that could not be read, each with what is wrong; they can still be opened to be mended. */
+    problems: MachineProblem[];
+}
+
+export interface MachineProblem {
+    id: string;
+    problem: string;
+}
+
+/** A machine file read: its summary, every firmware setting, the host's values and the page's controls. */
+export interface MachineDocument extends MachineSummary {
+    settings: Record<string, number>;
+    host: Partial<HostSettings>;
+    controls: Controls;
+}
+
+/** A machine file as the backend sends it: what it reads as, or why it does not, and the text as written. */
+export interface MachineResponse {
+    document: MachineDocument | null;
+    problems: string[];
+    text: string;
+}
+
+/** A text checked as a machine file, without being written. */
+export interface MachineCheck {
+    document: MachineDocument | null;
     problems: string[];
 }
 

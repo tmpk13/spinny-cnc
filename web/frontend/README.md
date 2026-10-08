@@ -31,25 +31,29 @@ machine's controls (`controls` in the settings the backend sends, from
 the machine file's `[controls]` or the defaults for what the machine is;
 `src/controls.ts` holds the page's copy of those defaults for the moment
 before the settings arrive and for the mock): one readout cell and one
-control per joint the file names, with its letter, label, steps, buttons,
-keys and zero button, a board X/Y pad on the arrow keys when the file has
-one, a feed field, goto fields and Center. The polar laser's defaults are
-the joint (`R` mm, `A` deg), the cross slide (`Z` mm) as a setup axis in
-a frame of its own, moved in the small steps a centering burn is measured
-into, and the focus axis (`H` mm) with the probe on a machine with one.
-Both panels are drawn again when the controls change.
+bar per joint the file names, with its letter, label, step choices and a
+field for any other step, its two buttons, keys and zero button, the
+board's X and Y bars on the arrow keys when the file has a pad, a feed
+field, goto fields and Center. *Cancel* sits in the jog panel's head,
+away from every move; Escape does the same. The polar laser's defaults
+are the joint (`R` mm, `A` deg), the cross slide (`Z` mm) as a setup
+axis moved in the small steps a centering burn is measured into, and the
+focus axis (`H` mm) with the probe on a machine with one. Both panels
+are drawn again when the controls change.
 
 The page follows what the machine is (`profile` in the backend's state,
 from `$cartesian` and `$spindle`), with a badge in the status bar when it
-is not the polar laser. The Settings panel's *Machine* pick lists the
-machine files in `machines/`, names the one the live settings are (or says
-they are no file's), and loads another after a confirmation, every
-firmware setting from the file; *Save to flash* keeps it over a restart. On a cartesian machine the cross slide is the Y
+is not the polar laser. The Config tab's machine file panel lists the
+files in `machines/`, names the one the live settings are (or says they
+are no file's), edits the picked one, and loads it after a confirmation,
+every firmware setting from the file; *Save to flash* keeps it over a
+restart. On a cartesian machine the cross slide is the Y
 axis: it steps like the rail, at the feed given, and the joint goto takes
 `r` and `z`. With a spindle the laser panel starts and stops the spindle,
 the groups table has depth and plunge in place of the power floor, the
 focus axis is the depth axis, "Focus here" is "Touch off here", and the
-settings panel has the travel clearance and spin-up. The in-page mock
+firmware settings panel on the Config tab has the travel clearance and
+spin-up. The in-page mock
 takes those settings too: with `$cartesian=1` the cross slide is a joint
 and a board move is one line in the table's frame, and with `$spindle=1`
 it mills a job the way the backend streams one (lift, spindle start,
@@ -68,9 +72,10 @@ spindle turns, and the spindle start while probing. The status reports the
 output's duty as driven on the pin; the DRO and the probe lock turn it
 around on an active-low output (`laser_invert`), as the backend does.
 
-The page has two tabs under the status bar, remembered per browser and
-set by `?page=cam` in the address: *Machine*, the panels above, and
-*CAM*. The CAM page shows a profile from `cam/` (`docs/CAM.md`): its axes,
+The page has three tabs under the status bar, remembered per browser and
+set by `?page=cam` or `?page=config` in the address: *Machine*, the
+panels above, *CAM* and *Config*. The CAM page shows a profile from
+`cam/` (`docs/CAM.md`): its axes,
 its tools and its operations, every cutting setting of an operation in a
 field that writes the one value back into the file (a field left empty is
 the tool's value again), the file's text in an editor that saves it whole
@@ -82,6 +87,21 @@ with a report of what each axis reaches. The CAM page has a preview of
 its own. The mock reads the shipped profiles itself (`src/mock/toml.ts`,
 `src/mock/cam.ts`): copper geometry is the demo coupon's, and its gcode
 follows the backend's post for a cartesian profile.
+
+The Config page is where a machine is described: the machine file panel
+picks a file from `machines/` (`docs/MACHINES.md`), shows it in the TOML
+editor, makes a new file from the text shown, deletes one, checks the
+text against the backend (*Check*), saves it whole (*Save*, which keeps
+nothing of a text that does not read), and loads it onto the board
+(*Load to board*, then *Save to flash*). The pins, the laser output, the
+probe and an optional tool output, are keys of the file; they are read at
+boot, so the page says to save and restart after a load that changes one.
+Beside it the firmware settings panel shows the live values with inline
+edits, the host's chord tolerance and the milling values. Both TOML
+editors (`src/views/editor.ts`) color the text (`src/highlight.ts`) and
+read it with the page's own TOML reader (`src/toml.ts`) on every edit,
+naming the line that does not read before any save; the backend's check
+is the one that counts.
 
 Arrow keys jog when no field that uses them has focus and the machine's
 page is up; Escape cancels a jog
@@ -111,7 +131,13 @@ classDiagram
         AppState
     }
     class views {
-        statusbar tabs dro jog laser jobs center heightmap previewpanel console settings cam toasts
+        statusbar tabs dro jog laser jobs center heightmap previewpanel console settings cam config editor toasts
+    }
+    class highlight {
+        highlightToml(text, errorLine) HTML spans per token
+    }
+    class toml {
+        parseToml(text) tables, arrays of tables, dotted names, inline tables, scalars, arrays
     }
     class preview {
         Preview  3D scene on the 2D canvas: rings, rail, limits, job, probe heights, head
@@ -146,8 +172,9 @@ classDiagram
         setValue(text, path, value) text
         buildCamJob / camGcode
     }
-    class mock_toml {
-        parseToml(text) tables, arrays of tables, dotted names, inline tables, scalars, arrays
+    class mock_machines {
+        parseMachine(text, id) MachineDocument  the backend's checks and words
+        DEFAULT_SETTINGS
     }
     main --> api
     main --> ws
@@ -157,12 +184,17 @@ classDiagram
     preview --> camera
     views --> profile
     views --> controls
+    views --> highlight
+    views --> toml
     controls --> profile
     mock_backend --> controls
     mock_backend --> kinematics
     mock_backend --> mock_jobs
     mock_backend --> mock_cam
-    mock_cam --> mock_toml
+    mock_backend --> mock_machines
+    mock_cam --> toml
     mock_cam --> mock_jobs
+    mock_machines --> toml
+    mock_machines --> controls
     main ..> mock_backend : ?mock=1
 ```

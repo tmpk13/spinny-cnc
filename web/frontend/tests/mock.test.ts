@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
-import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, machineOf, statusLine } from "../src/mock/backend.ts";
+import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock/backend.ts";
 import { outputDuty } from "../src/profile.ts";
+import { defaultControls } from "../src/controls.ts";
+import { DEFAULT_SETTINGS } from "../src/mock/backend.ts";
 import type { Compensate, GotoRequest, Grid, HeightMap, HeightMapState, Job, JogRequest, WsEvent } from "../src/types.ts";
 
 function stepped(machine: MockMachine, seconds: number, dt = 0.01): void {
@@ -1723,7 +1725,7 @@ describe("machine files in the mock", () => {
         const backend = new MockBackend({ timers: false });
         await backend.connect("/dev/ttyACM0");
         const listed = await backend.machines();
-        expect(listed.machines.map((m) => m.id)).toEqual(["polar-laser", "polar-laser-focus", "cartesian-laser", "cartesian-mill"]);
+        expect(listed.machines.map((m) => m.id)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]);
         expect(listed.problems).toEqual([]);
         // The mock boots with its focus axis fitted and all else at the defaults.
         expect(listed.current).toBe("polar-laser-focus");
@@ -1747,6 +1749,55 @@ describe("machine files in the mock", () => {
         expect(back.machine).toBe("polar-laser");
         expect(back.values["cartesian"]).toBe(0);
         expect((await backend.state()).profile).toMatchObject({ kinematics: "polar", tool: "laser", h_axis: false });
-        expect(machineOf({})).toBeNull();
+    });
+});
+
+describe("machine files read, checked, saved and removed in the mock", () => {
+    test("the files follow the backend's reading and its refusals", async () => {
+        const backend = new MockBackend({ timers: false });
+        const file = await backend.machineFile("polar-laser");
+        expect(file.problems).toEqual([]);
+        expect(file.text).toContain("[controls]");
+        // The polar laser's file spells out every default, controls included.
+        expect(file.document?.name).toBe("Polar laser");
+        expect(file.document?.settings).toEqual(DEFAULT_SETTINGS);
+        expect(file.document?.controls).toEqual(defaultControls({ kinematics: "polar", tool: "laser", h_axis: false, r_max: 0, z_max: 0 }));
+        const mill = await backend.machineFile("cartesian-mill");
+        expect(mill.document?.settings["sockets"]).toBe(1423);
+        expect(mill.document?.host).toEqual({ tolerance: 0.005, clearance: 2, spinup: 2 });
+        const checked = await backend.checkMachineFile("polar-laser", "[rail]\nmax_rate = 0\n");
+        expect(checked.document).toBeNull();
+        expect(checked.problems[0]).toContain("polar-laser.toml: [rail] max_rate must be above 0");
+        await expect(backend.saveMachineFile("polar-laser", "[rail]\nmax_rate = 0\n")).rejects.toBeInstanceOf(ApiError);
+        expect((await backend.machineFile("polar-laser")).text).toBe(file.text);
+        const saved = await backend.saveMachineFile("rig", 'name = "Rig"\n[output]\npin = 23\n[enable]\nfitted = true\npin = 20');
+        expect(saved.text.endsWith("\n")).toBe(true);
+        expect([saved.document?.settings["laser_pin"], saved.document?.settings["tool_out"], saved.document?.settings["tool_pin"]]).toEqual([23, 1, 20]);
+        expect((await backend.machines()).machines.map((m) => m.id)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser", "rig"]);
+        // Two settings on one pin are refused where the whole file is seen.
+        expect((await backend.checkMachineFile("rig", "[probe]\npin = 20\n")).problems[0]).toContain("[probe] pin 20 (FAN3) is the [output] pin too");
+        expect((await backend.checkMachineFile("rig", "[output]\npin = 11\n")).problems[0]).toContain("[output] pin 11 is a driver socket's");
+        expect((await backend.checkMachineFile("rig", "[controls]\n[[controls.axes]]\naxis = \"q\"\n")).problems[0]).toContain("[controls.axes] axis must be one of r, a, z, h");
+        // A file that does not read is listed with its problem and still opens, to be mended.
+        (backend as unknown as { machineTexts: Map<string, string> }).machineTexts.set("broken", "[rail]\nmax_rate = -5\n");
+        const listed = await backend.machines();
+        expect(listed.problems).toEqual([{ id: "broken", problem: expect.stringContaining("[rail] max_rate") as string }]);
+        expect(listed.machines.map((m) => m.id)).not.toContain("broken");
+        const broken = await backend.machineFile("broken");
+        expect(broken.document).toBeNull();
+        expect(broken.text).toBe("[rail]\nmax_rate = -5\n");
+        await backend.deleteMachineFile("rig");
+        await expect(backend.machineFile("rig")).rejects.toBeInstanceOf(ApiError);
+        await expect(backend.deleteMachineFile("rig")).rejects.toBeInstanceOf(ApiError);
+        await expect(backend.saveMachineFile("Bad Id", "")).rejects.toBeInstanceOf(ApiError);
+        // Loaded, a file's pins go to the machine like any setting, and the file's controls come with the settings.
+        await backend.connect("/dev/ttyACM0");
+        await backend.saveMachineFile("pins", 'name = "Pins"\n[focus]\nfitted = true\n[output]\npin = 23\n[controls]\npad = false\n');
+        const applied = await backend.applyMachine("pins");
+        expect(applied.machine).toBe("pins");
+        expect(applied.values["laser_pin"]).toBe(23);
+        expect(applied.controls?.pad).toBe(false);
+        // A pin the sockets own is refused by the settings too.
+        await expect(backend.updateSettings({ values: { probe_pin: 11 } })).rejects.toBeInstanceOf(ApiError);
     });
 });

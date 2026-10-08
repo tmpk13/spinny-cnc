@@ -1026,6 +1026,8 @@ mod tests {
         }
 
         fn set_frequency(&mut self, _hz: u32) {}
+
+        fn set_enable(&mut self, _high: bool) {}
     }
 
     /// A segment as the interrupt loaded it, with its block.

@@ -17,7 +17,7 @@ and turn jogs, and whole jobs all arrive as the same few line commands.
 | `web/backend` | serial link, job import, streaming, probing, API, serves the page | `uv run spinny-web` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, machine configs, gcode tools | `uv run pytest toolpath/tests` |
-| `machines` | machine configurations in TOML, one per axis setup, with the page's controls | `docs/MACHINES.md` |
+| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
 
@@ -33,14 +33,14 @@ flowchart LR
         BE --> LS[laser_sweep: gerber, isolation]
         BE --> HM[height map: probing, focus or power compensation, spindle depth]
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
-        MF[machines/*.toml: axes, kinematics, tool, the page's controls] --> BE
+        MF[machines/*.toml: axes, pins, kinematics, tool, the page's controls] <--> BE
         CF[cam/*.toml: axes, tools, operations, post] --> CAM
         CF --> CLI[spinny-cam]
     end
     MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
-        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, TMC2209, flash, probe input] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, spindle, machine]
+        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, tool output and probe input on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, spindle, tool output, machine]
         VIRT[virtual: TCP server, virtual clock, board surface] --> CORE
     end
 ```

@@ -344,19 +344,32 @@ microsteps a power of two up to 256.
 | `cartesian` | 0/1 | 0 | the cross slide is a joint: Y of an X/Y machine with the radius as X |
 | `spindle` | 0/1 | 0 | the laser output drives a spindle |
 | `sockets` | digits | 1234 | driver socket of the radius, table, cross slide and focus axis, in that order: 1 X, 2 Y, 3 Z, 4 E, each socket once; 1423 is a three axis mill (radius X, slide Y, focus Z, table E) |
+| `laser_pin` | GPIO | 20 | the laser (or spindle) PWM output: 20 FAN3, 17 FAN1, 18 FAN2, 23 HE, 21 BED, 29 SERVO; read at boot |
+| `probe_pin` | GPIO | 25 | the probe input, pulled up: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP; read at boot |
+| `tool_out` | 0/1 | 0 | 1 = `tool_pin` follows the tool: driven while a job runs, a beam is lit, a dwell burns or the spindle turns; read at boot |
+| `tool_pin` | GPIO | 17 | the tool output, FAN1 by default; read at boot |
+| `tool_invert` | 0/1 | 0 | 1 = the tool output is active low |
 
 Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
 configuration; a `tmc_*` value and `dir_invert` follow the axis to its
 socket.
 Changing `spindle` stops whatever runs on the output.
+A pin setting names any GPIO up to 29 but the driver sockets' and the
+UART's (2, 5 to 15, 19 and 28). The firmware takes the three one at a
+time, so it does not refuse two on one pin (a machine file does; the
+board keeps the laser on its pin and drops a probe or tool output that
+shares it). `laser_pin`, `probe_pin`, `tool_out` and `tool_pin` are read
+from flash at boot: `$save` and restart for a change to take effect;
+`tool_invert` applies at once.
 
 Settings stored by a firmware from before `probe_ms` (the stored layout
 changed, and the first focus axis firmware is one of them) are thrown away
 at boot: set them again, `laser_invert` first, and `$save`. Until then the
 output runs at the defaults' polarity, which lights an active-low module.
 Settings stored before `z_jerk`, `z_max`, `cartesian` and `spindle` are
-read, with those four at their defaults, and settings stored before
-`sockets` with it at 1234.
+read, with those four at their defaults, settings stored before
+`sockets` with it at 1234, and settings stored before the pins with those
+at their defaults.
 
 ## Status line
 

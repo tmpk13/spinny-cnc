@@ -1,14 +1,18 @@
-// A small TOML reader for the in-page mock: enough of the format for the
-// CAM profiles and the machine files (tables, arrays of tables, dotted
-// table names one level deep, inline tables, strings, numbers, booleans
-// and arrays of those), the line named in every refusal. The backend reads
-// the language in full; this reads what the shipped files and the page
-// write.
+// A small TOML reader: enough of the format for the CAM profiles and the
+// machine files (tables, arrays of tables, dotted table names one level
+// deep, inline tables, strings, numbers, booleans and arrays of those), the
+// line named in every refusal. The in-page mock reads the files with it,
+// and the editors check what is typed with it as it is typed. The backend
+// reads the language in full; this reads what the shipped files and the
+// page write.
 
 export class TomlError extends Error {
+    readonly line: number;
+
     constructor(line: number, text: string) {
         super(`line ${line}: ${text}`);
         this.name = "TomlError";
+        this.line = line;
     }
 }
 
@@ -105,7 +109,7 @@ export function parseToml(text: string): TomlTable {
         }
         const key = pair[1]!;
         if (!BARE_KEY.test(key)) {
-            throw new TomlError(number, `the mock reads plain keys only, not ${key}`);
+            throw new TomlError(number, `plain keys only here, not ${key}`);
         }
         let value = pair[2]!;
         // An array may run over several lines; the lines are joined until
@@ -133,7 +137,7 @@ export function parseToml(text: string): TomlTable {
 function tablePath(root: TomlTable, header: string, line: number): [TomlTable, string] {
     const parts = header.split(".").map((part) => part.trim());
     if (parts.length > 2 || !parts.every((part) => BARE_KEY.test(part))) {
-        throw new TomlError(line, `the mock reads plain table names only, not [${header}]`);
+        throw new TomlError(line, `plain table names only here, not [${header}]`);
     }
     if (parts.length === 1) {
         return [root, parts[0]!];
@@ -191,7 +195,7 @@ function parseValue(text: string, line: number): TomlValue {
     if (NUMBER.test(text)) {
         const value = Number(text.replace(/_/g, ""));
         if (!Number.isFinite(value)) {
-            throw new TomlError(line, `${text} is not a number the mock reads`);
+            throw new TomlError(line, `${text} is not a number read here`);
         }
         return value;
     }

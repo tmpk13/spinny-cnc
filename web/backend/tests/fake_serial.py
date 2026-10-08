@@ -70,6 +70,11 @@ DEFAULT_SETTINGS = {
     "cartesian": 0,
     "spindle": 0,
     "sockets": 1234,
+    "laser_pin": 20,
+    "probe_pin": 25,
+    "tool_out": 0,
+    "tool_pin": 17,
+    "tool_invert": 0,
 }
 
 

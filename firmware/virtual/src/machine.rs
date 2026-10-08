@@ -24,7 +24,7 @@ const SOCKETS: [&str; 4] = ["X", "Y", "Z", "E"];
 pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     let top: Table = text.parse().map_err(|e| format!("{e}"))?;
     let mut writes: Vec<(String, String)> = Vec::new();
-    let mut known_top = vec!["name", "description", "kinematics", "tool", "probe", "output", "drivers", "host", "controls"];
+    let mut known_top = vec!["name", "description", "kinematics", "tool", "probe", "output", "enable", "drivers", "host", "controls"];
 
     if let Some(value) = top.get("name") {
         value.as_str().ok_or("name must be a string")?;
@@ -117,7 +117,10 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     if let Some(value) = integer(&probe, "brake_ms", "probe")? {
         writes.push(("probe_ms".into(), value));
     }
-    only(&probe, "probe", &["invert", "brake_ms"])?;
+    if let Some(value) = integer(&probe, "pin", "probe")? {
+        writes.push(("probe_pin".into(), value));
+    }
+    only(&probe, "probe", &["invert", "brake_ms", "pin"])?;
 
     let output = table_of(&top, "output")?;
     if let Some(value) = integer(&output, "pwm_hz", "output")? {
@@ -137,7 +140,23 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     if let Some(value) = integer(&output, "test_ms", "output")? {
         writes.push(("laser_ms".into(), value));
     }
-    only(&output, "output", &["pwm_hz", "s_max", "s_min", "invert", "test_ms"])?;
+    if let Some(value) = integer(&output, "pin", "output")? {
+        writes.push(("laser_pin".into(), value));
+    }
+    only(&output, "output", &["pwm_hz", "s_max", "s_min", "invert", "test_ms", "pin"])?;
+
+    // The tool output: the host checks that its pin is nobody else's.
+    let enable = table_of(&top, "enable")?;
+    if let Some(fitted) = flag(&enable, "fitted", "enable")? {
+        writes.push(("tool_out".into(), flag_text(fitted)));
+    }
+    if let Some(value) = integer(&enable, "pin", "enable")? {
+        writes.push(("tool_pin".into(), value));
+    }
+    if let Some(invert) = flag(&enable, "invert", "enable")? {
+        writes.push(("tool_invert".into(), flag_text(invert)));
+    }
+    only(&enable, "enable", &["fitted", "pin", "invert"])?;
 
     let drivers = table_of(&top, "drivers")?;
     if let Some(invert) = flag(&drivers, "enable_invert", "drivers")? {
@@ -301,8 +320,9 @@ mod tests {
              [table]\nsteps_per_deg = 888.8889\nmax_rate = 1080\ninvert = true\n\
              [slide]\nsteps_per_mm = 640\nlimit = 8\n\
              [focus]\nfitted = true\nsteps_per_mm = 1600\nmax_rate = 300\njog_rate = 150\ninvert = true\n\
-             [probe]\ninvert = true\nbrake_ms = 0\n\
-             [output]\npwm_hz = 1000\ns_max = 255\ns_min = 10\ninvert = true\ntest_ms = 7000\n\
+             [probe]\ninvert = true\nbrake_ms = 0\npin = 22\n\
+             [output]\npwm_hz = 1000\ns_max = 255\ns_min = 10\ninvert = true\ntest_ms = 7000\npin = 23\n\
+             [enable]\nfitted = true\npin = 18\ninvert = true\n\
              [drivers]\nenable_invert = true\nidle_ms = 30000\nstep_us = 4\nhold_pct = 30\nstealth = false\n\
              [host]\ntolerance = 0.01\nclearance = 3\nspinup = 1.5\n",
         );
@@ -329,6 +349,9 @@ mod tests {
         assert_eq!(settings.s_min, 10.0);
         assert!(settings.laser_invert);
         assert_eq!(settings.laser_ms, 7000);
+        assert_eq!((settings.laser_pin, settings.probe_pin), (23, 22));
+        assert!(settings.tool_out && settings.tool_invert);
+        assert_eq!(settings.tool_pin, 18);
         assert!(settings.en_invert);
         assert_eq!(settings.idle_ms, 30000);
         assert_eq!(settings.step_us, 4);

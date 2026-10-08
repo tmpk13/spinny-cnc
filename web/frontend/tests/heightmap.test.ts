@@ -248,9 +248,9 @@ describe("focus axis readout and jog", () => {
         const { store, ctx, root, calls } = setup({ map: null, probe: null, settings: SETTINGS });
         mountJog(root, ctx);
         store.set({ snapshot: connected({ joint: { r: 0, a: 0, z: 0, h: null } }) });
-        expect(root.querySelector('.axis-frame[data-axis="h"]')).toBeNull();
+        expect(root.querySelector('[data-axis="h"]')).toBeNull();
         store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "laser", h_axis: true, r_max: 60, z_max: 0 } } });
-        const frame = root.querySelector('.axis-frame[data-axis="h"]')!;
+        const frame = root.querySelector('[data-axis="h"]')!;
         click(frame, "Up");
         click(frame, "Down");
         await settle();

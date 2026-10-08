@@ -28,7 +28,7 @@ import type {
     Tool,
 } from "../types.ts";
 import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
-import { parseToml, type TomlTable, type TomlValue } from "./toml.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
 export const SHIPPED_PROFILES: { id: string; text: string }[] = [
     { id: "cartesian-laser", text: laserText },

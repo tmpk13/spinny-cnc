@@ -20,9 +20,20 @@ speed signal and the focus axis its depth axis.
 | Table STEP / DIR / EN | GP6 / GP5 / GP7 | Y driver socket, EN active low |
 | Cross slide STEP / DIR / EN | GP19 / GP28 / GP2 | Z driver socket, EN active low |
 | Focus axis STEP / DIR / EN | GP14 / GP13 / GP15 | E driver socket, EN active low; used with `$h_axis=1` |
-| Probe | GP25 | Z-STOP header, internal pull-up, active low unless `$probe_invert=1` |
+| Probe | GP25 | Z-STOP header, internal pull-up, active low unless `$probe_invert=1`; `$probe_pin` moves it |
 | TMC2209 UART | GP8 TX, GP9 RX | one wire, 115200 baud, addresses X=0 Y=2 Z=1 E=3, 110 mOhm sense |
-| Laser | GP20 | FAN3 header, a low side MOSFET switching the fan rail |
+| Laser | GP20 | FAN3 header, a low side MOSFET switching the fan rail; `$laser_pin` moves it |
+| Tool output | none | `$tool_out=1` drives `$tool_pin` (GP17, FAN1, by default) while a job runs, a beam is lit, a dwell burns or the spindle turns; `$tool_invert=1` makes it active low |
+
+The pin settings are read from flash at boot, so a change takes effect
+after `$save` and a restart; the `$` listing shows the stored value
+meanwhile. Any GPIO but the driver sockets' and the UART's may be named:
+the headers are FAN1 GP17, FAN2 GP18, FAN3 GP20, HE GP23, BED GP21, SERVO
+GP29 and RGB GP24 for outputs, and X-STOP GP4, Y-STOP GP3, Z-STOP GP25,
+E-STOP GP16 and PROBE GP22 for inputs. The laser's slice of the PWM block
+follows from its pin, so any of them carries the PWM. A pin named twice
+is the machine file's to refuse; the board itself keeps the laser on its
+pin and drops the probe or the tool output from a pin the laser has.
 
 The cross slide goes in the **Z** socket and the focus axis in the **E**
 socket. The four enable pins are driven together, so an empty E socket

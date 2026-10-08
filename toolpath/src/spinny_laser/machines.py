@@ -15,8 +15,9 @@ The sections and keys, with the firmware setting each one sets:
     [slide]   Z, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (z_max), invert, current_ma, microsteps
     [focus]   H, mm: fitted (h_axis), steps_per_mm, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
               each axis also takes socket, the driver socket it is wired to (X, Y, Z or E, each once: sockets)
-    [probe]   invert, brake_ms (probe_ms)
-    [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms)
+    [probe]   invert, brake_ms (probe_ms), pin (probe_pin)
+    [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms), pin (laser_pin)
+    [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth
     [host]    tolerance, clearance, spinup: the host's own settings, not the firmware's
     [controls] the page's jog panel and readout (spinny_laser.controls); left out, drawn from the kinematics, tool and focus axis
@@ -25,6 +26,7 @@ The sections and keys, with the firmware setting each one sets:
 from __future__ import annotations
 
 import math
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +37,7 @@ KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle")
 
 # The firmware's defaults, in the order it lists them. A file sets what it
-# names and leaves the rest here, so a machine is always all 47 settings.
+# names and leaves the rest here, so a machine is always all 52 settings.
 FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "r_steps": 10240.0, "a_steps": 14222.222, "r_rate": 560.0, "a_rate": 400.0,
     "r_accel": 50.0, "a_accel": 50.0, "r_jerk": 3.0, "a_jerk": 2.0,
@@ -48,14 +50,28 @@ FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "h_axis": 0, "h_steps": 6400.0, "h_rate": 600.0, "h_accel": 50.0, "h_jerk": 1.0, "jog_h": 120.0,
     "probe_invert": 0, "tmc_h_ma": 600, "tmc_h_micro": 256, "probe_ms": 20,
     "z_jerk": 3.0, "z_max": 0.0, "cartesian": 0, "spindle": 0, "sockets": 1234,
+    "laser_pin": 20, "probe_pin": 25, "tool_out": 0, "tool_pin": 17, "tool_invert": 0,
 }
 
-FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle"})
+FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert"})
 INTEGERS = frozenset({
     "dir_invert", "idle_ms", "step_us", "laser_hz", "laser_ms", "tmc_hold_pct", "probe_ms",
     "tmc_r_ma", "tmc_a_ma", "tmc_z_ma", "tmc_h_ma", "tmc_r_micro", "tmc_a_micro", "tmc_z_micro", "tmc_h_micro",
-    "sockets",
+    "sockets", "laser_pin", "probe_pin", "tool_pin",
 })
+# The board's GPIOs a pin setting may name: up to PIN_MAX, less the driver
+# sockets' STEP, DIR and EN pins and the driver UART, which the firmware
+# refuses. The headers, for the messages and the page.
+PIN_MAX = 29
+RESERVED_PINS = frozenset({2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 28})
+HEADERS = {
+    17: "FAN1", 18: "FAN2", 20: "FAN3", 21: "BED", 23: "HE", 29: "SERVO", 24: "RGB",
+    4: "X-STOP", 3: "Y-STOP", 25: "Z-STOP", 16: "E-STOP", 22: "PROBE", 26: "THB", 27: "TH0",
+}
+# Settings the firmware reads at boot: a change takes effect after a save
+# to flash and a restart.
+BOOT_SETTINGS = ("laser_pin", "probe_pin", "tool_out", "tool_pin")
+ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MICROSTEPS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 # The largest float the firmware holds, and the longest probe brake.
 FLOAT_MAX = 1.0e7
@@ -79,6 +95,18 @@ HOST_KEYS = {"tolerance": (0.0, 10.0), "clearance": (0.0, 100.0), "spinup": (0.0
 
 class MachineError(ValueError):
     """A machine file that cannot be taken: the message names the file and the key."""
+
+
+def check_id(machine_id: str) -> str:
+    """A machine id is a file name: lower case letters, digits, - and _."""
+    if not ID_PATTERN.fullmatch(machine_id):
+        raise MachineError(f"{machine_id!r} is not a machine id: lower case letters, digits, - and _")
+    return machine_id
+
+
+def pin_name(pin: int) -> str:
+    """A GPIO with its header, when it is one: 20 (FAN3)."""
+    return f"{pin} ({HEADERS[pin]})" if pin in HEADERS else str(pin)
 
 
 @dataclass(frozen=True)
@@ -184,7 +212,9 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     settings["probe_invert"] = int(reader.flag(probe, "invert", False, "probe"))
     if "brake_ms" in probe:
         settings["probe_ms"] = reader.integer(probe, "brake_ms", "probe", 0, PROBE_MS_MAX)
-    reader.done(probe, "probe", {"invert", "brake_ms"})
+    if "pin" in probe:
+        settings["probe_pin"] = reader.pin(probe, "pin", "probe")
+    reader.done(probe, "probe", {"invert", "brake_ms", "pin"})
 
     output = reader.table(top, "output")
     if "pwm_hz" in output:
@@ -198,7 +228,24 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     settings["laser_invert"] = int(reader.flag(output, "invert", False, "output"))
     if "test_ms" in output:
         settings["laser_ms"] = reader.integer(output, "test_ms", "output", 1, 60_000)
-    reader.done(output, "output", {"pwm_hz", "s_max", "s_min", "invert", "test_ms"})
+    if "pin" in output:
+        settings["laser_pin"] = reader.pin(output, "pin", "output")
+    reader.done(output, "output", {"pwm_hz", "s_max", "s_min", "invert", "test_ms", "pin"})
+
+    # The tool output. The firmware takes the pins one setting at a time,
+    # so two on one GPIO are refused here, where the whole file is seen.
+    enable = reader.table(top, "enable")
+    settings["tool_out"] = int(reader.flag(enable, "fitted", False, "enable"))
+    if "pin" in enable:
+        settings["tool_pin"] = reader.pin(enable, "pin", "enable")
+    settings["tool_invert"] = int(reader.flag(enable, "invert", False, "enable"))
+    reader.done(enable, "enable", {"fitted", "pin", "invert"})
+    if settings["probe_pin"] == settings["laser_pin"]:
+        raise MachineError(f"{where}: [probe] pin {pin_name(settings['probe_pin'])} is the [output] pin too")
+    if settings["tool_out"]:
+        for section, other in (("output", "laser_pin"), ("probe", "probe_pin")):
+            if settings["tool_pin"] == settings[other]:
+                raise MachineError(f"{where}: [enable] pin {pin_name(settings['tool_pin'])} is the [{section}] pin too")
 
     drivers = reader.table(top, "drivers")
     settings["en_invert"] = int(reader.flag(drivers, "enable_invert", False, "drivers"))
@@ -221,7 +268,7 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             host[key] = value
     reader.done(host_table, "host", set(HOST_KEYS))
     controls = parse_controls(reader, top, kinematics, tool, bool(settings["h_axis"]))
-    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "probe", "output", "drivers", "host", "controls"})
+    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "probe", "output", "enable", "drivers", "host", "controls"})
 
     return Machine(
         id=machine_id,
@@ -301,6 +348,13 @@ class _Reader:
             raise self.fail(section, key, "must be a whole number")
         if not (low <= value <= high):
             raise self.fail(section, key, f"must be {low} to {high}")
+        return value
+
+    def pin(self, table: dict, key: str, section: str) -> int:
+        value = self.integer(table, key, section, 0, PIN_MAX)
+        if value in RESERVED_PINS:
+            raise self.fail(section, key, f"{value} is a driver socket's or the driver UART's; the sockets and the UART keep "
+                            + ", ".join(str(pin) for pin in sorted(RESERVED_PINS)))
         return value
 
     def one_of(self, table: dict, key: str, section: str, choices: tuple[int, ...]) -> int:

@@ -34,6 +34,7 @@ from . import __version__, center
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .heightmap import AUTO, FOCUS, MODES, OFF, POWER, Compensation, Grid, HeightMap, HeightMapStore, check_covers
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
+from .machines import MachineStore
 from .kinematics import (
     DEFAULT_TOLERANCE,
     CartesianStreamer,
@@ -135,6 +136,11 @@ SETTINGS_SCHEMA = [
     {"name": "cartesian", "unit": "0/1", "help": "1 = X/Y machine: the rail is X, the cross slide Y, the table holds"},
     {"name": "spindle", "unit": "0/1", "help": "1 = the laser output drives a spindle, the focus axis is its depth"},
     {"name": "sockets", "unit": "RAZH", "help": "driver socket per axis, rail, table, slide, focus: 1 X, 2 Y, 3 Z, 4 E, each once; 1234 as labeled"},
+    {"name": "laser_pin", "unit": "GPIO", "help": "laser or spindle PWM output: 20 FAN3, 17 FAN1, 18 FAN2, 23 HE, 21 BED, 29 SERVO; read at boot, so save and restart"},
+    {"name": "probe_pin", "unit": "GPIO", "help": "probe input, pulled up: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP; read at boot"},
+    {"name": "tool_out", "unit": "0/1", "help": "1 = tool_pin follows the tool: on while a job runs, a beam is lit, a dwell burns or the spindle turns; read at boot"},
+    {"name": "tool_pin", "unit": "GPIO", "help": "the tool output, 17 FAN1 by default; read at boot"},
+    {"name": "tool_invert", "unit": "0/1", "help": "1 = tool output active low"},
 ]
 
 POLAR, CARTESIAN = "polar", "cartesian"
@@ -230,6 +236,10 @@ class CamTextBody(BaseModel):
     text: str
 
 
+class MachineTextBody(BaseModel):
+    text: str
+
+
 class CamPatchBody(BaseModel):
     # The table and the key: ["operations", 2, "depth"]; null takes the key out.
     path: list[str | int]
@@ -322,6 +332,7 @@ class Backend:
     ) -> None:
         self.root = root
         self.machines_dir = machines_dir if machines_dir is not None else MACHINES_DIR
+        self.machine_store = MachineStore(self.machines_dir)
         self.cam = ProfileStore(cam_dir if cam_dir is not None else CAM_DIR)
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
@@ -1182,15 +1193,15 @@ class Backend:
 
     # --- machines -----------------------------------------------------------------
 
-    def machine_list(self) -> tuple[list[machine_files.Machine], list[str]]:
-        """The machine files, read afresh so an edit shows at once, and a
-        message for each one that cannot be taken."""
-        return machine_files.load_all(self.machines_dir)
+    def machine_list(self) -> tuple[list[machine_files.Machine], list[dict]]:
+        """The machine files, read afresh so an edit shows at once, and
+        the id and the problem of each one that cannot be taken."""
+        return self.machine_store.list()
 
     def machines(self) -> dict:
         """Every machine file, and which one the connected machine's
         settings are; `None` with no machine connected or settings of no
-        file's."""
+        file's. A file that cannot be read is named with its problem."""
         found, problems = self.machine_list()
         current = None
         if self.link is not None and self.link.is_open:
@@ -1883,7 +1894,20 @@ def create_app(
 
     @app.get("/api/machines/{machine_id}")
     def machine(machine_id: str):
-        return backend.machine(machine_id).document()
+        return guarded(lambda: backend.machine_store.document(machine_id))
+
+    @app.put("/api/machines/{machine_id}")
+    def machine_save(machine_id: str, body: MachineTextBody):
+        return guarded(lambda: backend.machine_store.save(machine_id, body.text))
+
+    @app.post("/api/machines/{machine_id}/check")
+    def machine_check(machine_id: str, body: MachineTextBody):
+        return guarded(lambda: backend.machine_store.check(machine_id, body.text))
+
+    @app.delete("/api/machines/{machine_id}")
+    def machine_delete(machine_id: str):
+        guarded(lambda: backend.machine_store.remove(machine_id))
+        return {"deleted": machine_id}
 
     @app.post("/api/machines/{machine_id}/apply")
     def apply_machine(machine_id: str, body: ApplyMachineBody | None = None):

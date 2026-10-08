@@ -34,7 +34,7 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
 | `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
 | `cam.py` | the CAM profiles in `cam/` (listed, read, saved whole, patched one value at a time), the uploaded files through a profile into a job (`spinny_laser.camjob`), a stored job as gcode for the profile's controller (`spinny_laser.post`) |
-| `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine files in `machines/` (listed, matched against the live settings, loaded whole, their controls sent with the settings), the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
+| `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine files in `machines/` (listed, matched against the live settings, loaded whole, their controls sent with the settings; read, checked, saved and removed through `machines.py`), the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
 
 ## Events
 

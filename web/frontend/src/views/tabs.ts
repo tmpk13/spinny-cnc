@@ -1,13 +1,15 @@
-// The page's tabs: the machine's page (the dashboard) and the CAM page. The
-// pick is set on #app for the stylesheet and remembered per browser.
+// The page's tabs: the machine's page (the dashboard), the CAM page and
+// the Config page (the machine files and the firmware settings). The pick
+// is set on #app for the stylesheet and remembered per browser.
 
 import { el } from "../dom.ts";
 
-export type PageId = "machine" | "cam";
+export type PageId = "machine" | "cam" | "config";
 
 export const PAGES: { id: PageId; label: string }[] = [
     { id: "machine", label: "Machine" },
     { id: "cam", label: "CAM" },
+    { id: "config", label: "Config" },
 ];
 
 const PAGE_KEY = "spinny.page";
@@ -16,7 +18,7 @@ function isPage(value: string | null | undefined): value is PageId {
     return PAGES.some((page) => page.id === value);
 }
 
-/** The page named in the address (`?page=cam`), else the one last shown in this browser, else the machine's. */
+/** The page named in the address (`?page=cam`, `?page=config`), else the one last shown in this browser, else the machine's. */
 export function readPage(): PageId {
     try {
         const asked = new URLSearchParams(globalThis.location?.search ?? "").get("page");

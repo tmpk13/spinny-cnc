@@ -110,8 +110,11 @@ the host's own.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser", "focus": false}, ...], "current": "polar-laser", "problems": []}`; `current` is the file the connected machine's settings are, `null` with no machine connected or settings of no file's; `problems` names each file that could not be read, the others are listed |
-| `GET /api/machines/{id}` | the entry above plus `settings` (all 46 values), `host` and `controls` (the file's `[controls]`, filled in from the defaults); 404 for a file that is not there or cannot be read |
+| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser", "focus": false}, ...], "current": "polar-laser", "problems": [{"id": "broken", "problem": "..."}]}`; `current` is the file the connected machine's settings are, `null` with no machine connected or settings of no file's; `problems` names each file that could not be read with what is wrong, the others are listed; such a file still opens below, to be mended |
+| `GET /api/machines/{id}` | `{"document": {...}, "problems": [], "text": "..."}`: the entry above plus `settings` (all 52 values), `host` and `controls` (the file's `[controls]`, filled in from the defaults) as `document`, and the file as written; a file that does not read answers with `document` null and the problem named, its text with it; 404 for a file that is not there, 400 for an id that is not lower case letters, digits, `-` and `_` |
+| `PUT /api/machines/{id}` | `{"text": "..."}`: writes the text as the file once it reads as a machine, creating the file when it is new; answers as `GET`; 400 names what is wrong and leaves the file as it was |
+| `POST /api/machines/{id}/check` | `{"text": "..."}`: `{"document": {...} or null, "problems": [...]}`, what the text would read as and what is wrong with it, without writing anything |
+| `DELETE /api/machines/{id}` | removes the file; `{"deleted": id}`, 404 when it is not there |
 | `POST /api/machines/{id}/apply` | `{"save": false}` (the body is optional); writes the file's settings and host values as `PUT /api/settings` does, all or nothing, and with `save` writes the flash afterwards; answers the settings response, `machine` naming the file; 404 for no such file, 409 while a run or probing owns the machine |
 
 ## CAM

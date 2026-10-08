@@ -19,6 +19,7 @@ import type {
     Tool,
 } from "../types.ts";
 import type { Ctx } from "./context.ts";
+import { codeEditor } from "./editor.ts";
 import { showPage } from "./tabs.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gm1,.drl,.kicad_pcb,.gcode,.nc";
@@ -176,13 +177,14 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     );
 
     // --- the file ---
-    const textArea = el("textarea", { class: "field cam-text", spellcheck: "false", "aria-label": "Profile file" });
+    const fileEditor = codeEditor("Profile file");
+    const textArea = fileEditor.textarea;
     const save = button("Save", () => saveText(), "btn btn-primary");
     const revert = button("Revert", () => revertText(), "btn btn-quiet");
     const fileStatus = el("span", { class: "muted cam-status" });
     const editor = el("div", { class: "panel-body" },
         el("div", { class: "button-row" }, save, revert, fileStatus),
-        textArea,
+        fileEditor.root,
         el("p", { class: "muted hint" }, "the file is the profile: every axis, tool and operation is here, with a comment on each key; Save checks it whole and keeps nothing of a text that does not read"),
     );
     (fileRoot ?? root).append(el("div", { class: "panel-head" }, el("h2", {}, "Profile file")), editor);
@@ -193,9 +195,9 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     let dirty = false;
     let lastJob: string | null = null;
 
-    textArea.addEventListener("input", () => {
+    fileEditor.onInput((problem) => {
         dirty = true;
-        setStatus("edited, not saved", false);
+        setStatus(problem ?? "edited, not saved", problem !== null);
     });
     pick.addEventListener("change", () => {
         picked = pick.value;
@@ -259,7 +261,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         shown = response;
         renderProfile();
         if (!dirty) {
-            textArea.value = response.text;
+            fileEditor.setText(response.text);
             setStatus("", false);
         }
     }
@@ -418,7 +420,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
 
     function revertText(): void {
         if (shown) {
-            textArea.value = shown.text;
+            fileEditor.setText(shown.text);
             dirty = false;
             setStatus("", false);
         }

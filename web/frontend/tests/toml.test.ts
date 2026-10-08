@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import millText from "../../../cam/mill-3axis.toml" with { type: "text" };
 import polarText from "../../../cam/polar-laser.toml" with { type: "text" };
-import { TomlError, parseToml, stripComment, type TomlTable } from "../src/mock/toml.ts";
+import { TomlError, parseToml, stripComment, type TomlTable } from "../src/toml.ts";
 
 describe("the mock's TOML reader", () => {
     test("reads the shipped profiles as Bun's own reader does", () => {

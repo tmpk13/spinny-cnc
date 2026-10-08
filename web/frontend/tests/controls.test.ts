@@ -11,7 +11,7 @@ import polarLaserFocus from "../../../machines/polar-laser-focus.toml" with { ty
 import polarLaser from "../../../machines/polar-laser.toml" with { type: "text" };
 import { controlOf, controlsOf, defaultControls, sameControls } from "../src/controls.ts";
 import { MockBackend } from "../src/mock/backend.ts";
-import { parseToml, type TomlTable } from "../src/mock/toml.ts";
+import { parseToml, type TomlTable } from "../src/toml.ts";
 import { initialState } from "../src/state.ts";
 import type { Profile } from "../src/types.ts";
 

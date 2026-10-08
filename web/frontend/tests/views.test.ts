@@ -13,6 +13,7 @@ import { anyOf, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedValues, mountSettings } from "../src/views/settings.ts";
+import { changedBootSettings, mountConfig } from "../src/views/config.ts";
 import { mountPreviewPanel } from "../src/views/previewpanel.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
 import { mountToasts } from "../src/views/toasts.ts";
@@ -235,7 +236,7 @@ describe("settings fold", () => {
         mountSettings(first.root, first.ctx);
         const fold = first.root.querySelector("details.panel-fold") as HTMLDetailsElement;
         expect(fold.open).toBe(true);
-        expect(fold.querySelector("summary h2")?.textContent).toBe("Settings");
+        expect(fold.querySelector("summary h2")?.textContent).toBe("Firmware settings");
         fold.open = false;
         fold.dispatchEvent(new Event("toggle"));
         const second = setup();
@@ -333,10 +334,16 @@ describe("jog", () => {
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 1, dy: 0, feed: null });
         calls.length = 0;
-        click(root, "10 mm");
-        click(root, "Radius -");
+        // Each bar has its own step: the radius bar's 10 mm, not the board's.
+        const radius = root.querySelector('[data-axis="r"]')!;
+        click(radius, "10 mm");
+        click(radius, "Radius -");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -10, feed: null });
+        calls.length = 0;
+        click(root, "X-");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -1, dy: 0, feed: null });
         calls.length = 0;
         click(root, "90 deg");
         click(root, "Turn +");
@@ -351,8 +358,52 @@ describe("jog", () => {
         await settle();
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", r: 0 });
         expect(root.querySelector("button.btn-quiet")?.closest("fieldset")?.disabled).toBe(false);
+        // The cancel button sits in the panel's head, outside the fieldset, and locks with it.
+        const cancel = root.querySelector(".panel-head button") as HTMLButtonElement;
+        expect(cancel.textContent).toBe("Cancel");
+        expect(cancel.disabled).toBe(false);
         store.set({ snapshot: { connected: false, url: null, firmware: null, machine: null, run: null } });
         expect(root.querySelector("fieldset")?.disabled).toBe(true);
+        expect(cancel.disabled).toBe(true);
+    });
+
+    test("a step typed in is the step until a choice is pressed again", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const x = root.querySelector('[data-axis="x"]')!;
+        const custom = x.querySelector('input[aria-label="Board X step"]') as HTMLInputElement;
+        custom.value = "2.5";
+        custom.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(Array.from(x.querySelectorAll(".btn-choice")).every((b) => b.getAttribute("aria-pressed") === "false")).toBe(true);
+        click(x, "X+");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 2.5, dy: 0, feed: null });
+        calls.length = 0;
+        // The arrow keys take it, and the Y bar keeps its own step.
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -2.5, dy: 0, feed: null });
+        calls.length = 0;
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 0, dy: 1, feed: null });
+        calls.length = 0;
+        // A choice pressed clears the typed step.
+        click(x, "10 mm");
+        expect(custom.value).toBe("");
+        click(x, "X-");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -10, dy: 0, feed: null });
+        calls.length = 0;
+        // A typed step that is no step leaves the choice pressed.
+        custom.value = "0";
+        custom.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(x.querySelector('.btn-choice[aria-pressed="true"]')?.textContent).toBe("10 mm");
+        click(x, "X+");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: 0, feed: null });
     });
 
     test("the cross slide moves on its own step and can be zeroed", async () => {
@@ -360,7 +411,7 @@ describe("jog", () => {
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
         mountJog(root, ctx);
-        const slide = root.querySelector(".axis-frame")!;
+        const slide = root.querySelector('[data-axis="z"]')!;
         expect(slide.textContent).toContain("Cross slide");
 
         click(slide, "Set Z=0 here");
@@ -844,31 +895,61 @@ describe("laser and settings", () => {
 });
 
 describe("machine files", () => {
-    test("the settings panel lists the files, names the loaded one, and loads another on confirm", async () => {
+    test("the config panel lists the files, names the loaded one, checks and saves a text, and loads one on confirm", async () => {
+        localStorage.removeItem("spinny.machine");
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountSettings(root, ctx);
+        mountConfig(root, ctx);
         await settle();
-        const pick = root.querySelector("select[aria-label='Machine']") as HTMLSelectElement;
-        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["", "polar-laser", "polar-laser-focus", "cartesian-laser", "cartesian-mill"]);
-        const load = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Load")!;
-        // Before the settings are read nothing is known to be loaded.
-        expect(pick.value).toBe("");
+        const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
+        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]);
+        const load = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Load to board")!;
+        const text = root.querySelector("textarea") as HTMLTextAreaElement;
+        const status = (): string => root.querySelector(".config-status")?.textContent ?? "";
+        // The mock boots as the polar laser with its focus axis: that file is picked first.
+        expect(pick.value).toBe("polar-laser-focus");
+        expect(text.value).toContain("[focus]");
         store.set({ settings: await api.settings() });
         await settle();
-        // The mock boots as the polar laser with its focus axis: that is the one loaded, and there is nothing to load.
-        expect(pick.value).toBe("polar-laser-focus");
-        expect(root.textContent).toContain("loaded");
+        expect(root.textContent).toContain("loaded on the board");
         expect(load.disabled).toBe(true);
+        // Another file: what it reads as, and Load has something to do.
         pick.value = "cartesian-mill";
         pick.dispatchEvent(new Event("change"));
-        expect(load.disabled).toBe(false);
-        expect(root.textContent).toContain("spindle on the output");
-        // A settings refresh does not take the pick away.
-        store.set({ settings: await api.settings() });
         await settle();
-        expect(pick.value).toBe("cartesian-mill");
+        expect(load.disabled).toBe(false);
+        expect(text.value).toContain('kinematics = "cartesian"');
+        expect(root.querySelector(".config-note")?.textContent).toContain("Cartesian mill: cartesian, spindle, focus axis");
+        const original = text.value;
+        // Typed, a line that does not read is named before any save.
+        text.value = `${original}\n[rail\n`;
+        text.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(status()).toContain("expected key = value");
+        // Checked, the backend's refusal is listed and nothing is written.
+        text.value = `${original}\n[nope]\nx = 1\n`;
+        text.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(status()).toBe("edited, not saved");
+        click(root, "Check");
+        await settle();
+        expect(root.querySelector(".config-problems")?.textContent).toContain("nope is not a key here");
+        click(root, "Save");
+        await settle();
+        expect(status()).toContain("nope is not a key here");
+        expect((await api.machineFile("cartesian-mill")).text).toBe(original);
+        // A good edit is saved, and the list follows the name.
+        text.value = original.replace('name = "Cartesian mill"', 'name = "My mill"');
+        text.dispatchEvent(new Event("input", { bubbles: true }));
+        click(root, "Save");
+        await settle();
+        expect(status()).toBe("saved");
+        expect(Array.from(pick.options).find((option) => option.value === "cartesian-mill")?.textContent).toBe("My mill");
+        // Revert takes the saved text.
+        text.value = "x";
+        text.dispatchEvent(new Event("input", { bubbles: true }));
+        click(root, "Revert");
+        expect(text.value).toContain('name = "My mill"');
+        // Load to board asks first, then writes every setting of the file.
         load.click();
         await settle();
         dialogButton("Cancel").click();
@@ -882,19 +963,53 @@ describe("machine files", () => {
         const settings = store.get().settings!;
         expect(settings.machine).toBe("cartesian-mill");
         expect(settings.values["cartesian"]).toBe(1);
-        expect(pick.value).toBe("cartesian-mill");
+        expect(root.textContent).toContain("loaded on the board");
         expect(load.disabled).toBe(true);
         // A setting changed by hand: the settings are no file's any more.
         await api.updateSettings({ values: { a_rate: 123 } });
         await ctx.refreshSettings();
         await settle();
-        expect(pick.value).toBe("");
-        expect(root.textContent).toContain("no file");
+        expect(root.textContent).toContain("no file's");
+        expect(load.disabled).toBe(false);
         // Not connected: nothing to load.
         store.set({ snapshot: { ...connected(), connected: false, machine: null } });
         await settle();
         expect(load.disabled).toBe(true);
         expect(root.textContent).toContain("connect to load one");
+        localStorage.removeItem("spinny.machine");
+    });
+
+    test("a new file is made from the text in the editor, and a file goes on confirm", async () => {
+        localStorage.removeItem("spinny.machine");
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountConfig(root, ctx);
+        await settle();
+        const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
+        pick.value = "polar-laser";
+        pick.dispatchEvent(new Event("change"));
+        await settle();
+        const id = root.querySelector("input[aria-label='New machine id']") as HTMLInputElement;
+        id.value = "my-rig";
+        click(root, "New");
+        await settle();
+        expect(pick.value).toBe("my-rig");
+        expect(Array.from(pick.options).map((option) => option.value)).toContain("my-rig");
+        expect((await api.machineFile("my-rig")).text).toContain('name = "Polar laser"');
+        click(root, "Delete");
+        await settle();
+        dialogButton("Delete").click();
+        await settle();
+        expect(Array.from(pick.options).map((option) => option.value)).not.toContain("my-rig");
+        await expect(api.machineFile("my-rig")).rejects.toBeDefined();
+        localStorage.removeItem("spinny.machine");
+    });
+
+    test("a load that changes a pin says the board must be saved and restarted", () => {
+        expect(changedBootSettings(undefined, { laser_pin: 20 })).toEqual([]);
+        const before = { laser_pin: 20, probe_pin: 25, tool_out: 0, tool_pin: 17, tool_invert: 0, r_rate: 1 };
+        expect(changedBootSettings(before, { ...before, laser_pin: 23, tool_out: 1, tool_invert: 1, r_rate: 2 })).toEqual(["laser_pin", "tool_out"]);
     });
 });
 
@@ -1003,8 +1118,8 @@ describe("controls from the machine file", () => {
         feed: false,
         center: null,
         axes: [
-            { axis: "r", letter: "X", label: "Rail", steps: [0.5, 5], step: 5, buttons: ["Left", "Right"], place: "buttons", feed: false, goto: true, zero: true, zero_hint: "", keys: ["PageDown", "PageUp"], note: "" },
-            { axis: "h", letter: "Z", label: "Depth", steps: [0.1, 1], step: 1, buttons: ["Down", "Up"], place: "frame", feed: false, goto: false, zero: false, zero_hint: "", keys: [], note: "Up is positive" },
+            { axis: "r", letter: "X", label: "Rail", steps: [0.5, 5], step: 5, buttons: ["Left", "Right"], feed: false, goto: true, zero: true, zero_hint: "", keys: ["PageDown", "PageUp"], note: "" },
+            { axis: "h", letter: "Z", label: "Depth", steps: [0.1, 1], step: 1, buttons: ["Down", "Up"], feed: false, goto: false, zero: false, zero_hint: "", keys: [], note: "Up is positive" },
         ],
     };
     const settingsWith = (controls: Controls): SettingsResponse => ({ values: {}, schema: [], host: { tolerance: 0.01 }, controls });
@@ -1030,12 +1145,11 @@ describe("controls from the machine file", () => {
         expect(labels()).not.toContain("Radius -");
         expect(labels()).not.toContain("X+");
         expect(labels()).not.toContain("Center");
-        // Without a pad the cancel button moves to the bottom row.
         expect(labels()).toContain("Cancel");
         expect(labels()).toContain("Set X=0 here");
         expect(labels()).not.toContain("Set Z=0 here");
         expect(root.textContent).not.toContain("Feed mm/min");
-        expect(root.querySelector(".axis-frame")?.textContent).toContain("Up is positive");
+        expect(root.querySelector('[data-axis="h"]')?.textContent).toContain("Up is positive");
         click(root, "Right");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: 5, feed: null });
@@ -1051,7 +1165,7 @@ describe("controls from the machine file", () => {
         calls.length = 0;
         // The goto row has the axes that take one, by their letters.
         const fields = Array.from(root.querySelectorAll("input[placeholder]")).filter((f) => f !== null) as HTMLInputElement[];
-        expect(fields.filter((f) => f.placeholder !== "default").map((f) => f.placeholder)).toEqual(["x"]);
+        expect(fields.filter((f) => f.placeholder !== "default" && f.placeholder !== "custom").map((f) => f.placeholder)).toEqual(["x"]);
         fields.find((f) => f.placeholder === "x")!.value = "2";
         click(root, "Go");
         await settle();

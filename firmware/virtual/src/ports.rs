@@ -67,12 +67,14 @@ impl SlidePort for Slide {
     }
 }
 
-/// The laser output as a duty in permille.
+/// The laser output as a duty in permille, and the tool output's level.
 #[derive(Default)]
 pub struct Laser {
     pub duty: u16,
     pub hz: u32,
     pub changes: u64,
+    /// Tool output level, `None` until it is first driven.
+    pub enable_level: Option<bool>,
 }
 
 impl LaserPort for Laser {
@@ -85,6 +87,10 @@ impl LaserPort for Laser {
 
     fn set_frequency(&mut self, hz: u32) {
         self.hz = hz;
+    }
+
+    fn set_enable(&mut self, high: bool) {
+        self.enable_level = Some(high);
     }
 }
 

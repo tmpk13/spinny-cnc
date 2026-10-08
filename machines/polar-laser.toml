@@ -58,6 +58,7 @@ socket = "E"
 [probe]
 invert = false              # true: the probe input is active high
 brake_ms = 20               # motion queued during a probe, 0 to 160
+pin = 25                    # GPIO of the input: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP
 
 [output]                    # the laser PWM
 pwm_hz = 5000
@@ -65,6 +66,12 @@ s_max = 1000                # S for full duty
 s_min = 0                   # dyn mode: below this the beam is off
 invert = false              # true: active low output
 test_ms = 5000              # default T for a manual beam
+pin = 20                    # GPIO of the output: 20 FAN3, 17 FAN1, 18 FAN2, 23 HE, 21 BED, 29 SERVO
+
+[enable]                    # an output that follows the tool: a laser supply relay, an air assist, a spindle's run input
+fitted = false              # true: the pin is driven while a job runs, a beam is lit, a dwell burns or the spindle turns
+pin = 17                    # FAN1; any free GPIO, not the output's or the probe's
+invert = false              # true: active low
 
 [drivers]
 enable_invert = false
@@ -80,7 +87,8 @@ tolerance = 0.005           # chord tolerance of the streamed path, mm
 # machine. Left out, they are drawn from the kinematics, the tool and the
 # focus axis, which is what is spelled out here. Every joint shown is one
 # [[controls.axes]] entry, in the order drawn; a key an entry leaves out is
-# the default for that joint.
+# the default for that joint. Every joint is drawn as a bar of its own,
+# with its steps and its buttons.
 [controls]
 pad = true                  # a board X/Y pad, on the arrow keys when no field has the focus
 pad_steps = [0.1, 1, 10]    # mm; an axis without steps of its own uses the pad's step
@@ -94,7 +102,6 @@ letter = "R"                # in the readout, and in "Set R=0 here"
 label = "Radius"
 # steps left out: the pad's step
 buttons = ["Radius -", "Radius +"]
-place = "buttons"           # beside the pad; "frame" is a block of its own with its note and steps
 feed = true                 # the feed field applies; false runs at the firmware's jog rate for the axis
 goto = true                 # a field in the joint goto row
 zero = true                 # a "Set R=0 here" button, which asks with the hint
@@ -108,7 +115,6 @@ label = "Table"
 steps = [1, 10, 90]         # degrees
 step = 10
 buttons = ["Turn -", "Turn +"]
-place = "buttons"
 feed = true
 goto = true
 zero = true
@@ -121,7 +127,6 @@ label = "Cross slide"
 steps = [0.05, 0.1, 0.5]    # the small corrections a centering burn is read into
 step = 0.1
 buttons = ["Z-", "Z+"]
-place = "frame"
 feed = false                # a setup axis: the firmware's own jog rate
 goto = false
 zero = true

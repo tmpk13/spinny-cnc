@@ -1,20 +1,26 @@
-// Jog panel, drawn from the machine's controls (controls.ts): a board X/Y
-// pad on the arrow keys, a button pair beside it or a framed block with its
-// own steps per joint, goto fields, zero buttons, Center, motors and
-// unlock. Which joints there are, what they are called, how they step and
-// whether the feed applies is the machine file's; the panel only draws it,
-// and draws it again when the controls change. Escape cancels a jog or
-// goto from anywhere but a dialog while a machine is connected.
+// Jog panel, drawn from the machine's controls (controls.ts): one bar per
+// axis, each with its steps (the choices, and a step typed in beside
+// them), its minus and plus buttons and its zero button. The board's X and
+// Y bars come first on a machine with a pad, and the arrow keys drive
+// them. Below: the feed field, goto fields, Center, motors and unlock; the
+// cancel button sits in the panel's head, away from every move. Which
+// joints there are, what they are called, how they step and whether the
+// feed applies is the machine file's; the panel only draws it, and draws
+// it again when the controls change. Escape cancels a jog or goto from
+// anywhere but a dialog while a machine is connected.
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, UNITS } from "../controls.ts";
-import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, replace } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, replace, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis } from "../types.ts";
-import { choiceRow, type Ctx } from "./context.ts";
+import { choiceRow, setPressed, type Ctx } from "./context.ts";
 
 export type KeyAction = { dx: number; dy: number } | { axis: JointAxis; sign: 1 | -1 } | "cancel" | null;
+
+/** A bar: the board's X or Y, or a joint. */
+export type BarId = "x" | "y" | JointAxis;
 
 /**
  * Maps a key to a board jog in step units, a joint jog by its step, or a
@@ -58,25 +64,29 @@ export function anyOf(names: string[]): string {
 }
 
 export function mountJog(root: HTMLElement, ctx: Ctx): void {
-    // The step picked per control, kept across a redraw: "pad", or the joint
-    // of an axis with steps of its own.
-    const picks = new Map<string, number>();
+    // The step of each bar, kept across a redraw: the choice pressed, and
+    // a step typed in, which is the step while it is there.
+    const picks = new Map<BarId, number>();
+    const typed = new Map<BarId, number>();
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
+    const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small");
     const body = el("fieldset", { class: "panel-body" });
-    root.append(el("h2", {}, "Jog"), body);
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "button-row" }, cancelButton)), body);
 
     let controls: Controls = controlsOf(ctx.store.get());
     let drawn: Controls | null = null;
     let motors: HTMLButtonElement | null = null;
 
-    const remembered = (key: string, choices: number[], fallback: number): number => {
-        const pick = picks.get(key);
-        return pick !== undefined && choices.includes(pick) ? pick : fallback;
+    /** The choices of a bar: the joint's own steps, or the pad's for one without. */
+    const choicesOf = (axis?: AxisControl): number[] => axis?.steps ?? controls.pad_steps;
+    const startOf = (axis?: AxisControl): number => (axis?.steps ? axis.step ?? axis.steps[0]! : controls.pad_step);
+    /** The choice a bar has pressed: the one remembered if it is still a choice, else the start. */
+    const pickOf = (id: BarId, axis?: AxisControl): number => {
+        const pick = picks.get(id);
+        return pick !== undefined && choicesOf(axis).includes(pick) ? pick : startOf(axis);
     };
-    const padStep = (): number => remembered("pad", controls.pad_steps, controls.pad_step);
-    const stepOf = (axis: AxisControl): number =>
-        axis.steps ? remembered(axis.axis, axis.steps, axis.step ?? axis.steps[0]!) : padStep();
+    const stepOf = (id: BarId, axis?: AxisControl): number => typed.get(id) ?? pickOf(id, axis);
 
     const jogBoard = (dx: number, dy: number): Promise<unknown> =>
         ctx.call(ctx.api.jog({ kind: "board", dx, dy, feed: controls.feed ? feed() : null }));
@@ -84,7 +94,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
     // rate for it: the feed field belongs to the moves that carry the beam
     // over the board.
     const jogAxis = (axis: AxisControl, sign: 1 | -1): Promise<unknown> => {
-        const request = { kind: "joint", [`d${axis.axis}`]: sign * stepOf(axis), feed: axis.feed && controls.feed ? feed() : null } as JogRequest;
+        const request = { kind: "joint", [`d${axis.axis}`]: sign * stepOf(axis.axis, axis), feed: axis.feed && controls.feed ? feed() : null } as JogRequest;
         return ctx.call(ctx.api.jog(request));
     };
     const cancel = (): Promise<unknown> => ctx.call(ctx.api.jogCancel());
@@ -108,49 +118,58 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         }
     };
 
-    function stepRow(axis: AxisControl): HTMLDivElement {
-        const steps = axis.steps!;
-        const unit = UNITS[axis.axis];
-        return choiceRow(
-            steps,
-            remembered(axis.axis, steps, axis.step ?? steps[0]!),
-            (value) => { picks.set(axis.axis, value); },
-            (value) => `${value} ${unit}`,
-            axis.place === "frame" ? "Step" : axis.label,
-        );
-    }
-
-    function pad(): HTMLDivElement {
-        const padButton = (label: string, area: string, onClick: () => Promise<unknown>, extra = ""): HTMLButtonElement => {
-            const node = button(label, onClick, `btn btn-pad ${extra}`.trim());
-            node.style.gridArea = area;
-            return node;
-        };
-        return el("div", { class: "pad" },
-            padButton("Y+", "up", () => jogBoard(0, padStep())),
-            padButton("X-", "left", () => jogBoard(-padStep(), 0)),
-            padButton("Cancel", "mid", () => cancel(), "btn-cancel"),
-            padButton("X+", "right", () => jogBoard(padStep(), 0)),
-            padButton("Y-", "down", () => jogBoard(0, -padStep())),
-        );
-    }
-
-    function pair(axis: AxisControl, className: string): HTMLButtonElement[] {
-        return [
-            button(axis.buttons[0], () => jogAxis(axis, -1), className),
-            button(axis.buttons[1], () => jogAxis(axis, 1), className),
-        ];
-    }
-
-    // A framed control is kept in its own block so it reads as what it is:
-    // a setup axis, or one that moves the head up and down.
-    function frame(axis: AxisControl): HTMLDivElement {
-        return el("div", { class: "axis-frame", "data-axis": axis.axis },
-            el("span", { class: "axis-frame-title" }, axis.label),
-            axis.note ? el("span", { class: "axis-frame-note" }, axis.note) : null,
-            axis.steps ? stepRow(axis) : null,
-            el("div", { class: "axis-frame-buttons" }, ...pair(axis, "btn btn-frame")),
-            axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet") : null,
+    /**
+     * One axis as a bar: its letter and title, a note, the step choices
+     * with a field for any other step, the minus and plus buttons, and the
+     * zero button when the axis has one.
+     */
+    function bar(
+        id: BarId,
+        letter: string,
+        title: string,
+        note: string,
+        unit: string,
+        axis: AxisControl | undefined,
+        buttons: [string, string],
+        onMove: (sign: 1 | -1) => Promise<unknown>,
+        zero: HTMLButtonElement | null,
+    ): HTMLDivElement {
+        const format = (value: number): string => `${value} ${unit}`;
+        const custom = numberField({ placeholder: "custom", min: 0, width: "6.5rem" });
+        custom.setAttribute("aria-label", `${title} step`);
+        const row = choiceRow(choicesOf(axis), pickOf(id, axis), (value) => {
+            picks.set(id, value);
+            typed.delete(id);
+            custom.value = "";
+        }, format);
+        const existing = typed.get(id);
+        if (existing !== undefined) {
+            custom.value = String(existing);
+            setPressed(row, "");
+        }
+        custom.addEventListener("input", () => {
+            const value = parseNumber(custom.value);
+            if (value !== null && value > 0) {
+                typed.set(id, value);
+                // A step typed in is the step: no choice shows as pressed.
+                setPressed(row, "");
+            } else {
+                typed.delete(id);
+                setPressed(row, format(pickOf(id, axis)));
+            }
+        });
+        return el("div", { class: "axis-bar", "data-axis": id },
+            el("div", { class: "axis-bar-head" },
+                el("span", { class: "axis-bar-letter" }, letter),
+                el("span", { class: "axis-bar-title" }, title),
+                note ? el("span", { class: "axis-bar-note" }, note) : null,
+            ),
+            el("div", { class: "axis-bar-steps" }, row, custom),
+            el("div", { class: "axis-bar-buttons" },
+                button(buttons[0], () => onMove(-1), "btn btn-axis"),
+                button(buttons[1], () => onMove(1), "btn btn-axis"),
+            ),
+            zero,
         );
     }
 
@@ -201,35 +220,22 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
 
     function draw(): void {
         drawn = controls;
-        const steps = el("div", { class: "steps" });
-        // The pad's step row serves the pad and every axis without steps of its own.
-        if (controls.pad || controls.axes.some((axis) => axis.steps === null)) {
-            steps.append(choiceRow(controls.pad_steps, padStep(), (value) => { picks.set("pad", value); }, (value) => `${value} mm`, "Step"));
-        }
-        for (const axis of controls.axes) {
-            if (axis.place === "buttons" && axis.steps) {
-                steps.append(stepRow(axis));
-            }
-        }
-        if (controls.feed) {
-            steps.append(labeled("Feed mm/min", feedInput));
-        }
-
-        const main = el("div", { class: "jog-main" });
+        const bars = el("div", { class: "axis-bars" });
         if (controls.pad) {
-            main.append(pad());
-        }
-        const beside = controls.axes.filter((axis) => axis.place === "buttons");
-        if (beside.length > 0) {
-            main.append(el("div", { class: "axis-buttons" }, ...beside.flatMap((axis) => pair(axis, "btn btn-axis"))));
+            bars.append(
+                bar("x", "X", "Board X", "Board mm; the left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), null),
+                bar("y", "Y", "Board Y", "Board mm; the up and down arrow keys", "mm", undefined, ["Y-", "Y+"], (sign) => jogBoard(0, sign * stepOf("y")), null),
+            );
         }
         for (const axis of controls.axes) {
-            if (axis.place === "frame") {
-                main.append(frame(axis));
-            }
+            const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small") : null;
+            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, UNITS[axis.axis], axis, axis.buttons, (sign) => jogAxis(axis, sign), zero));
         }
 
         const rows: HTMLElement[] = [];
+        if (controls.feed) {
+            rows.push(el("div", { class: "steps" }, labeled("Feed mm/min", feedInput)));
+        }
         if (controls.pad) {
             rows.push(boardGotoRow());
         }
@@ -240,18 +246,16 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
         const bottom = el("div", { class: "button-row" },
-            ...beside.filter((axis) => axis.zero).map((axis) => button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet")),
             motors,
             button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet"),
-            // The pad carries the cancel button; without one it goes here.
-            controls.pad ? null : button("Cancel", () => cancel(), "btn btn-quiet"),
         );
-        replace(body, steps, main, ...rows, bottom);
+        replace(body, bars, ...rows, bottom);
         show(ctx.store.get());
     }
 
     function show(state: AppState): void {
         body.disabled = !state.snapshot.connected;
+        setLocked(cancelButton, !state.snapshot.connected);
         if (motors) {
             motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
         }
@@ -293,7 +297,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         // Jog keys belong to a field that has the focus, and jog only from
-        // the machine's page: on the CAM page nothing should move.
+        // the machine's page: on the other pages nothing should move.
         if (inputHasFocus() || activePage() !== "machine") {
             return;
         }
@@ -302,7 +306,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
             const axis = "axis" in action ? controlOf(controls, action.axis) : undefined;
             const move = "axis" in action
                 ? (axis ? jogAxis(axis, action.sign) : Promise.resolve())
-                : jogBoard(action.dx * padStep(), action.dy * padStep());
+                : jogBoard(action.dx * stepOf("x"), action.dy * stepOf("y"));
             keyJog = move.finally(() => {
                 keyJog = null;
             });

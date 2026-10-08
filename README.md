@@ -11,7 +11,7 @@ make it an X/Y machine, with a spindle on the laser output for milling.
 | --- | --- | --- |
 | `firmware/` | the controller: portable core, SKR Pico port, virtual firmware on TCP | Rust |
 | `web/backend/` | serial link, job import, streaming, probing, API, serves the page | Python, FastAPI |
-| `web/frontend/` | the page: position, jog, jobs, height map, 3D preview, settings, and the CAM tab | TypeScript, Bun |
+| `web/frontend/` | the page: position, jog, jobs, height map, 3D preview, the CAM tab and the Config tab (machine files, pins, firmware settings) | TypeScript, Bun |
 | `toolpath/` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering coupons, machine configs, gcode tools | Python |
 | `machines/` | machine configurations in TOML, one file per axis setup | |
 | `cam/` | CAM profiles in TOML: a machine's axes, its tools with every cutting setting, the operations, the gcode post | |
@@ -37,7 +37,7 @@ toolpath library pulls in `laser-sweep` from `../kicad-to-gcode`.
 | `mise run test` | every suite; `test-firmware`, `test-toolpath`, `test-backend`, `test-frontend`, `test-sim` run one |
 
 Connect the page to the board, or to the virtual firmware's socket, and
-pick the machine in the Settings panel: a file in `machines/` describes
+pick the machine on the Config tab: a file in `machines/` describes
 the axes, their scales and limits, the kinematics (polar or cartesian) and
 the tool (laser or spindle), and loading it writes every firmware setting.
 The *CAM* tab takes a design through a profile in `cam/` (axes, tools,

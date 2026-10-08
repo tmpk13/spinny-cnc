@@ -35,6 +35,7 @@ import {
     type PlannedMove,
 } from "./jobs.ts";
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
+import { DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
     CamGcodeResponse,
@@ -52,7 +53,6 @@ import type {
     Group,
     HeightMap,
     HeightMapState,
-    HostSettings,
     Job,
     JobPatch,
     JobSummary,
@@ -60,7 +60,10 @@ import type {
     Joint,
     Machine,
     MachineState,
-    MachineSummary,
+    MachineCheck,
+    MachineDocument,
+    MachineProblem,
+    MachineResponse,
     MachinesResponse,
     Mode,
     Path,
@@ -86,56 +89,7 @@ const CLOCK_EPSILON = 1e-9;
 export const LINE_SLOTS = 16;
 export const PLANNER_BLOCKS = 32;
 
-/** The firmware's shipped defaults. */
-export const DEFAULT_SETTINGS: Record<string, number> = {
-    r_steps: 10240,
-    a_steps: 14222.222,
-    r_rate: 560,
-    a_rate: 400,
-    r_accel: 50,
-    a_accel: 50,
-    r_jerk: 3,
-    a_jerk: 2,
-    r_max: 0,
-    z_steps: 10240,
-    z_rate: 560,
-    z_accel: 50,
-    jog_z: 120,
-    jog_r: 300,
-    jog_a: 200,
-    dir_invert: 0,
-    en_invert: 0,
-    idle_ms: 0,
-    step_us: 2,
-    laser_hz: 5000,
-    s_max: 1000,
-    s_min: 0,
-    laser_invert: 0,
-    laser_ms: 5000,
-    tmc_r_ma: 800,
-    tmc_a_ma: 800,
-    tmc_hold_pct: 50,
-    tmc_r_micro: 256,
-    tmc_a_micro: 256,
-    tmc_z_ma: 800,
-    tmc_z_micro: 256,
-    tmc_stealth: 1,
-    h_axis: 0,
-    h_steps: 6400,
-    h_rate: 600,
-    h_accel: 50,
-    h_jerk: 1,
-    jog_h: 120,
-    probe_invert: 0,
-    tmc_h_ma: 600,
-    tmc_h_micro: 256,
-    probe_ms: 20,
-    z_jerk: 3,
-    z_max: 0,
-    cartesian: 0,
-    spindle: 0,
-    sockets: 1234,
-};
+export { DEFAULT_SETTINGS };
 
 /**
  * What the demo machine starts with over the shipped defaults: the firmware
@@ -201,12 +155,17 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "cartesian", unit: "0/1", help: "1 = X/Y machine: the rail is X, the cross slide Y, the table holds" },
     { name: "spindle", unit: "0/1", help: "1 = the laser output drives a spindle, the focus axis is its depth" },
     { name: "sockets", unit: "RAZH", help: "driver socket per axis, rail, table, slide, focus: 1 X, 2 Y, 3 Z, 4 E, each once; 1234 as labeled" },
+    { name: "laser_pin", unit: "GPIO", help: "laser or spindle PWM output: 20 FAN3, 17 FAN1, 18 FAN2, 23 HE, 21 BED, 29 SERVO; read at boot, so save and restart" },
+    { name: "probe_pin", unit: "GPIO", help: "probe input, pulled up: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP; read at boot" },
+    { name: "tool_out", unit: "0/1", help: "1 = tool_pin follows the tool: on while a job runs, a beam is lit, a dwell burns or the spindle turns; read at boot" },
+    { name: "tool_pin", unit: "GPIO", help: "the tool output, 17 FAN1 by default; read at boot" },
+    { name: "tool_invert", unit: "0/1", help: "1 = tool output active low" },
 ];
 
 /** Largest value a float setting takes, as the firmware bounds them. */
 const FLOAT_MAX = 1e7;
 /** Settings the firmware holds as 0 or 1. */
-const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle"]);
+const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert"]);
 /** Settings the firmware holds as unsigned 32-bit integers: decimal text is refused. */
 const INT_SETTINGS = new Set([
     "dir_invert",
@@ -224,7 +183,13 @@ const INT_SETTINGS = new Set([
     "tmc_h_ma",
     "tmc_h_micro",
     "probe_ms",
+    "sockets",
+    "laser_pin",
+    "probe_pin",
+    "tool_pin",
 ]);
+/** The pin settings: a GPIO the driver sockets and the driver UART leave free. */
+const PIN_SETTINGS = ["laser_pin", "probe_pin", "tool_pin"];
 const U32_MAX = 4294967295;
 /** Most motion a probe keeps queued, ms: the firmware's segment ring. */
 const PROBE_MS_MAX = 160;
@@ -253,46 +218,6 @@ const MAX_TOLERANCE = 10;
  * two of them hold: every value in its range, whole numbers where the
  * firmware keeps an integer, and `s_min` within `s_max`.
  */
-/**
- * The machine files the mock stands in for: the ones shipped in machines/,
- * each as its settings differ from the defaults, with the host values the
- * file names.
- */
-export const MOCK_MACHINES: { summary: MachineSummary; values: Record<string, number>; host: HostSettings }[] = [
-    {
-        summary: { id: "polar-laser", name: "Polar laser", description: "UV laser on the rail, the board turning under it on the table", kinematics: "polar", tool: "laser", focus: false },
-        values: {},
-        host: { tolerance: 0.005 },
-    },
-    {
-        summary: { id: "polar-laser-focus", name: "Polar laser with focus axis", description: "The polar laser with a motorized focus axis and a touch probe", kinematics: "polar", tool: "laser", focus: true },
-        values: { h_axis: 1 },
-        host: { tolerance: 0.005 },
-    },
-    {
-        summary: { id: "cartesian-laser", name: "Cartesian laser", description: "Rail as X and cross slide as Y, the table holding still", kinematics: "cartesian", tool: "laser", focus: false },
-        values: { cartesian: 1, z_max: 30 },
-        host: { tolerance: 0.005 },
-    },
-    {
-        summary: { id: "cartesian-mill", name: "Cartesian mill", description: "X/Y machine with a spindle on the output and the focus axis as depth", kinematics: "cartesian", tool: "spindle", focus: true },
-        values: { cartesian: 1, spindle: 1, h_axis: 1, z_max: 30, sockets: 1423, tmc_a_ma: 0 },
-        host: { tolerance: 0.005, clearance: 2, spinup: 2 },
-    },
-];
-
-/** The machine file these settings are, every one of them, or null. */
-export function machineOf(settings: Record<string, number>): string | null {
-    for (const { summary, values } of MOCK_MACHINES) {
-        const expected: Record<string, number> = { ...DEFAULT_SETTINGS, ...values };
-        const same = Object.keys(expected).every((name) => Math.abs((settings[name] ?? Number.NaN) - (expected[name] ?? Number.NaN)) <= 5e-4);
-        if (same) {
-            return summary.id;
-        }
-    }
-    return null;
-}
-
 export function settingsValid(settings: Record<string, number>): boolean {
     const value = (name: string): number => settings[name] ?? DEFAULT_SETTINGS[name] ?? Number.NaN;
     for (const name of Object.keys(DEFAULT_SETTINGS)) {
@@ -324,6 +249,7 @@ export function settingsValid(settings: Record<string, number>): boolean {
         within("z_max", 0, FLOAT_MAX) &&
         within("dir_invert", 0, 15) &&
         within("probe_ms", 0, PROBE_MS_MAX) &&
+        PIN_SETTINGS.every((name) => within(name, 0, PIN_MAX) && !RESERVED_PINS.has(value(name))) &&
         within("step_us", 1, 20) &&
         within("laser_hz", 100, 100000) &&
         within("laser_ms", 1, 60000) &&
@@ -1490,6 +1416,7 @@ export class MockBackend implements Api, EventFeed {
     private jobStore = new Map<string, Job>();
     /** The CAM profiles, by id, as their files read; the shipped ones to start with. */
     private camTexts = new Map<string, string>(SHIPPED_PROFILES.map((profile) => [profile.id, profile.text]));
+    private machineTexts = new Map<string, string>(MOCK_MACHINE_TEXTS.map((machine) => [machine.id, machine.text]));
     private order: string[] = [];
     private nextId = 1;
     private session: RunSession | null = null;
@@ -2563,32 +2490,106 @@ export class MockBackend implements Api, EventFeed {
     // Settings.
 
     async settings(): Promise<SettingsResponse> {
+        const found = this.machineOf();
         return {
             values: { ...this.machine.settings },
             schema: SETTINGS_SCHEMA,
             host: { tolerance: this.tolerance, clearance: this.clearance, spinup: this.spinup },
-            machine: machineOf(this.machine.settings),
-            // The shipped files spell out the defaults for what they are, so
-            // the defaults serve for a loaded file and for settings of no file's alike.
-            controls: defaultControls(this.machine.profile()),
+            machine: found?.id ?? null,
+            // The loaded file's controls, or the defaults for what the
+            // settings say the machine is when they are no file's.
+            controls: found?.controls ?? defaultControls(this.machine.profile()),
         };
     }
 
+    /** The machine files as they read now, by id, with what is wrong with the ones that do not. */
+    private machineDocuments(): { documents: MachineDocument[]; problems: MachineProblem[] } {
+        const documents: MachineDocument[] = [];
+        const problems: MachineProblem[] = [];
+        // In the backend's order: by file name, byte by byte, so "polar-laser-focus.toml" before "polar-laser.toml".
+        const byFile = ([a]: [string, string], [b]: [string, string]): number => (`${a}.toml` < `${b}.toml` ? -1 : 1);
+        for (const [id, text] of [...this.machineTexts.entries()].sort(byFile)) {
+            try {
+                documents.push(parseMachine(text, id));
+            } catch (error) {
+                problems.push({ id, problem: error instanceof Error ? error.message : String(error) });
+            }
+        }
+        return { documents, problems };
+    }
+
+    /** The machine file the live settings are, every one of them, or null. */
+    private machineOf(): MachineDocument | null {
+        return this.machineDocuments().documents.find((document) => matches(document, this.machine.settings)) ?? null;
+    }
+
     async machines(): Promise<MachinesResponse> {
+        const { documents, problems } = this.machineDocuments();
         return {
-            machines: MOCK_MACHINES.map((entry) => ({ ...entry.summary })),
-            current: this.connected ? machineOf(this.machine.settings) : null,
-            problems: [],
+            machines: documents.map((document) => machineSummaryOf(document)),
+            current: this.connected ? this.machineOf()?.id ?? null : null,
+            problems,
         };
+    }
+
+    private machineText(id: string): string {
+        if (!MACHINE_ID_PATTERN.test(id)) {
+            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
+        }
+        const text = this.machineTexts.get(id);
+        if (text === undefined) {
+            throw new ApiError(404, `no machine file '${id}'`);
+        }
+        return text;
+    }
+
+    private machineRead(id: string, text: string): MachineCheck {
+        try {
+            return { document: parseMachine(text, id), problems: [] };
+        } catch (error) {
+            return { document: null, problems: [error instanceof Error ? error.message : String(error)] };
+        }
+    }
+
+    /** A file as written, with what it reads as or why it does not. */
+    async machineFile(id: string): Promise<MachineResponse> {
+        const text = this.machineText(id);
+        return { ...this.machineRead(id, text), text };
+    }
+
+    async checkMachineFile(id: string, text: string): Promise<MachineCheck> {
+        if (!MACHINE_ID_PATTERN.test(id)) {
+            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
+        }
+        return this.machineRead(id, text);
+    }
+
+    /** Kept once it reads as a machine, as the backend writes the file. */
+    async saveMachineFile(id: string, text: string): Promise<MachineResponse> {
+        if (!MACHINE_ID_PATTERN.test(id)) {
+            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
+        }
+        const kept = text.endsWith("\n") ? text : text + "\n";
+        const read = this.machineRead(id, kept);
+        if (!read.document) {
+            throw new ApiError(400, read.problems[0] ?? "the text does not read");
+        }
+        this.machineTexts.set(id, kept);
+        return { ...read, text: kept };
+    }
+
+    async deleteMachineFile(id: string): Promise<void> {
+        this.machineText(id);
+        this.machineTexts.delete(id);
     }
 
     /** A machine file's every setting, as the backend writes them: all or nothing, then saved to flash when asked. */
     async applyMachine(id: string, save = false): Promise<SettingsResponse> {
-        const found = MOCK_MACHINES.find((entry) => entry.summary.id === id);
-        if (!found) {
+        const read = this.machineRead(id, this.machineText(id));
+        if (!read.document) {
             throw new ApiError(404, `no machine file '${id}'`);
         }
-        await this.updateSettings({ values: { ...DEFAULT_SETTINGS, ...found.values }, host: { ...found.host } });
+        await this.updateSettings({ values: { ...read.document.settings }, host: { tolerance: this.tolerance, ...read.document.host } });
         if (save) {
             await this.saveSettings();
         }

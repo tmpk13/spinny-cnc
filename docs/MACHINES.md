@@ -10,8 +10,8 @@ files start the virtual firmware, and give the gcode tools their defaults.
 
 | Where | How |
 | --- | --- |
-| Web page | Settings panel, *Machine*: pick a file and press *Load*; *Save to flash* keeps it over a restart. The select names the file the live settings are, or says they are no file's. |
-| Backend | `GET /api/machines`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
+| Web page | The *Config* tab: pick a file, edit it in the TOML editor (read as it is typed, and whole by *Check*), *Save* it and press *Load to board*; *Save to flash* keeps it over a restart. The panel names the file the live settings are, or says they are no file's, and the live firmware settings sit beside it. |
+| Backend | `GET /api/machines`, `GET`, `PUT` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
 | Virtual firmware | `spinny-virtual --machine machines/cartesian-mill.toml`; `--settings` after it overrides single values |
 | Gcode tools | `spinny-iso --machine machines/polar-laser.toml ...`: the axis rates, the power scale and the chord tolerance stand in for the defaults; a flag given still wins |
 | Code | `spinny_laser.machines` (Python), `firmware/virtual/src/machine.rs` (Rust); the virtual firmware's tests load the shipped files, so the two stay one schema |
@@ -84,6 +84,7 @@ microsteps = 256                # -> tmc_h_micro
 [probe]
 invert = false                  # true: input active high  -> probe_invert
 brake_ms = 20                   # 0 to 160                 -> probe_ms
+pin = 25                        # GPIO: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP -> probe_pin
 
 [output]                        # the laser PWM, or the spindle on it
 pwm_hz = 5000                   # 100 to 100000            -> laser_hz
@@ -91,6 +92,12 @@ s_max = 1000                    # S for full duty          -> s_max
 s_min = 0                       # dyn mode floor           -> s_min
 invert = false                  # true: active low         -> laser_invert
 test_ms = 5000                  # default T for laser      -> laser_ms
+pin = 20                        # GPIO: 20 FAN3, 17 FAN1, 18 FAN2, 23 HE, 21 BED, 29 SERVO -> laser_pin
+
+[enable]                        # an output that follows the tool; see Pins below
+fitted = false                  # -> tool_out
+pin = 17                        # GPIO, FAN1; not the output's or the probe's -> tool_pin
+invert = false                  # true: active low         -> tool_invert
 
 [drivers]
 enable_invert = false           # -> en_invert
@@ -114,17 +121,16 @@ center = { r = 0 }              # where Center sends the joints; left out: no bu
 [[controls.axes]]               # one per joint shown, in this order
 axis = "r"                      # the firmware's joint: r, a, z or h (h needs [focus] fitted)
 letter = "R"                    # 1 to 3 characters: the readout's, and in "Set R=0 here"
-label = "Radius"                # the step row's or the frame's title
+label = "Radius"                # the bar's title
 steps = [0.1, 1, 10]            # deg for a, mm otherwise; left out or []: the pad's step
 step = 1                        # left out: the middle one
 buttons = ["Radius -", "Radius +"]  # minus and plus
-place = "buttons"               # buttons: beside the pad; frame: its own block with the note and steps
 feed = true                     # the feed field applies; false: the firmware's jog rate for the axis
 goto = true                     # a field in the joint goto row
 zero = true                     # a "Set R=0 here" button, which asks with the hint
 zero_hint = "..."
 keys = []                       # two key names for minus and plus, such as ["PageDown", "PageUp"]
-note = ""                       # under the title of a framed control
+note = ""                       # under the bar's title
 ```
 
 ## Driver sockets
@@ -138,33 +144,57 @@ one setting, `sockets`, a digit per axis (rail, table, slide, focus;
 rail X, slide Y, focus Z as depth, and the table on E with `current_ma = 0`
 so its empty driver is left alone.
 
+## Pins
+
+The laser (or spindle) PWM output, the probe input and the tool output
+are on whichever GPIOs `[output] pin`, `[probe] pin` and `[enable] pin`
+name: any of the board's but the driver sockets' STEP, DIR and EN pins
+and the driver UART (GP2, GP5 to GP15, GP19 and GP28). The headers are
+FAN1 GP17, FAN2 GP18, FAN3 GP20, HE GP23, BED GP21, SERVO GP29 and RGB
+GP24 for outputs, and X-STOP GP4, Y-STOP GP3, Z-STOP GP25, E-STOP GP16
+and PROBE GP22 for inputs; the laser's slice of the PWM block follows
+from its pin. The firmware takes the pins one setting at a time, so a
+pin named twice is refused here, where the whole file is seen: the probe
+may not share the output's pin, and a fitted tool output may share
+neither. The pins and `[enable] fitted` are read from flash at boot, so a
+load that changes one wants *Save to flash* and a restart of the board;
+the page says so after such a load.
+
+`[enable]` is an output that follows the tool: driven while a job runs, a
+beam is lit, a dwell burns or the spindle turns, for a laser supply
+relay, an air assist or a spindle's run input. `invert` makes it active
+low; off (`fitted = false`) it rests at its inactive level whatever the
+tool does.
+
 ## The controls
 
 The jog panel and the position readout draw what `[controls]` says, so
 a machine with other joints, names, steps or keys needs no change to the
 page. The backend sends the controls with the settings (`GET
 /api/settings`): the loaded file's, or, for settings that are no file's,
-the defaults for what the settings say the machine is. The defaults are
-the controls the page always drew: a pad on the arrow keys, *Radius* and
-*Turn* buttons, the cross slide in a frame of its own (as the Y axis,
-stepping with the pad at the feed given, when cartesian; a setup axis at
-the firmware's rate otherwise, with no goto field), the focus axis in a
-frame when fitted (the depth axis with a spindle), a Center button to
-`R 0` (and `Z 0` when cartesian), and a zero button per joint. The shipped
-files spell those defaults out, which is where to start a file of your
-own.
+the defaults for what the settings say the machine is. Every control is a
+bar: its letter and title, a note, the step choices with a field for any
+other step, the minus and plus buttons and the zero button. The defaults
+are the board's X and Y bars on the arrow keys, a *Radius* and a *Table*
+bar, the cross slide's bar (as the Y axis, stepping with the pad's steps
+at the feed given, when cartesian; a setup axis at the firmware's rate
+otherwise, with no goto field), the focus axis's bar when fitted (the
+depth axis with a spindle), a Center button to `R 0` (and `Z 0` when
+cartesian), and a zero button per joint. The shipped files spell those
+defaults out, which is where to start a file of your own.
 
 An entry fills in what it leaves out from the default for its joint; an
 entry given a `letter` or a `label` but no `buttons` is labeled
 `<letter>-` and `<letter>+` rather than with the default's words. The
 step picked with a control is kept while the page is up; the keys of an
-axis jog it by that step, and `Escape` cancels whatever the controls are.
-The virtual firmware checks only that `[controls]` is a table: the
-controls are the page's, not the machine's.
+axis jog it by that step, and `Escape` or the jog panel's *Cancel*
+stops whatever the controls are. `place`, which older files say, is
+still taken and means nothing now. The virtual firmware checks only that
+`[controls]` is a table: the controls are the page's, not the machine's.
 
 ## How a load works
 
-The backend reads the file, maps it onto all 46 settings and writes the
+The backend reads the file, maps it onto all 52 settings and writes the
 ones that differ from the machine's, one `$name=value` line each, all or
 nothing: a value the firmware refuses has the ones sent before it put back.
 The host values are stored once the firmware's part is through. Nothing is
@@ -173,7 +203,7 @@ page), so a load can be tried and undone with a power cycle. A load is
 refused while a run or probing owns the machine, like any settings write.
 
 Which file the live settings are is decided on every settings read by
-comparing all 46 values, so a setting changed by hand at the console or in
+comparing all 52 values, so a setting changed by hand at the console or in
 the table turns the pick to "settings of no file" until a file is loaded
 again. Values are compared as the firmware reports them: a 32 bit float
 printed with three decimals.

@@ -30,6 +30,10 @@ pub trait LaserPort {
     /// High time in permille of the period.
     fn set_duty(&mut self, permille: u16);
     fn set_frequency(&mut self, hz: u32);
+    /// Level of the tool output, the pin that follows the tool when the
+    /// `tool_out` setting fits one. Polarity is the core's; a board with
+    /// no such pin claimed ignores it.
+    fn set_enable(&mut self, high: bool);
 }
 
 /// Where responses and reports go.

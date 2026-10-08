@@ -15,7 +15,11 @@ Open `http://localhost:8000`, connect to the board (or to
 axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
-per unit at low speed before the first job.
+per unit at low speed before the first job. Every axis is a bar in the
+jog panel, with its step choices and a field for any other step; *Cancel*
+in the panel's head, or Escape, stops a move. The *Config* tab holds the
+machine files, where the pins are set too (the laser output, the probe
+and an optional tool output), and the live firmware settings.
 
 ### Probing and the height map
 
@@ -40,7 +44,7 @@ run on hardware yet.
 
 Two optional modes use the same machine; both are firmware settings, off
 by default, and the page follows them. The quickest way between them is
-the *Machine* pick in the Settings panel, which loads a whole file from
+the *Config* tab, which edits and loads a whole file from
 `machines/` ([MACHINES.md](MACHINES.md)): `cartesian-laser` and
 `cartesian-mill` are the two modes below with the slide's travel set to
 30 mm either side; copy one and change the limit to yours. The settings
@@ -60,7 +64,7 @@ by that angle, so a board placed for a polar job is cut in the same place.
 travel height, the spindle starts and spins up, and every path is a plunge,
 the cuts at depth and a rise, each pass of a group a step deeper. Groups
 carry a depth and a plunge rate; the host keeps the travel clearance and
-the spin-up (Settings panel).
+the spin-up (the Config tab's settings panel).
 
 1. Touch the tool to the copper and press *Set H=0 here*: without a height
    map H 0 is the surface.

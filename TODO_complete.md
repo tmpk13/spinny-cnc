@@ -251,3 +251,26 @@
   wired as a three axis mill (1423, table driver left alone).
 - Loading a machine file names every setting the controller lacks and
   blames old firmware.
+
+## Config tab, settable pins and jog bars (2026-10-08)
+
+- Firmware: `laser_pin`, `probe_pin`, `tool_out`, `tool_pin` and
+  `tool_invert` settings (blob version 7); the board claims the laser PWM,
+  the probe input and the tool output on the stored pins at boot, the
+  laser's PWM slice following its pin; the tool output follows a job, a
+  lit beam, a dwell and the spindle, with its polarity in the core; the
+  virtual firmware reads the keys too.
+- Machine files: `[probe] pin`, `[output] pin`, `[enable]` (fitted, pin,
+  invert); a pin named twice refused where the whole file is seen; `place`
+  gone from the controls (still taken); the shipped files follow.
+- Backend: `GET`, `PUT`, `DELETE /api/machines/{id}` and
+  `POST /api/machines/{id}/check` through a machine file store; a file that
+  does not read still opens with its problem; the listing names broken
+  files by id.
+- Page: a Config tab with the machine file panel (pick, new, delete,
+  check, save, revert, load to board, save to flash) beside the firmware
+  settings panel, moved off the machine's page; a shared TOML editor with
+  Solarized syntax coloring and a live syntax check, used by the CAM page
+  too; the jog panel as one bar per axis with step choices and a typed
+  step, the cancel button in the panel's head; the mock reads the shipped
+  machine files with the backend's checks and takes edits.

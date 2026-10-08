@@ -263,12 +263,12 @@ describe("machine files", () => {
     test("the list and the load go to their routes", async () => {
         const { calls, fetchFn } = fakeFetch((call) => {
             if (call.url.endsWith("/api/machines")) {
-                return { status: 200, body: { machines: [], current: null, problems: ["bad.toml: [rail] max_rate must be above 0"] } };
+                return { status: 200, body: { machines: [], current: null, problems: [{ id: "bad", problem: "bad.toml: [rail] max_rate must be above 0" }] } };
             }
             return { status: 200, body: { values: { cartesian: 1 }, schema: [], host: { tolerance: 0.005 }, machine: "cartesian mill" } };
         });
         const api = new HttpApi("http://host:8000/", fetchFn);
-        expect(await api.machines()).toEqual({ machines: [], current: null, problems: ["bad.toml: [rail] max_rate must be above 0"] });
+        expect(await api.machines()).toEqual({ machines: [], current: null, problems: [{ id: "bad", problem: "bad.toml: [rail] max_rate must be above 0" }] });
         const applied = await api.applyMachine("cartesian mill", true);
         expect(applied.machine).toBe("cartesian mill");
         expect(calls.length).toBe(2);

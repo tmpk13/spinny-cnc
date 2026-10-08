@@ -109,9 +109,12 @@ def test_the_files_are_listed_with_the_broken_one_named(client):
     }
     # No machine connected: nothing is loaded.
     assert listed["current"] is None
-    assert len(listed["problems"]) == 1 and "broken.toml" in listed["problems"][0] and "[rail] max_rate" in listed["problems"][0]
+    [problem] = listed["problems"]
+    assert problem["id"] == "broken" and "broken.toml" in problem["problem"] and "[rail] max_rate" in problem["problem"]
 
-    document = client.get("/api/machines/rig").json()
+    response = client.get("/api/machines/rig").json()
+    assert response["text"] == RIG and response["problems"] == []
+    document = response["document"]
     assert document["settings"]["cartesian"] == 1 and document["settings"]["z_max"] == 25.0
     assert document["settings"]["a_rate"] == 270.0 and document["settings"]["dir_invert"] == 0
     assert document["host"] == {"tolerance": 0.02, "clearance": 3.0, "spinup": 1.0}
@@ -121,8 +124,43 @@ def test_the_files_are_listed_with_the_broken_one_named(client):
     assert [(axis["axis"], axis["label"], axis["buttons"]) for axis in controls["axes"]] == [
         ("r", "X", ["R-", "R+"]), ("z", "Y", ["Z-", "Z+"]), ("h", "Depth axis", ["Down", "Up"]),
     ]
+    # A file that does not read still opens, with its text and the problem, so it can be mended.
+    broken = client.get("/api/machines/broken").json()
+    assert broken["document"] is None and broken["text"].startswith("[rail]") and "[rail] max_rate" in broken["problems"][0]
     assert client.get("/api/machines/nope").status_code == 404
+    assert client.get("/api/machines/No%20Such").status_code == 400
     assert client.post("/api/machines/nope/apply").status_code == 404
+
+
+def test_a_file_is_checked_saved_and_removed_through_the_api(client):
+    bad = "[rail]\nmax_rate = 0\n"
+    good = "name = \"Mended\"\n[rail]\nmax_rate = 700"
+    checked = client.post("/api/machines/broken/check", json={"text": bad}).json()
+    assert checked["document"] is None and "[rail] max_rate must be above 0" in checked["problems"][0]
+    checked = client.post("/api/machines/broken/check", json={"text": good}).json()
+    assert checked["problems"] == [] and checked["document"]["name"] == "Mended" and checked["document"]["settings"]["r_rate"] == 700
+    # A check writes nothing.
+    assert (client.machines_dir / "broken.toml").read_text(encoding="utf-8") == "[rail]\nmax_rate = -5\n"
+    # A save of a text that does not read leaves the file as it was.
+    refused = client.put("/api/machines/broken", json={"text": bad})
+    assert refused.status_code == 400 and "[rail] max_rate" in refused.json()["detail"]
+    assert (client.machines_dir / "broken.toml").read_text(encoding="utf-8") == "[rail]\nmax_rate = -5\n"
+    saved = client.put("/api/machines/broken", json={"text": good})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["document"]["name"] == "Mended" and saved.json()["text"] == good + "\n"
+    assert (client.machines_dir / "broken.toml").read_text(encoding="utf-8") == good + "\n"
+    listed = client.get("/api/machines").json()
+    assert [m["id"] for m in listed["machines"]] == ["bare", "broken", "rig"] and listed["problems"] == []
+    # A new id makes a new file; a bad id makes nothing.
+    created = client.put("/api/machines/new-one", json={"text": ""})
+    assert created.status_code == 200 and (client.machines_dir / "new-one.toml").read_text(encoding="utf-8") == "\n"
+    assert created.json()["document"]["name"] == "new-one"
+    assert client.put("/api/machines/New%20One", json={"text": ""}).status_code == 400
+    assert client.post("/api/machines/New%20One/check", json={"text": ""}).status_code == 400
+    assert client.delete("/api/machines/new-one").json() == {"deleted": "new-one"}
+    assert not (client.machines_dir / "new-one.toml").exists()
+    assert client.delete("/api/machines/new-one").status_code == 404
+    assert client.get("/api/machines/new-one").status_code == 404
 
 
 def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(client, fake, tmp_path):

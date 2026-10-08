@@ -211,7 +211,7 @@ describe("cartesian", () => {
         await api.connect("/dev/ttyACM0");
         mountJog(root, ctx);
         store.set({ snapshot: snapshot({ kinematics: "cartesian" }) });
-        const slide = root.querySelector('.axis-frame[data-axis="z"]')!;
+        const slide = root.querySelector('[data-axis="z"]')!;
         expect(slide.textContent).toContain("Cross slide (Y)");
         click(slide, "Z+");
         await settle();
@@ -240,7 +240,7 @@ describe("cartesian", () => {
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", r: 0, z: 0 });
         // A polar machine draws the setup control again, with no z goto.
         store.set({ snapshot: snapshot({}) });
-        expect(root.querySelector('.axis-frame[data-axis="z"]')!.textContent).toContain("Setup only");
+        expect(root.querySelector('[data-axis="z"]')!.textContent).toContain("Setup only");
         expect(root.querySelector('input[placeholder="z"]')).toBeNull();
         expect(root.querySelector('input[placeholder="a"]')).not.toBeNull();
     });
@@ -248,12 +248,12 @@ describe("cartesian", () => {
     test("the depth axis is named as such on a spindle machine", () => {
         const { store, ctx, root } = setup();
         mountJog(root, ctx);
-        expect(root.querySelector('.axis-frame[data-axis="h"]')).toBeNull();
+        expect(root.querySelector('[data-axis="h"]')).toBeNull();
         store.set({ snapshot: snapshot({ tool: "spindle", h_axis: true }) });
-        const focus = root.querySelector('.axis-frame[data-axis="h"]')!;
+        const focus = root.querySelector('[data-axis="h"]')!;
         expect(focus.textContent).toContain("Depth axis");
         store.set({ snapshot: snapshot({ h_axis: true }) });
-        expect(root.querySelector('.axis-frame[data-axis="h"]')!.textContent).toContain("Focus axis");
+        expect(root.querySelector('[data-axis="h"]')!.textContent).toContain("Focus axis");
     });
 });
 

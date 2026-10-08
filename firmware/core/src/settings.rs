@@ -75,6 +75,19 @@ pub struct Settings {
     /// order), each 1 for the X socket, 2 for Y, 3 for Z and 4 for E: 1234
     /// is the board as labeled. Always each socket once.
     pub sockets: u32,
+    /// GPIO of the laser (or spindle) PWM output. Read at boot: a change
+    /// takes effect after `$save` and a restart.
+    pub laser_pin: u32,
+    /// GPIO of the probe input, pulled up inside the chip. Read at boot.
+    pub probe_pin: u32,
+    /// An output follows the tool: driven while a job runs, a beam is
+    /// lit, a dwell burns or the spindle turns, for a laser supply relay,
+    /// an air assist or a spindle's run input. Read at boot.
+    pub tool_out: bool,
+    /// GPIO of that output. Read at boot.
+    pub tool_pin: u32,
+    /// The tool output is active low.
+    pub tool_invert: bool,
 }
 
 /// Largest `probe_ms`: the whole segment ring.
@@ -84,6 +97,23 @@ pub const PROBE_MS_MAX: u32 = SEGMENTS as u32 * SEGMENT_MS;
 pub const SOCKETS: usize = 4;
 /// Radius on X, table on Y, cross slide on Z, focus axis on E.
 pub const SOCKETS_DEFAULT: u32 = 1234;
+
+/// Highest GPIO number the board has.
+pub const PIN_MAX: u32 = 29;
+/// GPIOs the driver sockets (STEP, DIR and EN of X, Y, Z and E) and the
+/// driver UART own, which no pin setting may name.
+pub const RESERVED_PINS: [u32; 14] = [2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 28];
+/// The FAN3 header.
+pub const LASER_PIN_DEFAULT: u32 = 20;
+/// The Z-STOP header.
+pub const PROBE_PIN_DEFAULT: u32 = 25;
+/// The FAN1 header.
+pub const TOOL_PIN_DEFAULT: u32 = 17;
+
+/// A pin setting names a GPIO the board has and nothing else owns.
+pub fn pin_valid(pin: u32) -> bool {
+    pin <= PIN_MAX && !RESERVED_PINS.contains(&pin)
+}
 
 /// `sockets` names each socket exactly once.
 fn sockets_valid(sockets: u32) -> bool {
@@ -141,12 +171,17 @@ impl Default for Settings {
             cartesian: false,
             spindle: false,
             sockets: SOCKETS_DEFAULT,
+            laser_pin: LASER_PIN_DEFAULT,
+            probe_pin: PROBE_PIN_DEFAULT,
+            tool_out: false,
+            tool_pin: TOOL_PIN_DEFAULT,
+            tool_invert: false,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 47] = [
+pub const NAMES: [&str; 52] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -156,6 +191,7 @@ pub const NAMES: [&str; 47] = [
     "h_axis", "h_steps", "h_rate", "h_accel", "h_jerk", "jog_h", "probe_invert",
     "tmc_h_ma", "tmc_h_micro", "probe_ms",
     "z_jerk", "z_max", "cartesian", "spindle", "sockets",
+    "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,9 +224,9 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
 /// older firmware is thrown away rather than read as this layout. Versions
-/// 5 and 6 are version 4 with fields appended, so a blob from version 4 on
+/// 5 to 7 are version 4 with fields appended, so a blob from version 4 on
 /// is still read, with the fields added after it at their defaults.
-const BLOB_VERSION: u8 = 6;
+const BLOB_VERSION: u8 = 7;
 /// Oldest version whose fields are a prefix of this layout.
 const BLOB_VERSION_PREFIX: u8 = 4;
 /// Bytes before the first field: magic and version.
@@ -205,8 +241,10 @@ const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
     + 1 + 1 + 4;
 /// Serialized size of the fields, in blob order: the version 4 fields,
 /// then `z_jerk`, `z_max`, `cartesian` and `spindle` (version 5), then
-/// `sockets` (version 6).
-const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4;
+/// `sockets` (version 6), then the pins and the tool output (version 7).
+const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN;
+/// Serialized size of the version 7 fields.
+const PINS_LEN: usize = 4 + 4 + 1 + 4 + 1;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -231,6 +269,10 @@ fn group(index: usize) -> Changed {
         19..=23 => Changed::Laser,
         44 => Changed::Kinematics,
         45 => Changed::Tool,
+        // The pins are read at boot; the tool output is driven again at
+        // the next poll.
+        47 | 48 | 50 => Changed::Other,
+        49 | 51 => Changed::Laser,
         // Whether the focus axis is fitted decides whether its driver is
         // configured; `sockets` moves every axis to its driver.
         _ => Changed::Driver,
@@ -379,7 +421,12 @@ impl Settings {
             43 => Slot::Float(&mut self.z_max),
             44 => Slot::Flag(&mut self.cartesian),
             45 => Slot::Flag(&mut self.spindle),
-            _ => Slot::Int(&mut self.sockets),
+            46 => Slot::Int(&mut self.sockets),
+            47 => Slot::Int(&mut self.laser_pin),
+            48 => Slot::Int(&mut self.probe_pin),
+            49 => Slot::Flag(&mut self.tool_out),
+            50 => Slot::Int(&mut self.tool_pin),
+            _ => Slot::Flag(&mut self.tool_invert),
         }
     }
 
@@ -429,6 +476,9 @@ impl Settings {
             && self.tmc_hold_pct <= 100
             && self.tmc_micro.iter().all(|&m| microsteps(m))
             && sockets_valid(self.sockets)
+            && pin_valid(self.laser_pin)
+            && pin_valid(self.probe_pin)
+            && pin_valid(self.tool_pin)
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -534,6 +584,11 @@ impl Settings {
         w.flag(self.cartesian);
         w.flag(self.spindle);
         w.u32(self.sockets);
+        w.u32(self.laser_pin);
+        w.u32(self.probe_pin);
+        w.flag(self.tool_out);
+        w.u32(self.tool_pin);
+        w.flag(self.tool_invert);
         debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -598,6 +653,13 @@ impl Settings {
         }
         if version >= 6 {
             s.sockets = r.u32();
+        }
+        if version >= 7 {
+            s.laser_pin = r.u32();
+            s.probe_pin = r.u32();
+            s.tool_out = r.flag()?;
+            s.tool_pin = r.u32();
+            s.tool_invert = r.flag()?;
         }
         if !s.is_valid() {
             return None;
@@ -680,7 +742,12 @@ mod tests {
         z_max=0\n\
         cartesian=0\n\
         spindle=0\n\
-        sockets=1234\n";
+        sockets=1234\n\
+        laser_pin=20\n\
+        probe_pin=25\n\
+        tool_out=0\n\
+        tool_pin=17\n\
+        tool_invert=0\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -689,7 +756,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 47> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 52> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -708,7 +775,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 47] = [
+        let table: [(&str, &str, &str, Changed); 52] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -756,6 +823,11 @@ mod tests {
             ("cartesian", "1", "1", Changed::Kinematics),
             ("spindle", "1", "1", Changed::Tool),
             ("sockets", "1432", "1432", Changed::Driver),
+            ("laser_pin", "23", "23", Changed::Other),
+            ("probe_pin", "22", "22", Changed::Other),
+            ("tool_out", "1", "1", Changed::Laser),
+            ("tool_pin", "18", "18", Changed::Other),
+            ("tool_invert", "1", "1", Changed::Laser),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -1075,6 +1147,30 @@ mod tests {
     }
 
     #[test]
+    fn pins_are_free_gpios_of_the_board() {
+        for name in ["laser_pin", "probe_pin", "tool_pin"] {
+            for bad in ["30", "2", "8", "9", "19", "28", "-1", "1.5", ""] {
+                rejects(name, bad);
+            }
+            for good in ["0", "17", "20", "22", "25", "29"] {
+                accepts(name, good);
+            }
+        }
+        // Two settings on one pin are the file's to refuse: the firmware
+        // takes them one at a time, so a swap would never go through.
+        let mut settings = Settings::default();
+        assert_eq!(settings.set("probe_pin", "20"), Ok(Changed::Other));
+        assert!(settings.is_valid());
+        let mut stored = Settings { laser_pin: 2, ..Settings::default() };
+        let mut blob = [0u8; BLOB_LEN];
+        stored.to_blob(&mut blob);
+        assert_eq!(Settings::from_blob(&blob), None, "a stored socket pin is thrown away");
+        stored.laser_pin = 23;
+        stored.to_blob(&mut blob);
+        assert_eq!(Settings::from_blob(&blob), Some(stored));
+    }
+
+    #[test]
     fn sockets_name_each_socket_once() {
         for bad in ["0", "123", "12345", "1123", "1235", "0123", "1204", "12.34", "-1234"] {
             rejects("sockets", bad);
@@ -1141,8 +1237,8 @@ mod tests {
             assert_eq!(read_value, Some(value), "{name}");
         }
         let defaults = Settings::default();
-        for name in ["z_jerk", "z_max", "cartesian", "spindle"] {
-            assert_eq!(line(&read, name).as_str(), line(&defaults, name).as_str(), "{name} is new in version 5");
+        for name in ["z_jerk", "z_max", "cartesian", "spindle", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert"] {
+            assert_eq!(line(&read, name).as_str(), line(&defaults, name).as_str(), "{name} came after version 4");
         }
     }
 
@@ -1164,14 +1260,25 @@ mod tests {
         assert_eq!(blob[end - 4..end], 160u32.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), Some(focus));
         // Then the cross slide's jerk and limit, the two mode flags and
-        // the sockets, just before the padding.
-        let modes = Settings { z_max: 9.5, cartesian: true, spindle: true, sockets: 1423, ..Settings::default() };
+        // the sockets, then the pins and the tool output, just before the
+        // padding.
+        let modes = Settings {
+            z_max: 9.5, cartesian: true, spindle: true, sockets: 1423,
+            laser_pin: 23, probe_pin: 22, tool_out: true, tool_pin: 18, tool_invert: true,
+            ..Settings::default()
+        };
         modes.to_blob(&mut blob);
         let tail = HEADER_LEN + FIELDS_LEN;
+        let pins = tail - PINS_LEN;
         assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
         assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
-        assert_eq!(blob[tail - 6..tail - 4], [1, 1]);
-        assert_eq!(blob[tail - 4..tail], 1423u32.to_le_bytes());
+        assert_eq!(blob[pins - 6..pins - 4], [1, 1]);
+        assert_eq!(blob[pins - 4..pins], 1423u32.to_le_bytes());
+        assert_eq!(blob[pins..pins + 4], 23u32.to_le_bytes());
+        assert_eq!(blob[pins + 4..pins + 8], 22u32.to_le_bytes());
+        assert_eq!(blob[pins + 8], 1);
+        assert_eq!(blob[pins + 9..pins + 13], 18u32.to_le_bytes());
+        assert_eq!(blob[pins + 13], 1);
         assert!(blob[tail..CRC_OFFSET].iter().all(|&b| b == 0));
         assert_eq!(Settings::from_blob(&blob), Some(modes));
     }

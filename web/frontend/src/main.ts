@@ -7,6 +7,7 @@ import { appendConsole, initialState, pushToast, Store, type AppState } from "./
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountCam } from "./views/cam.ts";
+import { mountConfig } from "./views/config.ts";
 import { mountConsole } from "./views/console.ts";
 import type { Ctx } from "./views/context.ts";
 import { mountDro } from "./views/dro.ts";
@@ -209,11 +210,13 @@ function main(): void {
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountConsole(panel("console"), ctx);
-    mountSettings(panel("settings"), ctx);
     // The CAM page has a preview of its own, since the panels of the
     // machine's page are not shown beside it.
     mountCam(panel("cam"), ctx, panel("cam-file"));
     mountPreviewPanel(panel("cam-preview"), ctx);
+    // The Config page: the machine files beside the live firmware settings.
+    mountConfig(panel("machine-file"), ctx);
+    mountSettings(panel("settings"), ctx);
     mountToasts(panel("toasts"), ctx);
 
     if (mock) {

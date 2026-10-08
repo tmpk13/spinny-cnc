@@ -146,6 +146,9 @@ pub struct Machine<'a> {
     apply_laser: bool,
     /// Enable pin level to re-apply at the next `poll`.
     apply_enable: bool,
+    /// Level last driven on the tool output; `None` before the first, and
+    /// again when the laser settings, which carry its polarity, change.
+    tool_driven: Option<bool>,
     /// When `Idle` was entered, for the idle disable.
     idle_since: u64,
     /// Time of the last `poll`.
@@ -183,6 +186,7 @@ impl<'a> Machine<'a> {
             hold_latched: false,
             apply_laser: true,
             apply_enable: true,
+            tool_driven: None,
             idle_since: 0,
             now: 0,
             lines_waiting: 0,
@@ -864,6 +868,15 @@ impl<'a> Machine<'a> {
             if !self.front.busy() || self.settings.spindle {
                 self.drive_beam(laser);
             }
+            self.tool_driven = None;
+        }
+        // The tool output follows what the output is doing, driven again
+        // only when that changes. With `tool_out` off it rests at its
+        // inactive level, whatever the tool does.
+        let tool_on = self.settings.tool_out && self.tool_active();
+        if self.tool_driven != Some(tool_on) {
+            self.tool_driven = Some(tool_on);
+            laser.set_enable(tool_on != self.settings.tool_invert);
         }
         if self.dwell_until.is_some_and(|until| now_us >= until) {
             self.dwell_until = None;
@@ -1252,6 +1265,15 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// The output is in use: a job runs, a beam is lit, a dwell burns or
+    /// the spindle turns. What the tool output follows.
+    fn tool_active(&self) -> bool {
+        self.state == State::Run
+            || self.beam.is_some()
+            || self.dwell_power.is_some()
+            || (self.settings.spindle && self.spindle.is_some_and(|speed| speed > 0.0))
+    }
+
     /// Duty with no beam: off, or the running spindle's.
     fn dark_duty(&self) -> u16 {
         match self.spindle {
@@ -1394,6 +1416,8 @@ mod tests {
         hz: u32,
         /// (time, duty) per change.
         duties: Vec<(u64, u16)>,
+        /// (time, level) per tool output write.
+        enables: Vec<(u64, bool)>,
     }
 
     impl LaserPort for Laser {
@@ -1407,6 +1431,10 @@ mod tests {
 
         fn set_frequency(&mut self, hz: u32) {
             self.hz = hz;
+        }
+
+        fn set_enable(&mut self, high: bool) {
+            self.enables.push((self.now, high));
         }
     }
 
@@ -1492,7 +1520,7 @@ mod tests {
                 isr,
                 port: Port { count: [0; AXES], enable_level: None, enable_writes: 0, probe_level: true },
                 slide: SlidePins::default(),
-                laser: Laser { now: 0, duty: 0, hz: 0, duties: Vec::new() },
+                laser: Laser { now: 0, duty: 0, hz: 0, duties: Vec::new(), enables: Vec::new() },
                 store: FakeStore::default(),
                 out: Out::default(),
                 now: 0,
@@ -2429,7 +2457,7 @@ mod tests {
         assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("probe_ms=20\nz_jerk=3\nz_max=0\ncartesian=0\nspindle=0\nsockets=1234\nok\n"));
+        assert!(listing.ends_with("spindle=0\nsockets=1234\nlaser_pin=20\nprobe_pin=25\ntool_out=0\ntool_pin=17\ntool_invert=0\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -3271,6 +3299,54 @@ mod tests {
         assert_eq!(rig.line("go R1 Z-5"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.joint()[Z], -5.0);
+    }
+
+    #[test]
+    fn the_tool_output_follows_the_job_the_beam_and_the_spindle() {
+        let mut rig = Rig::with(Settings { tool_out: true, ..bench_settings() });
+        rig.take_out();
+        rig.advance(POLL_US);
+        let level = |rig: &Rig| rig.laser.enables.last().map(|entry| entry.1);
+        assert_eq!(level(&rig), Some(false), "at rest from the first poll");
+        // A lit beam, until its timeout.
+        assert_eq!(rig.line("laser S500 T100"), "ok\n");
+        assert_eq!(level(&rig), Some(true));
+        rig.advance(150_000);
+        assert_eq!(level(&rig), Some(false));
+        // A job, from the first cut until the machine is idle again; a
+        // dark move is a job too.
+        assert_eq!(rig.line("go R5"), "ok\n");
+        assert_eq!(level(&rig), Some(true));
+        rig.advance(5_000_000);
+        assert_eq!(level(&rig), Some(false));
+        let writes = rig.laser.enables.len();
+        rig.advance(1_000_000);
+        assert_eq!(rig.laser.enables.len(), writes, "driven only on a change");
+        // Active low: the rest level is high, and turning the output off
+        // by its setting returns it to rest rather than driving it low.
+        assert_eq!(rig.line("$tool_invert=1"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(level(&rig), Some(true));
+        assert_eq!(rig.line("laser S500 T100"), "ok\n");
+        assert_eq!(level(&rig), Some(false));
+        rig.advance(150_000);
+        assert_eq!(rig.line("$tool_out=0"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(level(&rig), Some(true));
+        let writes = rig.laser.enables.len();
+        assert_eq!(rig.line("laser S500 T100"), "ok\n");
+        rig.advance(150_000);
+        assert_eq!(rig.laser.enables.len(), writes, "off by its setting, the output does not follow the beam");
+        // The spindle, from its start to its stop.
+        assert_eq!(rig.line("$tool_out=1"), "ok\n");
+        assert_eq!(rig.line("$tool_invert=0"), "ok\n");
+        assert_eq!(rig.line("$spindle=1"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(level(&rig), Some(false));
+        assert_eq!(rig.line("spindle S500"), "ok\n");
+        assert_eq!(level(&rig), Some(true));
+        assert_eq!(rig.line("spindle off"), "ok\n");
+        assert_eq!(level(&rig), Some(false));
     }
 
     #[test]

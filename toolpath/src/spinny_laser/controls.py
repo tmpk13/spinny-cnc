@@ -38,7 +38,6 @@ from __future__ import annotations
 import math
 
 JOINTS = ("r", "a", "z", "h")
-PLACES = ("buttons", "frame")
 PAD_KEYS = ("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown")
 CANCEL_KEY = "Escape"
 MAX_STEPS = 8
@@ -54,15 +53,15 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
     cartesian = kinematics == "cartesian"
     milling = tool == "spindle"
     axes = [
-        _axis("r", "R", "Radius", None, ["Radius -", "Radius +"], "buttons", feed=True, goto=True,
+        _axis("r", "R", "Radius", None, ["Radius -", "Radius +"], feed=True, goto=True,
               zero_hint="The beam must be over the rotation axis."),
         # The table is left alone under a cartesian cut, so no goto field there.
-        _axis("a", "A", "Table", [1, 10, 90], ["Turn -", "Turn +"], "buttons", feed=True, goto=not cartesian,
+        _axis("a", "A", "Table", [1, 10, 90], ["Turn -", "Turn +"], feed=True, goto=not cartesian,
               zero_hint=""),
     ]
     if cartesian:
         axes.append(_axis(
-            "z", "Z", "Cross slide (Y)", None, ["Z-", "Z+"], "frame", feed=True, goto=True,
+            "z", "Z", "Cross slide (Y)", None, ["Z-", "Z+"], feed=True, goto=True,
             zero_hint="Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
             note="Y axis: moves across the rail, which is X; steps and feed as the rail's",
         ))
@@ -70,7 +69,7 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
         # The cross slide is set from a measured centering burn, so its steps
         # are the small corrections that reading calls for.
         axes.append(_axis(
-            "z", "Z", "Cross slide", [0.05, 0.1, 0.5], ["Z-", "Z+"], "frame", feed=False, goto=False,
+            "z", "Z", "Cross slide", [0.05, 0.1, 0.5], ["Z-", "Z+"], feed=False, goto=False,
             zero_hint="The rail is over the axis when the centering lines meet at a point.",
             note="Setup only: carries the rail across the rotation axis",
         ))
@@ -78,7 +77,7 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
         # Fine steps to find focus by eye, a coarse one to clear the board.
         if milling:
             axes.append(_axis(
-                "h", "H", "Depth axis", [0.05, 0.1, 1], ["Down", "Up"], "frame", feed=False, goto=False,
+                "h", "H", "Depth axis", [0.05, 0.1, 1], ["Down", "Up"], feed=False, goto=False,
                 zero_hint="Touch the tool to the copper first: a milled cut without a height map goes down from H 0."
                 " A height map probed before keeps its heights in the old numbers, so a run follows it"
                 " only after Touch off here again (probe again for another board).",
@@ -86,7 +85,7 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
             ))
         else:
             axes.append(_axis(
-                "h", "H", "Focus axis", [0.05, 0.1, 1], ["Down", "Up"], "frame", feed=False, goto=False,
+                "h", "H", "Focus axis", [0.05, 0.1, 1], ["Down", "Up"], feed=False, goto=False,
                 zero_hint="A height map probed before keeps its heights in the old numbers, so a run follows it"
                 " only after Focus here again (probe again for another board).",
                 note="Raises and lowers the head; up is positive",
@@ -103,7 +102,7 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
     }
 
 
-def _axis(axis: str, letter: str, label: str, steps: list | None, buttons: list, place: str, *,
+def _axis(axis: str, letter: str, label: str, steps: list | None, buttons: list, *,
           feed: bool, goto: bool, zero_hint: str, note: str = "") -> dict:
     return {
         "axis": axis,
@@ -112,7 +111,6 @@ def _axis(axis: str, letter: str, label: str, steps: list | None, buttons: list,
         "steps": [float(step) for step in steps] if steps else None,
         "step": float(steps[len(steps) // 2]) if steps else None,
         "buttons": list(buttons),
-        "place": place,
         "feed": feed,
         "goto": goto,
         "zero": True,
@@ -216,9 +214,6 @@ def _axis_control(reader, entry: dict, by_joint: dict, focus: bool, pad: bool, p
         buttons = [f"{letter}-", f"{letter}+"]
     else:
         buttons = list(base["buttons"])
-    place = _text(reader, entry, "place", section, base["place"])
-    if place not in PLACES:
-        raise reader.fail(section, "place", f"must be one of {', '.join(PLACES)}")
     keys = _texts(reader, entry, "keys", section, 2, empty_ok=True) if "keys" in entry else list(base["keys"])
     if keys:
         if keys[0] == keys[1]:
@@ -235,7 +230,6 @@ def _axis_control(reader, entry: dict, by_joint: dict, focus: bool, pad: bool, p
         "steps": steps,
         "step": step,
         "buttons": buttons,
-        "place": place,
         "feed": reader.flag(entry, "feed", base["feed"], section),
         "goto": reader.flag(entry, "goto", base["goto"], section),
         "zero": reader.flag(entry, "zero", base["zero"], section),
@@ -243,6 +237,8 @@ def _axis_control(reader, entry: dict, by_joint: dict, focus: bool, pad: bool, p
         "keys": keys,
         "note": _text(reader, entry, "note", section, base["note"]),
     }
+    # Every control is a bar of its own now; `place`, which said whether an
+    # older page drew it beside the pad or in a frame, is still taken.
     reader.done(entry, section, {"axis", "letter", "label", "steps", "step", "buttons", "place", "feed", "goto", "zero", "zero_hint", "keys", "note"})
     return control
 

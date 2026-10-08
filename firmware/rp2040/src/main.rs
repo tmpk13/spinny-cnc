@@ -13,8 +13,9 @@
 //! off, and nothing depends on when its pulses land. With `$cartesian=1`
 //! it is a joint instead and the step timer drives it with the others.
 //!
-//! With `$spindle=1` the laser PWM on FAN3 drives a spindle's speed input;
-//! the core then keeps the step timer off it.
+//! With `$spindle=1` the laser PWM (FAN3 unless `$laser_pin` moves it)
+//! drives a spindle's speed input; the core then keeps the step timer off
+//! it. `$tool_out=1` adds an output that follows the tool.
 #![no_std]
 #![no_main]
 
@@ -54,24 +55,18 @@ const WATCHDOG_TIMEOUT: Duration = Duration::from_millis(1500);
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    // The stored settings decide the laser output's resting level, so
-    // they are read before the pin is claimed: driven low first and
-    // corrected after the flash read, an inverted module would be lit for
-    // that read.
+    // The stored settings decide which pins the laser output, the probe
+    // and the tool output are on and the laser's resting level, so they
+    // are read before any pin is claimed: driven low first and corrected
+    // after the flash read, an inverted module would be lit for that read.
     let mut store = flash::FlashStore::new(p.FLASH);
-    let laser_invert = {
+    let stored = {
         let mut blob = [0u8; BLOB_LEN];
-        store
-            .load(&mut blob)
-            .and_then(|n| Settings::from_blob(&blob[..n]))
-            .map(|settings| settings.laser_invert)
-            .unwrap_or(false)
+        store.load(&mut blob).and_then(|n| Settings::from_blob(&blob[..n])).unwrap_or_default()
     };
 
     // Laser output at its off level and motors disabled before anything else runs.
     let (mut port, mut laser, mut slide) = board::init(board::Pins {
-        pwm: p.PWM_SLICE2,
-        laser: p.PIN_20,
         x_step: p.PIN_11,
         x_dir: p.PIN_10,
         x_en: p.PIN_12,
@@ -84,8 +79,7 @@ async fn main(spawner: Spawner) {
         e_step: p.PIN_14,
         e_dir: p.PIN_13,
         e_en: p.PIN_15,
-        probe: p.PIN_25,
-    }, laser_invert);
+    }, board::IoPins::from_settings(&stored));
 
     // Every other interrupt below the step timer, which `step_timer::start` puts at P0.
     interrupt::USBCTRL_IRQ.set_priority(Priority::P2);
