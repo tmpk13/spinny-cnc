@@ -65,7 +65,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx): void {
     newId.style.width = "8rem";
     const create = button("New", () => createFile(), "btn");
     const remove = button("Delete", () => removeFile(), "btn btn-quiet");
-    const reload = button("Reload", () => refresh(), "btn btn-quiet btn-small");
+    const reload = button("Reload", () => reloadAll(), "btn btn-quiet btn-small");
     const note = el("p", { class: "muted config-note" });
     const load = button("Load to board", () => loadMachine(), "btn btn-primary");
     const flash = button("Save to flash", () => saveFlash(), "btn");
@@ -151,7 +151,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx): void {
         } else if (picked !== null && picked === current) {
             loadNote.textContent = "loaded on the board";
         } else if (current === null) {
-            loadNote.textContent = "the board's settings are no file's";
+            const drawn = state.settings?.controls_from ?? null;
+            const whose = drawn === null ? "the defaults" : drawn === picked ? "this file's controls" : `the controls of ${drawn}`;
+            loadNote.textContent = `the board's settings are no file's; the jog panel draws ${whose}`;
         } else {
             loadNote.textContent = `the board has ${current}`;
         }
@@ -190,6 +192,14 @@ export function mountConfig(root: HTMLElement, ctx: Ctx): void {
             note.textContent = "";
             showProblems([]);
             lockAll();
+        }
+    }
+
+    /** The list and the file again, and the settings with them: a file edited by hand may have changed the controls the jog panel draws. */
+    async function reloadAll(): Promise<void> {
+        await refresh();
+        if (ctx.store.get().snapshot.connected) {
+            await ctx.refreshSettings();
         }
     }
 

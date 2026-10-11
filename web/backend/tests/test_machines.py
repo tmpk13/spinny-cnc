@@ -168,14 +168,18 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     # The fake boots with settings that are no file's.
     settings = client.get("/api/settings").json()
     assert settings["machine"] is None
-    # No file's settings: the controls are the defaults for what the settings say the machine is.
+    # No file's settings: the controls of the one file for this kind of
+    # machine, bare, which are the defaults for a polar laser.
+    assert settings["controls_from"] == "bare"
     assert settings["controls"]["pad"] and [axis["axis"] for axis in settings["controls"]["axes"]][:2] == ["r", "a"]
     assert client.get("/api/machines").json()["current"] is None
 
     response = client.post("/api/machines/rig/apply")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["machine"] == "rig"
+    assert body["machine"] == "rig" and body["controls_from"] == "rig"
+    # Remembered, for the controls once a setting is changed by hand.
+    assert json.loads((tmp_path / "config.json").read_text())["last_machine"] == "rig"
     assert body["values"]["cartesian"] == 1 and body["values"]["spindle"] == 1 and body["values"]["h_axis"] == 1
     assert body["values"]["a_rate"] == 270 and body["values"]["z_max"] == 25
     assert body["host"] == {"tolerance": 0.02, "clearance": 3.0, "spinup": 1.0}
@@ -197,8 +201,19 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     assert client.put("/api/settings", json={"values": {"a_rate": 300}}).status_code == 200
     changed = client.get("/api/settings").json()
     assert changed["machine"] is None
-    # Back to the defaults, for the cartesian spindle machine the settings now describe.
-    assert changed["controls"]["pad"] and [axis["label"] for axis in changed["controls"]["axes"]] == ["Radius", "Table", "Cross slide (Y)", "Depth axis"]
+    # The controls stay rig's: the file last loaded, for a machine that is still a cartesian spindle one.
+    assert changed["controls_from"] == "rig"
+    assert not changed["controls"]["pad"] and [axis["label"] for axis in changed["controls"]["axes"]] == ["X", "Y", "Depth axis"]
+    # Two files for this kind of machine and none loaded from here: the
+    # defaults for the cartesian spindle machine the settings describe.
+    (client.machines_dir / "rig2.toml").write_text(RIG, encoding="utf-8")
+    client.backend.config.pop("last_machine")
+    unsure = client.get("/api/settings").json()
+    assert unsure["machine"] is None and unsure["controls_from"] is None
+    assert unsure["controls"]["pad"] and [axis["label"] for axis in unsure["controls"]["axes"]] == ["Radius", "Table", "Cross slide (Y)", "Depth axis"]
+    (client.machines_dir / "rig2.toml").unlink()
+    # With one file for the kind, its controls, loaded or not.
+    assert client.get("/api/settings").json()["controls_from"] == "rig"
 
     # Loading with save writes the flash too.
     response = client.post("/api/machines/rig/apply", json={"save": True})

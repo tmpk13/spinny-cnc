@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import pytest
 
 from spinny_laser import machine, machines
-from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, current, default_controls, load, load_all, matches, matching, parse
+from spinny_laser.controls import KINDS, default_controls_by_kind, kind_id
+from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, controls_file, current, default_controls, load, load_all, matches, matching, parse
 
 REPO = Path(__file__).resolve().parents[2]
 SHIPPED = REPO / "machines"
+FIXTURE = Path(__file__).parent / "data" / "default-controls.json"
 
 
 def test_the_defaults_cover_every_setting_once():
@@ -278,13 +281,46 @@ def test_the_controls_default_from_the_profile():
     assert mill["axes"][3]["label"] == "Depth axis" and "Touch the tool" in mill["axes"][3]["zero_hint"]
 
 
-def test_the_shipped_files_spell_out_their_default_controls():
+def test_the_polar_laser_file_spells_out_the_default_controls():
+    # The reference file, with a comment on each key; the other shipped
+    # files say where they differ from the defaults for their kind.
     found, _ = load_all(SHIPPED)
-    for found_machine in found:
-        assert found_machine.controls == default_controls(found_machine.kinematics, found_machine.tool, found_machine.focus), found_machine.id
+    polar = next(m for m in found if m.id == "polar-laser")
+    assert polar.controls == default_controls("polar", "laser", False)
     assert parse("", "bare").controls == default_controls("polar", "laser", False)
     assert parse("[controls]\n", "bare").controls == default_controls("polar", "laser", False)
     assert parse("[focus]\nfitted = true\n", "bare").controls == default_controls("polar", "laser", True)
+
+
+def test_the_default_controls_fixture_is_current():
+    # The page checks its copy of the defaults against the same file.
+    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert fixture == default_controls_by_kind(), "the defaults changed: mise run controls-fixture"
+    assert list(fixture) == [kind_id(*kind) for kind in KINDS] and len(fixture) == 8
+    assert kind_id("cartesian", "spindle", True) == "cartesian-spindle-focus"
+
+
+def test_the_controls_come_from_the_file_the_settings_are_else_the_one_for_the_machine():
+    mill_a = parse("kinematics = \"cartesian\"\ntool = \"spindle\"\n[focus]\nfitted = true\n[controls]\npad = false\n", "mill-a")
+    mill_b = parse("kinematics = \"cartesian\"\ntool = \"spindle\"\n[focus]\nfitted = true\n[rail]\nmax_rate = 700\n", "mill-b")
+    polar = parse("", "polar")
+    files = [polar, mill_a, mill_b]
+    kind = ("cartesian", "spindle", True)
+    # The file the settings are, whatever was loaded last.
+    assert controls_file(files, mill_a.settings, *kind) is mill_a
+    assert controls_file(files, mill_b.settings, *kind, loaded="mill-a") is mill_b
+    # No file's settings: the file last loaded, when it is this kind of machine.
+    changed = {**mill_a.settings, "r_rate": 999}
+    assert controls_file(files, changed, *kind) is None
+    assert controls_file(files, changed, *kind, loaded="mill-a") is mill_a
+    assert controls_file(files, changed, *kind, loaded="mill-b") is mill_b
+    assert controls_file(files, changed, *kind, loaded="polar") is None
+    assert controls_file(files, changed, *kind, loaded="gone") is None
+    # Nothing loaded: the one file for this kind of machine, if there is one.
+    assert controls_file([polar, mill_a], changed, *kind) is mill_a
+    assert controls_file(files, {}, "polar", "laser", False) is polar
+    assert controls_file([mill_a, mill_b], {}, "polar", "laser", False) is None
+    assert controls_file([], {}, "polar", "laser", False) is None
 
 
 def test_a_controls_entry_fills_in_from_its_default():

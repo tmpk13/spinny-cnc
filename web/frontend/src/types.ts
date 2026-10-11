@@ -140,6 +140,12 @@ export interface SettingsResponse {
     host: HostSettings;
     /** The machine file these settings are, every one of them; null for settings of no file's. */
     machine?: string | null;
+    /**
+     * The file the controls are drawn from: that one, or for settings of no
+     * file's the file last loaded from this host or the one file for this
+     * kind of machine; null for the defaults. Missing from an older backend.
+     */
+    controls_from?: string | null;
     /** The page's controls: the file's, or the defaults for what the settings say the machine is. Missing from a backend that predates it. */
     controls?: Controls;
 }

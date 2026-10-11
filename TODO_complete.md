@@ -274,3 +274,22 @@
   too; the jog panel as one bar per axis with step choices and a typed
   step, the cancel button in the panel's head; the mock reads the shipped
   machine files with the backend's checks and takes edits.
+
+## Controls follow the machine file (2026-10-11)
+
+- The jog panel and readout drew the defaults whenever the live settings
+  were no file's (a setting changed by hand, firmware older than the
+  file's newest keys), so a change to a machine file's `[controls]` did
+  not show. The controls now come from the file the settings are, else
+  the file last loaded from this host when it describes this kind of
+  machine, else the one file for the kind, else the defaults;
+  `GET /api/settings` says which in `controls_from`, the Config tab says
+  whose controls the jog panel draws, and its Reload reads the settings
+  again so a file edited by hand shows.
+- The page's copy of the default controls is checked against a fixture
+  the backend prints (`mise run controls-fixture`), not against the
+  shipped machine files, which may now differ from the defaults: the mill
+  file leaves the rail's bar out.
+- `mise run uf2` builds the board firmware as a uf2 and `scp-uf2` copies
+  it to a host given after `--`.
+

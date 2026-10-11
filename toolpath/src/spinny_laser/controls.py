@@ -21,21 +21,26 @@ says nothing gets the controls the page always drew for that machine.
     steps = [0.1, 1, 10]        # left out: the pad's step; a is in degrees, the rest in mm
     step = 1                    # left out: the middle one
     buttons = ["Radius -", "Radius +"]
-    place = "buttons"           # buttons: beside the pad; frame: its own block
     feed = true
     goto = true
     zero = true
     zero_hint = "..."
     keys = []                   # two key names for minus and plus
-    note = ""                   # under the title of a framed control
+    note = ""                   # under the bar's title
 
 The joint letters and their units are the firmware's: `a` is in degrees,
-`r`, `z` and `h` in millimeters.
+`r`, `z` and `h` in millimeters. `place`, which older files say, is still
+taken and means nothing: every control is a bar of its own.
+
+Run as a module, this prints the defaults for every kind of machine as
+JSON: the fixture the page's copy of the defaults is checked against.
 """
 
 from __future__ import annotations
 
+import json
 import math
+import sys
 
 JOINTS = ("r", "a", "z", "h")
 PAD_KEYS = ("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown")
@@ -100,6 +105,20 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
         "center": {"r": 0.0, "z": 0.0} if cartesian else {"r": 0.0},
         "axes": axes,
     }
+
+
+def kind_id(kinematics: str, tool: str, focus: bool) -> str:
+    """A name for a kind of machine: polar-laser, cartesian-spindle-focus."""
+    return f"{kinematics}-{tool}" + ("-focus" if focus else "")
+
+
+# Every kind of machine the defaults are drawn for.
+KINDS = tuple((kinematics, tool, focus) for kinematics in ("polar", "cartesian") for tool in ("laser", "spindle") for focus in (False, True))
+
+
+def default_controls_by_kind() -> dict[str, dict]:
+    """The defaults for every kind of machine, by `kind_id`."""
+    return {kind_id(*kind): default_controls(*kind) for kind in KINDS}
 
 
 def _axis(axis: str, letter: str, label: str, steps: list | None, buttons: list, *,
@@ -278,3 +297,8 @@ def _step_in(reader, table: dict, key: str, section: str, choices: list[float]) 
     if float(value) not in choices:
         raise reader.fail(section, key, f"must be one of the steps: {', '.join(f'{choice:g}' for choice in choices)}")
     return float(value)
+
+
+if __name__ == "__main__":
+    json.dump(default_controls_by_kind(), sys.stdout, indent=4)
+    sys.stdout.write("\n")

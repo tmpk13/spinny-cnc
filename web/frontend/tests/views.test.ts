@@ -969,8 +969,13 @@ describe("machine files", () => {
         await api.updateSettings({ values: { a_rate: 123 } });
         await ctx.refreshSettings();
         await settle();
-        expect(root.textContent).toContain("no file's");
+        expect(root.textContent).toContain("no file's; the jog panel draws this file's controls");
         expect(load.disabled).toBe(false);
+        // Reload reads the settings again too: a file edited by hand may have changed the controls.
+        const settingsReads = calls.filter((c) => c.name === "settings").length;
+        click(root, "Reload");
+        await settle();
+        expect(calls.filter((c) => c.name === "settings").length).toBe(settingsReads + 1);
         // Not connected: nothing to load.
         store.set({ snapshot: { ...connected(), connected: false, machine: null } });
         await settle();

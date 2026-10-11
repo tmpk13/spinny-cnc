@@ -1,61 +1,60 @@
-// The page's default controls are the backend's word for word: the shipped
-// machine files spell out the defaults for what they are (the backend's
-// tests check that against its own defaults), so the page's twin is read
-// against the files here.
+// The page's default controls are the backend's word for word: the backend
+// prints its defaults for every kind of machine into a fixture (mise run
+// controls-fixture), which its tests keep current, and the page's twin is
+// read against that fixture here. The shipped machine files are read too,
+// as what they say they are.
 
 import { describe, expect, test } from "bun:test";
 
-import cartesianLaser from "../../../machines/cartesian-laser.toml" with { type: "text" };
-import cartesianMill from "../../../machines/cartesian-mill.toml" with { type: "text" };
-import polarLaserFocus from "../../../machines/polar-laser-focus.toml" with { type: "text" };
-import polarLaser from "../../../machines/polar-laser.toml" with { type: "text" };
+import fixture from "../../../toolpath/tests/data/default-controls.json" with { type: "json" };
 import { controlOf, controlsOf, defaultControls, sameControls } from "../src/controls.ts";
 import { MockBackend } from "../src/mock/backend.ts";
-import { parseToml, type TomlTable } from "../src/toml.ts";
 import { initialState } from "../src/state.ts";
-import type { Profile } from "../src/types.ts";
+import type { Controls, Kinematics, Profile, Tool } from "../src/types.ts";
 
-const SHIPPED: [string, string, Profile][] = [
-    ["polar-laser", polarLaser, { kinematics: "polar", tool: "laser", h_axis: false, r_max: 0, z_max: 0 }],
-    ["polar-laser-focus", polarLaserFocus, { kinematics: "polar", tool: "laser", h_axis: true, r_max: 0, z_max: 0 }],
-    ["cartesian-laser", cartesianLaser, { kinematics: "cartesian", tool: "laser", h_axis: false, r_max: 0, z_max: 30 }],
-    ["cartesian-mill", cartesianMill, { kinematics: "cartesian", tool: "spindle", h_axis: true, r_max: 0, z_max: 30 }],
+const SHIPPED: [string, Profile][] = [
+    ["polar-laser", { kinematics: "polar", tool: "laser", h_axis: false, r_max: 0, z_max: 0 }],
+    ["polar-laser-focus", { kinematics: "polar", tool: "laser", h_axis: true, r_max: 0, z_max: 0 }],
+    ["cartesian-laser", { kinematics: "cartesian", tool: "laser", h_axis: false, r_max: 0, z_max: 30 }],
+    ["cartesian-mill", { kinematics: "cartesian", tool: "spindle", h_axis: true, r_max: 0, z_max: 30 }],
 ];
 
 describe("default controls", () => {
-    test("are what the shipped machine files spell out", () => {
-        for (const [id, text, profile] of SHIPPED) {
-            const file = parseToml(text);
-            const controls = file["controls"] as TomlTable;
-            const expected = defaultControls(profile);
-            const { axes, ...top } = controls;
-            // The files say what they say; a key left out is the default.
-            const said = (where: string, key: string, value: unknown): Record<string, unknown> => ({ [`${id} ${where} ${key}`]: value });
-            for (const [key, value] of Object.entries(top)) {
-                expect(said("controls", key, (expected as unknown as Record<string, unknown>)[key])).toEqual(said("controls", key, value));
-            }
-            const entries = axes as TomlTable[];
-            expect(entries.map((entry) => entry["axis"])).toEqual(expected.axes.map((axis) => axis.axis));
-            entries.forEach((entry, index) => {
-                const axis = expected.axes[index] as unknown as Record<string, unknown>;
-                for (const [key, value] of Object.entries(entry)) {
-                    expect(said(String(entry["axis"]), key, axis[key])).toEqual(said(String(entry["axis"]), key, value));
-                }
-            });
+    test("are the backend's for every kind of machine", () => {
+        const kinds = Object.keys(fixture);
+        expect(kinds).toHaveLength(8);
+        for (const kind of kinds) {
+            // polar-laser, cartesian-spindle-focus: the kinematics, the tool and whether a focus axis is fitted.
+            const [kinematics, tool, focus] = kind.split("-");
+            const profile: Profile = { kinematics: kinematics as Kinematics, tool: tool as Tool, h_axis: focus === "focus", r_max: 0, z_max: 0 };
+            const expected = (fixture as unknown as Record<string, Controls>)[kind]!;
+            expect({ kind, controls: defaultControls(profile) }).toEqual({ kind, controls: expected });
         }
     });
 
+    test("the shipped files read as what they say they are, and the polar laser's spells the defaults out", async () => {
+        const backend = new MockBackend({ timers: false });
+        for (const [id, profile] of SHIPPED) {
+            const { document, problems } = await backend.machineFile(id);
+            expect({ id, problems }).toEqual({ id, problems: [] });
+            expect({ id, kind: [document?.kinematics, document?.tool, document?.focus] }).toEqual({ id, kind: [profile.kinematics, profile.tool, profile.h_axis] });
+        }
+        expect((await backend.machineFile("polar-laser")).document?.controls).toEqual(defaultControls(SHIPPED[0]![1]));
+        // The mill leaves the rail's bar out: the pad's X bar moves the rail there.
+        expect((await backend.machineFile("cartesian-mill")).document?.controls.axes.map((axis) => axis.axis)).toEqual(["a", "z", "h"]);
+    });
+
     test("follow the kinematics, the tool and the focus axis", () => {
-        const polar = defaultControls(SHIPPED[0]![2]);
+        const polar = defaultControls(SHIPPED[0]![1]);
         expect(polar.axes.map((axis) => axis.axis)).toEqual(["r", "a", "z"]);
         expect(polar.center).toEqual({ r: 0 });
         expect(controlOf(polar, "r")?.steps).toBeNull();
         expect(controlOf(polar, "a")?.step).toBe(10);
-        const mill = defaultControls(SHIPPED[3]![2]);
+        const mill = defaultControls(SHIPPED[3]![1]);
         expect(mill.axes.map((axis) => axis.goto)).toEqual([true, false, true, false]);
         expect(controlOf(mill, "h")?.label).toBe("Depth axis");
         expect(controlOf(mill, "z")?.label).toBe("Cross slide (Y)");
-        expect(sameControls(polar, defaultControls(SHIPPED[0]![2]))).toBe(true);
+        expect(sameControls(polar, defaultControls(SHIPPED[0]![1]))).toBe(true);
         expect(sameControls(polar, mill)).toBe(false);
     });
 

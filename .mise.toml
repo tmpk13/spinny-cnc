@@ -61,3 +61,19 @@ run = "cd sim && cargo test -q"
 [tasks.test]
 description = "Every suite"
 depends = ["test-firmware", "test-toolpath", "test-backend", "test-frontend", "test-sim"]
+
+[tasks.uf2]
+description = "Build the board firmware as a uf2: firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
+run = """
+(cd firmware/rp2040 && cargo build --release)
+elf2uf2-rs firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2
+"""
+
+[tasks.scp-uf2]
+description = "Build the uf2 and copy it to a host with scp, to put on a board held in BOOTSEL there: mise run scp-uf2 -- pi@spinny.local:"
+depends = ["uf2"]
+run = "scp firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
+
+[tasks.controls-fixture]
+description = "Write the default controls fixture the toolpath and page tests check their copies of the defaults against"
+run = "uv run python -m spinny_laser.controls > toolpath/tests/data/default-controls.json"

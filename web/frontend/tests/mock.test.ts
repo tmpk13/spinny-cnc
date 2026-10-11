@@ -1730,6 +1730,7 @@ describe("machine files in the mock", () => {
         // The mock boots with its focus axis fitted and all else at the defaults.
         expect(listed.current).toBe("polar-laser-focus");
         expect((await backend.settings()).machine).toBe("polar-laser-focus");
+        expect((await backend.settings()).controls_from).toBe("polar-laser-focus");
 
         const applied = await backend.applyMachine("cartesian-mill");
         expect(applied.machine).toBe("cartesian-mill");
@@ -1738,9 +1739,13 @@ describe("machine files in the mock", () => {
         expect((await backend.state()).profile).toMatchObject({ kinematics: "cartesian", tool: "spindle", h_axis: true });
         expect((await backend.machines()).current).toBe("cartesian-mill");
 
-        // One setting changed by hand and the settings are no file's.
+        // One setting changed by hand and the settings are no file's; the
+        // controls stay the loaded file's, since the machine is the same.
         await backend.updateSettings({ values: { a_rate: 123 } });
-        expect((await backend.settings()).machine).toBeNull();
+        const changed = await backend.settings();
+        expect(changed.machine).toBeNull();
+        expect(changed.controls_from).toBe("cartesian-mill");
+        expect(changed.controls).toEqual((await backend.machineFile("cartesian-mill")).document!.controls);
         expect((await backend.machines()).current).toBeNull();
         await expect(backend.applyMachine("nope")).rejects.toBeInstanceOf(ApiError);
 

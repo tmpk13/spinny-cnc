@@ -400,6 +400,29 @@ def current(machines: list[Machine], values: dict) -> str | None:
     return found.id if found is not None else None
 
 
+def alike(machine: Machine, kinematics: str, tool: str, focus: bool) -> bool:
+    """The file describes this kind of machine: the kinematics, the tool
+    and whether a focus axis is fitted."""
+    return machine.kinematics == kinematics and machine.tool == tool and machine.focus == focus
+
+
+def controls_file(machines: list[Machine], values: dict, kinematics: str, tool: str, focus: bool, loaded: str | None = None) -> Machine | None:
+    """The file the page draws its controls from, for these live settings
+    and the kind of machine they describe: the file the settings are,
+    every one of them; else, for settings that are no file's, the file
+    last loaded onto the board (`loaded`) when it describes this kind of
+    machine, since a setting changed by hand does not change what the
+    machine is; else the one file that does; else None, for the defaults."""
+    found = matching(machines, values)
+    if found is not None:
+        return found
+    kind = [machine for machine in machines if alike(machine, kinematics, tool, focus)]
+    for machine in kind:
+        if machine.id == loaded:
+            return machine
+    return kind[0] if len(kind) == 1 else None
+
+
 def cli_defaults(machine: Machine) -> dict:
     """What a machine file says for the gcode tools' machine options: the
     axis rates for the estimate, the power scale, and the host's chord

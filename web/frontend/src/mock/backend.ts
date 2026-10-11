@@ -1454,6 +1454,8 @@ export class MockBackend implements Api, EventFeed {
     private focusFrame: number | null = null;
     /** Lines the machine prints after its answer to a console line, as `$tmc` prints its report. */
     private later: string[] = [];
+    /** The machine file last loaded onto the board; its controls stay while a setting changed by hand makes the values no file's. */
+    private loaded: string | null = null;
 
     constructor(options: MockOptions = {}) {
         this.useTimers = options.timers ?? true;
@@ -2491,14 +2493,16 @@ export class MockBackend implements Api, EventFeed {
 
     async settings(): Promise<SettingsResponse> {
         const found = this.machineOf();
+        // The controls: the file the settings are, else the file for this
+        // kind of machine, else the defaults for what the settings say it is.
+        const source = found ?? this.controlsFile();
         return {
             values: { ...this.machine.settings },
             schema: SETTINGS_SCHEMA,
             host: { tolerance: this.tolerance, clearance: this.clearance, spinup: this.spinup },
             machine: found?.id ?? null,
-            // The loaded file's controls, or the defaults for what the
-            // settings say the machine is when they are no file's.
-            controls: found?.controls ?? defaultControls(this.machine.profile()),
+            controls_from: source?.id ?? null,
+            controls: source?.controls ?? defaultControls(this.machine.profile()),
         };
     }
 
@@ -2521,6 +2525,19 @@ export class MockBackend implements Api, EventFeed {
     /** The machine file the live settings are, every one of them, or null. */
     private machineOf(): MachineDocument | null {
         return this.machineDocuments().documents.find((document) => matches(document, this.machine.settings)) ?? null;
+    }
+
+    /**
+     * For settings that are no file's: the file last loaded when it describes
+     * this kind of machine (a setting changed by hand does not change what
+     * the machine is), else the one file that does, else null for the defaults.
+     */
+    private controlsFile(): MachineDocument | null {
+        const profile = this.machine.profile();
+        const kind = this.machineDocuments().documents.filter(
+            (document) => document.kinematics === profile.kinematics && document.tool === profile.tool && document.focus === profile.h_axis,
+        );
+        return kind.find((document) => document.id === this.loaded) ?? (kind.length === 1 ? kind[0]! : null);
     }
 
     async machines(): Promise<MachinesResponse> {
@@ -2590,6 +2607,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(404, `no machine file '${id}'`);
         }
         await this.updateSettings({ values: { ...read.document.settings }, host: { tolerance: this.tolerance, ...read.document.host } });
+        this.loaded = id;
         if (save) {
             await this.saveSettings();
         }

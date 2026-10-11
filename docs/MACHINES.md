@@ -171,17 +171,27 @@ tool does.
 The jog panel and the position readout draw what `[controls]` says, so
 a machine with other joints, names, steps or keys needs no change to the
 page. The backend sends the controls with the settings (`GET
-/api/settings`): the loaded file's, or, for settings that are no file's,
-the defaults for what the settings say the machine is. Every control is a
-bar: its letter and title, a note, the step choices with a field for any
-other step, the minus and plus buttons and the zero button. The defaults
+/api/settings`): the file's whose settings the live ones are, every one
+of them, or, for settings that are no file's (one changed by hand, or
+firmware older than the file's newest keys), the file last loaded from
+this host when it describes this kind of machine (kinematics, tool, focus
+axis), else the one file that does, else the defaults for what the
+settings say the machine is. `controls_from` names the file, and the
+Config tab says under the file whose controls the jog panel draws. A file
+edited by hand shows after *Reload* there, or a page reload. Every
+control is a bar: its letter and title, a note, the step choices with a
+field for any other step, the minus and plus buttons and the zero button.
+The defaults
 are the board's X and Y bars on the arrow keys, a *Radius* and a *Table*
 bar, the cross slide's bar (as the Y axis, stepping with the pad's steps
 at the feed given, when cartesian; a setup axis at the firmware's rate
 otherwise, with no goto field), the focus axis's bar when fitted (the
 depth axis with a spindle), a Center button to `R 0` (and `Z 0` when
-cartesian), and a zero button per joint. The shipped files spell those
-defaults out, which is where to start a file of your own.
+cartesian), and a zero button per joint. `polar-laser.toml` spells those
+defaults out with a comment on each key, which is where to start a file
+of your own; the other shipped files say what differs for their kind (the
+mill leaves the rail's bar out: the rail is X there, which the pad's X
+bar moves).
 
 An entry fills in what it leaves out from the default for its joint; an
 entry given a `letter` or a `label` but no `buttons` is labeled

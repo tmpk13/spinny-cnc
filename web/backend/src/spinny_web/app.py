@@ -1145,15 +1145,28 @@ class Backend:
             self._settings_cache = (now, values)
             self.rates = Rates.from_settings(values)
             self.profile = profile_of(values)
-        # The page's controls are the loaded file's, or the defaults for
-        # what the settings say the machine is when they are no file's.
-        found = machine_files.matching(self.machine_list()[0], values)
+        return self._settings_response(values)
+
+    def _settings_response(self, values: dict) -> dict:
+        """The settings with the page's controls. The file the values are,
+        every one of them, is named; the controls are that file's, or, for
+        values that are no file's, those of the file last loaded from here
+        or of the one file for this kind of machine, else the defaults for
+        what the values say the machine is (spinny_laser.machines.controls_file)."""
+        profile = self.profile
+        loaded = self.config.get("last_machine")
+        source = machine_files.controls_file(
+            self.machine_list()[0], values, profile["kinematics"], profile["tool"], profile["h_axis"],
+            loaded if isinstance(loaded, str) else None,
+        )
+        found = source if source is not None and machine_files.matches(source, values) else None
         return {
             "values": values,
             "schema": SETTINGS_SCHEMA,
             "host": self.host_settings(),
             "machine": found.id if found is not None else None,
-            "controls": found.controls if found is not None else controls_of(self.profile),
+            "controls_from": source.id if source is not None else None,
+            "controls": source.controls if source is not None else controls_of(profile),
         }
 
     def write_settings(self, values: dict | None, host: dict | None) -> dict:
@@ -1189,7 +1202,7 @@ class Backend:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
-        return {"values": {}, "schema": SETTINGS_SCHEMA, "host": self.host_settings(), "machine": None, "controls": controls_of(self.profile)}
+        return self._settings_response({})
 
     # --- machines -----------------------------------------------------------------
 
@@ -1231,6 +1244,12 @@ class Backend:
                 f"its firmware predates them, flash the current firmware to load {machine_id!r}"
             )
         result = self.write_settings(dict(machine.settings), dict(machine.host) or None)
+        if self.config.get("last_machine") != machine_id:
+            # Remembered, so the page keeps this file's controls once a
+            # setting changed by hand makes the values no file's.
+            self.config["last_machine"] = machine_id
+            self._save_config()
+            result = self._settings_response(result["values"])
         if save:
             self.save_settings()
         return result

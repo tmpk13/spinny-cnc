@@ -27,8 +27,10 @@ Drag orbits, or pans with *Lock rotation* pressed (kept between visits);
 shift or right drag pans, the wheel zooms about the cursor, *Reset view*
 and a double click return to the overview, tilted with the axis in the
 middle and everything in view. The DRO and the jog panel draw the
-machine's controls (`controls` in the settings the backend sends, from
-the machine file's `[controls]` or the defaults for what the machine is;
+machine's controls (`controls` in the settings the backend sends: the
+`[controls]` of the machine file the settings are, or of the file last
+loaded or the one file for this kind of machine when they are no file's,
+else the defaults for what the machine is;
 `src/controls.ts` holds the page's copy of those defaults for the moment
 before the settings arrive and for the mock): one readout cell and one
 bar per joint the file names, with its letter, label, step choices and a
@@ -45,7 +47,8 @@ The page follows what the machine is (`profile` in the backend's state,
 from `$cartesian` and `$spindle`), with a badge in the status bar when it
 is not the polar laser. The Config tab's machine file panel lists the
 files in `machines/`, names the one the live settings are (or says they
-are no file's), edits the picked one, and loads it after a confirmation,
+are no file's, and whose controls the jog panel draws), edits the picked
+one, and loads it after a confirmation,
 every firmware setting from the file; *Save to flash* keeps it over a
 restart. On a cartesian machine the cross slide is the Y
 axis: it steps like the rail, at the feed given, and the joint goto takes

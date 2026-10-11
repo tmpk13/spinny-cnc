@@ -1,0 +1,666 @@
+{
+    "polar-laser": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide",
+                "steps": [
+                    0.05,
+                    0.1,
+                    0.5
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "The rail is over the axis when the centering lines meet at a point.",
+                "keys": [],
+                "note": "Setup only: carries the rail across the rotation axis"
+            }
+        ]
+    },
+    "polar-laser-focus": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide",
+                "steps": [
+                    0.05,
+                    0.1,
+                    0.5
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "The rail is over the axis when the centering lines meet at a point.",
+                "keys": [],
+                "note": "Setup only: carries the rail across the rotation axis"
+            },
+            {
+                "axis": "h",
+                "letter": "H",
+                "label": "Focus axis",
+                "steps": [
+                    0.05,
+                    0.1,
+                    1.0
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Down",
+                    "Up"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "A height map probed before keeps its heights in the old numbers, so a run follows it only after Focus here again (probe again for another board).",
+                "keys": [],
+                "note": "Raises and lowers the head; up is positive"
+            }
+        ]
+    },
+    "polar-spindle": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide",
+                "steps": [
+                    0.05,
+                    0.1,
+                    0.5
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "The rail is over the axis when the centering lines meet at a point.",
+                "keys": [],
+                "note": "Setup only: carries the rail across the rotation axis"
+            }
+        ]
+    },
+    "polar-spindle-focus": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide",
+                "steps": [
+                    0.05,
+                    0.1,
+                    0.5
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "The rail is over the axis when the centering lines meet at a point.",
+                "keys": [],
+                "note": "Setup only: carries the rail across the rotation axis"
+            },
+            {
+                "axis": "h",
+                "letter": "H",
+                "label": "Depth axis",
+                "steps": [
+                    0.05,
+                    0.1,
+                    1.0
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Down",
+                    "Up"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "Touch the tool to the copper first: a milled cut without a height map goes down from H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board).",
+                "keys": [],
+                "note": "Raises and lowers the tool; up is positive, H 0 is the board's surface"
+            }
+        ]
+    },
+    "cartesian-laser": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0,
+            "z": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide (Y)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "keys": [],
+                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+            }
+        ]
+    },
+    "cartesian-laser-focus": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0,
+            "z": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide (Y)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "keys": [],
+                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+            },
+            {
+                "axis": "h",
+                "letter": "H",
+                "label": "Focus axis",
+                "steps": [
+                    0.05,
+                    0.1,
+                    1.0
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Down",
+                    "Up"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "A height map probed before keeps its heights in the old numbers, so a run follows it only after Focus here again (probe again for another board).",
+                "keys": [],
+                "note": "Raises and lowers the head; up is positive"
+            }
+        ]
+    },
+    "cartesian-spindle": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0,
+            "z": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide (Y)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "keys": [],
+                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+            }
+        ]
+    },
+    "cartesian-spindle-focus": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0,
+            "z": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "R",
+                "label": "Radius",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Radius -",
+                    "Radius +"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "The beam must be over the rotation axis.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Table",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": true,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Z",
+                "label": "Cross slide (Y)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Z-",
+                    "Z+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "keys": [],
+                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+            },
+            {
+                "axis": "h",
+                "letter": "H",
+                "label": "Depth axis",
+                "steps": [
+                    0.05,
+                    0.1,
+                    1.0
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Down",
+                    "Up"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "Touch the tool to the copper first: a milled cut without a height map goes down from H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board).",
+                "keys": [],
+                "note": "Raises and lowers the tool; up is positive, H 0 is the board's surface"
+            }
+        ]
+    }
+}

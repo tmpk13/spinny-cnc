@@ -46,24 +46,15 @@ clearance = 2.0             # mm over the surface for travel between cuts
 spinup = 2.0                # s of dwell after the spindle starts or changes speed
 
 # The page's controls, as the defaults draw them for a cartesian spindle
-# machine: the cross slide is the Y axis and the focus axis is the depth
+# machine, less the rail's bar: the rail is X here, which the pad's X bar
+# moves. The cross slide is the Y axis and the focus axis is the depth
 # axis. polar-laser.toml says what each key means.
 [controls]
 pad = true
 pad_steps = [0.1, 1, 10]
 pad_step = 1
 feed = true
-center = { r = 0, z = 0 }
-
-[[controls.axes]]
-axis = "r"
-letter = "R"
-label = "Radius"
-buttons = ["Radius -", "Radius +"]
-feed = true
-goto = true
-zero = true
-zero_hint = "The beam must be over the rotation axis."
+center = { z = 0 }
 
 [[controls.axes]]
 axis = "a"
