@@ -82,7 +82,9 @@ pub struct Settings {
     pub probe_pin: u32,
     /// An output follows the tool: driven while a job runs, a beam is
     /// lit, a dwell burns or the spindle turns, for a laser supply relay,
-    /// an air assist or a spindle's run input. Read at boot.
+    /// an air assist or a spindle's run input. The pin is claimed at boot
+    /// only when this is set then; on a board that claimed it, a change
+    /// applies at once.
     pub tool_out: bool,
     /// GPIO of that output. Read at boot.
     pub tool_pin: u32,

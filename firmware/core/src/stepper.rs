@@ -126,6 +126,7 @@ pub struct Segment {
 
 impl Segment {
     /// Step events in the segment.
+    #[cfg(test)]
     pub fn events(&self) -> u32 {
         self.ticks as u32 >> self.amass
     }
@@ -622,7 +623,10 @@ impl<'a> Front<'a> {
             speed = segment_speed(v0, v_end, events, &slice, &block, top);
             timing = self::timing(speed / slice.per_event, events, floor_us);
         }
-        let duty = segment_duty(&block, speed, settings, mode);
+        // The brake runs dark by its own duty, not only by the flag the
+        // interrupt reads at each load: a resume that comes before the ramp
+        // has run clears that flag with ramp segments still queued.
+        let duty = if hold { self.shared.off_duty() } else { segment_duty(&block, speed, settings, mode) };
         let segment = Segment {
             ticks: (events << timing.amass) as u16,
             period_us: timing.period_us,
@@ -712,8 +716,12 @@ impl<'a> Front<'a> {
     /// the flag copies the final one.
     pub fn abort(&mut self, planner: &mut Planner) {
         self.forget();
+        // Quiet is judged before the position is read: an interrupt that
+        // steps once more and goes idle between the two would otherwise
+        // leave the planner a tick behind with no resync to catch it.
+        let quiet = self.producer.is_empty() && self.shared.idle.load(Ordering::SeqCst);
         planner.set_position(self.position());
-        if !(self.producer.is_empty() && self.shared.idle.load(Ordering::SeqCst)) {
+        if !quiet {
             self.resync = true;
             self.shared.abort.store(true, Ordering::SeqCst);
         }
@@ -1645,7 +1653,6 @@ mod tests {
         let mut rig = Rig::new(settings());
         rig.push(50.0, 0.0, MoveKind::Jog, Feed::Jog, 0.0, 0.0);
         rig.push(50.0, 100.0, MoveKind::Jog, Feed::Jog, 0.0, 0.0);
-        assert!(rig.planner.has_jog());
         rig.advance(1_000_000);
         rig.front.request_hold();
         while !rig.front.is_stopped() {
@@ -1991,6 +1998,11 @@ mod tests {
         rig.advance(2_000_000);
         assert!(rig.port.count[R] > 0 && rig.port.count[A] > 0);
         assert_eq!(rig.front.position()[A] as u64, rig.port.count[A]);
+        // The minor axis keeps pace with the major one, which steps every
+        // event: a wrapped counter would skip its steps and the position
+        // would skip them with it.
+        let expected = rig.port.count[A] * block.steps[R] as u64 / block.step_event_count as u64;
+        assert!(rig.port.count[R].abs_diff(expected) <= 1, "{} radius steps, {expected} expected", rig.port.count[R]);
         rig.check_axis_rates();
     }
 }

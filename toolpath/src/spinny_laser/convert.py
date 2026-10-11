@@ -1,6 +1,6 @@
 """spinny-polar: rewrite an X/Y laser job for the rotary table.
 
-Absolute millimetre `G0`/`G1` moves are read into paths with the `S` and `F`
+Absolute millimeter `G0`/`G1` moves are read into paths with the `S` and `F`
 they ran at, and written back out as radius and angle moves through the same
 emitter the isolation command uses. Arcs, inches, relative moves, coordinate
 offsets and feeds other than mm/min are refused; export arcs as line

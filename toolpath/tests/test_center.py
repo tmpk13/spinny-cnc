@@ -140,7 +140,7 @@ def test_the_pattern_survives_the_emitter_and_the_controller(tmp_path):
         assert len(angles) == 1, f"a line wandered off its angle: {angles}"
         # The emitter reopens the beam two coordinate quanta off the axis,
         # so a line starts a couple of microns out. Nothing here is
-        # measured to better than a hundredth of a millimetre.
+        # measured to better than a hundredth of a millimeter.
         assert min(math.hypot(x, y) for x, y in line) < 0.005, "a line missed the axis"
         assert max(math.hypot(x, y) for x, y in line) == pytest.approx(6.0, abs=0.01)
     radii = [math.hypot(x, y) for x, y in ring_path]

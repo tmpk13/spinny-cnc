@@ -506,14 +506,23 @@ impl<'a> Machine<'a> {
             }
             Command::SettingsDefaults => {
                 self.require_idle()?;
-                // The polarities describe the wiring, not a tuning: an
-                // active-low laser taken back to active high would light at
-                // full power the moment the output is driven.
+                // The polarities, the socket map and the pins describe the
+                // wiring, not a tuning: an active-low laser or tool output
+                // taken back to active high would be driven to its active
+                // level the moment the output is written, and a socket map
+                // taken back to the board's labels would step another
+                // axis's motor on the next move.
                 let defaults = Settings {
                     laser_invert: self.settings.laser_invert,
                     en_invert: self.settings.en_invert,
                     probe_invert: self.settings.probe_invert,
                     dir_invert: self.settings.dir_invert,
+                    sockets: self.settings.sockets,
+                    laser_pin: self.settings.laser_pin,
+                    probe_pin: self.settings.probe_pin,
+                    tool_out: self.settings.tool_out,
+                    tool_pin: self.settings.tool_pin,
+                    tool_invert: self.settings.tool_invert,
                     ..Settings::default()
                 };
                 self.adopt(defaults);
@@ -1005,9 +1014,13 @@ impl<'a> Machine<'a> {
                 self.state = State::Run;
                 self.dwell_power = power;
                 self.dwell_until = Some(self.now + ms as u64 * 1000);
-                self.drive_beam(laser);
+                // A hold kept for this line takes the dwell's time and
+                // leaves the beam dark; lit first, the output would carry
+                // the power for the moment between the two writes.
                 if self.hold_latched {
                     self.enter_hold(laser);
+                } else {
+                    self.drive_beam(laser);
                 }
                 return false;
             }
@@ -1266,11 +1279,13 @@ impl<'a> Machine<'a> {
     }
 
     /// The output is in use: a job runs, a beam is lit, a dwell burns or
-    /// the spindle turns. What the tool output follows.
+    /// the spindle turns. What the tool output follows. A held dwell does
+    /// not burn: `enter_hold` takes its time and leaves its power for the
+    /// resume.
     fn tool_active(&self) -> bool {
         self.state == State::Run
             || self.beam.is_some()
-            || self.dwell_power.is_some()
+            || (self.dwell_power.is_some() && self.dwell_until.is_some())
             || (self.settings.spindle && self.spindle.is_some_and(|speed| speed > 0.0))
     }
 
@@ -1312,8 +1327,7 @@ impl<'a> Machine<'a> {
 
     /// The USB host went away: like a reset without the output, and the
     /// laser off. The motors stay enabled so the position holds.
-    pub fn disconnected(&mut self, laser: &mut impl LaserPort, port: &mut impl StepPort) {
-        let _ = port;
+    pub fn disconnected(&mut self, laser: &mut impl LaserPort) {
         self.reset(laser);
     }
 
@@ -2351,7 +2365,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cross_slide_jog_is_cancelled_and_stopped_by_the_realtime_bytes() {
+    fn a_cross_slide_jog_is_canceled_and_stopped_by_the_realtime_bytes() {
         let mut rig = Rig::new();
         rig.take_out();
         assert_eq!(rig.line("set Z0"), "ok\n");
@@ -2380,13 +2394,13 @@ mod tests {
         rig.run();
         assert_eq!(rig.state(), State::Idle);
         assert_eq!(rig.take_out(), "");
-        let cancelled = rig.machine.slide_position();
-        assert!(cancelled > 0.1 && cancelled < 20.0, "stopped at {cancelled}");
+        let canceled = rig.machine.slide_position();
+        assert!(canceled > 0.1 && canceled < 20.0, "stopped at {canceled}");
         // Every pulse is in the position it reports.
-        assert_eq!(rig.slide.pulses - before, (cancelled * 256.0) as u64);
+        assert_eq!(rig.slide.pulses - before, (canceled * 256.0) as u64);
         // It stays stopped, and takes the next move from where it is.
         rig.advance(1_000_000);
-        assert_eq!(rig.slide.pulses - before, (cancelled * 256.0) as u64);
+        assert_eq!(rig.slide.pulses - before, (canceled * 256.0) as u64);
         assert_eq!(rig.line("jogto Z0"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.slide_position(), 0.0);
@@ -2417,7 +2431,7 @@ mod tests {
         rig.advance(200_000);
         assert_eq!(rig.state(), State::Jog);
         rig.laser.now = rig.now;
-        rig.machine.disconnected(&mut rig.laser, &mut rig.port);
+        rig.machine.disconnected(&mut rig.laser);
         let at = rig.machine.slide_position();
         assert!(at > 0.0 && at < 20.0, "stopped at {at}");
         rig.advance(1_000_000);
@@ -2504,7 +2518,7 @@ mod tests {
         rig.take_out();
         assert_eq!(rig.line("laser S600 T60000"), "ok\n");
         assert_eq!(rig.laser.duty, 600);
-        rig.machine.disconnected(&mut rig.laser, &mut rig.port);
+        rig.machine.disconnected(&mut rig.laser);
         assert_eq!(rig.laser.duty, 0);
         assert_eq!(rig.state(), State::Idle);
         assert_eq!(rig.take_out(), "");
@@ -2514,7 +2528,7 @@ mod tests {
         assert_eq!(rig.line("cut R50 F600 S800"), "ok\n");
         rig.advance(1_000_000);
         assert!(rig.laser.duty > 0);
-        rig.machine.disconnected(&mut rig.laser, &mut rig.port);
+        rig.machine.disconnected(&mut rig.laser);
         assert_eq!(rig.laser.duty, 0);
         assert_eq!(rig.state(), State::Alarm(1));
         rig.advance(20_000);
@@ -2877,7 +2891,7 @@ mod tests {
         rig.realtime(Realtime::Reset);
         assert_eq!(rig.take_out(), "[MSG:reset]\n[spinny v0.1.0 lines:16 blocks:32]\n");
         assert_eq!(rig.state(), State::Alarm(1), "a reset does not stand in for unlock");
-        rig.machine.disconnected(&mut rig.laser, &mut rig.port);
+        rig.machine.disconnected(&mut rig.laser);
         assert_eq!(rig.state(), State::Alarm(1));
         assert_eq!(rig.line("unlock"), "ok\n");
         assert_eq!(rig.state(), State::Idle);
@@ -2895,7 +2909,7 @@ mod tests {
     }
 
     /// The bench with a focus axis fitted: 256 steps/mm, so a step is
-    /// 3.90625 um and a sixteenth of a millimetre is a whole step count.
+    /// 3.90625 um and a sixteenth of a millimeter is a whole step count.
     fn focus_rig() -> Rig {
         let mut rig = Rig::with(Settings { h_axis: true, ..bench_settings() });
         rig.take_out();
@@ -3466,6 +3480,10 @@ mod tests {
         settings.en_invert = true;
         settings.probe_invert = true;
         settings.dir_invert = 5;
+        settings.sockets = 1423;
+        settings.tool_out = true;
+        settings.tool_invert = true;
+        settings.tool_pin = 21;
         settings.idle_ms = 1234;
         let mut rig = Rig::with(settings);
         rig.take_out();
@@ -3475,7 +3493,11 @@ mod tests {
         rig.advance(POLL_US);
         assert_eq!(rig.laser.duty, 1000, "an active-low laser lit by $defaults");
         let listed = rig.line("$");
-        for line in ["laser_invert=1\n", "en_invert=1\n", "probe_invert=1\n", "dir_invert=5\n", "idle_ms=0\n"] {
+        // The wiring stays: the polarities, the socket map and the pins.
+        for line in [
+            "laser_invert=1\n", "en_invert=1\n", "probe_invert=1\n", "dir_invert=5\n",
+            "sockets=1423\n", "tool_out=1\n", "tool_invert=1\n", "tool_pin=21\n", "idle_ms=0\n",
+        ] {
             assert!(listed.contains(line), "{line} in {listed}");
         }
     }

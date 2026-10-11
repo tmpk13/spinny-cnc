@@ -31,7 +31,7 @@ The line protocol is [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
 `core`, `rp2040-logic` and `virtual` are one workspace. `rp2040` is
 excluded and keeps its own `.cargo/config.toml`, because a `build.target`
-there applies to every crate below it and cannot be cancelled from a
+there applies to every crate below it and cannot be canceled from a
 child, which would capture the host crates.
 
 ## Build and test

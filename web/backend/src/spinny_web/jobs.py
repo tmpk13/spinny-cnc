@@ -29,7 +29,7 @@ DEFAULT_POWER = 500.0
 DEFAULT_SPEED = 400.0
 DEFAULT_SPOT = 0.1
 # Milling: how deep a group cuts below the surface, mm, and how fast the
-# tool goes down into it, mm/min. A tenth of a millimetre goes through the
+# tool goes down into it, mm/min. A tenth of a millimeter goes through the
 # copper of a usual board.
 DEFAULT_DEPTH = 0.1
 DEFAULT_PLUNGE = 60.0

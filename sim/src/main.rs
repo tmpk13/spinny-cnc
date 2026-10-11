@@ -83,7 +83,7 @@ fn parse_args() -> Options {
                 overrides.push((arg, value));
             }
             "--screenshot" => screenshot = Some(PathBuf::from(args.next().unwrap_or_else(|| usage()))),
-            "--at" => at = args.next().and_then(|v| v.parse().ok()),
+            "--at" => at = Some(args.next().unwrap_or_else(|| usage()).parse().unwrap_or_else(|_| usage())),
             "-h" | "--help" => usage(),
             _ if file.is_none() && !arg.starts_with('-') => file = Some(PathBuf::from(arg)),
             _ => usage(),

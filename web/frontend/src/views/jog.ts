@@ -211,7 +211,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         }
         const center = controls.center;
         return el("div", { class: "goto-row" },
-            el("span", { class: "choice-label" }, "JointAxis"),
+            el("span", { class: "choice-label" }, "Joint"),
             ...fields.map((field) => field.input),
             fields.length > 0 ? go : null,
             center ? button("Center", () => ctx.call(ctx.api.goto({ kind: "joint", ...center } as GotoRequest)), "btn btn-quiet") : null,

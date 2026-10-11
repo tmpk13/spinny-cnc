@@ -1053,8 +1053,8 @@ class Backend:
             return self.snapshot()
         # A run still being planned has sent nothing: it is not started,
         # and the line goes out as it would with no run.
-        cancelled = self.runner.cancel_start("the laser was turned off before it started")
-        if self.runner.active and not cancelled:
+        canceled = self.runner.cancel_start("the laser was turned off before it started")
+        if self.runner.active and not canceled:
             return self.snapshot()
         self.require_link().request_ok("laser off")
         return self.snapshot()
@@ -1271,7 +1271,9 @@ class Backend:
         sending: str | None = None
         try:
             for name, text in texts.items():
-                if _number(text) == current[name]:
+                # As the firmware lists it: three decimals, so a finer value
+                # already in force reads back a hair off and is not sent again.
+                if machine_files.close(float(_number(text)), float(current[name])):
                     continue
                 sending = name
                 link.request_ok(f"${name}={text}")

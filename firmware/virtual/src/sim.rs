@@ -9,7 +9,6 @@
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
-use spinny_core::hal::StepPort;
 use spinny_core::machine::Machine;
 use spinny_core::parser::{Error, Realtime};
 use spinny_core::report;
@@ -82,7 +81,9 @@ impl Sim {
         };
         // Stored settings win over the ones given on the command line, as
         // they do on the board, where flash is read at boot.
-        sim.machine.load_settings(&mut sim.store);
+        if sim.machine.load_settings(&mut sim.store) && !setup.quiet {
+            eprintln!("settings read from the store: they stand over --machine and --settings, as flash does on the board");
+        }
         sim.out.take();
         sim
     }
@@ -161,7 +162,7 @@ impl Sim {
     /// hold the next client off for as long as they take to run out.
     fn disconnect(&mut self) {
         let pending = !self.machine.ready_for_line();
-        self.machine.disconnected(&mut self.laser, &mut self.port);
+        self.machine.disconnected(&mut self.laser);
         if pending {
             self.drop_awaiting();
         }
@@ -259,7 +260,12 @@ impl Sim {
         let next = self.isr.tick(&mut self.port, &mut self.laser);
         let now = self.clock.now();
         self.trace.sample(now, self.machine.joint(), self.beam_duty());
-        self.next_tick = next.map(|us| now + u64::from(us));
+        // The next tick is counted from when this one was due, not from
+        // when it ran, as the board's timer does: on the real clock a late
+        // tick would otherwise stretch every period by its lateness and
+        // the step rate would run slow. One that is already behind runs now.
+        let due = self.next_tick.unwrap_or(now);
+        self.next_tick = next.map(|us| (due + u64::from(us)).max(now));
     }
 
     /// Nothing the clock could change until the client speaks. The
@@ -354,7 +360,7 @@ impl Sim {
             joint[1],
             joint[2],
             joint[3],
-            self.laser.duty,
+            self.beam_duty(),
             self.port.pulses[0],
             self.port.pulses[1],
             self.port.pulses[2],
@@ -370,14 +376,6 @@ fn count_answers(bytes: &[u8]) -> usize {
         .split(|&b| b == b'\n')
         .filter(|line| line.starts_with(b"ok") || line.starts_with(b"error:"))
         .count()
-}
-
-/// Stops the motors on the way out, so a simulated board does not end a
-/// run with its drivers still energized.
-impl Drop for Sim {
-    fn drop(&mut self) {
-        self.port.set_enable(true);
-    }
 }
 
 #[cfg(test)]

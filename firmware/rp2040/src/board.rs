@@ -201,8 +201,14 @@ pub fn init(pins: Pins, io: IoPins) -> (StepPins, LaserPwm, SlidePins) {
         forget(Output::new(unsafe { AnyPin::steal(tool) }, rest));
         TOOL_PIN.store(tool, Ordering::Relaxed);
     }
-    let probe_pin = if free(io.probe_pin) { io.probe_pin } else { PROBE_PIN_DEFAULT as u8 };
-    if probe_pin != laser_pin && Some(probe_pin) != io.tool_pin {
+    // A probe on the laser's pin would read the beam as contact (the tool
+    // output never shares it, `IoPins` drops that one): the default header
+    // is read instead, which with nothing on it is pulled up, no contact.
+    let mut probe_pin = if free(io.probe_pin) { io.probe_pin } else { PROBE_PIN_DEFAULT as u8 };
+    if probe_pin == laser_pin {
+        probe_pin = PROBE_PIN_DEFAULT as u8;
+    }
+    if probe_pin != laser_pin {
         forget(Input::new(unsafe { AnyPin::steal(probe_pin) }, Pull::Up));
     }
     PROBE_PIN.store(probe_pin, Ordering::Relaxed);

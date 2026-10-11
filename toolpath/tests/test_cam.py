@@ -87,7 +87,7 @@ def test_a_minimal_profile_takes_the_defaults():
         ('[[operations]]\nname = "x"\nsource = "outline"\ntool = "bit"\nspeed = 3\n', "[[operations]] x speed is not a key here"),
         ("[post]\nspindle_on = \"M8\"\n", "[post] spindle_on must be M3 or M4"),
         ("[placement]\noffset = [1]\n", "[placement] offset must be [x, y] in mm"),
-        ("colour = 1\n", "[[operations]] cut colour is not a key here"),
+        ("shade = 1\n", "[[operations]] cut shade is not a key here"),
     ],
 )
 def test_a_fault_names_the_table_and_the_key(change, said):
@@ -99,8 +99,8 @@ def test_a_fault_names_the_table_and_the_key(change, said):
 def test_a_depth_axis_needs_its_safe_height_and_a_top_level_key_is_checked():
     with pytest.raises(CamError, match=r"\[\[axes\]\] safe Z is the depth axis and needs a safe height"):
         parse(MINIMAL.replace("safe = 3\n", ""), "bench")
-    with pytest.raises(CamError, match="^bench.toml: colour is not a key here"):
-        parse("colour = 1\n" + MINIMAL, "bench", "bench.toml")
+    with pytest.raises(CamError, match="^bench.toml: shade is not a key here"):
+        parse("shade = 1\n" + MINIMAL, "bench", "bench.toml")
 
 
 def test_a_laser_tool_and_an_angle_axis_have_their_own_rules():

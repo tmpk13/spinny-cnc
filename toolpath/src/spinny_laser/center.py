@@ -42,7 +42,7 @@ from . import __version__, fine, gcode, machine, preview
 from .polar import Point
 
 # Angle between samples around the reference ring. At the default radius
-# the chord is a tenth of a millimetre and its sagitta a thousandth of
+# the chord is a tenth of a millimeter and its sagitta a thousandth of
 # one, so the ring is round well inside anything measurable on the board.
 RING_STEP_DEG = 1.0
 # Share of the table's rate the ring is paced at, so it is not riding on

@@ -293,3 +293,29 @@
 - `mise run uf2` builds the board firmware as a uf2 and `scp-uf2` copies
   it to a host given after `--`.
 
+## Fourth full review (2026-10-11)
+
+- Firmware: `$defaults` keeps the socket map, the pins and the tool
+  output's polarity along with the other wiring settings, so it no longer
+  drives an active-low tool output or remaps the motors; the brake of a
+  hold runs dark by its own duty, so a resume before the ramp has run
+  cannot relight it; a dwell with power kept for a latched hold is not lit
+  before the hold darkens it; the tool output does not stay active through
+  a held dwell; an axis a line leaves out stays on its step far from zero;
+  `abort` judges the interrupt quiet before it reads the position; dead
+  planner fields and an unused disconnect parameter are gone; the longest
+  block test checks the minor axis too; a probe on the laser's pin reads
+  the Z-STOP header instead.
+- Virtual firmware and simulator: the burnt length counts the last
+  stretch of a burn; the real-time tick schedule is phase locked like the
+  board's; the stderr report prints the beam, not the pin; a stored blob
+  winning over `--machine` is said; `--at` with a bad value is refused;
+  an unread length and a misdescribed Drop are gone.
+- Backend: a setting already in force to the firmware's three decimals is
+  not sent again on every load.
+- Docs: `$defaults`, the realtime bytes inside UTF-8, `tool_out` applying
+  at once on a board that claimed its pin, the uncut stretch a hold leaves.
+- Page: the joint goto row is labeled Joint again; the settings hint says
+  which settings need a restart.
+- American spelling throughout.
+

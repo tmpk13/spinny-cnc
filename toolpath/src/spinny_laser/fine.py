@@ -13,7 +13,7 @@ table half a turn on, the same board point gets the same displacement with
 the sign reversed. Two straight marks that meet at a small angle, one from
 each side, then cross not where they were meant to but 2 * error / tan
 (angle) along the line from there: at three degrees a hundredth of a
-millimetre becomes four tenths, which a rule reads.
+millimeter becomes four tenths, which a rule reads.
 
 The pattern is:
 

@@ -13,9 +13,13 @@ turns the laser output into a spindle's (see [Spindle](#spindle)).
 
 ## Transport
 
-- One command per line, terminated by `\n` (`\r` is ignored). A byte
-  outside 0x20..0x7E inside a line is read as a literal `?` and a tab as
-  a space, so UTF-8 or a control byte in a line ends in `error:2`.
+- One command per line, terminated by `\n` (`\r` is ignored). The
+  realtime bytes `?`, `!`, `~`, 0x18 and 0x85 act wherever they land, a
+  line in progress included, so the bytes of a UTF-8 character can carry
+  a jog cancel (0x85 is a continuation byte); any other byte outside
+  0x20..0x7E inside a line is read as a literal `?` and a tab as a space,
+  so UTF-8 or a control byte in a line ends in `error:2`. The backend
+  refuses such a line before it goes out.
 - A line is at most 96 bytes. Longer lines are rejected with `error:8`.
 - An empty line, or one that is only a `;` comment, is answered `ok` and
   spends a credit like any other.
@@ -41,7 +45,7 @@ part of the line.
 | Byte | Action |
 | --- | --- |
 | `?` | one status line |
-| `!` | hold: decelerate to a stop, laser off, state `Hold`; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a hold that finds the machine idle with a motion line taken in or waiting is kept for that line and applied as it starts (a `laser S` it was kept for is answered and stays dark, a cross slide jog ends before its first step, and a `spindle S` waits in `Hold` for the resume); a beam lit by `laser` is closed from any state |
+| `!` | hold: decelerate to a stop, laser off, state `Hold`; the beam is off from the byte on, the segments already queued and the brake run dark, and the resume continues from the stop without cutting that stretch again, so a hold in a cut leaves a gap to cut again; the report says `Hold` only once the brake has finished and keeps `Run`/`Jog` until then, so a reset sent on seeing `Hold` loses no steps; a hold that finds the machine idle with a motion line taken in or waiting is kept for that line and applied as it starts (a `laser S` it was kept for is answered and stays dark, a cross slide jog ends before its first step, and a `spindle S` waits in `Hold` for the resume); a beam lit by `laser` is closed from any state |
 | `~` | resume from `Hold`; a probe braking at its contact finishes the brake and ends as a contact whatever `~` asks |
 | `0x18` | reset: stop at once, flush everything, laser off, and forget the modal state (`F`, `S`, `mode` back to `dyn`); prints `[MSG:reset]`, then `ALARM:1 reset while moving, position may be off` if it was moving, then the banner; `Alarm:1` if it was moving, else `Idle`; an alarm already raised stays until `unlock` |
 | `0x85` | jog cancel: decelerate, discard the rest of the jog, `Idle`; a `probe` waiting behind the jog is ended unrun with `[PRB:<h>:0]` and `ok` |
@@ -285,7 +289,7 @@ turns off a floor below it.
 | `$<name>=<value>` | set in RAM (`Idle` only) |
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
-| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert` and `dir_invert` keep their values, so an active-low laser is not lit by it |
+| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert`, `dir_invert`, `sockets`, `laser_pin`, `probe_pin`, `tool_out`, `tool_pin` and `tool_invert` keep their values, so an active-low laser or tool output is not driven by it and the next move steps the motors it means |
 | `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 4 for each configuration. A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does, raises `ALARM:3` even from `Idle` (the motors held nothing meanwhile), and configures the drivers again; the loss is seen at the next driver poll, about every quarter second, so a supply back sooner than that drives the beam or spindle at the job's duty until then |
 
 A value outside its bounds is `error:7`; an integer setting refuses
@@ -346,9 +350,9 @@ microsteps a power of two up to 256.
 | `sockets` | digits | 1234 | driver socket of the radius, table, cross slide and focus axis, in that order: 1 X, 2 Y, 3 Z, 4 E, each socket once; 1423 is a three axis mill (radius X, slide Y, focus Z, table E) |
 | `laser_pin` | GPIO | 20 | the laser (or spindle) PWM output: 20 FAN3, 17 FAN1, 18 FAN2, 23 HE, 21 BED, 29 SERVO; read at boot |
 | `probe_pin` | GPIO | 25 | the probe input, pulled up: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP; read at boot |
-| `tool_out` | 0/1 | 0 | 1 = `tool_pin` follows the tool: driven while a job runs, a beam is lit, a dwell burns or the spindle turns; read at boot |
+| `tool_out` | 0/1 | 0 | 1 = `tool_pin` follows the tool: driven while a job runs, a beam is lit, a dwell burns or the spindle turns; the pin is claimed at boot only with this set, so turning it on needs `$save` and a restart, turning it off (and on again) applies at once |
 | `tool_pin` | GPIO | 17 | the tool output, FAN1 by default; read at boot |
-| `tool_invert` | 0/1 | 0 | 1 = the tool output is active low |
+| `tool_invert` | 0/1 | 0 | 1 = the tool output is active low; applies at once |
 
 Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
 configuration; a `tmc_*` value and `dir_invert` follow the axis to its
@@ -357,10 +361,13 @@ Changing `spindle` stops whatever runs on the output.
 A pin setting names any GPIO up to 29 but the driver sockets' and the
 UART's (2, 5 to 15, 19 and 28). The firmware takes the three one at a
 time, so it does not refuse two on one pin (a machine file does; the
-board keeps the laser on its pin and drops a probe or tool output that
-shares it). `laser_pin`, `probe_pin`, `tool_out` and `tool_pin` are read
-from flash at boot: `$save` and restart for a change to take effect;
-`tool_invert` applies at once.
+board keeps the laser on its pin, drops a tool output that shares it or
+the probe's pin, and reads a probe that shares the laser's pin on the
+Z-STOP header instead). `laser_pin`, `probe_pin` and `tool_pin` are read from flash
+at boot: `$save` and restart for a change to take effect. The tool pin is
+claimed at boot only when `tool_out` is set then, so `tool_out` turned on
+needs the same; on a board that claimed it, `tool_out` and `tool_invert`
+apply at once.
 
 Settings stored by a firmware from before `probe_ms` (the stored layout
 changed, and the first focus axis firmware is one of them) are thrown away

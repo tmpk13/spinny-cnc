@@ -96,7 +96,6 @@ pub struct Program {
     /// Cumulative end time of each move, seconds.
     pub ends: Vec<f64>,
     pub total: f64,
-    pub cut_length_joint: f64,
     pub max_radius: f64,
 }
 
@@ -329,9 +328,6 @@ fn push(
         limited: kind == Kind::Cut && seconds > wanted * (1.0 + 1e-9),
     });
     program.ends.push(*clock);
-    if kind == Kind::Cut {
-        program.cut_length_joint += (dr * dr + da * da).sqrt();
-    }
     program.max_radius = program.max_radius.max(to.0.abs());
 }
 

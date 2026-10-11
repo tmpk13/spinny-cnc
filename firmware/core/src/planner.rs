@@ -73,11 +73,8 @@ pub struct Block {
     /// The floor a dynamic cut's power does not scale below, at most
     /// `power`; zero for none.
     pub min_power: f32,
-    /// Board mm per second along this block at nominal speed, for reports.
-    pub surface_rate: f32,
     /// Board length of the block, mm.
     pub surface_mm: f32,
-    pub recalculate: bool,
     /// Metric length the stepper has already sliced off the current block;
     /// with `entry_speed_sqr` this is the state the plan continues from.
     pub progress: f32,
@@ -98,9 +95,7 @@ impl Block {
         kind: MoveKind::Rapid,
         power: 0.0,
         min_power: 0.0,
-        surface_rate: 0.0,
         surface_mm: 0.0,
-        recalculate: false,
         progress: 0.0,
     };
 
@@ -226,8 +221,16 @@ impl Planner {
         let mut dir_forward = 0u8;
         let mut delta_units = [0f32; AXES];
         let mut event_count = 0u32;
+        let start = self.position_units(settings);
         for i in 0..AXES {
-            target_steps[i] = math::units_to_steps(target[i], settings.steps[i]);
+            // An axis given the units it reads as stays on its step: far
+            // from zero the f32 units of a step need not round back to it,
+            // and a line that names the other axes must not take it a step.
+            target_steps[i] = if target[i] == start[i] {
+                self.position[i]
+            } else {
+                math::units_to_steps(target[i], settings.steps[i])
+            };
             let delta = target_steps[i].wrapping_sub(self.position[i]);
             steps[i] = delta.unsigned_abs();
             if delta > 0 {
@@ -249,7 +252,6 @@ impl Planner {
             unit[i] = delta_units[i] / length;
         }
         let axis_limit = paced_speed(&unit, &effective_max_rate(settings));
-        let start = self.position_units(settings);
         let mut end = [0f32; AXES];
         for i in 0..AXES {
             end[i] = math::steps_to_units(target_steps[i], settings.steps[i]);
@@ -318,9 +320,7 @@ impl Planner {
             kind,
             power,
             min_power,
-            surface_rate: nominal_speed * surface_mm / length,
             surface_mm,
-            recalculate: false,
             progress: 0.0,
         };
         let at = self.index(self.count);
@@ -337,9 +337,6 @@ impl Planner {
     /// block's entry speed is the stepper's and is left alone.
     fn replan(&mut self) {
         if self.count < 2 {
-            if let Some(block) = self.current_mut() {
-                block.recalculate = false;
-            }
             return;
         }
         let mut exit_sqr = 0.0;
@@ -348,7 +345,6 @@ impl Planner {
             let block = &mut self.blocks[at];
             let reachable = exit_sqr + 2.0 * block.acceleration * block.length;
             block.entry_speed_sqr = block.max_entry_speed_sqr.min(reachable);
-            block.recalculate = false;
             exit_sqr = block.entry_speed_sqr;
         }
         for nth in 0..self.count - 1 {
@@ -413,7 +409,6 @@ impl Planner {
     pub fn reinitialize(&mut self) {
         if let Some(block) = self.current_mut() {
             block.entry_speed_sqr = 0.0;
-            block.recalculate = true;
         }
         self.replan();
     }
@@ -447,13 +442,7 @@ impl Planner {
         block.progress = 0.0;
         block.entry_speed_sqr = 0.0;
         block.max_entry_speed_sqr = 0.0;
-        block.recalculate = true;
         self.replan();
-    }
-
-    /// Any block queued is a jog or a probe.
-    pub fn has_jog(&self) -> bool {
-        (0..self.count).any(|nth| matches!(self.blocks[self.index(nth)].kind, MoveKind::Jog | MoveKind::Probe))
     }
 }
 
@@ -493,7 +482,6 @@ mod tests {
         assert!(planner.current().is_none());
         assert_eq!(planner.position(), [0, 0, 0, 0]);
         assert_eq!(planner.position_units(&settings()), [0.0, 0.0, 0.0, 0.0]);
-        assert!(!planner.has_jog());
         assert_eq!(planner.current_exit_speed_sqr(), 0.0);
     }
 
@@ -547,10 +535,8 @@ mod tests {
         planner.discard_current();
         assert!(planner.is_empty());
         assert!(push(&mut planner, 0.0, 1.0, MoveKind::Jog, Feed::Jog, 0.0));
-        assert!(planner.has_jog());
         planner.clear();
         assert!(planner.is_empty());
-        assert!(!planner.has_jog());
         assert_eq!(planner.position(), [0, 889, 0, 0]);
         planner.set_position([5, -7, 0, 0]);
         assert_eq!(planner.position(), [5, -7, 0, 0]);
@@ -565,7 +551,6 @@ mod tests {
         assert!(close(b.nominal_speed, 1000.0 / 60.0, 1e-5));
         assert!(close(b.acceleration, 50.0, 1e-5));
         assert!(close(b.surface_mm, 30.0, 1e-5));
-        assert!(close(b.surface_rate, 1000.0 / 60.0, 1e-5));
         // Pure turn: a_rate 1080 deg/min.
         push(&mut planner, 30.0, 90.0, MoveKind::Rapid, Feed::Max, 0.0);
         let b = planner.nth(1).unwrap();
@@ -594,7 +579,6 @@ mod tests {
         assert!(close(b.surface_mm, 15.70796, 1e-4));
         assert!(close(b.requested_speed, 90.0 / (15.70796 / 5.0), 1e-4));
         assert!(close(b.nominal_speed, 18.0, 1e-5));
-        assert!(close(b.surface_rate, 18.0 * 15.70796 / 90.0, 1e-4));
         assert_eq!(b.kind, MoveKind::Cut);
         assert_eq!(b.power, 400.0);
         // Slow enough not to be limited: 30 mm/min.
@@ -602,7 +586,6 @@ mod tests {
         let b = planner.nth(1).unwrap();
         assert!(close(b.requested_speed, 90.0 / (15.70796 / 0.5), 1e-4));
         assert!(close(b.nominal_speed, b.requested_speed, 1e-6));
-        assert!(close(b.surface_rate, 0.5, 1e-4));
     }
 
     #[test]
@@ -635,7 +618,6 @@ mod tests {
         assert_eq!(b.surface_mm, 0.0);
         assert!(close(b.nominal_speed, 18.0, 1e-5));
         assert!(close(b.requested_speed, 18.0, 1e-5));
-        assert_eq!(b.surface_rate, 0.0);
         assert_eq!(b.power, 0.0);
         assert_eq!(b.kind, MoveKind::Cut);
     }
@@ -735,10 +717,27 @@ mod tests {
         assert!(close(planner.nth(1).unwrap().entry_speed_sqr, 74.0, 1e-3));
         planner.reinitialize();
         assert_eq!(planner.current().unwrap().entry_speed_sqr, 0.0);
-        assert!(planner.current().unwrap().recalculate);
         // Progress is kept: 0.1 mm is left, so the next block enters at 10.
         assert!(close(planner.nth(1).unwrap().entry_speed_sqr, 10.0, 1e-3));
-        assert!(!planner.nth(1).unwrap().recalculate);
+    }
+
+    #[test]
+    fn an_axis_given_the_units_it_reads_as_stays_on_its_step() {
+        // Far from zero a step's f32 units need not round back to the same
+        // step; a line that leaves an axis where it is must not move it.
+        // Past 16384 units an f32 ulp is 1.95e-3, more than a step at
+        // 888.889 steps/deg, so from there some steps do not round trip.
+        let per = settings().steps[A];
+        let n = (14_500_000..16_000_000)
+            .find(|&n| math::units_to_steps(math::steps_to_units(n, per), per) != n)
+            .expect("a step whose units do not round trip");
+        let mut planner = Planner::new();
+        planner.set_position([0, n, 0, 0]);
+        let here = planner.position_units(&settings());
+        assert!(!planner.push(here, MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()).unwrap());
+        assert!(planner.push([10.0, here[A], 0.0, 0.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &settings()).unwrap());
+        assert_eq!(planner.current().unwrap().steps, [2560, 0, 0, 0]);
+        assert_eq!(planner.position(), [2560, n, 0, 0]);
     }
 
     #[test]
@@ -765,7 +764,6 @@ mod tests {
             assert!(close(b.surface_mm, full.surface_mm * scale, 1e-5));
             assert_eq!(b.entry_speed_sqr, 0.0);
             assert_eq!(b.progress, 0.0);
-            assert!(b.recalculate);
             assert_eq!(b.unit, full.unit);
             assert_eq!(b.dir_forward, full.dir_forward);
             // The block after it is replanned from the shortened length.

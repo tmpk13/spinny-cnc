@@ -123,7 +123,7 @@ async fn main(spawner: Spawner) {
                 usb::Event::Connected => report::banner(&mut sink),
                 usb::Event::Disconnected => {
                     usb::clear_output();
-                    machine.disconnected(&mut laser, &mut port);
+                    machine.disconnected(&mut laser);
                     // What the old host left queued must not act after the
                     // reset either. The reader clears these too, but only
                     // once it runs, which can be after this pass takes one.

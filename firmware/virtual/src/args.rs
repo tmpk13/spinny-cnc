@@ -16,7 +16,9 @@ spinny-virtual: the spinny control core on a TCP socket
                         and tool, applied to the settings at start
     --settings K=V      set a machine setting at start, repeatable; after
                         --machine, it overrides the file
-    --store PATH        file standing in for the settings sector
+    --store PATH        file standing in for the settings sector; a blob
+                        saved there stands over --machine and --settings
+                        at start, as flash does on the board
     --surface B[,SX,SY[,C]]
                         a board under the probe: its top at focus height
                         B + SX*x + SY*y + C*(x^2 + y^2), board mm; without

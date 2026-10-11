@@ -120,12 +120,12 @@ impl Trace {
         }
         // Summed between kept marks, not between steps: the axes step one
         // at a time, so a step by step sum measures the staircase the
-        // microsteps trace out, around a fifth longer than the line.
-        if duty > 0 {
-            if let Some(last) = self.last {
-                if last.duty > 0 {
-                    self.laser_on_mm += moved;
-                }
+        // microsteps trace out, around a fifth longer than the line. The
+        // beam was on from the last mark to this one when that mark was
+        // lit, whether or not this one still is.
+        if let Some(last) = self.last {
+            if last.duty > 0 {
+                self.laser_on_mm += moved;
             }
         }
         self.marks.push(mark);
