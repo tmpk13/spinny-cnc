@@ -364,3 +364,8 @@
   the spot) clear of, shows the point and distance for a yes, then goes
   there, probes and ties the map (`POST /api/heightmap/touch` with
   `at: nearest`, planned by `/touch/plan`).
+- Tying the map no longer accumulates: the map keeps the gap over the
+  contact (`focus_gap`), and a tie sets the offset to the gap plus the
+  shift it measures, so tying again in the same frame changes nothing.
+- A spindle's run or resume without the height map is refused when a
+  probe in this frame found the copper more than 1 mm from H 0.

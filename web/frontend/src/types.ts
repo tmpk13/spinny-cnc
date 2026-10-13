@@ -541,6 +541,8 @@ export interface HeightMap {
     focus_set: boolean;
     /** The offset was set at some point in some frame, so a probe at one point can tie the map to a new one. */
     focus_known?: boolean;
+    /** The offset's part that does not move with the frame: focus (or touch-off) over the probe's contact, mm; null until known. */
+    focus_gap?: number | null;
     /** The probe tip from the beam when probed: along the rail, across it, mm, signed as ProbeSettings.offset. */
     probe_offset: [number, number];
     created: string;

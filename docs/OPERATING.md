@@ -115,9 +115,18 @@ survives the host as well as the controller.
    in the position the record holds. The head sits where the run left
    it, so the X/Y screws keep that position across a power cycle; the
    depth axis may have sunk under the spindle's weight.
-2. With a height map, tie it to the new frame: *Probe here: tie map* over
-   copper the map covers (the map's offset is taken back by every
-   position set, as a safeguard).
+2. With a height map, tie it to the new frame: *Probe nearest: tie map*,
+   or *Probe here: tie map* over copper the map covers (the map's offset
+   is taken back by every position set, as a safeguard). Tying again in
+   the same frame changes nothing: the map keeps the gap over the
+   contact and a tie only remeasures the frame. The *Height map* select
+   in the run row says how the pickup follows the board; untouched, it
+   is the way the stopped run did.
+   Without the map (the stopped run was *off*), the run takes H 0 for the
+   copper, so set that first: *Probe here: set Z 0* on the copper. A
+   pickup without the map is refused when a probe in this frame found the
+   copper more than 1 mm from H 0, which is what a power cycle with the
+   head raised looks like.
 3. *Plan* says which line the run starts at, how the head gets there and
    what goes out first; *Resume from line* does it after a confirmation.
    Leave *from the start of its path* on: the run then redoes the path the

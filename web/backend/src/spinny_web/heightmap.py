@@ -239,6 +239,13 @@ class HeightMap(Finite):
     # change takes `focus_set` back but leaves this, so a probe at one
     # point can tie the map to the new frame by the shift it finds.
     focus_known: bool = False
+    # The part of the offset that does not move with the frame: the focus
+    # (or touch-off) height over the probe's contact, mm. The offset is
+    # this plus the frame's shift from the one the heights are in, so a
+    # tie puts the shift it measures on top of this, not on top of the
+    # last offset, and tying twice changes nothing. None until a focus in
+    # the heights' frame, or a tie, has had it.
+    focus_gap: float | None = None
     # Where the probe tip sat from the beam when the map was probed, along
     # the rail and across it, mm; kept to say how it was made.
     probe_offset: tuple[float, float] = (0.0, 0.0)

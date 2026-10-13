@@ -3707,15 +3707,23 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, errorText(error));
         }
         const shift = height - mapped;
+        // The offset is the gap over the contact plus the frame's shift, measured from the gap, so a second tie changes nothing.
         let offset: number;
-        if (map.focus_known) {
-            offset = map.focus_offset + shift;
+        let gap: number;
+        if (map.focus_gap != null) {
+            gap = map.focus_gap;
+            offset = gap + shift;
+        } else if (map.focus_set) {
+            offset = map.focus_offset;
+            gap = offset - shift;
         } else if (machine.milling()) {
+            gap = 0;
             offset = shift;
         } else {
             throw new ApiError(400, "the map has never been focused: focus the beam by eye over it first (focus here)");
         }
         map.focus_offset = round4(offset);
+        map.focus_gap = round4(gap);
         map.focus_set = true;
         map.focus_known = true;
         this.focusFrame = this.frame;
@@ -4013,6 +4021,8 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `focus_offset must be within ${MAX_VALUE_TEXT} mm`);
         }
         map.focus_offset = round4(value);
+        // In the heights' own frame the offset is the gap itself; set in another, the gap waits for a tie.
+        map.focus_gap = this.heightsFrame === this.frame ? round4(value) : null;
         map.focus_set = true;
         this.focusFrame = this.frame;
         this.emitHeightMap();

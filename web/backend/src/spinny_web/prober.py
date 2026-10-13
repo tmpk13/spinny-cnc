@@ -396,6 +396,8 @@ class Prober:
             if keep_focus and previous is not None and tuple(previous.probe_offset) == tuple(settings.offset):
                 heightmap.focus_offset = previous.focus_offset
                 heightmap.focus_set = previous.focus_set
+                heightmap.focus_known = previous.focus_known
+                heightmap.focus_gap = previous.focus_gap
         with self._lock:
             if self._abort.is_set():
                 raise ProberError("probing was stopped before it started")

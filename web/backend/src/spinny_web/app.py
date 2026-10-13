@@ -315,6 +315,12 @@ class ProbeBody(Grid):
 # job's spot: a probe down in a cut reads its floor as the copper's height.
 TOUCH_CLEARANCE = 1.0
 
+# How far from H 0 a probe may have found the copper, mm, for a spindle's
+# run without the height map to go ahead: more than a board's relief, so
+# a Z 0 set at one corner of the board passes, and a frame with the copper
+# millimeters away does not.
+SURFACE_TOLERANCE = 1.0
+
 
 class TouchBody(BaseModel):
     # What one probe under the head is for: `map` ties the height map to
@@ -443,6 +449,10 @@ class Backend:
         # the map as it goes: one made just before a restart it had not yet
         # seen would bring an offset from the old frame back.
         self._focus_frame: int | None = None
+        # Where a probe last found the copper, (frame, H): what a spindle's
+        # run without the height map is checked against, since it takes
+        # H 0 for the copper.
+        self._contact: tuple[int, float] | None = None
 
     # --- config -------------------------------------------------------------
 
@@ -1953,6 +1963,8 @@ class Backend:
             # read 0, so the head reads how far above it it stands.
             link.request_ok(f"set H{num(travel - height, 4)}")
             self._frame_changed("the surface was probed")
+            with self._map_lock:
+                self._contact = (self._frame, 0.0)
             try:
                 link.status_now(1.0, routine=True)
             except LinkError:
@@ -1975,12 +1987,23 @@ class Backend:
             if not heightmap.cell_probed(x, y):
                 raise ValueError(f"the map was not probed around X {x:.1f} Y {y:.1f}: probe over a probed cell")
             mapped = heightmap.height_at(x, y)
+            # The frame in use against the one the heights are in. The
+            # offset is the gap over the contact plus this shift: measured
+            # from the gap, so a second tie in the same frame finds the
+            # same shift and leaves the offset where it is.
             shift = height - mapped
-            if heightmap.focus_known:
-                offset = heightmap.focus_offset + shift
+            if heightmap.focus_gap is not None:
+                gap = heightmap.focus_gap
+                offset = gap + shift
+            elif heightmap.focus_set:
+                # Focused in this frame with the gap unknown: the offset
+                # is right as it stands, and the touch says what the gap is.
+                offset = heightmap.focus_offset
+                gap = offset - shift
             elif self.milling:
                 # The tool is the probe: contact is where the tool meets
                 # the copper, and the map's heights were that too.
+                gap = 0.0
                 offset = shift
             else:
                 raise ValueError(
@@ -1988,15 +2011,17 @@ class Backend:
                     " a probe here can then tie it to a new frame"
                 )
             heightmap.focus_offset = round(offset, 4)
+            heightmap.focus_gap = round(gap, 4)
             heightmap.focus_set = True
             heightmap.focus_known = True
             self.heightmaps.put(heightmap)
             self._focus_frame = frame
+            self._contact = (frame, height)
         self.publish_heightmap()
         self.publish_message(
             "info",
             f"height map tied to this frame: the surface at X {x:.1f} Y {y:.1f} reads {height:.4f},"
-            f" {shift:+.4f} against the map; focus offset {offset:.4f}",
+            f" {shift:+.4f} against the map; focus offset {offset:.4f} ({gap:+.4f} over the contact)",
         )
 
     def stop_probe(self) -> dict:
@@ -2053,6 +2078,11 @@ class Backend:
                     " a position set or a map put back): use focus here over the map, or probe again"
                 )
             heightmap.focus_offset = round(offset, 4)
+            # In the heights' own frame the offset is the gap itself; set
+            # from the head in another frame, the gap is unknown until a
+            # tie measures the frame, and a gap from before does not
+            # outlive a fresh focus by eye.
+            heightmap.focus_gap = round(offset, 4) if self._heights_frame == frame else None
             heightmap.focus_set = True
             heightmap.focus_known = True
             self.heightmaps.put(heightmap)
@@ -2060,11 +2090,30 @@ class Backend:
         self.publish_heightmap()
         return self.heightmap_state()
 
+    def _check_surface_at_zero(self) -> None:
+        """A spindle's run without the height map cuts from H 0 as the
+        copper's height. Refused when a probe in this frame found the
+        copper well away from there: the run would cut in the air, or
+        into the board. A frame nobody has probed in is let through, as
+        before: the operator set Z 0 by hand, or means to."""
+        if not self.milling:
+            return
+        with self._map_lock:
+            contact = self._contact
+        if contact is None or contact[0] != self._frame:
+            return
+        if abs(contact[1]) > SURFACE_TOLERANCE:
+            raise ValueError(
+                f"the copper reads H {contact[1]:.3f} where it was last probed, but without the height map"
+                " the run cuts from H 0: probe here for Z 0 at the copper, or run with the height map"
+            )
+
     def compensation(self, mode: str, job: Job) -> Compensation | None:
         """What a run of `job` follows the board with, checked; None for off."""
         if mode not in MODES:
             raise ValueError(f"compensate must be one of {', '.join(MODES)}")
         if mode == OFF:
+            self._check_surface_at_zero()
             return None
         # A restart not yet seen in a status report takes the offset back
         # before the map is looked at, and so does one probing missed.

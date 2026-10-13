@@ -299,10 +299,20 @@ def wait_until(predicate, timeout: float = 3.0) -> bool:
 
 def goto(client, **joint) -> None:
     """A joint goto, waited for: its ok means queued, and focusing or probing
-    wants the head at rest."""
+    wants the head at rest, there. A report can still say Idle before the
+    move is taken in, so the position is waited for as well."""
     response = client.post("/api/goto", json={"kind": "joint", **joint})
     assert response.status_code == 200, response.text
-    assert wait_until(lambda: client.get("/api/state").json()["machine"]["state"] == "Idle"), "the goto did not come to rest"
+
+    def there() -> bool:
+        machine = client.get("/api/state").json()["machine"]
+        return machine["state"] == "Idle" and all(
+            abs(float(machine["joint"][axis]) - float(value)) < 1e-3
+            for axis, value in joint.items()
+            if axis in machine["joint"] and machine["joint"][axis] is not None
+        )
+
+    assert wait_until(there), "the goto did not come to rest"
 
 
 def backend_for(tmp_path, make_fake) -> tuple[Backend, list[FakeSerial]]:
@@ -917,3 +927,81 @@ def test_probe_nearest_goes_to_a_probed_point_clear_of_the_cuts(client, fake):
     assert response.status_code == 400
     response = client.post("/api/heightmap/touch/plan", json={**body, "job": "nope"})
     assert response.status_code == 404
+
+
+def test_tying_the_map_again_leaves_the_offset_where_it_is(client, fake):
+    probe(client)
+    # Focused by a number in the heights' own frame: the gap over the contact is 1.
+    assert client.post("/api/heightmap/focus", json={"offset": 1.0}).status_code == 200
+    goto(client, r=10, a=0)
+
+    def frame(lift: float) -> None:
+        # The board reads `lift` higher than when it was probed, and the
+        # position was set since: the offset is taken back.
+        fake.surface = lambda x, y: surface(x, y) + lift
+        assert client.post("/api/position", json={"h": fake.h}).status_code == 200
+        assert client.get("/api/heightmap").json()["map"]["focus_set"] is False
+
+    def tie() -> dict:
+        response = client.post("/api/heightmap/touch", json={"mode": "map"})
+        assert response.status_code == 200, response.text
+        state = wait_probe(client)
+        assert state["probe"]["state"] == "done", state["probe"]
+        return state["map"]
+
+    frame(0.2)
+    heightmap = tie()
+    assert heightmap["focus_offset"] == pytest.approx(1.2, abs=1e-3)
+    assert heightmap["focus_gap"] == pytest.approx(1.0, abs=1e-3)
+    # The same frame again finds the same shift: the offset stands.
+    heightmap = tie()
+    assert heightmap["focus_offset"] == pytest.approx(1.2, abs=1e-3)
+    # A further frame: the gap plus the new shift, not the last offset plus it.
+    frame(0.5)
+    heightmap = tie()
+    assert heightmap["focus_offset"] == pytest.approx(1.5, abs=1e-3)
+    assert heightmap["focus_gap"] == pytest.approx(1.0, abs=1e-3)
+    # Focused by eye in a frame the heights are not in: the offset is right
+    # as set and the gap waits; the tie then keeps the offset and learns the gap.
+    frame(0.8)
+    fake.h = surface(10, 0) + 0.8 + 1.0
+    response = client.post("/api/heightmap/focus", json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["map"]["focus_offset"] == pytest.approx(1.8, abs=1e-3)
+    assert response.json()["map"]["focus_gap"] is None
+    fake.h = 0.0
+    heightmap = tie()
+    assert heightmap["focus_offset"] == pytest.approx(1.8, abs=1e-3)
+    assert heightmap["focus_gap"] == pytest.approx(1.0, abs=1e-3)
+
+
+def test_a_spindle_run_without_the_map_needs_the_copper_near_zero(client, fake):
+    from spinny_web.jobs import Group, Job
+
+    fake.settings["spindle"] = 1
+    client.backend.read_settings(force=True)
+    probe(client)
+    job = Job(name="mill", groups=[Group(label="iso", power=700, speed=200, depth=0.2, paths=[[(1.0, 0.0), (3.0, 0.0)]])])
+    response = client.post("/api/jobs", files={"file": ("mill.json", job.model_dump_json(), "application/json")})
+    assert response.status_code == 200, response.text
+    job_id = response.json()["id"]
+    # The tool found the copper about 1.4 mm under H 0: a run that takes H 0
+    # for the copper would cut in the air, and is refused before a line goes out.
+    goto(client, r=10, a=0)
+    assert client.post("/api/heightmap/touch", json={"mode": "map"}).status_code == 200
+    assert wait_probe(client)["probe"]["state"] == "done"
+    sent = len(fake.received_lines)
+    response = client.post(f"/api/jobs/{job_id}/run", json={"compensate": "off"})
+    assert response.status_code == 400 and "cuts from H 0" in response.json()["detail"]
+    response = client.post(f"/api/jobs/{job_id}/resume/plan", json={"line": 0, "compensate": "off"})
+    assert response.status_code == 400 and "cuts from H 0" in response.json()["detail"]
+    assert not any(line.split()[0] in ("cut", "spindle") for line in fake.received_lines[sent:])
+    # With the map the run follows the copper where it is.
+    response = client.post(f"/api/jobs/{job_id}/resume/plan", json={"line": 0, "compensate": "auto"})
+    assert response.status_code == 200, response.text
+    # Z 0 set at the copper: the run without the map goes ahead.
+    assert client.post("/api/heightmap/touch", json={"mode": "zero"}).status_code == 200
+    assert wait_probe(client)["probe"]["state"] == "done"
+    response = client.post(f"/api/jobs/{job_id}/run", json={"compensate": "off"})
+    assert response.status_code == 200, response.text
+    client.post("/api/run/stop")
