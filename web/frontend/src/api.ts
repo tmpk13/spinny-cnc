@@ -33,7 +33,8 @@ import type {
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
-    TouchMode,
+    TouchPlan,
+    TouchRequest,
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
@@ -131,8 +132,10 @@ export interface Api {
     probe(request: ProbeRequest): Promise<HeightMapState>;
     /** About how long probing would take, and the points it would probe. */
     probeEstimate(request: ProbeRequest): Promise<ProbeEstimate>;
-    /** One probe under the head: ties the map to the frame in use, or makes the contact height H 0. */
-    probeHere(mode: TouchMode): Promise<HeightMapState>;
+    /** One probe down, under the head or at the nearest clear map point: ties the map to the frame in use, or makes the contact height H 0. */
+    probeHere(request: TouchRequest): Promise<HeightMapState>;
+    /** Where `probeHere` would go down and how the head gets there, without moving anything. */
+    planTouch(request: TouchRequest): Promise<TouchPlan>;
     probeStop(): Promise<HeightMapState>;
     /** Sets the focus offset; null takes it from the head over the board now. */
     focus(offset: number | null): Promise<HeightMapState>;
@@ -438,8 +441,12 @@ export class HttpApi implements Api {
         return this.request<ProbeEstimate>("POST", "/api/heightmap/estimate", request);
     }
 
-    probeHere(mode: TouchMode): Promise<HeightMapState> {
-        return this.request<HeightMapState>("POST", "/api/heightmap/touch", { mode });
+    probeHere(request: TouchRequest): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/touch", request);
+    }
+
+    planTouch(request: TouchRequest): Promise<TouchPlan> {
+        return this.request<TouchPlan>("POST", "/api/heightmap/touch/plan", request);
     }
 
     probeStop(): Promise<HeightMapState> {

@@ -359,3 +359,8 @@
 - The current position can be declared with typed values (*Here is* in the
   Jog panel, *Last known* from the record).
 - The run's state is saved to `var/resume.json` as it goes, to resume from.
+- *Probe nearest: tie map* in the Height map panel: the backend picks the
+  probed point nearest the tip that the job's cuts keep 1 mm (plus half
+  the spot) clear of, shows the point and distance for a yes, then goes
+  there, probes and ties the map (`POST /api/heightmap/touch` with
+  `at: nearest`, planned by `/touch/plan`).

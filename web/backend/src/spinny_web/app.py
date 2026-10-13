@@ -32,7 +32,19 @@ from spinny_laser.cam import CamError
 
 from . import __version__, center
 from .cam import NotFound, ProfileStore, build_job, gcode_of
-from .heightmap import AUTO, FOCUS, MODES, OFF, POWER, Compensation, Grid, HeightMap, HeightMapStore, check_covers
+from .heightmap import (
+    AUTO,
+    FOCUS,
+    MODES,
+    OFF,
+    POWER,
+    Compensation,
+    Grid,
+    HeightMap,
+    HeightMapStore,
+    check_covers,
+    nearest_clear_point,
+)
 from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
 from .machines import MachineStore
 from .kinematics import (
@@ -58,7 +70,7 @@ from .link import (
     REALTIME_STATUS,
 )
 from .log import log, setup as setup_log, tail as log_tail
-from .prober import Prober, ProberError, ProbeSettings
+from .prober import Prober, ProberError, ProbeSettings, reach_joint
 from .resume import ResumeStore
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 
@@ -299,11 +311,22 @@ class ProbeBody(Grid):
     resume: bool = False
 
 
+# How far a touch that ties the map keeps from a cut, mm, over half the
+# job's spot: a probe down in a cut reads its floor as the copper's height.
+TOUCH_CLEARANCE = 1.0
+
+
 class TouchBody(BaseModel):
     # What one probe under the head is for: `map` ties the height map to
     # the focus axis frame in use by the shift it finds there; `zero`
     # makes the contact height H 0, for milling without a map.
     mode: str = "map"
+    # Where the probe goes down: `here`, under the head as it stands, or
+    # `nearest`, the probed point of the map nearest the tip that no cut
+    # of `job` comes within the clearance of, which the head goes to
+    # first. The job is the page's, or the last run's when none is named.
+    at: str = "here"
+    job: str | None = None
 
 
 # --- fan-out ------------------------------------------------------------------
@@ -1793,12 +1816,7 @@ class Backend:
             # they are keeps the probing from starting.
             self.prober.reserve(link)
             try:
-                values = self.read_settings(force=True)["values"]
-                try:
-                    r_max = float(values.get("r_max", 0) or 0)
-                    z_max = float(values.get("z_max", 0) or 0)
-                except (TypeError, ValueError):
-                    r_max, z_max = 0.0, 0.0
+                r_max, z_max = _soft_limits(self.read_settings(force=True)["values"])
                 # The tool may be the probe: a spindle has to be stopped.
                 spindle_off = self._off_duty() if self.milling else None
                 with self._move_lock:
@@ -1829,23 +1847,33 @@ class Backend:
         log.info("probing started: %d points%s", len(resume.remaining()) if resume is not None else grid.points, ", going on with the map" if resume is not None else "")
         return self.heightmap_state()
 
-    def touch_probe(self, body: TouchBody) -> dict:
-        """One probe down where the head is. With `map`, the height found
-        ties the height map to the focus axis frame in use: the offset
-        moves by what the surface reads here against what the map says,
-        so a map probed before a power cycle, a restart or a position set
+    def touch_probe(self, body: TouchBody, dry_run: bool = False) -> dict:
+        """One probe down where the head is or, `at` nearest, at the probed
+        point of the map nearest the tip that the job's cuts leave clear,
+        which the head goes to first. With `map`, the height found ties
+        the height map to the focus axis frame in use: the offset moves
+        by what the surface reads there against what the map says, so a
+        map probed before a power cycle, a restart or a position set
         follows the board again without probing it all over. With `zero`
-        the contact height becomes H 0.
+        the contact height becomes H 0. `dry_run` only says where the
+        probe would go down, and how the head gets there.
         """
         if body.mode not in ("map", "zero"):
             raise ValueError("mode must be map or zero")
+        if body.at not in ("here", "nearest"):
+            raise ValueError("at must be here or nearest")
         if body.mode == "map" and self.heightmaps.get() is None:
             raise ValueError("there is no height map to tie: probe the board, or probe here for H 0")
+        job = None
+        if body.at == "nearest":
+            if body.mode != "map":
+                raise ValueError("the nearest probed point is for tying the map: H 0 is set where the head is")
+            job = self._touch_job(body.job)
         with self._owner_lock:
             link = self._movable()
             self.prober.reserve(link)
             try:
-                self.read_settings(force=True)
+                r_max, z_max = _soft_limits(self.read_settings(force=True)["values"])
                 spindle_off = self._off_duty() if self.milling else None
                 with self._move_lock:
                     self._jog_target = None
@@ -1854,6 +1882,30 @@ class Backend:
                     settings = self.probe_settings()
                     streamer = self.streamer(status)
                     tip = _tip_point(status, settings.offset, self.cartesian)
+                    target = None
+                    found = None
+                    if job is not None:
+                        heightmap = self.heightmaps.get()
+                        if heightmap is None:
+                            raise ValueError("there is no height map to tie: probe the board first")
+                        clearance = TOUCH_CLEARANCE + float(job.spot or 0.0) / 2.0
+                        found = nearest_clear_point(heightmap, job, tip, clearance)
+                        if found is None:
+                            raise ValueError(
+                                f"no probed point of the map is {clearance:g} mm clear of the job's cuts:"
+                                " jog the tip over copper the map covers and probe here"
+                            )
+                        tip = (heightmap.grid.xs[found[0]], heightmap.grid.ys[found[1]])
+                        # Refused past a soft limit before anything moves,
+                        # as a grid's points are.
+                        target = reach_joint(tip, settings.offset, streamer, status.a, 0.0, r_max, z_max)
+                    if dry_run:
+                        return {
+                            "point": [round(tip[0], 4), round(tip[1], 4)],
+                            "index": [found[0], found[1]] if found is not None else None,
+                            "distance": round(found[2], 3) if found is not None else 0.0,
+                            "lines": [f"go {streamer.words(target)}"] if target is not None else [],
+                        }
 
                     def touched(height: float, travel: float) -> None:
                         self._touched(link, body.mode, height, travel, tip, frame)
@@ -1863,14 +1915,35 @@ class Backend:
                         settings,
                         link,
                         streamer,
-                        spindle_off=spindle_off,
+                        r_max,
+                        z_max,
+                        spindle_off,
                         reserved=True,
                         touch=touched,
+                        target=target,
                     )
             finally:
                 self.prober.release()
-        log.info("probing one point under the head, for %s", "the map's frame" if body.mode == "map" else "H 0")
+        log.info(
+            "probing one point %s, for %s",
+            f"at ({tip[0]:.2f}, {tip[1]:.2f}), the nearest clear of the cuts" if target is not None else "under the head",
+            "the map's frame" if body.mode == "map" else "H 0",
+        )
         return self.heightmap_state()
+
+    def _touch_job(self, job_id: str | None) -> Job:
+        """The job whose cuts a touch keeps clear of: the one named, else
+        the last run's, whose cuts are the ones in the copper."""
+        if job_id is None:
+            record = self.resume_store.get()
+            if record is not None and record.get("job"):
+                job_id = str(record["job"])
+        if job_id is None:
+            raise ValueError("the nearest point clear of the cuts needs a job: load one, or run one first")
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return job
 
     def _touched(self, link: Link, mode: str, height: float, travel: float, tip: tuple[float, float], frame: int) -> None:
         """What a probe under the head found, with the head back up at rest.
@@ -2022,6 +2095,14 @@ class Backend:
             rayleigh=self.probe_settings().rayleigh,
             s_max=float(s_max) if isinstance(s_max, (int, float)) and s_max > 0 else 1000.0,
         )
+
+
+def _soft_limits(values: dict) -> tuple[float, float]:
+    """The r_max and z_max settings as numbers, 0 where unset."""
+    try:
+        return float(values.get("r_max", 0) or 0), float(values.get("z_max", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
 
 
 def _tip_point(status, offset: tuple[float, float], cartesian: bool) -> tuple[float, float]:
@@ -2591,6 +2672,10 @@ def create_app(
     @app.post("/api/heightmap/touch")
     def touch_probe(body: TouchBody):
         return guarded(lambda: backend.touch_probe(body))
+
+    @app.post("/api/heightmap/touch/plan")
+    def touch_plan(body: TouchBody):
+        return guarded(lambda: backend.touch_probe(body, dry_run=True))
 
     @app.post("/api/heightmap/stop")
     def stop_probe():

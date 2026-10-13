@@ -34,6 +34,7 @@ import math
 import os
 import tempfile
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -177,27 +178,9 @@ class Grid(Finite):
                 mark_box(min(a[0], b[0]) - reach, min(a[1], b[1]) - reach, max(a[0], b[0]) + reach, max(a[1], b[1]) + reach)
 
         any_cut = False
-        for group in job.groups:
-            if not group.enabled:
-                continue
-            for path in group.paths:
-                points = [(float(x), float(y)) for x, y in path]
-                if not points:
-                    continue
-                any_cut = True
-                if len(points) == 1:
-                    mark_segment(points[0], points[0])
-                for a, b in zip(points, points[1:]):
-                    mark_segment(a, b)
-            for poly in group.joints:
-                points = joint_moves_points(poly)
-                if not points:
-                    continue
-                any_cut = True
-                for a, b in zip(points, points[1:]):
-                    mark_segment(a, b)
-                if len(points) == 1:
-                    mark_segment(points[0], points[0])
+        for p, q in job_cuts(job):
+            any_cut = True
+            mark_segment(p, q)
         if not any_cut:
             return self.model_copy(update={"mask": None})
         mask = [[False] * self.nx for _ in range(self.ny)]
@@ -504,6 +487,70 @@ def joint_moves_points(poly) -> list[tuple[float, float]]:
             t = i / steps
             take(r0 + (r1 - r0) * t, a0 + (a1 - a0) * t)
     return out
+
+
+def job_cuts(job) -> Iterator[tuple[tuple[float, float], tuple[float, float]]]:
+    """Every cut of a job's enabled groups as a board segment (p, q): a
+    path's sides, and a joint polyline's moves sampled along their sweep.
+    A path of one point is a segment of no length."""
+    for group in job.groups:
+        if not group.enabled:
+            continue
+        for path in group.paths:
+            points = [(float(x), float(y)) for x, y in path]
+            if not points:
+                continue
+            if len(points) == 1:
+                yield points[0], points[0]
+            for a, b in zip(points, points[1:]):
+                yield a, b
+        for poly in group.joints:
+            points = joint_moves_points(poly)
+            if not points:
+                continue
+            if len(points) == 1:
+                yield points[0], points[0]
+            for a, b in zip(points, points[1:]):
+                yield a, b
+
+
+def segment_distance(point: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+    """How far a point lies from the segment a-b."""
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    length2 = dx * dx + dy * dy
+    if length2 <= 0.0:
+        return math.dist(point, a)
+    t = _clamp(((point[0] - ax) * dx + (point[1] - ay) * dy) / length2, 0.0, 1.0)
+    return math.dist(point, (ax + dx * t, ay + dy * t))
+
+
+def nearest_clear_point(
+    heightmap: HeightMap, job, near: tuple[float, float], clearance: float
+) -> tuple[int, int, float] | None:
+    """The probed point of the map nearest `near` that no cut of `job`
+    comes within `clearance` of, as (ix, iy, distance). A point counts as
+    probed when the cell it reads the map from has all four corners, which
+    is what a touch there needs. None when no point is clear: a probe
+    tied in a cut would read the cut's floor as the copper's height."""
+    grid = heightmap.grid
+    cuts = list(job_cuts(job))
+    xs, ys = grid.xs, grid.ys
+    best: tuple[int, int, float] | None = None
+    for iy in range(grid.ny):
+        for ix in range(grid.nx):
+            if heightmap.heights[iy][ix] is None:
+                continue
+            point = (xs[ix], ys[iy])
+            distance = math.dist(point, near)
+            if best is not None and distance >= best[2]:
+                continue
+            if not heightmap.cell_probed(*point):
+                continue
+            if any(segment_distance(point, p, q) < clearance for p, q in cuts):
+                continue
+            best = (ix, iy, distance)
+    return best
 
 
 def check_covers(heightmap: HeightMap, job) -> None:

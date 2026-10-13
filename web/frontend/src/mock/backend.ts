@@ -7,6 +7,7 @@ import {
     AXIS_EPSILON,
     DEG,
     cartesianSurfaceLength,
+    distanceToSegment,
     headBoard,
     lerpJoint,
     segmentBoardMove,
@@ -85,7 +86,8 @@ import type {
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
-    TouchMode,
+    TouchPlan,
+    TouchRequest,
     UploadOptions,
     WsEvent,
 } from "../types.ts";
@@ -1182,6 +1184,14 @@ function gridYs(grid: Grid): number[] {
 }
 
 /** The finer of the two point spacings, mm. */
+/** How far a touch that ties the map keeps from a cut, mm, over half the job's spot. */
+const TOUCH_CLEARANCE = 1.0;
+
+/** The words of a go to a probe joint: the rail and the table, or the rail and the cross slide on a cartesian machine. */
+function probeJointWords(joint: ProbeJoint, cartesian: boolean): string {
+    return cartesian ? `R${coord(joint.r, 3)} Z${coord(joint.z ?? 0, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
+}
+
 function gridSpacing(grid: Grid): number {
     return Math.min((grid.x1 - grid.x0) / (grid.nx - 1), (grid.y1 - grid.y0) / (grid.ny - 1));
 }
@@ -3618,11 +3628,19 @@ export class MockBackend implements Api, EventFeed {
      * the shift it finds against the map ties the map to the focus axis
      * frame in use; with `zero` the contact height becomes H 0.
      */
-    async probeHere(mode: TouchMode): Promise<HeightMapState> {
+    async probeHere(request: TouchRequest): Promise<HeightMapState> {
         this.requireConnected();
         this.notOwned();
+        const mode = request.mode;
+        const at = request.at ?? "here";
         if (mode !== "map" && mode !== "zero") {
             throw new ApiError(400, "mode must be map or zero");
+        }
+        if (at !== "here" && at !== "nearest") {
+            throw new ApiError(400, "at must be here or nearest");
+        }
+        if (at === "nearest" && mode !== "map") {
+            throw new ApiError(400, "the nearest probed point is for tying the map: H 0 is set where the head is");
         }
         const machine = this.machine;
         if (mode === "map" && !this.heightmap) {
@@ -3641,6 +3659,13 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "the spindle is turning: stop it before probing");
         }
         const settings = this.probeConfig;
+        // The nearest clear point is picked, and the head sent over it, before the probe goes down.
+        const nearest = at === "nearest" ? this.nearestClearTouch(request.job) : null;
+        if (nearest) {
+            this.line("tx", `go ${probeJointWords(nearest.joint, machine.cartesian())}`);
+            this.probeGo(nearest.joint, null);
+            this.line("rx", "ok");
+        }
         const travel = machine.h;
         const line = `probe H-${num(settings.depth, 4)} F${num(settings.feed)}`;
         this.line("tx", line);
@@ -3668,8 +3693,8 @@ export class MockBackend implements Api, EventFeed {
         }
         const map = this.heightmap!;
         const board = machine.headBoard();
-        const x = board.x + settings.offset[0];
-        const y = board.y + settings.offset[1];
+        const x = nearest ? nearest.x : board.x + settings.offset[0];
+        const y = nearest ? nearest.y : board.y + settings.offset[1];
         const grid = map.grid;
         const m = COVER_MARGIN;
         if (!(x >= grid.x0 - m && y >= grid.y0 - m && x <= grid.x1 + m && y <= grid.y1 + m)) {
@@ -3808,6 +3833,119 @@ export class MockBackend implements Api, EventFeed {
         this.emitHeightMap();
         this.probeBegin(session);
         return this.heightMapState();
+    }
+
+    /** Where a touch would go down, and how the head gets there, without moving anything. */
+    async planTouch(request: TouchRequest): Promise<TouchPlan> {
+        this.requireConnected();
+        const at = request.at ?? "here";
+        if (request.mode !== "map" && request.mode !== "zero") {
+            throw new ApiError(400, "mode must be map or zero");
+        }
+        if (at !== "here" && at !== "nearest") {
+            throw new ApiError(400, "at must be here or nearest");
+        }
+        if (at === "nearest") {
+            if (request.mode !== "map") {
+                throw new ApiError(400, "the nearest probed point is for tying the map: H 0 is set where the head is");
+            }
+            const found = this.nearestClearTouch(request.job);
+            return {
+                point: [round4(found.x), round4(found.y)],
+                index: found.index,
+                distance: Math.round(found.distance * 1000) / 1000,
+                lines: [`go ${probeJointWords(found.joint, this.machine.cartesian())}`],
+            };
+        }
+        const board = this.machine.headBoard();
+        const offset = this.probeConfig.offset;
+        return { point: [round4(board.x + offset[0]), round4(board.y + offset[1])], index: null, distance: 0, lines: [] };
+    }
+
+    /**
+     * The probed point of the map nearest the tip that no cut of the job
+     * (the one named, else the last run's) comes within the clearance of,
+     * with the joint that puts the tip over it, checked for reach.
+     */
+    private nearestClearTouch(jobId: string | undefined): { x: number; y: number; index: [number, number]; distance: number; joint: ProbeJoint } {
+        const map = this.heightmap;
+        if (!map) {
+            throw new ApiError(400, "there is no height map to tie: probe the board, or probe here for H 0");
+        }
+        const id = jobId ?? this.resumeRecordOf()?.job ?? undefined;
+        if (!id) {
+            throw new ApiError(400, "the nearest point clear of the cuts needs a job: load one, or run one first");
+        }
+        const job = this.jobStore.get(id);
+        if (!job) {
+            throw new ApiError(404, "no such job");
+        }
+        const machine = this.machine;
+        const settings = this.probeConfig;
+        const board = machine.headBoard();
+        const tip = { x: board.x + settings.offset[0], y: board.y + settings.offset[1] };
+        const clearance = TOUCH_CLEARANCE + (job.spot || 0) / 2;
+        const cuts: [Board, Board][] = [];
+        for (const group of job.groups) {
+            if (!group.enabled) {
+                continue;
+            }
+            for (const path of group.paths) {
+                const first = path[0];
+                if (path.length === 1 && first) {
+                    cuts.push([{ x: first[0], y: first[1] }, { x: first[0], y: first[1] }]);
+                }
+                for (let i = 1; i < path.length; i++) {
+                    const a = path[i - 1]!;
+                    const b = path[i]!;
+                    cuts.push([{ x: a[0], y: a[1] }, { x: b[0], y: b[1] }]);
+                }
+            }
+        }
+        const xs = gridXs(map.grid);
+        const ys = gridYs(map.grid);
+        let best: { x: number; y: number; index: [number, number]; distance: number } | null = null;
+        for (let iy = 0; iy < map.grid.ny; iy++) {
+            for (let ix = 0; ix < map.grid.nx; ix++) {
+                if (map.heights[iy]?.[ix] == null) {
+                    continue;
+                }
+                const x = xs[ix] ?? 0;
+                const y = ys[iy] ?? 0;
+                const distance = Math.hypot(x - tip.x, y - tip.y);
+                if (best && distance >= best.distance) {
+                    continue;
+                }
+                if (cuts.some(([a, b]) => distanceToSegment(x, y, a, b).distance < clearance)) {
+                    continue;
+                }
+                best = { x, y, index: [ix, iy], distance };
+            }
+        }
+        if (!best) {
+            throw new ApiError(400, `no probed point of the map is ${formatG(clearance)} mm clear of the job's cuts: jog the tip over copper the map covers and probe here`);
+        }
+        const where = `the probe cannot reach (${best.x.toFixed(2)}, ${best.y.toFixed(2)}): the head would go to`;
+        const rMax = machine.settings["r_max"] ?? 0;
+        const zMax = machine.settings["z_max"] ?? 0;
+        let joint: ProbeJoint;
+        if (machine.cartesian()) {
+            const head = turned({ x: best.x, y: best.y }, -machine.joint.a);
+            joint = { r: head.x - settings.offset[0], a: machine.joint.a, z: head.y - settings.offset[1] };
+            if (zMax > 0 && Math.abs(joint.z ?? 0) > zMax + 1e-9) {
+                throw new ApiError(409, `${where} Z${(joint.z ?? 0).toFixed(3)}, past the soft limit z_max=${formatG(zMax)}`);
+            }
+        } else {
+            try {
+                joint = probeJoint([best.x, best.y], settings.offset, machine.joint.a);
+            } catch (error) {
+                throw new ApiError(409, errorText(error));
+            }
+        }
+        if (rMax > 0 && Math.abs(joint.r) > rMax + 1e-9) {
+            throw new ApiError(409, `${where} R${joint.r.toFixed(3)}, past the soft limit r_max=${formatG(rMax)}`);
+        }
+        return { ...best, joint };
     }
 
     async probeStop(): Promise<HeightMapState> {

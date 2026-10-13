@@ -509,6 +509,28 @@ export interface ProbeEstimate {
 /** What one probe under the head is for: tie the map to the focus axis frame in use, or make the contact height H 0. */
 export type TouchMode = "map" | "zero";
 
+/** Where the probe goes down: under the head as it stands, or at the probed point of the map nearest the tip that the job's cuts leave clear, which the head goes to first. */
+export type TouchAt = "here" | "nearest";
+
+export interface TouchRequest {
+    mode: TouchMode;
+    at?: TouchAt;
+    /** The job whose cuts a nearest touch keeps clear of; left out, the last run's. */
+    job?: string;
+}
+
+/** What a touch would do, without moving anything. */
+export interface TouchPlan {
+    /** The board point the probe goes down at. */
+    point: [number, number];
+    /** The map point picked, (ix, iy); null for a touch under the head. */
+    index: [number, number] | null;
+    /** How far the tip is from the point, mm. */
+    distance: number;
+    /** The lines that take the head there. */
+    lines: string[];
+}
+
 export interface HeightMap {
     grid: Grid;
     /** heights[iy][ix]: the focus axis at contact, mm; null until probed. */

@@ -866,3 +866,54 @@ def test_a_half_turn_before_the_first_point_is_waited_out_on_the_virtual_firmwar
                 assert heightmap.heights[iy][ix] == pytest.approx(surface(x, y), abs=0.01)
     finally:
         link.close()
+
+
+def test_probe_nearest_goes_to_a_probed_point_clear_of_the_cuts(client, fake):
+    from spinny_web.jobs import Group, Job
+    from spinny_web.kinematics import board_of
+
+    probe(client)
+    assert client.post("/api/heightmap/focus", json={"offset": 1.0}).status_code == 200
+    # Probing ended at (-10, 5); the job cuts through that point, so the
+    # nearest probed point left clear is (0, 5).
+    job = client.backend.store.add(
+        Job(id="cut", name="cut", groups=[Group(label="g", power=1, speed=1, paths=[[(-11.0, 5.0), (-9.0, 5.0)]])])
+    )
+    # The board sits 0.2 mm higher than when it was probed, and the
+    # position was set since: the map's offset is taken back.
+    fake.surface = lambda x, y: surface(x, y) + 0.2
+    assert client.post("/api/position", json={"h": fake.h}).status_code == 200
+    assert client.get("/api/heightmap").json()["map"]["focus_set"] is False
+
+    body = {"mode": "map", "at": "nearest", "job": job.id}
+    sent = len(fake.received_lines)
+    response = client.post("/api/heightmap/touch/plan", json=body)
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan["point"] == [0.0, 5.0] and plan["index"] == [1, 1]
+    assert plan["distance"] == pytest.approx(10.0, abs=1e-3)
+    assert len(plan["lines"]) == 1 and words(plan["lines"][0])["R"] == pytest.approx(5.0, abs=1e-3)
+    assert not any(line.startswith(("go", "probe")) for line in fake.received_lines[sent:]), "a plan moves nothing"
+
+    response = client.post("/api/heightmap/touch", json=body)
+    assert response.status_code == 200, response.text
+    state = wait_probe(client)
+    assert state["probe"]["state"] == "done", state["probe"]
+    heightmap = state["map"]
+    assert heightmap["focus_set"] is True
+    assert heightmap["focus_offset"] == pytest.approx(1.2, abs=1e-3)
+    # The head went over the point, probed, and is back at the travel height.
+    x, y = board_of((fake.joint[0], fake.joint[1]))
+    assert (x, y) == (pytest.approx(0.0, abs=1e-3), pytest.approx(5.0, abs=1e-3))
+    assert fake.h == pytest.approx(0.0, abs=1e-6)
+
+    # Cuts along every grid line leave no point clear; H 0 is only set under the head.
+    everywhere = client.backend.store.add(
+        Job(id="all", name="all", groups=[Group(label="g", power=1, speed=1, paths=[[(-10.0, -5.0), (10.0, -5.0), (10.0, 5.0), (-10.0, 5.0), (-10.0, -5.0)], [(0.0, -5.0), (0.0, 5.0)]])])
+    )
+    response = client.post("/api/heightmap/touch/plan", json={**body, "job": everywhere.id})
+    assert response.status_code == 400 and "clear of the job's cuts" in response.json()["detail"]
+    response = client.post("/api/heightmap/touch/plan", json={**body, "mode": "zero"})
+    assert response.status_code == 400
+    response = client.post("/api/heightmap/touch/plan", json={**body, "job": "nope"})
+    assert response.status_code == 404

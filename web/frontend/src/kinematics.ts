@@ -124,7 +124,7 @@ export function chordError(from: Joint, to: Joint): number {
     return worst;
 }
 
-function distanceToSegment(px: number, py: number, a: Board, b: Board): { distance: number; t: number } {
+export function distanceToSegment(px: number, py: number, a: Board, b: Board): { distance: number; t: number } {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const lengthSquared = dx * dx + dy * dy;

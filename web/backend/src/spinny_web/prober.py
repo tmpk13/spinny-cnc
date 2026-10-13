@@ -124,6 +124,38 @@ def cartesian_probe_joint(point: tuple[float, float], offset: tuple[float, float
     return x - offset[0], y - offset[1]
 
 
+def reach_joint(
+    point: tuple[float, float],
+    offset: tuple[float, float],
+    streamer: Streamer,
+    angle: float,
+    slack: float,
+    r_max: float,
+    z_max: float,
+) -> tuple[float, float]:
+    """The joint that puts the probe tip over a board point on the machine
+    the streamer is for, `angle` the table's angle to unwrap from; refused
+    when the head would pass a soft limit (0 for none)."""
+    if streamer.cartesian:
+        joint = cartesian_probe_joint(point, offset, float(getattr(streamer, "angle", 0.0)))
+        if z_max > 0 and abs(joint[1]) > z_max + 1e-9:
+            raise ProberError(
+                f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
+                f" Z{joint[1]:.3f}, past the soft limit z_max={z_max:g}"
+            )
+    else:
+        try:
+            joint = probe_joint(point, offset, angle, slack)
+        except ValueError as exc:
+            raise ProberError(str(exc)) from exc
+    if r_max > 0 and abs(joint[0]) > r_max + 1e-9:
+        raise ProberError(
+            f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
+            f" R{joint[0]:.3f}, past the soft limit r_max={r_max:g}"
+        )
+    return joint
+
+
 @dataclass
 class ProbeProgress:
     state: str = RUNNING
@@ -239,6 +271,7 @@ class Prober:
         reserved: bool = False,
         resume: HeightMap | None = None,
         touch: Callable[[float, float], None] | None = None,
+        target: tuple[float, float] | None = None,
     ) -> dict:
         """Starts probing `grid`. `spindle_off` is the output's duty with a
         spindle stopped, on a machine whose output drives one: probing is
@@ -255,7 +288,9 @@ class Prober:
         the grid is ignored, the probe goes down where the head is, and
         `touch` is called with the contact height and the travel height
         once the head is back up and at rest, before probing is reported
-        done; the map in the store is left alone."""
+        done; the map in the store is left alone. With `target`, a joint
+        the caller has checked for reach, the head goes there at the
+        travel height first and the probe goes down under it there."""
         try:
             if touch is None:
                 grid.check()
@@ -277,7 +312,9 @@ class Prober:
             else:
                 self._claim(link)
         try:
-            return self._start(grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch)
+            return self._start(
+                grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch, target
+            )
         finally:
             self._starting = False
 
@@ -293,6 +330,7 @@ class Prober:
         keep_focus: bool,
         resume: HeightMap | None = None,
         touch: Callable[[float, float], None] | None = None,
+        target: tuple[float, float] | None = None,
     ) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
@@ -317,7 +355,17 @@ class Prober:
                 self._link = link
                 self._thread = threading.Thread(
                     target=self._run_touch,
-                    args=(settings, link, streamer, status.h, progress, self._restarts, touch),
+                    args=(
+                        settings,
+                        link,
+                        streamer,
+                        status.h,
+                        progress,
+                        self._restarts,
+                        touch,
+                        streamer.start_of(status),
+                        target,
+                    ),
                     name="prober",
                     daemon=True,
                 )
@@ -330,26 +378,12 @@ class Prober:
         todo = resume.remaining() if resume is not None else grid.order()
         for ix, iy in todo:
             point = (grid.xs[ix], grid.ys[iy])
-            if streamer.cartesian:
-                # The joint is the rail and the cross slide; the table
-                # stays where the streamer's frame has it.
-                joints[(ix, iy)] = cartesian_probe_joint(point, settings.offset, streamer.angle)
-                if z_max > 0 and abs(joints[(ix, iy)][1]) > z_max + 1e-9:
-                    raise ProberError(
-                        f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
-                        f" Z{joints[(ix, iy)][1]:.3f}, past the soft limit z_max={z_max:g}"
-                    )
-            else:
-                try:
-                    joints[(ix, iy)] = probe_joint(point, settings.offset, angle, grid.spacing / 2.0)
-                except ValueError as exc:
-                    raise ProberError(str(exc)) from exc
+            # On a cartesian machine the joint is the rail and the cross
+            # slide, the table staying where the streamer's frame has it;
+            # on a polar one each angle unwraps from the point before.
+            joints[(ix, iy)] = reach_joint(point, settings.offset, streamer, angle, grid.spacing / 2.0, r_max, z_max)
+            if not streamer.cartesian:
                 angle = joints[(ix, iy)][1]
-            if r_max > 0 and abs(joints[(ix, iy)][0]) > r_max + 1e-9:
-                raise ProberError(
-                    f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
-                    f" R{joints[(ix, iy)][0]:.3f}, past the soft limit r_max={r_max:g}"
-                )
         if resume is not None:
             heightmap = resume
             done = heightmap.probed
@@ -425,9 +459,10 @@ class Prober:
 
     # --- the probing thread -----------------------------------------------
 
-    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch) -> None:
-        """One probe down where the head is, then back up; `touch` gets the
-        contact height with the head at rest at the travel height."""
+    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch, start, target) -> None:
+        """One probe down where the head is, or at `target` after a move
+        there from `start`, then back up; `touch` gets the contact height
+        with the head at rest at the travel height."""
         if restarts is None:
             restarts = link.restarts
         h_rate = streamer.rates.h_rate
@@ -435,6 +470,9 @@ class Prober:
             with self._lock:
                 progress.point = (0, 0)
             self._emit(progress, None)
+            if target is not None:
+                self._request(link, f"go {streamer.words(target)}", LINE_TIMEOUT)
+                self._settle(link, streamer._rapid_seconds(start, target), restarts)
             height = self._touch(link, settings.feed, settings.depth, h_rate)
             if settings.slow > 0.0:
                 self._request(link, f"go H{coord(height + settings.backoff, FOCUS_DECIMALS)}", LINE_TIMEOUT)

@@ -467,11 +467,14 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     // One probe under the head: the map tied to the frame in use after a
     // power cycle or a position set, or the surface made H 0 without a map.
     const probeHereMap = button("Probe here: tie map", () => probeHere("map"), "btn btn-quiet");
+    const probeNearestMap = button("Probe nearest: tie map", () => probeNearest(), "btn btn-quiet");
     const probeHereZero = button("Probe here: set H 0", () => probeHere("zero"), "btn btn-quiet");
     const PROBE_HERE_HINT = "Probe here lowers the probe where the head is. Tie map: the height found against the map's"
         + " height there moves the map's offset, so a map probed before a power cycle, a restart or a position set"
         + " follows the board again without probing it all over; put the tip over copper the map covers, not in a"
-        + " cut. Set H 0: the surface found becomes H 0, for milling without a map.";
+        + " cut. Probe nearest goes to the probed point nearest the tip that the loaded job's cuts (or the last"
+        + " run's) keep clear of, and ties the map there. Set H 0: the surface found becomes H 0, for milling"
+        + " without a map.";
 
     // --- the map ---
     const mapBox = el("div", { class: "hm-map" });
@@ -555,7 +558,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "button-row" }, modeField, marginLabel, fit, estimateNote),
         el("div", { class: "button-row" }, probeButton, continueButton, stopButton),
         probeNote,
-        el("div", { class: "button-row" }, probeHereMap, probeHereZero),
+        el("div", { class: "button-row" }, probeHereMap, probeNearestMap, probeHereZero),
         el("p", { class: "muted hint" }, PROBE_HERE_HINT),
         mapBox,
         legend,
@@ -622,7 +625,27 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!(await askConfirm(question, "Probe here"))) {
             return;
         }
-        const state = await ctx.call(ctx.api.probeHere(mode));
+        const state = await ctx.call(ctx.api.probeHere({ mode }));
+        if (state) {
+            ctx.store.set({ heightMap: state });
+        }
+    }
+
+    // The backend picks the point and says where it is before anything
+    // moves, so the operator sees the move they are agreeing to.
+    async function probeNearest(): Promise<void> {
+        const request = { mode: "map" as const, at: "nearest" as const, job: ctx.store.get().job?.id };
+        const plan = await ctx.call(ctx.api.planTouch(request));
+        if (!plan) {
+            return;
+        }
+        const [x, y] = plan.point;
+        const question = `Go to X ${formatFixed(x, 2)} Y ${formatFixed(y, 2)}, the probed point ${formatFixed(plan.distance, 1)} mm`
+            + " from the tip that the job's cuts keep clear of, probe down there and tie the height map to the current frame?";
+        if (!(await askConfirm(question, "Probe nearest"))) {
+            return;
+        }
+        const state = await ctx.call(ctx.api.probeHere(request));
         if (state) {
             ctx.store.set({ heightMap: state });
         }
@@ -781,6 +804,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         continueButton.classList.toggle("hidden", !partial);
         setLocked(continueButton, !canProbe || !partial);
         setLocked(probeHereMap, !canProbe || !heightMap?.map);
+        setLocked(probeNearestMap, !canProbe || !heightMap?.map);
         setLocked(probeHereZero, !canProbe);
         probeHereZero.textContent = milling ? "Probe here: set Z 0" : "Probe here: set H 0";
         setLocked(stopButton, !probing);

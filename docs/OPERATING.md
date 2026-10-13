@@ -95,8 +95,12 @@ points the map still lacks; the time left is shown as it goes.
 map* reads the surface against what the map says there and moves the
 map's offset by the difference, so a map probed before a power cycle, a
 restart or a position set follows the board again without being probed
-anew: put the tip over copper the map covers, not in a cut. *Set H 0* (Z 0
-on a mill) makes the surface found H 0, for milling without a map.
+anew: put the tip over copper the map covers, not in a cut. *Probe
+nearest* finds that spot for you: it picks the probed point nearest the tip
+that the loaded job's cuts (or the last run's) keep clear of, says where
+it is and how far, and on a yes goes there, probes and ties the map. *Set
+H 0* (Z 0 on a mill) makes the surface found H 0, for milling without a
+map.
 
 ### Picking a run up where it stopped
 
