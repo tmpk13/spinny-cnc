@@ -57,7 +57,9 @@ from .link import (
     REALTIME_RESUME,
     REALTIME_STATUS,
 )
+from .log import log, setup as setup_log, tail as log_tail
 from .prober import Prober, ProberError, ProbeSettings
+from .resume import ResumeStore
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 
 # The repository's layout gives the defaults: the page's build beside this
@@ -261,6 +263,17 @@ class RunBody(BaseModel):
     compensate: str = OFF
 
 
+class ResumeBody(BaseModel):
+    # The line of the job to pick it up at: the count of lines done, as the
+    # progress reports it. With `rewind` the run starts over at the first
+    # line of the path that line belongs to, so a count a line off cannot
+    # leave a gap. `compensate` left out takes the way the run being
+    # picked up followed the board.
+    line: int
+    rewind: bool = True
+    compensate: str | None = None
+
+
 class FocusBody(Finite):
     # Focus height minus contact height; left out, it is taken from where
     # the head is now, over a probed point with the beam in focus.
@@ -274,6 +287,23 @@ class ProbeConfigBody(Finite):
     backoff: float | None = None
     offset: tuple[float, float] | None = None
     rayleigh: float | None = None
+
+
+class ProbeBody(Grid):
+    # With `job`, only the points a cut of that job comes within `margin`
+    # mm of are probed (half the job's spot added), the rest of the grid
+    # left out. `resume` goes on with the stored map where it has no
+    # height yet, whatever grid this body carries.
+    job: str | None = None
+    margin: float | None = None
+    resume: bool = False
+
+
+class TouchBody(BaseModel):
+    # What one probe under the head is for: `map` ties the height map to
+    # the focus axis frame in use by the shift it finds there; `zero`
+    # makes the contact height H 0, for milling without a map.
+    mode: str = "map"
 
 
 # --- fan-out ------------------------------------------------------------------
@@ -338,11 +368,18 @@ class Backend:
         self.config = self._load_config()
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
         self.heightmaps = HeightMapStore(heightmap_path or self.config_path.parent / "heightmap.json")
+        self.resume_store = ResumeStore(self.config_path.parent / "resume.json")
         self.link_factory = link_factory or (lambda url: Link(url))
         self.link: Link | None = None
         self.url: str | None = self.config.get("last_url")
         self.broadcast = Broadcast()
-        self.runner = Runner(publish=self._publish_progress, message=self.publish_message)
+        self.runner = Runner(publish=self._publish_progress, message=self.publish_message, checkpoint=self._checkpoint)
+        self._run_state_logged: tuple[str | None, str] | None = None
+        # A url, or `auto`, to keep a link open to without a page; None
+        # leaves connecting to the operator.
+        self.autoconnect: str | None = None
+        self.autoconnect_paused = False
+        self._autoconnect_failed: str | None = None
         self.prober = Prober(self.heightmaps, publish=self._publish_probe, message=self.publish_message)
         self.rates = Rates()
         # What the machine is, from its settings: polar or cartesian, laser
@@ -414,18 +451,37 @@ class Backend:
             return DEFAULT_TOLERANCE
 
     def spindle_config(self) -> Spindle:
-        """The host's milling settings, the defaults for any that do not hold."""
+        """The host's milling settings, the defaults for any that do not
+        hold. With the spindle's speed control off, every spindle line asks
+        for `s_max`, the full duty, whatever a group's speed says."""
+        full = None
+        if not self.speed_control:
+            cached = self._settings_cache
+            s_max = cached[1].get("s_max") if cached is not None else None
+            full = float(s_max) if isinstance(s_max, (int, float)) and s_max > 0 else 1000.0
         try:
             return Spindle(
                 clearance=float(self.config.get("clearance", Spindle.clearance)),
                 spinup=float(self.config.get("spinup", Spindle.spinup)),
+                full=full,
             )
         except (TypeError, ValueError):
-            return Spindle()
+            return Spindle(full=full)
+
+    @property
+    def speed_control(self) -> bool:
+        """Whether the host sets the spindle's speed from the groups; off,
+        the spindle runs full on whenever it runs."""
+        return bool(self.config.get("speed_control", True))
 
     def host_settings(self) -> dict:
         spindle = self.spindle_config()
-        return {"tolerance": self.tolerance, "clearance": spindle.clearance, "spinup": spindle.spinup}
+        return {
+            "tolerance": self.tolerance,
+            "clearance": spindle.clearance,
+            "spinup": spindle.spinup,
+            "speed_control": self.speed_control,
+        }
 
     @property
     def cartesian(self) -> bool:
@@ -476,10 +532,12 @@ class Backend:
             self.config["last_url"] = url
             self._save_config()
             self._settings_cache = None
+            self.autoconnect_paused = False
         if link.banner is None:
             self.publish_message("error", f"no banner from {url}: is that the firmware?")
         else:
             self.publish_message("info", f"connected to {url}, firmware v{link.banner.version}")
+        log.info("link opened: %s", url)
         # Nothing says the focus axis is where it was: the machine may have
         # been powered off, or moved by hand, since the offset was set.
         self._frame_changed("connected")
@@ -492,8 +550,49 @@ class Backend:
 
     def disconnect(self) -> dict:
         with self._lock:
+            if self.link is not None:
+                log.info("link closed by the operator: %s", self.link.url)
             self._close_link()
+            # An operator who closed the link does not want it opened again
+            # behind their back; the next connect lifts this.
+            self.autoconnect_paused = True
         return self.snapshot()
+
+    def autoconnect_url(self) -> str | None:
+        """Where `autoconnect` connects: the url given, or for `auto` the
+        port that announces itself as the controller, else the last url."""
+        wanted = self.autoconnect
+        if not wanted:
+            return None
+        if wanted != "auto":
+            return wanted
+        for port in self.ports()["ports"]:
+            if port.get("spinny"):
+                return str(port["url"])
+        last = self.config.get("last_url")
+        return str(last) if last else None
+
+    def autoconnect_tick(self) -> None:
+        """Connects when nothing is, for a host told to keep a link up: a
+        controller plugged in, or one that went quiet and was given up, is
+        taken up again without a page open. Nothing happens while the
+        operator has closed the link themselves."""
+        if not self.autoconnect or self.autoconnect_paused:
+            return
+        if self.link is not None and self.link.is_open:
+            return
+        url = self.autoconnect_url()
+        if url is None:
+            return
+        try:
+            self.connect(url)
+        except (LinkError, ValueError, HTTPException) as exc:
+            detail = getattr(exc, "detail", None) or str(exc)
+            if self._autoconnect_failed != url:
+                self._autoconnect_failed = url
+                log.error("autoconnect to %s failed: %s", url, detail)
+            return
+        self._autoconnect_failed = None
 
     def _close_link(self) -> None:
         link = self.link
@@ -667,6 +766,9 @@ class Backend:
                     "mode": status.mode,
                     "enabled": status.enabled,
                     "queue": {"planner": status.planner, "lines": status.lines},
+                    # How old the report is, s: a machine that has gone
+                    # quiet shows here before the link gives it up.
+                    "age": round(link.age, 1),
                 }
         return {
             "connected": connected,
@@ -675,6 +777,7 @@ class Backend:
             "machine": machine,
             "profile": self.profile,
             "run": self.runner.snapshot(),
+            "resume": self.resume_store.get(),
         }
 
     # --- events ---------------------------------------------------------------
@@ -740,6 +843,23 @@ class Backend:
     def _publish_progress(self, progress: dict) -> None:
         self.broadcast.publish_threadsafe({"type": "progress", **progress})
 
+    def _checkpoint(self, record: dict) -> None:
+        """Keeps the resume record, and logs a run's state changes."""
+        self.resume_store.put(record)
+        key = (record.get("job"), str(record.get("state")))
+        if key != self._run_state_logged:
+            self._run_state_logged = key
+            log.info(
+                "run %s %s: %s sent / %s acked / %s%s%s",
+                record.get("job"),
+                record.get("state"),
+                record.get("sent"),
+                record.get("acked"),
+                record.get("total"),
+                f", picked up at line {record['resumed_from']}" if record.get("resumed_from") else "",
+                f": {record['error']}" if record.get("error") else "",
+            )
+
     def _publish_probe(self, progress: dict | None, heightmap: dict | None) -> None:
         self._drop_stale_focus()
         self.publish_heightmap()
@@ -761,6 +881,10 @@ class Backend:
         self.broadcast.publish_threadsafe({"type": "heightmap", **self.heightmap_state()})
 
     def publish_message(self, level: str, text: str) -> None:
+        if level == "error":
+            log.error("%s", text)
+        else:
+            log.info("%s", text)
         self.broadcast.publish_threadsafe({"type": "message", "level": level, "text": text})
 
     # --- moving -----------------------------------------------------------------
@@ -1077,6 +1201,10 @@ class Backend:
             if not (math.isfinite(power) and power >= 0):
                 raise ValueError("power must be >= 0")
             link = self.require_link()
+            full = self.spindle_config().full
+            if full is not None and power > 0:
+                # The speed is not the host's to set: on is full on.
+                power = full
             link.request_ok(f"spindle S{num(power)}")
         link.status_now(1.0, routine=True)
         return self.snapshot()
@@ -1178,6 +1306,12 @@ class Backend:
         """
         tolerance = _tolerance(host["tolerance"]) if host and "tolerance" in host else None
         milling = None
+        speed_control = None
+        if host and "speed_control" in host:
+            flag = host["speed_control"]
+            if not isinstance(flag, (bool, int, float)) or isinstance(flag, float) and not math.isfinite(flag):
+                raise ValueError("speed_control must be true or false")
+            speed_control = bool(flag)
         if host and ("clearance" in host or "spinup" in host):
             current_spindle = self.spindle_config()
             try:
@@ -1198,7 +1332,9 @@ class Backend:
         if milling is not None:
             self.config["clearance"] = milling.clearance
             self.config["spinup"] = milling.spinup
-        if tolerance is not None or milling is not None:
+        if speed_control is not None:
+            self.config["speed_control"] = speed_control
+        if tolerance is not None or milling is not None or speed_control is not None:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
@@ -1321,17 +1457,62 @@ class Backend:
     # --- ports and jobs --------------------------------------------------------------
 
     def ports(self) -> dict:
+        """The serial ports on this host, the controller's own first.
+
+        A USB port is listed under its stable `/dev/serial/by-id` name when
+        the system gives it one, so the pick survives a replug that moves
+        it from ttyACM0 to ttyACM1. `kind` tells the page what to hide:
+        `usb` for a device with a vendor id, `system` for a built-in port
+        such as ttyS0, which is never the controller.
+        """
         from serial.tools import list_ports
 
         found = []
         try:
+            by_id = _by_id_names()
             for port in list_ports.comports():
-                found.append({"url": port.device, "description": port.description or ""})
-        except Exception:
-            pass
+                vid = getattr(port, "vid", None)
+                product = getattr(port, "product", None) or ""
+                manufacturer = getattr(port, "manufacturer", None) or ""
+                serial_number = getattr(port, "serial_number", None) or ""
+                description = port.description or ""
+                stable = by_id.get(port.device)
+                words = " ".join((product, manufacturer, description)).lower()
+                found.append(
+                    {
+                        "url": stable or port.device,
+                        "device": port.device,
+                        "description": description,
+                        "product": product,
+                        "manufacturer": manufacturer,
+                        "serial": serial_number,
+                        "vid": vid,
+                        "pid": getattr(port, "pid", None),
+                        "kind": "usb" if vid is not None else "system",
+                        # The firmware announces itself as the spinny laser
+                        # controller on the bus: the page picks that first.
+                        "spinny": "spinny" in words,
+                    }
+                )
+        except Exception as exc:
+            log.error("listing the serial ports failed: %r", exc)
+        found.sort(key=lambda entry: (not entry["spinny"], entry["kind"] != "usb", entry["url"]))
         last = self.config.get("last_url")
-        if last and last not in [entry["url"] for entry in found]:
-            found.append({"url": last, "description": "last used"})
+        if last and last not in [entry["url"] for entry in found] and last not in [entry.get("device") for entry in found]:
+            found.append(
+                {
+                    "url": last,
+                    "device": last,
+                    "description": "last used",
+                    "product": "",
+                    "manufacturer": "",
+                    "serial": "",
+                    "vid": None,
+                    "pid": None,
+                    "kind": "last",
+                    "spinny": False,
+                }
+            )
         return {"ports": found}
 
     def import_upload(self, filename: str, data: bytes, options: ImportOptions) -> Job:
@@ -1431,6 +1612,92 @@ class Backend:
         finally:
             self.runner.release()
 
+    def resume_job(self, job_id: str, body: ResumeBody, dry_run: bool = False) -> dict:
+        """Picks `job_id` up at a line: the lines before it count as done,
+        the head is brought from where it stands to where that line
+        begins, and the job goes on from there.
+
+        The plan is made from where the run being picked up began, when
+        the resume record is that run's, so its lines are the ones that
+        were counted; otherwise from where the head is, which on a
+        cartesian machine changes at most the first rapid. `dry_run` only
+        says what would happen: the line picked, and how the head gets
+        there.
+        """
+        with self._owner_lock:
+            job = self.store.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="no such job")
+            if self.prober.active:
+                raise HTTPException(status_code=409, detail="the board is being probed")
+            record = self.resume_store.get()
+            theirs = record is not None and record.get("job") == job_id
+            compensate = body.compensate
+            if compensate is None:
+                compensate = str(record.get("compensate", OFF)) if theirs and record is not None else OFF
+            if body.line < 0:
+                raise ValueError("the line to pick the job up at cannot be negative")
+            self.runner.reserve(self.link)
+            try:
+                link = self.require_link()
+                restarts = link.restarts
+                values = self.read_settings(force=True)["values"]
+                if self.milling and not values.get("h_axis"):
+                    raise ValueError("a spindle needs the focus axis as its depth axis: set $h_axis=1")
+                compensation = self.compensation(compensate, job)
+                status = link.status_now(1.0, routine=True)
+                streamer = self.streamer(status)
+                plan_start: tuple[float, float] | None = None
+                if theirs and record is not None and isinstance(record.get("start"), list) and len(record["start"]) == 2:
+                    if bool(record.get("cartesian", False)) == streamer.cartesian:
+                        plan_start = (float(record["start"][0]), float(record["start"][1]))
+                if plan_start is None:
+                    plan_start = streamer.start_of(status)
+                pieces = list(streamer.job_pieces(job, plan_start, compensation))
+                line = min(body.line, len(pieces))
+                skip = streamer.rewind(pieces, line) if body.rewind else line
+                if dry_run:
+                    approach = streamer.approach(pieces, skip, job, compensation)
+                    renumber = streamer.renumber_for(pieces, skip, status)
+                    if renumber is not None:
+                        approach.insert(0, renumber)
+                    return {
+                        "job": job_id,
+                        "line": line,
+                        "skip": skip,
+                        "total": len(pieces),
+                        "compensate": compensate,
+                        "planned_from_record": theirs and plan_start is not None and record is not None and record.get("start") is not None,
+                        "next": pieces[skip].line if skip < len(pieces) else None,
+                        "group": pieces[skip].group if skip < len(pieces) else None,
+                        "approach": approach,
+                    }
+                return self.runner.start(
+                    job,
+                    link,
+                    streamer,
+                    compensation,
+                    restarts,
+                    reserved=True,
+                    skip=skip,
+                    pieces=pieces,
+                    plan_start=plan_start,
+                )
+            finally:
+                self.runner.release()
+
+    def delete_all_jobs(self) -> dict:
+        """Removes every job but the one running."""
+        running = self.runner.progress.job if self.runner.active else None
+        removed = []
+        for job in list(self.store.list()):
+            if job.id == running:
+                continue
+            if self.store.remove(job.id):
+                removed.append(job.id)
+        log.info("deleted %d jobs", len(removed))
+        return {"deleted": removed, "kept": [running] if running else []}
+
     # --- the height map ---------------------------------------------------------------
 
     def probe_settings(self) -> ProbeSettings:
@@ -1480,7 +1747,43 @@ class Backend:
         self.publish_heightmap()
         return self.heightmap_state()
 
-    def start_probe(self, grid: Grid) -> dict:
+    def probe_grid(self, body: Grid) -> tuple[Grid, HeightMap | None]:
+        """The grid a probe request asks for, and the map to go on with
+        when it asks to resume. A plain grid is probed whole."""
+        job_id = getattr(body, "job", None)
+        margin_given = getattr(body, "margin", None)
+        if getattr(body, "resume", False):
+            heightmap = self.heightmaps.get()
+            if heightmap is None:
+                raise ValueError("there is no height map to go on with: probe the board first")
+            if heightmap.complete:
+                raise ValueError("the height map is complete: nothing is left to probe")
+            return heightmap.grid, heightmap
+        grid = Grid(x0=body.x0, y0=body.y0, x1=body.x1, y1=body.y1, nx=body.nx, ny=body.ny, mask=body.mask)
+        grid.check()
+        if job_id is not None:
+            job = self.store.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="no such job")
+            margin = float(margin_given) if margin_given is not None else 1.0
+            if not (math.isfinite(margin) and 0.0 <= margin <= 100.0):
+                raise ValueError("the margin must be 0 to 100 mm")
+            grid = grid.with_mask_for(job, margin, float(job.spot or 0.0))
+        return grid, None
+
+    def probe_estimate(self, body: ProbeBody) -> dict:
+        """About how long probing `body` would take, and the grid it would
+        probe, mask included, without touching the machine."""
+        grid, resume = self.probe_grid(body)
+        settings = self.probe_settings()
+        points = len(resume.remaining()) if resume is not None else grid.points
+        seconds = grid.estimate_seconds(settings, self.rates, self.cartesian)
+        if resume is not None and grid.points > 0:
+            seconds = seconds * points / grid.points
+        return {"seconds": round(seconds, 1), "points": points, "grid": grid.model_dump()}
+
+    def start_probe(self, body: Grid) -> dict:
+        grid, resume = self.probe_grid(body)
         # The check that no run is under way and the prober's claim are one
         # step: a run asked for at the same moment waits for this, then
         # finds the board being probed.
@@ -1502,6 +1805,11 @@ class Backend:
                     self._jog_target = None
                     status = link.status_now(1.0, routine=True)
                     frame = self._frame
+                    if resume is not None and self._heights_frame != frame:
+                        raise ValueError(
+                            "the focus axis was renumbered since the map was probed (a connect, a restart or a"
+                            " position set): its heights and the new ones would not agree, so probe it anew"
+                        )
                     self.prober.start(
                         grid,
                         self.probe_settings(),
@@ -1512,12 +1820,111 @@ class Backend:
                         spindle_off,
                         keep_focus=self._heights_frame == frame,
                         reserved=True,
+                        resume=resume,
                     )
                     self._heights_frame = frame
             finally:
                 # A start that went through has let go of the claim already.
                 self.prober.release()
+        log.info("probing started: %d points%s", len(resume.remaining()) if resume is not None else grid.points, ", going on with the map" if resume is not None else "")
         return self.heightmap_state()
+
+    def touch_probe(self, body: TouchBody) -> dict:
+        """One probe down where the head is. With `map`, the height found
+        ties the height map to the focus axis frame in use: the offset
+        moves by what the surface reads here against what the map says,
+        so a map probed before a power cycle, a restart or a position set
+        follows the board again without probing it all over. With `zero`
+        the contact height becomes H 0.
+        """
+        if body.mode not in ("map", "zero"):
+            raise ValueError("mode must be map or zero")
+        if body.mode == "map" and self.heightmaps.get() is None:
+            raise ValueError("there is no height map to tie: probe the board, or probe here for H 0")
+        with self._owner_lock:
+            link = self._movable()
+            self.prober.reserve(link)
+            try:
+                self.read_settings(force=True)
+                spindle_off = self._off_duty() if self.milling else None
+                with self._move_lock:
+                    self._jog_target = None
+                    status = link.status_now(1.0, routine=True)
+                    frame = self._frame
+                    settings = self.probe_settings()
+                    streamer = self.streamer(status)
+                    tip = _tip_point(status, settings.offset, self.cartesian)
+
+                    def touched(height: float, travel: float) -> None:
+                        self._touched(link, body.mode, height, travel, tip, frame)
+
+                    self.prober.start(
+                        Grid(x0=-1.0, y0=-1.0, x1=1.0, y1=1.0, nx=2, ny=2),
+                        settings,
+                        link,
+                        streamer,
+                        spindle_off=spindle_off,
+                        reserved=True,
+                        touch=touched,
+                    )
+            finally:
+                self.prober.release()
+        log.info("probing one point under the head, for %s", "the map's frame" if body.mode == "map" else "H 0")
+        return self.heightmap_state()
+
+    def _touched(self, link: Link, mode: str, height: float, travel: float, tip: tuple[float, float], frame: int) -> None:
+        """What a probe under the head found, with the head back up at rest.
+        Runs on the probing thread, which owns the machine."""
+        if mode == "zero":
+            # The head is at the travel height; the contact height is to
+            # read 0, so the head reads how far above it it stands.
+            link.request_ok(f"set H{num(travel - height, 4)}")
+            self._frame_changed("the surface was probed")
+            try:
+                link.status_now(1.0, routine=True)
+            except LinkError:
+                pass
+            self.publish_message("info", f"H 0 is now the surface probed here (it read {height:.4f})")
+            return
+        x, y = tip
+        with self._map_lock:
+            heightmap = self.heightmaps.get()
+            if heightmap is None:
+                raise ValueError("the height map went away while probing")
+            if self._frame != frame:
+                raise ValueError("the focus axis frame changed while probing: probe here again")
+            grid = heightmap.grid
+            if not grid.covers((x, y, x, y)):
+                raise ValueError(
+                    f"probe over the map: the tip is at X {x:.1f} Y {y:.1f}, the map covers"
+                    f" X {grid.x0:.1f}..{grid.x1:.1f} Y {grid.y0:.1f}..{grid.y1:.1f}"
+                )
+            if not heightmap.cell_probed(x, y):
+                raise ValueError(f"the map was not probed around X {x:.1f} Y {y:.1f}: probe over a probed cell")
+            mapped = heightmap.height_at(x, y)
+            shift = height - mapped
+            if heightmap.focus_known:
+                offset = heightmap.focus_offset + shift
+            elif self.milling:
+                # The tool is the probe: contact is where the tool meets
+                # the copper, and the map's heights were that too.
+                offset = shift
+            else:
+                raise ValueError(
+                    "the map has never been focused: focus the beam by eye over it first (focus here);"
+                    " a probe here can then tie it to a new frame"
+                )
+            heightmap.focus_offset = round(offset, 4)
+            heightmap.focus_set = True
+            heightmap.focus_known = True
+            self.heightmaps.put(heightmap)
+            self._focus_frame = frame
+        self.publish_heightmap()
+        self.publish_message(
+            "info",
+            f"height map tied to this frame: the surface at X {x:.1f} Y {y:.1f} reads {height:.4f},"
+            f" {shift:+.4f} against the map; focus offset {offset:.4f}",
+        )
 
     def stop_probe(self) -> dict:
         self.prober.stop()
@@ -1574,6 +1981,7 @@ class Backend:
                 )
             heightmap.focus_offset = round(offset, 4)
             heightmap.focus_set = True
+            heightmap.focus_known = True
             self.heightmaps.put(heightmap)
             self._focus_frame = frame
         self.publish_heightmap()
@@ -1614,6 +2022,37 @@ class Backend:
             rayleigh=self.probe_settings().rayleigh,
             s_max=float(s_max) if isinstance(s_max, (int, float)) and s_max > 0 else 1000.0,
         )
+
+
+def _tip_point(status, offset: tuple[float, float], cartesian: bool) -> tuple[float, float]:
+    """The board point under the probe tip: the head's place along the rail
+    and across it plus the tip's offset in those directions, turned by the
+    table's angle. On the polar machine the head sits on the rail (across
+    0), on a cartesian one at the cross slide's position."""
+    along = status.r + offset[0]
+    across = (status.z if cartesian else 0.0) + offset[1]
+    angle = math.radians(status.a)
+    return (
+        along * math.cos(angle) - across * math.sin(angle),
+        along * math.sin(angle) + across * math.cos(angle),
+    )
+
+
+def _by_id_names() -> dict[str, str]:
+    """Device path to its `/dev/serial/by-id` name, where the system keeps
+    such links."""
+    names: dict[str, str] = {}
+    folder = Path("/dev/serial/by-id")
+    try:
+        for entry in folder.iterdir():
+            try:
+                target = str(entry.resolve())
+            except OSError:
+                continue
+            names.setdefault(target, str(entry))
+    except OSError:
+        pass
+    return names
 
 
 def _number(text: str):
@@ -1762,6 +2201,19 @@ class OriginGuard:
 # --- the app ---------------------------------------------------------------------
 
 
+# How often a host told to keep a link up looks for the controller, s.
+AUTOCONNECT_INTERVAL = 5.0
+
+
+async def _keep_connected(backend: Backend) -> None:
+    while True:
+        try:
+            await run_in_threadpool(backend.autoconnect_tick)
+        except Exception as exc:
+            log.error("autoconnect failed: %r", exc)
+        await asyncio.sleep(AUTOCONNECT_INTERVAL)
+
+
 def create_app(
     backend: Backend | None = None,
     frontend: Path | None = None,
@@ -1774,9 +2226,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         backend.broadcast.loop = asyncio.get_running_loop()
+        keeper = asyncio.ensure_future(_keep_connected(backend)) if backend.autoconnect else None
         try:
             yield
         finally:
+            if keeper is not None:
+                keeper.cancel()
             await run_in_threadpool(backend.shutdown)
 
     app = FastAPI(title="spinny-web", version=__version__, lifespan=lifespan)
@@ -2039,6 +2494,10 @@ def create_app(
     def list_jobs():
         return {"jobs": [job.summary() for job in backend.store.list()]}
 
+    @app.delete("/api/jobs")
+    def delete_all_jobs():
+        return backend.delete_all_jobs()
+
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str):
         job = backend.store.get(job_id)
@@ -2062,6 +2521,29 @@ def create_app(
     def run_job(job_id: str, body: RunBody | None = None):
         compensate = body.compensate if body is not None else OFF
         return guarded(lambda: backend.run_job(job_id, compensate))
+
+    @app.post("/api/jobs/{job_id}/resume")
+    def resume_job(job_id: str, body: ResumeBody):
+        return guarded(lambda: backend.resume_job(job_id, body))
+
+    @app.post("/api/jobs/{job_id}/resume/plan")
+    def plan_resume(job_id: str, body: ResumeBody):
+        return guarded(lambda: backend.resume_job(job_id, body, dry_run=True))
+
+    @app.get("/api/resume")
+    def resume_record():
+        return {"resume": backend.resume_store.get()}
+
+    @app.delete("/api/resume")
+    def forget_resume():
+        if backend.runner.active:
+            raise HTTPException(status_code=409, detail="a job is running")
+        backend.resume_store.clear()
+        return {"resume": None}
+
+    @app.get("/api/log")
+    def read_log(lines: int = 200):
+        return {"lines": log_tail(backend.root / "spinny.log", lines)}
 
     @app.post("/api/run/hold")
     def run_hold():
@@ -2099,8 +2581,16 @@ def create_app(
         return guarded(lambda: backend.update_probe_settings(body))
 
     @app.post("/api/heightmap/probe")
-    def start_probe(body: Grid):
+    def start_probe(body: ProbeBody):
         return guarded(lambda: backend.start_probe(body))
+
+    @app.post("/api/heightmap/estimate")
+    def probe_estimate(body: ProbeBody):
+        return guarded(lambda: backend.probe_estimate(body))
+
+    @app.post("/api/heightmap/touch")
+    def touch_probe(body: TouchBody):
+        return guarded(lambda: backend.touch_probe(body))
 
     @app.post("/api/heightmap/stop")
     def stop_probe():
@@ -2182,11 +2672,22 @@ def main(argv: list[str] | None = None) -> int:
         default=CAM_DIR,
         help=f"directory of CAM profiles, one TOML file per machine and tool set (default: {CAM_DIR})",
     )
+    parser.add_argument(
+        "--connect",
+        metavar="URL",
+        help="keep a link open to this port without a page: a url, or `auto` for the port that announces"
+        " itself as the controller (else the last url used); a controller that goes quiet or is replugged is"
+        " taken up again every few seconds, unless the operator closed the link from the page",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
+    setup_log(args.data)
+    log.info("spinny-web %s starting on %s:%d", __version__, args.host, args.port)
+    backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam)
+    backend.autoconnect = args.connect
     uvicorn.run(
         create_app(
-            backend=Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam),
+            backend=backend,
             cors_origins=args.cors_origin,
             allowed_hosts=args.allowed_host,
         ),

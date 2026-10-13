@@ -132,17 +132,41 @@ class ProbeProgress:
     # The point being probed, (ix, iy).
     point: tuple[int, int] | None = None
     error: str | None = None
+    # About how long the whole of it was to take, s, from the grid before
+    # the first point; None when nobody guessed.
+    estimate: float | None = None
     started: float = field(default_factory=time.monotonic, repr=False)
     finished: float | None = field(default=None, repr=False)
+    # How many points were already done when this probing started: its own
+    # pace is measured over the rest.
+    started_done: int = field(default=0, repr=False)
+
+    def remaining(self, now: float | None = None) -> float | None:
+        """Seconds left: at the pace so far once a few points are done,
+        else what is left of the guess."""
+        if self.state != RUNNING:
+            return 0.0 if self.state == DONE else None
+        end = now if now is not None else time.monotonic()
+        elapsed = end - self.started
+        own = self.done - self.started_done
+        left = max(0, self.total - self.done)
+        if own >= 2 and elapsed > 0:
+            return elapsed / own * left
+        if self.estimate is not None and self.total > 0:
+            return max(0.0, self.estimate * left / self.total - (elapsed if own == 0 else 0.0))
+        return None
 
     def to_dict(self) -> dict:
         end = self.finished if self.finished is not None else time.monotonic()
+        remaining = self.remaining(end)
         return {
             "state": self.state,
             "done": self.done,
             "total": self.total,
             "point": list(self.point) if self.point is not None else None,
             "seconds": round(end - self.started, 1),
+            "estimate": round(self.estimate, 1) if self.estimate is not None else None,
+            "remaining": round(remaining, 1) if remaining is not None else None,
             "error": self.error,
         }
 
@@ -213,6 +237,8 @@ class Prober:
         spindle_off: int | None = None,
         keep_focus: bool = True,
         reserved: bool = False,
+        resume: HeightMap | None = None,
+        touch: Callable[[float, float], None] | None = None,
     ) -> dict:
         """Starts probing `grid`. `spindle_off` is the output's duty with a
         spindle stopped, on a machine whose output drives one: probing is
@@ -221,12 +247,25 @@ class Prober:
         `keep_focus` false starts the new map without the last one's focus
         offset, which then held only for heights from another frame.
         `reserved` takes over a claim `reserve` made, with whatever stop or
-        reset came since."""
+        reset came since.
+
+        `resume` goes on with a map probed in part: its grid is probed
+        where it has no height yet, and the heights it has are kept.
+        `touch` makes it a single point under the head rather than a map:
+        the grid is ignored, the probe goes down where the head is, and
+        `touch` is called with the contact height and the travel height
+        once the head is back up and at rest, before probing is reported
+        done; the map in the store is left alone."""
         try:
-            grid.check()
+            if touch is None:
+                grid.check()
             settings.check()
             if link is None or not link.is_open:
                 raise ProberError("not connected")
+            if resume is not None:
+                resume.check()
+                if resume.grid != grid:
+                    raise ProberError("the map to go on with was probed on another grid")
         except Exception:
             if reserved:
                 self.release()
@@ -238,7 +277,7 @@ class Prober:
             else:
                 self._claim(link)
         try:
-            return self._start(grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus)
+            return self._start(grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch)
         finally:
             self._starting = False
 
@@ -252,6 +291,8 @@ class Prober:
         z_max: float,
         spindle_off: int | None,
         keep_focus: bool,
+        resume: HeightMap | None = None,
+        touch: Callable[[float, float], None] | None = None,
     ) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
@@ -265,10 +306,29 @@ class Prober:
             raise ProberError("the probe is already touching: raise the head clear of the board first")
         if spindle_off is not None and status.laser != spindle_off:
             raise ProberError("the spindle is turning: stop it before probing")
+        if touch is not None:
+            with self._lock:
+                if self._abort.is_set():
+                    raise ProberError("probing was stopped before it started")
+                if self._restarts is not None and link.restarts != self._restarts:
+                    raise ProberError("the machine was reset while probing was being started")
+                self.progress = ProbeProgress(total=1)
+                progress = self.progress
+                self._link = link
+                self._thread = threading.Thread(
+                    target=self._run_touch,
+                    args=(settings, link, streamer, status.h, progress, self._restarts, touch),
+                    name="prober",
+                    daemon=True,
+                )
+                self._thread.start()
+            self._emit(progress, None)
+            return progress.to_dict()
         # Every point is checked for reach before the first move.
         angle = status.a
         joints = {}
-        for ix, iy in grid.order():
+        todo = resume.remaining() if resume is not None else grid.order()
+        for ix, iy in todo:
             point = (grid.xs[ix], grid.ys[iy])
             if streamer.cartesian:
                 # The joint is the rail and the cross slide; the table
@@ -290,13 +350,18 @@ class Prober:
                     f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
                     f" R{joints[(ix, iy)][0]:.3f}, past the soft limit r_max={r_max:g}"
                 )
-        heightmap = HeightMap.empty(grid, settings.offset)
-        # A map probed before keeps its focus offset only if the probe has
-        # not changed: the offset is contact to focus for that probe.
-        previous = self.store.get()
-        if keep_focus and previous is not None and tuple(previous.probe_offset) == tuple(settings.offset):
-            heightmap.focus_offset = previous.focus_offset
-            heightmap.focus_set = previous.focus_set
+        if resume is not None:
+            heightmap = resume
+            done = heightmap.probed
+        else:
+            heightmap = HeightMap.empty(grid, settings.offset)
+            done = 0
+            # A map probed before keeps its focus offset only if the probe has
+            # not changed: the offset is contact to focus for that probe.
+            previous = self.store.get()
+            if keep_focus and previous is not None and tuple(previous.probe_offset) == tuple(settings.offset):
+                heightmap.focus_offset = previous.focus_offset
+                heightmap.focus_set = previous.focus_set
         with self._lock:
             if self._abort.is_set():
                 raise ProberError("probing was stopped before it started")
@@ -305,13 +370,17 @@ class Prober:
             # The new map replaces the old one from the start, so the page
             # shows its grid filling in rather than the old heights.
             self.store.put(heightmap)
-            self.progress = ProbeProgress(total=grid.nx * grid.ny)
+            try:
+                estimate = grid.estimate_seconds(settings, streamer.rates, streamer.cartesian) * len(todo) / max(1, len(grid.order()))
+            except (TypeError, ValueError, ZeroDivisionError):
+                estimate = None
+            self.progress = ProbeProgress(total=grid.points, done=done, started_done=done, estimate=estimate)
             progress = self.progress
             self._link = link
             start = streamer.start_of(status)
             self._thread = threading.Thread(
                 target=self._run,
-                args=(grid, settings, link, streamer, start, status.h, joints, heightmap, progress, self._restarts),
+                args=(grid, settings, link, streamer, start, status.h, joints, heightmap, progress, self._restarts, todo),
                 name="prober",
                 daemon=True,
             )
@@ -356,7 +425,52 @@ class Prober:
 
     # --- the probing thread -----------------------------------------------
 
-    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress, restarts) -> None:
+    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch) -> None:
+        """One probe down where the head is, then back up; `touch` gets the
+        contact height with the head at rest at the travel height."""
+        if restarts is None:
+            restarts = link.restarts
+        h_rate = streamer.rates.h_rate
+        try:
+            with self._lock:
+                progress.point = (0, 0)
+            self._emit(progress, None)
+            height = self._touch(link, settings.feed, settings.depth, h_rate)
+            if settings.slow > 0.0:
+                self._request(link, f"go H{coord(height + settings.backoff, FOCUS_DECIMALS)}", LINE_TIMEOUT)
+                self._settle(link, settings.backoff / h_rate * 60.0, restarts)
+                height = self._touch(link, settings.slow, 2.0 * settings.backoff, h_rate)
+            self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
+            self._settle(link, abs(travel - height) / h_rate * 60.0, restarts)
+            if link.restarts != restarts:
+                raise LinkError("the machine reset during probing")
+            with self._lock:
+                progress.done = 1
+                progress.point = None
+            touch(round(height, 4), travel)
+            self._finish(progress, DONE, None)
+        except (LinkError, ValueError) as exc:
+            if self._abort.is_set():
+                return
+            reason = str(exc)
+            self._abort.set()
+            if link.restarts == restarts and link.is_open:
+                try:
+                    status = link.status_now(1.0, routine=True)
+                except LinkError:
+                    status = None
+                if status is None or status.state != "Alarm":
+                    stopped, note = halt(link, self._message)
+                    if not stopped:
+                        reason = f"{reason}; the machine could not be stopped: {note}"
+            self._message("error", f"probing failed: {reason}")
+            self._finish(progress, ERROR, reason)
+        except Exception as exc:
+            self._abort.set()
+            self._message("error", f"probing failed: {exc!r}")
+            self._finish(progress, ERROR, f"probing failed: {exc!r}")
+
+    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress, restarts, todo=None) -> None:
         if restarts is None:
             restarts = link.restarts
         h_rate = streamer.rates.h_rate
@@ -365,7 +479,7 @@ class Prober:
         joint = start
         rise = 0.0
         try:
-            for ix, iy in grid.order():
+            for ix, iy in grid.order() if todo is None else todo:
                 if self._abort.is_set():
                     return
                 with self._lock:

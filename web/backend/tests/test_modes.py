@@ -355,7 +355,7 @@ def test_a_milling_run_needs_the_depth_axis_and_streams_the_plunges(client, fake
 def test_host_milling_settings_are_kept(client, tmp_path):
     response = client.put("/api/settings", json={"host": {"clearance": 3.5, "spinup": 4}})
     assert response.status_code == 200, response.text
-    assert response.json()["host"] == {"tolerance": 0.005, "clearance": 3.5, "spinup": 4.0}
+    assert response.json()["host"] == {"tolerance": 0.005, "clearance": 3.5, "spinup": 4.0, "speed_control": True}
     assert client.put("/api/settings", json={"host": {"clearance": 0}}).status_code == 400
     assert client.put("/api/settings", json={"host": {"spinup": "soon"}}).status_code == 400
     assert client.backend.spindle_config() == Spindle(clearance=3.5, spinup=4.0)

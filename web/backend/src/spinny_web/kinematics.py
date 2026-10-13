@@ -86,12 +86,19 @@ class Spindle:
 
     clearance: float = 2.0
     spinup: float = 2.0
+    # The S every spindle line asks for when the spindle's speed is not
+    # the host's to set: a spindle with its own speed knob, or one behind
+    # a switch, is run full on and never at a group's rpm. None follows
+    # the groups.
+    full: float | None = None
 
     def __post_init__(self) -> None:
         if not (math.isfinite(self.clearance) and 0.0 < self.clearance <= 100.0):
             raise ValueError("the clearance must be above 0 and at most 100 mm")
         if not (math.isfinite(self.spinup) and 0.0 <= self.spinup <= 600.0):
             raise ValueError("the spin-up must be 0 to 600 s")
+        if self.full is not None and not (math.isfinite(self.full) and self.full > 0.0):
+            raise ValueError("the full speed must be above 0")
 
 
 def step_ceiling_hz(step_us: int) -> float:
@@ -121,6 +128,10 @@ class Piece:
     feed: float = 0.0
     power: float = 0.0
     floor: float | None = None
+    # The focus axis height the line leaves the head at, when the line
+    # says: a lift, a plunge, a cut at depth, a compensated move. None
+    # where the height is whatever it was.
+    h: float | None = None
 
 
 @dataclass
@@ -195,6 +206,17 @@ def surface_length(a: Joint, b: Joint) -> float:
     """Board length of one joint move, as the firmware reckons it."""
     arc = (a[0] + b[0]) / 2.0 * math.radians(b[1] - a[1])
     return math.hypot(b[0] - a[0], arc)
+
+
+def _spindle_speed(line: str) -> float | None:
+    """The S of a `spindle S` line; None for `spindle off`."""
+    for word in line.split()[1:]:
+        if word[:1].upper() == "S":
+            try:
+                return float(word[1:])
+            except ValueError:
+                return None
+    return None
 
 
 def turned_toward(poly: list[Joint], angle: float) -> list[Joint]:
@@ -428,6 +450,7 @@ class Streamer:
                     joint=piece.start,
                     seconds=abs(h - compensation.head_h) / self.rates.h_rate * 60.0,
                     group=piece.group,
+                    h=h,
                 )
             placed = True
             if piece.kind == "cut" and piece.start is not None:
@@ -452,11 +475,12 @@ class Streamer:
                         start=previous,
                         power=power,
                         floor=floor,
+                        h=h,
                     )
                     previous = joint
             elif focus and piece.kind in ("go", "turn"):
                 h = compensation.focus(self.board_of(piece.joint))
-                yield dataclasses.replace(piece, line=f"{piece.line} H{coord(h, FOCUS_DECIMALS)}")
+                yield dataclasses.replace(piece, line=f"{piece.line} H{coord(h, FOCUS_DECIMALS)}", h=h)
             else:
                 yield piece
 
@@ -569,9 +593,9 @@ class Streamer:
         top = compensation.highest() if compensation is not None else 0.0
         return top + self.spindle.clearance
 
-    def _lift(self, h: float, frm: float | None, group: int | None) -> Piece:
+    def _lift(self, h: float, frm: float | None, group: int | None, joint: Joint = (0.0, 0.0)) -> Piece:
         seconds = abs(h - frm) / self.rates.h_rate * 60.0 if frm is not None else 0.0
-        return Piece(line=f"go H{coord(h, FOCUS_DECIMALS)}", kind="lift", joint=(0.0, 0.0), seconds=seconds, group=group)
+        return Piece(line=f"go H{coord(h, FOCUS_DECIMALS)}", kind="lift", joint=joint, seconds=seconds, group=group, h=h)
 
     def check_job(self, job: "Job") -> None:
         """Refuses, with a ValueError, a job this streamer would make into
@@ -627,7 +651,7 @@ class Streamer:
         h: float | None = None
         speed: float | None = None
         last_group: int | None = None
-        yield self._lift(travel, h, None)
+        yield self._lift(travel, h, None, joint)
         h = travel
         for index, group in enumerate(job.groups):
             if not group.enabled:
@@ -637,8 +661,9 @@ class Streamer:
             last_group = index
             feed = float(group.speed)
             plunge = float(group.plunge)
-            if group.power != speed:
-                speed = float(group.power)
+            wanted = float(group.power) if self.spindle.full is None else float(self.spindle.full)
+            if wanted != speed:
+                speed = wanted
                 yield Piece(line=f"spindle S{num(speed)}", kind="spindle", joint=joint, group=index)
                 if spinup_ms > 0:
                     yield Piece(line=f"dwell T{spinup_ms}", kind="dwell", joint=joint, seconds=spinup_ms / 1000.0, group=index)
@@ -668,8 +693,9 @@ class Streamer:
                             joint=joint,
                             seconds=abs((h if h is not None else bottom) - bottom) / plunge * 60.0,
                             group=index,
+                            h=bottom,
                         )
-                        yield self._lift(travel, bottom, index)
+                        yield self._lift(travel, bottom, index, joint)
                         h = travel
                         continue
                     plunged = False
@@ -692,6 +718,7 @@ class Streamer:
                                 joint=joint,
                                 seconds=abs((h if h is not None else bottom) - bottom) / plunge * 60.0,
                                 group=index,
+                                h=bottom,
                             )
                             h = bottom
                             plunged = True
@@ -704,6 +731,7 @@ class Streamer:
                                 joint=b,
                                 seconds=self._rapid_seconds(a, b),
                                 group=index,
+                                h=h,
                             )
                             joint = b
                             continue
@@ -726,15 +754,111 @@ class Streamer:
                                 group=index,
                                 start=previous,
                                 feed=feed,
+                                h=h,
                             )
                             previous = end
                         joint = b
                     if plunged:
-                        yield self._lift(travel, h, index)
+                        yield self._lift(travel, h, index, joint)
                         h = travel
         yield Piece(line="spindle off", kind="spindle", joint=joint, group=last_group)
 
-    def estimate(self, job: "Job", start: Joint = (0.0, 0.0), compensation: "Compensation | None" = None) -> Stats:
+    # --- picking a job up part way ----------------------------------------
+
+    @staticmethod
+    def rewind(pieces: list[Piece], index: int) -> int:
+        """The first line of the path `pieces[index]` is part of: back over
+        the cuts, turns and the plunge before it, and the rapid that
+        brought the head to the path. A run picked up there cuts the whole
+        path again rather than leaving a gap where a count one line off
+        would have skipped a segment."""
+        index = max(0, min(index, len(pieces)))
+        while index > 0 and pieces[index - 1].kind in ("cut", "turn", "plunge"):
+            index -= 1
+        if index > 0 and pieces[index - 1].kind == "go":
+            index -= 1
+        return index
+
+    def approach(
+        self,
+        pieces: list[Piece],
+        skip: int,
+        job: "Job",
+        compensation: "Compensation | None",
+    ) -> list[str]:
+        """The lines that bring a head at rest, its output off, to where
+        `pieces[skip]` begins, so the lines from there on land where the
+        whole job would have put them.
+
+        With a spindle the tool rises to the travel height first, goes
+        over the point, the spindle is started at the speed the job had
+        in force there and given its spin-up, and, when the next line is a
+        cut at depth, the tool plunges to the depth that cut starts at.
+        With a laser the head goes dark to the point, at the focus height
+        the job had there when it follows the height map.
+        """
+        if skip <= 0 or skip > len(pieces):
+            return []
+        joint: Joint | None = None
+        h: float | None = None
+        speed: float | None = None
+        for piece in pieces[:skip]:
+            if piece.kind in ("go", "turn", "cut", "plunge"):
+                joint = piece.joint
+            if piece.h is not None:
+                h = piece.h
+            if piece.kind == "spindle":
+                speed = _spindle_speed(piece.line)
+        piece = pieces[skip] if skip < len(pieces) else None
+        target = piece.start if piece is not None and piece.kind == "cut" and piece.start is not None else joint
+        lines: list[str] = []
+        if self.spindle is None:
+            if target is not None:
+                lines.append(f"go {self.words(target, h=h)}")
+            return lines
+        travel = self.travel_height(compensation)
+        lines.append(f"go H{coord(travel, FOCUS_DECIMALS)}")
+        if target is not None:
+            lines.append(f"go {self.words(target)}")
+        if speed is not None and (piece is None or piece.kind != "spindle"):
+            lines.append(f"spindle S{num(speed)}")
+            spinup_ms = int(round(self.spindle.spinup * 1000.0))
+            if spinup_ms > 0:
+                lines.append(f"dwell T{spinup_ms}")
+        if piece is not None and piece.kind in ("cut", "turn") and h is not None and piece.group is not None:
+            plunge = float(job.groups[piece.group].plunge)
+            lines.append(f"cut H{coord(h, FOCUS_DECIMALS)} F{num(plunge)}")
+        return lines
+
+    def renumber_for(self, pieces: list[Piece], skip: int, status) -> str | None:
+        """A `set A` that gives the table, as the status reports it, the
+        angle the plan counts it at: a job's angles are unwrapped from
+        where the run began, and a machine that has started over since
+        reads the same orientation turns apart. None when nothing needs
+        saying, and always on a cartesian machine, whose table holds."""
+        if self.cartesian or skip <= 0 or skip > len(pieces):
+            return None
+        joint: Joint | None = None
+        for piece in pieces[:skip]:
+            if piece.kind in ("go", "turn", "cut", "plunge"):
+                joint = piece.joint
+        if joint is None:
+            return None
+        declared = polar.unwrap(status.a, joint[1])
+        if abs(declared - status.a) < 0.5 * 10.0 ** -self.angle_decimals:
+            return None
+        return f"set A{num(declared, self.angle_decimals)}"
+
+    def estimate(
+        self,
+        job: "Job",
+        start: Joint = (0.0, 0.0),
+        compensation: "Compensation | None" = None,
+        pieces: list[Piece] | None = None,
+    ) -> Stats:
+        """What the job costs from `start`. `pieces` is the job's lines
+        already made from that start, when the caller has them, so they
+        are not made twice."""
         stats = Stats()
         limited = 0.0
         radii: list[float] = []
@@ -756,7 +880,7 @@ class Streamer:
                     continue
                 radii.append(max(polar.radius_of(p) for p in points))
                 lows.append(polar.path_min_radius(points))
-        for piece in self.job_pieces(job, start, compensation):
+        for piece in pieces if pieces is not None else self.job_pieces(job, start, compensation):
             stats.moves += 1
             stats.seconds += piece.seconds
             stats.length_mm += piece.length

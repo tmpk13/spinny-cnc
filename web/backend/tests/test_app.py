@@ -61,6 +61,7 @@ def test_state_and_ports_before_connecting(client, tmp_path):
         "machine": None,
         "profile": {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0},
         "run": None,
+        "resume": None,
     }
     ports = client.get("/api/ports").json()
     assert "ports" in ports
@@ -79,7 +80,7 @@ def test_connect_disconnect_and_last_url(client, fake, tmp_path):
     assert state["machine"]["board"] == {"x": 0.0, "y": 0.0}
     assert state["machine"]["queue"] == {"planner": 32, "lines": 16}
     ports = client.get("/api/ports").json()["ports"]
-    assert {"url": "socket://127.0.0.1:9999", "description": "last used"} in ports
+    assert any(port["url"] == "socket://127.0.0.1:9999" and port["description"] == "last used" for port in ports)
     config = json.loads((tmp_path / "config.json").read_text())
     assert config["last_url"] == "socket://127.0.0.1:9999"
     # Connecting again to the same url keeps the link.
@@ -196,7 +197,7 @@ def test_settings_read_write_save(client, fake, tmp_path):
     connect(client)
     settings = client.get("/api/settings").json()
     assert settings["values"]["r_rate"] == 1000 and settings["values"]["a_steps"] == 888.889
-    assert settings["host"] == {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}
+    assert settings["host"] == {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": True}
     assert {"name": "r_steps", "unit": "steps/mm", "help": "radius motor"} in settings["schema"]
     asked = fake.received_lines.count("$")
     client.get("/api/settings")

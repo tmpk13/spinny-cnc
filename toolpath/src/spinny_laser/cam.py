@@ -126,13 +126,36 @@ class Tool:
     id: str
     kind: str
     name: str
-    # The width of the cut: a bit's diameter, a beam's spot.
+    # The width of the cut: a bit's diameter, a beam's spot. For a V bit,
+    # the width at its default depth; `width_at` gives it for another.
     width: float
     # The cutting settings the file gives it, by key.
     settings: dict[str, float]
+    # A V bit: the included angle of its point, degrees, and the width of
+    # its tip, mm. Its cut widens with the depth. None for a straight bit
+    # or a beam.
+    angle: float | None = None
+    tip: float = 0.0
+    # The widest a V bit's cut can be, its shank, when the file says; None
+    # for no bound.
+    shank: float | None = None
+
+    def width_at(self, depth: float) -> float:
+        """The width of the cut at a depth: a straight bit's or a beam's
+        is its own, a V bit's is its tip plus what its flanks add."""
+        if self.angle is None:
+            return self.width
+        wide = self.tip + 2.0 * max(0.0, depth) * math.tan(math.radians(self.angle / 2.0))
+        return min(wide, self.shank) if self.shank is not None else wide
 
     def document(self) -> dict:
-        return {"id": self.id, "kind": self.kind, "name": self.name, "width": self.width, "settings": dict(self.settings)}
+        out = {"id": self.id, "kind": self.kind, "name": self.name, "width": self.width, "settings": dict(self.settings)}
+        if self.angle is not None:
+            out["angle"] = self.angle
+            out["tip"] = self.tip
+            if self.shank is not None:
+                out["shank"] = self.shank
+        return out
 
 
 @dataclass(frozen=True)
@@ -486,8 +509,17 @@ class _Reader:
         spot = self.bounded(table, section, "spot", 0.0, MAX_WIDTH, False)
         if width is not None and spot is not None:
             raise self.fail(section, "spot", "and diameter are the same width; give one")
+        # A V bit is given by its point: the cut is as wide as the depth
+        # makes it, and the diameter, when given, is the shank that bounds it.
+        angle = self.bounded(table, section, "angle", 0.0, 179.0, False)
+        tip = self.bounded(table, section, "tip", 0.0, MAX_WIDTH, True)
+        if (angle is not None or tip is not None) and kind != SPINDLE:
+            raise self.fail(section, "angle" if angle is not None else "tip", "is for a mill's V bit; a beam has a spot")
+        if tip is not None and angle is None:
+            raise self.fail(section, "tip", "needs angle: the included angle of the V bit's point, degrees")
+        shank = width if angle is not None else None
         width = width if width is not None else spot
-        if width is None:
+        if width is None and angle is None:
             raise self.fail(section, "diameter" if kind == SPINDLE else "spot", "is needed: the width of the cut, mm")
         bounds = SETTINGS_BY_KIND[kind]
         settings: dict[str, float] = {}
@@ -501,7 +533,16 @@ class _Reader:
         for key in REQUIRED_BY_KIND[kind]:
             if key not in settings:
                 raise self.fail(section, key, "is needed")
-        self.done(table, section, {"id", "kind", "name", "diameter", "spot", "passes", *bounds})
+        self.done(table, section, {"id", "kind", "name", "diameter", "spot", "passes", "angle", "tip", *bounds})
+        if angle is not None:
+            # The nominal width is the cut at the tool's own default depth,
+            # for whatever shows one number for the tool.
+            tool = Tool(tool_id, kind, name, 0.0, settings, angle=angle, tip=tip or 0.0, shank=shank)
+            nominal = tool.width_at(settings.get("depth", DEFAULT_DEPTH))
+            if nominal <= 0.0:
+                raise self.fail(section, "tip", "or the depth must give the cut some width")
+            return Tool(tool_id, kind, name, nominal, settings, angle=angle, tip=tip or 0.0, shank=shank)
+        assert width is not None
         return Tool(tool_id, kind, name, width, settings)
 
     def operation(self, table: dict, index: int, tools: dict[str, Tool]) -> Operation:
@@ -626,7 +667,9 @@ def resolve(tool: Tool, settings: dict[str, Any]) -> dict[str, float]:
     else:
         cutting.setdefault("min_power", 0.0)
         cutting.setdefault("passes", 1.0)
-    cutting["width"] = tool.width
+    # A V bit cuts as wide as the operation's depth makes it; the last
+    # pass, at the full depth, sets the trench.
+    cutting["width"] = tool.width_at(cutting["depth"]) if tool.kind == SPINDLE else tool.width
     return cutting
 
 

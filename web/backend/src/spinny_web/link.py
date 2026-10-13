@@ -26,6 +26,12 @@ READ_TIMEOUT = 0.05
 WRITE_TIMEOUT = 2.0
 POLL_IDLE = 0.2
 POLL_MOVING = 0.1
+# A machine that has answered nothing for this long, with status polls
+# out to it, has stopped talking: the link is closed with that reason
+# rather than left looking connected while everything sent to it waits.
+# The firmware answers a poll from its main loop in every state, a probe
+# or a flash write included, so silence this long is not a slow command.
+STALL_SECONDS = 3.0
 MOVING_STATES = ("Run", "Jog", "Hold")
 MAX_LINE = 96
 # Longest run of bytes without a line end the reader keeps; the firmware
@@ -271,10 +277,17 @@ class Link:
         open_port: Callable[[str], Any] | None = None,
         credits: int = DEFAULT_CREDITS,
         poll: bool = True,
+        stall: float | None = STALL_SECONDS,
     ) -> None:
         self.url = url
         self.credits = credits
         self.poll = poll
+        # Seconds of silence with polls unanswered before the link gives
+        # the machine up; None keeps waiting for ever.
+        self.stall = stall
+        # When the last line arrived, so a snapshot can say how old what it
+        # shows is, and the poller can tell a machine that has gone quiet.
+        self.last_heard = time.monotonic()
         self._open_port = open_port or open_serial
         self._port: Any = None
         self._pending: deque[Pending] = deque()
@@ -350,6 +363,11 @@ class Link:
     @property
     def is_open(self) -> bool:
         return self._opened and not self._closed.is_set()
+
+    @property
+    def age(self) -> float:
+        """Seconds since the machine last said anything."""
+        return max(0.0, time.monotonic() - self.last_heard)
 
     def close(self, reason: str = "closed") -> None:
         with self._close_lock:
@@ -604,6 +622,7 @@ class Link:
                     return
 
     def _handle_line(self, text: str) -> None:
+        self.last_heard = time.monotonic()
         routine = False
         # A report taken as a `status` line's answer is not counted as the
         # answer to a `?`: whichever of the two arrives first, the other
@@ -730,6 +749,18 @@ class Link:
 
     def _poll_loop(self) -> None:
         while not self._closed.wait(self._poll_interval()):
+            if self.stall is not None:
+                with self._status_cond:
+                    unanswered = self._polls_out
+                age = self.age
+                if unanswered > 0 and age > self.stall:
+                    # Nothing has come back for a while, polls included:
+                    # the machine, or the path to it, has stopped. Every
+                    # line waiting on it is failed with this reason, and a
+                    # run learns of it instead of waiting for a credit
+                    # that would never come free.
+                    self._fail(f"no answer from the machine for {age:.0f} s")
+                    return
             try:
                 self.realtime(REALTIME_STATUS, routine=True)
             except LinkError:

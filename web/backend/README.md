@@ -76,6 +76,7 @@ classDiagram
         Link.send(line) Pending
         Link.request(line) lines
         Link.realtime(byte)
+        Link.age / stall: closed after 3 s unanswered
         parse_status(text) Status
     }
     class kinematics {
@@ -85,7 +86,8 @@ classDiagram
         Streamer.joint_jog / joint_goto
         Streamer.slide_jog / slide_goto
         CartesianStreamer(angle) R and Z in the table frame
-        Spindle clearance, spinup
+        Streamer.rewind / approach / renumber_for picking a job up
+        Spindle clearance, spinup, full (speed control off)
     }
     class jobs {
         Job, Group, JobStats
@@ -97,17 +99,27 @@ classDiagram
         build(request, streamer, rate) CenterResult
     }
     class runner {
-        Runner.start(job, link, streamer, compensation)
+        Runner.start(job, link, streamer, compensation, skip, pieces, plan_start)
         Runner.hold / resume / stop
+        Runner.record() the resume record, checkpointed as the run goes
         halt(link) stop at rest
+    }
+    class resume {
+        ResumeStore var/resume.json
+    }
+    class log {
+        setup(root) var/spinny.log, rotated
+        tail(path, lines)
     }
     class heightmap {
         Grid, HeightMap, HeightMapStore
+        Grid.mask / with_mask_for(job, margin) only around the cuts
+        Grid.estimate_seconds(settings, rates)
         Compensation focus / power
-        check_covers(map, job)
+        check_covers(map, job) every cut over probed cells
     }
     class prober {
-        Prober.start(grid, settings, link, spindle_off, keep_focus)
+        Prober.start(grid, settings, link, spindle_off, keep_focus, resume, touch)
         Prober.stop / cancel, also while starting
         probe_joint(point, offset)
         cartesian_probe_joint(point, offset, angle)

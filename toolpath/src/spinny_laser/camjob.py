@@ -253,10 +253,11 @@ class _Board:
 
 
 def _isolation_width(profile: cam.Profile) -> float:
-    """The width the isolation is cut at: its tool's, else the narrowest tool's."""
+    """The width the isolation is cut at: its operation's, at the depth it
+    cuts (a V bit widens with it), else the narrowest tool's."""
     for operation in profile.operations:
         if operation.source == cam.ISOLATION:
-            return profile.tool(operation.tool).width
+            return float(operation.cutting.get("width", profile.tool(operation.tool).width))
     return min(tool.width for tool in profile.tools)
 
 
@@ -327,6 +328,9 @@ def _operation_groups(
 ) -> list[BuiltGroup]:
     source = operation.source
     prefix = operation.name
+    # The width of this operation's cut: the tool's, or for a V bit what
+    # the operation's depth makes it.
+    width = float(operation.cutting.get("width", tool.width))
     if source == cam.PATHS:
         wanted = str(operation.settings.get("match", "")).lower()
         taken = [found for found in design.paths if wanted in found.label.lower()]
@@ -345,25 +349,25 @@ def _operation_groups(
             label = f"{prefix}: loop {index + 1} at {members[0].offset:.3f} mm"
             groups.append(_group(operation, tool, label, [[tuple(p) for p in loop.points] for loop in members]))
         if plan.bridges:
-            notes.append(f"{prefix}: {len(plan.bridges)} places where copper is too close to part at {tool.width:g} mm")
+            notes.append(f"{prefix}: {len(plan.bridges)} places where copper is too close to part at {width:g} mm")
         return groups
     if source == cam.CLEARING:
         pattern = str(operation.settings.get("pattern", "lines"))
-        pitch = tool.width * operation.cutting.get("stepover", 1.0) if tool.kind == cam.SPINDLE else tool.width
+        pitch = width * operation.cutting.get("stepover", 1.0) if tool.kind == cam.SPINDLE else width
         strokes = copper_clearing.clear(
             plan.copper,
             max(plan.offsets),
-            tool.width,
+            width,
             pattern,
             outline=plan.outline,
-            pitch=min(tool.width, max(pitch, 1e-3)),
+            pitch=min(width, max(pitch, 1e-3)),
             tolerance=board.tolerance,
             pace=board.pace,
         )
         if not strokes:
             notes.append(f"{prefix}: nothing left to clear")
             return []
-        return [_group(operation, tool, f"{prefix}: {pattern}, {tool.width:g} mm {tool.kind}", [list(map(tuple, s)) for s in strokes])]
+        return [_group(operation, tool, f"{prefix}: {pattern}, {width:g} mm {tool.kind}", [list(map(tuple, s)) for s in strokes])]
     if source == cam.OUTLINE:
         if not board.outline:
             notes.append(f"{prefix}: {design.name} has no outline")
@@ -373,12 +377,12 @@ def _operation_groups(
         if not board.holes:
             notes.append(f"{prefix}: {design.name} has no drill file")
             return []
-        return _drill_groups(operation, tool, board.holes, notes)
+        return _drill_groups(operation, tool, board.holes, notes, width)
     if source == cam.DEPOSIT:
         fill = str(operation.settings.get("fill", copper_deposition.CONTOUR))
         deposition = copper_deposition.deposit(
             plan.copper,
-            tool.width,
+            width,
             fill,
             passes=int(operation.settings.get("loops", 1)),
             centers=board.centers,
@@ -403,9 +407,12 @@ def _drill_groups(
     tool: cam.Tool,
     holes: list[tuple[Point, float, Point | None]],
     notes: list[str],
+    width: float | None = None,
 ) -> list[BuiltGroup]:
     """Drilling: a bit is put down at the center of a hole its own size and
-    milled round a wider one; a laser marks each hole instead."""
+    milled round a wider one; a laser marks each hole instead. `width` is
+    the cut's at the operation's depth, the tool's own when left out."""
+    width = tool.width if width is None else width
     prefix = operation.name
     if tool.kind == cam.LASER:
         from laser_sweep import excellon
@@ -415,7 +422,7 @@ def _drill_groups(
             holes=[excellon.Hole(at=center, diameter=diameter, end=end) for center, diameter, end in holes],
             tools={},
         )
-        marks = excellon.marks(drills, style, tool.width)
+        marks = excellon.marks(drills, style, width)
         return [_group(operation, tool, f"{prefix}: {len(holes)} holes marked as {style}", [list(map(tuple, m)) for m in marks])]
     pecks: list[Polyline] = []
     rounds: list[Polyline] = []
@@ -424,16 +431,16 @@ def _drill_groups(
     for center, diameter, end in holes:
         if end is not None:
             slots += 1
-            rounds.append(_slot(center, end, diameter, tool.width))
+            rounds.append(_slot(center, end, diameter, width))
             continue
-        if diameter < tool.width - HOLE_SLACK:
+        if diameter < width - HOLE_SLACK:
             narrow += 1
-        if diameter > tool.width + HOLE_SLACK:
-            rounds.append(_circle(center, (diameter - tool.width) / 2.0))
+        if diameter > width + HOLE_SLACK:
+            rounds.append(_circle(center, (diameter - width) / 2.0))
         else:
             pecks.append([center])
     if narrow:
-        notes.append(f"{prefix}: {narrow} holes are narrower than the {tool.width:g} mm bit and come out its size")
+        notes.append(f"{prefix}: {narrow} holes are narrower than the {width:g} mm bit and come out its size")
     if slots:
         notes.append(f"{prefix}: {slots} slots are milled along their middle")
     groups = []

@@ -19,7 +19,7 @@ The sections and keys, with the firmware setting each one sets:
     [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms), pin (laser_pin)
     [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth
-    [host]    tolerance, clearance, spinup: the host's own settings, not the firmware's
+    [host]    tolerance, clearance, spinup, speed_control: the host's own settings, not the firmware's
     [controls] the page's jog panel and readout (spinny_laser.controls); left out, drawn from the kinematics, tool and focus axis
 """
 
@@ -266,7 +266,9 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             if not (low <= value <= high) or (key != "spinup" and value <= 0):
                 raise MachineError(f"{where}: [host] {key} must be above {low:g} and at most {high:g}")
             host[key] = value
-    reader.done(host_table, "host", set(HOST_KEYS))
+    if "speed_control" in host_table:
+        host["speed_control"] = float(reader.flag(host_table, "speed_control", True, "host"))
+    reader.done(host_table, "host", {*HOST_KEYS, "speed_control"})
     controls = parse_controls(reader, top, kinematics, tool, bool(settings["h_axis"]))
     reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "probe", "output", "enable", "drivers", "host", "controls"})
 

@@ -9,6 +9,7 @@ holds the machine, waits for it to come to rest and resets it.
 
 from __future__ import annotations
 
+import datetime
 import functools
 import threading
 import time
@@ -17,7 +18,7 @@ from typing import Callable
 
 from .heightmap import Compensation
 from .jobs import Job
-from .kinematics import Streamer, num
+from .kinematics import Piece, Streamer, num
 from .link import (
     REALTIME_HOLD,
     REALTIME_RESUME,
@@ -28,6 +29,9 @@ from .link import (
 )
 
 PUBLISH_INTERVAL = 0.2
+# How often the resume record is written while a run goes on, so that a
+# host that dies mid-job knows, within this, how far it got.
+CHECKPOINT_INTERVAL = 1.0
 # How long a hold may take to bring the machine to rest before the stop
 # resets it anyway.
 HOLD_WAIT = 2.0
@@ -57,6 +61,8 @@ class Progress:
     estimate: float = 0.0
     group: int | None = None
     error: str | None = None
+    # The line the run picked the job up at, None for a run from the top.
+    resumed_from: int | None = None
     started: float = field(default=0.0, repr=False)
     finished: float | None = field(default=None, repr=False)
 
@@ -73,6 +79,7 @@ class Progress:
             "estimate": round(self.estimate, 1),
             "group": self.group,
             "error": self.error,
+            "resumed_from": self.resumed_from,
         }
 
 
@@ -81,9 +88,16 @@ class Runner:
         self,
         publish: Callable[[dict], None] | None = None,
         message: Callable[[str, str], None] | None = None,
+        checkpoint: Callable[[dict], None] | None = None,
     ) -> None:
         self._publish = publish or (lambda progress: None)
         self._message = message or (lambda level, text: None)
+        # Takes the resume record: what the run is, where its plan began
+        # and how far it has got, written as the run goes so a later host,
+        # or a later session, can pick the job up where this one stopped.
+        self._checkpoint = checkpoint or (lambda record: None)
+        self._last_checkpoint = 0.0
+        self._plan: dict = {}
         self._lock = threading.Lock()
         self._abort = threading.Event()
         self._thread: threading.Thread | None = None
@@ -154,6 +168,9 @@ class Runner:
         compensation: Compensation | None = None,
         restarts: int | None = None,
         reserved: bool = False,
+        skip: int = 0,
+        pieces: list[Piece] | None = None,
+        plan_start: tuple[float, float] | None = None,
     ) -> dict:
         """Plans the run from where the machine is and starts streaming it.
 
@@ -162,6 +179,12 @@ class Runner:
         refuses the start. By default it is taken as planning begins.
         `reserved` takes over a claim `reserve` made, with whatever stop or
         hold came since.
+
+        `skip` picks the job up at that line: the lines before it are
+        counted as done, the head is brought to where it begins, and the
+        job goes on from there. The plan is then made from `plan_start`,
+        where the run being picked up began, so its lines are the same
+        ones, and `pieces`, when given, are those lines already made.
         """
         with self._lock:
             if reserved:
@@ -171,8 +194,19 @@ class Runner:
             else:
                 self._claim(link)
         try:
-            start, stats, restarts = self._prepare(job, link, streamer, compensation, restarts)
+            start, stats, restarts, pieces = self._prepare(
+                job, link, streamer, compensation, restarts, plan_start=plan_start, pieces=pieces
+            )
             assert link is not None
+            if skip < 0 or skip > stats.moves:
+                raise RunnerError(f"the job has {stats.moves} lines, so it cannot be picked up at line {skip}")
+            approach: list[str] = []
+            if skip > 0:
+                assert pieces is not None
+                approach = streamer.approach(pieces, skip, job, compensation)
+                renumber = streamer.renumber_for(pieces, skip, link.status) if link.status is not None else None
+                if renumber is not None:
+                    approach.insert(0, renumber)
             with self._lock:
                 if self._cancel_start is not None:
                     raise RunnerError(f"the run was not started: {self._cancel_start}")
@@ -183,19 +217,31 @@ class Runner:
                 self.progress = Progress(
                     job=job.id,
                     state=RUNNING,
+                    sent=skip,
+                    acked=skip,
                     total=stats.moves,
                     estimate=stats.seconds,
+                    resumed_from=skip if skip > 0 else None,
                     started=time.monotonic(),
                 )
                 progress = self.progress
+                self._plan = {
+                    "start": [float(start[0]), float(start[1])],
+                    "compensate": compensation.mode if compensation is not None else "off",
+                    "cartesian": streamer.cartesian,
+                    "angle": float(getattr(streamer, "angle", 0.0)),
+                    "spindle": streamer.spindle is not None,
+                    "started": _now_iso(),
+                }
                 self._link = link
                 self._error = None
                 self._end_state = ERROR
                 self._abort.clear()
                 self._last_publish = 0.0
+                self._last_checkpoint = 0.0
                 self._thread = threading.Thread(
                     target=self._run,
-                    args=(job, link, streamer, start, progress, compensation, restarts),
+                    args=(job, link, streamer, start, progress, compensation, restarts, skip, pieces, approach),
                     name="runner",
                     daemon=True,
                 )
@@ -215,6 +261,8 @@ class Runner:
         streamer: Streamer,
         compensation: Compensation | None,
         restarts: int | None = None,
+        plan_start: tuple[float, float] | None = None,
+        pieces: list[Piece] | None = None,
     ):
         if link is None or not link.is_open:
             raise RunnerError("not connected")
@@ -241,8 +289,16 @@ class Runner:
             except LinkError as exc:
                 raise RunnerError(f"could not renumber the table angle: {exc}") from exc
             status = self._idle_status(link)
-        start = streamer.start_of(status)
-        stats = streamer.estimate(job, start, compensation)
+        # A job picked up part way is planned from where the run it picks
+        # up began, not from where the head is now: only then are its lines
+        # the ones that were counted.
+        start = plan_start if plan_start is not None else streamer.start_of(status)
+        if pieces is None and plan_start is not None:
+            pieces = list(streamer.job_pieces(job, start, compensation))
+        if pieces is not None:
+            stats = streamer.estimate(job, start, compensation, pieces=pieces)
+        else:
+            stats = streamer.estimate(job, start, compensation)
         # The estimate takes a while on a large job, and the plan is only
         # good from where the machine was when it was made: a typed line in
         # the meantime may have moved the head, or declared it elsewhere.
@@ -250,7 +306,7 @@ class Runner:
         after = self._idle_status(link)
         if (after.r, after.a, after.z, after.h) != (status.r, status.a, status.z, status.h):
             raise RunnerError("the machine moved while the run was being prepared")
-        return start, stats, restarts
+        return start, stats, restarts, pieces
 
     @staticmethod
     def _idle_status(link: Link):
@@ -373,12 +429,28 @@ class Runner:
         progress: Progress,
         compensation: Compensation | None,
         restarts: int,
+        skip: int = 0,
+        pieces: list[Piece] | None = None,
+        approach: list[str] | None = None,
     ) -> None:
         # `restarts` is the count from before the plan was made, so a reset
         # between the plan and this thread is one under the run too.
         on_ack = functools.partial(self._on_ack, progress)
+        on_approach = functools.partial(self._on_approach, progress)
         try:
-            for piece in streamer.job_pieces(job, start, compensation):
+            lines = iter(pieces) if pieces is not None else streamer.job_pieces(job, start, compensation)
+            for index, piece in enumerate(lines):
+                if index < skip:
+                    # Done by the run this one picks up.
+                    continue
+                if index == skip and approach:
+                    # The head is brought from rest to where this line
+                    # begins before it goes out. These lines are the
+                    # host's, not the job's, so they are not counted.
+                    for line in approach:
+                        if self._abort.is_set():
+                            break
+                        link.send(line, abort=self._abort, callback=on_approach)
                 if self._abort.is_set():
                     break
                 if link.restarts != restarts:
@@ -435,6 +507,23 @@ class Runner:
             self._fail(reason, progress, state)
         elif not aborted:
             self._finish(DONE, progress)
+
+    def _on_approach(self, progress: Progress, pending: Pending) -> None:
+        """An answer to a line that brought the head to the resume point:
+        nothing is counted, and a refusal ends the run as a job line's
+        would."""
+        if progress is not self.progress:
+            return
+        if not pending.answered:
+            if pending.response == "reset" and not self._abort.is_set():
+                if self._error is None:
+                    self._error = "the machine was reset during the run"
+                self._abort.set()
+            return
+        if not pending.ok:
+            if self._error is None:
+                self._error = f"{pending.line!r}: {pending.response}"
+            self._abort.set()
 
     def _on_ack(self, progress: Progress, pending: Pending) -> None:
         if progress is not self.progress:
@@ -537,7 +626,32 @@ class Runner:
                 return
             self._last_publish = now
             snapshot = self.progress.to_dict()
+            checkpoint = force or now - self._last_checkpoint >= CHECKPOINT_INTERVAL
+            if checkpoint:
+                self._last_checkpoint = now
+                record = self.record()
         self._publish(snapshot)
+        if checkpoint:
+            self._checkpoint(record)
+
+    def record(self) -> dict:
+        """The resume record: the run's progress with the plan it was made
+        from. Call under the lock or with the run at rest."""
+        link = self._link
+        status = link.status if link is not None else None
+        position = None
+        if status is not None:
+            position = {"r": status.r, "a": status.a, "z": status.z, "h": status.h}
+        return {
+            **self.progress.to_dict(),
+            **self._plan,
+            "position": position,
+            "updated": _now_iso(),
+        }
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
 def _lines_waiting(link: Link, status) -> bool:

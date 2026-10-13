@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -325,3 +326,52 @@ def test_the_command_line_tool_writes_the_program_and_a_report(tmp_path, capsys)
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(BOARD_COPPER), "--dry-run"]) == 0
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(tmp_path / "nothing.svg")]) == 1
     assert "not a board or an X/Y gcode file" in capsys.readouterr().err
+
+
+def test_a_v_bit_cuts_as_wide_as_the_depth_makes_it():
+    text = """
+[[axes]]
+letter = "X"
+role = "x"
+[[axes]]
+letter = "Y"
+role = "y"
+[[axes]]
+letter = "Z"
+role = "depth"
+safe = 5
+[[tools]]
+id = "v"
+kind = "mill"
+angle = 30
+tip = 0.1
+rpm = 12000
+feed = 300
+depth = 0.1
+[[operations]]
+name = "iso"
+source = "isolation"
+tool = "v"
+[[operations]]
+name = "deep"
+source = "outline"
+tool = "v"
+depth = 0.2
+"""
+    profile = parse(text, "v")
+    tool = profile.tool("v")
+    flank = 2.0 * 0.1 * math.tan(math.radians(15.0))
+    assert tool.angle == 30.0 and tool.tip == 0.1 and tool.shank is None
+    assert tool.width == pytest.approx(0.1 + flank), "the nominal width is the cut at the default depth"
+    assert tool.width_at(0.2) == pytest.approx(0.1 + 2.0 * flank)
+    iso, deep = profile.operations
+    assert iso.cutting["width"] == pytest.approx(tool.width)
+    assert deep.cutting["width"] == pytest.approx(0.1 + 2.0 * flank), "the outline is cut deeper, so wider"
+    assert tool.document()["angle"] == 30.0
+    # A shank bounds the width however deep the cut.
+    capped = parse(text.replace("tip = 0.1\n", "tip = 0.1\ndiameter = 0.15\n"), "v").tool("v")
+    assert capped.shank == 0.15 and capped.width_at(5.0) == 0.15
+    with pytest.raises(CamError, match="tip needs angle"):
+        parse(text.replace("angle = 30\n", ""), "v")
+    with pytest.raises(CamError, match="angle is for a mill"):
+        parse(text.replace('kind = "mill"\nangle = 30\ntip = 0.1\nrpm = 12000\nfeed = 300\n', 'kind = "laser"\nangle = 30\nspot = 0.1\npower = 1\nspeed = 100\n'), "v")
