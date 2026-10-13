@@ -121,7 +121,8 @@ return_home = true              # G0 to each axis' home at the end
 anchor = "center"               # center | corner | keep: the middle on the origin, the lower
                                 # left on it, or the design as drawn
 offset = [0, 0]                 # mm, added after the anchor
-layer = "F.Cu"                  # the copper layer of a board
+layer = "F.Cu"                  # the layer a KiCad board is read from: a copper layer, or
+                                # F.Paste with a deposit operation for a solder paste stencil
 mirror = "none"                 # none | x | y: flips the layer, for a bottom layer cut through
 ```
 

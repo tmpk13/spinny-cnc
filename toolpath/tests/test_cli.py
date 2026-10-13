@@ -246,3 +246,19 @@ def test_a_board_file_goes_straight_in(tmp_path):
     code = main([str(BOARD), "-o", str(out), "--spot", "0.2", "--outline", "auto"])
     assert code == 0
     assert "board outline pass 1" in out.read_text()
+
+
+@pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+def test_a_board_file_is_cut_on_the_layer_asked_for(tmp_path, capsys):
+    out = tmp_path / "stencil.gcode"
+    code = main([str(BOARD), "-o", str(out), "--spot", "0.2", "--layer", "F.Paste", "--outline", "auto"])
+    assert code == 0
+    text = out.read_text()
+    assert "isolation loop 1" in text and "board outline pass 1" in text
+    assert re.search(r"^paste +\d+ islands", capsys.readouterr().out, re.M)
+    with pytest.raises(SystemExit):
+        main([str(BOARD), "-o", str(out), "--layer", "In1.Cu"])
+    assert "board.kicad_pcb has no layer In1.Cu" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main([str(BOARD), "-o", str(out), "--layer", "F/Paste"])
+    assert "layer must be a KiCad layer name" in capsys.readouterr().err

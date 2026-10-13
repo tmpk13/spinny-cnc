@@ -294,6 +294,8 @@ export interface Job {
     id: string;
     name: string;
     source: string;
+    /** The board layer a kicad or gerber job was cut from (F.Cu, or F.Paste for a stencil); missing or null otherwise. */
+    layer?: string | null;
     spot: number;
     offset: Board;
     groups: Group[];
@@ -322,6 +324,7 @@ export interface JobSummary {
     id: string;
     name: string;
     source: string;
+    layer?: string | null;
     spot: number;
     offset: Board;
     groups: GroupSummary[];
@@ -357,6 +360,8 @@ export interface UploadOptions {
     anchor?: Anchor;
     offset_x?: number;
     offset_y?: number;
+    /** The layer a KiCad board is read from, a KiCad layer name; left out, F.Cu. F.Paste with a deposit is a stencil. */
+    layer?: string;
     /** Gerber and KiCad boards only; left out, the board is isolated. */
     mode?: BoardMode;
     /** Isolation only; left out, no copper is cleared. */

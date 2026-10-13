@@ -146,6 +146,7 @@ def build_job(profile: Profile, folder: Path, name: str | None, streamer: Stream
     job = Job(
         name=built.name,
         source=built.source,
+        layer=design.layer,
         spot=built.spot,
         offset=Offset(x=built.offset[0], y=built.offset[1]),
         groups=[

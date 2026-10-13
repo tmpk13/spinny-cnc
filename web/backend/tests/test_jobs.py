@@ -529,3 +529,52 @@ def test_gcode_import_keeps_the_order_of_the_file():
     )
     job = jobs.from_gcode(text, "order", jobs.ImportOptions(anchor="keep"))
     assert [(g.power, g.speed, len(g.paths)) for g in job.groups] == [(500.0, 200.0, 1), (300.0, 800.0, 1), (500.0, 200.0, 1)]
+
+
+def test_the_layer_of_a_board_is_checked_and_kept():
+    with pytest.raises(JobImportError, match="layer must be a KiCad layer name"):
+        ImportOptions(layer="F/Paste").check()
+    ImportOptions(layer="In2.Cu").check()
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1))
+    assert job.layer == "F.Cu"
+    assert job.summary()["layer"] == "F.Cu"
+    assert jobs.job_from_dict(json.loads(jobs.job_to_json(job))).layer == "F.Cu"
+
+
+def test_a_gerber_whose_name_does_not_say_its_layer_is_taken_for_copper(tmp_path):
+    copy = tmp_path / "coupon.gbr"
+    copy.write_bytes(BOARD_COPPER.read_bytes())
+    job = jobs.from_board(copy, "coupon", ImportOptions(spot=0.1, mode="deposit"))
+    assert job.layer is None
+    assert job.groups[0].label == "copper edge loop 1 at 0.050 mm in"
+    assert from_svg(SVG, "drawing", ImportOptions()).layer is None
+
+
+@pytest.mark.skipif(
+    not BOARD_SAMPLE.exists() or shutil.which("kicad-cli") is None,
+    reason="needs toolpath/tests/data/board.kicad_pcb and kicad-cli",
+)
+def test_a_deposit_of_the_paste_layer_is_a_stencil():
+    job = jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(spot=0.1, layer="F.Paste", mode="deposit"))
+    assert job.source == "kicad" and job.layer == "F.Paste"
+    labels = [group.label for group in job.groups]
+    assert labels[0] == "paste edge loop 1 at 0.050 mm in"
+    assert labels[1] == "paste fill, contour, 0.100 mm pitch"
+    assert labels[-1] == "board outline pass 1" and not job.groups[-1].enabled
+    assert job.copper and job.outline
+    inside = inside_of(job.copper)
+    assert all(inside(point) for path in job.groups[0].paths for point in path)
+    isolated = jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(spot=0.1, layer="F.Paste", clear="radial"))
+    assert isolated.layer == "F.Paste"
+    assert [group.label for group in isolated.groups][-2].startswith("paste clearing, radial")
+
+
+@pytest.mark.skipif(
+    not BOARD_SAMPLE.exists() or shutil.which("kicad-cli") is None,
+    reason="needs toolpath/tests/data/board.kicad_pcb and kicad-cli",
+)
+def test_a_layer_the_board_lacks_or_leaves_empty_is_refused():
+    with pytest.raises(JobImportError, match="board.kicad_pcb has no layer In1.Cu"):
+        jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(layer="In1.Cu"))
+    with pytest.raises(JobImportError, match="draws no paste"):
+        jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(layer="B.Paste"))

@@ -87,6 +87,7 @@ def test_a_minimal_profile_takes_the_defaults():
         ('[[operations]]\nname = "x"\nsource = "outline"\ntool = "bit"\nspeed = 3\n', "[[operations]] x speed is not a key here"),
         ("[post]\nspindle_on = \"M8\"\n", "[post] spindle_on must be M3 or M4"),
         ("[placement]\noffset = [1]\n", "[placement] offset must be [x, y] in mm"),
+        ('[placement]\nlayer = "F/Paste"\n', "[placement] layer must be a KiCad layer name such as F.Cu or F.Paste"),
         ("shade = 1\n", "[[operations]] cut shade is not a key here"),
     ],
 )

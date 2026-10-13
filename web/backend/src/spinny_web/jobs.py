@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+from spinny_laser import board
 from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
 
@@ -43,7 +44,7 @@ DEFAULT_PPI = 96.0
 # Curves are bisected at most this deep when flattening.
 FLATTEN_DEPTH = 16
 
-GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gm1")
+GERBER_SUFFIXES = board.GERBER_SUFFIXES
 # Largest value a power, a speed or a coordinate may take: far past any
 # machine, and short enough to keep every protocol line under its limit.
 MAX_VALUE = 1.0e6
@@ -127,6 +128,10 @@ class Job(Finite):
     id: str = ""
     name: str = "job"
     source: str = "json"
+    # The board layer a kicad or gerber job was cut from, F.Cu or F.Paste
+    # for a stencil; None for a drawing, a gcode file or a gerber whose
+    # name does not say.
+    layer: str | None = None
     spot: float = DEFAULT_SPOT
     offset: Offset = Field(default_factory=Offset)
     groups: list[Group] = Field(default_factory=list)
@@ -139,6 +144,7 @@ class Job(Finite):
             "id": self.id,
             "name": self.name,
             "source": self.source,
+            "layer": self.layer,
             "spot": self.spot,
             "offset": self.offset.model_dump(),
             "groups": [
@@ -295,7 +301,10 @@ class ImportOptions:
     offset: Point = (0.0, 0.0)
     tolerance: float = kinematics.DEFAULT_TOLERANCE
     passes: int = 1
-    layer: str = "F.Cu"
+    # The layer a KiCad board is read from: a copper layer, or F.Paste,
+    # which with a deposit is a solder paste stencil. A gerber is its own
+    # layer.
+    layer: str = board.DEFAULT_LAYER
     # Only a board has copper to isolate, clear or deposit; other files
     # ignore all three.
     mode: str = MODE_ISOLATE
@@ -318,6 +327,7 @@ class ImportOptions:
         if self.mode == MODE_ISOLATE and self.fill is not None:
             raise JobImportError("fill is for a deposit; isolation takes clear instead")
         try:
+            board.check_layer(self.layer)
             check_power(self.power)
             check_speed(self.speed)
         except ValueError as exc:
@@ -544,33 +554,43 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
 
 
 def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE) -> Job:
-    """Isolation loops for a copper gerber or a KiCad board, with the outline when found,
+    """Isolation loops for a gerber or a KiCad board, with the outline when found,
     or with `mode` deposit the copper itself burnt and the outline switched off.
+
+    A KiCad board is read on `options.layer`: a copper layer, or the paste
+    layer, whose deposit is a solder paste stencil. A gerber is the layer
+    it is, and the groups are named for what the layer draws.
 
     `pace` is the machine's rail rate in mm/min over its table rate in
     deg/min, which a radial clearing or fill orders its spokes by."""
     from laser_sweep import geom, gerber, isocli, isolate
 
     temporary: tempfile.TemporaryDirectory | None = None
+    layer: str | None = options.layer
     try:
         if path.suffix.lower() == ".kicad_pcb":
             temporary = tempfile.TemporaryDirectory(prefix="spinny-web-")
             into = Path(temporary.name)
             isocli.export_board(path, options.layer, outline=True, drill=False, into=into)
-            copper_path = isocli.find_layer(into, options.layer)
+            try:
+                copper_path = board.find_layer(into, options.layer)
+            except board.LayerError:
+                raise JobImportError(f"{path.name} has no layer {options.layer}") from None
             source = "kicad"
         else:
             copper_path = path
             into = path.parent
             source = "gerber"
+            layer = board.layer_of(path)
+        word = board.layer_word(layer)
         try:
-            outline_path: Path | None = isocli.find_layer(into, "Edge.Cuts")
-        except isocli.SourceError:
+            outline_path: Path | None = board.find_layer(into, "Edge.Cuts")
+        except board.LayerError:
             outline_path = None
         image = gerber.read(copper_path)
         copper = geom.copper(image)
         if not copper:
-            raise JobImportError(f"{copper_path.name} draws no copper")
+            raise JobImportError(f"{copper_path.name} draws no {word}")
         outline: list = []
         if outline_path is not None:
             outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
@@ -597,7 +617,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                 tolerance=options.tolerance,
                 pace=pace,
             )
-            groups = deposit_groups(deposition, options)
+            groups = deposit_groups(deposition, options, word)
         else:
             plan = isolate.build(copper, config, outline=outline)
             placed, outline = plan.copper, plan.outline
@@ -614,7 +634,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                     tolerance=options.tolerance,
                     pace=pace,
                 )
-            groups = isolation_groups(plan, cleared, options)
+            groups = isolation_groups(plan, cleared, options, word)
     except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
         raise JobImportError(str(exc)) from exc
     finally:
@@ -637,6 +657,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     return Job(
         name=name,
         source=source,
+        layer=layer,
         spot=options.spot,
         offset=Offset(x=options.offset[0], y=options.offset[1]),
         groups=groups,
@@ -645,8 +666,9 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     )
 
 
-def isolation_groups(plan, cleared: list, options: ImportOptions) -> list[Group]:
-    """A group per isolation loop offset, then the clearing, if any."""
+def isolation_groups(plan, cleared: list, options: ImportOptions, word: str = "copper") -> list[Group]:
+    """A group per isolation loop offset, then the clearing, if any; `word`
+    is what the layer draws, for the labels."""
     groups: list[Group] = []
     for index in sorted({loop.index for loop in plan.loops}):
         members = [loop for loop in plan.loops if loop.index == index]
@@ -662,7 +684,7 @@ def isolation_groups(plan, cleared: list, options: ImportOptions) -> list[Group]
         # Before the outline: a board cut free may move under the beam.
         groups.append(
             Group(
-                label=f"copper clearing, {options.clear}, {options.spot:.3f} mm pitch",
+                label=f"{word} clearing, {options.clear}, {options.spot:.3f} mm pitch",
                 power=options.power,
                 speed=options.speed,
                 paths=[[tuple(p) for p in path] for path in cleared],
@@ -671,11 +693,12 @@ def isolation_groups(plan, cleared: list, options: ImportOptions) -> list[Group]
     return groups
 
 
-def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOptions) -> list[Group]:
-    """A group per edge loop offset, then the fill and the narrow traces."""
+def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOptions, word: str = "copper") -> list[Group]:
+    """A group per edge loop offset, then the fill and the narrow traces;
+    `word` is what the layer draws, for the labels."""
     groups = [
         Group(
-            label=f"copper edge loop {index + 1} at {offset:.3f} mm in",
+            label=f"{word} edge loop {index + 1} at {offset:.3f} mm in",
             power=options.power,
             speed=options.speed,
             paths=[[tuple(p) for p in loop] for loop in loops],
@@ -686,7 +709,7 @@ def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOpti
     if deposition.fill:
         groups.append(
             Group(
-                label=f"copper fill, {options.fill or copper_deposition.CONTOUR}, {options.spot:.3f} mm pitch",
+                label=f"{word} fill, {options.fill or copper_deposition.CONTOUR}, {options.spot:.3f} mm pitch",
                 power=options.power,
                 speed=options.speed,
                 paths=[[tuple(p) for p in path] for path in deposition.fill],
@@ -695,7 +718,7 @@ def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOpti
     if deposition.thin:
         groups.append(
             Group(
-                label="copper narrower than the spot, along its middle",
+                label=f"{word} narrower than the spot, along its middle",
                 power=options.power,
                 speed=options.speed,
                 paths=[[tuple(p) for p in path] for path in deposition.thin],

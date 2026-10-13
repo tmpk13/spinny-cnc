@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from pathlib import Path
 
@@ -829,3 +830,32 @@ def test_a_disconnect_with_the_machine_moving_holds_before_it_resets(tmp_path):
         assert 0x18 in fake.realtime_bytes
         assert ord("!") in fake.realtime_bytes[: fake.realtime_bytes.index(0x18)], fake.realtime_bytes
         assert fake.alarm is None
+
+
+def test_a_board_upload_names_its_layer(client):
+    board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board-F_Cu.gbr"
+    files = {"file": ("board-F_Cu.gbr", board.read_bytes(), "application/octet-stream")}
+    response = client.post("/api/jobs", files=files, data={"layer": "F/Paste"})
+    assert response.status_code == 400 and "layer must be a KiCad layer name" in response.text
+    response = client.post("/api/jobs", files=files, data={"layer": " F.Cu "})
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["layer"] == "F.Cu"
+    listed = [entry for entry in client.get("/api/jobs").json()["jobs"] if entry["id"] == job["id"]]
+    assert listed and listed[0]["layer"] == "F.Cu"
+
+
+@pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+def test_a_kicad_upload_can_cut_a_paste_stencil(client):
+    board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board.kicad_pcb"
+    files = {"file": ("board.kicad_pcb", board.read_bytes(), "application/octet-stream")}
+    response = client.post("/api/jobs", files=files, data={"layer": "F.Paste", "mode": "deposit", "fill": "radial"})
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["source"] == "kicad" and job["layer"] == "F.Paste"
+    assert [group["label"] for group in job["groups"]][:2] == [
+        "paste edge loop 1 at 0.050 mm in",
+        "paste fill, radial, 0.100 mm pitch",
+    ]
+    response = client.post("/api/jobs", files=files, data={"layer": "In1.Cu"})
+    assert response.status_code == 400 and "has no layer In1.Cu" in response.text

@@ -774,6 +774,33 @@ describe("jobs", () => {
         ]);
     });
 
+    test("the layer goes with an upload, trimmed, and an empty one sends none", async () => {
+        const { ctx, root, calls } = setup();
+        mountJobs(root, ctx);
+        const layer = root.querySelector('input[aria-label="Board layer"]') as HTMLInputElement;
+        expect(layer.value).toBe("F.Cu");
+        const offered = Array.from(root.querySelectorAll("datalist#board-layers option")).map((option) => (option as HTMLOptionElement).value);
+        expect(offered).toContain("F.Paste");
+        expect(layer.getAttribute("list")).toBe("board-layers");
+        const drop = root.querySelector(".drop") as HTMLElement;
+        const send = async (): Promise<void> => {
+            const event = new Event("drop", { cancelable: true });
+            Object.defineProperty(event, "dataTransfer", { value: { files: [new File(["(kicad_pcb)"], "board.kicad_pcb")] } });
+            drop.dispatchEvent(event);
+            for (let i = 0; i < 5; i++) {
+                await settle();
+            }
+        };
+        await send();
+        layer.value = " F.Paste ";
+        await send();
+        expect(root.querySelector(".job-list")!.textContent).toContain("kicad F.Paste");
+        layer.value = "";
+        await send();
+        const uploads = calls.filter((c) => c.name === "uploadJob").map((c) => c.args[1] as { layer?: string });
+        expect(uploads.map((options) => options.layer)).toEqual(["F.Cu", "F.Paste", undefined]);
+    });
+
     test("list and groups of the selected job", async () => {
         const { store, ctx, root, api } = setup();
         mountJobs(root, ctx);

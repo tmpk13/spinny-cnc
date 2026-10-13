@@ -1991,11 +1991,14 @@ def create_app(
         offset_x: float | None = Form(None),
         offset_y: float | None = Form(None),
         passes: int | None = Form(None),
+        layer: str | None = Form(None),
         clear: str | None = Form(None),
         mode: str | None = Form(None),
         fill: str | None = Form(None),
     ):
         options = ImportOptions(tolerance=backend.tolerance)
+        if layer:
+            options.layer = layer.strip()
         if power is not None:
             options.power = power
         if speed is not None:

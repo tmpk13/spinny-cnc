@@ -12,6 +12,7 @@ import {
     groupMoves,
     jointMinRadius,
     jointPreview,
+    layerOf,
     lengthToMm,
     parseGcode,
     parsePathData,
@@ -368,6 +369,21 @@ describe("building jobs", () => {
         expect(() => buildJob("0011", "a.svg", svg, { mode: "deposit", fill: "zigzag" as never }, limits)).toThrow("fill must be one of contour, radial, rings, lines");
         expect(() => buildJob("0011", "a.svg", svg, { mode: "deposit", clear: "radial" }, limits)).toThrow("clear is for isolation");
         expect(() => buildJob("0011", "a.svg", svg, { fill: "contour" }, limits)).toThrow("fill is for a deposit");
+    });
+
+    test("a board's layer is checked and kept, and a gerber's read from its name", () => {
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" viewBox="0 0 10 10"><path d="M0 0 L10 0"/></svg>';
+        expect(() => buildJob("0012", "board.kicad_pcb", "", { layer: "F/Paste" }, limits)).toThrow("layer must be a KiCad layer name such as F.Cu or F.Paste");
+        const stencil = buildJob("0012", "board.kicad_pcb", "", { layer: "F.Paste", mode: "deposit" }, limits);
+        expect(stencil.job.layer).toBe("F.Paste");
+        expect(stencil.note).toContain("paste geometry and deposition");
+        expect(buildJob("0013", "board.kicad_pcb", "", {}, limits).job.layer).toBe("F.Cu");
+        expect(buildJob("0014", "board-F_Paste.gtp", "G04 nothing*", {}, limits).job.layer).toBe("F.Paste");
+        expect(buildJob("0015", "coupon.gbr", "G04 nothing*", {}, limits).job.layer).toBeNull();
+        expect(buildJob("0016", "a.svg", svg, {}, limits).job.layer).toBeNull();
+        expect(layerOf("test-gerbers-F_Cu.gbr")).toBe("F.Cu");
+        expect(layerOf("board-Edge_Cuts.gm1")).toBe("Edge.Cuts");
+        expect(layerOf("my_board.gbr")).toBeNull();
     });
 
     test("unknown types are refused", () => {

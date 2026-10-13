@@ -10,7 +10,11 @@ import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
 
-export const ACCEPT = ".svg,.json,.gbr,.kicad_pcb,.gcode,.nc";
+export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gts,.gbs,.gtp,.gbp,.gto,.gbo,.gm1,.kicad_pcb,.gcode,.nc";
+
+/** The layers of a KiCad board a job is usually cut from, offered under the layer field; any other name may be typed. */
+export const BOARD_LAYERS = ["F.Cu", "B.Cu", "F.Paste", "B.Paste", "F.Mask", "B.Mask", "F.SilkS", "B.SilkS"];
+export const DEFAULT_LAYER = "F.Cu";
 
 export function progressText(progress: Progress | null): { bar: number; counts: string; time: string; state: string; reason: string } {
     if (!progress) {
@@ -76,6 +80,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     );
     const offsetX = numberField({ value: 0 });
     const offsetY = numberField({ value: 0 });
+    const layerList = el("datalist", { id: "board-layers" }, ...BOARD_LAYERS.map((layer) => el("option", { value: layer })));
+    const layerField = el("input", {
+        type: "text",
+        class: "field",
+        list: "board-layers",
+        value: DEFAULT_LAYER,
+        spellcheck: "false",
+        "aria-label": "Board layer",
+        title: "The layer of a KiCad board the job is cut from: a copper layer to isolate or deposit, or F.Paste with deposit to burn a solder paste stencil out of a film. A gerber is its own layer",
+    }) as HTMLInputElement;
     const clearField = el("select", {
         class: "field",
         "aria-label": "Clear copper",
@@ -120,6 +134,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         labeled("Anchor", anchorField),
         labeled("Offset x", offsetX),
         labeled("Offset y", offsetY),
+        labeled("Layer", layerField),
+        layerList,
         labeled("Board", modeField),
         clearLabel,
         fillLabel,
@@ -158,6 +174,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         }
         if (oy !== null) {
             out.offset_y = oy;
+        }
+        const layer = layerField.value.trim();
+        if (layer) {
+            out.layer = layer;
         }
         if (modeField.value === "deposit") {
             out.mode = modeField.value as BoardMode;
@@ -224,7 +244,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             const item = el("li", { class: job.id === selected ? "selected" : "" });
             const pick = el("button", { type: "button", class: "job-pick", onclick: () => void ctx.selectJob(job.id) },
                 el("span", { class: "job-name" }, job.name),
-                el("span", { class: "muted" }, ` ${job.source}`),
+                el("span", { class: "muted" }, job.layer ? ` ${job.source} ${job.layer}` : ` ${job.source}`),
                 job.stats ? el("span", { class: "muted job-stat" }, ` ${formatLength(job.stats.length_mm)}, ${formatDuration(job.stats.seconds)}`) : null,
             );
             const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small");

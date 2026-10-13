@@ -2889,6 +2889,7 @@ export class MockBackend implements Api, EventFeed {
                 id: job.id,
                 name: job.name,
                 source: job.source,
+                layer: job.layer ?? null,
                 spot: job.spot,
                 offset: job.offset,
                 groups: job.groups.map((group) => ({

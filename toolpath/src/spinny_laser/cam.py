@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import board
+
 LINEAR, ROTARY = "linear", "rotary"
 KINDS = (LINEAR, ROTARY)
 X, Y, DEPTH, RADIUS, ANGLE, SETUP = "x", "y", "depth", "radius", "angle", "setup"
@@ -588,7 +590,11 @@ class _Reader:
             or any(abs(v) > MAX_VALUE for v in offset)
         ):
             raise self.fail(section, "offset", "must be [x, y] in mm")
-        layer = self.text(table, section, "layer", "F.Cu")
+        layer = self.text(table, section, "layer", board.DEFAULT_LAYER)
+        try:
+            board.check_layer(layer)
+        except board.LayerError:
+            raise self.fail(section, "layer", "must be a KiCad layer name such as F.Cu or F.Paste") from None
         mirror = self.choice(table, section, "mirror", MIRRORS, "none")
         self.done(table, section, {"anchor", "offset", "layer", "mirror"})
         return Placement(anchor, (float(offset[0]), float(offset[1])), layer, mirror)

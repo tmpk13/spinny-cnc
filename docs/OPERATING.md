@@ -9,7 +9,10 @@ From the first connection to a probed, compensated run. The wiring and the bring
 The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
 A board upload isolates its copper by default; with Board set to deposit,
 for a process that lays copper down, it burns the copper itself and
-nothing past its edge.
+nothing past its edge. The Layer field picks the layer a KiCad board is
+read from: a copper layer, or F.Paste, which with deposit burns the paste
+openings out of a film laid where the board would be, a solder paste
+stencil. A gerber is its own layer.
 Open `http://localhost:8000`, connect to the board (or to
 `socket://127.0.0.1:2323` for the virtual firmware), jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table

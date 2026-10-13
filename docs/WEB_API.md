@@ -137,7 +137,7 @@ operations a design goes through, and how the gcode is written.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, or with `mode` `deposit` edge loops inside it, not the group passes below), `mode` (`isolate`, the default, or `deposit`: gerber and KiCad only, see below), `clear` (`off`, `radial`, `rings` or `lines`: isolation only, gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead), `fill` (`contour`, the default, `radial`, `rings` or `lines`: a deposit only); `clear` other than `off` with a deposit, or `fill` with isolation, answers 400; a file over 64 MB answers 413 |
+| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, or with `mode` `deposit` edge loops inside it, not the group passes below), `layer` (a KiCad layer name, `F.Cu` when left out: the layer a `.kicad_pcb` is read from, a copper layer or `F.Paste`, which with `mode` `deposit` is a solder paste stencil; a gerber is its own layer, and one named the way kicad-cli names them, `board-F_Paste.gtp`, is known for it; a name that is not a layer name answers 400, a layer the board does not have `has no layer`), `mode` (`isolate`, the default, or `deposit`: gerber and KiCad only, see below), `clear` (`off`, `radial`, `rings` or `lines`: isolation only, gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead), `fill` (`contour`, the default, `radial`, `rings` or `lines`: a deposit only); `clear` other than `off` with a deposit, or `fill` with isolation, answers 400; a file over 64 MB answers 413 |
 | `POST /api/center` | the polar laser's only (400 on a cartesian or spindle machine); JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
@@ -153,8 +153,13 @@ is 502.
 
 Accepted uploads: `.svg` (paths, lines, polylines, polygons, rects,
 circles; curves flattened; mm from the viewBox), `.gcode`/`.nc` (absolute
-X/Y `G0`/`G1` with `S` and `F`), `.json` (a job), `.gbr` (copper layer,
-isolation loops through the sibling geometry engine), `.kicad_pcb`.
+X/Y `G0`/`G1` with `S` and `F`), `.json` (a job), a gerber of one layer
+(`.gbr`, or the Protel extensions kicad-cli gives its layers, `.gtl`,
+`.gbl`, `.gts`, `.gbs`, `.gtp`, `.gbp`, `.gto`, `.gbo`, `.gm1`; isolation
+loops through the sibling geometry engine), `.kicad_pcb` (its `layer`
+plotted through kicad-cli). The job's `layer` says which layer a kicad or
+gerber job came from, `null` otherwise, and the group labels below say
+`paste`, `mask` or `silk` for `copper` when the layer is one of those.
 
 A board with `mode` `deposit` is for a process that lays copper down: the
 beam burns the copper and nothing past its edge. Its groups, in order:
@@ -168,13 +173,16 @@ beam burns the copper and nothing past its edge. Its groups, in order:
 
 Copper narrower than the spot that is not a stroke (a thin neck of a
 zone) is left, as are the corners of copper sharper than the beam. A
-deposit is placed where isolation of the same board would be.
+deposit is placed where isolation of the same board would be. A deposit
+of `layer` `F.Paste` is a solder paste stencil: the paste openings burnt
+out of a film laid where the board would be, the outline group there to
+cut the film to the board's shape.
 
 Job:
 
 ```json
 {
-  "id": "a1b2", "name": "board", "source": "gerber",
+  "id": "a1b2", "name": "board", "source": "gerber", "layer": "F.Cu",
   "spot": 0.1, "offset": {"x": 0, "y": 14},
   "groups": [
     {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "passes": 1, "enabled": true,

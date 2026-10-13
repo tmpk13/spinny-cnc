@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from pathlib import Path
 
-from laser_sweep import excellon, geom, gerber, isolate
+from laser_sweep import excellon, geom, gerber, isocli, isolate
 from laser_sweep.isocli import (
     AUTO,
     NONE,
@@ -32,7 +33,7 @@ from laser_sweep.isolate import (
 )
 from laser_sweep.layout import INSIDE_OUT, OUTSIDE_IN
 
-from . import __version__, gcode, machine, preview
+from . import __version__, board, gcode, machine, preview
 from .clear import chains
 
 
@@ -44,11 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument("input", type=Path, help="a .kicad_pcb, or a copper layer gerber")
+    parser.add_argument("input", type=Path, help="a .kicad_pcb, or a gerber of one layer")
     parser.add_argument(
         "--layer",
-        default="F.Cu",
-        help="copper layer to isolate, for a board file or to pick a sibling gerber",
+        default=board.DEFAULT_LAYER,
+        help="the layer of a board file to isolate: a copper layer, or F.Paste for a stencil",
     )
 
     cut = parser.add_argument_group("isolation")
@@ -130,6 +131,41 @@ def read_outline(path: Path, offset: float) -> list:
     return outline_cut(drawn, offset)
 
 
+def resolve_input(args, temporary: list) -> tuple[Path, Path | None, Path | None]:
+    """The files that hold the layer, the profile and the holes.
+
+    A board file is plotted here rather than by the sibling's resolver,
+    which only knows the copper and mask gerber extensions kicad-cli gives
+    its files; a paste or silk layer comes out as .gtp or .gto."""
+    source = args.input
+    if source.suffix.lower() != ".kicad_pcb":
+        return resolve(args, temporary)
+    if not source.exists():
+        raise SourceError(f"{source} does not exist")
+    board.check_layer(args.layer)
+    outline_mode = args.outline.strip().lower()
+    drill_mode = args.drill.strip().lower()
+    directory = args.gerber_dir
+    if directory is None:
+        holder = tempfile.TemporaryDirectory(prefix="spinny-iso-")
+        temporary.append(holder)
+        directory = Path(holder.name)
+    isocli.export_board(source, args.layer, outline=outline_mode == AUTO, drill=drill_mode == AUTO, into=directory)
+    try:
+        layer_path = board.find_layer(directory, args.layer)
+    except board.LayerError:
+        raise SourceError(f"{source.name} has no layer {args.layer}") from None
+    outline = None if outline_mode in (AUTO, NONE) else Path(args.outline)
+    drill = None if drill_mode in (AUTO, NONE) else Path(args.drill)
+    if outline_mode == AUTO:
+        outline = board.find_layer(directory, "Edge.Cuts")
+    if drill_mode == AUTO:
+        drill = isocli.find_drill(directory, source.stem)
+        if drill is None:
+            raise SourceError(f"no drill file was exported to {directory}")
+    return layer_path, outline, drill
+
+
 def check_burn(power_name: str, power: float, speed_name: str, speed: float, s_max: float) -> None:
     if not 0.0 <= power <= s_max:
         raise ValueError(f"{power_name} {power:g} is outside 0 to --s-max {s_max:g}")
@@ -143,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     temporary: list = []
 
     try:
-        copper_path, outline_path, drill_path = resolve(args, temporary)
+        copper_path, outline_path, drill_path = resolve_input(args, temporary)
+        word = board.layer_word(args.layer if args.input.suffix.lower() == ".kicad_pcb" else board.layer_of(args.input))
         offset = parse_offset(args.offset)
         config = IsoConfig(
             spot=args.spot,
@@ -173,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         image = gerber.read(copper_path)
         copper = geom.copper(image)
         if not copper:
-            raise SourceError(f"{copper_path} draws no copper")
+            raise SourceError(f"{copper_path} draws no {word}")
         outline = []
         if outline_path is not None:
             outline = read_outline(outline_path, args.outline_offset)
@@ -183,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             found = excellon.read(drill_path)
             holes = len(found.holes)
             drills = excellon.marks(found, args.drill_marks, args.spot)
-    except (SourceError, gerber.GerberError, ValueError) as exc:
+    except (SourceError, board.LayerError, gerber.GerberError, ValueError) as exc:
         parser.error(str(exc))
 
     plan = isolate.build(
@@ -242,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     ) + args.spot / 2.0
     summary = [
         f"source     {args.input}" + (f" ({copper_path.name})" if copper_path != args.input else ""),
-        f"copper     {plan.islands} islands",
+        f"{word:<11}{plan.islands} islands",
         f"loops      {len(plan.loops)} in {len(plan.offsets)} pass(es)",
         f"radius     {reach:.2f} mm from the axis",
         *machine.summary_lines(job),

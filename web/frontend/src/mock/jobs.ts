@@ -1167,6 +1167,30 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
 
 /** What a board import may clear with, as the backend names them. */
 const CLEAR_CHOICES: string[] = ["off", "radial", "rings", "lines"];
+/** A KiCad layer name, as the backend checks it: F.Cu, In2.Cu, B.Paste, Margin. */
+const LAYER_NAME = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)?$/;
+const MAX_LAYER_LENGTH = 32;
+/** The layer a gerber's name ends with, the way kicad-cli names them: board-F_Paste.gtp. */
+const NAMED_LAYER = /(?:^|-)((?:F|B|In[0-9]+)_(?:Cu|Paste|Mask|SilkS|Adhes|Fab|CrtYd)|(?:Dwgs|Cmts|Eco[12])_User|Edge_Cuts|User_[0-9]+|Margin)$/;
+/** The gerber extensions the backend takes: KiCad's own and the Protel ones kicad-cli gives the layers. */
+const GERBER_EXTENSIONS = ["gbr", "gtl", "gbl", "gts", "gbs", "gtp", "gbp", "gto", "gbo", "gm1"];
+
+/** The layer a gerber's name says it is, or null when the name does not say. */
+export function layerOf(name: string): string | null {
+    const stem = name.replace(/\.[^.]+$/, "");
+    const match = NAMED_LAYER.exec(stem);
+    return match ? match[1]!.replace(/_/g, ".") : null;
+}
+
+/** What a layer draws, as the backend labels the groups cut from it. */
+function layerWord(layer: string | null): string {
+    const words: Record<string, string> = { Cu: "copper", Paste: "paste", Mask: "mask", SilkS: "silk" };
+    if (layer === null) {
+        return "copper";
+    }
+    const kind = layer.includes(".") ? layer.slice(layer.lastIndexOf(".") + 1) : layer;
+    return words[kind] ?? layer;
+}
 /** What a board import burns, and what a deposit may fill with, as the backend names them. */
 const MODES: string[] = ["isolate", "deposit"];
 const FILL_CHOICES: string[] = ["contour", "radial", "rings", "lines"];
@@ -1191,6 +1215,10 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     const mode: string = options.mode ?? "isolate";
     if (!MODES.includes(mode)) {
         throw new Error(`mode must be one of ${MODES.join(", ")}`);
+    }
+    const layer = options.layer ?? "F.Cu";
+    if (layer.length > MAX_LAYER_LENGTH || !LAYER_NAME.test(layer)) {
+        throw new Error(`layer must be a KiCad layer name such as F.Cu or F.Paste, not ${JSON.stringify(layer)}`);
     }
     const clear: string = options.clear ?? "off";
     if (!CLEAR_CHOICES.includes(clear)) {
@@ -1219,28 +1247,33 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     let source: string;
     let note: string | null = null;
     let geometry: ParsedGeometry & { copper?: Path[]; outline?: Path[] };
-    switch (extension) {
-        case "svg":
-            geometry = parseSvg(text);
-            source = "svg";
-            break;
-        case "gcode":
-        case "nc":
-            geometry = parseGcode(text);
-            source = "gcode";
-            break;
-        case "gbr":
-        case "kicad_pcb":
-            geometry = demoCoupon();
-            source = extension === "gbr" ? "gerber" : "kicad";
-            note = mode === "deposit"
-                ? "mock backend: copper geometry and deposition need the real backend, showing a demo coupon"
-                : clear === "off"
-                    ? "mock backend: copper geometry needs the real backend, showing a demo coupon"
-                    : "mock backend: copper geometry and clearing need the real backend, showing a demo coupon";
-            break;
-        default:
-            throw new Error(`unsupported file type: .${extension || "?"}`);
+    // A board job keeps the layer it was cut from: a KiCad board's chosen
+    // one, a gerber's from its name when the name says.
+    let jobLayer: string | null = null;
+    if (extension === "kicad_pcb" || GERBER_EXTENSIONS.includes(extension)) {
+        geometry = demoCoupon();
+        source = extension === "kicad_pcb" ? "kicad" : "gerber";
+        jobLayer = extension === "kicad_pcb" ? layer : layerOf(name);
+        const word = layerWord(jobLayer);
+        note = mode === "deposit"
+            ? `mock backend: ${word} geometry and deposition need the real backend, showing a demo coupon`
+            : clear === "off"
+                ? `mock backend: ${word} geometry needs the real backend, showing a demo coupon`
+                : `mock backend: ${word} geometry and clearing need the real backend, showing a demo coupon`;
+    } else {
+        switch (extension) {
+            case "svg":
+                geometry = parseSvg(text);
+                source = "svg";
+                break;
+            case "gcode":
+            case "nc":
+                geometry = parseGcode(text);
+                source = "gcode";
+                break;
+            default:
+                throw new Error(`unsupported file type: .${extension || "?"}`);
+        }
     }
 
     const placed = placeJob(geometry, anchor, offset);
@@ -1258,6 +1291,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         id,
         name: name.replace(/\.[^.]+$/, ""),
         source,
+        layer: jobLayer,
         spot,
         offset,
         groups,

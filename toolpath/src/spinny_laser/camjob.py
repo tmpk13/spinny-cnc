@@ -15,14 +15,14 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import cam
+from . import board, cam
 from . import clear as copper_clearing
 from . import deposit as copper_deposition
 
 Point = tuple[float, float]
 Polyline = list[Point]
 
-GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gm1")
+GERBER_SUFFIXES = board.GERBER_SUFFIXES
 BOARD_SUFFIXES = GERBER_SUFFIXES + (".kicad_pcb",)
 # A hole this much wider than the bit is milled round; narrower, the bit is
 # put down at its center.
@@ -52,6 +52,10 @@ class Design:
 
     name: str
     source: str
+    # The board layer the copper was read from (F.Cu, or F.Paste for a
+    # stencil); None for a design that is not a board, or a gerber whose
+    # name does not say.
+    layer: str | None = None
     copper: list = field(default_factory=list)
     outline: list[Polyline] = field(default_factory=list)
     # (center, diameter, end of a slot or None), as the drill file lists them.
@@ -113,33 +117,40 @@ class BuiltJob:
 # --- reading a board ----------------------------------------------------------
 
 
-def read_board(path: Path, layer: str = "F.Cu") -> Design:
+def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
     """A board's copper, outline and drills: a KiCad board exported through
-    kicad-cli, or a copper gerber with its siblings found beside it."""
+    kicad-cli, its `layer` read as the copper (the paste layer for a
+    stencil), or a gerber with its siblings found beside it."""
     from laser_sweep import excellon, geom, gerber, isocli
 
     path = Path(path)
     temporary: tempfile.TemporaryDirectory | None = None
+    read_layer: str | None = layer
     try:
         if path.suffix.lower() == ".kicad_pcb":
+            board.check_layer(layer)
             temporary = tempfile.TemporaryDirectory(prefix="spinny-cam-")
             into = Path(temporary.name)
             isocli.export_board(path, layer, outline=True, drill=True, into=into)
-            copper_path = isocli.find_layer(into, layer)
+            try:
+                copper_path = board.find_layer(into, layer)
+            except board.LayerError:
+                raise DesignError(f"{path.name} has no layer {layer}") from None
             source = "kicad"
         else:
             copper_path = path
             into = path.parent
             source = "gerber"
+            read_layer = board.layer_of(path)
         try:
-            outline_path: Path | None = isocli.find_layer(into, "Edge.Cuts")
-        except isocli.SourceError:
+            outline_path: Path | None = board.find_layer(into, "Edge.Cuts")
+        except board.LayerError:
             outline_path = None
         drill_path = isocli.find_drill(into, path.stem.split("-")[0]) if into.is_dir() else None
         image = gerber.read(copper_path)
         copper = geom.copper(image)
         if not copper:
-            raise DesignError(f"{copper_path.name} draws no copper")
+            raise DesignError(f"{copper_path.name} draws no {board.layer_word(read_layer)}")
         outline: list[Polyline] = []
         if outline_path is not None:
             outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
@@ -150,13 +161,14 @@ def read_board(path: Path, layer: str = "F.Cu") -> Design:
         return Design(
             name=path.stem,
             source=source,
+            layer=read_layer,
             copper=copper,
             outline=[list(map(tuple, p)) for p in outline],
             holes=holes,
             centers=copper_deposition.centerlines(image),
             image=image,
         )
-    except (isocli.SourceError, gerber.GerberError, OSError) as exc:
+    except (isocli.SourceError, board.LayerError, gerber.GerberError, OSError) as exc:
         raise DesignError(str(exc)) from exc
     finally:
         if temporary is not None:
