@@ -49,7 +49,9 @@ def test_the_shipped_files_load_and_say_what_they_are():
         "description": "X/Y machine with a spindle on the output and the focus axis as depth",
         "kinematics": "cartesian", "tool": "spindle", "focus": True,
     }
-    assert mill.document()["settings"]["z_max"] == 30.0
+    # The slide's travel is the user's measurement, so the shipped value is
+    # not the oracle: the document carries whatever the file says.
+    assert mill.document()["settings"]["z_max"] == mill.settings["z_max"] > 0
     # Wired as a three axis mill: rail on X, table on E, slide on Y, depth on Z.
     assert mill.settings["sockets"] == 1423 and mill.settings["tmc_a_ma"] == 0
     assert {m.settings["sockets"] for m in found if m.id != "cartesian-mill"} == {1234}

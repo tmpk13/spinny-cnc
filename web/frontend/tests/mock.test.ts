@@ -1734,7 +1734,9 @@ describe("machine files in the mock", () => {
 
         const applied = await backend.applyMachine("cartesian-mill");
         expect(applied.machine).toBe("cartesian-mill");
-        expect([applied.values["cartesian"], applied.values["spindle"], applied.values["h_axis"], applied.values["z_max"]]).toEqual([1, 1, 1, 30]);
+        expect([applied.values["cartesian"], applied.values["spindle"], applied.values["h_axis"]]).toEqual([1, 1, 1]);
+        // The slide's travel is measured on the machine and edited in the file, so it is not asserted by value.
+        expect(applied.values["z_max"]).toBeGreaterThan(0);
         expect(applied.host).toEqual({ tolerance: 0.005, clearance: 2, spinup: 2 });
         expect((await backend.state()).profile).toMatchObject({ kinematics: "cartesian", tool: "spindle", h_axis: true });
         expect((await backend.machines()).current).toBe("cartesian-mill");

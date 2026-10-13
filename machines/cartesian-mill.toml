@@ -13,6 +13,7 @@ tool = "spindle"
 [rail]
 socket = "X"
 steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn; the step generator caps it near 470 mm/min
+limit = 60
 
 [table]
 socket = "E"
@@ -25,7 +26,7 @@ max_rate = 560
 accel = 50
 jerk = 3
 jog_rate = 120
-limit = 30
+limit = 40
 
 [focus]
 socket = "Z"
@@ -38,8 +39,8 @@ jog_rate = 120
 current_ma = 600
 
 [probe]
-invert = false
-brake_ms = 20
+invert = true
+brake_ms = 1
 
 [host]
 tolerance = 0.005
