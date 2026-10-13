@@ -27,8 +27,27 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
         button("Resume ~", () => ctx.call(ctx.api.realtime("resume")), "btn btn-quiet btn-small"),
         button("Reset", () => ctx.call(ctx.api.realtime("reset")), "btn btn-danger btn-small"),
         button("Clear", () => { ctx.store.set({ console: [] }); }, "btn btn-quiet btn-small"),
+        button("Log", () => showLog(), "btn btn-quiet btn-small"),
         el("label", { class: "check", for: "show-polls", title: "Show the status polls the link sends on its own" }, polls, "polls"),
     );
+
+    /**
+     * The tail of the backend's log into the console: what happened to the
+     * link, the runs and the probing, kept when no page was open to see it.
+     */
+    async function showLog(): Promise<void> {
+        const lines = await ctx.call(ctx.api.log(100));
+        if (!lines) {
+            return;
+        }
+        const entries: ConsoleLine[] = lines.map((text) => ({ dir: "rx", text: `# ${text}`, poll: false }));
+        if (entries.length === 0) {
+            entries.push({ dir: "rx", text: "# the backend's log is empty", poll: false });
+        }
+        const current = ctx.store.get().console;
+        const next = [...current, ...entries];
+        ctx.store.set({ console: next.length > CONSOLE_LIMIT ? next.slice(next.length - CONSOLE_LIMIT) : next });
+    }
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Console"), realtime),
         log,

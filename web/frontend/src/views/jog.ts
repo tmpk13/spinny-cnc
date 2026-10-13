@@ -218,6 +218,58 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         );
     }
 
+    /**
+     * Declares where the head is without moving it, in the numbers typed:
+     * what a power cycle calls for, when the head sits where the last run
+     * left it but the controller counts from zero again. The last position
+     * the backend recorded fills the fields in with a press.
+     */
+    function positionRow(axes: AxisControl[]): HTMLDivElement {
+        // No placeholders: the goto rows own the letters as placeholders, and
+        // a letter before each field says which it is.
+        const fields = axes.map((axis) => {
+            const input = numberField({ step: 0.001, width: "6rem" });
+            input.setAttribute("aria-label", `declare ${axis.letter}`);
+            return { axis, input };
+        });
+        const set = button("Set position", async () => {
+            const given = fields
+                .map((field) => [field.axis.axis, parseNumber(field.input.value)] as const)
+                .filter((entry): entry is readonly [JointAxis, number] => entry[1] !== null);
+            if (given.length === 0) {
+                ctx.toast("error", `enter ${anyOf(fields.map((field) => field.axis.letter.toLowerCase()))} to declare`);
+                return;
+            }
+            const words = given.map(([axis, value]) => `${controlOf(controls, axis)?.letter ?? axis.toUpperCase()} ${value}`).join(", ");
+            const ok = await askConfirm(`Declare the head to be at ${words} without moving it? The height map's offset is taken back and must be set again.`, "Set position");
+            if (!ok) {
+                return;
+            }
+            await ctx.call(ctx.api.setPosition(Object.fromEntries(given)));
+        }, "btn btn-quiet");
+        const last = button("Last known", () => {
+            const position = ctx.store.get().snapshot.resume?.position;
+            if (!position) {
+                ctx.toast("error", "no run has recorded a position");
+                return;
+            }
+            for (const field of fields) {
+                const value = position[field.axis.axis];
+                field.input.value = value === null || value === undefined ? "" : String(value);
+            }
+        }, "btn btn-quiet");
+        last.title = "Fill in the last position the backend recorded during a run";
+        for (const field of fields) {
+            field.input.addEventListener("keydown", onEnter(set));
+        }
+        return el("div", { class: "position-row" },
+            el("span", { class: "choice-label" }, "Here is"),
+            ...fields.flatMap((field) => [el("span", { class: "muted position-letter" }, field.axis.letter), field.input]),
+            set,
+            last,
+        );
+    }
+
     function draw(): void {
         drawn = controls;
         const bars = el("div", { class: "axis-bars" });
@@ -242,6 +294,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         const gotoAxes = controls.axes.filter((axis) => axis.goto);
         if (gotoAxes.length > 0 || controls.center) {
             rows.push(jointGotoRow(gotoAxes));
+        }
+        if (controls.axes.length > 0) {
+            rows.push(positionRow(controls.axes));
         }
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet");

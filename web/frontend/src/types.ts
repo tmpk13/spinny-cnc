@@ -3,6 +3,17 @@
 export interface Port {
     url: string;
     description: string;
+    /** The device node behind a stable by-id url; the url itself for a port without one. */
+    device?: string;
+    product?: string;
+    manufacturer?: string;
+    serial?: string;
+    vid?: number | null;
+    pid?: number | null;
+    /** `usb` for a device with a vendor id, `system` for a built-in port (never the controller), `last` for the url last used. */
+    kind?: "usb" | "system" | "last";
+    /** The device announces itself as the spinny controller. */
+    spinny?: boolean;
 }
 
 export interface PortsResponse {
@@ -58,6 +69,8 @@ export interface Machine {
     queue: Queue;
     /** The touch probe is down; null on a machine without a focus axis. */
     probe?: boolean | null;
+    /** How old the report is, s: a machine that has gone quiet shows here before the link gives it up. */
+    age?: number;
 }
 
 /** How the head moves over the board: the rail and the table, or the rail and the cross slide. */
@@ -84,6 +97,50 @@ export interface Snapshot {
     /** Missing from a backend that predates it: a polar laser. */
     profile?: Profile;
     run: Progress | null;
+    /** How far the last run got and the plan it was made from, kept across sessions; null when none ran. */
+    resume?: ResumeRecord | null;
+}
+
+/** The last run's progress with what a later session needs to pick the job up where it stopped. */
+export interface ResumeRecord extends Progress {
+    /** Where the plan began: the joint the head was at, [r, a] or [r, z] on a cartesian machine. */
+    start?: [number, number] | null;
+    compensate?: Compensate;
+    cartesian?: boolean;
+    angle?: number;
+    spindle?: boolean;
+    started?: string;
+    updated?: string;
+    /** The machine's last reported position. */
+    position?: { r: number; a: number; z: number; h: number | null } | null;
+    /** A note left by whoever wrote the record by hand. */
+    note?: string;
+}
+
+export interface ResumeRequest {
+    /** The count of lines done, as the progress reports it. */
+    line: number;
+    /** Start over at the first line of the path that line belongs to, so a count a line off cannot leave a gap. */
+    rewind?: boolean;
+    /** Left out, the way the run being picked up followed the board. */
+    compensate?: Compensate | null;
+}
+
+/** What picking a job up would do, without moving anything. */
+export interface ResumePlan {
+    job: string;
+    line: number;
+    /** The line the run starts at: `line`, or the start of its path. */
+    skip: number;
+    total: number;
+    compensate: Compensate;
+    /** The plan was made from where the recorded run began, so its lines are the ones counted. */
+    planned_from_record: boolean;
+    /** The job's line the run starts with; null past the end. */
+    next: string | null;
+    group: number | null;
+    /** The lines that bring the head from rest to where `next` begins. */
+    approach: string[];
 }
 
 // On the polar machine the cross slide is a setup axis: it moves alone, so
@@ -132,6 +189,12 @@ export interface HostSettings {
     clearance?: number;
     /** Milling: dwell after the spindle starts, s. */
     spinup?: number;
+    /** Milling: the host sets the spindle's speed from the groups; off, the spindle runs full on whenever it runs. */
+    speed_control?: boolean;
+}
+
+export interface LogResponse {
+    lines: string[];
 }
 
 export interface SettingsResponse {
@@ -408,6 +471,8 @@ export interface Progress {
     group: number | null;
     /** Why the state is error. */
     error?: string | null;
+    /** The line the run picked the job up at; null or missing for a run from the top. */
+    resumed_from?: number | null;
 }
 
 /** How a run follows the height map: not at all, the focus axis where fitted, else power, or one of the two. */
@@ -421,7 +486,28 @@ export interface Grid {
     y1: number;
     nx: number;
     ny: number;
+    /** mask[iy][ix]: which points are probed; missing or null probes them all. */
+    mask?: boolean[][] | null;
 }
+
+/** What to probe: the grid, or only the points a job's cuts come near, or the rest of a map probed in part. */
+export interface ProbeRequest extends Grid {
+    /** Probe only the points within `margin` mm (plus half the spot) of this job's cuts. */
+    job?: string | null;
+    margin?: number | null;
+    /** Go on with the stored map where it has no height yet. */
+    resume?: boolean;
+}
+
+/** About how long probing would take, and the grid it would probe, mask included. */
+export interface ProbeEstimate {
+    seconds: number;
+    points: number;
+    grid: Grid;
+}
+
+/** What one probe under the head is for: tie the map to the focus axis frame in use, or make the contact height H 0. */
+export type TouchMode = "map" | "zero";
 
 export interface HeightMap {
     grid: Grid;
@@ -431,6 +517,8 @@ export interface HeightMap {
     focus_offset: number;
     /** Someone has said what the focus offset is; a run needs it. */
     focus_set: boolean;
+    /** The offset was set at some point in some frame, so a probe at one point can tie the map to a new one. */
+    focus_known?: boolean;
     /** The probe tip from the beam when probed: along the rail, across it, mm, signed as ProbeSettings.offset. */
     probe_offset: [number, number];
     created: string;
@@ -446,6 +534,10 @@ export interface ProbeProgress {
     point: [number, number] | null;
     seconds: number;
     error: string | null;
+    /** About how long the whole of it was to take, s; null when nobody guessed. */
+    estimate?: number | null;
+    /** Seconds left, at the pace so far once a few points are done. */
+    remaining?: number | null;
 }
 
 /** The host's probing parameters. */

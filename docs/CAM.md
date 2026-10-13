@@ -85,6 +85,10 @@ id = "vbit"                     # needed: letters, digits, - and _
 kind = "mill"                   # needed: mill (a spindle) | laser
 name = "30 degree V bit"
 diameter = 0.2                  # a mill, needed: the width of the cut, mm (`spot` for a laser)
+# angle = 30                    # a mill V bit instead: the included angle of its point, degrees; the
+# tip = 0.1                     # width of its tip, mm. The cut is then tip + 2 * depth * tan(angle / 2),
+                                # as wide as each operation's depth makes it, and `diameter`, if given,
+                                # is the shank that bounds it
 rpm = 12000                     # a mill, needed: S
 feed = 300                      # a mill, needed: mm/min along the cut
 plunge = 60                     # a mill: mm/min into the cut; default 60

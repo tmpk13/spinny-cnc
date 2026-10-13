@@ -38,13 +38,13 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setV
 import { DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
+    Board,
     CamGcodeResponse,
     CamJobResponse,
     CamPath,
     CamProfileResponse,
     CamProfilesResponse,
     CamValue,
-    Board,
     CenterRequest,
     CenterResponse,
     Compensate,
@@ -59,26 +59,33 @@ import type {
     JogRequest,
     Joint,
     Machine,
-    MachineState,
     MachineCheck,
     MachineDocument,
     MachineProblem,
     MachineResponse,
     MachinesResponse,
+    MachineState,
     Mode,
     Path,
+    Point,
     Port,
     PositionRequest,
+    ProbeEstimate,
     ProbeProgress,
+    ProbeRequest,
     ProbeSettings,
     Profile,
     Progress,
     RealtimeAction,
+    ResumePlan,
+    ResumeRecord,
+    ResumeRequest,
     RunState,
     SettingSchema,
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
+    TouchMode,
     UploadOptions,
     WsEvent,
 } from "../types.ts";
@@ -1085,6 +1092,9 @@ interface RunSession {
     state: RunState;
     seconds: number;
     group: number;
+    /** The line the run picked the job up at; null for a run from the top. */
+    resumedFrom?: number | null;
+    compensate?: Compensate;
 }
 
 /** Points per side of a probe grid. */
@@ -1181,10 +1191,96 @@ export function gridOrder(grid: Grid): [number, number][] {
     const out: [number, number][] = [];
     for (let iy = 0; iy < grid.ny; iy++) {
         for (let k = 0; k < grid.nx; k++) {
-            out.push([iy % 2 === 0 ? k : grid.nx - 1 - k, iy]);
+            const ix = iy % 2 === 0 ? k : grid.nx - 1 - k;
+            if (gridWanted(grid, ix, iy)) {
+                out.push([ix, iy]);
+            }
         }
     }
     return out;
+}
+
+/** Whether a grid point is probed: every one without a mask. */
+export function gridWanted(grid: Grid, ix: number, iy: number): boolean {
+    const mask = grid.mask;
+    return !mask || Boolean(mask[iy]?.[ix]);
+}
+
+/** How many points a grid probes. */
+export function gridPoints(grid: Grid): number {
+    return gridOrder(grid).length;
+}
+
+/**
+ * The grid probing only what a job's cuts come near: the corners of every
+ * cell a cut passes through, the cut taken `margin` plus half the spot
+ * wide. A job with no cuts inside the grid keeps the whole grid.
+ */
+export function gridMaskedForJob(grid: Grid, job: Job, margin: number): Grid {
+    const reach = Math.max(0, margin) + Math.max(0, job.spot ?? 0) / 2;
+    const dx = (grid.x1 - grid.x0) / (grid.nx - 1);
+    const dy = (grid.y1 - grid.y0) / (grid.ny - 1);
+    const cells: boolean[][] = Array.from({ length: grid.ny - 1 }, () => Array<boolean>(grid.nx - 1).fill(false));
+    const clampX = (value: number): number => Math.max(0, Math.min(grid.nx - 2, Math.floor((value - grid.x0) / dx)));
+    const clampY = (value: number): number => Math.max(0, Math.min(grid.ny - 2, Math.floor((value - grid.y0) / dy)));
+    let anyCut = false;
+    const markBox = (bx0: number, by0: number, bx1: number, by1: number): void => {
+        if (bx1 < grid.x0 || bx0 > grid.x1 || by1 < grid.y0 || by0 > grid.y1) {
+            return;
+        }
+        for (let j = clampY(by0); j <= clampY(by1); j++) {
+            for (let i = clampX(bx0); i <= clampX(bx1); i++) {
+                cells[j]![i] = true;
+            }
+        }
+    };
+    const step = Math.min(dx, dy) / 2;
+    const markSegment = (a: Point, b: Point): void => {
+        const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const parts = length > 0 ? Math.max(1, Math.ceil(length / step)) : 1;
+        for (let k = 0; k < parts; k++) {
+            const p: Point = [a[0] + (b[0] - a[0]) * k / parts, a[1] + (b[1] - a[1]) * k / parts];
+            const q: Point = [a[0] + (b[0] - a[0]) * (k + 1) / parts, a[1] + (b[1] - a[1]) * (k + 1) / parts];
+            markBox(Math.min(p[0], q[0]) - reach, Math.min(p[1], q[1]) - reach, Math.max(p[0], q[0]) + reach, Math.max(p[1], q[1]) + reach);
+        }
+    };
+    for (const group of job.groups) {
+        if (!group.enabled) {
+            continue;
+        }
+        for (const path of group.paths) {
+            if (path.length === 0) {
+                continue;
+            }
+            anyCut = true;
+            if (path.length === 1) {
+                markSegment(path[0]!, path[0]!);
+            }
+            for (let k = 1; k < path.length; k++) {
+                markSegment(path[k - 1]!, path[k]!);
+            }
+        }
+        for (const poly of group.joints ?? []) {
+            const points: Point[] = poly.map(([r, a]) => [r * Math.cos(a * Math.PI / 180), r * Math.sin(a * Math.PI / 180)]);
+            if (points.length === 0) {
+                continue;
+            }
+            anyCut = true;
+            for (let k = 1; k < points.length; k++) {
+                markSegment(points[k - 1]!, points[k]!);
+            }
+        }
+    }
+    if (!anyCut) {
+        return { ...grid, mask: null };
+    }
+    const mask: boolean[][] = Array.from({ length: grid.ny }, () => Array<boolean>(grid.nx).fill(false));
+    cells.forEach((row, j) => row.forEach((flag, i) => {
+        if (flag) {
+            mask[j]![i] = mask[j]![i + 1] = mask[j + 1]![i] = mask[j + 1]![i + 1] = true;
+        }
+    }));
+    return { ...grid, mask };
 }
 
 /**
@@ -1421,6 +1517,10 @@ export class MockBackend implements Api, EventFeed {
     private nextId = 1;
     private session: RunSession | null = null;
     private lastProgress: Progress | null = null;
+    /** Every line either way, as the backend's log would hold them. */
+    private consoleLog: string[] = [];
+    /** What the last run was planned from, kept with its progress as the resume record. */
+    private lastPlan: { start: [number, number]; compensate: Compensate; cartesian: boolean; spindle: boolean } | null = null;
     /** Board moves waiting for a free line slot, sent as the machine drains. */
     private outbox: { line: string; move: Move }[] = [];
     private eventListeners = new Set<(event: WsEvent) => void>();
@@ -1578,6 +1678,7 @@ export class MockBackend implements Api, EventFeed {
             machine: this.connected ? this.machine.status() : null,
             profile: this.machine.profile(),
             run: this.progress(),
+            resume: this.resumeRecordOf(),
         };
     }
 
@@ -1591,12 +1692,22 @@ export class MockBackend implements Api, EventFeed {
             job: session.job.id,
             state: session.state,
             sent: session.next,
-            acked: Math.max(0, Math.min(session.next, acked)),
+            acked: Math.max(session.resumedFrom ?? 0, Math.min(session.next, acked)),
             total: session.moves.length,
             seconds: session.seconds,
             estimate: session.job.stats.seconds,
             group: session.group,
+            resumed_from: session.resumedFrom ?? null,
         };
+    }
+
+    /** The record of the last run, as the backend keeps across sessions. */
+    private resumeRecordOf(): ResumeRecord | null {
+        const progress = this.progress();
+        if (!progress || !this.lastPlan) {
+            return null;
+        }
+        return { ...progress, ...this.lastPlan, position: { ...this.machine.joint, z: this.machine.z, h: this.machine.hasFocusAxis() ? this.machine.h : null } };
     }
 
     private serviceRun(dt: number): void {
@@ -1733,10 +1844,21 @@ export class MockBackend implements Api, EventFeed {
 
     async ports(): Promise<Port[]> {
         const ports: Port[] = [
-            { url: "/dev/ttyACM0", description: "RP2040 spinny firmware (mock)" },
+            {
+                url: "/dev/serial/by-id/usb-spinny_spinny_laser_controller_mock-if00",
+                device: "/dev/ttyACM0",
+                description: "spinny laser controller (mock)",
+                product: "spinny laser controller",
+                manufacturer: "spinny",
+                vid: 0x2e8a,
+                pid: 0x000a,
+                kind: "usb",
+                spinny: true,
+            },
+            { url: "/dev/ttyS0", device: "/dev/ttyS0", description: "n/a", kind: "system", spinny: false },
         ];
         if (this.lastSocket) {
-            ports.push({ url: this.lastSocket, description: "virtual firmware" });
+            ports.push({ url: this.lastSocket, device: this.lastSocket, description: "last used", kind: "last", spinny: false });
         }
         return ports;
     }
@@ -3014,6 +3136,24 @@ export class MockBackend implements Api, EventFeed {
         this.order = this.order.filter((other) => other !== id);
     }
 
+    async deleteAllJobs(): Promise<string[]> {
+        const running = this.session?.job.id ?? null;
+        const removed: string[] = [];
+        for (const id of [...this.order]) {
+            if (id === running) {
+                continue;
+            }
+            this.jobStore.delete(id);
+            removed.push(id);
+        }
+        this.order = this.order.filter((id) => id === running);
+        return removed;
+    }
+
+    async log(lines = 200): Promise<string[]> {
+        return this.consoleLog.slice(-lines);
+    }
+
     /**
      * The steps along one board path from `joint`, `z`: the polar planner's,
      * or on a cartesian machine one joint line per board line, in the frame
@@ -3260,11 +3400,113 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "job has no enabled paths");
         }
         this.jogTracked = false;
-        this.session = { job, moves, next: 0, okSent: 0, state: "running", seconds: 0, group: 0 };
+        this.session = { job, moves, next: 0, okSent: 0, state: "running", seconds: 0, group: 0, compensate: followed?.mode ?? "off" };
         this.lastProgress = null;
+        this.lastPlan = this.planOf(followed?.mode ?? "off");
         const following = followed ? `, following the board by ${followed.mode}` : "";
         this.message("info", `running ${job.name}: ${moves.length} moves${following}`);
         this.serviceRun(0);
+    }
+
+    private planOf(compensate: Compensate): { start: [number, number]; compensate: Compensate; cartesian: boolean; spindle: boolean } {
+        const machine = this.machine;
+        const cartesian = machine.cartesian();
+        return {
+            start: cartesian ? [machine.joint.r, machine.z] : [machine.joint.r, machine.joint.a],
+            compensate,
+            cartesian,
+            spindle: machine.milling(),
+        };
+    }
+
+    /** The moves of a job and where picking it up at `request.line` would start. */
+    private resumePlanOf(id: string, request: ResumeRequest): { job: Job; moves: Move[]; skip: number; line: number; compensate: Compensate } {
+        const job = this.requireJob(id);
+        if (!Number.isInteger(request.line) || request.line < 0) {
+            throw new ApiError(400, "the line to pick the job up at cannot be negative");
+        }
+        const record = this.resumeRecordOf();
+        const theirs = record !== null && record.job === id;
+        const compensate = request.compensate ?? (theirs ? record.compensate ?? "off" : "off");
+        if (!COMPENSATE_MODES.includes(compensate)) {
+            throw new ApiError(400, `compensate must be one of ${COMPENSATE_MODES.join(", ")}`);
+        }
+        const followed = this.compensation(compensate, job);
+        let moves: Move[];
+        try {
+            moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const line = Math.min(request.line, moves.length);
+        let skip = line;
+        if (request.rewind ?? true) {
+            while (skip > 0 && ["cut", "turn", "plunge"].includes(moves[skip - 1]!.kind)) {
+                skip -= 1;
+            }
+            if (skip > 0 && moves[skip - 1]!.kind === "go") {
+                skip -= 1;
+            }
+        }
+        return { job, moves, skip, line, compensate: followed?.mode ?? "off" };
+    }
+
+    async planResume(id: string, request: ResumeRequest): Promise<ResumePlan> {
+        const { moves, skip, line, compensate } = this.resumePlanOf(id, request);
+        const next = moves[skip] ?? null;
+        const record = this.resumeRecordOf();
+        return {
+            job: id,
+            line,
+            skip,
+            total: moves.length,
+            compensate,
+            planned_from_record: record !== null && record.job === id,
+            next: next ? formatMove(next) : null,
+            group: next ? next.group : null,
+            approach: next ? [formatMove(next)] : [],
+        };
+    }
+
+    async resumeJob(id: string, request: ResumeRequest): Promise<Progress> {
+        this.requireConnected();
+        this.refuseWhileProbing();
+        if (this.machine.milling() && !this.machine.hasFocusAxis()) {
+            throw new ApiError(400, "a spindle needs the focus axis as its depth axis: set $h_axis=1");
+        }
+        const { job, moves, skip, compensate } = this.resumePlanOf(id, request);
+        if (this.session) {
+            throw new ApiError(409, "a job is already running");
+        }
+        if (this.machine.state !== "Idle" || this.outbox.length > 0) {
+            throw new ApiError(409, "machine is not idle");
+        }
+        if (moves.length === 0) {
+            throw new ApiError(400, "job has no enabled paths");
+        }
+        this.jogTracked = false;
+        this.session = { job, moves, next: skip, okSent: skip, state: "running", seconds: 0, group: moves[skip]?.group ?? 0, resumedFrom: skip, compensate };
+        this.lastProgress = null;
+        this.lastPlan = this.planOf(compensate);
+        this.message("info", `picking ${job.name} up at line ${skip} of ${moves.length}`);
+        this.serviceRun(0);
+        const progress = this.progress();
+        if (!progress) {
+            throw new ApiError(500, "the run did not start");
+        }
+        return progress;
+    }
+
+    async resumeRecord(): Promise<ResumeRecord | null> {
+        return this.resumeRecordOf();
+    }
+
+    async forgetResume(): Promise<void> {
+        if (this.session) {
+            throw new ApiError(409, "a job is running");
+        }
+        this.lastProgress = null;
+        this.lastPlan = null;
     }
 
     async runHold(): Promise<void> {
@@ -3316,13 +3558,145 @@ export class MockBackend implements Api, EventFeed {
 
     private heightMapState(): HeightMapState {
         const progress = this.probeProgress;
+        let remaining: number | null = null;
+        if (progress) {
+            remaining = progress.state === "running" ? Math.max(0, progress.total - progress.done) * PROBE_POINT_SECONDS : progress.state === "done" ? 0 : null;
+        }
         return {
             map: this.heightmap ? structuredClone(this.heightmap) : null,
             probe: progress
-                ? { ...progress, point: progress.point ? [progress.point[0], progress.point[1]] : null, seconds: Math.round(progress.seconds * 10) / 10 }
+                ? {
+                    ...progress,
+                    point: progress.point ? [progress.point[0], progress.point[1]] : null,
+                    seconds: Math.round(progress.seconds * 10) / 10,
+                    remaining: remaining === null ? null : Math.round(remaining * 10) / 10,
+                }
                 : null,
             settings: structuredClone(this.probeConfig),
         };
+    }
+
+    /** The grid a probe request asks for: the job's mask when it names one, the stored map's when it goes on with it. */
+    private probeGridOf(request: ProbeRequest): { grid: Grid; resume: HeightMap | null } {
+        if (request.resume) {
+            const map = this.heightmap;
+            if (!map) {
+                throw new ApiError(400, "there is no height map to go on with: probe the board first");
+            }
+            if (map.heights.every((row, iy) => row.every((value, ix) => value !== null || !gridWanted(map.grid, ix, iy)))) {
+                throw new ApiError(400, "the height map is complete: nothing is left to probe");
+            }
+            return { grid: structuredClone(map.grid), resume: map };
+        }
+        let grid: Grid = { x0: request.x0, y0: request.y0, x1: request.x1, y1: request.y1, nx: request.nx, ny: request.ny, mask: request.mask ?? null };
+        try {
+            checkGrid(grid);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        if (request.job) {
+            const job = this.requireJob(request.job);
+            const margin = request.margin ?? 1;
+            if (!(Number.isFinite(margin) && margin >= 0 && margin <= 100)) {
+                throw new ApiError(400, "the margin must be 0 to 100 mm");
+            }
+            grid = gridMaskedForJob(grid, job, margin);
+        }
+        return { grid, resume: null };
+    }
+
+    async probeEstimate(request: ProbeRequest): Promise<ProbeEstimate> {
+        const { grid, resume } = this.probeGridOf(request);
+        const points = resume
+            ? gridOrder(grid).filter(([ix, iy]) => resume.heights[iy]?.[ix] === null).length
+            : gridPoints(grid);
+        return { seconds: Math.round(points * PROBE_POINT_SECONDS * 10) / 10, points, grid };
+    }
+
+    /**
+     * One probe under the head, at once on the mock's clock: with `map`
+     * the shift it finds against the map ties the map to the focus axis
+     * frame in use; with `zero` the contact height becomes H 0.
+     */
+    async probeHere(mode: TouchMode): Promise<HeightMapState> {
+        this.requireConnected();
+        this.notOwned();
+        if (mode !== "map" && mode !== "zero") {
+            throw new ApiError(400, "mode must be map or zero");
+        }
+        const machine = this.machine;
+        if (mode === "map" && !this.heightmap) {
+            throw new ApiError(400, "there is no height map to tie: probe the board, or probe here for H 0");
+        }
+        if (machine.state !== "Idle") {
+            throw new ApiError(409, `the machine is ${statusLine(machine)}, not Idle`);
+        }
+        if (!machine.hasFocusAxis()) {
+            throw new ApiError(409, "the machine has no focus axis: set $h_axis=1 to probe");
+        }
+        if (machine.probeActive()) {
+            throw new ApiError(409, "the probe is already touching: raise the head clear of the board first");
+        }
+        if (machine.milling() && machine.spindle > 0) {
+            throw new ApiError(409, "the spindle is turning: stop it before probing");
+        }
+        const settings = this.probeConfig;
+        const travel = machine.h;
+        const line = `probe H-${num(settings.depth, 4)} F${num(settings.feed)}`;
+        this.line("tx", line);
+        const replies = probeReplies(machine, -settings.depth, settings.feed);
+        for (const reply of replies) {
+            this.line("rx", reply);
+        }
+        const report = /^\[PRB:(-?[\d.]+):([01])\]$/.exec(replies[0] ?? "");
+        if (!report || report[2] !== "1") {
+            this.message("error", `probing failed: the probe found nothing within ${shortNumber(settings.depth)} mm`);
+            throw new ApiError(409, `the probe found nothing within ${shortNumber(settings.depth)} mm`);
+        }
+        const height = Number(report[1]);
+        this.line("tx", `go H${coord(travel, 4)}`);
+        machine.h = travel;
+        this.line("rx", "ok");
+        if (mode === "zero") {
+            this.line("tx", `set H${num(travel - height, 4)}`);
+            machine.h = travel - height;
+            this.line("rx", "ok");
+            this.frameChanged("the surface was probed");
+            this.message("info", `H 0 is now the surface probed here (it read ${height.toFixed(4)})`);
+            this.emit({ type: "state", data: this.snapshot() });
+            return this.heightMapState();
+        }
+        const map = this.heightmap!;
+        const board = machine.headBoard();
+        const x = board.x + settings.offset[0];
+        const y = board.y + settings.offset[1];
+        const grid = map.grid;
+        const m = COVER_MARGIN;
+        if (!(x >= grid.x0 - m && y >= grid.y0 - m && x <= grid.x1 + m && y <= grid.y1 + m)) {
+            throw new ApiError(400, `probe over the map: the tip is at X ${x.toFixed(1)} Y ${y.toFixed(1)}`);
+        }
+        let mapped: number;
+        try {
+            mapped = heightAt(map, x, y);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const shift = height - mapped;
+        let offset: number;
+        if (map.focus_known) {
+            offset = map.focus_offset + shift;
+        } else if (machine.milling()) {
+            offset = shift;
+        } else {
+            throw new ApiError(400, "the map has never been focused: focus the beam by eye over it first (focus here)");
+        }
+        map.focus_offset = round4(offset);
+        map.focus_set = true;
+        map.focus_known = true;
+        this.focusFrame = this.frame;
+        this.emitHeightMap();
+        this.message("info", `height map tied to this frame: the surface here reads ${height.toFixed(4)}, ${shift >= 0 ? "+" : ""}${shift.toFixed(4)} against the map`);
+        return this.heightMapState();
     }
 
     private emitHeightMap(): void {
@@ -3338,14 +3712,10 @@ export class MockBackend implements Api, EventFeed {
      * point: the head goes over the point, touches, touches again slower,
      * and rises back to the height it had when probing began.
      */
-    async probe(grid: Grid): Promise<HeightMapState> {
+    async probe(request: ProbeRequest): Promise<HeightMapState> {
         this.requireConnected();
         this.notOwned();
-        try {
-            checkGrid(grid);
-        } catch (error) {
-            throw new ApiError(400, errorText(error));
-        }
+        const { grid, resume } = this.probeGridOf(request);
         const machine = this.machine;
         if (machine.state !== "Idle") {
             throw new ApiError(409, `the machine is ${statusLine(machine)}, not Idle`);
@@ -3364,7 +3734,7 @@ export class MockBackend implements Api, EventFeed {
         // Every point is checked for reach before the first move, soft limits included.
         const xs = gridXs(grid);
         const ys = gridYs(grid);
-        const order = gridOrder(grid);
+        const order = resume ? gridOrder(grid).filter(([ix, iy]) => resume.heights[iy]?.[ix] === null) : gridOrder(grid);
         const joints: ProbeJoint[] = [];
         const cartesian = machine.cartesian();
         const rMax = machine.settings["r_max"] ?? 0;
@@ -3395,11 +3765,15 @@ export class MockBackend implements Api, EventFeed {
             }
             joints.push(joint);
         }
-        const map: HeightMap = {
-            grid: { x0: grid.x0, y0: grid.y0, x1: grid.x1, y1: grid.y1, nx: grid.nx, ny: grid.ny },
+        if (resume && this.heightsFrame !== this.frame) {
+            throw new ApiError(400, "the focus axis was renumbered since the map was probed: probe it anew");
+        }
+        const map: HeightMap = resume ?? {
+            grid: { x0: grid.x0, y0: grid.y0, x1: grid.x1, y1: grid.y1, nx: grid.nx, ny: grid.ny, mask: grid.mask ?? null },
             heights: Array.from({ length: grid.ny }, () => Array<number | null>(grid.nx).fill(null)),
             focus_offset: 0,
             focus_set: false,
+            focus_known: false,
             probe_offset: [settings.offset[0], settings.offset[1]],
             created: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
         };
@@ -3408,15 +3782,26 @@ export class MockBackend implements Api, EventFeed {
         // its heights are in this focus axis frame.
         const previous = this.heightmap;
         const sameProbe = previous && previous.probe_offset[0] === settings.offset[0] && previous.probe_offset[1] === settings.offset[1];
-        if (previous && sameProbe && this.heightsFrame === this.frame) {
+        if (!resume && previous && sameProbe && this.heightsFrame === this.frame) {
             map.focus_offset = previous.focus_offset;
             map.focus_set = previous.focus_set;
+            map.focus_known = previous.focus_known ?? false;
         }
         this.heightsFrame = this.frame;
         this.jogTracked = false;
         // The new map replaces the old one from the start, so its grid fills in.
         this.heightmap = map;
-        const progress: ProbeProgress = { state: "running", done: 0, total: grid.nx * grid.ny, point: null, seconds: 0, error: null };
+        const done = resume ? map.heights.flat().filter((value) => value !== null).length : 0;
+        const progress: ProbeProgress = {
+            state: "running",
+            done,
+            total: gridPoints(grid),
+            point: null,
+            seconds: 0,
+            error: null,
+            estimate: Math.round(order.length * PROBE_POINT_SECONDS * 10) / 10,
+            remaining: null,
+        };
         this.probeProgress = progress;
         const session: ProbeSession = { settings, order, joints, next: 0, elapsed: 0, travel: machine.h, map, progress };
         this.probing = session;

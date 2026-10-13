@@ -60,5 +60,85 @@ describe("the code editor", () => {
         expect(editor.getText()).toBe("a    ");
         expect(seen.length).toBe(3);
         editor.root.remove();
+        editor.dispose();
+    });
+
+    test("a text put in keeps the caret and the scroll, the caret held within the new text", () => {
+        const editor = codeEditor("Machine file");
+        document.body.appendChild(editor.root);
+        const seen: (string | null)[] = [];
+        editor.onInput((problem) => seen.push(problem));
+        const text = "a = 1\nb = 2\nc = 3\n";
+        editor.setText(text);
+        editor.textarea.setSelectionRange(7, 10);
+        editor.textarea.scrollTop = 30;
+        editor.textarea.scrollLeft = 4;
+        // The same text again is no change at all.
+        editor.setText(text);
+        expect(editor.textarea.selectionStart).toBe(7);
+        expect(editor.textarea.selectionEnd).toBe(10);
+        expect(editor.textarea.scrollTop).toBe(30);
+        expect(editor.textarea.scrollLeft).toBe(4);
+        // Another text keeps the scroll and the caret where they were.
+        editor.setText("a = 1\nb = 22\nc = 3\n");
+        expect(editor.textarea.selectionStart).toBe(7);
+        expect(editor.textarea.selectionEnd).toBe(10);
+        expect(editor.textarea.scrollTop).toBe(30);
+        // A shorter text holds the caret within it rather than at its end.
+        editor.setText("a = 1\n");
+        expect(editor.textarea.selectionStart).toBe(6);
+        expect(editor.textarea.selectionEnd).toBe(6);
+        expect(editor.textarea.scrollTop).toBe(30);
+        expect(seen).toEqual([]);
+        // Tab keeps the line being typed where it was.
+        editor.setText(text);
+        editor.textarea.setSelectionRange(6, 6);
+        editor.textarea.scrollTop = 25;
+        editor.textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", cancelable: true }));
+        expect(editor.getText()).toBe("a = 1\n    b = 2\nc = 3\n");
+        expect(editor.textarea.selectionStart).toBe(10);
+        expect(editor.textarea.scrollTop).toBe(25);
+        expect(seen).toEqual([null]);
+        editor.root.remove();
+        editor.dispose();
+    });
+
+    test("shown again after its page was hidden, the field is scrolled, focused and selected as it was, the layer in step", () => {
+        const editor = codeEditor("Machine file");
+        document.body.appendChild(editor.root);
+        const layer = editor.root.querySelector(".code-layer") as HTMLElement;
+        editor.setText("a = 1\nb = 2\nc = 3\n");
+        editor.textarea.focus();
+        editor.textarea.setSelectionRange(2, 5);
+        editor.textarea.scrollTop = 48;
+        editor.textarea.scrollLeft = 9;
+        editor.textarea.dispatchEvent(new Event("scroll"));
+        expect(layer.scrollTop).toBe(48);
+        expect(layer.scrollLeft).toBe(9);
+        // Hidden, the field loses its scroll and its focus, as the browser
+        // takes them from an element without a box.
+        editor.setShown(false);
+        editor.textarea.blur();
+        editor.textarea.scrollTop = 0;
+        editor.textarea.scrollLeft = 0;
+        layer.scrollTop = 0;
+        editor.textarea.setSelectionRange(0, 0);
+        expect(document.activeElement).not.toBe(editor.textarea);
+        editor.setShown(true);
+        expect(editor.textarea.scrollTop).toBe(48);
+        expect(editor.textarea.scrollLeft).toBe(9);
+        expect(layer.scrollTop).toBe(48);
+        expect(layer.scrollLeft).toBe(9);
+        expect(document.activeElement).toBe(editor.textarea);
+        expect(editor.textarea.selectionStart).toBe(2);
+        expect(editor.textarea.selectionEnd).toBe(5);
+        // Left on purpose while shown, the field does not take the focus back.
+        editor.textarea.blur();
+        editor.setShown(false);
+        editor.setShown(true);
+        expect(document.activeElement).not.toBe(editor.textarea);
+        expect(editor.textarea.scrollTop).toBe(48);
+        editor.root.remove();
+        editor.dispose();
     });
 });

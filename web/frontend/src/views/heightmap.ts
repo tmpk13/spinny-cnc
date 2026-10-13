@@ -3,11 +3,11 @@
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
-import { formatFixed, parseNumber } from "../format.ts";
+import { formatDuration, formatFixed, parseNumber } from "../format.ts";
 import { isMilling, outputDuty } from "../profile.ts";
 import { boardOfJoint, lerpJoint } from "../kinematics.ts";
 import type { AppState } from "../state.ts";
-import type { Grid, HeightMap, HeightMapState, Job, ProbeSettings } from "../types.ts";
+import type { Grid, HeightMap, HeightMapState, Job, ProbeRequest, ProbeSettings, TouchMode } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** A grid when there is neither a map nor a job to take one from. */
@@ -158,10 +158,14 @@ export function gridForJob(job: Job, nx: number, ny: number, margin = FIT_MARGIN
     return { x0, y0, x1, y1, nx, ny };
 }
 
+/** The fields of a grid typed in: its corners and its point counts. */
+export type GridField = "x0" | "y0" | "x1" | "y1" | "nx" | "ny";
+export const GRID_FIELDS: GridField[] = ["x0", "y0", "x1", "y1", "nx", "ny"];
+
 /** The grid the fields describe, or a message saying which field is wrong. */
-export function readGrid(fields: Record<keyof Grid, string>): Grid | string {
-    const out: Partial<Grid> = {};
-    for (const key of ["x0", "y0", "x1", "y1", "nx", "ny"] as (keyof Grid)[]) {
+export function readGrid(fields: Record<GridField, string>): Grid | string {
+    const out: Partial<Record<GridField, number>> = {};
+    for (const key of GRID_FIELDS) {
         const value = parseNumber(fields[key]);
         if (value === null) {
             return `${key} is not a number`;
@@ -191,9 +195,41 @@ export function mapUsable(map: HeightMap | null): boolean {
     return map !== null && map.focus_set && mapComplete(map);
 }
 
-/** Probed at every point of its grid. */
+/** Whether a grid point is probed at all: every one without a mask. */
+export function gridWanted(grid: Grid, ix: number, iy: number): boolean {
+    const mask = grid.mask;
+    return !mask || Boolean(mask[iy]?.[ix]);
+}
+
+/** How many points a grid probes. */
+export function gridPointCount(grid: Grid): number {
+    let count = 0;
+    for (let iy = 0; iy < grid.ny; iy++) {
+        for (let ix = 0; ix < grid.nx; ix++) {
+            if (gridWanted(grid, ix, iy)) {
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
+/** Probed at every point of its grid that is to be probed. */
 export function mapComplete(map: HeightMap | null): boolean {
-    return map !== null && map.heights.every((row) => row.every((value) => value !== null));
+    return map !== null && map.heights.every((row, iy) => row.every((value, ix) => value !== null || !gridWanted(map.grid, ix, iy)));
+}
+
+/** Probed in part: some points still to come, which probing can go on with. */
+export function mapPartial(map: HeightMap | null): boolean {
+    return map !== null && !mapComplete(map) && map.heights.some((row) => row.some((value) => value !== null));
+}
+
+/** "about 4 min" for a time in seconds; empty for none. */
+export function aboutTime(seconds: number | null | undefined): string {
+    if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+        return "";
+    }
+    return `about ${formatDuration(Math.max(0, seconds))}`;
 }
 
 /**
@@ -233,7 +269,7 @@ export function mapStatus(state: HeightMapState | null): { text: string; kind: s
         return { text: "no map", kind: "none" };
     }
     const stats = heightStats(map);
-    const total = map.grid.nx * map.grid.ny;
+    const total = gridPointCount(map.grid);
     if (stats === null || stats.probed < total) {
         return { text: `${stats?.probed ?? 0}/${total} probed`, kind: "partial" };
     }
@@ -255,7 +291,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         ny: numberField({ value: DEFAULT_GRID.ny, min: 2, max: 50, step: 1 }),
     };
     const showGrid = (grid: Grid): void => {
-        for (const key of Object.keys(gridFields) as (keyof Grid)[]) {
+        for (const key of GRID_FIELDS) {
             gridFields[key].value = String(grid[key]);
         }
         publishDraft();
@@ -276,6 +312,78 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     for (const field of Object.values(gridFields)) {
         field.addEventListener("input", publishDraft);
     }
+    // What to probe: the whole rectangle, or only the points the selected
+    // job's cuts come near, which on a sparse board is a fraction of them.
+    const modeField = el("select", { class: "field", "aria-label": "What to probe" },
+        el("option", { value: "grid" }, "the whole grid"),
+        el("option", { value: "job" }, "around the job's cuts"),
+    ) as HTMLSelectElement;
+    const marginField = numberField({ value: 1, min: 0, step: 0.5, width: "5rem" });
+    const marginLabel = labeled("Margin mm", marginField, "labeled inline hidden");
+    const estimateNote = el("span", { class: "muted hm-estimate" });
+    const probeRequest = (): ProbeRequest | string => {
+        const grid = readGrid({
+            x0: gridFields.x0.value,
+            y0: gridFields.y0.value,
+            x1: gridFields.x1.value,
+            y1: gridFields.y1.value,
+            nx: gridFields.nx.value,
+            ny: gridFields.ny.value,
+        });
+        if (typeof grid === "string") {
+            return grid;
+        }
+        if (modeField.value !== "job") {
+            return grid;
+        }
+        const job = ctx.store.get().job;
+        if (!job) {
+            return "select a job to probe around its cuts";
+        }
+        const margin = parseNumber(marginField.value);
+        if (margin === null || margin < 0) {
+            return "the margin is a distance in mm, 0 or more";
+        }
+        return { ...grid, job: job.id, margin };
+    };
+    // The estimate, and the points the mask leaves, from the backend a
+    // moment after the last change, so the preview shows what is probed.
+    let estimateTimer: ReturnType<typeof setTimeout> | null = null;
+    let estimateSeq = 0;
+    const requestEstimate = (): void => {
+        if (estimateTimer !== null) {
+            clearTimeout(estimateTimer);
+        }
+        estimateTimer = setTimeout(() => {
+            estimateTimer = null;
+            const request = probeRequest();
+            if (typeof request === "string") {
+                estimateNote.textContent = "";
+                return;
+            }
+            const seq = ++estimateSeq;
+            void ctx.api.probeEstimate(request).then((estimate) => {
+                if (seq !== estimateSeq) {
+                    return;
+                }
+                estimateNote.textContent = `${estimate.points} points, ${aboutTime(estimate.seconds)}`;
+                if (request.job) {
+                    ctx.store.set({ probeDraft: estimate.grid });
+                }
+            }).catch(() => {
+                estimateNote.textContent = "";
+            });
+        }, 300);
+    };
+    for (const field of Object.values(gridFields)) {
+        field.addEventListener("input", requestEstimate);
+    }
+    marginField.addEventListener("input", requestEstimate);
+    modeField.addEventListener("change", () => {
+        marginLabel.classList.toggle("hidden", modeField.value !== "job");
+        publishDraft();
+        requestEstimate();
+    });
     const fit = button("Fit to job", () => {
         const job = ctx.store.get().job;
         if (!job) {
@@ -353,8 +461,17 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     };
 
     const probeButton = button("Probe", () => startProbe(), "btn btn-primary");
+    const continueButton = button("Continue", () => continueProbe(), "btn");
     const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger");
     const probeNote = el("p", { class: "muted hint" });
+    // One probe under the head: the map tied to the frame in use after a
+    // power cycle or a position set, or the surface made H 0 without a map.
+    const probeHereMap = button("Probe here: tie map", () => probeHere("map"), "btn btn-quiet");
+    const probeHereZero = button("Probe here: set H 0", () => probeHere("zero"), "btn btn-quiet");
+    const PROBE_HERE_HINT = "Probe here lowers the probe where the head is. Tie map: the height found against the map's"
+        + " height there moves the map's offset, so a map probed before a power cycle, a restart or a position set"
+        + " follows the board again without probing it all over; put the tip over copper the map covers, not in a"
+        + " cut. Set H 0: the surface found becomes H 0, for milling without a map.";
 
     // --- the map ---
     const mapBox = el("div", { class: "hm-map" });
@@ -370,6 +487,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         + " tool as the probe (tip offsets 0) it is about 0. A cut goes the group's depth under that.";
     const focusHint = el("p", { class: "muted hint" }, FOCUS_HINT);
     const focusField = numberField({ step: 0.05 });
+    // The text the field was last given from the map: a field still showing
+    // it follows the map, one typed in keeps what was typed until Set.
+    let focusShown: string | null = null;
     const rayleighField = numberField({ min: 0, step: 0.1 });
     onChange(rayleighField, (rayleigh) => ({ rayleigh }));
     const focusState = el("span", { class: "muted" });
@@ -381,6 +501,12 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         return applyFocus(offset);
     }, "btn btn-quiet");
+    focusField.addEventListener("keydown", (event) => {
+        if ((event as KeyboardEvent).key === "Enter") {
+            event.preventDefault();
+            setFocus.click();
+        }
+    });
     const focusHere = button("Focus here", () => applyFocus(null), "btn");
     const focusLabel = labeled("Focus offset mm", focusField, "labeled inline");
     const loadInput = el("input", { type: "file", accept: ".json,application/json", class: "hidden" }) as HTMLInputElement;
@@ -420,12 +546,17 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
                 + " The tip offset is from the beam: along the rail, outward positive, and across it,"
                 + " positive to the left of outward seen from above (board +Y at table angle 0, +Z on an"
                 + " X/Y machine). To check the signs, probe one point, then jog the beam over it and compare."
-                + " The brake queue is how long the head goes on past the contact before it brakes;"
+                + " Before the first probe, watch the Probe readout: it must say up with the tip free and down"
+                + " when the tip touches; the other way round, set invert = true under [probe] in the machine"
+                + " file ($probe_invert). The brake queue is how long the head goes on past the contact before it brakes;"
                 + " the height is read at the contact either way. 0 stops it dead when the probe is"
                 + " no faster than h_jerk. It is a machine setting: Save to flash keeps it."),
         ),
-        el("div", { class: "button-row" }, fit, probeButton, stopButton),
+        el("div", { class: "button-row" }, modeField, marginLabel, fit, estimateNote),
+        el("div", { class: "button-row" }, probeButton, continueButton, stopButton),
         probeNote,
+        el("div", { class: "button-row" }, probeHereMap, probeHereZero),
+        el("p", { class: "muted hint" }, PROBE_HERE_HINT),
         mapBox,
         legend,
         el("div", { class: "button-row hm-focus" },
@@ -442,27 +573,56 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     );
 
     async function startProbe(): Promise<void> {
-        const grid = readGrid({
-            x0: gridFields.x0.value,
-            y0: gridFields.y0.value,
-            x1: gridFields.x1.value,
-            y1: gridFields.y1.value,
-            nx: gridFields.nx.value,
-            ny: gridFields.ny.value,
-        });
-        if (typeof grid === "string") {
-            ctx.toast("error", grid);
+        const request = probeRequest();
+        if (typeof request === "string") {
+            ctx.toast("error", request);
             return;
         }
+        const estimate = await ctx.call(ctx.api.probeEstimate(request));
+        const points = estimate ? estimate.points : gridPointCount(request);
+        const time = estimate ? `, ${aboutTime(estimate.seconds)}` : "";
         const ok = await askConfirm(
-            `Probe ${grid.nx * grid.ny} points? The head travels between them at the height it has now,`
+            `Probe ${points} points${time}? The head travels between them at the height it has now,`
             + " so it must clear the board, and it replaces the current map.",
             "Probe",
         );
         if (!ok) {
             return;
         }
-        const state = await ctx.call(ctx.api.probe(grid));
+        const state = await ctx.call(ctx.api.probe(request));
+        if (state) {
+            ctx.store.set({ heightMap: state });
+        }
+    }
+
+    async function continueProbe(): Promise<void> {
+        const map = ctx.store.get().heightMap?.map;
+        if (!map) {
+            return;
+        }
+        const left = gridPointCount(map.grid) - map.heights.flat().filter((value) => value !== null).length;
+        const ok = await askConfirm(
+            `Go on probing the ${left} points the map still lacks? The head travels at the height it has now,`
+            + " so it must clear the board.",
+            "Continue",
+        );
+        if (!ok) {
+            return;
+        }
+        const state = await ctx.call(ctx.api.probe({ ...map.grid, resume: true }));
+        if (state) {
+            ctx.store.set({ heightMap: state });
+        }
+    }
+
+    async function probeHere(mode: TouchMode): Promise<void> {
+        const question = mode === "map"
+            ? "Probe down here and tie the height map to the current frame by the height found? The tip must be over copper the map covers."
+            : "Probe down here and make the surface found H 0? The height map's offset, if any, is taken back.";
+        if (!(await askConfirm(question, "Probe here"))) {
+            return;
+        }
+        const state = await ctx.call(ctx.api.probeHere(mode));
         if (state) {
             ctx.store.set({ heightMap: state });
         }
@@ -560,10 +720,11 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             const row = el("tr");
             for (let ix = 0; ix < map.grid.nx; ix++) {
                 const value = map.heights[iy]?.[ix] ?? null;
+                const wanted = gridWanted(map.grid, ix, iy);
                 const where = `X ${formatFixed(xs[ix], 1)} Y ${formatFixed(ys[iy], 1)}`;
-                const text = value === null ? "not probed" : `${formatFixed(value, 3)} mm`;
+                const text = value === null ? (wanted ? "not probed" : "left out: no cut comes near") : `${formatFixed(value, 3)} mm`;
                 const cell = el("td", {
-                    class: "hm-cell",
+                    class: wanted ? "hm-cell" : "hm-cell hm-cell-skipped",
                     title: `${where}: ${text}`,
                     "aria-label": `${where}: ${text}`,
                     tabindex: 0,
@@ -614,7 +775,14 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         // active-low output reports its pin at full duty.
         const spinning = milling && machine !== null && outputDuty(machine.laser, state.settings) > 0;
         body.disabled = !connected;
-        setLocked(probeButton, !connected || !focusAxis || !idle || probing || busy || spinning);
+        const canProbe = connected && focusAxis && idle && !probing && !busy && !spinning;
+        setLocked(probeButton, !canProbe);
+        const partial = mapPartial(heightMap?.map ?? null);
+        continueButton.classList.toggle("hidden", !partial);
+        setLocked(continueButton, !canProbe || !partial);
+        setLocked(probeHereMap, !canProbe || !heightMap?.map);
+        setLocked(probeHereZero, !canProbe);
+        probeHereZero.textContent = milling ? "Probe here: set Z 0" : "Probe here: set H 0";
         setLocked(stopButton, !probing);
         setLocked(focusHere, !connected || !heightMap?.map || !idle || probing);
         focusHere.textContent = milling ? "Touch off here" : "Focus here";
@@ -636,7 +804,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             // The last point is in; the head rises back before probing ends.
             probeNote.textContent = `Probed all ${probe.total} points, the head is rising, ${formatFixed(probe.seconds, 0)} s`;
         } else if (probing && probe) {
-            probeNote.textContent = `Probing point ${probe.done + 1} of ${probe.total}, ${formatFixed(probe.seconds, 0)} s`;
+            const left = aboutTime(probe.remaining);
+            probeNote.textContent = `Probing point ${probe.done + 1} of ${probe.total}, ${formatFixed(probe.seconds, 0)} s${left ? `, ${left} left` : ""}`;
         } else if (spinning) {
             probeNote.textContent = "The spindle is turning: stop it before probing.";
         } else {
@@ -644,9 +813,14 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const map = heightMap?.map ?? null;
         if (map) {
-            if (focusField !== document.activeElement) {
-                focusField.value = String(map.focus_offset);
+            // Only a field still showing what the map last said follows the
+            // map: one typed in keeps its text, focused or not, until Set.
+            const text = String(map.focus_offset);
+            const untouched = focusShown === null || focusField.value === focusShown || focusField.value === "";
+            if (untouched && focusField !== document.activeElement && focusField.value !== text) {
+                focusField.value = text;
             }
+            focusShown = text;
             focusState.textContent = focusStateText(map, milling);
         } else {
             focusState.textContent = "";
@@ -660,7 +834,15 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         renderMap(state.heightMap);
     };
     ctx.store.subscribe((state) => renderData(state), ["heightMap"]);
+    // The estimate follows the job (its cuts) and the probe settings (the depth and feeds).
+    ctx.store.subscribe(() => requestEstimate(), ["job"]);
+    ctx.store.subscribe((state, previous) => {
+        if (state.heightMap?.settings !== previous.heightMap?.settings) {
+            requestEstimate();
+        }
+    }, ["heightMap"]);
     publishDraft();
+    requestEstimate();
     ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress", "settings"]);
     ctx.store.subscribe((state) => showQueue(state), ["settings"]);
     showQueue(ctx.store.get());

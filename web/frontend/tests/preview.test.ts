@@ -19,6 +19,7 @@ import {
     zoomAt,
 } from "../src/camera.ts";
 import {
+    HEIGHTS_KEY,
     LABEL_GAP_PX,
     LOCK_KEY,
     Preview,
@@ -294,6 +295,165 @@ describe("Preview", () => {
         expect(localStorage.getItem(LOCK_KEY)).toBe("0");
         other.dispose();
         canvas.remove();
+    });
+
+    test("the height map is drawn unless switched off, and the choice is remembered", () => {
+        localStorage.removeItem(HEIGHTS_KEY);
+        const { canvas, counts } = sizedCanvas(W, H);
+        const preview = new Preview(canvas);
+        expect(preview.showHeights).toBe(true);
+        preview.setHead({ r: 5, a: 90 });
+        const map: HeightMap = {
+            grid: { x0: -5, y0: -5, x1: 5, y1: 5, nx: 3, ny: 2 },
+            heights: [[-0.05, 0, 0.05], [null, 0.02, 0.1]],
+            focus_offset: 0,
+            focus_set: false,
+            probe_offset: [0, 0],
+            created: "",
+        };
+        preview.setProbe(map, null);
+        preview.draw();
+        // The head is three arcs; the six probe points are six more.
+        expect(counts["arc"]).toBe(9);
+        const withMesh = counts["stroke"] ?? 0;
+        for (const name of Object.keys(counts)) {
+            delete counts[name];
+        }
+        preview.setShowHeights(false);
+        expect(preview.showHeights).toBe(false);
+        expect(localStorage.getItem(HEIGHTS_KEY)).toBe("0");
+        preview.draw();
+        expect(counts["arc"]).toBe(3);
+        expect(counts["stroke"]).toBeLessThan(withMesh);
+        expect(preview.toggleHeights()).toBe(true);
+        expect(localStorage.getItem(HEIGHTS_KEY)).toBe("1");
+        preview.dispose();
+        // The next preview comes up as the last one was left.
+        preview.setShowHeights(false);
+        const other = new Preview(sizedCanvas(W, H).canvas);
+        expect(other.showHeights).toBe(false);
+        other.dispose();
+        localStorage.removeItem(HEIGHTS_KEY);
+        canvas.remove();
+    });
+
+    test("a frame that leaves the head where it was asks for no draw", () => {
+        const { canvas } = sizedCanvas(W, H);
+        const preview = new Preview(canvas);
+        let asked = 0;
+        preview.requestDraw = () => {
+            asked += 1;
+        };
+        preview.setHead({ r: 5, a: 0 });
+        expect(asked).toBe(1);
+        preview.setHead({ r: 5, a: 0 });
+        // The board point the backend gives for the same place is the same place.
+        preview.setHead({ r: 5, a: 0 }, { x: 5, y: 0 });
+        expect(asked).toBe(1);
+        preview.setHead({ r: 5, a: 1 });
+        expect(asked).toBe(2);
+        // The board point alone moving is a move.
+        preview.setHead({ r: 5, a: 1 }, { x: 1, y: 1 });
+        expect(asked).toBe(3);
+        preview.setHead(null);
+        expect(asked).toBe(4);
+        preview.setHead(null);
+        expect(asked).toBe(4);
+        preview.dispose();
+        canvas.remove();
+    });
+
+    test("nothing is drawn into a canvas hidden with its page, and one draw follows its return", () => {
+        const canvas = document.createElement("canvas");
+        let rect = { width: W, height: H };
+        canvas.getBoundingClientRect = (() => ({ ...rect, x: 0, y: 0, top: 0, left: 0, right: rect.width, bottom: rect.height, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
+        const { ctx, counts } = fakeContext();
+        canvas.getContext = (() => ctx) as unknown as typeof canvas.getContext;
+        document.body.appendChild(canvas);
+        const preview = new Preview(canvas);
+        preview.setJob(job);
+        preview.draw();
+        expect(counts["stroke"]).toBeGreaterThan(0);
+        for (const name of Object.keys(counts)) {
+            delete counts[name];
+        }
+        rect = { width: 0, height: 0 };
+        preview.resize();
+        preview.draw();
+        expect(counts).toEqual({});
+        let asked = 0;
+        preview.requestDraw = () => {
+            asked += 1;
+        };
+        rect = { width: W, height: H };
+        preview.resize();
+        expect(asked).toBe(1);
+        preview.draw();
+        expect(counts["stroke"]).toBeGreaterThan(0);
+        preview.dispose();
+        canvas.remove();
+    });
+
+    test("the still layers are drawn once and copied under a moving head, and again when the view changes", () => {
+        // Offscreen canvases get a context of their own here, so the layers
+        // can be told from the canvas on the page.
+        const offscreen: Record<string, number> = {};
+        const create = document.createElement.bind(document);
+        document.createElement = ((tag: string, options?: ElementCreationOptions) => {
+            const node = create(tag, options);
+            if (tag === "canvas") {
+                (node as HTMLCanvasElement).getContext = (() => new Proxy({}, {
+                    get(_target, name) {
+                        return typeof name === "string"
+                            ? (): void => {
+                                offscreen[name] = (offscreen[name] ?? 0) + 1;
+                            }
+                            : undefined;
+                    },
+                    set() {
+                        return true;
+                    },
+                })) as unknown as HTMLCanvasElement["getContext"];
+            }
+            return node;
+        }) as typeof document.createElement;
+        try {
+            const { canvas, counts } = sizedCanvas(W, H);
+            const preview = new Preview(canvas);
+            preview.setJob(job);
+            preview.setRMax(40);
+            preview.setHead({ r: 5, a: 90 });
+            preview.draw();
+            const built = offscreen["stroke"] ?? 0;
+            expect(built).toBeGreaterThan(0);
+            expect(offscreen["fill"]).toBe(1);
+            expect(counts["drawImage"]).toBe(2);
+            // The job's copper is filled in a layer, not on the page.
+            expect(counts["fill"]).toBe(2);
+            // The head moving copies the layers as they are.
+            preview.setHead({ r: 6, a: 95 });
+            preview.draw();
+            expect(offscreen["stroke"]).toBe(built);
+            expect(counts["drawImage"]).toBe(4);
+            // A change of view draws them again, as does a change of what is on the board.
+            preview.setCamera({ target: [0, 0, 0], distance: 50, yaw: 10, pitch: 70 });
+            preview.draw();
+            expect(offscreen["stroke"]).toBeGreaterThan(built);
+            const turned = offscreen["stroke"] ?? 0;
+            preview.setShowHeights(false);
+            preview.draw();
+            expect(offscreen["stroke"]).toBeGreaterThan(turned);
+            const toggled = offscreen["stroke"] ?? 0;
+            preview.refreshColors();
+            preview.draw();
+            // The same palette read again keeps the layers.
+            expect(offscreen["stroke"]).toBe(toggled);
+            preview.setShowHeights(true);
+            preview.dispose();
+            canvas.remove();
+        } finally {
+            document.createElement = create;
+        }
     });
 
     test("what a pointer does: shift or a second button pans, else the lock decides", () => {

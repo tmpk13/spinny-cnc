@@ -49,10 +49,19 @@ export function droText(machine: Machine | null, settings: SettingsResponse | nu
     };
 }
 
+/** What the readout says of a report's age: nothing while it is fresh. */
+export function ageText(machine: Machine | null): string {
+    const age = machine?.age ?? 0;
+    return age > 1.5 ? `last report ${Math.round(age)} s ago` : "";
+}
+
 export function mountDro(root: HTMLElement, ctx: Ctx): void {
     const joint = el("div", { class: "dro-row dro-row-joint" });
     const board = el("div", { class: "dro-row" });
-    root.append(el("h2", {}, "Position"), joint, board);
+    // Says when the numbers are old: a machine that has gone quiet is
+    // still shown at its last report, which is not where it may be.
+    const age = el("span", { class: "dro-age badge hidden" }, "");
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Position"), age), joint, board);
     const cells = new Map<JointAxis, HTMLSpanElement>();
     const boardCells = { x: bigCell("X", "mm", "x"), y: bigCell("Y", "mm", "y") };
     board.append(boardCells.x.parentElement!, boardCells.y.parentElement!);
@@ -105,6 +114,9 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         setText(smalls.mode, text.mode);
         setText(smalls.queue, text.queue);
         setText(smalls.motors, text.motors);
+        const stale = state.snapshot.connected ? ageText(machine) : "";
+        setText(age, stale);
+        age.classList.toggle("hidden", stale === "");
         root.classList.toggle("laser-on", machine !== null && outputDuty(machine.laser, state.settings) > 0);
     }, ["snapshot", "settings"]);
     draw(controlsOf(ctx.store.get()));

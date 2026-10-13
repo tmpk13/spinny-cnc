@@ -82,7 +82,7 @@ current_ma = 600                # -> tmc_h_ma
 microsteps = 256                # -> tmc_h_micro
 
 [probe]
-invert = false                  # true: input active high  -> probe_invert
+invert = false                  # true: input active high  -> probe_invert; wrong way round when the readout says down with the tip free
 brake_ms = 20                   # 0 to 160                 -> probe_ms
 pin = 25                        # GPIO: 25 Z-STOP, 22 PROBE, 4 X-STOP, 3 Y-STOP, 16 E-STOP -> probe_pin
 
@@ -110,6 +110,7 @@ stealth = true                  # stealthChop              -> tmc_stealth
 tolerance = 0.005               # chord tolerance, mm, (0, 10]
 clearance = 2.0                 # milling: travel height over the surface, mm, (0, 100]
 spinup = 2.0                    # milling: dwell after the spindle starts, s, [0, 600]
+speed_control = true            # milling: false runs the spindle full on (S = s_max), never at a group's rpm
 
 [controls]                      # the page's jog panel and readout; left out: the defaults below
 pad = true                      # a board X/Y pad, on the arrow keys when no field has the focus
@@ -165,6 +166,17 @@ beam is lit, a dwell burns or the spindle turns, for a laser supply
 relay, an air assist or a spindle's run input. `invert` makes it active
 low; off (`fitted = false`) it rests at its inactive level whatever the
 tool does.
+
+Every `invert` is checked the same way, by what the machine does, not by
+how it is wired: an axis's `invert` is wrong when a positive jog moves it
+the other way than its `[controls]` buttons say (the page's X+ must move
+the head toward board +X, Y+ toward +Y, Z+ or H+ up, and a positive turn
+counterclockwise seen from above); `[probe] invert` is wrong when the
+readout says *down* with the tip free and *up* when it touches; `[output]
+invert` is wrong when the beam or the spindle is on with nothing asked for
+(and dangerous, so it is the first thing to check at power on); `[enable]
+invert` when the relay is on while the machine is idle. Flip the one that
+is wrong in the file, load it again and check again.
 
 ## The controls
 

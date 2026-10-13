@@ -351,17 +351,21 @@ export function parseMachine(text: string, id: string): MachineDocument {
     reader.done(drivers, "drivers", ["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth"]);
 
     const hostTable = reader.table(top, "host");
-    const host: Partial<HostSettings> = {};
+    const hostNumbers: Record<string, number> = {};
     for (const [key, [low, high]] of Object.entries(HOST_KEYS)) {
         if (key in hostTable) {
             const value = reader.number(hostTable, key, "host");
             if (!(low <= value && value <= high) || (key !== "spinup" && value <= 0)) {
                 throw new Error(`${where}: [host] ${key} must be above ${low} and at most ${high}`);
             }
-            host[key as keyof HostSettings] = value;
+            hostNumbers[key] = value;
         }
     }
-    reader.done(hostTable, "host", Object.keys(HOST_KEYS));
+    const host: Partial<HostSettings> = { ...hostNumbers };
+    if ("speed_control" in hostTable) {
+        host.speed_control = reader.flag(hostTable, "speed_control", true, "host");
+    }
+    reader.done(hostTable, "host", [...Object.keys(HOST_KEYS), "speed_control"]);
     const focus = settings["h_axis"] === 1;
     const controls = parseControls(reader, top, kinematics, tool, focus);
     reader.done(top, null, ["name", "description", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "probe", "output", "enable", "drivers", "host", "controls"]);

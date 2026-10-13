@@ -53,17 +53,35 @@ Each part keeps its own module diagram next to its code:
 
 ## Controller on a Raspberry Pi
 
-The backend runs here; `mise run relay-pi -- user@host` makes a controller
-plugged into a Pi look local. socat on the Pi bridges the tty to a port on
-the Pi's loopback, ssh forwards that port here, and the page connects to
-`socket://127.0.0.1:2324`. Nothing is installed on the Pi.
+Two ways, one controller. Only one of them may hold the controller's port
+at a time.
+
+**The Pi runs the whole thing.** `mise run deploy-pi -- user@host` builds
+the page here and copies the repository, its sibling `kicad-to-gcode` and
+the page to the Pi, where uv installs Python 3.12 and the dependencies and
+a systemd unit runs the backend with `--connect auto`: it keeps its own
+link to the controller up, so a job uploaded to `http://host.local:8000`
+streams from the Pi whether or not the page stays open, and a controller
+that is replugged, or goes quiet and is given up, is taken up again by
+itself. The Pi needs no bun or Rust, and `firmware/` and `sim/` stay
+behind. Jobs, the height map and the resume record are the Pi's own.
+
+**The backend runs here.** `mise run relay-pi -- user@host` makes a
+controller plugged into a Pi look local: socat on the Pi bridges the tty
+to a port on the Pi's loopback, ssh forwards that port here, and the page
+connects to `socket://127.0.0.1:2324`. Nothing is installed on the Pi,
+and the run lives in the backend here, so it ends if this machine does.
 
 ```mermaid
 flowchart LR
-    BE2[backend here] <-->|socket://127.0.0.1:2324| SSH[ssh -L]
-    SSH <-->|ssh session| SOC
-    subgraph PI[Raspberry Pi]
-        SOC[socat, Pi loopback :2324] <-->|/dev/serial/by-id, raw tty| BOARD[SKR Pico]
+    subgraph DEPLOYED[deploy-pi: the Pi runs the whole thing]
+        BR[browser] <-->|HTTP, WebSocket :8000| BE1
+        BE1[systemd spinny-web --connect auto] <-->|/dev/serial/by-id| BOARD1[SKR Pico]
+    end
+    subgraph RELAYED[relay-pi: the backend runs here]
+        BE2[backend here] <-->|socket://127.0.0.1:2324| SSH[ssh -L]
+        SSH <-->|ssh session| SOC[socat on the Pi]
+        SOC <-->|/dev/serial/by-id, raw tty| BOARD2[SKR Pico]
     end
 ```
 
@@ -71,5 +89,7 @@ flowchart LR
 
 Everything the programs write at run time sits under `var/` at the
 repository root, which is not tracked: the backend's `jobs/`,
-`config.json` and `heightmap.json` (`spinny-web --data DIR` moves them),
-and the command line tools' `out/`.
+`config.json`, `heightmap.json`, `resume.json` (how far the last run got
+and the plan it was made from, written as the run goes) and `spinny.log`
+(the backend's log, rotated at 1 MB; `spinny-web --data DIR` moves them
+all), and the command line tools' `out/`.

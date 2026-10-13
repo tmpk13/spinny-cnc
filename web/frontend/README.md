@@ -64,8 +64,15 @@ spin-up dwell, plunge, cuts at depth, lift, spindle off). The preview draws
 a cartesian machine's soft limits as a box turned with the table.
 
 The Height map panel probes a grid (drawn on the preview before and while it
-is probed), shows the heights as a map of the board seen from above, blue
-below the mean and red above it, and sets the focus offset. The run button
+is probed), or only the points around the selected job's cuts with a
+margin, with the point count and about how long beside the fields (the
+backend's estimate, and the time left while it probes); shows the heights
+as a map of the board seen from above, blue below the mean and red above
+it, the points left out hatched; goes on with a map probed in part
+(*Continue*); and sets the focus offset, by a typed value that holds until
+*Set*, by Focus here, or by one probe under the head (*Probe here: tie
+map*, which moves the map's offset by the shift the surface shows there,
+or *set H 0*). The run button
 sends the chosen compensation, which turns to `auto` while a map is usable
 and back to off when it is not. The backend drops the focus offset whenever
 the focus axis may have moved to other numbers (Set H=0, a connect, the
@@ -74,6 +81,17 @@ off here) again before a run follows the map. Probing is locked while the
 spindle turns, and the spindle start while probing. The status reports the
 output's duty as driven on the pin; the DRO and the probe lock turn it
 around on an active-low output (`laser_invert`), as the backend does.
+
+The Jobs panel has *Save job* (the selected job's JSON) and *Delete all*
+beside its title, and under a run that stopped short a *Resume from line*
+row: the count of lines done, *from the start of its path*, *Plan* (what
+would go out first) and the button. The Jog panel's *Here is* row declares
+the joints without moving them, *Last known* filling in the position the
+backend recorded during the last run. The status bar lists the controller
+first and polls the ports every 10 s while nothing is connected, with a
+toggle that hides the built-in system ports; it marks a machine whose
+last report is old, as the Position panel does, before the backend gives
+the link up. The console's *Log* shows the backend's log.
 
 The page has three tabs under the status bar, remembered per browser and
 set by `?page=cam` or `?page=config` in the address: *Machine*, the

@@ -325,8 +325,18 @@ function readTool(reader: Reader, table: TomlTable, index: number): CamTool {
     if (diameter !== null && spot !== null) {
         throw reader.fail(section, "spot", "and diameter are the same width; give one");
     }
-    const width = diameter ?? spot;
-    if (width === null) {
+    // A V bit is given by its point: the cut is as wide as the depth makes
+    // it, and the diameter, when given, is the shank that bounds it.
+    const angle = reader.bounded(table, section, "angle", [0, 179, false]);
+    const tip = reader.bounded(table, section, "tip", [0, 1000, true]);
+    if ((angle !== null || tip !== null) && kind !== "spindle") {
+        throw reader.fail(section, angle !== null ? "angle" : "tip", "is for a mill V bit; a beam has a spot");
+    }
+    if (tip !== null && angle === null) {
+        throw reader.fail(section, "tip", "needs angle: the included angle of the V bit point, degrees");
+    }
+    let width = diameter ?? spot;
+    if (width === null && angle === null) {
         throw reader.fail(section, kind === "spindle" ? "diameter" : "spot", "is needed: the width of the cut, mm");
     }
     const bounds = kind === "spindle" ? SPINDLE_SETTINGS : LASER_SETTINGS;
@@ -346,8 +356,17 @@ function readTool(reader: Reader, table: TomlTable, index: number): CamTool {
             throw reader.fail(section, key, "is needed");
         }
     }
-    reader.done(table, section, ["id", "kind", "name", "diameter", "spot", "passes", ...Object.keys(bounds)]);
-    return { id, kind, name, width, settings };
+    reader.done(table, section, ["id", "kind", "name", "diameter", "spot", "passes", "angle", "tip", ...Object.keys(bounds)]);
+    if (angle !== null) {
+        // The nominal width is the cut at the tool's own default depth.
+        const depth = settings["depth"] ?? DEFAULT_DEPTH;
+        const wide = (tip ?? 0) + 2 * depth * Math.tan((angle / 2) * Math.PI / 180);
+        width = diameter !== null ? Math.min(wide, diameter) : wide;
+        if (width <= 0) {
+            throw reader.fail(section, "tip", "or the depth must give the cut some width");
+        }
+    }
+    return { id, kind, name, width: width ?? 0, settings };
 }
 
 function readOperation(reader: Reader, table: TomlTable, index: number, tools: CamTool[]): CamOperation {

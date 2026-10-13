@@ -17,6 +17,10 @@ run = "cd web/frontend && bun run dev"
 description = "Forward the controller on a Raspberry Pi to socket://127.0.0.1:2324 here over ssh: mise run relay-pi -- pi@spinny.local"
 run = "relay/relay-pi.sh"
 
+[tasks.deploy-pi]
+description = "Install the backend and the built page on a Raspberry Pi as a service that drives the controller on its own: mise run deploy-pi -- pi@spinny.local"
+run = "deploy/deploy-pi.sh"
+
 [tasks.cam]
 description = "A design through a CAM profile to gcode: mise run cam -- cam/mill-3axis.toml board.kicad_pcb"
 run = "uv run spinny-cam"

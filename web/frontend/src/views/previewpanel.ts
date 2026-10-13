@@ -1,6 +1,6 @@
 // Hosts the 3D preview and feeds it the selected job, the live position,
-// the soft limits and the probe grid; the rotation lock and the reset to
-// the overview sit in its head.
+// the soft limits and the probe grid; the rotation lock, the height map
+// toggle and the reset to the overview sit in its head.
 
 import { button, el } from "../dom.ts";
 import { Preview } from "../preview.ts";
@@ -8,6 +8,7 @@ import type { Ctx } from "./context.ts";
 
 export const LOCK_LABEL = "Lock rotation";
 export const LOCKED_LABEL = "Rotation locked";
+export const HEIGHTS_LABEL = "Heights";
 
 export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
     const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board around the rotation axis" });
@@ -18,11 +19,18 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
         lock.textContent = locked ? LOCKED_LABEL : LOCK_LABEL;
     };
     showLock(preview.rotationLocked);
+    const heights = button(HEIGHTS_LABEL, () => showHeights(preview.toggleHeights()), "btn btn-quiet btn-small btn-toggle");
+    heights.title = "draw the height map's mesh and probe points";
+    const showHeights = (on: boolean): void => {
+        heights.setAttribute("aria-pressed", on ? "true" : "false");
+    };
+    showHeights(preview.showHeights);
     root.append(
         el("div", { class: "panel-head" },
             el("h2", {}, "Preview"),
             el("div", { class: "button-row" },
                 lock,
+                heights,
                 button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small"),
                 button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small"),
             ),
@@ -40,7 +48,8 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
     }, ["job"]);
     ctx.store.subscribe((state) => {
         // The board point comes from the backend, which knows the frame: on a
-        // cartesian machine the head is not at the joint's polar point.
+        // cartesian machine the head is not at the joint's polar point. The
+        // preview draws nothing for a frame that leaves the head where it was.
         const machine = state.snapshot.machine;
         preview.setHead(machine?.joint ?? null, machine?.board ?? null);
     }, ["snapshot"]);

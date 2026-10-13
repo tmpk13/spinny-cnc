@@ -45,16 +45,34 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });
     const clearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
     const spinup = numberField({ value: 2, min: 0, step: 0.5, width: "6rem" });
+    // Off, every spindle line asks for s_max: a spindle with its own speed
+    // knob, or one behind a switch, runs full on and never at a group's rpm.
+    const speedControl = el("input", { type: "checkbox", "aria-label": "Spindle speed from the groups" }) as HTMLInputElement;
+    speedControl.checked = true;
     const milling = el("div", { class: "button-row hidden" },
         labeled("Travel clearance mm", clearance, "labeled inline"),
         labeled("Spin-up s", spinup, "labeled inline"),
+        el("label", { class: "muted", title: "Off, the spindle runs full on (S = s_max) whenever a run or the button starts it, whatever a group's speed says" },
+            speedControl, " speed from the groups"),
     );
     const apply = button("Apply", () => applyEdits(), "btn btn-primary");
     const save = button("Save to flash", () => saveFlash(), "btn");
     const reload = button("Reload", () => ctx.refreshSettings(), "btn btn-quiet");
     const table = el("table", { class: "settings" });
+    // The buttons stay in view while the long table scrolls under them.
+    const actions = el("div", { class: "button-row settings-actions" }, labeled("Chord tolerance mm", tolerance, "labeled inline"), apply, save, reload);
+    // On the narrow layout the page scrolls under the status bar, which is
+    // stuck to its top; the row is stuck under that, however tall it is
+    // (it wraps onto two lines on a phone). The wide layout scrolls each
+    // column on its own, below the bar, and the stylesheet puts the row at
+    // the top there.
+    const bar = document.querySelector<HTMLElement>(".statusbar");
+    if (bar && typeof ResizeObserver === "function") {
+        const under = new ResizeObserver(() => actions.style.setProperty("--stuck-under", `${bar.offsetHeight}px`));
+        under.observe(bar);
+    }
     const body = el("fieldset", { class: "panel-body" },
-        el("div", { class: "button-row" }, labeled("Chord tolerance mm", tolerance, "labeled inline"), apply, save, reload),
+        actions,
         milling,
         table,
         el("p", { class: "muted hint" }, "the values the controller runs with now; a machine file loaded from the panel beside sets every one of them. laser_pin, probe_pin and tool_pin are read at boot, and tool_out claims its pin then: Save to flash, then restart the board for those."),
@@ -125,6 +143,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         follow(tolerance, "tolerance");
         follow(clearance, "clearance");
         follow(spinup, "spinup");
+        speedControl.checked = settings.host.speed_control ?? true;
         hostShown = host;
         // The field being typed in keeps its text as it is, parsed or not.
         const typing = focused instanceof HTMLInputElement && table.contains(focused)
@@ -209,6 +228,10 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         }
         if (hostSpinup !== null && hostSpinup !== settings.host.spinup) {
             host.spinup = hostSpinup;
+            hostChanged = true;
+        }
+        if (speedControl.checked !== (settings.host.speed_control ?? true)) {
+            host.speed_control = speedControl.checked;
             hostChanged = true;
         }
         if (hostChanged) {

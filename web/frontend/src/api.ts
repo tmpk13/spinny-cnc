@@ -12,7 +12,6 @@ import type {
     CommandResponse,
     Compensate,
     GotoRequest,
-    Grid,
     HeightMap,
     HeightMapState,
     Job,
@@ -20,14 +19,21 @@ import type {
     JobSummary,
     JobsResponse,
     JogRequest,
+    LogResponse,
     MachinesResponse,
     Mode,
     Port,
     PortsResponse,
     PositionRequest,
+    ProbeEstimate,
+    ProbeRequest,
     ProbeSettings,
     Progress,
     RealtimeAction,
+    ResumePlan,
+    ResumeRecord,
+    ResumeRequest,
+    TouchMode,
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
@@ -102,16 +108,31 @@ export interface Api {
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
     deleteJob(id: string): Promise<void>;
+    /** Removes every job but the one running; answers their ids. */
+    deleteAllJobs(): Promise<string[]>;
     /** `compensate` follows the height map; left out, the run does not. */
     runJob(id: string, compensate?: Compensate): Promise<void>;
+    /** Picks the job up at a line: the lines before it count as done, the head is brought to where it begins. */
+    resumeJob(id: string, request: ResumeRequest): Promise<Progress>;
+    /** What `resumeJob` would do, without moving anything. */
+    planResume(id: string, request: ResumeRequest): Promise<ResumePlan>;
+    /** The last run's record; null when none ran. */
+    resumeRecord(): Promise<ResumeRecord | null>;
+    forgetResume(): Promise<void>;
     runHold(): Promise<void>;
     runResume(): Promise<void>;
     runStop(): Promise<void>;
     run(): Promise<Progress | null>;
+    /** The tail of the backend's log, oldest first. */
+    log(lines?: number): Promise<string[]>;
 
     heightMap(): Promise<HeightMapState>;
     /** Probes the grid, replacing the map; the head's height now is the travel height. */
-    probe(grid: Grid): Promise<HeightMapState>;
+    probe(request: ProbeRequest): Promise<HeightMapState>;
+    /** About how long probing would take, and the points it would probe. */
+    probeEstimate(request: ProbeRequest): Promise<ProbeEstimate>;
+    /** One probe under the head: ties the map to the frame in use, or makes the contact height H 0. */
+    probeHere(mode: TouchMode): Promise<HeightMapState>;
     probeStop(): Promise<HeightMapState>;
     /** Sets the focus offset; null takes it from the head over the board now. */
     focus(offset: number | null): Promise<HeightMapState>;
@@ -354,8 +375,35 @@ export class HttpApi implements Api {
         await this.request("DELETE", `/api/jobs/${encodeURIComponent(id)}`);
     }
 
+    async deleteAllJobs(): Promise<string[]> {
+        const response = await this.request<{ deleted: string[] }>("DELETE", "/api/jobs");
+        return response.deleted ?? [];
+    }
+
     async runJob(id: string, compensate: Compensate = "off"): Promise<void> {
         await this.request("POST", `/api/jobs/${encodeURIComponent(id)}/run`, { compensate });
+    }
+
+    resumeJob(id: string, request: ResumeRequest): Promise<Progress> {
+        return this.request<Progress>("POST", `/api/jobs/${encodeURIComponent(id)}/resume`, request);
+    }
+
+    planResume(id: string, request: ResumeRequest): Promise<ResumePlan> {
+        return this.request<ResumePlan>("POST", `/api/jobs/${encodeURIComponent(id)}/resume/plan`, request);
+    }
+
+    async resumeRecord(): Promise<ResumeRecord | null> {
+        const response = await this.request<{ resume: ResumeRecord | null }>("GET", "/api/resume");
+        return response.resume ?? null;
+    }
+
+    async forgetResume(): Promise<void> {
+        await this.request("DELETE", "/api/resume");
+    }
+
+    async log(lines = 200): Promise<string[]> {
+        const response = await this.request<LogResponse>("GET", `/api/log?lines=${encodeURIComponent(String(lines))}`);
+        return response.lines ?? [];
     }
 
     async runHold(): Promise<void> {
@@ -382,8 +430,16 @@ export class HttpApi implements Api {
         return this.request<HeightMapState>("GET", "/api/heightmap");
     }
 
-    probe(grid: Grid): Promise<HeightMapState> {
-        return this.request<HeightMapState>("POST", "/api/heightmap/probe", grid);
+    probe(request: ProbeRequest): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/probe", request);
+    }
+
+    probeEstimate(request: ProbeRequest): Promise<ProbeEstimate> {
+        return this.request<ProbeEstimate>("POST", "/api/heightmap/estimate", request);
+    }
+
+    probeHere(mode: TouchMode): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/touch", { mode });
     }
 
     probeStop(): Promise<HeightMapState> {

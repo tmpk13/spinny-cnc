@@ -5,7 +5,7 @@ import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts"
 import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, UploadOptions } from "../types.ts";
+import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
@@ -21,15 +21,55 @@ export function progressText(progress: Progress | null): { bar: number; counts: 
         return { bar: 0, counts: "", time: "", state: "", reason: "" };
     }
     const bar = progress.total > 0 ? Math.min(1, progress.acked / progress.total) : 0;
+    const from = progress.resumed_from ? `, picked up at line ${progress.resumed_from}` : "";
     return {
         bar,
-        counts: `${progress.sent} sent / ${progress.acked} acked / ${progress.total}`,
+        counts: `${progress.sent} sent / ${progress.acked} acked / ${progress.total}${from}`,
         time: `${formatDuration(progress.seconds)} / ${formatDuration(progress.estimate)}`,
         state: progress.state,
         // Why a run ended the way it did stays with the run, after the
         // toast that announced it is gone.
         reason: progress.error ?? "",
     };
+}
+
+/**
+ * The run of `jobId` a resume could pick up: the progress of the last run
+ * when it is this job's and over, else the record kept across sessions.
+ * Null while nothing of this job has run, or it ran to the end.
+ */
+export function resumable(jobId: string | null, progress: Progress | null, record: ResumeRecord | null | undefined): Progress | ResumeRecord | null {
+    if (jobId === null) {
+        return null;
+    }
+    const candidates = [progress, record ?? null];
+    for (const candidate of candidates) {
+        if (!candidate || candidate.job !== jobId) {
+            continue;
+        }
+        if (candidate.state === "running" || candidate.state === "hold" || candidate.state === "done") {
+            return null;
+        }
+        if (candidate.acked > 0 || candidate.sent > 0) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+/** Where the last run says the head is, for the operator to check against the machine. */
+export function recordPositionText(record: ResumeRecord | null | undefined, cartesian: boolean): string {
+    const position = record?.position;
+    if (!position) {
+        return "";
+    }
+    const parts = cartesian
+        ? [`X ${formatMm(position.r)}`, `Y ${formatMm(position.z)}`]
+        : [`R ${formatMm(position.r)}`, `A ${position.a.toFixed(3)}`];
+    if (position.h !== null && position.h !== undefined) {
+        parts.push(`${cartesian ? "Z" : "H"} ${formatMm(position.h)}`);
+    }
+    return `last reported position ${parts.join(" ")}${record?.note ? ` (${record.note})` : ""}`;
 }
 
 interface GroupRow {
@@ -151,7 +191,49 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     showMode();
     const list = el("ul", { class: "job-list" });
     const details = el("div", { class: "job-details" });
-    root.append(el("h2", {}, "Jobs"), drop, options, centerTest(ctx), list, details);
+    const saveButton = button("Save job", () => saveJob(), "btn btn-quiet btn-small");
+    const deleteAllButton = button("Delete all", () => removeAll(), "btn btn-quiet btn-small");
+    root.append(
+        el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, saveButton, deleteAllButton)),
+        drop, options, centerTest(ctx), list, details,
+    );
+
+    /** The selected job as the file it is kept in, to put back with an upload. */
+    function saveJob(): void {
+        const job = ctx.store.get().job;
+        if (!job) {
+            ctx.toast("error", "select a job to save");
+            return;
+        }
+        const name = job.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "job";
+        const blob = new Blob([JSON.stringify(job, null, 2)], { type: "application/json" });
+        const link = el("a", { href: URL.createObjectURL(blob), download: `${name}.json` });
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+
+    async function removeAll(): Promise<void> {
+        const count = ctx.store.get().jobs.length;
+        if (count === 0) {
+            ctx.toast("info", "there are no jobs to delete");
+            return;
+        }
+        const running = ctx.store.get().progress?.state;
+        const kept = running === "running" || running === "hold" ? " The job running stays." : "";
+        if (!(await askConfirm(`Delete all ${count} jobs? They are gone for good.${kept}`, "Delete all"))) {
+            return;
+        }
+        const removed = await ctx.call(ctx.api.deleteAllJobs());
+        if (!removed) {
+            return;
+        }
+        const selected = ctx.store.get().job?.id ?? null;
+        if (selected !== null && removed.includes(selected)) {
+            await ctx.selectJob(null);
+        }
+        await ctx.refreshJobs();
+        ctx.toast("info", `deleted ${removed.length} jobs`);
+    }
 
     const uploadOptions = (): UploadOptions => {
         const out: UploadOptions = { anchor: anchorField.value as Anchor };
@@ -317,6 +399,28 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "progress-track" }, progressBar),
         el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
     );
+    // Picking a stopped run up: the line to go on from, whether to start
+    // that line's path over, what the plan says, and the button.
+    const pickupLine = numberField({ min: 0, step: 1, width: "7rem" });
+    const pickupRewind = el("input", { type: "checkbox" }) as HTMLInputElement;
+    pickupRewind.checked = true;
+    const pickupPlanButton = button("Plan", () => planPickup(), "btn btn-quiet btn-small");
+    const pickupButton = button("Resume from line", () => pickup(), "btn btn-primary btn-small");
+    const pickupNote = el("p", { class: "muted hint" });
+    const pickupPosition = el("p", { class: "muted hint" });
+    const pickupBox = el("div", { class: "pickup hidden" },
+        el("div", { class: "run-row" },
+            labeled("Line done", pickupLine, "labeled inline"),
+            el("label", { class: "muted" }, pickupRewind, " from the start of its path"),
+            pickupPlanButton,
+            pickupButton,
+        ),
+        pickupNote,
+        pickupPosition,
+    );
+    // The job whose count the line field was filled from, so a new job or
+    // a new record fills it again without overwriting what was typed.
+    let pickupFilledFor: string | null = null;
 
     async function run(): Promise<void> {
         const job = ctx.store.get().job;
@@ -324,6 +428,59 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         await ctx.call(ctx.api.runJob(job.id, compensate.value as Compensate));
+        await ctx.refreshState();
+    }
+
+    function pickupRequest(): { line: number; rewind: boolean; compensate: Compensate | null } | null {
+        const line = parseNumber(pickupLine.value);
+        if (line === null || !Number.isInteger(line) || line < 0) {
+            ctx.toast("error", "the line done is a whole number");
+            return null;
+        }
+        // The map choice follows the row above: what the operator picked, or
+        // the way the run being picked up followed the board when untouched.
+        return { line, rewind: pickupRewind.checked, compensate: compensateTouched ? (compensate.value as Compensate) : null };
+    }
+
+    async function planPickup(): Promise<void> {
+        const job = ctx.store.get().job;
+        const request = pickupRequest();
+        if (!job || !request) {
+            return;
+        }
+        const plan = await ctx.call(ctx.api.planResume(job.id, request));
+        if (!plan) {
+            return;
+        }
+        const approach = plan.approach.length ? ` First: ${plan.approach.join("; ")}.` : "";
+        const where = plan.next ? ` Then line ${plan.skip}: ${plan.next}.` : " Nothing is left to send.";
+        const planned = plan.planned_from_record ? "" : " The last run's record is another job's, so the lines are counted from where the head is now.";
+        pickupNote.textContent = `Starts at line ${plan.skip} of ${plan.total} (${plan.compensate === "off" ? "no height map" : `height map: ${plan.compensate}`}).${approach}${where}${planned}`;
+    }
+
+    async function pickup(): Promise<void> {
+        const job = ctx.store.get().job;
+        const request = pickupRequest();
+        if (!job || !request) {
+            return;
+        }
+        const plan = await ctx.call(ctx.api.planResume(job.id, request));
+        if (!plan) {
+            return;
+        }
+        const ok = await askConfirm(
+            `Pick ${job.name} up at line ${plan.skip} of ${plan.total}? The head is brought there from where it is now:`
+            + ` ${plan.approach.join("; ") || "nothing to do"}. Check that the position shown is where the head really is.`,
+            "Resume",
+        );
+        if (!ok) {
+            return;
+        }
+        const started = await ctx.call(ctx.api.resumeJob(job.id, request));
+        if (started) {
+            ctx.store.set({ progress: started });
+            pickupNote.textContent = "";
+        }
         await ctx.refreshState();
     }
 
@@ -352,6 +509,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 runRow,
                 compensateNote,
                 progressBox,
+                pickupBox,
             );
         } else if (detailsJob !== job) {
             detailsJob = job;
@@ -415,6 +573,24 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         const again = focusAgainText(map, milling);
         compensateNote.textContent = again;
         compensateNote.classList.toggle("hidden", again === "");
+        // A run of this job that stopped short can be picked up where it
+        // got to, this session's or an earlier one's.
+        const record = state.snapshot.resume ?? null;
+        const candidate = resumable(state.job?.id ?? null, progress, record);
+        pickupBox.classList.toggle("hidden", candidate === null);
+        if (candidate !== null) {
+            const key = `${candidate.job}:${candidate.acked}`;
+            if (pickupFilledFor !== key && pickupLine !== document.activeElement) {
+                pickupFilledFor = key;
+                pickupLine.value = String(candidate.acked);
+                pickupNote.textContent = "";
+            }
+            pickupPosition.textContent = recordPositionText(record?.job === candidate.job ? record : null, state.snapshot.profile?.kinematics === "cartesian");
+            const idle = state.snapshot.machine?.state === "Idle";
+            setLocked(pickupButton, !connected || active || !idle);
+            setLocked(pickupPlanButton, !connected || active);
+        }
+        setLocked(saveButton, !state.job);
         const labels = jobLabels(milling);
         relabel(powerLabel, labels.power);
         relabel(speedLabel, labels.speed);

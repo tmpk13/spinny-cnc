@@ -319,3 +319,43 @@
   which settings need a restart.
 - American spelling throughout.
 
+
+## Resume, stall detection, probing around the cuts (2026-10-13)
+
+- Port select: the controller (it announces itself as `spinny laser
+  controller`) is listed and picked first, by its stable by-id name; the
+  list is polled every 10 s while disconnected; a toggle hides the
+  built-in system ports.
+- Delete all jobs, with a confirmation; Save job downloads the selected
+  job's JSON.
+- The Config editor keeps its caret and scroll across a tab switch, and
+  its colored layer stays in step with the textarea.
+- Probing around the job's cuts with a margin instead of the whole grid
+  (`Grid.mask`); the preview and the map table show the points left out.
+- The settings' Apply / Save to flash / Reload row stays in view while the
+  table scrolls.
+- Invert instructions: how each `invert` is checked by what the machine
+  does (directions, probe readout, output, enable) in MACHINES.md and
+  OPERATING.md, and a hint beside the probe settings.
+- Probing stopped goes on with *Continue*, probing only what the map lacks.
+- Dedicated Pi software: `mise run deploy-pi` installs the backend and the
+  page as a service that keeps its own link to the controller
+  (`spinny-web --connect auto`), so the Pi runs the whole thing.
+- V bits in CAM profiles (`angle`, `tip`): the cut width follows the depth.
+- Probing time estimate before and during probing (`/api/heightmap/estimate`,
+  `remaining` in the progress).
+- Page speed on complex boards: the preview caches its still layers, draws
+  only when something moved, and not at all while its page is hidden.
+- A Heights toggle in the preview.
+- A single probe point: *Probe here* ties the map to the frame in use, or
+  sets H 0 at the surface.
+- The touch-off / focus offset field keeps what is typed until Set.
+- Resume a job from the count of lines done (`/api/jobs/{id}/resume`), with
+  a plan preview and a rewind to the path's start.
+- Logging to `var/spinny.log` with a Log button in the console; a machine
+  that stops answering is given up after 3 s and the run fails with the
+  reason instead of waiting for ever.
+- Spindle speed control can be turned off (`speed_control` host setting).
+- The current position can be declared with typed values (*Here is* in the
+  Jog panel, *Last known* from the record).
+- The run's state is saved to `var/resume.json` as it goes, to resume from.

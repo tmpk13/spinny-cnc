@@ -275,7 +275,7 @@ input[type="checkbox"] {
         display: flex;
         flex-direction: column;
         gap: var(--gap);
-        padding: var(--gap) calc(var(--gap) / 2);
+        padding: 0 calc(var(--gap) / 2) var(--gap);
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -285,6 +285,14 @@ input[type="checkbox"] {
 
     .column > .panel {
         flex: none;
+    }
+
+    /* The room over the first panel is its margin, not the column's
+       padding: a box stuck to the top of a padded scroll container sits at
+       the padding's inner edge in some browsers and at the scrollport's in
+       others, and with no padding there the two agree. */
+    .column > .panel:first-child {
+        margin-top: var(--gap);
     }
 
     /* The jog pad, the preview and the job list take the height their
@@ -1202,6 +1210,26 @@ table.groups, table.settings {
     font-size: 0.9rem;
 }
 
+/* The settings' Apply, Save and Reload stay in view while the long table
+   scrolls under them: stuck under the status bar on the narrow layout,
+   where the page scrolls, and at the top of their column on the wide one,
+   where the column does. The panel's color behind them keeps the rows
+   from showing through. */
+.settings-actions {
+    position: sticky;
+    top: var(--stuck-under, 0);
+    z-index: 2;
+    background: var(--panel);
+    padding-bottom: 0.5rem;
+    border-bottom: thin solid var(--border);
+}
+
+@media (min-width: 64rem) {
+    .settings-actions {
+        top: 0;
+    }
+}
+
 table.groups th, table.settings th {
     text-align: left;
     color: var(--muted);
@@ -1852,4 +1880,55 @@ table.cam-table input[type="checkbox"] {
 
 .cam-report .warning {
     color: var(--yellow);
+}
+
+/* --- declaring the position, picking a run up, probing around a job ----- */
+
+/* The row that declares where the head is: fields for the joints, Set, and
+   the last position recorded, laid out like a goto row. */
+.position-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.position-row .field {
+    width: 6rem;
+}
+
+/* Picking a stopped run up: set apart from the run row above it. */
+.pickup {
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: thin solid var(--border);
+}
+
+/* A grid point left out of the probing: no cut comes near it. */
+.hm-cell-skipped {
+    opacity: 0.35;
+    background-image: repeating-linear-gradient(45deg, transparent 0 0.2rem, var(--border) 0.2rem 0.25rem);
+}
+
+.hm-estimate {
+    margin-left: auto;
+}
+
+/* A report the machine has not refreshed: the state shown is only what it last said. */
+.badge[data-stale] {
+    --tone: var(--orange);
+    outline: thin dashed var(--orange);
+}
+
+.dro-age {
+    --tone: var(--orange);
+    font-size: 0.75rem;
+}
+
+.hide-system-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
 }

@@ -78,3 +78,64 @@ the spin-up (the Config tab's settings panel).
 
 FAN3 is a low side switch on the fan rail, not a logic output: see the
 spindle note in `firmware/rp2040/README.md` before connecting one.
+
+### Probing less: around the cuts, and one point
+
+Probing every point of a grid over a sparse board measures mostly bare
+board. Under the grid fields, *around the job's cuts* probes only the
+points a cut of the selected job comes within the margin of (the corners
+of every grid cell a cut passes through) and leaves the rest out: the
+preview shows which, and the estimate beside it says how many points and
+about how long. A run following such a map is refused where a cut would
+land in a cell nobody probed, so probe with the job you will run.
+Probing that was stopped goes on with *Continue*, which probes only the
+points the map still lacks; the time left is shown as it goes.
+
+*Probe here* lowers the probe where the head is and comes back up. *Tie
+map* reads the surface against what the map says there and moves the
+map's offset by the difference, so a map probed before a power cycle, a
+restart or a position set follows the board again without being probed
+anew: put the tip over copper the map covers, not in a cut. *Set H 0* (Z 0
+on a mill) makes the surface found H 0, for milling without a map.
+
+### Picking a run up where it stopped
+
+A run that stopped short, this session's or an earlier one's, shows a
+*Resume from line* row under its job with the count of lines done filled
+in. The backend writes `var/resume.json` as a run goes, so the count
+survives the host as well as the controller.
+
+1. If the controller lost its position (it was powered down, or reset
+   while moving), tell it where the head is first: *Here is* in the Jog
+   panel declares the joints without moving them, and *Last known* fills
+   in the position the record holds. The head sits where the run left
+   it, so the X/Y screws keep that position across a power cycle; the
+   depth axis may have sunk under the spindle's weight.
+2. With a height map, tie it to the new frame: *Probe here: tie map* over
+   copper the map covers (the map's offset is taken back by every
+   position set, as a safeguard).
+3. *Plan* says which line the run starts at, how the head gets there and
+   what goes out first; *Resume from line* does it after a confirmation.
+   Leave *from the start of its path* on: the run then redoes the path the
+   line belongs to from its rapid, so a count one line off cannot leave a
+   gap in a trace. A spindle rises to the travel height, goes over the
+   point, starts at the job's speed there, spins up and plunges before the
+   first cut.
+
+A machine that stops answering is given up by the link after 3 s of
+silence: the state badge first shows the age of its last report, then the
+run ends as an error with the reason and the link closes. Reconnect, and
+pick the job up as above; the console's *Log* shows the backend's log,
+which keeps what happened when no page was open.
+
+### Checking the directions and the probe
+
+Every `invert` in the machine file is checked by what the machine does.
+With the head clear of the board, jog each axis one step: X+ must move the
+head toward board +X, Y+ toward +Y, Z+ or H+ up, and a positive turn must
+swing the point under the beam counterclockwise seen from above; an axis
+that goes the other way wants `invert = true` in its section
+(`$dir_invert`). Then watch the *Probe* readout: it must say *up* with the
+tip free and *down* while the tip touches; the other way round wants
+`invert = true` under `[probe]` (`$probe_invert`), or the first probe
+drives the head into the board. Load the file again after a change.

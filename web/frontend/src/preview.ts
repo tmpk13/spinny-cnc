@@ -7,6 +7,12 @@
 // returns to the overview. Everything is projected by camera.ts and drawn
 // with the plain 2D context, so the page needs no WebGL and the view math
 // tests without a canvas.
+//
+// The head moves many times a second while the rest of the picture does
+// not, so what stays still is drawn once into offscreen layers for the
+// camera, size, job and palette of the moment and copied under the head
+// on every frame; the layers are drawn again only when one of those
+// changes.
 
 import {
     type Camera,
@@ -19,17 +25,21 @@ import {
     pan,
     project,
     pxPerMm,
+    sameCamera,
     zoomAt,
 } from "./camera.ts";
 import { cssVar } from "./dom.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
 import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Path, Point } from "./types.ts";
 
-/** Every point of a probe grid, row by row from the lowest Y. */
+/** Every point of a probe grid that is probed, row by row from the lowest Y; a mask leaves points out. */
 export function gridPoints(grid: Grid): Point[] {
     const points: Point[] = [];
     for (let iy = 0; iy < grid.ny; iy++) {
         for (let ix = 0; ix < grid.nx; ix++) {
+            if (grid.mask && !grid.mask[iy]?.[ix]) {
+                continue;
+            }
             points.push([
                 grid.x0 + (grid.x1 - grid.x0) * ix / Math.max(1, grid.nx - 1),
                 grid.y0 + (grid.y1 - grid.y0) * iy / Math.max(1, grid.ny - 1),
@@ -39,11 +49,21 @@ export function gridPoints(grid: Grid): Point[] {
     return points;
 }
 
+function sameMask(a: Grid["mask"], b: Grid["mask"]): boolean {
+    if (!a && !b) {
+        return true;
+    }
+    if (!a || !b || a.length !== b.length) {
+        return false;
+    }
+    return a.every((row, iy) => row.length === b[iy]?.length && row.every((flag, ix) => flag === b[iy]?.[ix]));
+}
+
 export function sameGrid(a: Grid | null, b: Grid | null): boolean {
     if (a === null || b === null) {
         return a === b;
     }
-    return a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1 && a.nx === b.nx && a.ny === b.ny;
+    return (a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1 && a.nx === b.nx && a.ny === b.ny) && sameMask(a.mask, b.mask);
 }
 
 /** Screen room a ring label needs before the next one is drawn. */
@@ -51,10 +71,14 @@ export const LABEL_GAP_PX = 44;
 const TRAIL_LENGTH = 240;
 /** Where the rotation lock is remembered between visits. */
 export const LOCK_KEY = "spinny.preview.lock";
+/** Where the choice to draw the height map is remembered between visits. */
+export const HEIGHTS_KEY = "spinny.previewHeights";
 /** The head marker and the rail float this share of the reach over the board. */
 const HEAD_HEIGHT = 0.15;
 const MIN_EXAGGERATION = 1;
 const MAX_EXAGGERATION = 200;
+/** How long the palette read from the stylesheet is trusted before it is read again, ms. */
+const PALETTE_MS = 1000;
 
 /** What bounds the head, as the machine's profile gives it. */
 export interface Limits {
@@ -115,14 +139,17 @@ export function limitReach(limits: Limits): number {
 export function jobReach(job: Job | null, limit: number): number {
     let reach = limit > 0 ? limit : 0;
     if (job) {
-        const paths: Path[] = [...job.outline, ...job.copper];
-        for (const group of job.groups) {
-            paths.push(...group.paths);
-        }
-        for (const path of paths) {
-            for (const [x, y] of path) {
-                reach = Math.max(reach, Math.hypot(x, y));
+        const take = (paths: Path[]): void => {
+            for (const path of paths) {
+                for (const [x, y] of path) {
+                    reach = Math.max(reach, Math.hypot(x, y));
+                }
             }
+        };
+        take(job.outline);
+        take(job.copper);
+        for (const group of job.groups) {
+            take(group.paths);
         }
     }
     return reach > 0 ? reach : 10;
@@ -187,21 +214,25 @@ export function heightSpread(map: HeightMap): { mean: number; range: number } | 
     return { mean, range: Math.max(...heights) - Math.min(...heights) };
 }
 
-function readLock(): boolean {
+function readFlag(key: string, fallback: boolean): boolean {
     try {
-        return typeof localStorage !== "undefined" && localStorage.getItem(LOCK_KEY) === "1";
+        if (typeof localStorage === "undefined") {
+            return fallback;
+        }
+        const stored = localStorage.getItem(key);
+        return stored === null ? fallback : stored === "1";
     } catch {
-        return false;
+        return fallback;
     }
 }
 
-function writeLock(locked: boolean): void {
+function writeFlag(key: string, on: boolean): void {
     try {
         if (typeof localStorage !== "undefined") {
-            localStorage.setItem(LOCK_KEY, locked ? "1" : "0");
+            localStorage.setItem(key, on ? "1" : "0");
         }
     } catch {
-        // Nothing to remember into; the lock holds for this page.
+        // Nothing to remember into; the choice holds for this page.
     }
 }
 
@@ -222,6 +253,73 @@ interface Colors {
     high: string;
 }
 
+function readColors(node: Element): Colors {
+    return {
+        bg: cssVar(node, "--pv-bg", "#ffffff"),
+        grid: cssVar(node, "--pv-grid", "#d8d8d8"),
+        axis: cssVar(node, "--pv-axis", "#e07000"),
+        rail: cssVar(node, "--pv-rail", "#8090a0"),
+        rmax: cssVar(node, "--pv-rmax", "#c02020"),
+        copper: cssVar(node, "--pv-copper", "#c8a165"),
+        outline: cssVar(node, "--pv-outline", "#404040"),
+        head: cssVar(node, "--pv-head", "#e07000"),
+        trail: cssVar(node, "--pv-trail", "#e0a000"),
+        text: cssVar(node, "--pv-text", "#606060"),
+        groups: [
+            cssVar(node, "--pv-g0", "#c02020"),
+            cssVar(node, "--pv-g1", "#204090"),
+            cssVar(node, "--pv-g2", "#207040"),
+            cssVar(node, "--pv-g3", "#806000"),
+        ],
+        probe: cssVar(node, "--pv-probe", "#7a3fb0"),
+        low: cssVar(node, "--hm-low", "#268bd2"),
+        high: cssVar(node, "--hm-high", "#dc322f"),
+    };
+}
+
+function sameColors(a: Colors, b: Colors): boolean {
+    return a.bg === b.bg && a.grid === b.grid && a.axis === b.axis && a.rail === b.rail && a.rmax === b.rmax
+        && a.copper === b.copper && a.outline === b.outline && a.head === b.head && a.trail === b.trail
+        && a.text === b.text && a.probe === b.probe && a.low === b.low && a.high === b.high
+        && a.groups.length === b.groups.length && a.groups.every((color, index) => color === b.groups[index]);
+}
+
+/** Everything the still layers were drawn from; a change in any of it draws them again. */
+interface SceneKey {
+    job: Job | null;
+    probeMap: HeightMap | null;
+    probeDraft: Grid | null;
+    heights: boolean;
+    camera: Camera;
+    width: number;
+    height: number;
+    dpr: number;
+    colors: Colors;
+    limits: Limits;
+    /** The table angle on a cartesian machine, whose limit box turns with it; null on the polar machine, whose limits stand still. */
+    angle: number | null;
+}
+
+function sameSceneKey(a: SceneKey, b: SceneKey): boolean {
+    return a.job === b.job && a.probeMap === b.probeMap && sameGrid(a.probeDraft, b.probeDraft) && a.heights === b.heights
+        && sameCamera(a.camera, b.camera) && a.width === b.width && a.height === b.height && a.dpr === b.dpr
+        && a.colors === b.colors && a.angle === b.angle
+        && a.limits.kinematics === b.limits.kinematics && a.limits.r_max === b.limits.r_max && a.limits.z_max === b.limits.z_max;
+}
+
+/**
+ * The still parts of the picture, drawn once: the board with its rings,
+ * which the rail is drawn over, and the limits, the job, the probe grid
+ * and the axis cross, which are drawn over the rail, transparent elsewhere.
+ */
+interface Scene {
+    key: SceneKey;
+    under: HTMLCanvasElement;
+    over: HTMLCanvasElement;
+    /** How far the probed heights were stretched, for the notes; null without a mesh. */
+    exaggeration: number | null;
+}
+
 interface Pointer {
     x: number;
     y: number;
@@ -238,6 +336,8 @@ export class Preview {
     private dpr = 1;
     /** The view was fitted against a canvas that had a size. */
     private fitted = false;
+    /** The canvas has no size: hidden with its page, or not laid out yet. */
+    private hidden = false;
     private job: Job | null = null;
     private limits: Limits = { kinematics: "polar", r_max: 0, z_max: 0 };
     private head: Joint | null = null;
@@ -245,11 +345,18 @@ export class Preview {
     private trail: Point[] = [];
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
+    private heights = readFlag(HEIGHTS_KEY, true);
     private pending = false;
     private observer: ResizeObserver | null = null;
     private pointers = new Map<number, Pointer>();
-    private locked = readLock();
+    private locked = readFlag(LOCK_KEY, false);
     private disposers: (() => void)[] = [];
+    private palette: Colors | null = null;
+    private paletteAt = 0;
+    private scene: Scene | null = null;
+    /** The page cannot make offscreen canvases; the still layers are drawn every frame instead. */
+    private noLayers = false;
+    private reachMemo: { job: Job | null; limit: number; reach: number } | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -275,6 +382,24 @@ export class Preview {
             this.probeDraft = draft;
             this.requestDraw();
         }
+    }
+
+    /** Whether the height map's mesh and probe points are drawn; the choice is kept between visits. */
+    get showHeights(): boolean {
+        return this.heights;
+    }
+
+    setShowHeights(on: boolean): void {
+        if (on !== this.heights) {
+            this.heights = on;
+            writeFlag(HEIGHTS_KEY, on);
+            this.requestDraw();
+        }
+    }
+
+    toggleHeights(): boolean {
+        this.setShowHeights(!this.heights);
+        return this.heights;
     }
 
     /** The radius limit drawn, mm; 0 is none. */
@@ -304,22 +429,26 @@ export class Preview {
     /**
      * Live joint position, and the board point under the head when the
      * caller knows it (a cartesian machine's is not the joint's polar
-     * point); the trail keeps the last positions that moved.
+     * point); the trail keeps the last positions that moved. A frame that
+     * reports the head where it was draws nothing.
      */
     setHead(joint: Joint | null, board: Board | null = null): void {
+        const next = joint ? board ?? boardOfJoint(joint) : null;
+        const same = sameJoint(this.head, joint) && sameBoard(this.headBoard, next);
         this.head = joint;
-        this.headBoard = joint ? board ?? boardOfJoint(joint) : null;
-        if (joint) {
-            const board = this.headBoard!;
+        this.headBoard = next;
+        if (next) {
             const last = this.trail[this.trail.length - 1];
-            if (!last || Math.hypot(last[0] - board.x, last[1] - board.y) > 1e-4) {
-                this.trail.push([board.x, board.y]);
+            if (!last || Math.hypot(last[0] - next.x, last[1] - next.y) > 1e-4) {
+                this.trail.push([next.x, next.y]);
                 if (this.trail.length > TRAIL_LENGTH) {
                     this.trail.splice(0, this.trail.length - TRAIL_LENGTH);
                 }
             }
         }
-        this.requestDraw();
+        if (!same) {
+            this.requestDraw();
+        }
     }
 
     clearTrail(): void {
@@ -343,7 +472,7 @@ export class Preview {
 
     setRotationLocked(locked: boolean): void {
         this.locked = locked;
-        writeLock(locked);
+        writeFlag(LOCK_KEY, locked);
         this.requestDraw();
     }
 
@@ -354,7 +483,7 @@ export class Preview {
 
     /** Back to the overview: the axis in the middle, tilted, everything drawn in view. */
     resetView(): void {
-        this.camera = overview(jobReach(this.job, limitReach(this.limits)), this.width || 1, this.height || 1);
+        this.camera = overview(this.reach(), this.width || 1, this.height || 1);
         // A canvas measures 0 by 0 until it is laid out, so a fit before
         // that is against nothing and the next real size has to redo it.
         this.fitted = this.width > 1 && this.height > 1;
@@ -379,6 +508,15 @@ export class Preview {
 
     resize(): void {
         const rect = this.canvas.getBoundingClientRect();
+        // A canvas hidden with its page measures 0 by 0: nothing is drawn
+        // into it until it is back, and then once at least, since the
+        // head went on moving meanwhile.
+        const hidden = !(rect.width > 0 && rect.height > 0);
+        const back = this.hidden && !hidden;
+        this.hidden = hidden;
+        if (hidden) {
+            return;
+        }
         const width = Math.max(1, Math.round(rect.width));
         const height = Math.max(1, Math.round(rect.height));
         const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
@@ -394,7 +532,15 @@ export class Preview {
             } else {
                 this.requestDraw();
             }
+        } else if (back) {
+            this.requestDraw();
         }
+    }
+
+    /** Reads the palette from the stylesheet again, as after a change of theme. */
+    refreshColors(): void {
+        this.paletteAt = Number.NEGATIVE_INFINITY;
+        this.requestDraw();
     }
 
     dispose(): void {
@@ -420,18 +566,12 @@ export class Preview {
 
     draw(): void {
         const ctx = this.ctx;
-        if (!ctx || this.width === 0) {
+        if (!ctx || this.hidden || this.width === 0) {
             return;
         }
         const colors = this.colors();
         const { width, height, dpr, camera } = this;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.fillStyle = colors.bg;
-        ctx.fillRect(0, 0, width, height);
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        const reach = jobReach(this.job, limitReach(this.limits));
+        const reach = this.reach();
         const frame = frameOf(camera);
         const scale = pxPerMm(camera, height);
         const cartesian = this.limits.kinematics === "cartesian";
@@ -439,12 +579,14 @@ export class Preview {
         const headHeight = Math.max(1, reach * HEAD_HEIGHT);
         const at = (x: number, y: number, z = 0) => project(frame, width, height, [x, y, z]);
 
-        // Rings on the board.
-        const step = ringStep(reach);
-        ctx.strokeStyle = colors.grid;
-        ctx.lineWidth = 1;
-        for (let ring = step; ring <= reach * 1.5; ring += step) {
-            this.polyline(ctx, frame, circlePoints(ring, 96), true);
+        const scene = this.stillScene(colors, reach, scale, extent);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        if (scene) {
+            this.blit(ctx, scene.under);
+        } else {
+            this.drawBoard(ctx, frame, colors, reach);
         }
 
         // The rail, floating at the head's height: along +X from the axis
@@ -471,54 +613,13 @@ export class Preview {
         this.polyline(ctx, frame, [[0, 0, 0], [0, 0, headHeight]]);
         ctx.globalAlpha = 1;
 
-        const limit = limitShape(this.limits, this.head?.a ?? 0, extent);
-        if (limit) {
-            ctx.strokeStyle = colors.rmax;
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([4, 4]);
-            if (limit.kind === "circle") {
-                this.polyline(ctx, frame, circlePoints(limit.radius, 96), true);
-            } else if (limit.kind === "outline") {
-                this.polyline(ctx, frame, limit.points.map(([x, y]) => [x, y, 0] as Vec3), true);
-            } else {
-                for (const [[x0, y0], [x1, y1]] of limit.lines) {
-                    this.polyline(ctx, frame, [[x0, y0, 0], [x1, y1, 0]]);
-                }
-            }
-            ctx.setLineDash([]);
+        let exaggeration: number | null;
+        if (scene) {
+            this.blit(ctx, scene.over);
+            exaggeration = scene.exaggeration;
+        } else {
+            exaggeration = this.drawWork(ctx, frame, colors, reach, scale, extent);
         }
-
-        const job = this.job;
-        if (job) {
-            if (job.copper.length > 0) {
-                ctx.fillStyle = colors.copper;
-                ctx.globalAlpha = 0.35;
-                this.fillPaths(ctx, frame, job.copper);
-                ctx.globalAlpha = 1;
-            }
-            const spot = job.spot > 0 ? job.spot : 0.1;
-            job.groups.forEach((group, index) => {
-                ctx.strokeStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
-                ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
-                ctx.lineWidth = Math.max(spot * scale, 1.2);
-                this.strokePaths(ctx, frame, group.paths);
-            });
-            ctx.globalAlpha = 1;
-            if (job.outline.length > 0) {
-                ctx.strokeStyle = colors.outline;
-                ctx.lineWidth = Math.max(spot * scale / 2, 1);
-                this.strokePaths(ctx, frame, job.outline);
-            }
-        }
-
-        const exaggeration = this.drawProbe(ctx, frame, colors, reach);
-
-        // Axis cross, ten px wide whatever the zoom.
-        const cross = 10 / scale;
-        ctx.strokeStyle = colors.axis;
-        ctx.lineWidth = 1.5;
-        this.polyline(ctx, frame, [[-cross, 0, 0], [cross, 0, 0]]);
-        this.polyline(ctx, frame, [[0, -cross, 0], [0, cross, 0]]);
 
         // Trail and head.
         if (this.trail.length > 1) {
@@ -563,6 +664,7 @@ export class Preview {
 
         // Labels in screen space: the rings along the rail, every one while
         // they are far enough apart to read, every second or fourth beyond.
+        const step = ringStep(reach);
         ctx.fillStyle = colors.text;
         ctx.font = "0.75rem system-ui, sans-serif";
         ctx.textBaseline = "top";
@@ -589,6 +691,163 @@ export class Preview {
             notes.unshift(`heights x${exaggeration >= 10 ? Math.round(exaggeration) : exaggeration.toFixed(1)}`);
         }
         ctx.fillText(notes.join("   "), width - 6, height - 4);
+    }
+
+    /** The farthest thing drawn, as `jobReach` has it, worked out once per job and limit rather than per frame. */
+    private reach(): number {
+        const limit = limitReach(this.limits);
+        const memo = this.reachMemo;
+        if (memo && memo.job === this.job && memo.limit === limit) {
+            return memo.reach;
+        }
+        const reach = jobReach(this.job, limit);
+        this.reachMemo = { job: this.job, limit, reach };
+        return reach;
+    }
+
+    /**
+     * The still layers for the picture of the moment, drawn again only when
+     * something in them changed; null where offscreen canvases cannot be
+     * had, and the layers are then drawn straight onto the canvas.
+     */
+    private stillScene(colors: Colors, reach: number, scale: number, extent: number): Scene | null {
+        if (this.noLayers) {
+            return null;
+        }
+        const key: SceneKey = {
+            job: this.job,
+            probeMap: this.probeMap,
+            probeDraft: this.probeDraft,
+            heights: this.heights,
+            camera: this.camera,
+            width: this.width,
+            height: this.height,
+            dpr: this.dpr,
+            colors,
+            limits: this.limits,
+            angle: this.limits.kinematics === "cartesian" ? this.head?.a ?? 0 : null,
+        };
+        const scene = this.scene;
+        if (scene && sameSceneKey(scene.key, key)) {
+            return scene;
+        }
+        const under = scene?.under ?? this.layerCanvas();
+        const over = scene?.over ?? this.layerCanvas();
+        const underCtx = under?.getContext("2d");
+        const overCtx = over?.getContext("2d");
+        if (!under || !over || !underCtx || !overCtx) {
+            this.noLayers = true;
+            this.scene = null;
+            return null;
+        }
+        const frame = frameOf(this.camera);
+        this.beginLayer(under, underCtx);
+        this.drawBoard(underCtx, frame, colors, reach);
+        this.beginLayer(over, overCtx);
+        const exaggeration = this.drawWork(overCtx, frame, colors, reach, scale, extent);
+        this.scene = { key, under, over, exaggeration };
+        return this.scene;
+    }
+
+    private layerCanvas(): HTMLCanvasElement | null {
+        if (typeof document === "undefined") {
+            return null;
+        }
+        return document.createElement("canvas");
+    }
+
+    /** Sizes a layer to the canvas and wipes it, the transform set so it is drawn in CSS px like the canvas. */
+    private beginLayer(layer: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
+        const width = Math.round(this.width * this.dpr);
+        const height = Math.round(this.height * this.dpr);
+        if (layer.width !== width || layer.height !== height) {
+            layer.width = width;
+            layer.height = height;
+        }
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.globalAlpha = 1;
+        ctx.setLineDash([]);
+    }
+
+    /** Copies a layer onto the canvas, device pixel for device pixel. */
+    private blit(ctx: CanvasRenderingContext2D, layer: HTMLCanvasElement): void {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(layer, 0, 0);
+        ctx.restore();
+    }
+
+    /** The board: the background and the rings about the axis. */
+    private drawBoard(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number): void {
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(0, 0, this.width, this.height);
+        const step = ringStep(reach);
+        ctx.strokeStyle = colors.grid;
+        ctx.lineWidth = 1;
+        for (let ring = step; ring <= reach * 1.5; ring += step) {
+            this.polyline(ctx, frame, circlePoints(ring, 96), true);
+        }
+    }
+
+    /**
+     * What lies on the board over the rail: the soft limits, the job's
+     * copper, paths and outline, the probe grid and the axis cross. Returns
+     * the stretch of the probed heights, or null when no surface was drawn.
+     */
+    private drawWork(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number, scale: number, extent: number): number | null {
+        const limit = limitShape(this.limits, this.head?.a ?? 0, extent);
+        if (limit) {
+            ctx.strokeStyle = colors.rmax;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 4]);
+            if (limit.kind === "circle") {
+                this.polyline(ctx, frame, circlePoints(limit.radius, 96), true);
+            } else if (limit.kind === "outline") {
+                this.polyline(ctx, frame, limit.points.map(([x, y]) => [x, y, 0] as Vec3), true);
+            } else {
+                for (const [[x0, y0], [x1, y1]] of limit.lines) {
+                    this.polyline(ctx, frame, [[x0, y0, 0], [x1, y1, 0]]);
+                }
+            }
+            ctx.setLineDash([]);
+        }
+
+        const job = this.job;
+        if (job) {
+            if (job.copper.length > 0) {
+                ctx.fillStyle = colors.copper;
+                ctx.globalAlpha = 0.35;
+                this.fillPaths(ctx, frame, job.copper);
+                ctx.globalAlpha = 1;
+            }
+            const spot = job.spot > 0 ? job.spot : 0.1;
+            job.groups.forEach((group, index) => {
+                ctx.strokeStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
+                ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
+                ctx.lineWidth = Math.max(spot * scale, 1.2);
+                this.strokePaths(ctx, frame, group.paths);
+            });
+            ctx.globalAlpha = 1;
+            if (job.outline.length > 0) {
+                ctx.strokeStyle = colors.outline;
+                ctx.lineWidth = Math.max(spot * scale / 2, 1);
+                this.strokePaths(ctx, frame, job.outline);
+            }
+        }
+
+        const exaggeration = this.heights ? this.drawProbe(ctx, frame, colors, reach) : null;
+
+        // Axis cross, ten px wide whatever the zoom.
+        const cross = 10 / scale;
+        ctx.strokeStyle = colors.axis;
+        ctx.lineWidth = 1.5;
+        this.polyline(ctx, frame, [[-cross, 0, 0], [cross, 0, 0]]);
+        this.polyline(ctx, frame, [[0, -cross, 0], [0, cross, 0]]);
+        return exaggeration;
     }
 
     /**
@@ -735,29 +994,23 @@ export class Preview {
         }
     }
 
+    /**
+     * The palette from the stylesheet, read again after a change of theme
+     * or once a second at most, since every read is a computed style; the
+     * same values keep the same object, so the still layers drawn with
+     * them stand.
+     */
     private colors(): Colors {
-        const node = this.canvas;
-        return {
-            bg: cssVar(node, "--pv-bg", "#ffffff"),
-            grid: cssVar(node, "--pv-grid", "#d8d8d8"),
-            axis: cssVar(node, "--pv-axis", "#e07000"),
-            rail: cssVar(node, "--pv-rail", "#8090a0"),
-            rmax: cssVar(node, "--pv-rmax", "#c02020"),
-            copper: cssVar(node, "--pv-copper", "#c8a165"),
-            outline: cssVar(node, "--pv-outline", "#404040"),
-            head: cssVar(node, "--pv-head", "#e07000"),
-            trail: cssVar(node, "--pv-trail", "#e0a000"),
-            text: cssVar(node, "--pv-text", "#606060"),
-            groups: [
-                cssVar(node, "--pv-g0", "#c02020"),
-                cssVar(node, "--pv-g1", "#204090"),
-                cssVar(node, "--pv-g2", "#207040"),
-                cssVar(node, "--pv-g3", "#806000"),
-            ],
-            probe: cssVar(node, "--pv-probe", "#7a3fb0"),
-            low: cssVar(node, "--hm-low", "#268bd2"),
-            high: cssVar(node, "--hm-high", "#dc322f"),
-        };
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        if (this.palette && now - this.paletteAt < PALETTE_MS) {
+            return this.palette;
+        }
+        const read = readColors(this.canvas);
+        this.paletteAt = now;
+        if (!this.palette || !sameColors(this.palette, read)) {
+            this.palette = read;
+        }
+        return this.palette;
     }
 
     private canvasPoint(event: { clientX: number; clientY: number }): [number, number] {
@@ -823,9 +1076,23 @@ export class Preview {
         }
         if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
             const media = window.matchMedia("(prefers-color-scheme: dark)");
-            const handler = (): void => this.requestDraw();
+            const handler = (): void => this.refreshColors();
             media.addEventListener?.("change", handler);
             this.disposers.push(() => media.removeEventListener?.("change", handler));
         }
     }
+}
+
+function sameJoint(a: Joint | null, b: Joint | null): boolean {
+    if (a === null || b === null) {
+        return a === b;
+    }
+    return a.r === b.r && a.a === b.a;
+}
+
+function sameBoard(a: Board | null, b: Board | null): boolean {
+    if (a === null || b === null) {
+        return a === b;
+    }
+    return a.x === b.x && a.y === b.y;
 }

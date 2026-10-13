@@ -2,9 +2,58 @@
 
 import { button, el, replace } from "../dom.ts";
 import { profileBadge, profileOf } from "../profile.ts";
+import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
+/** How often the ports are listed again while nothing is connected, ms: a controller plugged in shows up by itself. */
+export const PORT_POLL_MS = 10_000;
+const HIDE_SYSTEM_KEY = "spinny.hideSystemPorts";
+/** A report older than this, s, is a machine that has gone quiet; the link gives it up a little later. */
+export const STALE_SECONDS = 1.5;
+
+/** The port to offer first: the controller by name, then the url last used, then any USB device, then anything. */
+export function defaultPort(ports: Port[]): Port | null {
+    return ports.find((port) => port.spinny)
+        ?? ports.find((port) => port.kind === "last")
+        ?? ports.find((port) => port.kind === "usb")
+        ?? ports[0]
+        ?? null;
+}
+
+/** The ports shown: without the built-in ones when asked, which are never the controller. */
+export function visiblePorts(ports: Port[], hideSystem: boolean): Port[] {
+    return hideSystem ? ports.filter((port) => port.kind !== "system") : ports;
+}
+
+/** What the select says for a port: what it is, then where. */
+export function portLabel(port: Port): string {
+    const name = port.product || port.description;
+    return name ? `${name}  ${port.url}` : port.url;
+}
+
+function readHideSystem(): boolean {
+    try {
+        const stored = localStorage.getItem(HIDE_SYSTEM_KEY);
+        return stored === null ? true : stored === "1";
+    } catch {
+        return true;
+    }
+}
+
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
+    let hideSystem = readHideSystem();
+    const hideBox = el("input", { type: "checkbox", class: "hide-system", "aria-label": "Hide system ports" }) as HTMLInputElement;
+    hideBox.checked = hideSystem;
+    const hideLabel = el("label", { class: "muted hide-system-label", title: "Leave out the built-in serial ports, which are never the controller" }, hideBox, " hide system ports");
+    hideBox.addEventListener("change", () => {
+        hideSystem = hideBox.checked;
+        try {
+            localStorage.setItem(HIDE_SYSTEM_KEY, hideSystem ? "1" : "0");
+        } catch {
+            // Nothing to remember it in: the choice holds for this page.
+        }
+        renderPorts(ctx.store.get().ports);
+    });
     const select = el("select", { class: "field", "aria-label": "Serial port" });
     const urlInput = el("input", {
         type: "text",
@@ -24,7 +73,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
 
     root.append(
         el("div", { class: "brand" }, "Spinny Laser"),
-        el("div", { class: "connection" }, select, urlInput, refresh, connect),
+        el("div", { class: "connection" }, select, urlInput, refresh, connect, hideLabel),
         el("div", { class: "status" }, stateBadge, profile, firmware, link, mock),
     );
 
@@ -55,22 +104,38 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
         }
     }
 
-    ctx.store.subscribe((state) => {
+    function renderPorts(all: Port[]): void {
+        const ports = visiblePorts(all, hideSystem);
         const current = select.value;
         replace(
             select,
-            el("option", { value: "" }, state.ports.length ? "port..." : "no ports"),
-            ...state.ports.map((port) => el("option", { value: port.url }, `${port.url}  ${port.description}`.trim())),
+            el("option", { value: "" }, ports.length ? "port..." : "no ports"),
+            ...ports.map((port) => el("option", { value: port.url }, portLabel(port))),
         );
-        if (state.ports.some((port) => port.url === current)) {
+        if (ports.some((port) => port.url === current)) {
             select.value = current;
         }
-        const first = state.ports[0];
-        if (urlInput.value === "" && first && !state.snapshot.connected) {
-            urlInput.value = first.url;
-            select.value = first.url;
+        const connected = ctx.store.get().snapshot.connected;
+        const offered = defaultPort(ports);
+        // The controller takes the field over from a built-in port it was
+        // given before anything better was listed, never from something typed.
+        const typed = urlInput.value !== "" && !all.some((port) => port.url === urlInput.value || port.device === urlInput.value);
+        const held = all.find((port) => port.url === urlInput.value || port.device === urlInput.value);
+        if (!connected && offered && !typed && (urlInput.value === "" || (held?.kind === "system" && offered.kind !== "system"))) {
+            urlInput.value = offered.url;
+            select.value = offered.url;
         }
-    }, ["ports"]);
+    }
+
+    ctx.store.subscribe((state) => renderPorts(state.ports), ["ports"]);
+
+    // A controller plugged in later shows up without a press of Ports.
+    const poll = setInterval(() => {
+        if (!ctx.store.get().snapshot.connected && document.visibilityState !== "hidden") {
+            void ctx.refreshPorts();
+        }
+    }, PORT_POLL_MS);
+    window.addEventListener("pagehide", () => clearInterval(poll));
 
     ctx.store.subscribe((state) => {
         const snapshot = state.snapshot;
@@ -86,13 +151,18 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
             stateBadge.textContent = snapshot.connected ? "Connected" : "Disconnected";
             stateBadge.setAttribute("data-state", snapshot.connected ? "Idle" : "none");
         } else {
-            stateBadge.textContent = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? "?"}` : machine.state;
+            const name = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? "?"}` : machine.state;
+            // A report that is not being refreshed is a machine that has
+            // stopped answering: the state shown is only what it last said.
+            const stale = (machine.age ?? 0) > STALE_SECONDS;
+            stateBadge.textContent = stale ? `${name}, no answer ${Math.round(machine.age ?? 0)} s` : name;
             stateBadge.setAttribute("data-state", machine.state);
+            stateBadge.toggleAttribute("data-stale", stale);
         }
         firmware.textContent = snapshot.firmware ? `v${snapshot.firmware.version}` : "";
-        const name = snapshot.connected ? profileBadge(profileOf(snapshot)) : "";
-        profile.textContent = name;
-        profile.classList.toggle("hidden", name === "");
+        const badgeName = snapshot.connected ? profileBadge(profileOf(snapshot)) : "";
+        profile.textContent = badgeName;
+        profile.classList.toggle("hidden", badgeName === "");
         link.setAttribute("data-link", state.link);
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";
     }, ["snapshot", "link"]);

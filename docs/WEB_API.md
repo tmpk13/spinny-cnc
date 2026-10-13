@@ -10,7 +10,7 @@ Base URL: `http://<host>:8000`. Bodies and responses are JSON unless noted.
 
 | Method and path | Body | Returns |
 | --- | --- | --- |
-| `GET /api/ports` | | `{"ports": [{"url": "/dev/ttyACM0", "description": "..."}]}` plus any `socket://` url last used |
+| `GET /api/ports` | | `{"ports": [{"url": "/dev/serial/by-id/usb-spinny_...", "device": "/dev/ttyACM0", "description": "...", "product": "spinny laser controller", "manufacturer": "spinny", "serial": "...", "vid": 11914, "pid": 10, "kind": "usb", "spinny": true}]}`, the controller first (`spinny`: it announces itself on the bus), then the other USB devices, then the built-in ports (`kind` `system`, never the controller), plus the url last used when it is not listed (`kind` `last`); a USB device is named by its stable `/dev/serial/by-id` link where the system gives one, so the pick survives a replug |
 | `POST /api/connect` | `{"url": "/dev/ttyACM0"}` | state snapshot; `socket://host:port` reaches the virtual firmware; anything but a device path, a `COMn` port or a `socket://` url is refused with 400 |
 | `POST /api/disconnect` | | state snapshot; a turning spindle or a lit beam is stopped first (`laser off` on an idle machine; one that is moving or held, or does not take `laser off` at once, is held and then reset once at rest, as a run's stop does), since the firmware does not see a port close; the backend's shutdown does the same |
 | `GET /api/state` | | state snapshot |
@@ -31,9 +31,17 @@ State snapshot:
     "queue": {"planner": 32, "lines": 16}
   },
   "profile": {"kinematics": "polar", "tool": "laser", "h_axis": true, "r_max": 60.0, "z_max": 0.0},
-  "run": null
+  "run": null,
+  "resume": null
 }
 ```
+
+`machine.age` is how old the report is, s: a machine that has gone quiet
+shows there first, and after 3 s with status polls unanswered the link is
+closed with that reason (`link closed: no answer from the machine for 3
+s`), which ends a run as `error` with it; reconnect, and pick the job up
+(below). `resume` is the resume record, the last run's progress with the
+plan it was made from (see `GET /api/resume`), kept across sessions.
 
 `board` is derived on the host from `joint`: `x = r cos a`, `y = r sin a`
 on the polar machine; on a cartesian one it is `(r, z)` turned by `a`.
@@ -93,13 +101,15 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}, "machine": "polar-laser", "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `controls` is what the page draws for jogging and the readout ([MACHINES.md](MACHINES.md), `[controls]`): that file's, or, for values that are no file's, those of the file last loaded from this host when it is this kind of machine (kinematics, tool, focus axis), else of the one file that is, else the defaults for what the values say the machine is; `controls_from` is the file the controls are, `null` for the defaults |
-| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
+| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true}, "machine": "polar-laser", "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `controls` is what the page draws for jogging and the readout ([MACHINES.md](MACHINES.md), `[controls]`): that file's, or, for values that are no file's, those of the file last loaded from this host when it is this kind of machine (kinematics, tool, focus axis), else of the one file that is, else the defaults for what the values say the machine is; `controls_from` is the file the controls are, `null` for the defaults |
+| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
 
 `clearance` and `spinup` are for milling: the tool travels `clearance` mm
 over the surface (H 0 without a height map, the map's highest point with
 one), and a run dwells `spinup` seconds after starting the spindle or
-changing its speed.
+changing its speed. `speed_control` false runs the spindle full on: every
+`spindle S` a run or the page sends asks for `s_max`, whatever a group's
+speed says, for a spindle with its own speed knob or one behind a switch.
 | `POST /api/settings/save` | writes the firmware settings to flash |
 
 ## Machines
@@ -143,7 +153,13 @@ operations a design goes through, and how the gcode is written.
 | `GET /api/jobs/{id}` | the job |
 | `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm |
 | `DELETE /api/jobs/{id}` | |
+| `DELETE /api/jobs` | every job but the one running: `{"deleted": [ids], "kept": [id]}` |
 | `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out; 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less, and for an enabled group whose `tool` is the other than the machine's |
+| `POST /api/jobs/{id}/resume` | picks the job up at a line: `{"line": 27213, "rewind": true, "compensate": "focus"}`. `line` is the count of lines done, as the progress reports it (`acked`); the lines before it count as done, and the head is brought from where it stands to where that line begins (a spindle: up to the travel height, over the point, the spindle started at the speed the job had there and given its spin-up, then down to the depth the cut starts at; a laser: a dark move to the cut's start, at the focus height when the map is followed), then the job goes on. `rewind` (default true) starts over at the first line of the path that line belongs to, so a count one line off cannot leave a gap. `compensate` left out takes the way the recorded run followed the board. The plan is made from where the recorded run began when the record is this job's, so its lines are the ones counted; otherwise from where the head is, which on a cartesian machine changes at most the first rapid. On the polar machine a `set A` first gives the table the plan's count of turns. Answers the progress, with `resumed_from`; the same refusals as a run, plus 400 for a line past the job |
+| `POST /api/jobs/{id}/resume/plan` | the same body; what the resume would do without moving anything: `{"job", "line", "skip", "total", "compensate", "planned_from_record", "next", "group", "approach": [lines]}`, `skip` the line the run starts at, `next` that line, `approach` the lines that bring the head there |
+| `GET /api/resume` | `{"resume": record or null}`: the last run's progress (see below) plus `start` (the joint its plan began from), `compensate`, `cartesian`, `angle`, `spindle`, `started`, `updated` and `position` (the machine's last report, `{"r", "a", "z", "h"}`), written every second as a run goes and at its end, so a host that dies, or a controller powered down with the job half done, leaves behind what a later session needs |
+| `DELETE /api/resume` | forgets the record; 409 while a job runs |
+| `GET /api/log?lines=200` | `{"lines": [...]}`, the tail of the backend's log (`var/spinny.log`): the link's opening, closing and stalls, every run's and probing's start and end with its counts, settings written, messages shown on the page |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | while a run is still being prepared (its checks and estimate), `hold` and `stop` cancel its start, and the pending `POST /api/jobs/{id}/run` answers 409 with the reason; `POST /api/laser/off` and a reset do the same, and a reset in that window is also seen by the preparation itself |
 | `GET /api/run` | progress, or `null` before any job has run |
 
@@ -213,8 +229,11 @@ are left out. Progress:
 
 ```json
 {"job": "a1b2", "state": "running", "sent": 120, "acked": 118, "total": 900,
- "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null}
+ "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null, "resumed_from": null}
 ```
+
+`resumed_from` is the line a run picked the job up at, null for a run from
+the top; its `sent` and `acked` count from there.
 
 On a spindle machine a job is milled: `power` is the spindle's `S`,
 `speed` the feed, `depth` how far under the surface the group's last pass
@@ -271,7 +290,9 @@ across a frame change.
 | Method and path | Body |
 | --- | --- |
 | `GET /api/heightmap` | returns `{"map": map or null, "probe": probing progress or null, "settings": probe settings}` |
-| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, with a spindle turning, or while a run or another probing is under way (a run and probing asked for at once: one starts, the other is 409); a point the probe tip cannot reach, or one that would take the head past `r_max` (or `z_max` on a cartesian machine, where the rail and the cross slide put the tip over each point), is 409 before anything moves; the map is done once the head is back at the travel height and still |
+| `POST /api/heightmap/probe` | `{"x0": -20, "y0": -15, "x1": 20, "y1": 15, "nx": 5, "ny": 4}`: probes that grid (2 to 50 points a side) and replaces the map; 409 without a focus axis, with the probe already touching, unless `Idle`, with a spindle turning, or while a run or another probing is under way (a run and probing asked for at once: one starts, the other is 409); a point the probe tip cannot reach, or one that would take the head past `r_max` (or `z_max` on a cartesian machine, where the rail and the cross slide put the tip over each point), is 409 before anything moves; the map is done once the head is back at the travel height and still. With `"job": id` and `"margin": 1.0` only the points a cut of that job comes within the margin (plus half the job's spot) of are probed: the corners of every grid cell a cut passes through, the rest left out of the map (`grid.mask[iy][ix]`, false where left out; `heights` stay null there), which on a sparse board is most of them. With `"resume": true` probing goes on with the stored map where it has no height yet, whatever grid the body carries (400 when there is none, when it is complete, or when the focus axis was renumbered since it was probed) |
+| `POST /api/heightmap/estimate` | the same body; `{"seconds": 420.0, "points": 60, "grid": grid}` without touching the machine: about how long the probing takes (each point its moves, a touch down over half the probe depth, the slow touch, the rise and the answers), and the grid it would probe, mask included, for the page to draw |
+| `POST /api/heightmap/touch` | `{"mode": "map" \| "zero"}`: one probe down where the head is, back up, and then: `map` ties the height map to the focus axis frame in use by the shift it finds, the surface's height there against the map's, so a map probed before a power cycle, a restart or a position set follows the board again without being probed anew (the tip must be over a probed cell, and a laser's map must have been focused by eye once; a spindle's touch-off is the probe itself, so its first touch sets the offset); `zero` makes the contact height H 0 (`set H`), for milling without a map, and takes the map's offset back as any position set does. Reported as a probing of one point; the same refusals as a probing |
 | `POST /api/heightmap/stop` | holds and resets like a run's stop; a probing still starting (checking the machine) ends before anything moves, and so it does on `POST /api/realtime` `reset`; 409 when nothing is being probed |
 | `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset, for a map probed in the focus axis frame in use (400 otherwise); `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam; 400 with the beam more than 1 mm outside the grid, where the map would only guess |
 | `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail (outward positive) and across it (positive to the left of outward seen from above: board +Y at table angle 0, +Z on a cartesian machine), in mm, and the beam's Rayleigh length for power compensation (mm) |
