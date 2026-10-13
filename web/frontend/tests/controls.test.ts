@@ -40,8 +40,8 @@ describe("default controls", () => {
             expect({ id, kind: [document?.kinematics, document?.tool, document?.focus] }).toEqual({ id, kind: [profile.kinematics, profile.tool, profile.h_axis] });
         }
         expect((await backend.machineFile("polar-laser")).document?.controls).toEqual(defaultControls(SHIPPED[0]![1]));
-        // The mill leaves the rail's bar out: the pad's X bar moves the rail there.
-        expect((await backend.machineFile("cartesian-mill")).document?.controls.axes.map((axis) => axis.axis)).toEqual(["a", "z", "h"]);
+        // The mill draws its rail, cross slide and depth axis as X, Y and Z bars, with no pad and no table.
+        expect((await backend.machineFile("cartesian-mill")).document?.controls.axes.map((axis) => [axis.axis, axis.letter])).toEqual([["r", "X"], ["z", "Y"], ["h", "Z"]]);
     });
 
     test("follow the kinematics, the tool and the focus axis", () => {

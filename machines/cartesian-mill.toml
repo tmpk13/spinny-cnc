@@ -12,6 +12,7 @@ tool = "spindle"
 # socket with its driver left alone.
 [rail]
 socket = "X"
+steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn; the step generator caps it near 470 mm/min
 
 [table]
 socket = "E"
@@ -19,7 +20,7 @@ current_ma = 0
 
 [slide]
 socket = "Y"
-steps_per_mm = 10240
+steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn
 max_rate = 560
 accel = 50
 jerk = 3
@@ -29,7 +30,7 @@ limit = 30
 [focus]
 socket = "Z"
 fitted = true
-steps_per_mm = 6400
+steps_per_mm = 10240        # 200 steps, 256 microsteps, 5 mm per turn
 max_rate = 600
 accel = 50
 jerk = 1
@@ -45,49 +46,53 @@ tolerance = 0.005
 clearance = 2.0             # mm over the surface for travel between cuts
 spinup = 2.0                # s of dwell after the spindle starts or changes speed
 
-# The page's controls, as the defaults draw them for a cartesian spindle
-# machine, less the rail's bar: the rail is X here, which the pad's X bar
-# moves. The cross slide is the Y axis and the focus axis is the depth
-# axis. polar-laser.toml says what each key means.
+# The page's controls, as a three axis mill: the rail, the cross slide
+# and the depth axis as X, Y and Z, each with its own zero, on the arrow
+# keys and Page Down/Up. The board pad would move the same two joints as
+# X and Y, so it is left out, and with it the board row of the readout.
+# The table has no driver here, so it has no bar. polar-laser.toml says
+# what each key means.
 [controls]
-pad = true
-pad_steps = [0.1, 1, 10]
-pad_step = 1
+pad = false
 feed = true
-center = { z = 0 }
+center = {}
 
 [[controls.axes]]
-axis = "a"
-letter = "A"
-label = "Table"
-steps = [1, 10, 90]
-step = 10
-buttons = ["Turn -", "Turn +"]
-feed = true
-goto = false
-zero = true
-zero_hint = ""
-
-[[controls.axes]]
-axis = "z"
-letter = "Z"
-label = "Cross slide (Y)"
-buttons = ["Z-", "Z+"]
+axis = "r"
+letter = "X"
+label = "X (rail)"
+steps = [0.1, 1, 10]
+step = 1
+buttons = ["X-", "X+"]
 feed = true
 goto = true
 zero = true
-zero_hint = "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it."
-note = "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+zero_hint = "X is measured from here: put the tool over the job's X origin first."
+keys = ["ArrowLeft", "ArrowRight"]
+
+[[controls.axes]]
+axis = "z"
+letter = "Y"
+label = "Y (cross slide)"
+steps = [0.1, 1, 10]
+step = 1
+buttons = ["Y-", "Y+"]
+feed = true
+goto = true
+zero = true
+zero_hint = "Y is measured from here: put the tool over the job's Y origin first."
+keys = ["ArrowDown", "ArrowUp"]
 
 [[controls.axes]]
 axis = "h"
-letter = "H"
-label = "Depth axis"
+letter = "Z"
+label = "Z (depth)"
 steps = [0.05, 0.1, 1]
 step = 0.1
 buttons = ["Down", "Up"]
 feed = false
 goto = false
 zero = true
-zero_hint = "Touch the tool to the copper first: a milled cut without a height map goes down from H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board)."
-note = "Raises and lowers the tool; up is positive, H 0 is the board's surface"
+zero_hint = "Touch the tool to the copper first: a milled cut without a height map goes down from Z 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after a new Z 0 here (probe again for another board)."
+keys = ["PageDown", "PageUp"]
+note = "Raises and lowers the tool; up is positive, Z 0 is the board's surface"
