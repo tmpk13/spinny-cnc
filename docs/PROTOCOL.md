@@ -84,6 +84,7 @@ Which commands each state takes:
 | `Run` | `go`, `cut`, `dwell`, `probe`, `spindle S` |
 | `Jog` | jogs, `probe` |
 | `Hold` | `go`, `cut`, `dwell` and `spindle S` in a hold of a run, `probe` in any hold: they are taken in and wait for the resume |
+| `Home` | nothing: the `home` line is pending until it ends |
 | `Alarm` | `unlock` |
 
 Queries (`?`, `status`, `version`, `help`, `$`, `$<name>`, `$tmc`) are
@@ -170,6 +171,71 @@ meanwhile. The state is `Jog` while it moves.
 
 The input's polarity is `probe_invert`: 0 is active low, as a switch or a
 pin touching grounded copper pulls it down against the pull-up.
+
+## Endstops and homing
+
+Each axis may have an endstop: a switch at its negative end, at its
+positive end, or at both ends wired to the one input (normally closed in
+series, or normally open in parallel), per `<axis>_stop` (0 none, 1
+negative, 2 positive, 3 both) on `<axis>_stop_pin`, pulled up inside the
+chip, active low unless the axis's bit of `stop_invert` is set. The
+switch is what `home` seeks, and with the axis's bit of `limits` set it
+also halts a move that closes it.
+
+| Command | Effect |
+| --- | --- |
+| `home [R[-\|+]] [A[-\|+]] [H[-\|+]] [Z[-\|+]]` | home the joints named, in the order H, R, Z, A whatever the order given; with no letters, every joint that has a switch. A `-` or `+` after a letter picks the end to seek; without one the joint goes to its only switch, or to the negative one of two. `Idle` only; `H` only with `h_axis`; a joint without a switch, or without one at the end asked for, is `error:2` |
+
+The state is `Home` while it runs, and the line is answered only when it
+ends, so nothing runs behind it. Each joint goes through a cycle:
+
+1. A switch closed at the start is backed off by `<axis>_home_pull`. One
+   still closed after that is `error:12 endstop active`, and the home
+   ends with `[HOME:<axis>:<position>:0]`; nothing else moves.
+2. The seek: toward the switch at the joint's jog rate, up to a tenth
+   more than `<axis>_home_travel` plus the pull-off. The block watches
+   the switch as a probe watches its input, the position is latched at
+   the step the switch was read closed on, and the joint brakes from
+   there as a probe does (`probe_ms` of motion queued).
+3. The contact is declared to be `<axis>_home_pos`, or `home_pos +
+   home_travel` at the positive end of a two-ended axis, and the joint
+   its overtravel past it.
+4. Back off by the pull-off, then the locate: toward the switch again at
+   a tenth of the jog rate, up to twice the pull-off, latched and
+   declared the same way, so the datum is the slow contact.
+5. Off the switch by the pull-off, where the joint ends: `[HOME:<axis>:
+   <position>:1]`, with the position in the joint's units, four
+   decimals.
+
+The line ends `ok` after the last joint. On a polar machine the cross
+slide is homed the same way on its own stepper, its switch read by the
+main loop.
+
+- No contact within the seek, or within the locate: `[HOME:<axis>:
+  <position>:0]`, `ALARM:5 home failed, position may be off` and
+  `error:13 home failed`. The joint ran its travel and more: it may have
+  stalled against its end, so where it is nobody knows. `unlock` clears
+  the alarm.
+- `!` and `0x85` brake the home and end it with `[HOME:<axis>:
+  <position>:0]` and `ok`, no alarm, `Idle`. A reset ends it with no
+  answer, `Alarm:1` when it was moving.
+- A joint homed stays so, and the status line's `D` field names it,
+  until its position is lost or declared: a reset while moving, a lost
+  motor supply, an endstop halt or a failed home unhome every joint, and
+  `set` unhomes the joints it names.
+
+An endstop in `limits` is read by the step interrupt at every tick of
+every move. One that stays closed for 10 ms under a move (the switch's
+bounce is shorter) halts the interrupt on the spot, as a probe halt
+does, and the machine resets as it does for a lost motor supply:
+`[MSG:reset]`, `[MSG:endstop <axes>]`, `ALARM:4 endstop hit while moving,
+position may be off`, then the banner. The motor may have stalled against
+the switch, so the position is lost and every joint is unhomed; `unlock`
+clears the alarm. A switch already closed when a move starts is not a
+halt until it has opened once, so a joint parked on its switch can be
+moved off it, and the switch a home seeks is no halt for that home. On a
+polar machine the cross slide's switch is read by the main loop under its
+own moves, with the same debounce.
 
 ## The cross slide
 
@@ -289,7 +355,7 @@ turns off a floor below it.
 | `$<name>=<value>` | set in RAM (`Idle` only) |
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
-| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert`, `dir_invert`, `sockets`, `laser_pin`, `probe_pin`, `tool_out`, `tool_pin` and `tool_invert` keep their values, so an active-low laser or tool output is not driven by it and the next move steps the motors it means |
+| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert`, `dir_invert`, `sockets`, `laser_pin`, `probe_pin`, `tool_out`, `tool_pin`, `tool_invert`, the four `<axis>_stop` and `<axis>_stop_pin`, `stop_invert` and `limits` keep their values, so an active-low laser or tool output is not driven by it, the next move steps the motors it means, and an endstop that halts a move goes on doing so |
 | `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 4 for each configuration. A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does, raises `ALARM:3` even from `Idle` (the motors held nothing meanwhile), and configures the drivers again; the loss is seen at the next driver poll, about every quarter second, so a supply back sooner than that drives the beam or spindle at the job's duty until then |
 
 A value outside its bounds is `error:7`; an integer setting refuses
@@ -353,6 +419,13 @@ microsteps a power of two up to 256.
 | `tool_out` | 0/1 | 0 | 1 = `tool_pin` follows the tool: driven while a job runs, a beam is lit, a dwell burns or the spindle turns; the pin is claimed at boot only with this set, so turning it on needs `$save` and a restart, turning it off (and on again) applies at once |
 | `tool_pin` | GPIO | 17 | the tool output, FAN1 by default; read at boot |
 | `tool_invert` | 0/1 | 0 | 1 = the tool output is active low; applies at once |
+| `r_stop`, `a_stop`, `h_stop`, `z_stop` | 0..3 | 0 | where the axis's endstops are: 0 none, 1 at the negative end, 2 at the positive end, 3 at both ends on the one input |
+| `r_stop_pin`, `a_stop_pin`, `h_stop_pin`, `z_stop_pin` | GPIO | 4, 3, 16, 22 | the endstop input, pulled up: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE, 25 Z-STOP; read at boot, and claimed whether or not the axis has a switch yet, so `<axis>_stop` may be set without a restart. Two axes, or an axis and the probe, may share an input; one on the laser's or the tool output's pin is left out and reads open |
+| `r_home_pull`, `a_home_pull`, `h_home_pull`, `z_home_pull` | mm or deg | 1 | how far a home backs the axis off its switch before the locate, and leaves it off the switch at the end; above 0 |
+| `r_home_pos`, `a_home_pos`, `h_home_pos`, `z_home_pos` | mm or deg | 0 | what the axis reads where its switch closes: the switch at the negative end, or the only one |
+| `r_home_travel`, `a_home_travel`, `h_home_travel`, `z_home_travel` | mm or deg | 200, 400, 50, 200 | the axis's travel between its ends; a home seeks a tenth further than this plus the pull-off, and the positive switch of a two-ended axis reads `home_pos + home_travel`; above 0 |
+| `stop_invert` | mask | 0 | the endstop inputs that are active high: bit 0 the rail, bit 1 the table, bit 2 the cross slide, bit 3 the focus axis, the `dir_invert` order |
+| `limits` | mask | 0 | the endstops that halt a move closing them, same bits (`ALARM:4`); a bit for an axis without a switch does nothing |
 
 Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
 configuration; a `tmc_*` value and `dir_invert` follow the axis to its
@@ -383,9 +456,11 @@ at their defaults.
 ```
 <Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>
 <Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000|H:-1.250|P:0>
+<Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000|D:RA>
 ```
 
-The second form is with `h_axis` set.
+The second form is with `h_axis` set, the third with an endstop on any
+axis (and both fields with both).
 
 | Field | Meaning |
 | --- | --- |
@@ -399,6 +474,7 @@ The second form is with `h_axis` set.
 | `Z` | cross slide position, mm, whether the setup stepper or the joints moved it |
 | `H` | focus axis position, mm; only with `h_axis` |
 | `P` | 1 while the probe input is active; only with `h_axis` |
+| `D` | the joints homed since the position was last lost, as letters in the order R A H Z, empty for none; only with an endstop on some axis |
 
 ## Errors and alarms
 
@@ -415,9 +491,13 @@ The second form is with `h_axis` set.
 | `error:9` | flash failed: `$save` could not write, or `$load` found nothing valid stored |
 | `error:10` | probe active: the probe input was already active when a `probe` was to start |
 | `error:11` | probe missed: a `probe` went its whole distance without contact (with `ALARM:2`) |
+| `error:12` | endstop active: the switch a `home` was to seek was closed and backing off did not open it |
+| `error:13` | home failed: a `home` found no switch within the travel (with `ALARM:5`) |
 | `ALARM:1` | reset while moving, the position may be off; `unlock` clears it |
 | `ALARM:2` | probe missed: the head is lower than the probe was meant to take it; `unlock` clears it |
 | `ALARM:3` | motor power lost: the drivers lost their supply and were configured again, and the motors held nothing meanwhile, so the position may be off even from `Idle`; `unlock` clears it |
+| `ALARM:4` | endstop hit while moving: a switch in `limits` closed under a move and the motion was halted on the spot, so the motor may have stalled and the position may be off; every joint is unhomed; `unlock` clears it |
+| `ALARM:5` | home failed: a `home` found no switch within the travel, so the joint may have stalled against its end and its position may be off; `unlock` clears it |
 
 ## Example session
 

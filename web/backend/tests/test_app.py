@@ -65,7 +65,7 @@ def test_state_and_ports_before_connecting(client, tmp_path):
     }
     ports = client.get("/api/ports").json()
     assert "ports" in ports
-    for route in ("/api/jog", "/api/goto", "/api/command", "/api/laser/off", "/api/unlock"):
+    for route in ("/api/jog", "/api/goto", "/api/command", "/api/laser/off", "/api/unlock", "/api/home"):
         response = client.post(route, json={"line": "x", "kind": "joint", "dr": 1})
         assert response.status_code == 409, route
     assert client.get("/api/settings").status_code == 409
@@ -187,6 +187,27 @@ def test_realtime_command_laser_mode_motors_unlock(client, fake):
     fake.alarm = 1
     state = client.post("/api/unlock").json()
     assert fake.received_lines[-1] == "unlock" and state["machine"]["state"] == "Idle"
+
+
+def test_home_sends_the_line_and_reports_what_is_homed(client, fake):
+    connect(client)
+    state = client.get("/api/state").json()
+    assert state["machine"]["homed"] is None, "no endstop, no field"
+    # Nothing to home: the firmware's refusal is a 400.
+    assert client.post("/api/home", json={}).status_code == 400
+    assert fake.received_lines[-1] == "home"
+    fake.settings["r_stop"] = 1
+    fake.settings["r_home_pos"] = -3.0
+    fake.settings["z_stop"] = 2
+    state = client.post("/api/home", json={"axes": "r"}).json()
+    assert fake.received_lines[-1] == "home R"
+    assert state["machine"]["homed"] == "R" and state["machine"]["joint"]["r"] == -2.0
+    state = client.post("/api/home", json={}).json()
+    assert fake.received_lines[-1] == "home" and state["machine"]["homed"] == "RZ"
+    assert client.post("/api/home", json={"axes": "Q"}).status_code == 400
+    assert client.post("/api/home", json={"axes": "R+"}).status_code == 400, "no switch at that end"
+    state = client.post("/api/position", json={"r": 0}).json()
+    assert state["machine"]["homed"] == "Z", "declared elsewhere, the rail is unhomed"
     # An error answer to a required command is a 400.
     fake.settings["r_max"] = 1.0
     response = client.post("/api/goto", json={"kind": "joint", "r": 5.0})

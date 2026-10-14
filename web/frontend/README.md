@@ -37,7 +37,10 @@ bar per joint the file names, with its letter, label, step choices and a
 field for any other step, its two buttons, keys and zero button, the
 board's X and Y bars on the arrow keys when the file has a pad, a feed
 field, goto fields and Center. *Cancel* sits in the jog panel's head,
-away from every move; Escape does the same. The polar laser's defaults
+away from every move; Escape does the same. On a machine with an endstop
+the panel's *Home* homes every axis that has a switch, and the readout's
+*Homed* names the joints homed since the position was last lost. The
+polar laser's defaults
 are the joint (`R` mm, `A` deg), the cross slide (`Z` mm) as a setup
 axis moved in the small steps a centering burn is measured into, and the
 focus axis (`H` mm) with the probe on a machine with one. Both panels

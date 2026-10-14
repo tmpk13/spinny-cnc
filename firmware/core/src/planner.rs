@@ -32,6 +32,8 @@ pub enum MoveKind {
     Jog,
     /// A jog of the focus axis that watches the probe input.
     Probe,
+    /// A jog of one joint, this one, that watches its endstop.
+    Home(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,6 +46,9 @@ pub enum Feed {
     Surface(f32),
     /// The settings' jog rates, the slower axis pacing.
     Jog,
+    /// A move of one joint at this many of its own units a minute, mm or
+    /// degrees; a home seeks and locates its switch with it.
+    Axis(f32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -260,6 +265,14 @@ impl Planner {
         let requested_speed = match feed {
             Feed::Max => axis_limit,
             Feed::Jog => paced_speed(&unit, &effective_jog_rate(settings)),
+            // One joint moves, so the metric length is its own distance.
+            Feed::Axis(per_min) => {
+                if per_min.is_nan() || per_min <= 0.0 {
+                    axis_limit
+                } else {
+                    per_min / 60.0
+                }
+            }
             Feed::Surface(mm_per_min) => {
                 if mm_per_min.is_nan() || mm_per_min <= 0.0 {
                     axis_limit

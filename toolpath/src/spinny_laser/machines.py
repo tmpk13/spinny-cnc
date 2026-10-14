@@ -14,7 +14,10 @@ The sections and keys, with the firmware setting each one sets:
     [table]   A, deg: steps_per_deg, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
     [slide]   Z, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (z_max), invert, current_ma, microsteps
     [focus]   H, mm: fitted (h_axis), steps_per_mm, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
-              each axis also takes socket, the driver socket it is wired to (X, Y, Z or E, each once: sockets)
+              each axis also takes socket, the driver socket it is wired to (X, Y, Z or E, each once: sockets),
+              and its endstops: endstop (none, min, max, both: <axis>_stop), endstop_pin (<axis>_stop_pin),
+              endstop_invert (stop_invert bit), endstop_halt (limits bit), home_pull, home_pos, home_travel
+              (<axis>_home_pull, <axis>_home_pos, <axis>_home_travel)
     [probe]   invert, brake_ms (probe_ms), pin (probe_pin)
     [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms), pin (laser_pin)
     [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
@@ -37,7 +40,7 @@ KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle")
 
 # The firmware's defaults, in the order it lists them. A file sets what it
-# names and leaves the rest here, so a machine is always all 52 settings.
+# names and leaves the rest here, so a machine is always all 74 settings.
 FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "r_steps": 10240.0, "a_steps": 14222.222, "r_rate": 560.0, "a_rate": 400.0,
     "r_accel": 50.0, "a_accel": 50.0, "r_jerk": 3.0, "a_jerk": 2.0,
@@ -51,6 +54,11 @@ FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "probe_invert": 0, "tmc_h_ma": 600, "tmc_h_micro": 256, "probe_ms": 20,
     "z_jerk": 3.0, "z_max": 0.0, "cartesian": 0, "spindle": 0, "sockets": 1234,
     "laser_pin": 20, "probe_pin": 25, "tool_out": 0, "tool_pin": 17, "tool_invert": 0,
+    "r_stop": 0, "r_stop_pin": 4, "r_home_pull": 1.0, "r_home_pos": 0.0, "r_home_travel": 200.0,
+    "a_stop": 0, "a_stop_pin": 3, "a_home_pull": 1.0, "a_home_pos": 0.0, "a_home_travel": 400.0,
+    "h_stop": 0, "h_stop_pin": 16, "h_home_pull": 1.0, "h_home_pos": 0.0, "h_home_travel": 50.0,
+    "z_stop": 0, "z_stop_pin": 22, "z_home_pull": 1.0, "z_home_pos": 0.0, "z_home_travel": 200.0,
+    "stop_invert": 0, "limits": 0,
 }
 
 FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert"})
@@ -58,7 +66,11 @@ INTEGERS = frozenset({
     "dir_invert", "idle_ms", "step_us", "laser_hz", "laser_ms", "tmc_hold_pct", "probe_ms",
     "tmc_r_ma", "tmc_a_ma", "tmc_z_ma", "tmc_h_ma", "tmc_r_micro", "tmc_a_micro", "tmc_z_micro", "tmc_h_micro",
     "sockets", "laser_pin", "probe_pin", "tool_pin",
+    "r_stop", "a_stop", "h_stop", "z_stop", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin",
+    "stop_invert", "limits",
 })
+# Where an axis's endstops are, in the order of the <axis>_stop values.
+ENDSTOPS = ("none", "min", "max", "both")
 # The board's GPIOs a pin setting may name: up to PIN_MAX, less the driver
 # sockets' STEP, DIR and EN pins and the driver UART, which the firmware
 # refuses. The headers, for the messages and the page.
@@ -70,7 +82,7 @@ HEADERS = {
 }
 # Settings the firmware reads at boot: a change takes effect after a save
 # to flash and a restart.
-BOOT_SETTINGS = ("laser_pin", "probe_pin", "tool_out", "tool_pin")
+BOOT_SETTINGS = ("laser_pin", "probe_pin", "tool_out", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin")
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MICROSTEPS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 # The largest float the firmware holds, and the longest probe brake.
@@ -177,6 +189,8 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     settings["cartesian"] = int(kinematics == "cartesian")
     settings["spindle"] = int(tool == "spindle")
     dir_invert = 0
+    stop_invert = 0
+    limits = 0
     # The socket of each axis, as labeled unless the file says otherwise.
     sockets = list(SOCKETS)
     for section, (axis, scale_key, bit) in AXES.items():
@@ -198,9 +212,25 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             settings[f"tmc_{axis}_ma"] = reader.integer(table, "current_ma", section, 0, 2000)
         if "microsteps" in table:
             settings[f"tmc_{axis}_micro"] = reader.one_of(table, "microsteps", section, MICROSTEPS)
-        reader.done(table, section, {scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket"}
+        if "endstop" in table:
+            settings[f"{axis}_stop"] = ENDSTOPS.index(reader.text_choice(table, "endstop", section, ENDSTOPS))
+        if "endstop_pin" in table:
+            settings[f"{axis}_stop_pin"] = reader.pin(table, "endstop_pin", section)
+        if reader.flag(table, "endstop_invert", False, section):
+            stop_invert |= 1 << bit
+        if reader.flag(table, "endstop_halt", False, section):
+            limits |= 1 << bit
+        for key in ("home_pull", "home_travel"):
+            if key in table:
+                settings[f"{axis}_{key}"] = reader.positive(table, key, section)
+        if "home_pos" in table:
+            settings[f"{axis}_home_pos"] = reader.number(table, "home_pos", section)
+        reader.done(table, section, {scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
+                                     "endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel"}
                     | ({"limit"} if axis in ("r", "z") else set()) | ({"fitted"} if axis == "h" else set()))
     settings["dir_invert"] = dir_invert
+    settings["stop_invert"] = stop_invert
+    settings["limits"] = limits
     sections = list(AXES)
     for i, socket in enumerate(sockets):
         if socket in sockets[:i]:
@@ -246,6 +276,16 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         for section, other in (("output", "laser_pin"), ("probe", "probe_pin")):
             if settings["tool_pin"] == settings[other]:
                 raise MachineError(f"{where}: [enable] pin {pin_name(settings['tool_pin'])} is the [{section}] pin too")
+    # A fitted endstop is an input like the probe, which it may share;
+    # on an output's pin it would read the output.
+    for section, (axis, _, _) in AXES.items():
+        if not settings[f"{axis}_stop"]:
+            continue
+        pin = settings[f"{axis}_stop_pin"]
+        outputs = [("output", settings["laser_pin"])] + ([("enable", settings["tool_pin"])] if settings["tool_out"] else [])
+        for other, other_pin in outputs:
+            if pin == other_pin:
+                raise MachineError(f"{where}: [{section}] endstop_pin {pin_name(pin)} is the [{other}] pin too")
 
     drivers = reader.table(top, "drivers")
     settings["en_invert"] = int(reader.flag(drivers, "enable_invert", False, "drivers"))

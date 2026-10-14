@@ -19,6 +19,13 @@ invert = false
 current_ma = 800
 microsteps = 256
 socket = "X"                # driver socket: X, Y, Z or E, each used once
+endstop = "none"            # none, min, max, both: where the rail's switches are
+endstop_pin = 4             # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot
+endstop_invert = false      # true: the input is active high
+endstop_halt = false        # true: a move that closes the switch halts with an alarm
+home_pull = 1               # mm off the switch after a home
+home_pos = 0                # mm the switch reads as
+home_travel = 200           # mm between the ends; a home seeks a tenth further
 
 [table]                     # A: the table, degrees
 steps_per_deg = 14222.222   # 200 steps, 256 microsteps, 100:1
@@ -30,6 +37,13 @@ invert = false
 current_ma = 800
 microsteps = 256
 socket = "Y"
+endstop = "none"            # none, min, max, both: where the table's switches are
+endstop_pin = 3             # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot
+endstop_invert = false      # true: the input is active high
+endstop_halt = false        # true: a move that closes the switch halts with an alarm
+home_pull = 1               # deg off the switch after a home
+home_pos = 0                # deg the switch reads as
+home_travel = 400           # deg between the ends; a home seeks a tenth further
 
 [slide]                     # Z: the cross slide, mm; a setup axis here
 steps_per_mm = 10240
@@ -42,6 +56,13 @@ invert = false
 current_ma = 800
 microsteps = 256
 socket = "Z"
+endstop = "none"            # none, min, max, both: where the slide's switches are
+endstop_pin = 22            # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot
+endstop_invert = false      # true: the input is active high
+endstop_halt = false        # true: a move that closes the switch halts with an alarm
+home_pull = 1               # mm off the switch after a home
+home_pos = 0                # mm the switch reads as
+home_travel = 200           # mm between the ends; a home seeks a tenth further
 
 [focus]                     # H: the focus axis, mm; not fitted here
 fitted = false
@@ -54,6 +75,13 @@ invert = false
 current_ma = 600
 microsteps = 256
 socket = "E"
+endstop = "none"            # none, min, max, both: where the head's switches are
+endstop_pin = 16            # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot
+endstop_invert = false      # true: the input is active high
+endstop_halt = false        # true: a move that closes the switch halts with an alarm
+home_pull = 1               # mm off the switch after a home
+home_pos = 0                # mm the switch reads as
+home_travel = 50            # mm between the ends; a home seeks a tenth further
 
 [probe]
 invert = false              # true: the probe input is active high

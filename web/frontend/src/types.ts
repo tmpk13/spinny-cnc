@@ -26,7 +26,7 @@ export interface Firmware {
     blocks: number;
 }
 
-export type MachineState = "Idle" | "Run" | "Jog" | "Hold" | "Alarm";
+export type MachineState = "Idle" | "Run" | "Jog" | "Hold" | "Home" | "Alarm";
 
 export type Mode = "dyn" | "const";
 
@@ -69,6 +69,8 @@ export interface Machine {
     queue: Queue;
     /** The touch probe is down; null on a machine without a focus axis. */
     probe?: boolean | null;
+    /** The letters of the joints homed since the position was last lost (R, A, H, Z); null on a machine with no endstop. */
+    homed?: string | null;
     /** How old the report is, s: a machine that has gone quiet shows here before the link gives it up. */
     age?: number;
 }

@@ -16,7 +16,7 @@ use embassy_rp::pac::{IO_BANK0, PWM, SIO};
 use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_12, PIN_13, PIN_14, PIN_15, PIN_19, PIN_2, PIN_28, PIN_5, PIN_6, PIN_7};
 use embassy_rp::Peri;
 use spinny_core::hal::{LaserPort, SlidePort, StepPort};
-use spinny_core::settings::{Settings, LASER_PIN_DEFAULT, PROBE_PIN_DEFAULT, RESERVED_PINS, SOCKETS};
+use spinny_core::settings::{Settings, LASER_PIN_DEFAULT, PROBE_PIN_DEFAULT, RESERVED_PINS, SOCKETS, STOP_PIN_DEFAULTS};
 use spinny_core::{AXES, Z};
 use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_params, pwm_slice, resting_duty};
 use spinny_fw_logic::pins::{level_masks, mask_of};
@@ -90,6 +90,14 @@ static LASER_CHANNEL_B: AtomicBool = AtomicBool::new(!pwm_is_channel_a(LASER_PIN
 static PROBE_PIN: AtomicU8 = AtomicU8::new(PROBE_PIN_DEFAULT as u8);
 /// The tool output, or `NO_PIN`.
 static TOOL_PIN: AtomicU8 = AtomicU8::new(NO_PIN);
+/// The endstop input of each joint, with the internal pull-up, or
+/// `NO_PIN` where the setting named an output's pin; that one reads high.
+static STOP_PINS: [AtomicU8; AXES] = [
+    AtomicU8::new(STOP_PIN_DEFAULTS[0] as u8),
+    AtomicU8::new(STOP_PIN_DEFAULTS[1] as u8),
+    AtomicU8::new(STOP_PIN_DEFAULTS[2] as u8),
+    AtomicU8::new(STOP_PIN_DEFAULTS[3] as u8),
+];
 /// STEP and DIR pin of each joint in the core's order, from `sockets`;
 /// the board as labeled until the settings are applied.
 static JOINT_STEP_PINS: [AtomicU8; AXES] = [
@@ -130,6 +138,9 @@ pub struct IoPins {
     /// The tool output's pin, when one is driven.
     pub tool_pin: Option<u8>,
     pub tool_invert: bool,
+    /// The endstop input of each joint, claimed whether or not the joint
+    /// has a switch yet, so `<axis>_stop` can be set without a restart.
+    pub stop_pins: [u8; AXES],
 }
 
 impl IoPins {
@@ -144,6 +155,7 @@ impl IoPins {
             probe_pin: settings.probe_pin as u8,
             tool_pin: tool.then_some(settings.tool_pin as u8),
             tool_invert: settings.tool_invert,
+            stop_pins: core::array::from_fn(|joint| settings.stop_pin[joint] as u8),
         }
     }
 }
@@ -212,6 +224,24 @@ pub fn init(pins: Pins, io: IoPins) -> (StepPins, LaserPwm, SlidePins) {
         forget(Input::new(unsafe { AnyPin::steal(probe_pin) }, Pull::Up));
     }
     PROBE_PIN.store(probe_pin, Ordering::Relaxed);
+    // The endstops: inputs like the probe, and two joints may share one
+    // (or the probe's), which is then claimed once. One on the laser's or
+    // the tool's pin is left out and reads open.
+    let mut inputs: [u8; AXES + 1] = [NO_PIN; AXES + 1];
+    inputs[0] = probe_pin;
+    for joint in 0..AXES {
+        let pin = io.stop_pins[joint];
+        let output = pin == laser_pin || TOOL_PIN.load(Ordering::Relaxed) == pin;
+        if !free(pin) || output {
+            STOP_PINS[joint].store(NO_PIN, Ordering::Relaxed);
+            continue;
+        }
+        if !contains(&inputs.map(u32::from), pin) {
+            forget(Input::new(unsafe { AnyPin::steal(pin) }, Pull::Up));
+            inputs[joint + 1] = pin;
+        }
+        STOP_PINS[joint].store(pin, Ordering::Relaxed);
+    }
 
     let step = [pins.x_step.pin(), pins.y_step.pin(), pins.z_step.pin(), pins.e_step.pin()];
     let dir = [pins.x_dir.pin(), pins.y_dir.pin(), pins.z_dir.pin(), pins.e_dir.pin()];
@@ -311,6 +341,18 @@ impl StepPort for StepPins {
 
     fn probe(&mut self) -> bool {
         SIO.gpio_in(0).read() & (1 << PROBE_PIN.load(Ordering::Relaxed)) != 0
+    }
+
+    fn stops(&mut self) -> u8 {
+        let levels = SIO.gpio_in(0).read();
+        let mut high = 0;
+        for joint in 0..AXES {
+            let pin = STOP_PINS[joint].load(Ordering::Relaxed);
+            if pin == NO_PIN || levels & (1 << pin) != 0 {
+                high |= 1 << joint;
+            }
+        }
+        high
     }
 }
 

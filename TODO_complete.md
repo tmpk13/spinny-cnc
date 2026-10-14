@@ -369,3 +369,13 @@
   shift it measures, so tying again in the same frame changes nothing.
 - A spindle's run or resume without the height map is refused when a
   probe in this frame found the copper more than 1 mm from H 0.
+- Optional endstops and one or two directional homing per axis
+  (2026-10-13): `<axis>_stop` says which ends have a switch, with
+  `<axis>_stop_pin`, `stop_invert` and `limits` masks, `<axis>_home_pull`,
+  `<axis>_home_pos` and `<axis>_home_travel`; `home [R-|+] [A] [H] [Z]`
+  seeks, backs off, locates slowly and declares the switch's position,
+  the status line's `D` field names what is homed, and a switch in
+  `limits` halts a move that closes it (`ALARM:4`). Machine files take
+  `endstop`, `endstop_pin`, `endstop_invert`, `endstop_halt`, `home_pull`,
+  `home_pos`, `home_travel` per axis; the page has *Home* and a *Homed*
+  readout, `POST /api/home`; the virtual firmware takes `--stop`.

@@ -46,6 +46,11 @@ pub enum Command<'a> {
     Jog { target: [Option<f32>; AXES], feed: Option<f32>, absolute: bool },
     /// Moves the focus axis by up to `distance` mm until the probe touches.
     Probe { distance: f32, feed: Option<f32> },
+    /// Homes the joints in `axes` (bit i = joint i), or with none named
+    /// every joint that has an endstop. A joint in `positive` was asked
+    /// for its positive end (`R+`), one in `negative` for its negative end
+    /// (`R-`); the rest go to their only switch, or the negative one.
+    Home { axes: u8, positive: u8, negative: u8 },
     Dwell { ms: u32, power: Option<f32> },
     Mode(PowerMode),
     LaserOn { power: f32, ms: Option<u32> },
@@ -84,6 +89,11 @@ pub enum Error {
     ProbeActive,
     /// A probe went its whole distance without contact.
     ProbeMissed,
+    /// An endstop was closed when a home was to seek it, and backing off
+    /// did not open it.
+    StopActive,
+    /// A home went its whole travel without its switch closing.
+    HomeFailed,
 }
 
 impl Error {
@@ -100,6 +110,8 @@ impl Error {
             Error::Flash => 9,
             Error::ProbeActive => 10,
             Error::ProbeMissed => 11,
+            Error::StopActive => 12,
+            Error::HomeFailed => 13,
         }
     }
 
@@ -116,6 +128,8 @@ impl Error {
             Error::Flash => "flash failed",
             Error::ProbeActive => "probe active",
             Error::ProbeMissed => "probe missed",
+            Error::StopActive => "endstop active",
+            Error::HomeFailed => "home failed",
         }
     }
 }
@@ -248,6 +262,37 @@ fn millis(t: f32, max: u32) -> Result<u32, Error> {
     Ok((t + 0.5) as u32)
 }
 
+/// `home` with its joint letters, each with an optional `-` or `+` for the
+/// end to seek, each at most once; no letters for every joint with a
+/// switch.
+fn home<'a>(tokens: impl Iterator<Item = &'a str>) -> Result<Command<'a>, Error> {
+    let mut axes = 0u8;
+    let mut positive = 0u8;
+    let mut negative = 0u8;
+    for token in tokens {
+        let bytes = token.as_bytes();
+        let joint = match bytes[0].to_ascii_uppercase() {
+            b'R' => R,
+            b'A' => A,
+            b'H' => H,
+            b'Z' => Z,
+            _ => return Err(Error::BadWord),
+        };
+        let bit = 1 << joint;
+        if axes & bit != 0 {
+            return Err(Error::BadWord);
+        }
+        axes |= bit;
+        match &bytes[1..] {
+            b"" => {}
+            b"+" => positive |= bit,
+            b"-" => negative |= bit,
+            _ => return Err(Error::BadWord),
+        }
+    }
+    Ok(Command::Home { axes, positive, negative })
+}
+
 /// A command that takes no words.
 fn bare<'a>(mut tokens: impl Iterator<Item = &'a str>, command: Command<'a>) -> Result<Command<'a>, Error> {
     if tokens.next().is_some() {
@@ -346,6 +391,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             words.check_feed()?;
             Ok(Command::Probe { distance, feed: words.f })
         }
+        b"home" => home(tokens),
         b"dwell" => {
             let words = Words::read(tokens, b"TS")?;
             let t = words.t.ok_or(Error::MissingWord)?;
@@ -437,6 +483,10 @@ mod tests {
             (Error::BadSettingValue, 7, "bad setting value"),
             (Error::TooLong, 8, "line too long"),
             (Error::Flash, 9, "flash failed"),
+            (Error::ProbeActive, 10, "probe active"),
+            (Error::ProbeMissed, 11, "probe missed"),
+            (Error::StopActive, 12, "endstop active"),
+            (Error::HomeFailed, 13, "home failed"),
         ];
         for (error, code, text) in all {
             assert_eq!(error.code(), code);
@@ -816,6 +866,20 @@ mod tests {
         assert_eq!(parse("probe H0"), Err(Error::OutOfRange));
         assert_eq!(parse("probe H-1 F0"), Err(Error::OutOfRange));
         assert_eq!(parse("probe R1 H-1"), Err(Error::BadWord));
+    }
+
+    #[test]
+    fn home_forms() {
+        assert_eq!(parse("home"), Ok(Command::Home { axes: 0, positive: 0, negative: 0 }));
+        assert_eq!(parse("home R"), Ok(Command::Home { axes: 1 << R, positive: 0, negative: 0 }));
+        assert_eq!(
+            parse("HOME r- a+ h z"),
+            Ok(Command::Home { axes: 0b1111, positive: 1 << A, negative: 1 << R })
+        );
+        assert_eq!(parse("home R R"), Err(Error::BadWord));
+        assert_eq!(parse("home R1"), Err(Error::BadWord));
+        assert_eq!(parse("home X"), Err(Error::BadWord));
+        assert_eq!(parse("home R+-"), Err(Error::BadWord));
         assert_eq!(Error::ProbeActive.code(), 10);
         assert_eq!(Error::ProbeMissed.code(), 11);
     }

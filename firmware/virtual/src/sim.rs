@@ -14,11 +14,12 @@ use spinny_core::parser::{Error, Realtime};
 use spinny_core::report;
 use spinny_core::settings::Settings;
 use spinny_core::stepper::{self, Isr, Shared};
-use spinny_core::AXES;
+use spinny_core::{AXES, Z};
 
 use crate::clock::Clock;
 use crate::inbox::{Inbound, Inbox};
 use crate::ports::{FileStore, Laser, OutBuf, Slide, Steppers};
+use crate::stops::Stops;
 use crate::surface::Surface;
 use crate::trace::{Command, Trace};
 
@@ -48,6 +49,8 @@ pub struct Sim {
     report_at: Option<Instant>,
     /// The board under the probe.
     surface: Option<Surface>,
+    /// The endstops.
+    stops: Stops,
 }
 
 /// Start values for a simulated board.
@@ -58,6 +61,7 @@ pub struct Setup {
     pub trace: Trace,
     pub quiet: bool,
     pub surface: Option<Surface>,
+    pub stops: Stops,
 }
 
 impl Sim {
@@ -78,6 +82,7 @@ impl Sim {
             awaiting: Vec::new(),
             report_at: (!setup.quiet).then(|| Instant::now() + REPORT_EVERY),
             surface: setup.surface,
+            stops: setup.stops,
         };
         // Stored settings win over the ones given on the command line, as
         // they do on the board, where flash is read at boot.
@@ -228,6 +233,20 @@ impl Sim {
     fn update_probe(&mut self) {
         let touching = self.surface.is_some_and(|surface| surface.touching(self.machine.joint()));
         self.port.probe_level = touching == self.machine.settings().probe_invert;
+        // The switches sit where the motors physically are, which a `set`
+        // or a home does not move; the ports keep that count once they
+        // know which way is forward.
+        let settings = self.machine.settings();
+        self.port.dir_invert = settings.joint_dir_invert();
+        self.slide.invert = settings.dir_invert & 0b0100 != 0;
+        let mut physical = [0.0; AXES];
+        for i in 0..AXES {
+            physical[i] = self.port.physical[i] as f32 / settings.steps[i];
+        }
+        if !settings.cartesian {
+            physical[Z] = self.slide.physical as f32 / settings.steps[Z];
+        }
+        self.port.stop_levels = self.stops.levels(physical, settings);
     }
 
     fn poll(&mut self) {
@@ -352,6 +371,7 @@ impl Sim {
             report::State::Run => "Run".to_string(),
             report::State::Jog => "Jog".to_string(),
             report::State::Hold => "Hold".to_string(),
+            report::State::Home => "Home".to_string(),
             report::State::Alarm(code) => format!("Alarm:{code}"),
         };
         format!(
@@ -396,6 +416,7 @@ mod tests {
             trace: Trace::new(None),
             quiet: true,
             surface: None,
+            stops: Stops::default(),
         })
     }
 
@@ -455,6 +476,7 @@ mod tests {
             trace: Trace::new(Some(std::path::PathBuf::from("/dev/null"))),
             quiet: true,
             surface: None,
+            stops: Stops::default(),
         });
         let inbox = Inbox::new();
         inbox.try_push(line("set R0 A0")).unwrap();
@@ -521,6 +543,7 @@ mod tests {
             trace: Trace::new(None),
             quiet: true,
             surface: None,
+            stops: Stops::default(),
         });
         let inbox = Inbox::new();
         let mut out = Vec::new();
@@ -555,6 +578,7 @@ mod tests {
             trace: Trace::new(None),
             quiet: true,
             surface: None,
+            stops: Stops::default(),
         });
         let inbox = Inbox::new();
         let mut out = Vec::new();
@@ -645,6 +669,7 @@ mod tests {
             trace: Trace::new(Some(std::path::PathBuf::from("/dev/null"))),
             quiet: true,
             surface: None,
+            stops: Stops::default(),
         });
         let inbox = Inbox::new();
         inbox.try_push(line("set R0 A0")).unwrap();
@@ -687,6 +712,7 @@ mod tests {
             quiet: true,
             // Tilted up along X, with the tip 2 mm further out than the beam.
             surface: Some(Surface { base: -1.0, slope: [0.01, 0.0], curve: 0.0, offset: [2.0, 0.0] }),
+            stops: Stops::default(),
         });
         let inbox = Inbox::new();
         inbox.try_push(line("go R8")).unwrap();

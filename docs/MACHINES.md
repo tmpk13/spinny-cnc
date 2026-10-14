@@ -48,6 +48,13 @@ invert = false                  # direction                -> dir_invert bit 0
 current_ma = 800                # -> tmc_r_ma
 microsteps = 256                # 1, 2, 4 ... 256          -> tmc_r_micro
 socket = "X"                    # driver socket: X, Y, Z or E, each once -> sockets
+endstop = "none"                # none, min, max, both: which ends have a switch -> r_stop
+endstop_pin = 4                 # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE, 25 Z-STOP -> r_stop_pin
+endstop_invert = false          # true: the input is active high -> stop_invert bit 0
+endstop_halt = false            # true: a move that closes the switch halts, ALARM:4 -> limits bit 0
+home_pull = 1                   # mm a home backs off the switch, and ends from it -> r_home_pull
+home_pos = 0                    # mm the switch reads as (the negative one of two) -> r_home_pos
+home_travel = 200               # mm between the ends; a home seeks a tenth further -> r_home_travel
 
 [table]                         # A, degrees
 steps_per_deg = 14222.222       # -> a_steps
@@ -58,6 +65,8 @@ jog_rate = 200                  # -> jog_a
 invert = false                  # -> dir_invert bit 1
 current_ma = 800                # -> tmc_a_ma
 microsteps = 256                # -> tmc_a_micro
+                                # endstop, endstop_pin (3 Y-STOP), endstop_invert, endstop_halt,
+                                # home_pull, home_pos, home_travel (400 deg) as under [rail]: a_stop ...
 
 [slide]                         # Z, mm: a setup axis when polar, Y when cartesian
 steps_per_mm = 10240            # -> z_steps
@@ -69,6 +78,8 @@ limit = 0                       # -> z_max
 invert = false                  # -> dir_invert bit 2
 current_ma = 800                # -> tmc_z_ma
 microsteps = 256                # -> tmc_z_micro
+                                # endstop, endstop_pin (22 PROBE), endstop_invert, endstop_halt,
+                                # home_pull, home_pos, home_travel (200 mm) as under [rail]: z_stop ...
 
 [focus]                         # H, mm: optional, on the E socket unless socket says otherwise
 fitted = false                  # -> h_axis
@@ -80,6 +91,8 @@ jog_rate = 120                  # jog and probe rate       -> jog_h
 invert = false                  # -> dir_invert bit 3
 current_ma = 600                # -> tmc_h_ma
 microsteps = 256                # -> tmc_h_micro
+                                # endstop, endstop_pin (16 E-STOP), endstop_invert, endstop_halt,
+                                # home_pull, home_pos, home_travel (50 mm) as under [rail]: h_stop ...
 
 [probe]
 invert = false                  # true: input active high  -> probe_invert; wrong way round when the readout says down with the tip free
@@ -157,9 +170,24 @@ and PROBE GP22 for inputs; the laser's slice of the PWM block follows
 from its pin. The firmware takes the pins one setting at a time, so a
 pin named twice is refused here, where the whole file is seen: the probe
 may not share the output's pin, and a fitted tool output may share
-neither. The pins and `[enable] fitted` are read from flash at boot, so a
-load that changes one wants *Save to flash* and a restart of the board;
-the page says so after such a load.
+neither. An axis's `endstop_pin` is an input like the probe's: two axes
+may share one, and an axis may share the probe's, but a fitted endstop
+(`endstop` other than `none`) may not sit on the output's or the tool
+output's pin. The pins and `[enable] fitted` are read from flash at boot,
+so a load that changes one wants *Save to flash* and a restart of the
+board; the page says so after such a load. The endstop pins are claimed
+at boot whether or not the axis has a switch yet, so `endstop` itself
+applies at once.
+
+The endstops: `endstop` says which ends of the axis have a switch, on the
+one input when both do (normally closed in series, normally open in
+parallel). `home` seeks it, and `endstop_halt` makes it halt a move that
+closes it (`ALARM:4`, the position lost). `home_pos` is what the axis
+reads at the switch, the negative one of two, and `home_travel` the
+distance between its ends: the seek goes a tenth further before giving
+up, and the positive switch of a two-ended axis reads `home_pos +
+home_travel`. The page's jog panel shows *Home* on a machine with a
+switch, and the readout what is homed.
 
 `[enable]` is an output that follows the tool: driven while a job runs, a
 beam is lit, a dwell burns or the spindle turns, for a laser supply

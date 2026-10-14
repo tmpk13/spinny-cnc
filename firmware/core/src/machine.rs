@@ -37,6 +37,28 @@
 //! than whoever sent it thinks, and whatever they sent next would move it
 //! across the board. A jog cancel ends it with `[PRB:h:0]` and `ok`.
 //!
+//! A `home` is pending the same way and runs from `Idle` only, in the
+//! `Home` state, one joint at a time in the order H, R, Z, A. Each joint
+//! goes through a cycle `poll_home` drives: a switch closed at the start
+//! is backed off, then the seek at the jog rate toward the switch with
+//! the block watching it (`MoveKind::Home`), a brake at the contact as a
+//! probe brakes, the position declared so the contact reads `home_pos`
+//! (or `home_pos + home_travel` at the positive end of a two-ended axis),
+//! a back-off by `home_pull`, a slow locate for the exact contact, the
+//! declaration again, and the final move off the switch by the pull-off.
+//! The cross slide of a polar machine is homed the same way on its own
+//! `Slide`, its contact read by the main loop. Each joint done prints
+//! `[HOME:<letter>:<position>:1]`; the line ends `ok` when every joint
+//! is done. A hold or a jog cancel brakes the home and ends it with
+//! `[HOME:..:0]` and `ok`; a switch not found within the travel is
+//! `Alarm:5` and `error:13`, and a switch that stays closed through the
+//! first back-off is `error:12`, nothing moved further.
+//!
+//! An endstop in `limits` closing under any other motion is a halt in the
+//! interrupt (`stepper`), seen here as `Front::limit_hit`, or for the
+//! polar cross slide read here and debounced the same way; either is
+//! treated as a reset while moving, with `Alarm:4` and every axis unhomed.
+//!
 //! The cross slide is a pending command like any other, but it runs on
 //! its own `Slide` rather than through the planner: it is taken only from
 //! `Idle`, holds the state at `Jog` until it stops, and is stepped by
@@ -91,6 +113,11 @@ enum Pending {
     Probe { distance: f32, feed: f32 },
     /// A probe in progress; answered when it ends.
     Probing,
+    /// A home, started once queued motion is done: the joints in `axes`,
+    /// those in `positive` toward their positive end.
+    Home { axes: u8, positive: u8 },
+    /// A home in progress; answered when it ends.
+    Homing,
     Mode(PowerMode),
     LaserOn { power: f32, ms: Option<u32> },
     LaserOff,
@@ -103,6 +130,65 @@ enum Pending {
     Save,
     Load,
 }
+
+/// A `home` under way: which joints are still to do, which end each goes
+/// to, and where the one being homed is in its cycle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Homing {
+    /// Joints still to home, bit per joint, the one under way included.
+    axes: u8,
+    /// Joints that go to their positive end.
+    positive: u8,
+    /// The joint under way.
+    joint: usize,
+    phase: HomePhase,
+    /// The joint's position at the contact the seek or the locate met:
+    /// in steps for a joint the stepper moves, in mm for the polar cross
+    /// slide.
+    contact_steps: i32,
+    contact_mm: f32,
+}
+
+/// The cycle of one joint's home, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HomePhase {
+    /// Backing off a switch that was closed at the start, by the pull-off.
+    Clear,
+    /// Seeking the switch at the jog rate.
+    Seek,
+    /// Braking after the seek's contact.
+    SeekBrake,
+    /// Backing off the switch by the pull-off.
+    Back,
+    /// Approaching the switch again, slowly.
+    Locate,
+    /// Braking after the locate's contact.
+    LocateBrake,
+    /// Leaving the switch by the pull-off, where the joint ends.
+    Off,
+}
+
+/// How a home ends short of every joint done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HomeEnd {
+    /// A hold or a jog cancel.
+    Canceled,
+    /// The switch stayed closed through the first back-off.
+    StopActive,
+    /// A move of the cycle does not fit the step counters.
+    OutOfRange,
+    /// No contact within the travel.
+    Missed,
+}
+
+/// The order a `home` of several joints takes them in: the head up first,
+/// then the rail, the cross slide and the table.
+const HOME_ORDER: [usize; AXES] = [H, R, Z, A];
+/// The locate runs this much slower than the seek, which runs at the
+/// joint's jog rate.
+const HOME_LOCATE_DIVISOR: f32 = 10.0;
+/// The seek goes this much further than `home_travel`, plus the pull-off.
+const HOME_SEEK_MARGIN: f32 = 1.1;
 
 pub struct Machine<'a> {
     front: Front<'a>,
@@ -139,6 +225,20 @@ pub struct Machine<'a> {
     probe_halting: bool,
     /// The probe input is active, as of the last `poll`.
     probe_active: bool,
+    /// The endstops that are closed, bit per joint, as of the last `poll`.
+    stops_closed: u8,
+    /// The `home` under way.
+    homing: Option<Homing>,
+    /// A hold or a jog cancel is braking the home.
+    home_cancel: bool,
+    /// Joints homed since the position was last lost, bit per joint.
+    homed: u8,
+    /// When the polar cross slide's endstop was first seen closed under a
+    /// move it may halt, for the debounce; `None` while open.
+    slide_limit_since: Option<u64>,
+    /// The cross slide's endstop was closed when its move started: no
+    /// halt until it has opened.
+    slide_limit_ignore: bool,
     /// A hold asked for while idle with a motion line taken in or still
     /// waiting: it is applied the moment that line starts.
     hold_latched: bool,
@@ -183,6 +283,12 @@ impl<'a> Machine<'a> {
             probe_braking: false,
             probe_halting: false,
             probe_active: false,
+            stops_closed: 0,
+            homing: None,
+            home_cancel: false,
+            homed: 0,
+            slide_limit_since: None,
+            slide_limit_ignore: false,
             hold_latched: false,
             apply_laser: true,
             apply_enable: true,
@@ -383,6 +489,43 @@ impl<'a> Machine<'a> {
                 self.pending = Pending::Probe { distance, feed };
                 Ok(false)
             }
+            Command::Home { axes, positive, negative } => {
+                // A focus axis that is not fitted has no switch to seek.
+                let fitted = if self.settings.h_axis { 0b1111 } else { 0b1111 & !(1 << H) };
+                let axes = if axes == 0 { self.settings.stop_mask() & fitted } else { axes };
+                if axes == 0 || axes & !fitted != 0 || axes & !self.settings.stop_mask() != 0 {
+                    return Err(Error::BadWord);
+                }
+                let mut ends = 0u8;
+                for joint in 0..AXES {
+                    let bit = 1 << joint;
+                    if axes & bit == 0 {
+                        continue;
+                    }
+                    // Unsigned, a joint goes to its only switch, or the
+                    // negative one of two.
+                    let to_max = if positive & bit != 0 {
+                        true
+                    } else if negative & bit != 0 {
+                        false
+                    } else {
+                        !self.settings.has_min_stop(joint)
+                    };
+                    let there = if to_max { self.settings.has_max_stop(joint) } else { self.settings.has_min_stop(joint) };
+                    if !there {
+                        return Err(Error::BadWord);
+                    }
+                    if to_max {
+                        ends |= bit;
+                    }
+                }
+                self.require_idle()?;
+                if self.slide.busy() || self.jog_cancel {
+                    return Err(Error::State);
+                }
+                self.pending = Pending::Home { axes, positive: ends };
+                Ok(false)
+            }
             Command::Dwell { ms, power } => {
                 if self.settings.spindle && power.is_some() {
                     return Err(Error::BadWord);
@@ -523,6 +666,13 @@ impl<'a> Machine<'a> {
                     tool_out: self.settings.tool_out,
                     tool_pin: self.settings.tool_pin,
                     tool_invert: self.settings.tool_invert,
+                    // The endstops: where they are, their pins and polarity,
+                    // and whether they halt a move, which a reset of the
+                    // tuning must not switch off.
+                    stop: self.settings.stop,
+                    stop_pin: self.settings.stop_pin,
+                    stop_invert: self.settings.stop_invert,
+                    limits: self.settings.limits,
                     ..Settings::default()
                 };
                 self.adopt(defaults);
@@ -697,6 +847,7 @@ impl<'a> Machine<'a> {
             mode: self.mode,
             enabled: self.enabled,
             probe: self.settings.h_axis.then_some(self.probe_active),
+            homed: (self.settings.stop_mask() != 0).then_some(self.homed),
         }
     }
 
@@ -716,6 +867,12 @@ impl<'a> Machine<'a> {
                 // as a stop brakes it and ends it where it is, and the
                 // state falls back to `Idle` rather than waiting on a
                 // resume that would have nothing to do.
+                // A home has nothing to resume into either: a hold brakes
+                // it and ends it where it is.
+                if self.state == State::Home {
+                    self.cancel_home();
+                    return;
+                }
                 if self.slide.busy() {
                     self.slide.cancel();
                     return;
@@ -730,6 +887,7 @@ impl<'a> Machine<'a> {
                         Pending::Motion { .. }
                             | Pending::Dwell { .. }
                             | Pending::Probe { .. }
+                            | Pending::Home { .. }
                             | Pending::Spindle(Some(_))
                             | Pending::SlideMove { .. }
                     ) || self.lines_waiting > 0;
@@ -764,6 +922,10 @@ impl<'a> Machine<'a> {
                 report::banner(out);
             }
             Realtime::JogCancel => {
+                if self.state == State::Home {
+                    self.cancel_home();
+                    return;
+                }
                 // The slide only ever moves on its own, so at most one of
                 // the two is running.
                 if self.slide.busy() {
@@ -786,10 +948,43 @@ impl<'a> Machine<'a> {
     /// rather than run from a position nobody knows.
     pub fn power_lost(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) {
         self.reset(laser);
+        self.homed = 0;
         self.state = State::Alarm(3);
         report::message("reset", out);
         report::alarm(3, out);
         report::banner(out);
+    }
+
+    /// An endstop in `limits` closed under a move: the interrupt has
+    /// halted (or the polar cross slide is stopped here), and everything
+    /// else stops as it does on a reset. The motor may have stalled
+    /// against the switch, so the position is lost: `Alarm:4`, and every
+    /// axis is unhomed. The banner follows, as after a lost motor supply,
+    /// so a host that streamed a job sees the lines it sent fail.
+    fn limit_tripped(&mut self, mask: u8, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        self.reset(laser);
+        self.homed = 0;
+        self.state = State::Alarm(4);
+        report::message("reset", out);
+        report::limit(mask, out);
+        report::alarm(4, out);
+        report::banner(out);
+    }
+
+    /// Brakes the home under way; `poll_home` ends it once stopped.
+    fn cancel_home(&mut self) {
+        let Some(homing) = self.homing else {
+            return;
+        };
+        if self.home_cancel {
+            return;
+        }
+        self.home_cancel = true;
+        if self.home_on_slide(homing.joint) {
+            self.slide.cancel();
+        } else {
+            self.front.request_hold();
+        }
     }
 
     fn enter_hold(&mut self, laser: &mut impl LaserPort) {
@@ -808,7 +1003,7 @@ impl<'a> Machine<'a> {
     /// Stops everything and forgets the modal state. True when it was
     /// moving: the position may be off and the state is `Alarm`.
     fn reset(&mut self, laser: &mut impl LaserPort) -> bool {
-        let moving = matches!(self.state, State::Run | State::Jog | State::Hold) && self.front.busy();
+        let moving = matches!(self.state, State::Run | State::Jog | State::Hold | State::Home) && self.front.busy();
         self.front.abort(&mut self.planner);
         self.planner.clear();
         // The slide counts its own steps, so stopping it mid-move costs
@@ -818,6 +1013,9 @@ impl<'a> Machine<'a> {
         self.jog_cancel = false;
         self.probe_braking = false;
         self.probe_halting = false;
+        self.homing = None;
+        self.home_cancel = false;
+        self.slide_limit_since = None;
         self.hold_latched = false;
         self.dwell_until = None;
         self.dwell_left_us = 0;
@@ -830,6 +1028,7 @@ impl<'a> Machine<'a> {
         self.mode = PowerMode::Dynamic;
         if moving {
             self.state = State::Alarm(1);
+            self.homed = 0;
         } else if !matches!(self.state, State::Alarm(_)) {
             // An alarm already raised stays: it is the operator's
             // acknowledgment that the position may be off, and another
@@ -854,6 +1053,13 @@ impl<'a> Machine<'a> {
     ) -> bool {
         self.now = now_us;
         self.probe_active = port.probe() == self.settings.probe_invert;
+        self.stops_closed = (port.stops() ^ self.settings.joint_stop_invert() ^ 0b1111) & 0b1111;
+        // Before anything is queued behind a halt the interrupt made.
+        let limit = self.front.limit_hit();
+        if limit != 0 {
+            self.limit_tripped(limit, laser, out);
+        }
+        self.check_slide_limit(laser, out);
         let mut kick = self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
         if self.progress(port, laser, store, out) {
             kick |= self.front.prep(&mut self.planner, &self.settings, self.mode).kick;
@@ -914,6 +1120,9 @@ impl<'a> Machine<'a> {
             if !self.jog_cancel {
                 self.poll_probe(laser, out);
             }
+        }
+        if self.pending == Pending::Homing {
+            self.poll_home(laser, out);
         }
         if self.jog_cancel && self.front.is_stopped() {
             self.jog_cancel = false;
@@ -995,7 +1204,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if matches!(pending, Pending::None | Pending::Dwelling | Pending::Probing) {
+        if matches!(pending, Pending::None | Pending::Dwelling | Pending::Probing | Pending::Homing) {
             return false;
         }
         if !self.planner.is_empty() || self.front.busy() {
@@ -1025,6 +1234,7 @@ impl<'a> Machine<'a> {
                 return false;
             }
             Pending::Probe { distance, feed } => return self.start_probe(distance, feed, port, laser, out),
+            Pending::Home { axes, positive } => return self.start_home(axes, positive, port, laser, out),
             Pending::Mode(mode) => self.mode = mode,
             // A hold kept for this line closes the beam as soon as it lights,
             // as it would a beam already lit: it is answered and stays dark.
@@ -1060,12 +1270,18 @@ impl<'a> Machine<'a> {
                 for i in 0..AXES {
                     if let Some(units) = value[i] {
                         steps[i] = math::units_to_steps(units, self.settings.steps[i]);
+                        // Declared elsewhere, the axis is no longer where
+                        // its switch put it.
+                        self.homed &= !(1 << i);
                     }
                 }
                 self.planner.set_position(steps);
                 self.front.set_position(steps);
             }
-            Pending::SetSlide(value) => self.slide.set_position(value, &self.settings),
+            Pending::SetSlide(value) => {
+                self.slide.set_position(value, &self.settings);
+                self.homed &= !(1 << Z);
+            }
             // A hold brakes a slide move and ends it where it is; one kept
             // for the move ends it before its first step.
             Pending::SlideMove { .. } if self.hold_latched => self.hold_latched = false,
@@ -1080,6 +1296,8 @@ impl<'a> Machine<'a> {
                 if self.slide.busy() {
                     self.state = State::Jog;
                 }
+                self.slide_limit_ignore = self.stop_closed(Z);
+                self.slide_limit_since = None;
             }
             Pending::Enable(on) => self.set_enabled(on, port),
             Pending::Save => {
@@ -1098,11 +1316,313 @@ impl<'a> Machine<'a> {
                     return false;
                 }
             }
-            Pending::None | Pending::Dwelling | Pending::Probing | Pending::Motion { .. } => {}
+            Pending::None
+            | Pending::Dwelling
+            | Pending::Probing
+            | Pending::Homing
+            | Pending::Motion { .. } => {}
         }
         self.pending = Pending::None;
         report::ok(out);
         false
+    }
+
+    /// Starts the home once everything before it has run. True when a
+    /// block was pushed.
+    fn start_home(
+        &mut self,
+        axes: u8,
+        positive: u8,
+        port: &mut impl StepPort,
+        laser: &mut impl LaserPort,
+        out: &mut impl Sink,
+    ) -> bool {
+        // A hold kept for the line: a home has nothing to pause into, so
+        // it does not start.
+        if self.hold_latched {
+            self.hold_latched = false;
+            self.pending = Pending::None;
+            report::error(Error::State, out);
+            return false;
+        }
+        self.set_enabled(true, port);
+        if self.beam.take().is_some() {
+            laser.set_duty(self.off_duty());
+        }
+        self.pending = Pending::Homing;
+        self.state = State::Home;
+        self.home_cancel = false;
+        self.homing = Some(Homing { axes, positive, joint: 0, phase: HomePhase::Clear, contact_steps: 0, contact_mm: 0.0 });
+        self.next_home_joint(laser, out)
+    }
+
+    /// Takes up the next joint of the home in `HOME_ORDER`, or ends the
+    /// home when none is left. True when a block was pushed.
+    fn next_home_joint(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) -> bool {
+        let Some(mut homing) = self.homing else {
+            return false;
+        };
+        let Some(&joint) = HOME_ORDER.iter().find(|&&joint| homing.axes & (1 << joint) != 0) else {
+            self.homing = None;
+            self.pending = Pending::None;
+            report::ok(out);
+            self.enter_idle(laser);
+            return false;
+        };
+        homing.joint = joint;
+        self.homing = Some(homing);
+        // Closed at rest, the switch is backed off first, so the seek
+        // meets a fresh contact rather than reading the one it sits on.
+        let phase = if self.stop_closed(joint) { HomePhase::Clear } else { HomePhase::Seek };
+        self.home_phase(phase, laser, out)
+    }
+
+    /// Enters `phase` for the joint under way by queuing its move. True
+    /// when a block was pushed.
+    fn home_phase(&mut self, phase: HomePhase, laser: &mut impl LaserPort, out: &mut impl Sink) -> bool {
+        let Some(mut homing) = self.homing else {
+            return false;
+        };
+        let joint = homing.joint;
+        let dir = if homing.positive & (1 << joint) != 0 { 1.0 } else { -1.0 };
+        let pull = self.settings.home_pull[joint];
+        let jog = self.settings.jog_rate[joint];
+        let here = self.joint()[joint];
+        let switch = self.switch_position(joint, dir);
+        let (target, rate, watch) = match phase {
+            HomePhase::Clear => (here - dir * pull, jog, false),
+            HomePhase::Seek => (here + dir * (HOME_SEEK_MARGIN * self.settings.home_travel[joint] + pull), jog, true),
+            HomePhase::Back => (switch - dir * pull, jog, false),
+            // From the pull-off, twice it toward the switch: the seek put
+            // the switch within its own repeatability of `switch`.
+            HomePhase::Locate => (switch + dir * pull, jog / HOME_LOCATE_DIVISOR, true),
+            HomePhase::Off => (switch - dir * pull, jog, false),
+            HomePhase::SeekBrake | HomePhase::LocateBrake => return false,
+        };
+        homing.phase = phase;
+        self.homing = Some(homing);
+        if self.home_on_slide(joint) {
+            self.slide.start(self.slide.position(), target, Some(rate), &self.settings);
+            return false;
+        }
+        let scale = self.settings.steps[joint];
+        let from = self.planner.position()[joint];
+        if !math::fits_steps(target, scale)
+            || (math::units_to_steps(target, scale) as i64 - from as i64).unsigned_abs() > stepper::MAX_EVENTS as u64
+        {
+            self.end_home(HomeEnd::OutOfRange, laser, out);
+            return false;
+        }
+        let mut units = self.planner.position_units(&self.settings);
+        units[joint] = target;
+        let kind = if watch {
+            self.front.arm_probe(false);
+            MoveKind::Home(joint as u8)
+        } else {
+            MoveKind::Jog
+        };
+        match self.planner.push(units, kind, Feed::Axis(rate), 0.0, 0.0, &self.settings) {
+            Ok(pushed) => pushed,
+            Err(_) => {
+                self.end_home(HomeEnd::OutOfRange, laser, out);
+                false
+            }
+        }
+    }
+
+    /// Follows the home under way: brakes at a contact, declares the
+    /// position once stopped, moves the joint on through its cycle and
+    /// takes up the next joint.
+    fn poll_home(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        let Some(homing) = self.homing else {
+            return;
+        };
+        let joint = homing.joint;
+        let slide = self.home_on_slide(joint);
+        if self.home_cancel {
+            if self.home_stopped(slide) {
+                self.end_home(HomeEnd::Canceled, laser, out);
+            }
+            return;
+        }
+        match homing.phase {
+            HomePhase::Clear | HomePhase::Back | HomePhase::Off => {
+                if !self.home_move_done(slide) {
+                    return;
+                }
+                match homing.phase {
+                    HomePhase::Clear if self.stop_closed(joint) => self.end_home(HomeEnd::StopActive, laser, out),
+                    HomePhase::Clear => {
+                        self.home_phase(HomePhase::Seek, laser, out);
+                    }
+                    HomePhase::Back => {
+                        self.home_phase(HomePhase::Locate, laser, out);
+                    }
+                    _ => {
+                        self.homed |= 1 << joint;
+                        report::home(joint, self.joint()[joint], true, out);
+                        let mut rest = homing;
+                        rest.axes &= !(1 << joint);
+                        self.homing = Some(rest);
+                        self.next_home_joint(laser, out);
+                    }
+                }
+            }
+            HomePhase::Seek | HomePhase::Locate => {
+                let mut met = homing;
+                let contact = if slide {
+                    // Read here, once a poll: the slide steps from the
+                    // main loop, so this is as fine as its timing.
+                    met.contact_mm = self.slide.position();
+                    self.stop_closed(joint)
+                } else {
+                    match self.front.probe_contact() {
+                        Some(steps) => {
+                            met.contact_steps = steps;
+                            true
+                        }
+                        None => false,
+                    }
+                };
+                if contact {
+                    if slide {
+                        self.slide.cancel();
+                    } else {
+                        self.front.request_hold();
+                    }
+                    met.phase = if homing.phase == HomePhase::Seek { HomePhase::SeekBrake } else { HomePhase::LocateBrake };
+                    self.homing = Some(met);
+                } else if self.home_move_done(slide) {
+                    self.end_home(HomeEnd::Missed, laser, out);
+                }
+            }
+            HomePhase::SeekBrake | HomePhase::LocateBrake => {
+                if !self.home_stopped(slide) {
+                    return;
+                }
+                // The joint sits its overtravel past the contact: declare
+                // the contact as the switch's position and it with it.
+                let dir = if homing.positive & (1 << joint) != 0 { 1.0 } else { -1.0 };
+                let switch = self.switch_position(joint, dir);
+                if slide {
+                    let now = self.slide.position();
+                    self.slide.set_position(switch + (now - homing.contact_mm), &self.settings);
+                } else {
+                    self.front.flush(&mut self.planner);
+                    self.planner.clear();
+                    let mut steps = self.front.position();
+                    let at_switch = math::units_to_steps(switch, self.settings.steps[joint]);
+                    steps[joint] = steps[joint].wrapping_sub(homing.contact_steps).wrapping_add(at_switch);
+                    self.planner.set_position(steps);
+                    self.front.set_position(steps);
+                }
+                let next = if homing.phase == HomePhase::SeekBrake { HomePhase::Back } else { HomePhase::Off };
+                self.home_phase(next, laser, out);
+            }
+        }
+    }
+
+    /// Ends the home short: `[HOME:..:0]` for the joint under way, then
+    /// the answer `end` calls for.
+    fn end_home(&mut self, end: HomeEnd, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        let Some(homing) = self.homing.take() else {
+            return;
+        };
+        self.pending = Pending::None;
+        self.home_cancel = false;
+        if self.home_on_slide(homing.joint) {
+            self.slide.stop();
+        } else {
+            self.front.flush(&mut self.planner);
+            self.planner.clear();
+        }
+        report::home(homing.joint, self.joint()[homing.joint], false, out);
+        match end {
+            HomeEnd::Canceled => {
+                report::ok(out);
+                self.enter_idle(laser);
+            }
+            HomeEnd::StopActive => {
+                report::error(Error::StopActive, out);
+                self.enter_idle(laser);
+            }
+            HomeEnd::OutOfRange => {
+                report::error(Error::OutOfRange, out);
+                self.enter_idle(laser);
+            }
+            HomeEnd::Missed => {
+                // The axis ran its travel and more without the switch:
+                // it may have stalled against its end, so where it is
+                // nobody knows.
+                self.homed &= !(1 << homing.joint);
+                report::alarm(5, out);
+                report::error(Error::HomeFailed, out);
+                self.state = State::Alarm(5);
+                self.spindle = None;
+                self.drive_beam(laser);
+            }
+        }
+    }
+
+    /// What the joint reads where the switch it seeks closes.
+    fn switch_position(&self, joint: usize, dir: f32) -> f32 {
+        if dir > 0.0 && self.settings.has_min_stop(joint) {
+            self.settings.home_pos[joint] + self.settings.home_travel[joint]
+        } else {
+            self.settings.home_pos[joint]
+        }
+    }
+
+    /// The joint is the polar cross slide, which moves on its own `Slide`.
+    fn home_on_slide(&self, joint: usize) -> bool {
+        joint == Z && !self.settings.cartesian
+    }
+
+    fn stop_closed(&self, joint: usize) -> bool {
+        self.stops_closed & (1 << joint) != 0
+    }
+
+    /// A plain move of the home has run out.
+    fn home_move_done(&self, slide: bool) -> bool {
+        if slide {
+            !self.slide.busy()
+        } else {
+            self.planner.is_empty() && !self.front.busy() && !self.front.resync_pending()
+        }
+    }
+
+    /// A brake of the home has come to rest.
+    fn home_stopped(&self, slide: bool) -> bool {
+        if slide {
+            !self.slide.busy()
+        } else {
+            self.front.is_stopped()
+        }
+    }
+
+    /// The polar cross slide's endstop under one of its own moves, read
+    /// and debounced here as the interrupt does the joints': closed for
+    /// `LIMIT_DEBOUNCE_US`, it halts the slide and trips the alarm. One
+    /// closed when the move started is waited out until it opens.
+    fn check_slide_limit(&mut self, laser: &mut impl LaserPort, out: &mut impl Sink) {
+        let watched = !self.settings.cartesian
+            && self.slide.busy()
+            && self.homing.is_none()
+            && self.settings.joint_limits() & (1 << Z) != 0;
+        let closed = self.stop_closed(Z);
+        if !closed {
+            self.slide_limit_since = None;
+            self.slide_limit_ignore = false;
+            return;
+        }
+        if !watched || self.slide_limit_ignore {
+            self.slide_limit_since = None;
+            return;
+        }
+        let since = *self.slide_limit_since.get_or_insert(self.now);
+        if self.now.saturating_sub(since) >= stepper::LIMIT_DEBOUNCE_US as u64 {
+            self.limit_tripped(1 << Z, laser, out);
+        }
     }
 
     /// Queues the probe block once everything before it has run. True
@@ -1357,6 +1877,7 @@ const HELP: &str = "go [R] [A] [H] | cut [R] [A] [H] [F] [S] [M] | jog [R] [A] [
 cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z\n\
 cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A\n\
 focus axis probe (h_axis=1): probe H [F]\n\
+home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop\n\
 dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]\n\
 spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S\n\
 enable | disable | unlock | version | status | help\n\
@@ -1373,6 +1894,7 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
+    use crate::settings::{STOP_MAX, STOP_MIN};
     use crate::stepper::{self, Isr, Shared};
     use crate::{A, BLOCKS};
 
@@ -1384,15 +1906,29 @@ mod tests {
         enable_writes: u32,
         /// Probe pin level: high is open for the default active-low probe.
         probe_level: bool,
+        /// Endstop input levels, bit per joint: high is open at the
+        /// default polarity.
+        stop_levels: u8,
+        /// Direction levels as driven, and which level means forward,
+        /// from the settings; the rig keeps the latter current.
+        dir_levels: u8,
+        dir_invert: u8,
+        /// Where each motor physically is, in steps from the start: a
+        /// `set` or a home moves the reported position, never this.
+        physical: [i64; AXES],
     }
 
     impl StepPort for Port {
-        fn set_dir(&mut self, _levels: u8) {}
+        fn set_dir(&mut self, levels: u8) {
+            self.dir_levels = levels;
+        }
 
         fn step(&mut self, mask: u8) {
             for i in 0..AXES {
                 if mask & (1 << i) != 0 {
                     self.count[i] += 1;
+                    let forward = (self.dir_levels ^ self.dir_invert) & (1 << i) != 0;
+                    self.physical[i] += if forward { 1 } else { -1 };
                 }
             }
         }
@@ -1405,6 +1941,10 @@ mod tests {
         fn probe(&mut self) -> bool {
             self.probe_level
         }
+
+        fn stops(&mut self) -> u8 {
+            self.stop_levels
+        }
     }
 
     /// The cross slide's pins as counters.
@@ -1412,6 +1952,10 @@ mod tests {
     struct SlidePins {
         pulses: u64,
         dir: Option<bool>,
+        /// The cross slide's `dir_invert` bit, kept current by the rig.
+        invert: bool,
+        /// Where the motor physically is, in steps from the start.
+        physical: i64,
     }
 
     impl SlidePort for SlidePins {
@@ -1421,6 +1965,8 @@ mod tests {
 
         fn step(&mut self) {
             self.pulses += 1;
+            let forward = self.dir.unwrap_or(false) != self.invert;
+            self.physical += if forward { 1 } else { -1 };
         }
     }
 
@@ -1503,6 +2049,10 @@ mod tests {
         /// Focus axis position at and below which the probe touches the
         /// board; `None` for no board under it.
         surface: Option<f32>,
+        /// Where each joint's switches physically are, in its units from
+        /// the start: closed at or below the first, at or above the second.
+        stop_min: [Option<f32>; AXES],
+        stop_max: [Option<f32>; AXES],
     }
 
     /// Fixed settings so these tests measure the machine and not its
@@ -1532,7 +2082,16 @@ mod tests {
             let mut rig = Rig {
                 machine: Machine::new(front, settings),
                 isr,
-                port: Port { count: [0; AXES], enable_level: None, enable_writes: 0, probe_level: true },
+                port: Port {
+                    count: [0; AXES],
+                    enable_level: None,
+                    enable_writes: 0,
+                    probe_level: true,
+                    stop_levels: 0b1111,
+                    dir_levels: 0,
+                    dir_invert: 0,
+                    physical: [0; AXES],
+                },
                 slide: SlidePins::default(),
                 laser: Laser { now: 0, duty: 0, hz: 0, duties: Vec::new(), enables: Vec::new() },
                 store: FakeStore::default(),
@@ -1542,6 +2101,8 @@ mod tests {
                 min_duty_while_stepping: 1000,
                 max_duty_while_stepping: 0,
                 surface: None,
+                stop_min: [None; AXES],
+                stop_max: [None; AXES],
             };
             report::banner(&mut rig.out);
             rig
@@ -1552,10 +2113,31 @@ mod tests {
         }
 
         /// The probe pin as the board under the head sets it: pulled low
-        /// while touching, for the default active-low input.
+        /// while touching, for the default active-low input. The endstops
+        /// likewise, from where the motors physically are: a switch at or
+        /// past `stop_min` or `stop_max` is closed.
         fn update_probe(&mut self) {
             let h = self.machine.joint()[H];
             self.port.probe_level = !self.surface.is_some_and(|top| h <= top);
+            let settings = self.machine.settings();
+            self.port.dir_invert = settings.joint_dir_invert();
+            self.slide.invert = settings.dir_invert & 0b0100 != 0;
+            let mut closed = 0u8;
+            for i in 0..AXES {
+                let steps = if i == Z && !settings.cartesian { self.slide.physical } else { self.port.physical[i] };
+                let at = steps as f32 / settings.steps[i];
+                if self.stop_min[i].is_some_and(|low| at <= low) || self.stop_max[i].is_some_and(|high| at >= high) {
+                    closed |= 1 << i;
+                }
+            }
+            self.port.stop_levels = !(closed ^ settings.joint_stop_invert()) & 0b1111;
+        }
+
+        /// Where a motor physically is, in its units from the start.
+        fn physical(&self, joint: usize) -> f32 {
+            let settings = self.machine.settings();
+            let steps = if joint == Z && !settings.cartesian { self.slide.physical } else { self.port.physical[joint] };
+            steps as f32 / settings.steps[joint]
         }
 
         fn poll(&mut self) {
@@ -2471,7 +3053,7 @@ mod tests {
         assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("spindle=0\nsockets=1234\nlaser_pin=20\nprobe_pin=25\ntool_out=0\ntool_pin=17\ntool_invert=0\nok\n"));
+        assert!(listing.ends_with("z_home_travel=200\nstop_invert=0\nlimits=0\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -3485,6 +4067,11 @@ mod tests {
         settings.tool_invert = true;
         settings.tool_pin = 21;
         settings.idle_ms = 1234;
+        settings.stop[R] = STOP_MIN;
+        settings.stop_pin[R] = 22;
+        settings.stop_invert = 1;
+        settings.limits = 1;
+        settings.home_pull[R] = 2.5;
         let mut rig = Rig::with(settings);
         rig.take_out();
         rig.advance(POLL_US);
@@ -3497,8 +4084,252 @@ mod tests {
         for line in [
             "laser_invert=1\n", "en_invert=1\n", "probe_invert=1\n", "dir_invert=5\n",
             "sockets=1423\n", "tool_out=1\n", "tool_invert=1\n", "tool_pin=21\n", "idle_ms=0\n",
+            "r_stop=1\n", "r_stop_pin=22\n", "stop_invert=1\n", "limits=1\n", "r_home_pull=1\n",
         ] {
             assert!(listed.contains(line), "{line} in {listed}");
         }
+    }
+
+    /// The bench with a switch at the rail's negative end, which reads
+    /// -3 mm, a 1 mm pull-off and 40 mm of travel.
+    fn homing_settings() -> Settings {
+        let mut settings = bench_settings();
+        settings.stop[R] = STOP_MIN;
+        settings.home_pos[R] = -3.0;
+        settings.home_pull[R] = 1.0;
+        settings.home_travel[R] = 40.0;
+        settings
+    }
+
+    #[test]
+    fn a_home_seeks_the_switch_backs_off_and_locates_it() {
+        let mut rig = Rig::with(homing_settings());
+        rig.take_out();
+        // The switch is physically 7 mm from where the rail started.
+        rig.stop_min[R] = Some(-7.0);
+        assert_eq!(rig.line("home R"), "[HOME:R:-2.0000:1]\nok\n");
+        assert_eq!(rig.state(), State::Idle);
+        let status = rig.status_line();
+        assert_eq!(field(&status, "D:"), "R");
+        assert!(status.contains("|J:-2.000,"), "{status}");
+        // The switch reads -3 and the rail sits the pull-off from it, so
+        // physically it is 1 mm short of the switch.
+        let physical = rig.physical(R);
+        assert!((physical + 6.0).abs() < 0.02, "physically at {physical}");
+        // Homed again from there, the same place.
+        assert_eq!(rig.line("home R"), "[HOME:R:-2.0000:1]\nok\n");
+        assert!((rig.physical(R) + 6.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn a_home_reports_the_home_state_while_it_runs() {
+        let mut rig = Rig::with(homing_settings());
+        rig.take_out();
+        rig.stop_min[R] = Some(-30.0);
+        rig.submit("home R");
+        rig.advance(50_000);
+        assert_eq!(rig.state(), State::Home);
+        assert!(rig.status_line().starts_with("<Home|"));
+        // Pending until it ends, so no line joins it.
+        assert!(!rig.machine.ready_for_line());
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert!(rig.take_out().ends_with("[HOME:R:-2.0000:1]\nok\n"));
+    }
+
+    #[test]
+    fn a_two_ended_axis_homes_to_either_end() {
+        let mut settings = homing_settings();
+        settings.stop[R] = STOP_MIN + STOP_MAX;
+        settings.home_travel[R] = 25.0;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_min[R] = Some(-7.0);
+        rig.stop_max[R] = Some(18.0);
+        // The positive switch reads home_pos + home_travel.
+        assert_eq!(rig.line("home R+"), "[HOME:R:21.0000:1]\nok\n");
+        assert!((rig.physical(R) - 17.0).abs() < 0.02, "physically at {}", rig.physical(R));
+        assert_eq!(rig.line("home R-"), "[HOME:R:-2.0000:1]\nok\n");
+        assert!((rig.physical(R) + 6.0).abs() < 0.02);
+        // Unsigned, the negative end.
+        assert_eq!(rig.line("jog R10"), "ok\n");
+        rig.run();
+        rig.take_out();
+        assert_eq!(rig.line("home R"), "[HOME:R:-2.0000:1]\nok\n");
+    }
+
+    #[test]
+    fn a_home_that_finds_no_switch_is_an_alarm() {
+        let mut rig = Rig::with(homing_settings());
+        rig.take_out();
+        // Travel and a tenth, plus the pull-off, then nothing.
+        assert_eq!(
+            rig.line("home R"),
+            "[HOME:R:-45.0000:0]\nALARM:5 home failed, position may be off\nerror:13 home failed\n"
+        );
+        assert_eq!(rig.state(), State::Alarm(5));
+        assert_eq!(rig.line("jog R1"), "error:5 not now\n");
+        assert_eq!(rig.line("unlock"), "ok\n");
+        assert_eq!(field(&rig.status_line(), "D:"), "");
+    }
+
+    #[test]
+    fn a_switch_closed_at_the_start_is_backed_off_first() {
+        let mut rig = Rig::with(homing_settings());
+        rig.take_out();
+        // Parked on the switch: the rail backs off the pull-off, then
+        // seeks the contact afresh.
+        rig.stop_min[R] = Some(0.0);
+        assert_eq!(rig.line("home R"), "[HOME:R:-2.0000:1]\nok\n");
+        assert!((rig.physical(R) - 1.0).abs() < 0.02, "physically at {}", rig.physical(R));
+    }
+
+    #[test]
+    fn a_switch_that_stays_closed_refuses_the_home() {
+        let mut rig = Rig::with(homing_settings());
+        rig.take_out();
+        rig.stop_max[R] = Some(-1000.0);
+        assert_eq!(rig.line("home R"), "[HOME:R:1.0000:0]\nerror:12 endstop active\n");
+        assert_eq!(rig.state(), State::Idle);
+        assert_eq!(field(&rig.status_line(), "D:"), "");
+    }
+
+    #[test]
+    fn a_jog_cancel_or_a_hold_ends_a_home() {
+        for action in [Realtime::JogCancel, Realtime::Hold] {
+            let mut rig = Rig::with(homing_settings());
+            rig.take_out();
+            rig.stop_min[R] = Some(-30.0);
+            rig.submit("home R");
+            rig.advance(50_000);
+            rig.realtime(action);
+            rig.run();
+            let out = rig.take_out();
+            assert!(out.starts_with("[HOME:R:-") && out.ends_with(":0]\nok\n"), "{out}");
+            assert_eq!(rig.state(), State::Idle);
+            assert_eq!(field(&rig.status_line(), "D:"), "");
+            assert!(rig.physical(R) < -0.1 && rig.physical(R) > -30.0, "stopped short at {}", rig.physical(R));
+        }
+    }
+
+    #[test]
+    fn a_home_takes_the_joints_in_order_and_refuses_one_without_a_switch() {
+        let mut settings = homing_settings();
+        settings.h_axis = true;
+        settings.stop[H] = STOP_MAX;
+        settings.home_pos[H] = 12.0;
+        settings.home_travel[H] = 20.0;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_min[R] = Some(-7.0);
+        rig.stop_max[H] = Some(10.0);
+        assert_eq!(rig.line("home A"), "error:2 bad word\n");
+        assert_eq!(rig.line("home R+"), "error:2 bad word\n", "no switch at that end");
+        assert_eq!(rig.line("home H-"), "error:2 bad word\n");
+        // The head first, then the rail.
+        assert_eq!(rig.line("home"), "[HOME:H:11.0000:1]\n[HOME:R:-2.0000:1]\nok\n");
+        assert_eq!(field(&rig.status_line(), "D:"), "RH");
+        assert_eq!(rig.line("set R0"), "ok\n");
+        assert_eq!(field(&rig.status_line(), "D:"), "H", "declared elsewhere, the rail is unhomed");
+        assert_eq!(rig.line("go R5"), "ok\n");
+        assert_eq!(rig.line("home R"), "error:5 not now\n", "only from Idle");
+        rig.run();
+    }
+
+    #[test]
+    fn a_focus_axis_not_fitted_has_no_switch_to_home() {
+        let mut settings = homing_settings();
+        settings.stop[H] = STOP_MAX;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_min[R] = Some(-7.0);
+        assert_eq!(rig.line("home H"), "error:2 bad word\n");
+        assert_eq!(rig.line("home"), "[HOME:R:-2.0000:1]\nok\n", "the rail alone");
+    }
+
+    #[test]
+    fn the_polar_cross_slide_homes_on_its_own_stepper() {
+        let mut settings = bench_settings();
+        settings.stop[Z] = STOP_MIN;
+        settings.home_pull[Z] = 1.0;
+        settings.home_travel[Z] = 20.0;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_min[Z] = Some(-4.0);
+        assert_eq!(rig.line("home Z"), "[HOME:Z:1.0000:1]\nok\n");
+        assert!((rig.physical(Z) + 3.0).abs() < 0.02, "physically at {}", rig.physical(Z));
+        assert_eq!(rig.port.count[Z], 0, "the joint stepper never moved it");
+        let status = rig.status_line();
+        assert_eq!(field(&status, "D:"), "Z");
+        assert!(status.contains("|Z:1.000"), "{status}");
+    }
+
+    #[test]
+    fn an_endstop_halts_a_move_it_closes_under() {
+        let mut settings = homing_settings();
+        settings.stop[R] = STOP_MAX;
+        settings.limits = 1;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_max[R] = Some(5.0);
+        assert_eq!(rig.line("go R10"), "ok\n");
+        rig.run();
+        let out = rig.take_out();
+        assert!(
+            out.starts_with("[MSG:reset]\n[MSG:endstop R]\nALARM:4 endstop hit while moving, position may be off\n[spinny v"),
+            "{out}"
+        );
+        assert_eq!(rig.state(), State::Alarm(4));
+        // Halted within the debounce of the switch, not run to the end.
+        let physical = rig.physical(R);
+        assert!(physical >= 5.0 && physical < 5.5, "halted at {physical}");
+        assert_eq!(rig.line("unlock"), "ok\n");
+        assert_eq!(field(&rig.status_line(), "D:"), "");
+    }
+
+    #[test]
+    fn an_endstop_closed_at_rest_lets_the_axis_move_off_it() {
+        let mut settings = homing_settings();
+        settings.limits = 1;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_min[R] = Some(0.0);
+        assert_eq!(rig.line("jog R2"), "ok\n");
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert!(!rig.take_out().contains("ALARM"));
+        assert!((rig.physical(R) - 2.0).abs() < 0.01);
+        // Back onto it, and past it, is the halt.
+        assert_eq!(rig.line("jog R-3"), "ok\n");
+        rig.run();
+        assert_eq!(rig.state(), State::Alarm(4));
+        assert!(rig.physical(R) > -0.5, "halted at {}", rig.physical(R));
+    }
+
+    #[test]
+    fn a_limit_on_the_polar_cross_slide_halts_it_too() {
+        let mut settings = bench_settings();
+        settings.stop[Z] = STOP_MAX;
+        settings.limits = 0b0100;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.stop_max[Z] = Some(3.0);
+        assert_eq!(rig.line("jog Z8"), "ok\n");
+        rig.run();
+        assert_eq!(rig.state(), State::Alarm(4));
+        assert!(rig.take_out().contains("[MSG:endstop Z]\nALARM:4"));
+        let physical = rig.physical(Z);
+        assert!(physical >= 3.0 && physical < 3.5, "halted at {physical}");
+    }
+
+    #[test]
+    fn an_endstop_that_is_no_limit_is_ignored_under_a_move() {
+        let mut rig = Rig::with(homing_settings());
+        rig.take_out();
+        rig.stop_min[R] = Some(-2.0);
+        assert_eq!(rig.line("jog R-5"), "ok\n");
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        assert!((rig.physical(R) + 5.0).abs() < 0.01);
     }
 }

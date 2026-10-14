@@ -77,6 +77,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
     let controls: Controls = controlsOf(ctx.store.get());
     let drawn: Controls | null = null;
     let motors: HTMLButtonElement | null = null;
+    let home: HTMLButtonElement | null = null;
 
     /** The choices of a bar: the joint's own steps, or the pad's for one without. */
     const choicesOf = (axis?: AxisControl): number[] => axis?.steps ?? controls.pad_steps;
@@ -300,8 +301,12 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         }
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
+        // Only a machine with an endstop reports what is homed, and only
+        // that one has anything to home.
+        home = button("Home", () => ctx.call(ctx.api.home()), "btn btn-quiet hidden");
         const bottom = el("div", { class: "button-row" },
             motors,
+            home,
             button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet"),
         );
         replace(body, bars, ...rows, bottom);
@@ -313,6 +318,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         setLocked(cancelButton, !state.snapshot.connected);
         if (motors) {
             motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
+        }
+        if (home) {
+            home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string");
         }
     }
 

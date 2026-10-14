@@ -46,6 +46,23 @@
 //! hold. `Shared::spindle` tells the interrupt so, and it then never writes
 //! the output: not per segment, not when the ring runs dry, not on an abort.
 //!
+//! Homing: a block made by `home` carries `Watch::Stop(joint)` and is
+//! followed like a probe block, the joint's endstop read instead of the
+//! probe input and its position latched in `probe_at` at the first closed
+//! read; the main loop brakes it. The queue cap of `probe_segments` holds
+//! for it too.
+//!
+//! Limits: the joints in `Shared::limits` have their endstop read at every
+//! tick of every block, and one held closed for `LIMIT_DEBOUNCE_US` ends
+//! the motion as a probe halt does: the segment in progress and everything
+//! queued are dropped, `Shared::limit_hit` names the joint, and the
+//! interrupt keeps dropping until the main loop has taken the hit with
+//! `Front::abort`. A switch already closed when the motion started is
+//! waited out until it opens, so an axis parked on its switch can be
+//! moved off it, and the switch a home block seeks is no limit for that
+//! block. The main loop treats the hit as a reset while moving: the
+//! motor may have stalled against the switch, so the position is lost.
+//!
 //! Abort ordering: `Front::abort` sets `Shared::abort` and forgets its own
 //! state; it cannot empty the ring because the `Consumer` belongs to the
 //! interrupt. The caller pends the interrupt; the interrupt's next `tick`
@@ -56,7 +73,7 @@
 //! position into the planner.
 
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, Ordering};
 
 use heapless::spsc::{Consumer, Producer, Queue};
 
@@ -84,11 +101,28 @@ pub const AMASS_TARGET_HZ: f32 = 4000.0;
 const MIN_EVENT_RATE_HZ: f32 = 2.0;
 /// Segment length as planned, seconds.
 const SEGMENT_S: f32 = SEGMENT_MS as f32 / 1000.0;
+/// How long an endstop in `Shared::limits` must stay closed under a move
+/// before the interrupt halts: longer than a switch bounces, shorter than
+/// an axis takes to do any harm past its switch.
+pub const LIMIT_DEBOUNCE_US: u32 = 10_000;
+/// Every joint's bit.
+const ALL_JOINTS: u8 = (1 << AXES) - 1;
 /// Segments a probe block keeps queued: the time between contact and the
 /// start of the brake, beyond the main loop's own period. `probe_ms` in
 /// whole segments, rounded up, and at least one.
 pub fn probe_segments(settings: &Settings) -> usize {
     (settings.probe_ms.div_ceil(SEGMENT_MS) as usize).clamp(1, SEGMENTS)
+}
+
+/// What the interrupt reads at every tick of a block.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Watch {
+    #[default]
+    Nothing,
+    /// The probe input, for a `probe` block.
+    Probe,
+    /// This joint's endstop, for a `home` block.
+    Stop(u8),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -101,8 +135,8 @@ pub struct StepBlock {
     pub dir_forward: u8,
     /// Board mm per metric unit, for the rate report.
     pub surface_scale: f32,
-    /// Sample the probe input at every tick of this block.
-    pub probe: bool,
+    /// The input sampled at every tick of this block.
+    pub watch: Watch,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -164,10 +198,20 @@ pub struct Shared {
     pub duty: AtomicU32,
     /// Probe input level that means contact, from the settings.
     pub probe_level: AtomicBool,
-    /// A probe block met contact; `probe_at` holds the focus axis position
-    /// in steps at that tick. Cleared by `Front::arm_probe`.
+    /// A probe or home block met contact; `probe_at` holds the watched
+    /// joint's position in steps at that tick. Cleared by
+    /// `Front::arm_probe`.
     pub probe_hit: AtomicBool,
     pub probe_at: AtomicI32,
+    /// Endstop input levels that mean the switch is closed, bit per joint
+    /// (`stop_invert` in joint order), and the joints whose switch halts
+    /// a move (`limits` in joint order); from the settings at every `prep`.
+    pub stop_invert: AtomicU8,
+    pub limits: AtomicU8,
+    /// Joints whose endstop halted a move. The interrupt dropped
+    /// everything and drops whatever arrives while this stands; cleared
+    /// when the front forgets its state, which `Front::abort` does.
+    pub limit_hit: AtomicU8,
     /// The probe stops dead at contact rather than braking: set by
     /// `Front::arm_probe`, cleared when the front forgets its state.
     pub probe_halt: AtomicBool,
@@ -197,7 +241,7 @@ impl Shared {
         Shared {
             ring: UnsafeCell::new(Queue::new()),
             blocks: UnsafeCell::new(
-                [StepBlock { steps: [0; AXES], event_count: 0, dir_levels: 0, dir_forward: 0, surface_scale: 0.0, probe: false };
+                [StepBlock { steps: [0; AXES], event_count: 0, dir_levels: 0, dir_forward: 0, surface_scale: 0.0, watch: Watch::Nothing };
                     STEP_BLOCKS],
             ),
             position: [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)],
@@ -213,6 +257,9 @@ impl Shared {
             probe_hit: AtomicBool::new(false),
             probe_at: AtomicI32::new(0),
             probe_halt: AtomicBool::new(false),
+            stop_invert: AtomicU8::new(0),
+            limits: AtomicU8::new(0),
+            limit_hit: AtomicU8::new(0),
             #[cfg(test)]
             executing: core::sync::atomic::AtomicU8::new(NO_SLOT),
         }
@@ -294,8 +341,16 @@ pub struct Isr<'a> {
     forward: u8,
     /// Board mm per metric unit of the loaded block.
     surface_scale: f32,
-    /// The loaded block is a probe: watch the input.
-    probing: bool,
+    /// What the loaded block watches.
+    watch: Watch,
+    /// How long each joint's endstop has been closed under the motion in
+    /// progress, for the limit debounce.
+    limit_us: [u32; AXES],
+    /// Joints whose endstop was closed when the motion started: no limit
+    /// until it has opened once.
+    limit_ignore: u8,
+    /// A segment has been loaded since the interrupt last went idle.
+    moving: bool,
     /// Local copy of `Shared::done`.
     done: u32,
     /// Fraction of a microsecond owed to the timer, in 1/256 us.
@@ -338,7 +393,10 @@ pub fn split(shared: &'static mut Shared) -> (Front<'static>, Isr<'static>) {
         event_shifted: 0,
         forward: 0,
         surface_scale: 0.0,
-        probing: false,
+        watch: Watch::Nothing,
+        limit_us: [0; AXES],
+        limit_ignore: 0,
+        moving: false,
         done: 0,
         frac_acc: 0,
         #[cfg(test)]
@@ -486,6 +544,8 @@ impl<'a> Front<'a> {
         self.shared.laser_invert.store(settings.laser_invert, Ordering::Relaxed);
         self.shared.spindle.store(settings.spindle, Ordering::Relaxed);
         self.shared.probe_level.store(settings.probe_invert, Ordering::Relaxed);
+        self.shared.stop_invert.store(settings.joint_stop_invert(), Ordering::Relaxed);
+        self.shared.limits.store(settings.joint_limits(), Ordering::Relaxed);
         if self.shared.abort.load(Ordering::SeqCst) {
             // The interrupt has to run once more to empty the ring, even
             // when it is idle.
@@ -512,8 +572,8 @@ impl<'a> Front<'a> {
             if self.slice.is_none() && !self.load_block(planner, settings) {
                 break;
             }
-            let probing = planner.current().is_some_and(|block| block.kind == MoveKind::Probe);
-            if probing && self.producer.len() >= probe_segments(settings) {
+            let watched = planner.current().is_some_and(|block| matches!(block.kind, MoveKind::Probe | MoveKind::Home(_)));
+            if watched && self.producer.len() >= probe_segments(settings) {
                 break;
             }
             // A halted probe is over: nothing more goes out until the main
@@ -559,7 +619,11 @@ impl<'a> Front<'a> {
             dir_levels: block.dir_forward ^ settings.joint_dir_invert(),
             dir_forward: block.dir_forward,
             surface_scale: if block.length > 0.0 { block.surface_mm / block.length } else { 0.0 },
-            probe: block.kind == MoveKind::Probe,
+            watch: match block.kind {
+                MoveKind::Probe => Watch::Probe,
+                MoveKind::Home(joint) => Watch::Stop(joint),
+                _ => Watch::Nothing,
+            },
         };
         #[cfg(test)]
         self.check_slot_unreferenced(slot as u8);
@@ -738,6 +802,13 @@ impl<'a> Front<'a> {
         self.resume_pending = false;
         self.speed = 0.0;
         self.shared.probe_halt.store(false, Ordering::SeqCst);
+        self.shared.limit_hit.store(0, Ordering::SeqCst);
+    }
+
+    /// Joints whose endstop halted the motion, bit per joint, until the
+    /// front forgets its state (an `abort` or a `flush`).
+    pub fn limit_hit(&self) -> u8 {
+        self.shared.limit_hit.load(Ordering::SeqCst)
     }
 
     /// After a hold has stopped: discard what was queued (a jog cancel) and
@@ -757,8 +828,8 @@ impl<'a> Front<'a> {
         self.shared.read_position()
     }
 
-    /// Forgets an earlier contact, before a probe block is queued. With
-    /// `halt` the interrupt stops the axes dead at the contact.
+    /// Forgets an earlier contact, before a probe or home block is queued.
+    /// With `halt` the interrupt stops the axes dead at the contact.
     pub fn arm_probe(&mut self, halt: bool) {
         self.shared.probe_hit.store(false, Ordering::SeqCst);
         self.shared.probe_halt.store(halt, Ordering::SeqCst);
@@ -770,8 +841,8 @@ impl<'a> Front<'a> {
         self.shared.probe_halt.load(Ordering::SeqCst) && self.shared.probe_hit.load(Ordering::SeqCst)
     }
 
-    /// Focus axis position in steps at the contact a probe block met, once
-    /// it has.
+    /// Position in steps of the watched joint at the contact a probe or
+    /// home block met, once it has.
     pub fn probe_contact(&self) -> Option<i32> {
         if self.shared.probe_hit.load(Ordering::Acquire) {
             Some(self.shared.probe_at.load(Ordering::Relaxed))
@@ -838,6 +909,11 @@ impl<'a> Isr<'a> {
             self.drop_all(laser);
             return None;
         }
+        // A limit hit stays a halt until the main loop has taken it.
+        if shared.limit_hit.load(Ordering::SeqCst) != 0 {
+            self.drop_all(laser);
+            return None;
+        }
         if self.segment.is_none() {
             let next = match self.consumer.dequeue() {
                 Some(segment) => Some(segment),
@@ -852,6 +928,7 @@ impl<'a> Isr<'a> {
             match next {
                 Some(segment) => self.load(segment, port, laser),
                 None => {
+                    self.moving = false;
                     self.write_duty(laser, shared.off_duty());
                     self.publish(0.0, shared.off_duty());
                     return None;
@@ -859,13 +936,28 @@ impl<'a> Isr<'a> {
             }
         }
         let segment = self.segment.unwrap_or_default();
-        // Before this tick's steps, so the position latched is the one the
-        // input was read at.
-        if self.probing
-            && !shared.probe_hit.load(Ordering::Relaxed)
-            && port.probe() == shared.probe_level.load(Ordering::Relaxed)
-        {
-            shared.probe_at.store(shared.position[H].load(Ordering::Relaxed), Ordering::Relaxed);
+        // The inputs are read before this tick's steps, so the position
+        // latched is the one they were read at.
+        let limits = shared.limits.load(Ordering::Relaxed);
+        let sought = match self.watch {
+            Watch::Stop(joint) => 1 << joint,
+            _ => 0,
+        };
+        let mut closed = 0;
+        if limits | sought != 0 {
+            closed = self.closed_stops(port);
+            // The switch a home seeks is no limit for it.
+            if self.check_limits(closed, limits & !sought, segment.period_us, laser) {
+                return None;
+            }
+        }
+        let (contact, joint) = match self.watch {
+            Watch::Nothing => (false, 0),
+            Watch::Probe => (port.probe() == shared.probe_level.load(Ordering::Relaxed), H),
+            Watch::Stop(joint) => (closed & sought != 0, joint as usize),
+        };
+        if contact && !shared.probe_hit.load(Ordering::Relaxed) {
+            shared.probe_at.store(shared.position[joint].load(Ordering::Relaxed), Ordering::Relaxed);
             shared.probe_hit.store(true, Ordering::Release);
             if shared.probe_halt.load(Ordering::SeqCst) {
                 // Not even this tick's steps: the axis stops where the
@@ -899,10 +991,43 @@ impl<'a> Isr<'a> {
         Some(segment.period_us + carry)
     }
 
+    /// The endstops that are closed, bit per joint, through their
+    /// polarity.
+    fn closed_stops(&self, port: &mut impl StepPort) -> u8 {
+        (port.stops() ^ self.shared.stop_invert.load(Ordering::Relaxed) ^ ALL_JOINTS) & ALL_JOINTS
+    }
+
+    /// Times the endstops of the joints in `limits` that are closed and
+    /// halts when one has stayed closed for `LIMIT_DEBOUNCE_US`. True when
+    /// it halted. One closed when the motion started is ignored until it
+    /// has opened.
+    fn check_limits(&mut self, closed: u8, limits: u8, period_us: u32, laser: &mut impl LaserPort) -> bool {
+        self.limit_ignore &= closed;
+        let mut hit = 0;
+        for i in 0..AXES {
+            let bit = 1 << i;
+            if limits & bit == 0 || closed & bit == 0 || self.limit_ignore & bit != 0 {
+                self.limit_us[i] = 0;
+                continue;
+            }
+            self.limit_us[i] = self.limit_us[i].saturating_add(period_us);
+            if self.limit_us[i] >= LIMIT_DEBOUNCE_US {
+                hit |= bit;
+            }
+        }
+        if hit == 0 {
+            return false;
+        }
+        self.shared.limit_hit.store(hit, Ordering::SeqCst);
+        self.drop_all(laser);
+        true
+    }
+
     /// Drops the segment in progress and everything queued, beam off, and
-    /// goes idle; an abort and a probe halt end this way.
+    /// goes idle; an abort, a probe halt and a limit hit end this way.
     fn drop_all(&mut self, laser: &mut impl LaserPort) {
         let shared = self.shared;
+        self.moving = false;
         let mut dropped = self.segment.take().map_or(0, |_| 1);
         while self.consumer.dequeue().is_some() {
             dropped += 1;
@@ -938,6 +1063,13 @@ impl<'a> Isr<'a> {
     fn load(&mut self, segment: Segment, port: &mut impl StepPort, laser: &mut impl LaserPort) {
         let shared = self.shared;
         shared.idle.store(false, Ordering::SeqCst);
+        if !self.moving {
+            // Motion starts: a switch closed now was closed at rest, and
+            // the move may be the one that takes the axis off it.
+            self.moving = true;
+            self.limit_us = [0; AXES];
+            self.limit_ignore = if shared.limits.load(Ordering::Relaxed) != 0 { self.closed_stops(port) } else { 0 };
+        }
         if self.loaded != Some(segment.block) {
             // SAFETY: the front wrote this slot before enqueueing the
             // segment and will not touch it until the segment is done.
@@ -949,7 +1081,7 @@ impl<'a> Isr<'a> {
             }
             self.forward = block.dir_forward;
             self.surface_scale = block.surface_scale;
-            self.probing = block.probe;
+            self.watch = block.watch;
             port.set_dir(block.dir_levels);
             self.loaded = Some(segment.block);
         }
@@ -990,6 +1122,9 @@ mod tests {
         record: bool,
         /// (time, mask) per pulse when `record` is set.
         pulses: Vec<(u64, u8)>,
+        /// Endstop input levels, bit per joint; all high is every switch
+        /// open at the default polarity.
+        stop_levels: u8,
     }
 
     impl StepPort for Port {
@@ -1014,6 +1149,10 @@ mod tests {
 
         fn probe(&mut self) -> bool {
             true
+        }
+
+        fn stops(&mut self) -> u8 {
+            self.stop_levels
         }
     }
 
@@ -1109,7 +1248,7 @@ mod tests {
                 planner: Planner::new(),
                 settings,
                 mode: PowerMode::Dynamic,
-                port: Port { now: 0, count: [0; AXES], levels: 0, dirs: Vec::new(), record: false, pulses: Vec::new() },
+                port: Port { now: 0, count: [0; AXES], levels: 0, dirs: Vec::new(), record: false, pulses: Vec::new(), stop_levels: ALL_JOINTS },
                 laser: Laser { now: 0, duty: 0, duties: Vec::new() },
                 now: 0,
                 next_tick: None,

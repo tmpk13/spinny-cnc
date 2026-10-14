@@ -90,7 +90,41 @@ pub struct Settings {
     pub tool_pin: u32,
     /// The tool output is active low.
     pub tool_invert: bool,
+    /// Where each axis has an endstop, by joint (`R`, `A`, `H`, `Z`): 0
+    /// none, `STOP_MIN` at the negative end, `STOP_MAX` at the positive
+    /// end, both at both ends on the one input (normally closed switches
+    /// in series, or normally open in parallel). `home` seeks the switch,
+    /// and `limits` makes it halt a move.
+    pub stop: [u8; AXES],
+    /// GPIO of each axis's endstop input, pulled up inside the chip. Read
+    /// at boot.
+    pub stop_pin: [u32; AXES],
+    /// How far `home` backs the axis off its switch before the slow
+    /// approach, and leaves it off the switch at the end, units.
+    pub home_pull: [f32; AXES],
+    /// What the axis reads where its switch closes: the switch at the
+    /// negative end, or the only one. The positive switch of an axis with
+    /// both reads `home_pos + home_travel`.
+    pub home_pos: [f32; AXES],
+    /// The axis's travel between its ends, units. A home seeks the switch
+    /// a tenth further than that plus the pull-off, so a switch it does
+    /// not find within it is missing.
+    pub home_travel: [f32; AXES],
+    /// The endstop inputs are active high: bit 0 the rail, bit 1 the
+    /// table, bit 2 the cross slide, bit 3 the focus axis, the
+    /// `dir_invert` order. Off, a switch pulls its input low.
+    pub stop_invert: u8,
+    /// Which endstops halt a move that closes them, same bit order: the
+    /// interrupt drops everything the moment one closes, and the machine
+    /// raises `ALARM:4`, the position lost as it is on a reset while
+    /// moving. Off, a switch closing under a move is ignored.
+    pub limits: u8,
 }
+
+/// An endstop at the negative end of its axis, and one at the positive
+/// end; `stop` is their sum.
+pub const STOP_MIN: u8 = 1;
+pub const STOP_MAX: u8 = 2;
 
 /// Largest `probe_ms`: the whole segment ring.
 pub const PROBE_MS_MAX: u32 = SEGMENTS as u32 * SEGMENT_MS;
@@ -111,6 +145,10 @@ pub const LASER_PIN_DEFAULT: u32 = 20;
 pub const PROBE_PIN_DEFAULT: u32 = 25;
 /// The FAN1 header.
 pub const TOOL_PIN_DEFAULT: u32 = 17;
+/// Endstop inputs by joint: X-STOP for the rail, Y-STOP for the table,
+/// E-STOP for the focus axis and the PROBE header for the cross slide,
+/// Z-STOP being the probe's.
+pub const STOP_PIN_DEFAULTS: [u32; AXES] = [4, 3, 16, 22];
 
 /// A pin setting names a GPIO the board has and nothing else owns.
 pub fn pin_valid(pin: u32) -> bool {
@@ -178,12 +216,20 @@ impl Default for Settings {
             tool_out: false,
             tool_pin: TOOL_PIN_DEFAULT,
             tool_invert: false,
+            stop: [0; AXES],
+            stop_pin: STOP_PIN_DEFAULTS,
+            home_pull: [1.0; AXES],
+            home_pos: [0.0; AXES],
+            // A rail's worth, a turn and a bit, a focus screw, a slide.
+            home_travel: [200.0, 400.0, 50.0, 200.0],
+            stop_invert: 0,
+            limits: 0,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 52] = [
+pub const NAMES: [&str; 74] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -194,7 +240,17 @@ pub const NAMES: [&str; 52] = [
     "tmc_h_ma", "tmc_h_micro", "probe_ms",
     "z_jerk", "z_max", "cartesian", "spindle", "sockets",
     "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert",
+    "r_stop", "r_stop_pin", "r_home_pull", "r_home_pos", "r_home_travel",
+    "a_stop", "a_stop_pin", "a_home_pull", "a_home_pos", "a_home_travel",
+    "h_stop", "h_stop_pin", "h_home_pull", "h_home_pos", "h_home_travel",
+    "z_stop", "z_stop_pin", "z_home_pull", "z_home_pos", "z_home_travel",
+    "stop_invert", "limits",
 ];
+
+/// First of the endstop settings in `NAMES`: five per joint in the
+/// core's joint order, then the two masks.
+const STOP_NAMES_AT: usize = 52;
+const STOP_NAMES_PER_JOINT: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetError {
@@ -226,9 +282,9 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
 /// older firmware is thrown away rather than read as this layout. Versions
-/// 5 to 7 are version 4 with fields appended, so a blob from version 4 on
+/// 5 to 8 are version 4 with fields appended, so a blob from version 4 on
 /// is still read, with the fields added after it at their defaults.
-const BLOB_VERSION: u8 = 7;
+const BLOB_VERSION: u8 = 8;
 /// Oldest version whose fields are a prefix of this layout.
 const BLOB_VERSION_PREFIX: u8 = 4;
 /// Bytes before the first field: magic and version.
@@ -243,10 +299,14 @@ const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
     + 1 + 1 + 4;
 /// Serialized size of the fields, in blob order: the version 4 fields,
 /// then `z_jerk`, `z_max`, `cartesian` and `spindle` (version 5), then
-/// `sockets` (version 6), then the pins and the tool output (version 7).
-const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN;
+/// `sockets` (version 6), then the pins and the tool output (version 7),
+/// then the endstops and homing (version 8).
+const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN;
 /// Serialized size of the version 7 fields.
 const PINS_LEN: usize = 4 + 4 + 1 + 4 + 1;
+/// Serialized size of the version 8 fields: per joint the ends, the pin
+/// as a byte, the pull-off, the position and the travel, then the masks.
+const STOPS_LEN: usize = AXES * (1 + 1 + 4 + 4 + 4) + 1 + 1;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -260,8 +320,16 @@ enum Slot<'a> {
     Flag(&'a mut bool),
 }
 
+/// A mask in the `dir_invert` bit order (rail, table, cross slide, focus
+/// axis) as the step port numbers the joints: the rail and table bits as
+/// they are, the focus axis from bit 3 and the cross slide from bit 2.
+fn joint_bits(bits: u8) -> u8 {
+    (bits & 0b0011) | ((bits >> 1) & (1 << H)) | ((bits << 1) & (1 << Z))
+}
+
 /// Position of `name` in `NAMES`, ignoring case.
 fn index_of(name: &str) -> Option<usize> {
+
     NAMES.iter().position(|known| known.eq_ignore_ascii_case(name))
 }
 
@@ -275,6 +343,9 @@ fn group(index: usize) -> Changed {
         // the next poll.
         47 | 48 | 50 => Changed::Other,
         49 | 51 => Changed::Laser,
+        // The endstops are read fresh by the stepper at every fill, and
+        // a home reads its tuning when it starts.
+        STOP_NAMES_AT.. => Changed::Other,
         // Whether the focus axis is fitted decides whether its driver is
         // configured; `sockets` moves every axis to its driver.
         _ => Changed::Driver,
@@ -428,8 +499,54 @@ impl Settings {
             48 => Slot::Int(&mut self.probe_pin),
             49 => Slot::Flag(&mut self.tool_out),
             50 => Slot::Int(&mut self.tool_pin),
-            _ => Slot::Flag(&mut self.tool_invert),
+            51 => Slot::Flag(&mut self.tool_invert),
+            72 => Slot::Byte(&mut self.stop_invert),
+            73 => Slot::Byte(&mut self.limits),
+            _ => {
+                let at = index - STOP_NAMES_AT;
+                let joint = [R, A, H, Z][at / STOP_NAMES_PER_JOINT];
+                match at % STOP_NAMES_PER_JOINT {
+                    0 => Slot::Byte(&mut self.stop[joint]),
+                    1 => Slot::Int(&mut self.stop_pin[joint]),
+                    2 => Slot::Float(&mut self.home_pull[joint]),
+                    3 => Slot::Float(&mut self.home_pos[joint]),
+                    _ => Slot::Float(&mut self.home_travel[joint]),
+                }
+            }
         }
+    }
+
+    /// Joints with an endstop, bit i = joint i.
+    pub fn stop_mask(&self) -> u8 {
+        let mut mask = 0;
+        for i in 0..AXES {
+            if self.stop[i] != 0 {
+                mask |= 1 << i;
+            }
+        }
+        mask
+    }
+
+    /// Joint `i` has a switch at its negative end.
+    pub fn has_min_stop(&self, i: usize) -> bool {
+        self.stop[i] & STOP_MIN != 0
+    }
+
+    /// Joint `i` has a switch at its positive end.
+    pub fn has_max_stop(&self, i: usize) -> bool {
+        self.stop[i] & STOP_MAX != 0
+    }
+
+    /// `stop_invert` as the step port numbers the joints: bit i set when
+    /// joint i's endstop input is active high.
+    pub fn joint_stop_invert(&self) -> u8 {
+        joint_bits(self.stop_invert)
+    }
+
+    /// `limits` as the step port numbers the joints, less the joints that
+    /// have no endstop.
+    pub fn joint_limits(&self) -> u8 {
+        joint_bits(self.limits) & self.stop_mask()
     }
 
     /// Direction inversion for the joint axes as the step port numbers
@@ -437,7 +554,7 @@ impl Settings {
     /// focus axis from bit 3 and the cross slide from bit 2, which is how
     /// `dir_invert` numbered them before either was a joint.
     pub fn joint_dir_invert(&self) -> u8 {
-        (self.dir_invert & 0b0011) | ((self.dir_invert >> 1) & (1 << H)) | ((self.dir_invert << 1) & (1 << Z))
+        joint_bits(self.dir_invert)
     }
 
     /// Driver socket of a joint (`R`, `A`, `H` or `Z`): 0 for the X
@@ -481,6 +598,13 @@ impl Settings {
             && pin_valid(self.laser_pin)
             && pin_valid(self.probe_pin)
             && pin_valid(self.tool_pin)
+            && self.stop.iter().all(|&ends| ends <= STOP_MIN + STOP_MAX)
+            && self.stop_pin.iter().all(|&pin| pin_valid(pin))
+            && self.home_pull.iter().all(|&v| positive(v))
+            && self.home_pos.iter().all(|&v| (-FLOAT_MAX..=FLOAT_MAX).contains(&v))
+            && self.home_travel.iter().all(|&v| positive(v))
+            && self.stop_invert <= 15
+            && self.limits <= 15
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -591,6 +715,15 @@ impl Settings {
         w.flag(self.tool_out);
         w.u32(self.tool_pin);
         w.flag(self.tool_invert);
+        for i in 0..AXES {
+            w.u8(self.stop[i]);
+            w.u8(self.stop_pin[i] as u8);
+            w.f32(self.home_pull[i]);
+            w.f32(self.home_pos[i]);
+            w.f32(self.home_travel[i]);
+        }
+        w.u8(self.stop_invert);
+        w.u8(self.limits);
         debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -663,6 +796,17 @@ impl Settings {
             s.tool_pin = r.u32();
             s.tool_invert = r.flag()?;
         }
+        if version >= 8 {
+            for i in 0..AXES {
+                s.stop[i] = r.u8();
+                s.stop_pin[i] = r.u8() as u32;
+                s.home_pull[i] = r.f32();
+                s.home_pos[i] = r.f32();
+                s.home_travel[i] = r.f32();
+            }
+            s.stop_invert = r.u8();
+            s.limits = r.u8();
+        }
         if !s.is_valid() {
             return None;
         }
@@ -674,7 +818,7 @@ impl Settings {
 mod tests {
     use super::*;
 
-    struct Out(heapless::Vec<u8, 1024>);
+    struct Out(heapless::Vec<u8, 2048>);
 
     impl Out {
         fn new() -> Self {
@@ -749,7 +893,29 @@ mod tests {
         probe_pin=25\n\
         tool_out=0\n\
         tool_pin=17\n\
-        tool_invert=0\n";
+        tool_invert=0\n\
+        r_stop=0\n\
+        r_stop_pin=4\n\
+        r_home_pull=1\n\
+        r_home_pos=0\n\
+        r_home_travel=200\n\
+        a_stop=0\n\
+        a_stop_pin=3\n\
+        a_home_pull=1\n\
+        a_home_pos=0\n\
+        a_home_travel=400\n\
+        h_stop=0\n\
+        h_stop_pin=16\n\
+        h_home_pull=1\n\
+        h_home_pos=0\n\
+        h_home_travel=50\n\
+        z_stop=0\n\
+        z_stop_pin=22\n\
+        z_home_pull=1\n\
+        z_home_pos=0\n\
+        z_home_travel=200\n\
+        stop_invert=0\n\
+        limits=0\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -758,7 +924,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 52> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 74> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -777,7 +943,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 52] = [
+        let table: [(&str, &str, &str, Changed); 74] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -830,6 +996,28 @@ mod tests {
             ("tool_out", "1", "1", Changed::Laser),
             ("tool_pin", "18", "18", Changed::Other),
             ("tool_invert", "1", "1", Changed::Laser),
+            ("r_stop", "3", "3", Changed::Other),
+            ("r_stop_pin", "22", "22", Changed::Other),
+            ("r_home_pull", "2.5", "2.5", Changed::Other),
+            ("r_home_pos", "-3", "-3", Changed::Other),
+            ("r_home_travel", "150", "150", Changed::Other),
+            ("a_stop", "1", "1", Changed::Other),
+            ("a_stop_pin", "26", "26", Changed::Other),
+            ("a_home_pull", "0.5", "0.5", Changed::Other),
+            ("a_home_pos", "90", "90", Changed::Other),
+            ("a_home_travel", "370", "370", Changed::Other),
+            ("h_stop", "2", "2", Changed::Other),
+            ("h_stop_pin", "27", "27", Changed::Other),
+            ("h_home_pull", "1.25", "1.25", Changed::Other),
+            ("h_home_pos", "15", "15", Changed::Other),
+            ("h_home_travel", "40", "40", Changed::Other),
+            ("z_stop", "0", "0", Changed::Other),
+            ("z_stop_pin", "25", "25", Changed::Other),
+            ("z_home_pull", "3", "3", Changed::Other),
+            ("z_home_pos", "-20", "-20", Changed::Other),
+            ("z_home_travel", "60", "60", Changed::Other),
+            ("stop_invert", "15", "15", Changed::Other),
+            ("limits", "9", "9", Changed::Other),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -1271,7 +1459,7 @@ mod tests {
         };
         modes.to_blob(&mut blob);
         let tail = HEADER_LEN + FIELDS_LEN;
-        let pins = tail - PINS_LEN;
+        let pins = tail - STOPS_LEN - PINS_LEN;
         assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
         assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
         assert_eq!(blob[pins - 6..pins - 4], [1, 1]);
@@ -1283,6 +1471,48 @@ mod tests {
         assert_eq!(blob[pins + 13], 1);
         assert!(blob[tail..CRC_OFFSET].iter().all(|&b| b == 0));
         assert_eq!(Settings::from_blob(&blob), Some(modes));
+    }
+
+    #[test]
+    fn the_endstop_fields_are_checked_and_round_trip_the_blob() {
+        let mut settings = Settings::default();
+        for (name, bad, good) in [
+            ("r_stop", "4", "3"),
+            ("a_stop_pin", "28", "26"),
+            ("h_home_pull", "0", "0.1"),
+            ("z_home_pos", "100000000", "-9999999"),
+            ("r_home_travel", "-1", "500"),
+            ("stop_invert", "16", "15"),
+            ("limits", "16", "0"),
+        ] {
+            assert_eq!(settings.set(name, bad), Err(SetError::BadValue), "{name}={bad}");
+            assert_eq!(settings.set(name, good), Ok(Changed::Other), "{name}={good}");
+        }
+        settings.set("a_stop", "1").unwrap();
+        settings.set("h_stop", "2").unwrap();
+        assert_eq!(settings.stop_mask(), 1 << R | 1 << A | 1 << H);
+        assert!(settings.has_min_stop(R) && settings.has_max_stop(R));
+        assert!(settings.has_min_stop(A) && !settings.has_max_stop(A));
+        assert!(!settings.has_min_stop(H) && settings.has_max_stop(H));
+        // The masks follow the dir_invert bit order into the joint order,
+        // and the limits leave out a joint with no switch.
+        assert_eq!(settings.joint_stop_invert(), 0b1111);
+        settings.set("stop_invert", "8").unwrap();
+        assert_eq!(settings.joint_stop_invert(), 1 << H, "bit 3 is the focus axis");
+        settings.set("stop_invert", "4").unwrap();
+        assert_eq!(settings.joint_stop_invert(), 1 << Z, "bit 2 is the cross slide");
+        settings.set("limits", "15").unwrap();
+        assert_eq!(settings.joint_limits(), 1 << R | 1 << A | 1 << H);
+        let mut blob = [0u8; BLOB_LEN];
+        settings.to_blob(&mut blob);
+        assert_eq!(Settings::from_blob(&blob), Some(settings));
+        // A version 7 blob reads with the endstops at their defaults.
+        let older = Settings::default();
+        older.to_blob(&mut blob);
+        blob[4] = 7;
+        let crc = crc32(&blob[..CRC_OFFSET]);
+        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        assert_eq!(Settings::from_blob(&blob), Some(older));
     }
 
     #[test]

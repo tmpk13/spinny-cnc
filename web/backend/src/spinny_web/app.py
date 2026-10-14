@@ -155,7 +155,33 @@ SETTINGS_SCHEMA = [
     {"name": "tool_out", "unit": "0/1", "help": "1 = tool_pin follows the tool: on while a job runs, a beam is lit, a dwell burns or the spindle turns; read at boot"},
     {"name": "tool_pin", "unit": "GPIO", "help": "the tool output, 17 FAN1 by default; read at boot"},
     {"name": "tool_invert", "unit": "0/1", "help": "1 = tool output active low"},
+    {"name": "r_stop", "unit": "", "help": "rail endstops: 0 none, 1 at the negative end, 2 at the positive end, 3 both on the one input"},
+    {"name": "r_stop_pin", "unit": "GPIO", "help": "rail endstop input, pulled up: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot"},
+    {"name": "r_home_pull", "unit": "mm", "help": "how far a home backs off the switch, and leaves the rail from it"},
+    {"name": "r_home_pos", "unit": "mm", "help": "what the rail reads at its switch (the negative one of two)"},
+    {"name": "r_home_travel", "unit": "mm", "help": "rail travel between its ends; a home seeks a tenth further, and the positive switch of two reads home_pos + this"},
+    {"name": "a_stop", "unit": "", "help": "table endstops: 0 none, 1 negative end, 2 positive end, 3 both"},
+    {"name": "a_stop_pin", "unit": "GPIO", "help": "table endstop input, pulled up; read at boot"},
+    {"name": "a_home_pull", "unit": "deg", "help": "how far a home backs off the switch, and leaves the table from it"},
+    {"name": "a_home_pos", "unit": "deg", "help": "what the table reads at its switch"},
+    {"name": "a_home_travel", "unit": "deg", "help": "table travel between its ends; a home seeks a tenth further"},
+    {"name": "h_stop", "unit": "", "help": "focus axis endstops: 0 none, 1 negative end, 2 positive end, 3 both"},
+    {"name": "h_stop_pin", "unit": "GPIO", "help": "focus axis endstop input, pulled up; read at boot"},
+    {"name": "h_home_pull", "unit": "mm", "help": "how far a home backs off the switch, and leaves the head from it"},
+    {"name": "h_home_pos", "unit": "mm", "help": "what the focus axis reads at its switch"},
+    {"name": "h_home_travel", "unit": "mm", "help": "focus axis travel between its ends; a home seeks a tenth further"},
+    {"name": "z_stop", "unit": "", "help": "cross slide endstops: 0 none, 1 negative end, 2 positive end, 3 both"},
+    {"name": "z_stop_pin", "unit": "GPIO", "help": "cross slide endstop input, pulled up; read at boot"},
+    {"name": "z_home_pull", "unit": "mm", "help": "how far a home backs off the switch, and leaves the slide from it"},
+    {"name": "z_home_pos", "unit": "mm", "help": "what the cross slide reads at its switch"},
+    {"name": "z_home_travel", "unit": "mm", "help": "cross slide travel between its ends; a home seeks a tenth further"},
+    {"name": "stop_invert", "unit": "mask", "help": "endstop inputs active high: bit 0 rail, bit 1 table, bit 2 cross slide, bit 3 focus axis"},
+    {"name": "limits", "unit": "mask", "help": "endstops that halt a move closing them (ALARM:4, position lost), same bits"},
 ]
+
+# How long a home may take before the request gives up on it: every axis
+# at its jog rate over its travel, twice, and the slow locate.
+HOME_TIMEOUT = 600.0
 
 POLAR, CARTESIAN = "polar", "cartesian"
 LASER, SPINDLE = "laser", "spindle"
@@ -225,6 +251,12 @@ class RealtimeBody(BaseModel):
 
 class CommandBody(BaseModel):
     line: str
+
+
+class HomeBody(BaseModel):
+    # Joint letters R, A, H and Z, each with an optional - or + for the
+    # end to seek; empty for every axis with an endstop.
+    axes: str = ""
 
 
 class LaserBody(Finite):
@@ -793,6 +825,7 @@ class Backend:
                     "alarm": status.alarm,
                     "joint": {"r": status.r, "a": status.a, "z": status.z, "h": status.h},
                     "probe": status.probe,
+                    "homed": status.homed,
                     "board": {"x": round(x, 4), "y": round(y, 4)},
                     "rate": status.rate,
                     "laser": status.laser,
@@ -1288,6 +1321,27 @@ class Backend:
         link.request_ok("unlock")
         link.status_now(1.0, routine=True)
         return self.snapshot()
+
+    def home(self, axes: str) -> dict:
+        """Homes the axes named, or every one with an endstop. The firmware
+        answers the line when the home ends, so this waits for it, as long
+        as a home over the travel can take."""
+        words = axes.split()
+        for word in words:
+            if not re.fullmatch(r"[RAHZrahz][-+]?", word):
+                raise ValueError(f"not an axis to home: {word!r}; give R, A, H or Z, each with an optional - or +")
+        line = " ".join(["home", *(word.upper() for word in words)])
+        with self._owner_lock, self._move_lock:
+            link = self._movable()
+            self._jog_target = None
+            try:
+                link.request_ok(line, timeout=HOME_TIMEOUT)
+            finally:
+                # A home renumbers an axis as a `set` does: the frame the
+                # height map's heights and points are in has moved.
+                self._frame_changed("the machine was homed")
+            link.status_now(1.0, routine=True)
+            return self.snapshot()
 
     # --- settings -----------------------------------------------------------------
 
@@ -2453,6 +2507,10 @@ def create_app(
     @app.post("/api/unlock")
     def unlock():
         return guarded(backend.unlock)
+
+    @app.post("/api/home")
+    def home(body: HomeBody):
+        return guarded(lambda: backend.home(body.axes))
 
     @app.post("/api/realtime")
     def realtime(body: RealtimeBody):

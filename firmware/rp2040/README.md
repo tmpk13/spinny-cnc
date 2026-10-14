@@ -21,6 +21,7 @@ speed signal and the focus axis its depth axis.
 | Cross slide STEP / DIR / EN | GP19 / GP28 / GP2 | Z driver socket, EN active low |
 | Focus axis STEP / DIR / EN | GP14 / GP13 / GP15 | E driver socket, EN active low; used with `$h_axis=1` |
 | Probe | GP25 | Z-STOP header, internal pull-up, active low unless `$probe_invert=1`; `$probe_pin` moves it |
+| Endstops | GP4, GP3, GP22, GP16 | X-STOP for the rail, Y-STOP for the table, PROBE for the cross slide, E-STOP for the focus axis; internal pull-ups, active low unless the axis's bit of `$stop_invert` is set; `$<axis>_stop_pin` moves each, `$<axis>_stop` says which ends have a switch, `$limits` which halt a move; `home` seeks them |
 | TMC2209 UART | GP8 TX, GP9 RX | one wire, 115200 baud, addresses X=0 Y=2 Z=1 E=3, 110 mOhm sense |
 | Laser | GP20 | FAN3 header, a low side MOSFET switching the fan rail; `$laser_pin` moves it |
 | Tool output | none | `$tool_out=1` drives `$tool_pin` (GP17, FAN1, by default) while a job runs, a beam is lit, a dwell burns or the spindle turns; `$tool_invert=1` makes it active low |
@@ -260,12 +261,24 @@ $save
   spindle is connected, with the board unpowered, held in BOOTSEL, and
   running after `spindle off`: all three must read stop. Set `$laser_hz`
   to the frequency the controller expects.
-- The focus axis has no limit switches and no soft limit either. A probe
-  that finds nothing goes its whole distance down and raises `ALARM:2`, so
-  keep the distance to what the head can travel before anything but the
-  probe meets the board. A probe that stays below the focal point once it
-  has touched (a fixed pin rather than a retracting one) drags across the
-  board during the cut: retract or remove it before running a job.
+- The focus axis has no soft limit, and no limit switch unless
+  `$h_stop` fits one at its top (`$limits` bit 3 makes it halt a move).
+  A probe that finds nothing goes its whole distance down and raises
+  `ALARM:2`, so keep the distance to what the head can travel before
+  anything but the probe meets the board. A probe that stays below the
+  focal point once it has touched (a fixed pin rather than a retracting
+  one) drags across the board during the cut: retract or remove it before
+  running a job.
+- An endstop is a switch between its header's signal and GND, 3.3 V logic
+  like the probe: the input is pulled up and reads closed when pulled low,
+  or the other way round with its bit of `$stop_invert`. Switches at both
+  ends of an axis go to the one header, normally closed in series or
+  normally open in parallel. Before the first `home`, close each switch by
+  hand and watch `?`: a `home` seeks a switch it reads open, and a switch
+  wired the wrong way round would be read closed at rest, backed off and
+  refused (`error:12`), or never seen (`ALARM:5`) with the axis driven into
+  its end. Set `$<axis>_home_travel` to the axis's real travel, since the
+  seek goes a tenth past it before giving up.
 - GP20 is an input from power-on until the firmware starts, again after
   a watchdog reset, and in BOOTSEL. The pad's own pull-down holds the
   MOSFET off, so a laser on FAN3 must be dark while FAN3 is off, and

@@ -18,10 +18,33 @@ FIXTURE = Path(__file__).parent / "data" / "default-controls.json"
 
 
 def test_the_defaults_cover_every_setting_once():
-    assert len(FIRMWARE_DEFAULTS) == 52
+    assert len(FIRMWARE_DEFAULTS) == 74
     assert machines.FLAGS <= set(FIRMWARE_DEFAULTS) and machines.INTEGERS <= set(FIRMWARE_DEFAULTS)
     for name in machines.FLAGS | machines.INTEGERS:
         assert isinstance(FIRMWARE_DEFAULTS[name], int)
+
+
+def test_endstops_and_homing_are_read_per_axis():
+    text = (
+        '[rail]\nendstop = "both"\nendstop_pin = 22\nendstop_invert = true\nendstop_halt = true\n'
+        "home_pull = 2\nhome_pos = -3\nhome_travel = 120\n"
+        '[focus]\nendstop = "max"\nendstop_halt = true\nhome_pos = 15\n'
+    )
+    s = parse(text, "stops").settings
+    assert (s["r_stop"], s["r_stop_pin"], s["r_home_pull"], s["r_home_pos"], s["r_home_travel"]) == (3, 22, 2.0, -3.0, 120.0)
+    assert (s["h_stop"], s["h_stop_pin"], s["h_home_pos"]) == (2, 16, 15.0)
+    assert s["stop_invert"] == 0b0001 and s["limits"] == 0b1001
+    with pytest.raises(MachineError, match=r"\[rail\] endstop"):
+        parse('[rail]\nendstop = "left"\n', "bad")
+    with pytest.raises(MachineError, match=r"\[rail\] home_travel"):
+        parse('[rail]\nhome_travel = 0\n', "bad")
+    with pytest.raises(MachineError, match=r"\[rail\] endstop_pin 20 \(FAN3\) is the \[output\] pin too"):
+        parse('[rail]\nendstop = "min"\nendstop_pin = 20\n', "clash")
+    with pytest.raises(MachineError, match=r"\[table\] endstop_pin 17 \(FAN1\) is the \[enable\] pin too"):
+        parse('[table]\nendstop = "min"\nendstop_pin = 17\n[enable]\nfitted = true\n', "clash")
+    # Not fitted, an endstop may name any input, and a fitted one may share the probe's.
+    assert parse('[rail]\nendstop_pin = 20\n', "spare").settings["r_stop_pin"] == 20
+    assert parse('[rail]\nendstop = "min"\nendstop_pin = 25\n', "shared").settings["r_stop_pin"] == 25
 
 
 def test_an_empty_file_is_the_firmware_at_its_defaults():

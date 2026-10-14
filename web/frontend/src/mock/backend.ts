@@ -169,6 +169,28 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tool_out", unit: "0/1", help: "1 = tool_pin follows the tool: on while a job runs, a beam is lit, a dwell burns or the spindle turns; read at boot" },
     { name: "tool_pin", unit: "GPIO", help: "the tool output, 17 FAN1 by default; read at boot" },
     { name: "tool_invert", unit: "0/1", help: "1 = tool output active low" },
+    { name: "r_stop", unit: "", help: "rail endstops: 0 none, 1 at the negative end, 2 at the positive end, 3 both on the one input" },
+    { name: "r_stop_pin", unit: "GPIO", help: "rail endstop input, pulled up: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot" },
+    { name: "r_home_pull", unit: "mm", help: "how far a home backs off the switch, and leaves the rail from it" },
+    { name: "r_home_pos", unit: "mm", help: "what the rail reads at its switch (the negative one of two)" },
+    { name: "r_home_travel", unit: "mm", help: "rail travel between its ends; a home seeks a tenth further, and the positive switch of two reads home_pos + this" },
+    { name: "a_stop", unit: "", help: "table endstops: 0 none, 1 negative end, 2 positive end, 3 both" },
+    { name: "a_stop_pin", unit: "GPIO", help: "table endstop input, pulled up; read at boot" },
+    { name: "a_home_pull", unit: "deg", help: "how far a home backs off the switch, and leaves the table from it" },
+    { name: "a_home_pos", unit: "deg", help: "what the table reads at its switch" },
+    { name: "a_home_travel", unit: "deg", help: "table travel between its ends; a home seeks a tenth further" },
+    { name: "h_stop", unit: "", help: "focus axis endstops: 0 none, 1 negative end, 2 positive end, 3 both" },
+    { name: "h_stop_pin", unit: "GPIO", help: "focus axis endstop input, pulled up; read at boot" },
+    { name: "h_home_pull", unit: "mm", help: "how far a home backs off the switch, and leaves the head from it" },
+    { name: "h_home_pos", unit: "mm", help: "what the focus axis reads at its switch" },
+    { name: "h_home_travel", unit: "mm", help: "focus axis travel between its ends; a home seeks a tenth further" },
+    { name: "z_stop", unit: "", help: "cross slide endstops: 0 none, 1 negative end, 2 positive end, 3 both" },
+    { name: "z_stop_pin", unit: "GPIO", help: "cross slide endstop input, pulled up; read at boot" },
+    { name: "z_home_pull", unit: "mm", help: "how far a home backs off the switch, and leaves the slide from it" },
+    { name: "z_home_pos", unit: "mm", help: "what the cross slide reads at its switch" },
+    { name: "z_home_travel", unit: "mm", help: "cross slide travel between its ends; a home seeks a tenth further" },
+    { name: "stop_invert", unit: "mask", help: "endstop inputs active high: bit 0 rail, bit 1 table, bit 2 cross slide, bit 3 focus axis" },
+    { name: "limits", unit: "mask", help: "endstops that halt a move closing them (ALARM:4, position lost), same bits" },
 ];
 
 /** Largest value a float setting takes, as the firmware bounds them. */
@@ -196,15 +218,28 @@ const INT_SETTINGS = new Set([
     "laser_pin",
     "probe_pin",
     "tool_pin",
+    "r_stop",
+    "a_stop",
+    "h_stop",
+    "z_stop",
+    "r_stop_pin",
+    "a_stop_pin",
+    "h_stop_pin",
+    "z_stop_pin",
+    "stop_invert",
+    "limits",
 ]);
 /** The pin settings: a GPIO the driver sockets and the driver UART leave free. */
-const PIN_SETTINGS = ["laser_pin", "probe_pin", "tool_pin"];
+const PIN_SETTINGS = ["laser_pin", "probe_pin", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin"];
 const U32_MAX = 4294967295;
 /** Most motion a probe keeps queued, ms: the firmware's segment ring. */
 const PROBE_MS_MAX = 160;
 const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 /** The wiring, which `$defaults` leaves as it is: an active-low laser taken back to active high would light. */
-const WIRING_SETTINGS = ["laser_invert", "en_invert", "probe_invert", "dir_invert"];
+const WIRING_SETTINGS = [
+    "laser_invert", "en_invert", "probe_invert", "dir_invert", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert",
+    "r_stop", "a_stop", "h_stop", "z_stop", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin", "stop_invert", "limits",
+];
 /** Settings that scale or turn the axes, so the focus axis frame a height map is tied to. */
 const FRAME_SETTINGS = new Set(["r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis"]);
 
@@ -240,10 +275,13 @@ export function settingsValid(settings: Record<string, number>): boolean {
         if (INT_SETTINGS.has(name) && !(Number.isInteger(v) && v >= 0 && v <= U32_MAX)) {
             return false;
         }
-        if (/_(steps|rate|accel|jerk)$/.test(name) || name.startsWith("jog_")) {
+        if (/_(steps|rate|accel|jerk|home_pull|home_travel)$/.test(name) || name.startsWith("jog_")) {
             if (!(v > 0 && v <= FLOAT_MAX)) {
                 return false;
             }
+        }
+        if (name.endsWith("_home_pos") && !(v >= -FLOAT_MAX && v <= FLOAT_MAX)) {
+            return false;
         }
         if (/^tmc_._ma$/.test(name) && v > 2000) {
             return false;
@@ -257,6 +295,9 @@ export function settingsValid(settings: Record<string, number>): boolean {
         within("r_max", 0, FLOAT_MAX) &&
         within("z_max", 0, FLOAT_MAX) &&
         within("dir_invert", 0, 15) &&
+        within("stop_invert", 0, 15) &&
+        within("limits", 0, 15) &&
+        ["r_stop", "a_stop", "h_stop", "z_stop"].every((name) => within(name, 0, 3)) &&
         within("probe_ms", 0, PROBE_MS_MAX) &&
         PIN_SETTINGS.every((name) => within(name, 0, PIN_MAX) && !RESERVED_PINS.has(value(name))) &&
         within("step_us", 1, 20) &&
@@ -354,6 +395,7 @@ export const HELP_LINES = [
     "cross slide, alone and from idle: jog Z [F] | jogto Z [F] | set Z",
     "cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A",
     "focus axis probe (h_axis=1): probe H [F]",
+    "home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop",
     "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]",
     "spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S",
     "enable | disable | unlock | version | status | help",
@@ -593,6 +635,7 @@ export class MockMachine {
             enabled: this.enabled,
             queue: this.queueFree(),
             probe: focus ? this.probeActive() : null,
+            homed: this.hasStops() ? this.homed : null,
         };
     }
 
@@ -969,6 +1012,70 @@ export class MockMachine {
         this.state = "Idle";
     }
 
+    /** The joints homed since the position was last lost, as letters in joint order. */
+    homed = "";
+
+    /** Any axis has an endstop: the status then reports what is homed, and `home` has something to do. */
+    hasStops(): boolean {
+        return ["r", "a", "h", "z"].some((axis) => (this.settings[`${axis}_stop`] ?? 0) !== 0);
+    }
+
+    /**
+     * `home [R|A|H|Z][-|+]...`: the joints named, or every one with an
+     * endstop, in the firmware's order. The mock jumps each to the
+     * pull-off from its switch rather than seeking it, and prints the
+     * firmware's line per joint.
+     */
+    home(axes: string): string[] {
+        const fitted = ["r", "a", "h", "z"].filter((axis) => (this.settings[`${axis}_stop`] ?? 0) !== 0 && (axis !== "h" || this.hasFocusAxis()));
+        const words = axes.trim() === "" ? [] : axes.trim().split(/\s+/);
+        const asked: string[] = [];
+        for (const word of words) {
+            const letter = word[0]!.toLowerCase();
+            const sign = word.slice(1);
+            const ends = this.settings[`${letter}_stop`] ?? 0;
+            if (!/^[rahzRAHZ][-+]?$/.test(word) || asked.includes(letter) || !fitted.includes(letter)) {
+                throw new MachineError(2, "bad word");
+            }
+            if ((sign === "+" && !(ends & 2)) || (sign === "-" && !(ends & 1))) {
+                throw new MachineError(2, "bad word");
+            }
+            asked.push(letter);
+        }
+        const joints = asked.length > 0 ? asked : fitted;
+        if (joints.length === 0) {
+            throw new MachineError(2, "bad word");
+        }
+        this.requireIdle();
+        const lines: string[] = [];
+        for (const letter of ["h", "r", "z", "a"]) {
+            if (!joints.includes(letter)) {
+                continue;
+            }
+            const word = words.find((w) => w[0]!.toLowerCase() === letter);
+            const sign = word?.slice(1) ?? "";
+            const ends = this.settings[`${letter}_stop`] ?? 0;
+            const toMax = sign === "+" || (sign !== "-" && !(ends & 1));
+            const pull = this.settings[`${letter}_home_pull`] ?? 1;
+            const atSwitch = (this.settings[`${letter}_home_pos`] ?? 0) + (toMax && ends & 1 ? (this.settings[`${letter}_home_travel`] ?? 0) : 0);
+            const at = atSwitch - (toMax ? 1 : -1) * pull;
+            if (letter === "r") {
+                this.joint = { ...this.joint, r: at };
+            } else if (letter === "a") {
+                this.joint = { ...this.joint, a: at };
+            } else if (letter === "h") {
+                this.h = at;
+            } else {
+                this.z = at;
+            }
+            const upper = letter.toUpperCase();
+            this.homed = ["R", "A", "H", "Z"].filter((l) => l === upper || this.homed.includes(l)).join("");
+            lines.push(`[HOME:${upper}:${at.toFixed(4)}:1]`);
+        }
+        this.enabled = true;
+        return lines;
+    }
+
     /** Clears an alarm; outside one there is nothing to clear, and the firmware says so. */
     unlock(): void {
         if (this.state !== "Alarm") {
@@ -993,6 +1100,12 @@ export class MockMachine {
         this.joint = { r: request.r ?? this.joint.r, a: request.a ?? this.joint.a };
         this.z = request.z ?? this.z;
         this.h = request.h ?? this.h;
+        // Declared elsewhere, an axis is no longer where its switch put it.
+        for (const [key, letter] of [["r", "R"], ["a", "A"], ["h", "H"], ["z", "Z"]] as const) {
+            if (request[key] !== undefined) {
+                this.homed = this.homed.replace(letter, "");
+            }
+        }
     }
 
     /**
@@ -2166,6 +2279,15 @@ export class MockBackend implements Api, EventFeed {
         this.exchange("unlock", () => this.machine.unlock());
     }
 
+    async home(axes = ""): Promise<void> {
+        const words = axes.trim() === "" ? [] : axes.trim().split(/\s+/);
+        this.exchange(["home", ...words].join(" "), () => {
+            for (const found of this.machine.home(axes)) {
+                this.line("rx", found);
+            }
+        });
+    }
+
     async realtime(action: RealtimeAction): Promise<void> {
         this.requireConnected();
         const machine = this.machine;
@@ -2485,6 +2607,8 @@ export class MockBackend implements Api, EventFeed {
                 bare();
                 machine.unlock();
                 return ["ok"];
+            case "home":
+                return [...machine.home(tokens.join(" ")), "ok"];
             case "version":
                 bare();
                 return [`[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`, "ok"];
@@ -4256,9 +4380,10 @@ export function statusLine(machine: MockMachine): string {
     const state = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? 1}` : machine.state;
     // The focus axis fields are there only with the axis fitted.
     const focus = machine.hasFocusAxis() ? `|H:${coord(machine.h, 3)}|P:${machine.probeActive() ? 1 : 0}` : "";
+    const stops = machine.hasStops() ? `|D:${machine.homed}` : "";
     const joint = `J:${coord(machine.joint.r, 3)},${coord(machine.joint.a, 4)}`;
     const duty = Math.round(machine.status().laser);
-    return `<${state}|${joint}|V:${coord(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${coord(machine.z, 3)}${focus}>`;
+    return `<${state}|${joint}|V:${coord(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${coord(machine.z, 3)}${focus}${stops}>`;
 }
 
 /**

@@ -75,7 +75,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         actions,
         milling,
         table,
-        el("p", { class: "muted hint" }, "the values the controller runs with now; a machine file loaded from the panel beside sets every one of them. laser_pin, probe_pin and tool_pin are read at boot, and tool_out claims its pin then: Save to flash, then restart the board for those."),
+        el("p", { class: "muted hint" }, "the values the controller runs with now; a machine file loaded from the panel beside sets every one of them. laser_pin, probe_pin, tool_pin and the endstop pins are read at boot, and tool_out claims its pin then: Save to flash, then restart the board for those."),
     );
     const fold = el("details", { class: "panel-fold", open: readFoldOpen() },
         el("summary", { class: "panel-head" }, el("h2", {}, "Firmware settings")),

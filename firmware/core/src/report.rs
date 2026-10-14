@@ -15,6 +15,8 @@ pub enum State {
     Run,
     Jog,
     Hold,
+    /// A `home` is running.
+    Home,
     Alarm(u8),
 }
 
@@ -36,6 +38,9 @@ pub struct Status {
     /// With a focus axis fitted: whether the probe input is active. The
     /// focus position and this are left off the line without one.
     pub probe: Option<bool>,
+    /// With an endstop on any axis: the joints homed since the last loss
+    /// of position, bit i = joint i. Left off the line without one.
+    pub homed: Option<u8>,
 }
 
 /// Most decimal places `float` renders.
@@ -47,6 +52,8 @@ pub fn alarm_text(code: u8) -> &'static str {
         1 => "reset while moving, position may be off",
         2 => "probe missed, check the head before moving",
         3 => "motor power lost, position may be off",
+        4 => "endstop hit while moving, position may be off",
+        5 => "home failed, position may be off",
         _ => "unknown alarm",
     }
 }
@@ -60,6 +67,7 @@ pub fn status(status: &Status, out: &mut impl Sink) {
         State::Run => out.write(b"Run"),
         State::Jog => out.write(b"Jog"),
         State::Hold => out.write(b"Hold"),
+        State::Home => out.write(b"Home"),
         State::Alarm(code) => {
             out.write(b"Alarm:");
             uint(code as u64, out);
@@ -92,7 +100,38 @@ pub fn status(status: &Status, out: &mut impl Sink) {
         out.write(b"|P:");
         out.write(if active { b"1" } else { b"0" });
     }
+    if let Some(homed) = status.homed {
+        out.write(b"|D:");
+        joints(homed, out);
+    }
     out.write(b">\n");
+}
+
+/// The letters of the joints in `mask`, in joint order.
+pub fn joints(mask: u8, out: &mut impl Sink) {
+    for (joint, letter) in [(R, b"R"), (A, b"A"), (H, b"H"), (Z, b"Z")] {
+        if mask & (1 << joint) != 0 {
+            out.write(letter);
+        }
+    }
+}
+
+/// `[HOME:R:12.345:1]` plus newline: a joint's letter, its position in
+/// units after its home, and whether the switch was found (`:1`) or the
+/// home ended without it (`:0`).
+pub fn home(joint: usize, position: f32, found: bool, out: &mut impl Sink) {
+    out.write(b"[HOME:");
+    joints(1 << joint, out);
+    out.write(b":");
+    float(position, 4, out);
+    out.write(if found { b":1]\n" } else { b":0]\n" });
+}
+
+/// `[MSG:endstop RA]` plus newline: the joints whose endstop halted a move.
+pub fn limit(mask: u8, out: &mut impl Sink) {
+    out.write(b"[MSG:endstop ");
+    joints(mask, out);
+    out.write(b"]\n");
 }
 
 /// `[spinny v0.1.0 lines:16 blocks:32]` plus newline.
@@ -283,6 +322,7 @@ mod tests {
             mode: PowerMode::Dynamic,
             enabled: false,
             probe: None,
+            homed: None,
         }
     }
 
@@ -309,6 +349,7 @@ mod tests {
             mode: PowerMode::Dynamic,
             enabled: true,
             probe: None,
+            homed: None,
         };
         assert_eq!(status_text(&status).as_str(), "<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:-1.250>\n");
     }

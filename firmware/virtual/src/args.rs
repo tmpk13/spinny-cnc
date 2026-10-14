@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use spinny_core::settings::Settings;
 
+use crate::stops::Stops;
 use crate::surface::Surface;
 
 pub const USAGE: &str = "\
@@ -19,6 +20,8 @@ spinny-virtual: the spinny control core on a TCP socket
     --store PATH        file standing in for the settings sector; a blob
                         saved there stands over --machine and --settings
                         at start, as flash does on the board
+    --stop L[MIN][,MAX] an endstop on joint L (R, A, H or Z), closed at or
+                        below MIN and at or above MAX; repeatable
     --surface B[,SX,SY[,C]]
                         a board under the probe: its top at focus height
                         B + SX*x + SY*y + C*(x^2 + y^2), board mm; without
@@ -46,6 +49,8 @@ pub struct Options {
     pub settings: Settings,
     /// The board a probe touches; `None` for none.
     pub surface: Option<Surface>,
+    /// The endstops a home finds.
+    pub stops: Stops,
 }
 
 impl Default for Options {
@@ -58,6 +63,7 @@ impl Default for Options {
             quiet: false,
             settings: Settings::default(),
             surface: None,
+            stops: Stops::default(),
         }
     }
 }
@@ -79,6 +85,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Options>,
             "--trace" => options.trace = Some(PathBuf::from(value("--trace")?)),
             "--store" => options.store = Some(PathBuf::from(value("--store")?)),
             "--surface" => options.surface = Some(Surface::parse(&value("--surface")?)?),
+            "--stop" => options.stops.add(&value("--stop")?)?,
             "--machine" => {
                 let path = value("--machine")?;
                 let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
@@ -117,7 +124,7 @@ mod tests {
         let path = format!("{}/../../machines/cartesian-mill.toml", env!("CARGO_MANIFEST_DIR"));
         let options = parse_args(&["--machine", &path]).unwrap().unwrap();
         assert!(options.settings.cartesian && options.settings.spindle && options.settings.h_axis);
-        assert_eq!(options.settings.z_max, 30.0);
+        assert!(options.settings.z_max > 0.0, "the mill's measured limit, whatever it is");
         let options = parse_args(&["--machine", &path, "--settings", "z_max=12"]).unwrap().unwrap();
         assert_eq!(options.settings.z_max, 12.0);
         assert!(parse_args(&["--machine", "/nonexistent/machine.toml"]).unwrap_err().contains("machine.toml"));

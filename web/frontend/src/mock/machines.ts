@@ -75,6 +75,28 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     tool_out: 0,
     tool_pin: 17,
     tool_invert: 0,
+    r_stop: 0,
+    r_stop_pin: 4,
+    r_home_pull: 1,
+    r_home_pos: 0,
+    r_home_travel: 200,
+    a_stop: 0,
+    a_stop_pin: 3,
+    a_home_pull: 1,
+    a_home_pos: 0,
+    a_home_travel: 400,
+    h_stop: 0,
+    h_stop_pin: 16,
+    h_home_pull: 1,
+    h_home_pos: 0,
+    h_home_travel: 50,
+    z_stop: 0,
+    z_stop_pin: 22,
+    z_home_pull: 1,
+    z_home_pos: 0,
+    z_home_travel: 200,
+    stop_invert: 0,
+    limits: 0,
 };
 
 export const MACHINE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -89,6 +111,8 @@ const KINEMATICS: Kinematics[] = ["polar", "cartesian"];
 const TOOLS: Tool[] = ["laser", "spindle"];
 const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 const SOCKETS = ["X", "Y", "Z", "E"];
+/** Where an axis's endstops are, in the order of the <axis>_stop values. */
+const ENDSTOPS = ["none", "min", "max", "both"];
 const FLOAT_MAX = 1e7;
 const PROBE_MS_MAX = 160;
 const INT_MAX = 4294967295;
@@ -235,6 +259,8 @@ export function parseMachine(text: string, id: string): MachineDocument {
     settings["cartesian"] = kinematics === "cartesian" ? 1 : 0;
     settings["spindle"] = tool === "spindle" ? 1 : 0;
     let dirInvert = 0;
+    let stopInvert = 0;
+    let limits = 0;
     const sockets = [...SOCKETS];
     for (const [section, axis, scaleKey, bit] of AXES) {
         const table = reader.table(top, section);
@@ -268,7 +294,34 @@ export function parseMachine(text: string, id: string): MachineDocument {
         if ("microsteps" in table) {
             settings[`tmc_${axis}_micro`] = reader.oneOf(table, "microsteps", section, MICROSTEPS);
         }
-        const known = [scaleKey, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket"];
+        if ("endstop" in table) {
+            const ends = reader.text(table, "endstop", "", section);
+            if (!ENDSTOPS.includes(ends)) {
+                throw reader.fail(section, "endstop", `must be one of ${ENDSTOPS.join(", ")}`);
+            }
+            settings[`${axis}_stop`] = ENDSTOPS.indexOf(ends);
+        }
+        if ("endstop_pin" in table) {
+            settings[`${axis}_stop_pin`] = reader.pin(table, "endstop_pin", section);
+        }
+        if (reader.flag(table, "endstop_invert", false, section)) {
+            stopInvert |= 1 << bit;
+        }
+        if (reader.flag(table, "endstop_halt", false, section)) {
+            limits |= 1 << bit;
+        }
+        for (const key of ["home_pull", "home_travel"]) {
+            if (key in table) {
+                settings[`${axis}_${key}`] = reader.positive(table, key, section);
+            }
+        }
+        if ("home_pos" in table) {
+            settings[`${axis}_home_pos`] = reader.number(table, "home_pos", section);
+        }
+        const known = [
+            scaleKey, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
+            "endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel",
+        ];
         if (axis === "r" || axis === "z") {
             known.push("limit");
         }
@@ -278,6 +331,8 @@ export function parseMachine(text: string, id: string): MachineDocument {
         reader.done(table, section, known);
     }
     settings["dir_invert"] = dirInvert;
+    settings["stop_invert"] = stopInvert;
+    settings["limits"] = limits;
     sockets.forEach((socket, index) => {
         const other = sockets.indexOf(socket);
         if (other < index) {
@@ -332,6 +387,23 @@ export function parseMachine(text: string, id: string): MachineDocument {
         for (const [section, other] of [["output", "laser_pin"], ["probe", "probe_pin"]] as [string, string][]) {
             if (settings["tool_pin"] === settings[other]) {
                 throw new Error(`${where}: [enable] pin ${pinName(settings["tool_pin"]!)} is the [${section}] pin too`);
+            }
+        }
+    }
+    // A fitted endstop is an input like the probe, which it may share; on
+    // an output's pin it would read the output.
+    for (const [section, axis] of AXES) {
+        if (!settings[`${axis}_stop`]) {
+            continue;
+        }
+        const pin = settings[`${axis}_stop_pin`]!;
+        const outputs: [string, number][] = [["output", settings["laser_pin"]!]];
+        if (settings["tool_out"]) {
+            outputs.push(["enable", settings["tool_pin"]!]);
+        }
+        for (const [other, otherPin] of outputs) {
+            if (pin === otherPin) {
+                throw new Error(`${where}: [${section}] endstop_pin ${pinName(pin)} is the [${other}] pin too`);
             }
         }
     }

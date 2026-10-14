@@ -24,6 +24,17 @@ pub struct Steppers {
     /// Probe input level, set by the simulation from the board surface
     /// before each poll and tick.
     pub probe_level: bool,
+    /// Endstop input levels, bit per joint, set by the simulation from
+    /// the switches it was given before each poll and tick.
+    pub stop_levels: u8,
+    /// Which direction levels mean forward, from `dir_invert` in joint
+    /// order; set by the simulation, so the physical position below is
+    /// signed the way the motors turn.
+    pub dir_invert: u8,
+    /// Where each motor physically is, in steps from where it was at
+    /// start: unlike the position the machine reports, a `set` or a home
+    /// never moves it, which is what an endstop sits in.
+    pub physical: [i64; AXES],
 }
 
 impl StepPort for Steppers {
@@ -35,6 +46,8 @@ impl StepPort for Steppers {
         for axis in 0..AXES {
             if mask & (1 << axis) != 0 {
                 self.pulses[axis] += 1;
+                let forward = (self.dir_levels ^ self.dir_invert) & (1 << axis) != 0;
+                self.physical[axis] += if forward { 1 } else { -1 };
             }
         }
     }
@@ -46,6 +59,10 @@ impl StepPort for Steppers {
     fn probe(&mut self) -> bool {
         self.probe_level
     }
+
+    fn stops(&mut self) -> u8 {
+        self.stop_levels
+    }
 }
 
 /// The cross slide's step and direction pins as counters. Its motor
@@ -55,6 +72,11 @@ pub struct Slide {
     pub pulses: u64,
     /// Direction pin level, `None` until it is first driven.
     pub dir_level: Option<bool>,
+    /// The level that means forward is low: the cross slide's bit of
+    /// `dir_invert`, set by the simulation.
+    pub invert: bool,
+    /// Where the motor physically is, in steps from where it started.
+    pub physical: i64,
 }
 
 impl SlidePort for Slide {
@@ -64,6 +86,8 @@ impl SlidePort for Slide {
 
     fn step(&mut self) {
         self.pulses += 1;
+        let forward = self.dir_level.unwrap_or(false) != self.invert;
+        self.physical += if forward { 1 } else { -1 };
     }
 }
 

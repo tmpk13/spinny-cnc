@@ -65,6 +65,8 @@ export interface Api {
     setPosition(request: PositionRequest): Promise<void>;
     motors(enabled: boolean): Promise<void>;
     unlock(): Promise<void>;
+    /** Homes the axes named (letters, each with an optional - or + for the end), or every axis with an endstop; answers when the home ends. */
+    home(axes?: string): Promise<void>;
     realtime(action: RealtimeAction): Promise<void>;
     command(line: string): Promise<string[]>;
 
@@ -244,6 +246,10 @@ export class HttpApi implements Api {
 
     async unlock(): Promise<void> {
         await this.request("POST", "/api/unlock");
+    }
+
+    async home(axes = ""): Promise<void> {
+        await this.request("POST", "/api/home", { axes });
     }
 
     async realtime(action: RealtimeAction): Promise<void> {

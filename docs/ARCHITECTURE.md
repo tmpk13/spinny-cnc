@@ -40,8 +40,8 @@ flowchart LR
     MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
-        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, tool output and probe input on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, spindle, tool output, machine]
-        VIRT[virtual: TCP server, virtual clock, board surface] --> CORE
+        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, tool output, probe and endstop inputs on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, homing and endstop limits, spindle, tool output, machine]
+        VIRT[virtual: TCP server, virtual clock, board surface, endstops] --> CORE
     end
 ```
 

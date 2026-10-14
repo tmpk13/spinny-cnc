@@ -152,3 +152,28 @@ that goes the other way wants `invert = true` in its section
 tip free and *down* while the tip touches; the other way round wants
 `invert = true` under `[probe]` (`$probe_invert`), or the first probe
 drives the head into the board. Load the file again after a change.
+
+### Endstops and homing
+
+An axis with a switch at one end or both (`endstop` under its section in
+the machine file, with `endstop_pin`) can be homed: *Home* in the jog
+panel, or `home`, `home R` or `home R+` in the console, seeks each switch
+at the jog rate, backs off, finds it again slowly and declares the axis
+to read `home_pos` there, ending the pull-off (`home_pull`) from it. The
+readout's *Homed* field names the joints homed since the position was
+last lost; a position set, a reset while moving, a lost motor supply or
+an endstop halt unhome them.
+
+Before the first home, check each switch as the probe is checked: close
+it by hand and watch the console's `?` line, which has no field for the
+switches but refuses a `home` that starts on a closed one. Set
+`home_travel` to the axis's real travel: a home that finds no switch
+within a tenth more than that stops with `ALARM:5` after driving the axis
+into its end. With `endstop_halt = true` the switch also halts any move
+that closes it, with `ALARM:4` and the position lost, so a job that runs
+into an end stops short of the hard stop; a switch an axis sits on at
+rest does not halt the move that takes it off.
+
+A home renumbers the axis, so the height map's focus offset is taken
+back as it is by a position set: tie the map again (*Probe here* or
+*Focus here*) before a compensated run.

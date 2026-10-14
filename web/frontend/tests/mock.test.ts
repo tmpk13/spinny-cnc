@@ -1300,8 +1300,9 @@ describe("the mock machine answers as the firmware does", () => {
         const help = await backend.command("help");
         expect(help.at(-1)).toBe("ok");
         expect(help[2]).toBe("cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A");
-        expect(help[5]).toBe("spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S");
-        expect(help.length).toBe(10);
+        expect(help[4]).toBe("home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop");
+        expect(help[6]).toBe("spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S");
+        expect(help.length).toBe(11);
     });
 
     test("the status line has no negative zero", () => {

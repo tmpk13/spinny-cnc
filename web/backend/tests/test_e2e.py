@@ -63,6 +63,65 @@ def firmware():
             process.kill()
 
 
+@pytest.fixture
+def stops_firmware():
+    """The virtual machine with switches at both ends of the rail, which
+    halt a move, and one at the slide's negative end."""
+    if not BINARY or not Path(BINARY).exists():
+        pytest.skip("SPINNY_VIRTUAL does not name a virtual firmware binary")
+    port = free_port()
+    process = subprocess.Popen(
+        [
+            BINARY, "--listen", f"127.0.0.1:{port}", "--fast", "--quiet",
+            "--settings", "r_stop=3", "--settings", "r_home_pos=-3", "--settings", "r_home_travel=25",
+            "--settings", "z_stop=1", "--settings", "limits=1",
+            "--stop", "R-7,18", "--stop", "Z-4",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not wait_port(port):
+            pytest.fail("the virtual firmware did not open its port")
+        yield port
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def test_homing_and_an_endstop_halt_on_the_virtual_firmware(stops_firmware):
+    link = Link(f"socket://127.0.0.1:{stops_firmware}")
+    link.open()
+    try:
+        assert link.status_now(1.0).homed == ""
+        # The head first, then the rail, then the slide: no head here.
+        assert link.request_ok("home", timeout=60.0) == ["[HOME:R:-2.0000:1]", "[HOME:Z:1.0000:1]"]
+        status = link.status_now(1.0)
+        assert status.homed == "RZ" and status.state == "Idle"
+        assert status.r == pytest.approx(-2.0, abs=0.001) and status.z == pytest.approx(1.0, abs=0.001)
+        # The positive switch reads home_pos + home_travel.
+        assert link.request_ok("home R+", timeout=60.0) == ["[HOME:R:21.0000:1]"]
+        assert link.status_now(1.0).r == pytest.approx(21.0, abs=0.001)
+        # The rail's switches halt a move: toward the negative one and on.
+        assert link.request_ok("jog R-40") == []
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            status = link.status_now(1.0)
+            if status.state == "Alarm":
+                break
+            time.sleep(0.05)
+        assert status.state == "Alarm" and status.alarm == 4, status.raw
+        assert status.homed == "", "the position is lost"
+        assert status.r > -3.5, status.raw
+        assert link.request_ok("unlock") == []
+        assert link.status_now(1.0).state == "Idle"
+    finally:
+        link.close()
+
+
 def test_small_job_runs_on_the_virtual_firmware(firmware):
     link = Link(f"socket://127.0.0.1:{firmware}")
     link.open()

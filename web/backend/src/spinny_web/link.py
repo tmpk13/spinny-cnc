@@ -32,7 +32,7 @@ POLL_MOVING = 0.1
 # The firmware answers a poll from its main loop in every state, a probe
 # or a flash write included, so silence this long is not a slow command.
 STALL_SECONDS = 3.0
-MOVING_STATES = ("Run", "Jog", "Hold")
+MOVING_STATES = ("Run", "Jog", "Hold", "Home")
 MAX_LINE = 96
 # Longest run of bytes without a line end the reader keeps; the firmware
 # never sends a line a tenth as long, so more is not the firmware.
@@ -92,6 +92,9 @@ class Status:
     # machine with a focus axis fitted; None without one.
     h: float | None = None
     probe: bool | None = None
+    # The letters of the joints homed since the position was last lost,
+    # reported only by a machine with an endstop; None without one.
+    homed: str | None = None
     rate: float = 0.0
     laser: int = 0
     planner: int = 0
@@ -180,6 +183,8 @@ def parse_status(text: str) -> Status | None:
                 status.h = float(value)
             elif key == "P":
                 status.probe = value.strip() not in ("0", "")
+            elif key == "D":
+                status.homed = value.strip()
             elif key == "V":
                 status.rate = float(value)
             elif key == "L":

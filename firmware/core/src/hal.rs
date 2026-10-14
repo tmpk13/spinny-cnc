@@ -12,6 +12,10 @@ pub trait StepPort {
     /// Level of the probe input, high true. Read from the step interrupt
     /// during a probe and from the main loop, so a plain register read.
     fn probe(&mut self) -> bool;
+    /// Levels of the endstop inputs, bit i = joint i high. Read from the
+    /// step interrupt at every tick of a home and of any move an endstop
+    /// may halt, and from the main loop, so one register read.
+    fn stops(&mut self) -> u8;
 }
 
 /// Step and direction pins for the cross slide. It moves alone and never

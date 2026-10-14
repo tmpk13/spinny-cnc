@@ -12,7 +12,7 @@ import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
 
 /** Settings the firmware reads at boot: a change takes effect after a save to flash and a restart. */
-export const BOOT_SETTINGS = ["laser_pin", "probe_pin", "tool_out", "tool_pin"];
+export const BOOT_SETTINGS = ["laser_pin", "probe_pin", "tool_out", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin"];
 
 /** The boot-time settings a load changed, so the operator is told to save and restart. */
 export function changedBootSettings(before: Record<string, number> | undefined, after: Record<string, number>): string[] {

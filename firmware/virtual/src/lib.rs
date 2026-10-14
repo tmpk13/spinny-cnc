@@ -10,6 +10,7 @@ pub mod machine;
 pub mod ports;
 pub mod server;
 pub mod sim;
+pub mod stops;
 pub mod surface;
 pub mod trace;
 
@@ -30,6 +31,7 @@ pub fn setup(options: &Options) -> Setup {
         trace: Trace::new(options.trace.clone()),
         quiet: options.quiet,
         surface: options.surface,
+        stops: options.stops,
     }
 }
 

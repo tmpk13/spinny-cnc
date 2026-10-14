@@ -75,6 +75,11 @@ DEFAULT_SETTINGS = {
     "tool_out": 0,
     "tool_pin": 17,
     "tool_invert": 0,
+    "r_stop": 0, "r_stop_pin": 4, "r_home_pull": 1.0, "r_home_pos": 0.0, "r_home_travel": 200.0,
+    "a_stop": 0, "a_stop_pin": 3, "a_home_pull": 1.0, "a_home_pos": 0.0, "a_home_travel": 400.0,
+    "h_stop": 0, "h_stop_pin": 16, "h_home_pull": 1.0, "h_home_pos": 0.0, "h_home_travel": 50.0,
+    "z_stop": 0, "z_stop_pin": 22, "z_home_pull": 1.0, "z_home_pos": 0.0, "z_home_travel": 200.0,
+    "stop_invert": 0, "limits": 0,
 }
 
 
@@ -135,6 +140,9 @@ class FakeSerial:
         self.alarm: int | None = None
         self.busy_until = 0.0
         self.jogging = False
+        # The joints homed, as letters in joint order, reported in the
+        # status line's D field while any axis has an endstop.
+        self.homed = ""
         # Counted so a probe waiting behind motion can tell that a jog
         # cancel or a reset came while it waited.
         self._jog_cancels = 0
@@ -239,11 +247,58 @@ class FakeSerial:
         if self.settings["spindle"]:
             laser = self.duty(self.spindle)
         focus = f"|H:{self.h:.3f}|P:{int(self.touching())}" if self.settings["h_axis"] else ""
+        stops = f"|D:{self.homed}" if self.stops_fitted() else ""
         return (
             f"<{self.state()}|J:{r:.3f},{a:.4f}|V:{rate}|L:{laser}"
             f"|Q:{self.blocks},{self.credits - waiting}|M:{self.mode}|E:{int(self.enabled)}"
-            f"|Z:{self.z:.3f}{focus}>"
+            f"|Z:{self.z:.3f}{focus}{stops}>"
         )
+
+    def stops_fitted(self) -> bool:
+        return any(self.settings[f"{axis}_stop"] for axis in "rahz")
+
+    def _home(self, words: list[str]) -> list[str]:
+        """`home [R|A|H|Z][-|+]...`: the joints named, or every one with an
+        endstop, each jumped to the pull-off from its switch."""
+        fitted = [a for a in "RAHZ" if self.settings[f"{a.lower()}_stop"] and (a != "H" or self.settings["h_axis"])]
+        asked: list[str] = []
+        for word in words:
+            letter = word[0].upper()
+            if letter not in "RAHZ" or len(word) > 2 or (len(word) == 2 and word[1] not in "+-") or letter in asked:
+                return ["error:2 bad word"]
+            ends = self.settings[f"{letter.lower()}_stop"]
+            sign = word[1:]
+            if letter not in fitted or (sign == "+" and not ends & 2) or (sign == "-" and not ends & 1):
+                return ["error:2 bad word"]
+            asked.append(letter)
+        joints = asked or fitted
+        if not joints:
+            return ["error:2 bad word"]
+        if self.alarm is not None or self.state() != "Idle":
+            return ["error:5 not now"]
+        lines = []
+        for letter in "HRZA":
+            if letter not in joints:
+                continue
+            axis = letter.lower()
+            word = next((w for w in words if w[0].upper() == letter), "")
+            ends = self.settings[f"{axis}_stop"]
+            to_max = word[1:] == "+" or (word[1:] != "-" and not ends & 1)
+            switch = self.settings[f"{axis}_home_pos"] + (self.settings[f"{axis}_home_travel"] if to_max and ends & 1 else 0.0)
+            at = switch - (1.0 if to_max else -1.0) * self.settings[f"{axis}_home_pull"]
+            if letter == "R":
+                self.joint[0] = at
+            elif letter == "A":
+                self.joint[1] = at
+            elif letter == "H":
+                self.h = at
+            else:
+                self.z = at
+            self.homed = "".join(a for a in "RAHZ" if a == letter or a in self.homed)
+            lines.append(f"[HOME:{letter}:{at:.4f}:1]")
+        self.enabled = True
+        self.busy_until = max(self.busy_until, time.monotonic()) + self.move_time
+        return [*lines, "ok"]
 
     def top(self) -> float | None:
         """Height at which the probe touches the board under its tip."""
@@ -338,6 +393,8 @@ class FakeSerial:
             return self._setting(text.strip())
         if keyword == "probe":
             return self._probe(values)
+        if keyword == "home":
+            return self._home(words[1:])
         if keyword == "spindle":
             if not spindle:
                 return ["error:2 bad word"]
@@ -426,6 +483,8 @@ class FakeSerial:
                 self.joint[1] = values["A"]
             if "Z" in values:
                 self.z = values["Z"]
+            # Declared elsewhere, an axis is no longer where its switch put it.
+            self.homed = "".join(a for a in self.homed if a not in values)
             return ["ok"]
         if keyword in ("enable", "disable"):
             self.enabled = keyword == "enable"

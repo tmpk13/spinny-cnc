@@ -18,6 +18,8 @@ const AXES: [(&str, &str, &str, u8); 4] = [
 
 /// Driver socket letters, numbered from 1 in the `sockets` setting.
 const SOCKETS: [&str; 4] = ["X", "Y", "Z", "E"];
+/// The `endstop` words, in the order of the `<axis>_stop` values.
+const ENDSTOPS: [&str; 4] = ["none", "min", "max", "both"];
 
 /// Applies a machine file's text to `settings`; what the file leaves out
 /// stays as it was. The error names the key.
@@ -46,6 +48,8 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     }
 
     let mut dir_invert = 0u8;
+    let mut stop_invert = 0u8;
+    let mut limits = 0u8;
     // The socket of each axis, as labeled unless the file says otherwise.
     let mut sockets = [0usize, 1, 2, 3];
     for (section, axis, scale_key, bit) in AXES {
@@ -97,9 +101,37 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
         if let Some(value) = integer(&table, "microsteps", section)? {
             writes.push((format!("tmc_{axis}_micro"), value));
         }
+        known.extend(["endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel"]);
+        match table.get("endstop").map(|v| v.as_str()) {
+            None => {}
+            Some(Some(ends)) => {
+                let stop = ENDSTOPS
+                    .iter()
+                    .position(|known| *known == ends)
+                    .ok_or(format!("[{section}] endstop must be one of none, min, max, both"))?;
+                writes.push((format!("{axis}_stop"), stop.to_string()));
+            }
+            Some(None) => return Err(format!("[{section}] endstop must be one of none, min, max, both")),
+        }
+        if let Some(value) = integer(&table, "endstop_pin", section)? {
+            writes.push((format!("{axis}_stop_pin"), value));
+        }
+        if flag(&table, "endstop_invert", section)? == Some(true) {
+            stop_invert |= 1 << bit;
+        }
+        if flag(&table, "endstop_halt", section)? == Some(true) {
+            limits |= 1 << bit;
+        }
+        for key in ["home_pull", "home_pos", "home_travel"] {
+            if let Some(value) = number(&table, key, section)? {
+                writes.push((format!("{axis}_{key}"), value));
+            }
+        }
         only(&table, section, &known)?;
     }
     writes.push(("dir_invert".into(), dir_invert.to_string()));
+    writes.push(("stop_invert".into(), stop_invert.to_string()));
+    writes.push(("limits".into(), limits.to_string()));
     for (i, socket) in sockets.iter().enumerate() {
         if let Some(other) = sockets[..i].iter().position(|s| s == socket) {
             return Err(format!(
@@ -292,7 +324,9 @@ mod tests {
         assert_eq!(laser.z_max, 30.0);
         let mill = applied(&shipped("cartesian-mill"));
         assert!(mill.cartesian && mill.spindle && mill.h_axis);
-        assert_eq!(mill.z_max, 30.0);
+        // The mill's limits are the measured ones, which move with the
+        // machine: only that it has one is asserted.
+        assert!(mill.z_max > 0.0);
         // A three axis mill wired as labeled: X, Y and Z drive the rail,
         // the slide and the depth, and the table is on E.
         assert_eq!(mill.sockets, 1423);

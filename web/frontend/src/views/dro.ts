@@ -24,15 +24,18 @@ export interface DroText {
     motors: string;
     /** "down" or "up"; null without a focus axis. */
     probe: string | null;
+    /** The homed joints' letters, or "none"; null without an endstop. */
+    homed: string | null;
 }
 
 /** The settings say which way round the output is driven; see outputDuty. */
 export function droText(machine: Machine | null, settings: SettingsResponse | null = null): DroText {
     if (!machine) {
-        return { r: formatMm(null), a: formatDeg(null), z: formatMm(null), h: null, x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-", probe: null };
+        return { r: formatMm(null), a: formatDeg(null), z: formatMm(null), h: null, x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-", probe: null, homed: null };
     }
     const h = machine.joint.h;
     const probe = machine.probe;
+    const homed = machine.homed;
     return {
         r: formatMm(machine.joint.r),
         a: formatDeg(machine.joint.a),
@@ -46,6 +49,7 @@ export function droText(machine: Machine | null, settings: SettingsResponse | nu
         queue: `${machine.queue.planner}/${machine.queue.lines}`,
         motors: machine.enabled ? "on" : "off",
         probe: probe === null || probe === undefined ? null : probe ? "down" : "up",
+        homed: homed === null || homed === undefined ? null : homed === "" ? "none" : homed,
     };
 }
 
@@ -66,8 +70,9 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
     const boardCells = { x: bigCell("X", "mm", "x"), y: bigCell("Y", "mm", "y") };
     board.append(boardCells.x.parentElement!, boardCells.y.parentElement!);
     const small = (name: string): HTMLSpanElement => el("span", { class: "dro-small-value", "data-dro": name }, "-");
-    const smalls = { laser: small("laser"), rate: small("rate"), mode: small("mode"), queue: small("queue"), motors: small("motors"), probe: small("probe") };
+    const smalls = { laser: small("laser"), rate: small("rate"), mode: small("mode"), queue: small("queue"), motors: small("motors"), probe: small("probe"), homed: small("homed") };
     const probeBox = el("div", {}, el("span", { class: "dro-label" }, "Probe"), smalls.probe);
+    const homedBox = el("div", {}, el("span", { class: "dro-label" }, "Homed"), smalls.homed);
     // The output's duty is a spindle's speed on a spindle machine.
     const outputLabel = el("span", { class: "dro-label" }, "Laser");
     root.append(el("div", { class: "dro-small" },
@@ -77,6 +82,7 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         el("div", {}, el("span", { class: "dro-label" }, "Queue"), smalls.queue),
         el("div", {}, el("span", { class: "dro-label" }, "Motors"), smalls.motors),
         probeBox,
+        homedBox,
     ));
     let drawn: Controls | null = null;
 
@@ -105,6 +111,8 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         }
         setText(smalls.probe, text.probe ?? "-");
         probeBox.classList.toggle("hidden", text.probe === null);
+        setText(smalls.homed, text.homed ?? "-");
+        homedBox.classList.toggle("hidden", text.homed === null);
         smalls.probe.toggleAttribute("data-down", text.probe === "down");
         setText(boardCells.x, text.x);
         setText(boardCells.y, text.y);
