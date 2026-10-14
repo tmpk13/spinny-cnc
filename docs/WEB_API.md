@@ -32,7 +32,8 @@ State snapshot:
   },
   "profile": {"kinematics": "polar", "tool": "laser", "h_axis": true, "r_max": 60.0, "z_max": 0.0},
   "run": null,
-  "resume": null
+  "resume": null,
+  "position": {"r": 12.345, "a": 90.1234, "z": 0.0, "h": -1.25, "state": "Idle", "at": "2026-10-14T03:00:00+00:00"}
 }
 ```
 
@@ -42,6 +43,10 @@ closed with that reason (`link closed: no answer from the machine for 3
 s`), which ends a run as `error` with it; reconnect, and pick the job up
 (below). `resume` is the resume record, the last run's progress with the
 plan it was made from (see `GET /api/resume`), kept across sessions.
+`position` is the last position the machine reported, with its state and
+when, kept across sessions in `var/position.json` (written at most once
+a second while it changes and when the link closes): what *Last known*
+in the Jog panel declares after a power cycle, run or no run.
 
 `board` is derived on the host from `joint`: `x = r cos a`, `y = r sin a`
 on the polar machine; on a cartesian one it is `(r, z)` turned by `a`.

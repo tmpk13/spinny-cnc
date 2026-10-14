@@ -72,7 +72,7 @@ from .link import (
 )
 from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as log_tail, wire_line, wire_note
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
-from .resume import ResumeStore
+from .resume import PositionStore, ResumeStore
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
 
 # The repository's layout gives the defaults: the page's build beside this
@@ -431,6 +431,9 @@ class Backend:
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
         self.heightmaps = HeightMapStore(heightmap_path or self.config_path.parent / "heightmap.json")
         self.resume_store = ResumeStore(self.config_path.parent / "resume.json")
+        # Where the machine last said it was, for a controller that counts
+        # from zero again after a power cycle.
+        self.position_store = PositionStore(self.config_path.parent / "position.json")
         self.link_factory = link_factory or (lambda url: Link(url))
         self.link: Link | None = None
         self.url: str | None = self.config.get("last_url")
@@ -689,6 +692,7 @@ class Backend:
         if link.is_open:
             self._output_off(link)
         link.close("disconnected")
+        self.position_store.flush()
         self.link = None
         self._jog_target = None
 
@@ -857,12 +861,14 @@ class Backend:
             "profile": self.profile,
             "run": self.runner.snapshot(),
             "resume": self.resume_store.get(),
+            "position": self.position_store.get(),
         }
 
     # --- events ---------------------------------------------------------------
 
     def _on_link_event(self, event: Event) -> None:
         if event.kind == "status":
+            self.position_store.note(event.data)
             self._check_restart()
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "console":
@@ -891,6 +897,7 @@ class Backend:
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "disconnect":
             reason = event.data.get("reason", "")
+            self.position_store.flush()
             wire_note(f"link closed: {reason}")
             # A close the user asked for is news, not a fault.
             self.publish_message("info" if reason == "disconnected" else "error", f"link closed: {reason}")

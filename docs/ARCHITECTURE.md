@@ -110,7 +110,8 @@ flowchart LR
 Everything the programs write at run time sits under `var/` at the
 repository root, which is not tracked: the backend's `jobs/`,
 `config.json`, `heightmap.json`, `resume.json` (how far the last run got
-and the plan it was made from, written as the run goes), `spinny.log`
+and the plan it was made from, written as the run goes), `position.json`
+(where the machine last said it was, for *Last known*), `spinny.log`
 (the backend's log, rotated at 1 MB) and `wire.log` (every line over the
 link with its time, rotated at 8 MB; `spinny-web --data DIR` moves them
 all), and the command line tools' `out/`.

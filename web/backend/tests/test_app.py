@@ -64,6 +64,7 @@ def test_state_and_ports_before_connecting(client, tmp_path):
         "profile": {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0},
         "run": None,
         "resume": None,
+        "position": None,
     }
     ports = client.get("/api/ports").json()
     assert "ports" in ports
@@ -928,3 +929,28 @@ def test_a_boot_the_firmware_did_not_mean_is_logged_as_an_error(tmp_path, log_re
         record = next(r for r in log_records.records if r.getMessage() == f"machine: boot {boot}")
         assert record.levelno == logging.ERROR
         assert backend.link is not None and backend.link.boot == boot
+
+
+def test_the_last_position_the_machine_reported_is_kept_across_sessions(client, fake, tmp_path):
+    connect(client)
+    fake.joint = [12.5, 45.0]
+    fake.z = 3.25
+
+    def seen() -> bool:
+        position = client.get("/api/state").json()["position"]
+        return position is not None and position["r"] == 12.5 and position["z"] == 3.25
+
+    assert wait_for(seen)
+    position = client.get("/api/state").json()["position"]
+    assert position["a"] == 45.0 and position["state"] == "Idle" and position["at"]
+    client.post("/api/disconnect")
+    # Written by the close, whatever the write interval had left pending.
+    on_disk = json.loads((tmp_path / "position.json").read_text())
+    assert on_disk["r"] == 12.5 and on_disk["z"] == 3.25
+    later = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    assert later.snapshot()["position"]["r"] == 12.5

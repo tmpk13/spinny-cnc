@@ -1,5 +1,3 @@
-- A button for assuming the z is the same as when it shut off.
-
 - Randomly disconnecting and restarting is a critical flaw.
 
 

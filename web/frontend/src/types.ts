@@ -101,6 +101,18 @@ export interface Snapshot {
     run: Progress | null;
     /** How far the last run got and the plan it was made from, kept across sessions; null when none ran. */
     resume?: ResumeRecord | null;
+    /** The last position the machine reported, kept across sessions: where a controller that counts from zero again was. */
+    position?: LastPosition | null;
+}
+
+/** The machine's last reported joints, with its state and when. */
+export interface LastPosition {
+    r: number;
+    a: number;
+    z: number;
+    h: number | null;
+    state: string;
+    at: string;
 }
 
 /** The last run's progress with what a later session needs to pick the job up where it stopped. */

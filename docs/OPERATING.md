@@ -112,7 +112,8 @@ survives the host as well as the controller.
 1. If the controller lost its position (it was powered down, or reset
    while moving), tell it where the head is first: *Here is* in the Jog
    panel declares the joints without moving them, and *Last known* fills
-   in the position the record holds. The head sits where the run left
+   in the last position the machine reported before the link closed,
+   run or no run. The head sits where the run left
    it, so the X/Y screws keep that position across a power cycle; the
    depth axis may have sunk under the spindle's weight.
 2. With a height map, tie it to the new frame: *Probe nearest: tie map*,

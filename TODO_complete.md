@@ -406,3 +406,7 @@
   and boot line when a program opens the port (DTR rising) and treats the
   port closing as a disconnect, as the virtual firmware already did per
   client.
+- Assume the position from before the power-off (2026-10-14): the backend
+  keeps the machine's last reported joints in `var/position.json` (once a
+  second while they change, and at the link's close), run or no run, and
+  *Last known* in the Jog panel fills them in for *Set position*.

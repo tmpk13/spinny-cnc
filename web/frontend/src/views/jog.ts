@@ -222,8 +222,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
     /**
      * Declares where the head is without moving it, in the numbers typed:
      * what a power cycle calls for, when the head sits where the last run
-     * left it but the controller counts from zero again. The last position
-     * the backend recorded fills the fields in with a press.
+     * or jog left it but the controller counts from zero again. The last
+     * position the machine reported fills the fields in with a press.
      */
     function positionRow(axes: AxisControl[]): HTMLDivElement {
         // No placeholders: the goto rows own the letters as placeholders, and
@@ -249,9 +249,10 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
             await ctx.call(ctx.api.setPosition(Object.fromEntries(given)));
         }, "btn btn-quiet");
         const last = button("Last known", () => {
-            const position = ctx.store.get().snapshot.resume?.position;
+            const snapshot = ctx.store.get().snapshot;
+            const position = snapshot.position ?? snapshot.resume?.position;
             if (!position) {
-                ctx.toast("error", "no run has recorded a position");
+                ctx.toast("error", "the machine has not reported a position yet");
                 return;
             }
             for (const field of fields) {
@@ -259,7 +260,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
                 field.input.value = value === null || value === undefined ? "" : String(value);
             }
         }, "btn btn-quiet");
-        last.title = "Fill in the last position the backend recorded during a run";
+        last.title = "Fill in the last position the machine reported: its last report before the link closed, or a run's record";
         for (const field of fields) {
             field.input.addEventListener("keydown", onEnter(set));
         }
