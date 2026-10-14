@@ -32,12 +32,15 @@ turns the laser output into a spindle's (see [Spindle](#spindle)).
 - The firmware keeps 16 lines waiting behind the planner. The host may have
   at most 16 unanswered lines in flight. Beyond that the USB endpoint stalls
   and realtime bytes cannot get through either, so the credit must be kept.
-- Unsolicited lines: `[spinny v<version> lines:16 blocks:32]` at connect and
-  after a reset, `[MSG:<text>]` for notes, `ALARM:<code> <text>` when an
-  alarm is raised, `<...>` status only in answer to `?`. `[PRB:<h>:<0|1>]`
-  comes just before the answer to a `probe`, as part of it. The board
-  follows the banner it prints at connect (not the one after a reset byte)
-  with `[MSG:boot <reason>]`, why it started: see Diagnostics.
+- Unsolicited lines: `[spinny v<version> lines:16 blocks:32]` when a
+  program opens the port (the host raises DTR, which Linux does at every
+  open, so a host that closes and opens the port again is greeted again)
+  and after a reset, `[MSG:<text>]` for notes, `ALARM:<code> <text>` when
+  an alarm is raised, `<...>` status only in answer to `?`.
+  `[PRB:<h>:<0|1>]` comes just before the answer to a `probe`, as part of
+  it. The board follows the banner it prints at an open (not the one after
+  a reset byte) with `[MSG:boot <reason>]`, why it started: see
+  Diagnostics. A host that raises no DTR gets the banner by `version`.
 
 ## Realtime bytes
 
@@ -328,9 +331,12 @@ USB host disconnects, and when the planner runs dry (a spindle is not; see
 [Spindle](#spindle)). A USB disconnect is a
 full reset: the queue is flushed, the modal state forgotten, and a machine
 that was moving is left in `Alarm:1`. A disconnect is the bus going away (a
-cable pulled, the host suspended or reset); a program that only closes the
-serial port is not one, and leaves the queue, a beam or a spindle running,
-so a host stops the output itself before it closes. `S` is 0 to `s_max`
+cable pulled, the host suspended or reset), or the program holding the
+port closing it or dying, which drops the host's DTR: a host that dies
+mid-job leaves nothing running. A host still stops the output itself
+before it closes, so the end is orderly rather than an alarm; a program
+that opens the port without raising DTR is not seen, and leaves the queue,
+a beam or a spindle running when it closes. `S` is 0 to `s_max`
 and maps linearly to PWM duty; in `dyn` mode a computed power below `s_min`
 is set to 0. `M` holds the beam up where the head slows for a corner: an `M`
 above `S` counts as `S`, a turn on the axis stays dark, and `s_min` still
@@ -355,7 +361,8 @@ The board keeps a record in RAM that no reset short of a power cycle
 clears: where its main loop was, how long it had run, how many lines it
 had taken, and, when a panic or a hard fault ended it, the location and
 message or the faulting `pc` and `lr`. The next life reads it before
-anything else and prints, right after the banner at connect:
+anything else and prints, right after the banner, at every open of the
+port:
 
 ```
 [MSG:boot power on]
@@ -389,7 +396,9 @@ loses the record; the board's RESET button keeps it.
 
 `usb` counts the device state changes the host caused (a suspend is taken
 as the host going away); `dtr` and `rts` are the host's control lines,
-raised while a program holds the port open. `rx` is bytes from the host
+raised while a program holds the port open: DTR rising is answered with
+the banner and the boot line, DTR falling is taken as a disconnect. `rx`
+is bytes from the host
 and when the last came; `tx` is bytes handed to the host, `dropped` the
 output lost because the host did not read fast enough (the 4 KB output
 ring drops its oldest), and the writer is `waiting for the host for N ms`

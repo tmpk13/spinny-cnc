@@ -394,3 +394,15 @@
   the relay's socat prints its notices; `mise run usb-log`, `pi-logs`
   and `symbolize`. The watchdog question is answered: 1.5 s, fed once a
   main loop pass, and it is what brings a hung board back.
+- deploy-pi as a bridge (2026-10-14): `spinny-bridge` serves the
+  controller's port on the Pi's loopback, installed by default by
+  `deploy-pi` (`--web` for the backend and page); `relay-pi` forwards it.
+- The socat relay that had to be restarted (2026-10-14): a board that
+  stopped taking bytes left socat's child blocked in a write and the next
+  client unserved, which the bridge handles by giving the device up after
+  3 s with the client told why; the link names that notice in the failed
+  connect.
+- No banner on a reconnect (2026-10-14): the firmware prints its banner
+  and boot line when a program opens the port (DTR rising) and treats the
+  port closing as a disconnect, as the virtual firmware already did per
+  client.

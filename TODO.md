@@ -1,12 +1,6 @@
 - A button for assuming the z is the same as when it shut off.
 
-- Make it so the deploy-pi can be used as a bridge. This was meant to be, not the current were the pi also runs the web ui.
-
 - Randomly disconnecting and restarting is a critical flaw.
-
-- Something is bricking the system on some fails, the socat has to be restarted to reconnect. This is bad.
-
-- No banner from firmware. Why wont the firmware show banner on attempted reconnect?
 
 
 # Don't do yet

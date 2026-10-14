@@ -717,3 +717,17 @@ def test_a_machine_that_stops_answering_is_logged_with_its_last_words(log_record
     text = next(r.getMessage() for r in log_records.records if r.levelno == logging.ERROR and "closed: no answer" in r.getMessage())
     assert "1 polls unanswered" in text and "last sent 'go R1'" in text
     assert "last heard '<Idle" in text and "last status '<Idle" in text
+
+
+def test_a_bridge_notice_names_the_reason_when_the_port_then_fails():
+    fake = FakeSerial()
+    events = Collector()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    lk.subscribe(events)
+    lk.open()
+    fake.message("bridge no controller: no spinny controller under /dev/serial/by-id")
+    assert wait_for(lambda: any("bridge" in m["text"] for m in events.of("message")))
+    fake.vanish()
+    assert wait_for(lambda: not lk.is_open, 2.0)
+    assert "bridge: no controller: no spinny controller under /dev/serial/by-id" in (lk.close_reason or "")
+    lk.close()

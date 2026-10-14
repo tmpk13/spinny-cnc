@@ -27,6 +27,7 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | Module | Job |
 | --- | --- |
 | `link.py` | `serial_for_url` port (`/dev/ttyACM0` or `socket://host:port`), reader thread, line classification, credit flow control, realtime bytes, status poll |
+| `bridge.py` | `spinny-bridge`: the controller's port served over TCP for a backend elsewhere, one client at a time, the device opened per client; a device that takes nothing is given up with the client told why, a client that stops reading dropped, a quiet one replaced |
 | `kinematics.py` | board polylines to `cut`/`go`/`jogto` lines through `spinny_laser.polar`, joint-space polylines streamed as they are (a negative radius is the far side of the axis), time estimate against the axis limits, the cross slide's own `Z` lines; `CartesianStreamer` for `$cartesian=1` (straight `R Z` lines in the table's frame); milling with a `Spindle` (lift, spin-up, plunge, step-down passes, rise) |
 | `jobs.py` | the job model (board `paths`, or `joints` for a group written in joint space), importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
 | `center.py` | the `spinny-center` test burn built in place as a job, coarse (board paths) or fine (joint space) |

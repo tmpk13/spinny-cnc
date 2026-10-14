@@ -32,8 +32,9 @@ toolpath library pulls in `laser-sweep` from `../kicad-to-gcode`.
 | `mise run virtual-mill` | the same as the cartesian spindle machine over a tilted board |
 | `mise run flash` | build the board firmware and copy it to an SKR Pico in BOOTSEL mode |
 | `mise run dev` | the page from Bun's dev server with live reload |
-| `mise run relay-pi -- pi@host` | forward the controller plugged into a Raspberry Pi (ssh, socat, dialout) to `socket://127.0.0.1:2324` here |
-| `mise run deploy-pi -- pi@host` | install the backend and the page on a Raspberry Pi as a service that keeps its own link to the controller: the Pi runs the whole thing |
+| `mise run deploy-pi -- pi@host` | install the bridge on a Raspberry Pi as a service: the controller's port served to the backend here; `-- --web pi@host` installs the backend and the page instead, so the Pi runs the whole thing |
+| `mise run relay-pi -- pi@host` | forward the Pi's bridge to `socket://127.0.0.1:2324` here over ssh (socat for the session when no bridge is installed) |
+| `mise run bridge` | serve a controller plugged in here over TCP for a backend elsewhere, what deploy-pi installs on the Pi |
 | `mise run cam -- cam/mill-3axis.toml board.kicad_pcb` | a design through a CAM profile, gcode for its controller in `var/out/` |
 | `mise run test` | every suite; `test-firmware`, `test-toolpath`, `test-backend`, `test-frontend`, `test-sim` run one |
 

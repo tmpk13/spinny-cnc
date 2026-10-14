@@ -35,6 +35,9 @@ POLL_MOVING = 0.1
 # The firmware answers a poll from its main loop in every state, a probe
 # or a flash write included, so silence this long is not a slow command.
 STALL_SECONDS = 3.0
+# A bridge on a Pi says why before it closes the socket (`[MSG:bridge
+# ...]`); a port failure this soon after names it.
+BRIDGE_NOTICE_SECONDS = 2.0
 MOVING_STATES = ("Run", "Jog", "Hold", "Home")
 MAX_LINE = 96
 # Longest run of bytes without a line end the reader keeps; the firmware
@@ -258,13 +261,19 @@ def check_url(url: str) -> None:
 
 
 def open_serial(url: str):
-    """A raw pyserial port for a device path or a `socket://host:port` url."""
+    """A raw pyserial port for a device path or a `socket://host:port` url.
+
+    A device is taken for this program alone: a second backend, a bridge
+    or a tool opening the same port is refused with a clear error rather
+    than sharing the byte stream, where each would take the other's
+    answers. A socket has one client by the bridge's own rule."""
     check_url(url)
     port = serial.serial_for_url(
         url,
         baudrate=BAUD,
         timeout=READ_TIMEOUT,
         write_timeout=WRITE_TIMEOUT,
+        exclusive=True,
         do_not_open=True,
     )
     # pyserial's open() discards whatever the port already holds, which is
@@ -339,6 +348,8 @@ class Link:
         self.opened_at = time.monotonic()
         # The firmware's `[MSG:boot ...]`: why it started, once it has said.
         self.boot: str | None = None
+        # The last `[MSG:bridge ...]` and when it came.
+        self._bridge_notice: tuple[str, float] | None = None
 
     # --- lifecycle ------------------------------------------------------
 
@@ -644,8 +655,12 @@ class Link:
                         waiting = port.in_waiting
             except PORT_ERRORS as exc:
                 if not self._closed.is_set():
-                    log.error("port %s failed: %r", self.url, exc)
-                    self._fail(f"port error: {exc}")
+                    reason = f"port error: {exc}"
+                    notice = self._bridge_notice
+                    if notice is not None and time.monotonic() - notice[1] < BRIDGE_NOTICE_SECONDS:
+                        reason = f"{reason} (bridge: {notice[0]})"
+                    log.error("port %s failed: %s", self.url, reason)
+                    self._fail(reason)
                 return
             if not chunk:
                 continue
@@ -725,6 +740,8 @@ class Link:
             level = "error" if body.endswith("position may be off") or boot_is_fault(body) else "info"
             if body.startswith("boot "):
                 self.boot = body[5:]
+            elif body.startswith("bridge "):
+                self._bridge_notice = (body[7:], time.monotonic())
             self._publish(Event("message", {"level": level, "text": body}))
         elif text.startswith("ALARM:"):
             self._publish(Event("message", {"level": "error", "text": text}))

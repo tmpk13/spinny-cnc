@@ -198,10 +198,12 @@ every few seconds. What to read, in order:
 3. `mise run usb-log` here, or `mise run usb-log -- user@host` for a Pi:
    the kernel's view. A board that reset shows a disconnect and a new
    device; one whose firmware only stopped answering shows nothing.
-4. The relay's terminal, when the controller hangs off a Pi: socat prints
-   each connection, each open of the device and each error with the time.
-5. `mise run pi-logs -- user@host` when the Pi runs the backend: its
-   journal and both log tails.
+4. `mise run pi-logs -- user@host` when the controller hangs off a Pi:
+   the bridge's journal says when each client came and went, which device
+   it opened and why the session ended, such as `took nothing for 3 s`
+   for a board that stopped taking bytes; a Pi running the backend shows
+   its journal and both log tails instead. With socat standing in for
+   the bridge, its terminal prints each connection, open and error.
 
 Bring a board that stopped answering back with its RESET button rather
 than a power cycle when you can: the record of its last life survives

@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 spinny-web = "spinny_web.app:main"
+spinny-bridge = "spinny_web.bridge:main"
 
 [build-system]
 requires = ["hatchling"]

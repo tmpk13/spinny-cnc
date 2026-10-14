@@ -54,44 +54,54 @@ Each part keeps its own module diagram next to its code:
 ## Controller on a Raspberry Pi
 
 Two ways, one controller. Only one of them may hold the controller's port
-at a time.
+at a time; installing either service stops the other.
 
-**The Pi runs the whole thing.** `mise run deploy-pi -- user@host` builds
-the page here and copies the repository, its sibling `kicad-to-gcode` and
-the page to the Pi, where uv installs Python 3.12 and the dependencies and
-a systemd unit runs the backend with `--connect auto`: it keeps its own
-link to the controller up, so a job uploaded to `http://host.local:8000`
-streams from the Pi whether or not the page stays open, and a controller
-that is replugged, or goes quiet and is given up, is taken up again by
-itself. The Pi needs no bun or Rust, and `firmware/` and `sim/` stay
-behind. Jobs, the height map and the resume record are the Pi's own.
+**The Pi is a bridge.** `mise run deploy-pi -- user@host` copies the
+repository and its sibling `kicad-to-gcode` to the Pi, where uv installs
+Python 3.12 and the dependencies, and a systemd unit runs `spinny-bridge`
+(`web/backend/src/spinny_web/bridge.py`): the controller's port served on
+the Pi's loopback port 2324, one client at a time, the device looked up
+under its by-id name and opened when a client connects and closed when it
+leaves, so the firmware greets every connect with its banner and stops
+everything when the client goes. `mise run relay-pi -- user@host`
+forwards that port here over ssh and the page connects to
+`socket://127.0.0.1:2324`; the run lives in the backend here, so it ends
+if this machine does. The bridge writes the device only when it is ready,
+gives up a device that takes nothing for 3 s and a client that stops
+reading, tells the client why in a `[MSG:bridge ...]` line that the
+backend logs and names in a failed connect, and lets a new client take
+over from one that has gone quiet, so a board that wedges needs nothing on
+the Pi restarted. With no bridge installed, `relay-pi` starts socat on the
+Pi for the session instead; socat blocks in a write to a board that stops
+taking bytes and serves no one after that until the relay is started
+again, which is why the bridge exists.
 
-**The backend runs here.** `mise run relay-pi -- user@host` makes a
-controller plugged into a Pi look local: socat on the Pi bridges the tty
-to a port on the Pi's loopback, ssh forwards that port here, and the page
-connects to `socket://127.0.0.1:2324`. Nothing is installed on the Pi,
-and the run lives in the backend here, so it ends if this machine does.
-socat prints a dated notice on the terminal for every connection, device
-open and error, so when the link goes quiet the relay says whether the
-Pi still had the device.
+**The Pi runs the whole thing.** `mise run deploy-pi -- --web user@host`
+builds the page here and copies it along, and the unit runs the backend
+with `--connect auto`: it keeps its own link to the controller up, so a job
+uploaded to `http://host.local:8000` streams from the Pi whether or not
+the page stays open, and a controller that is replugged, or goes quiet and
+is given up, is taken up again by itself. The Pi needs no bun or Rust, and
+`firmware/` and `sim/` stay behind. Jobs, the height map and the resume
+record are the Pi's own.
 
 Either way, `mise run usb-log -- user@host` (or with no host, here)
 follows the kernel's USB and serial lines, which settle whether the board
 dropped off the bus or re-enumerated, and `mise run pi-logs -- user@host`
-shows the service's journal and the tails of `spinny.log` and `wire.log`
-on a Pi running the backend. `docs/OPERATING.md` has the procedure for a
-machine that went quiet.
+shows the bridge's journal, or on a Pi running the backend its journal
+and the tails of `spinny.log` and `wire.log`. `docs/OPERATING.md` has the
+procedure for a machine that went quiet.
 
 ```mermaid
 flowchart LR
-    subgraph DEPLOYED[deploy-pi: the Pi runs the whole thing]
+    subgraph DEPLOYED[deploy-pi --web: the Pi runs the whole thing]
         BR[browser] <-->|HTTP, WebSocket :8000| BE1
         BE1[systemd spinny-web --connect auto] <-->|/dev/serial/by-id| BOARD1[SKR Pico]
     end
-    subgraph RELAYED[relay-pi: the backend runs here]
-        BE2[backend here] <-->|socket://127.0.0.1:2324| SSH[ssh -L]
-        SSH <-->|ssh session| SOC[socat on the Pi]
-        SOC <-->|/dev/serial/by-id, raw tty| BOARD2[SKR Pico]
+    subgraph BRIDGED[deploy-pi: the Pi is a bridge, the backend runs here]
+        BE2[backend here] <-->|socket://127.0.0.1:2324| SSH[relay-pi: ssh -L]
+        SSH <-->|ssh session| BRG[systemd spinny-bridge]
+        BRG <-->|/dev/serial/by-id, opened per client| BOARD2[SKR Pico]
     end
 ```
 

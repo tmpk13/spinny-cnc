@@ -1,0 +1,14 @@
+[Unit]
+Description=Spinny controller bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+WorkingDirectory=@DIR@/spinny-laser-pcb
+ExecStart=@UV@ run --no-dev --frozen spinny-bridge --device auto --bind 127.0.0.1 --port 2324
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

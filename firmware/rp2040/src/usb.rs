@@ -6,7 +6,10 @@
 //! going away is only ever seen through the device's state: a bus reset,
 //! a suspend or the configuration being dropped. Those come through the
 //! `Handler` callbacks, which report the disconnect to the main loop and
-//! make the reader and the writer start over.
+//! make the reader and the writer start over. A program opening or
+//! closing the port shows as the host's DTR line, which the control task
+//! turns into events of its own: the opener is greeted, and a closer,
+//! which may be a host that died mid-job, leaves nothing running.
 
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -41,7 +44,13 @@ pub enum Inbound {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
+    /// The host configured the device: it is on the bus, nobody has it open yet.
     Connected,
+    /// A program on the host opened the port (DTR raised).
+    HostOpened,
+    /// The program holding the port closed it, or died (DTR dropped).
+    HostClosed,
+    /// The bus went away: a reset, a suspend, the configuration dropped.
     Disconnected,
 }
 
@@ -181,14 +190,22 @@ pub fn start(spawner: &Spawner, usb: Peri<'static, USB>, serial: &'static str) {
     spawner.spawn(control_task(control).expect("usb control task"));
 }
 
-/// Watches the host's DTR and RTS, which Linux raises when a program
-/// opens the port and drops when it closes it: whether anyone is
-/// listening is part of what `diag` reports. Nothing acts on them.
+/// Watches the host's DTR and RTS, which the host raises when a program
+/// opens the port and drops when it closes it or dies. A rising DTR is a
+/// program that has just opened the port and expects the banner; a
+/// falling one is that program gone, with whatever it had queued. A bus
+/// reset drops the line too, after the disconnect it already caused.
 #[embassy_executor::task]
 async fn control_task(control: ControlChanged<'static>) {
+    let mut open = false;
     loop {
         control.control_changed().await;
-        diag::control(control.dtr(), control.rts());
+        let dtr = control.dtr();
+        diag::control(dtr, control.rts());
+        if dtr != open {
+            open = dtr;
+            let _ = EVENTS.try_send(if dtr { Event::HostOpened } else { Event::HostClosed });
+        }
     }
 }
 

@@ -3,15 +3,19 @@
 #
 #   relay/relay-pi.sh user@host [port]
 #
-# then connect the page to socket://127.0.0.1:<port> (default 2324). The Pi
-# needs ssh, socat and its user in the dialout group; nothing is installed.
-# Ctrl-C ends the relay.
+# then connect the page to socket://127.0.0.1:<port> (default 2324). Ctrl-C
+# ends the relay.
 #
-# socat on the Pi listens on its loopback only and ssh carries that port
-# here, so the machine is reachable only through the ssh login. One client
-# at a time; the device is opened per connection, so a controller that
-# reset or was replugged between connections is found again. A listener
-# already on that port of the Pi is reused rather than replaced.
+# A Pi with the bridge service installed (deploy/deploy-pi.sh) already
+# serves the port on its loopback: this then only forwards it over ssh, so
+# the machine is reachable only through the ssh login. Without the bridge,
+# socat is started on the Pi for the session (the Pi needs socat and its
+# user in dialout; nothing is installed), one client at a time, the device
+# opened per connection so a controller that reset or was replugged
+# between connections is found again. socat has a flaw the bridge does
+# not: a board that stops taking bytes leaves its child blocked in a write,
+# and the next connection is accepted but never served until this relay
+# is started again.
 set -euo pipefail
 
 host=${1:?usage: relay-pi.sh user@host [port]}
@@ -23,7 +27,7 @@ remote=$(cat <<EOF
 set -e
 command -v socat >/dev/null || { echo "socat is missing on the Pi: sudo apt install socat" >&2; exit 1; }
 if ss -Hltn "sport = :$port" | grep -q .; then
-    echo "a relay already listens on port $port on the Pi; forwarding to it" >&2
+    echo "a bridge already listens on port $port on the Pi; forwarding to it" >&2
     exec sleep infinity
 fi
 dev='$device'

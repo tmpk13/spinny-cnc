@@ -129,11 +129,21 @@ async fn main(spawner: Spawner) {
         diag::phase(Phase::Events);
         while let Ok(event) = usb::EVENTS.try_receive() {
             match event {
-                usb::Event::Connected => {
+                // The banner goes to the program that opened the port, not
+                // to the bus: printed at configuration it would sit in the
+                // endpoint for whoever opens first, and never again for a
+                // host that closes and opens the port while the device
+                // stays configured. The boot line follows it every time,
+                // so a reconnect says why the board last started too.
+                usb::Event::Connected => {}
+                usb::Event::HostOpened => {
                     report::banner(&mut sink);
                     diag::boot_message(&mut sink);
                 }
-                usb::Event::Disconnected => {
+                // A program that closed the port, or died holding it, is
+                // gone like a host off the bus: its queue must not go on
+                // cutting, and its beam or spindle must not stay on.
+                usb::Event::Disconnected | usb::Event::HostClosed => {
                     usb::clear_output();
                     machine.disconnected(&mut laser);
                     // What the old host left queued must not act after the
