@@ -731,3 +731,44 @@ def test_a_bridge_notice_names_the_reason_when_the_port_then_fails():
     assert wait_for(lambda: not lk.is_open, 2.0)
     assert "bridge: no controller: no spinny controller under /dev/serial/by-id" in (lk.close_reason or "")
     lk.close()
+
+
+def test_a_reader_held_up_is_not_the_machines_silence():
+    """A backend starved for seconds has the answers waiting unread: the
+    poller must not take that for a machine that stopped."""
+    fake = FakeSerial()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=True, stall=0.3)
+    hold = threading.Event()
+    held = threading.Event()
+
+    def starve(event):
+        # In the reader thread, right after a report was heard.
+        if event.kind == "status" and hold.is_set() and not held.is_set():
+            held.set()
+            time.sleep(0.7)
+
+    lk.subscribe(starve)
+    lk.open()
+    assert wait_for(lambda: lk.status is not None, 2.0)
+    hold.set()
+    assert held.wait(1.0)
+    time.sleep(0.5)
+    assert lk.is_open, lk.close_reason
+    assert wait_for(lambda: lk.age < 0.3, 2.0)
+    lk.close()
+
+
+def test_a_reader_stuck_for_several_stalls_ends_the_link_with_its_own_reason():
+    fake = FakeSerial()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=True, stall=0.3)
+    stuck = threading.Event()
+
+    def jam(event):
+        if event.kind == "status" and not stuck.is_set():
+            stuck.set()
+            time.sleep(1.6)
+
+    lk.subscribe(jam)
+    lk.open()
+    assert wait_for(lambda: not lk.is_open, 3.0)
+    assert lk.close_reason is not None and "reader has not run" in lk.close_reason

@@ -7,6 +7,7 @@ streams jobs, and serves the frontend. The firmware does no kinematics.
 ```sh
 uv sync                                     # once, at the repository root
 uv run spinny-web --host 0.0.0.0 --port 8000
+uv run spinny-bridge --device auto --port 2324   # the controller's port over TCP for a backend elsewhere
 uv run pytest web/backend/tests
 ```
 

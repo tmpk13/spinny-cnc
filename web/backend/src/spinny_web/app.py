@@ -699,10 +699,12 @@ class Backend:
     def _output_off(self, link: Link) -> None:
         """Stops a turning spindle or a lit beam before the port closes.
 
-        The firmware does not see a port close, only the USB host going
-        away, and a spindle has no timeout: left on, it would go on turning
-        with nothing connected to stop it. On an idle machine `laser off`
-        stops either. A machine that is moving or held, or one that does not
+        The board stops everything when the port closes (the host's DTR
+        drops), but as a reset, which lands on a move as an alarm with the
+        position lost; a program that opens the port without raising DTR,
+        and the virtual firmware over a socket, see no close at all, and a
+        spindle has no timeout. On an idle machine `laser off` stops
+        either. A machine that is moving or held, or one that does not
         take `laser off` in time, is stopped the way a run's stop does it:
         a hold, then the reset once it is at rest, which turns the output
         off without the reset landing on a move.

@@ -41,7 +41,10 @@ State snapshot:
 shows there first, and after 3 s with status polls unanswered the link is
 closed with that reason (`link closed: no answer from the machine for 3
 s`), which ends a run as `error` with it; reconnect, and pick the job up
-(below). `resume` is the resume record, the last run's progress with the
+(below). The verdict waits while the backend's own reader is behind on
+the port (the interpreter held for seconds by a board's geometry on a
+slow host), since the answers are then waiting unread; a reader that has
+not run for three stalls closes the link with that reason instead. `resume` is the resume record, the last run's progress with the
 plan it was made from (see `GET /api/resume`), kept across sessions.
 `position` is the last position the machine reported, with its state and
 when, kept across sessions in `var/position.json` (written at most once

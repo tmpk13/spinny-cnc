@@ -38,6 +38,15 @@ STALL_SECONDS = 3.0
 # A bridge on a Pi says why before it closes the socket (`[MSG:bridge
 # ...]`); a port failure this soon after names it.
 BRIDGE_NOTICE_SECONDS = 2.0
+# The poller gives the machine up only while the reader is keeping up with
+# the port, which it shows by looking at it every read timeout. A reader
+# that has not looked for this long has the answers waiting unread: the
+# backend was starved (a board's geometry computed on a slow Pi holds the
+# interpreter for seconds), which is not the machine's silence, and the
+# verdict waits. A reader behind for this many stalls is stuck in a read,
+# and that ends the link with its own reason.
+READER_BEHIND = 0.25
+READER_STUCK_STALLS = 3
 MOVING_STATES = ("Run", "Jog", "Hold", "Home")
 MAX_LINE = 96
 # Longest run of bytes without a line end the reader keeps; the firmware
@@ -305,6 +314,8 @@ class Link:
         # When the last line arrived, so a snapshot can say how old what it
         # shows is, and the poller can tell a machine that has gone quiet.
         self.last_heard = time.monotonic()
+        # When the reader last looked at the port, data or not.
+        self._reader_seen = time.monotonic()
         self._open_port = open_port or open_serial
         self._port: Any = None
         self._pending: deque[Pending] = deque()
@@ -662,6 +673,7 @@ class Link:
                     log.error("port %s failed: %s", self.url, reason)
                     self._fail(reason)
                 return
+            self._reader_seen = time.monotonic()
             if not chunk:
                 continue
             self.rx_bytes += len(chunk)
@@ -830,13 +842,18 @@ class Link:
                 with self._status_cond:
                     unanswered = self._polls_out
                 age = self.age
-                if unanswered > 0 and age > self.stall:
-                    # Nothing has come back for a while, polls included:
-                    # the machine, or the path to it, has stopped. Every
-                    # line waiting on it is failed with this reason, and a
-                    # run learns of it instead of waiting for a credit
-                    # that would never come free.
+                behind = time.monotonic() - self._reader_seen
+                if unanswered > 0 and age > self.stall and behind <= READER_BEHIND:
+                    # Nothing has come back for a while, polls included,
+                    # and the reader has been looking: the machine, or the
+                    # path to it, has stopped. Every line waiting on it is
+                    # failed with this reason, and a run learns of it
+                    # instead of waiting for a credit that would never
+                    # come free.
                     self._fail(f"no answer from the machine for {age:.0f} s")
+                    return
+                if unanswered > 0 and behind > READER_STUCK_STALLS * self.stall:
+                    self._fail(f"the port's reader has not run for {behind:.0f} s")
                     return
             try:
                 self.realtime(REALTIME_STATUS, routine=True)

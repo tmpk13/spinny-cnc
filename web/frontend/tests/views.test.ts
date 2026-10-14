@@ -1246,3 +1246,34 @@ describe("controls from the machine file", () => {
         expect(root.querySelector('[data-dro="x"]')?.closest(".dro-row")?.classList.contains("hidden")).toBe(false);
     });
 });
+
+describe("jog position row", () => {
+    test("Last known fills in the machine's last reported position, run or no run", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({
+            snapshot: {
+                ...connected(),
+                resume: null,
+                position: { r: 1.5, a: 30, z: 2.25, h: null, state: "Idle", at: "2026-10-14T03:00:00+00:00" },
+            },
+        });
+        mountJog(root, ctx);
+        click(root, "Last known");
+        const declared = Array.from(root.querySelectorAll<HTMLInputElement>('input[aria-label^="declare "]'));
+        expect(declared.length).toBeGreaterThan(0);
+        const byLetter = Object.fromEntries(declared.map((input) => [input.getAttribute("aria-label"), input.value]));
+        expect(byLetter["declare R"]).toBe("1.5");
+        expect(byLetter["declare A"]).toBe("30");
+    });
+
+    test("Last known with nothing reported says so", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: { ...connected(), resume: null, position: null } });
+        mountJog(root, ctx);
+        click(root, "Last known");
+        const declared = Array.from(root.querySelectorAll<HTMLInputElement>('input[aria-label^="declare "]'));
+        expect(declared.every((input) => input.value === "")).toBe(true);
+    });
+});
