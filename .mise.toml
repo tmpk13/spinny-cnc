@@ -17,6 +17,14 @@ run = "cd web/frontend && bun run dev"
 description = "Forward the controller on a Raspberry Pi to socket://127.0.0.1:2324 here over ssh: mise run relay-pi -- pi@spinny.local"
 run = "relay/relay-pi.sh"
 
+[tasks.usb-log]
+description = "Follow the kernel's USB and serial lines here, or on a Pi over ssh: mise run usb-log -- pi@spinny.local"
+run = "relay/usb-log.sh"
+
+[tasks.pi-logs]
+description = "The backend's journal and the tails of spinny.log and wire.log on a Pi running the service: mise run pi-logs -- pi@spinny.local"
+run = "relay/pi-logs.sh"
+
 [tasks.deploy-pi]
 description = "Install the backend and the built page on a Raspberry Pi as a service that drives the controller on its own: mise run deploy-pi -- pi@spinny.local"
 run = "deploy/deploy-pi.sh"
@@ -72,6 +80,10 @@ run = """
 (cd firmware/rp2040 && cargo build --release)
 elf2uf2-rs firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2
 """
+
+[tasks.symbolize]
+description = "The source line behind a hard fault's pc or lr from the boot message, against the last release build: mise run symbolize -- 0x10001234"
+run = "arm-none-eabi-addr2line -f -C -i -e firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw"
 
 [tasks.scp-uf2]
 description = "Build the uf2 and copy it to a host with scp, to put on a board held in BOOTSEL there: mise run scp-uf2 -- pi@spinny.local:"

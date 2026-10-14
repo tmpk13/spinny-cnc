@@ -10,6 +10,7 @@ and alarms arrive unasked and would be lost.
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import serial
+
+from .log import log
 
 DEFAULT_CREDITS = 16
 BAUD = 115200
@@ -325,6 +328,17 @@ class Link:
         # Status polls sent by this link and not yet answered, so their
         # reports can be told from one an operator asked for.
         self._polls_out = 0
+        # What went by, for the line the log gets when the link closes: a
+        # machine that stops answering is told by what was sent to it and
+        # what it said last.
+        self.tx_lines = 0
+        self.rx_lines = 0
+        self.rx_bytes = 0
+        self.last_sent = ""
+        self.last_heard_text = ""
+        self.opened_at = time.monotonic()
+        # The firmware's `[MSG:boot ...]`: why it started, once it has said.
+        self.boot: str | None = None
 
     # --- lifecycle ------------------------------------------------------
 
@@ -353,6 +367,7 @@ class Link:
             # The port went away underneath the wait: that is a failure to
             # open, not a silent link with no banner.
             raise LinkError(f"cannot open {self.url}: {self.close_reason}")
+        log.debug("port %s opened, banner %s", self.url, "seen" if self.banner is not None else "missing")
 
     @property
     def restarts(self) -> int:
@@ -380,6 +395,7 @@ class Link:
                 return
             self.close_reason = reason
             self._closed.set()
+        self._log_close(reason)
         with self._status_cond:
             self._polls_out = 0
             self._status_asked = 0
@@ -404,6 +420,33 @@ class Link:
                 thread.join(timeout=1.0)
         if self._opened:
             self._publish(Event("disconnect", {"reason": reason}))
+
+    def _log_close(self, reason: str) -> None:
+        """One line with everything a close can say about the link's state,
+        so a machine that went quiet is described without a page open."""
+        with self._status_cond:
+            unanswered = self._polls_out
+        with self._credit:
+            outstanding = len(self._pending)
+        status = self.status
+        level = logging.INFO if reason in ("closed", "disconnected") else logging.ERROR
+        log.log(
+            level,
+            "link %s closed: %s; open %.0f s, %d lines sent, %d unanswered, %d polls unanswered,"
+            " %d lines and %d bytes heard, last heard %.1f s ago; last sent %r, last heard %r, last status %r",
+            self.url,
+            reason,
+            time.monotonic() - self.opened_at,
+            self.tx_lines,
+            outstanding,
+            unanswered,
+            self.rx_lines,
+            self.rx_bytes,
+            self.age,
+            self.last_sent,
+            self.last_heard_text,
+            status.raw if status is not None else None,
+        )
 
     def subscribe(self, callback: Callable[[Event], None]) -> None:
         self._subscribers.append(callback)
@@ -485,6 +528,8 @@ class Link:
                         self._credit.notify_all()
                     raise
                 break
+        self.tx_lines += 1
+        self.last_sent = line
         self._publish(Event("console", {"dir": "tx", "text": line, "poll": False}))
         return pending
 
@@ -580,6 +625,7 @@ class Link:
             with self._write_lock:
                 self._port.write(data)
         except PORT_ERRORS as exc:
+            log.error("write to %s failed: %r", self.url, exc)
             self._fail(f"write failed: {exc}")
             raise LinkClosed(str(exc)) from exc
 
@@ -598,10 +644,12 @@ class Link:
                         waiting = port.in_waiting
             except PORT_ERRORS as exc:
                 if not self._closed.is_set():
+                    log.error("port %s failed: %r", self.url, exc)
                     self._fail(f"port error: {exc}")
                 return
             if not chunk:
                 continue
+            self.rx_bytes += len(chunk)
             buffer += chunk
             while True:
                 cut = buffer.find(b"\n")
@@ -628,6 +676,8 @@ class Link:
 
     def _handle_line(self, text: str) -> None:
         self.last_heard = time.monotonic()
+        self.rx_lines += 1
+        self.last_heard_text = text
         routine = False
         # A report taken as a `status` line's answer is not counted as the
         # answer to a `?`: whichever of the two arrives first, the other
@@ -669,9 +719,13 @@ class Link:
         elif text.startswith("[spinny v"):
             self._handle_banner(text)
         elif text.startswith("[MSG:") and text.endswith("]"):
-            # A message that says the position may be off is a fault, not news.
-            level = "error" if text.endswith("position may be off]") else "info"
-            self._publish(Event("message", {"level": level, "text": text[5:-1]}))
+            body = text[5:-1]
+            # A message that says the position may be off is a fault, not
+            # news; so is a start the firmware did not mean.
+            level = "error" if body.endswith("position may be off") or boot_is_fault(body) else "info"
+            if body.startswith("boot "):
+                self.boot = body[5:]
+            self._publish(Event("message", {"level": level, "text": body}))
         elif text.startswith("ALARM:"):
             self._publish(Event("message", {"level": "error", "text": text}))
         else:
@@ -701,6 +755,7 @@ class Link:
                 # An unasked banner means the firmware restarted and dropped
                 # whatever was waiting for an answer.
                 self._fail_pending("reset")
+        log.debug("banner from %s: %r (%s)", self.url, text, "answers version" if answer else "a reset" if expected else "unasked")
         banner = parse_banner(text)
         if banner is not None:
             self.banner = banner
@@ -781,6 +836,13 @@ class Link:
                 callback(event)
             except Exception:
                 pass
+
+
+def boot_is_fault(body: str) -> bool:
+    """A `boot ...` message that names a reset the firmware did not mean: the
+    watchdog ran out, it panicked or it hit a hard fault. A power-on, the
+    reset pin and a forced reset (flashing) are news."""
+    return body.startswith("boot ") and body[5:].startswith(("watchdog", "panic", "hard fault"))
 
 
 def _show_byte(data: bytes) -> str:

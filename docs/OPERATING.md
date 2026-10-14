@@ -177,3 +177,33 @@ rest does not halt the move that takes it off.
 A home renumbers the axis, so the height map's focus offset is taken
 back as it is by a position set: tie the map again (*Probe here* or
 *Focus here*) before a compensated run.
+
+### When the machine goes quiet
+
+The backend gives a machine up after 3 s without an answer to its status
+polls, fails the run with that reason, and with `--connect` tries again
+every few seconds. What to read, in order:
+
+1. The console's *Log* (or `var/spinny.log`): the `link ... closed` line
+   says how long the link had been open, how many lines were sent and
+   unanswered, when the machine was last heard and what it last said,
+   and its last status report. `machine: boot ...` lines say why the
+   board started every time it was connected: a power-on, the reset pin,
+   the watchdog (the main loop stalled), a panic with its location, a hard
+   fault with its `pc`, or a forced reset after flashing.
+2. The console's *Wire* (or `var/wire.log`): every line each way with the
+   time to the millisecond, the polls marked. The last `rx` line is the
+   last thing the machine said; what follows is what was sent into the
+   silence.
+3. `mise run usb-log` here, or `mise run usb-log -- user@host` for a Pi:
+   the kernel's view. A board that reset shows a disconnect and a new
+   device; one whose firmware only stopped answering shows nothing.
+4. The relay's terminal, when the controller hangs off a Pi: socat prints
+   each connection, each open of the device and each error with the time.
+5. `mise run pi-logs -- user@host` when the Pi runs the backend: its
+   journal and both log tails.
+
+Bring a board that stopped answering back with its RESET button rather
+than a power cycle when you can: the record of its last life survives
+the one and not the other, and the next connect logs it. `diag` typed at
+the console prints the boot reason and the counters at any time.

@@ -1105,6 +1105,20 @@ describe("console and toasts", () => {
         expect(log.children.length).toBe(0);
     });
 
+    test("the Log and Wire buttons read the backend's two logs into the console", async () => {
+        const { ctx, root, calls } = setup();
+        mountConsole(root, ctx);
+        calls.length = 0;
+        click(root, "Log");
+        await settle();
+        click(root, "Wire");
+        await settle();
+        expect(calls.filter((c) => c.name === "log").map((c) => c.args)).toEqual([[100, "spinny"], [100, "wire"]]);
+        const log = root.querySelector(".console-log")!;
+        expect(log.textContent).toContain("# the backend's log is empty");
+        expect(log.textContent).toContain("# the backend's wire log is empty");
+    });
+
     test("a setting typed at the console reloads the page's copy of the settings", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");

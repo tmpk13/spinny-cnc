@@ -199,6 +199,9 @@ export interface LogResponse {
     lines: string[];
 }
 
+/** The backend's log files: its own, or every line over the wire. */
+export type LogFile = "spinny" | "wire";
+
 export interface SettingsResponse {
     values: Record<string, number>;
     schema: SettingSchema[];

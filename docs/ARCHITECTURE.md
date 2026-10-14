@@ -71,6 +71,16 @@ controller plugged into a Pi look local: socat on the Pi bridges the tty
 to a port on the Pi's loopback, ssh forwards that port here, and the page
 connects to `socket://127.0.0.1:2324`. Nothing is installed on the Pi,
 and the run lives in the backend here, so it ends if this machine does.
+socat prints a dated notice on the terminal for every connection, device
+open and error, so when the link goes quiet the relay says whether the
+Pi still had the device.
+
+Either way, `mise run usb-log -- user@host` (or with no host, here)
+follows the kernel's USB and serial lines, which settle whether the board
+dropped off the bus or re-enumerated, and `mise run pi-logs -- user@host`
+shows the service's journal and the tails of `spinny.log` and `wire.log`
+on a Pi running the backend. `docs/OPERATING.md` has the procedure for a
+machine that went quiet.
 
 ```mermaid
 flowchart LR
@@ -90,6 +100,7 @@ flowchart LR
 Everything the programs write at run time sits under `var/` at the
 repository root, which is not tracked: the backend's `jobs/`,
 `config.json`, `heightmap.json`, `resume.json` (how far the last run got
-and the plan it was made from, written as the run goes) and `spinny.log`
-(the backend's log, rotated at 1 MB; `spinny-web --data DIR` moves them
+and the plan it was made from, written as the run goes), `spinny.log`
+(the backend's log, rotated at 1 MB) and `wire.log` (every line over the
+link with its time, rotated at 8 MB; `spinny-web --data DIR` moves them
 all), and the command line tools' `out/`.

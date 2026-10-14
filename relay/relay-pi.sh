@@ -31,7 +31,10 @@ dev='$device'
 [ -n "\$dev" ] || { echo "no spinny controller under /dev/serial/by-id on the Pi" >&2; exit 1; }
 [ -r "\$dev" ] && [ -w "\$dev" ] || { echo "no access to \$dev: sudo usermod -aG dialout \$USER, then log in again" >&2; exit 1; }
 echo "relaying \$dev to socket://127.0.0.1:$port here" >&2
-exec socat TCP-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork,max-children=1 FILE:"\$dev",rawer
+# -d -d: a dated notice on this terminal for every connection accepted,
+# the device opened and closed, and every error, so when the link goes
+# quiet the relay says whether the Pi still had the device.
+exec socat -d -d TCP-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork,max-children=1 FILE:"\$dev",rawer
 EOF
 )
 

@@ -1,8 +1,6 @@
 - A button for assuming the z is the same as when it shut off.
 
-- Make it so the deploy-pi can be used as a bridge.
-
-- Need error log.
+- Make it so the deploy-pi can be used as a bridge. This was meant to be, not the current were the pi also runs the web ui.
 
 - Randomly disconnecting and restarting is a critical flaw.
 
@@ -10,7 +8,6 @@
 
 - No banner from firmware. Why wont the firmware show banner on attempted reconnect?
 
-- Is there a watchdog currently?
 
 # Don't do yet
 

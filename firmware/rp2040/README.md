@@ -85,6 +85,34 @@ number of UART writes it accepted), the microsteps it actually steps at
 and DRV_STATUS, or `no reply`. A driver the configuration leaves alone,
 the E socket without `$h_axis=1`, is still asked and marked `unused`.
 
+## Diagnostics
+
+The board says why it started right after its banner, as `[MSG:boot ...]`:
+a power-on, the reset pin, a forced reset (the bootloader after flashing),
+the watchdog (the main loop stalled for 1.5 s), a panic or a hard fault.
+For anything but a power-on it adds what the last life left in RAM, which
+no reset short of a power cycle clears: the phase the main loop was in,
+how long it had run, how many lines it had taken, its longest pass and
+its longest wait between passes; for a panic the location and message,
+for a hard fault the `pc` and `lr`. `diag` prints the same and this
+life's counters (USB state changes, the host's DTR and RTS, bytes each
+way, how long the writer has waited for the host, output dropped, motor
+power losses); the formats are in `docs/PROTOCOL.md`. The backend asks it
+at every connect and logs the answer, so `var/spinny.log` holds every
+boot reason the board has reported.
+
+A panic or a hard fault no longer spins until the watchdog fires: the
+handler disables interrupts, writes the record and resets the chip at
+once (`rp2040/src/diag.rs`), so the laser pin is an input, held by the
+board's pull resistor, within microseconds. A board that went quiet is
+best brought back with its RESET button, not a power cycle: the record
+survives the one and not the other.
+
+`mise run symbolize -- 0x10001234` turns a hard fault's `pc` or `lr`
+into a source line against the last release build in
+`target/thumbv6m-none-eabi/release/spinny-fw`; the build keeps its debug
+information for this.
+
 ## First bring-up
 
 Nothing here has run on a machine yet. Do it in this order, with the laser

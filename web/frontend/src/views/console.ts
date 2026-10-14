@@ -2,7 +2,7 @@
 
 import { button, el } from "../dom.ts";
 import { CONSOLE_LIMIT, type AppState } from "../state.ts";
-import type { ConsoleLine } from "../types.ts";
+import type { ConsoleLine, LogFile } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 const HISTORY = 50;
@@ -27,22 +27,25 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
         button("Resume ~", () => ctx.call(ctx.api.realtime("resume")), "btn btn-quiet btn-small"),
         button("Reset", () => ctx.call(ctx.api.realtime("reset")), "btn btn-danger btn-small"),
         button("Clear", () => { ctx.store.set({ console: [] }); }, "btn btn-quiet btn-small"),
-        button("Log", () => showLog(), "btn btn-quiet btn-small"),
+        button("Log", () => showLog("spinny"), "btn btn-quiet btn-small"),
+        button("Wire", () => showLog("wire"), "btn btn-quiet btn-small"),
         el("label", { class: "check", for: "show-polls", title: "Show the status polls the link sends on its own" }, polls, "polls"),
     );
 
     /**
-     * The tail of the backend's log into the console: what happened to the
-     * link, the runs and the probing, kept when no page was open to see it.
+     * The tail of one of the backend's logs into the console: its own, with
+     * what happened to the link, the runs and the probing, kept when no
+     * page was open to see it; or the wire's, every line sent and received
+     * with the time, polls included, for a machine that went quiet.
      */
-    async function showLog(): Promise<void> {
-        const lines = await ctx.call(ctx.api.log(100));
+    async function showLog(file: LogFile): Promise<void> {
+        const lines = await ctx.call(ctx.api.log(100, file));
         if (!lines) {
             return;
         }
         const entries: ConsoleLine[] = lines.map((text) => ({ dir: "rx", text: `# ${text}`, poll: false }));
         if (entries.length === 0) {
-            entries.push({ dir: "rx", text: "# the backend's log is empty", poll: false });
+            entries.push({ dir: "rx", text: `# the backend's ${file === "wire" ? "wire log" : "log"} is empty`, poll: false });
         }
         const current = ctx.store.get().console;
         const next = [...current, ...entries];

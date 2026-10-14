@@ -101,6 +101,8 @@ flowchart TB
         IO[USB CDC or TCP] --> LINES[realtime bytes and lines]
         LINES --> LOOP[main loop]
         LOOP --> TIMER[step timer]
+        LOOP --> DIAG[diag: boot reason, reset record in RAM, counters]
+        DIAG --> IO
     end
     subgraph core [spinny-core]
         LOOP --> MACHINE[machine: state, pending line, laser]

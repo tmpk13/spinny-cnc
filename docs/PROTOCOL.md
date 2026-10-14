@@ -35,7 +35,9 @@ turns the laser output into a spindle's (see [Spindle](#spindle)).
 - Unsolicited lines: `[spinny v<version> lines:16 blocks:32]` at connect and
   after a reset, `[MSG:<text>]` for notes, `ALARM:<code> <text>` when an
   alarm is raised, `<...>` status only in answer to `?`. `[PRB:<h>:<0|1>]`
-  comes just before the answer to a `probe`, as part of it.
+  comes just before the answer to a `probe`, as part of it. The board
+  follows the banner it prints at connect (not the one after a reset byte)
+  with `[MSG:boot <reason>]`, why it started: see Diagnostics.
 
 ## Realtime bytes
 
@@ -345,6 +347,55 @@ turns off a floor below it.
 | `version` | `[spinny v<version> ...]` |
 | `status` | same as `?` |
 | `help` | short command list |
+| `diag` | `ok`, then `[MSG:diag ...]` lines with why the board last started and this life's counters; see Diagnostics |
+
+## Diagnostics
+
+The board keeps a record in RAM that no reset short of a power cycle
+clears: where its main loop was, how long it had run, how many lines it
+had taken, and, when a panic or a hard fault ended it, the location and
+message or the faulting `pc` and `lr`. The next life reads it before
+anything else and prints, right after the banner at connect:
+
+```
+[MSG:boot power on]
+[MSG:boot reset pin]
+[MSG:boot forced reset in waiting after 12 s, 0 lines, pass max 310 us, gap max 900 us]
+[MSG:boot watchdog: the main loop stalled in poll after 1234 s, 27213 lines, pass max 820 us, gap max 1900 us]
+[MSG:boot panic in line after 56 s, 120 lines, pass max 300 us, gap max 900 us: core/src/machine.rs:1234: index out of bounds]
+[MSG:boot hard fault in poll after 56 s, 120 lines, pass max 300 us, gap max 900 us: pc 0x10001234 lr 0x10005679]
+```
+
+`forced reset` is a watchdog reset nothing on the board asked for: the
+bootloader after flashing, or `picotool reboot`. `watchdog` is the main
+loop stalling for 1.5 s; `pass max` is its longest pass and `gap max`
+the longest wait between two passes, both in microseconds, against that
+budget. The phase (`waiting`, `events`, `realtime`, `line`, `slide`,
+`poll`, `drivers`, `power`, `boot`) is what the loop was doing. A panic
+or a hard fault no longer spins until the watchdog fires: the handler
+disables interrupts, writes the record and resets the chip at once, so
+the laser pin falls back to an input within microseconds. A power cycle
+loses the record; the board's RESET button keeps it.
+
+`diag` is answered `ok` and followed by this life's counters:
+
+```
+[MSG:diag boot <the boot line's text>]
+[MSG:diag up 56 s in waiting, pass max 310 us, gap max 1200 us, 120 lines, 0 too long]
+[MSG:diag usb configured 1, deconfigured 0, resets 1, suspends 0, resumes 0, disabled 0, last 56000 ms ago, dtr 1 rts 1, control changes 2]
+[MSG:diag rx 3456 bytes, last 200 ms ago; tx 12345 bytes, dropped 0, writer idle, longest write 12 ms]
+[MSG:diag motor power lost 0 times]
+```
+
+`usb` counts the device state changes the host caused (a suspend is taken
+as the host going away); `dtr` and `rts` are the host's control lines,
+raised while a program holds the port open. `rx` is bytes from the host
+and when the last came; `tx` is bytes handed to the host, `dropped` the
+output lost because the host did not read fast enough (the 4 KB output
+ring drops its oldest), and the writer is `waiting for the host for N ms`
+while a packet sits unread in the endpoint, which is what a host that
+stopped reading looks like from here. The backend asks `diag` at every
+connect and logs the answer.
 
 ## Settings
 

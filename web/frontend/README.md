@@ -94,7 +94,7 @@ backend recorded during the last run. The status bar lists the controller
 first and polls the ports every 10 s while nothing is connected, with a
 toggle that hides the built-in system ports; it marks a machine whose
 last report is old, as the Position panel does, before the backend gives
-the link up. The console's *Log* shows the backend's log.
+the link up. The console's *Log* shows the backend's log, *Wire* the last lines over the wire with their times, polls included.
 
 The page has three tabs under the status bar, remembered per browser and
 set by `?page=cam` or `?page=config` in the address: *Machine*, the

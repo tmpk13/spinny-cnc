@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, Broadcast, create_app
 from spinny_web.link import Link, LinkTimeout
+from spinny_web.log import setup as setup_log
 
 SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" viewBox="0 0 40 40">
     <rect x="5" y="5" width="10" height="10" stroke="#ff0000" fill="none"/>
@@ -881,3 +883,48 @@ def test_a_kicad_upload_can_cut_a_paste_stencil(client):
     ]
     response = client.post("/api/jobs", files=files, data={"layer": "In1.Cu"})
     assert response.status_code == 400 and "has no layer In1.Cu" in response.text
+
+
+def _logged(records, text: str, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(text in record.getMessage() for record in records.records):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_connecting_asks_for_the_diagnostics_and_logs_the_machines_words(client, fake, log_records):
+    connect(client)
+    assert "diag" in fake.received_lines
+    assert _logged(log_records, "machine: diag fake firmware: no board, no reset record")
+    assert _logged(log_records, "machine banner: firmware v0.1.0, 16 line slots, 32 blocks")
+
+
+def test_the_log_route_serves_either_file_and_refuses_others(client, tmp_path):
+    setup_log(tmp_path, to_stderr=False)
+    connect(client)
+    wire = client.get("/api/log?file=wire").json()["lines"]
+    assert any(line.endswith(" tx diag") for line in wire), wire[-5:]
+    assert any(line.endswith(" -- link opened: socket://127.0.0.1:9999") for line in wire)
+    spinny = client.get("/api/log").json()["lines"]
+    assert any("link opened: socket://127.0.0.1:9999" in line for line in spinny)
+    assert client.get("/api/log?file=nope").status_code == 400
+
+
+def test_a_boot_the_firmware_did_not_mean_is_logged_as_an_error(tmp_path, log_records):
+    boot = "watchdog: the main loop stalled in poll after 5 s, 3 lines, pass max 1 us, gap max 2 us"
+    fake = FakeSerial(move_time=0.002, boot=boot)
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    app = create_app(backend, frontend=tmp_path / "no-dist")
+    with TestClient(app) as client:
+        connect(client)
+        assert _logged(log_records, f"machine: boot {boot}")
+        record = next(r for r in log_records.records if r.getMessage() == f"machine: boot {boot}")
+        assert record.levelno == logging.ERROR
+        assert backend.link is not None and backend.link.boot == boot

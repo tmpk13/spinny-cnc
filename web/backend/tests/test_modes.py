@@ -345,7 +345,8 @@ def test_a_milling_run_needs_the_depth_axis_and_streams_the_plunges(client, fake
         assert time.monotonic() < deadline
         time.sleep(0.01)
     assert client.get("/api/run").json()["state"] == "done"
-    sent = [line for line in fake.received_lines if not line.startswith(("$", "?", "status"))]
+    # The connect's own housekeeping (settings, polls, `diag`) is not the job's.
+    sent = [line for line in fake.received_lines if not line.startswith(("$", "?", "status", "diag"))]
     assert sent[:4] == ["go H2.0000", "spindle S700", "dwell T2000", "go R1.000 Z0.000"]
     assert "cut H-0.1000 F60" in sent and "cut H-0.2000 F60" in sent
     assert sent[-1] == "spindle off"

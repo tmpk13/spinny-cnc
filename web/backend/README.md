@@ -58,6 +58,8 @@ points; none of them is tracked.
 - `config.json`: the host tolerance, the milling clearance and spin-up, the last url and the probe settings.
 - `heightmap.json`: the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
 - `jobs/*.json`: one file per imported job.
+- `spinny.log`: the backend's log, rotated at 1 MB (`--log-level debug` for more): the link's opening and closing with what it last sent and heard, runs, probing, settings written, messages shown on the page and the machine's own messages, its boot reason and `diag` answer among them.
+- `wire.log`: every line sent and received with the time to the millisecond, the link's own status polls marked, rotated at 8 MB with four kept; the last lines before a machine went quiet.
 
 ## Architecture
 
@@ -108,7 +110,8 @@ classDiagram
         ResumeStore var/resume.json
     }
     class log {
-        setup(root) var/spinny.log, rotated
+        setup(root, level) var/spinny.log, rotated
+        wire_line / wire_note var/wire.log, every line with the time
         tail(path, lines)
     }
     class heightmap {

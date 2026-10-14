@@ -20,7 +20,7 @@ use embassy_rp::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_usb::class::cdc_acm::{CdcAcmClass, Receiver, Sender, State};
+use embassy_usb::class::cdc_acm::{CdcAcmClass, ControlChanged, Receiver, Sender, State};
 use embassy_usb::{Builder, Config, Handler, UsbDevice};
 use spinny_core::hal::Sink;
 use spinny_core::parser::Realtime;
@@ -28,6 +28,7 @@ use spinny_fw_logic::line::{Event as LineEvent, Line, LineAssembler};
 use spinny_fw_logic::out::{zlp_after, OutRing, PACKET};
 use static_cell::StaticCell;
 
+use crate::diag::{self, UsbEvent};
 use crate::Irqs;
 
 type UsbDrv = Driver<'static, USB>;
@@ -61,18 +62,22 @@ struct DeviceEvents;
 impl Handler for DeviceEvents {
     fn enabled(&mut self, enabled: bool) {
         if !enabled {
+            diag::usb(UsbEvent::Disabled);
             disconnected();
         }
     }
 
     fn reset(&mut self) {
+        diag::usb(UsbEvent::Reset);
         disconnected();
     }
 
     fn configured(&mut self, configured: bool) {
         if configured {
+            diag::usb(UsbEvent::Configured);
             let _ = EVENTS.try_send(Event::Connected);
         } else {
+            diag::usb(UsbEvent::Deconfigured);
             disconnected();
         }
     }
@@ -81,7 +86,10 @@ impl Handler for DeviceEvents {
         // With no VBUS sense on this board an unplug only ever shows as a
         // suspend, so a suspend is taken as the host going away.
         if suspended {
+            diag::usb(UsbEvent::Suspended);
             disconnected();
+        } else {
+            diag::usb(UsbEvent::Resumed);
         }
     }
 }
@@ -120,7 +128,6 @@ pub fn clear_output() {
 }
 
 /// Bytes dropped because the host did not read fast enough.
-#[allow(dead_code)]
 pub fn dropped_bytes() -> u32 {
     OUT_DROPPED.load(Ordering::Relaxed)
 }
@@ -165,12 +172,24 @@ pub fn start(spawner: &Spawner, usb: Peri<'static, USB>, serial: &'static str) {
     );
     builder.handler(HANDLER.init(DeviceEvents));
     let class = CdcAcmClass::new(&mut builder, STATE.init(State::new()), PACKET as u16);
-    let (sender, receiver) = class.split();
+    let (sender, receiver, control) = class.split_with_control();
     let device = builder.build();
 
     spawner.spawn(device_task(device).expect("usb device task"));
     spawner.spawn(reader_task(receiver).expect("usb reader task"));
     spawner.spawn(writer_task(sender).expect("usb writer task"));
+    spawner.spawn(control_task(control).expect("usb control task"));
+}
+
+/// Watches the host's DTR and RTS, which Linux raises when a program
+/// opens the port and drops when it closes it: whether anyone is
+/// listening is part of what `diag` reports. Nothing acts on them.
+#[embassy_executor::task]
+async fn control_task(control: ControlChanged<'static>) {
+    loop {
+        control.control_changed().await;
+        diag::control(control.dtr(), control.rts());
+    }
 }
 
 #[embassy_executor::task]
@@ -192,6 +211,7 @@ async fn reader_task(mut receiver: Receiver<'static, UsbDrv>) {
                 Either::First(Ok(n)) => n,
                 Either::First(Err(_)) | Either::Second(()) => break,
             };
+            diag::received(n);
             for &byte in &buf[..n] {
                 match assembler.push(byte) {
                     Some(LineEvent::Realtime(action)) => {
@@ -234,14 +254,22 @@ async fn writer_task(mut sender: Sender<'static, UsbDrv>) {
                     Either::Second(()) => break,
                 }
             }
+            diag::write_begin();
             match select(sender.write_packet(&buf[..n]), WRITER_RESTART.wait()).await {
-                Either::First(Ok(())) => {}
-                Either::First(Err(_)) | Either::Second(()) => break,
+                Either::First(Ok(())) => diag::write_end(n),
+                Either::First(Err(_)) | Either::Second(()) => {
+                    diag::write_end(0);
+                    break;
+                }
             }
             if zlp_after(n, remaining) {
+                diag::write_begin();
                 match select(sender.write_packet(&[]), WRITER_RESTART.wait()).await {
-                    Either::First(Ok(())) => {}
-                    Either::First(Err(_)) | Either::Second(()) => break,
+                    Either::First(Ok(())) => diag::write_end(0),
+                    Either::First(Err(_)) | Either::Second(()) => {
+                        diag::write_end(0);
+                        break;
+                    }
                 }
             }
         }

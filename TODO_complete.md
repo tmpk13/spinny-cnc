@@ -379,3 +379,18 @@
   `endstop`, `endstop_pin`, `endstop_invert`, `endstop_halt`, `home_pull`,
   `home_pos`, `home_travel` per axis; the page has *Home* and a *Homed*
   readout, `POST /api/home`; the virtual firmware takes `--stop`.
+- Crash diagnostics (2026-10-13): the board keeps a record in RAM across
+  resets (main loop phase, uptime, lines, longest pass and gap; a panic's
+  location and message or a hard fault's pc and lr), reads the reset
+  registers and prints `[MSG:boot <reason>]` after its banner; a panic or
+  hard fault writes the record and resets at once instead of spinning
+  until the watchdog; `diag` prints the boot reason and this life's
+  counters (USB state changes, DTR/RTS, bytes each way, the writer's wait
+  for the host, dropped output, motor power losses). The backend logs
+  the machine's own messages and asks `diag` at every connect, writes
+  every line over the link to `var/wire.log` with the time, logs what
+  it last sent and heard when a link closes, and takes `--log-level`;
+  `GET /api/log?file=wire` and a *Wire* button in the console read it;
+  the relay's socat prints its notices; `mise run usb-log`, `pi-logs`
+  and `symbolize`. The watchdog question is answered: 1.5 s, fed once a
+  main loop pass, and it is what brings a hung board back.

@@ -39,6 +39,7 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setV
 import { DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
+    LogFile,
     Board,
     CamGcodeResponse,
     CamJobResponse,
@@ -398,7 +399,7 @@ export const HELP_LINES = [
     "home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop",
     "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]",
     "spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S",
-    "enable | disable | unlock | version | status | help",
+    "enable | disable | unlock | version | status | help | diag",
     "$ | $name | $name=value | $save | $load | $defaults | $tmc",
     "realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel",
 ];
@@ -2609,6 +2610,12 @@ export class MockBackend implements Api, EventFeed {
                 return ["ok"];
             case "home":
                 return [...machine.home(tokens.join(" ")), "ok"];
+            case "diag":
+                bare();
+                // Answered at once; the board's counters follow the answer,
+                // as the drivers' report does.
+                this.later = ["[MSG:diag mock firmware: no board, no reset record]"];
+                return ["ok"];
             case "version":
                 bare();
                 return [`[spinny v${MOCK_VERSION} lines:${LINE_SLOTS} blocks:${PLANNER_BLOCKS}]`, "ok"];
@@ -3284,7 +3291,9 @@ export class MockBackend implements Api, EventFeed {
         return removed;
     }
 
-    async log(lines = 200): Promise<string[]> {
+    async log(lines = 200, file: LogFile = "spinny"): Promise<string[]> {
+        // One file stands for both here: the mock has no wire of its own.
+        void file;
         return this.consoleLog.slice(-lines);
     }
 

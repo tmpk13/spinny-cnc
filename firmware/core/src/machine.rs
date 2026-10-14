@@ -94,6 +94,8 @@ pub struct Events {
     pub driver_config: bool,
     /// `$tmc` was asked for: print the driver status.
     pub driver_report: bool,
+    /// `diag` was asked for: print the port's diagnostics.
+    pub diag: bool,
 }
 
 /// The line whose answer comes from a later `poll`.
@@ -605,6 +607,12 @@ impl<'a> Machine<'a> {
             }
             Command::Help => {
                 out.write_str(HELP);
+                Ok(true)
+            }
+            Command::Diag => {
+                // The counters live in the port, which prints them once
+                // this answer is out, as `$tmc` does with the drivers.
+                self.events.diag = true;
                 Ok(true)
             }
             Command::SettingsList => {
@@ -1880,7 +1888,7 @@ focus axis probe (h_axis=1): probe H [F]\n\
 home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop\n\
 dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]\n\
 spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S\n\
-enable | disable | unlock | version | status | help\n\
+enable | disable | unlock | version | status | help | diag\n\
 $ | $name | $name=value | $save | $load | $defaults | $tmc\n\
 realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel\n";
 
@@ -3050,7 +3058,10 @@ mod tests {
         rig.advance(POLL_US);
         assert_eq!(rig.laser.hz, 20000);
         assert_eq!(rig.line("$tmc"), "ok\n");
-        assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true });
+        assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true, diag: false });
+        assert_eq!(rig.line("diag"), "ok\n");
+        assert_eq!(rig.machine.take_events(), Events { diag: true, ..Events::default() });
+        assert_eq!(rig.line("diag now"), "error:2 bad word\n");
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
         assert!(listing.ends_with("z_home_travel=200\nstop_invert=0\nlimits=0\nok\n"));

@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import re
 import threading
 import time
@@ -69,7 +70,7 @@ from .link import (
     REALTIME_RESUME,
     REALTIME_STATUS,
 )
-from .log import log, setup as setup_log, tail as log_tail
+from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as log_tail, wire_line, wire_note
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
 from .resume import ResumeStore
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
@@ -603,6 +604,7 @@ class Backend:
         else:
             self.publish_message("info", f"connected to {url}, firmware v{link.banner.version}")
         log.info("link opened: %s", url)
+        wire_note(f"link opened: {url}")
         # Nothing says the focus axis is where it was: the machine may have
         # been powered off, or moved by hand, since the offset was set.
         self._frame_changed("connected")
@@ -611,7 +613,18 @@ class Backend:
             self.read_settings(force=True)
         except (LinkError, HTTPException):
             pass
+        self._ask_diag(link)
         return self.snapshot()
+
+    @staticmethod
+    def _ask_diag(link: Link) -> None:
+        """Asks the firmware for its diagnostics: why it last started and
+        its counters, which arrive as messages and so go to the log. An
+        older firmware refuses the line, which is as good an answer."""
+        try:
+            link.request("diag", timeout=1.0)
+        except LinkError:
+            pass
 
     def disconnect(self) -> dict:
         with self._lock:
@@ -853,9 +866,15 @@ class Backend:
             self._check_restart()
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "console":
+            data = event.data
+            wire_line(str(data.get("dir", "")), str(data.get("text", "")), bool(data.get("poll")))
             self.broadcast.publish_threadsafe({"type": "console", **event.data})
         elif event.kind == "message":
             text = event.data.get("text", "")
+            # The machine's own words go to the log with the backend's: a
+            # reset, an alarm, why it booted, its diagnostics.
+            (log.error if event.data.get("level") == "error" else log.info)("machine: %s", text)
+            wire_note(f"message: {text}")
             if text == "reset":
                 self._soft_resets += 1
             self.broadcast.publish_threadsafe({"type": "message", **event.data})
@@ -866,9 +885,13 @@ class Backend:
             if text.startswith("tmc ") and text.endswith(" lost motor power, position may be off"):
                 self._frame_changed("the motors lost power")
         elif event.kind == "banner":
+            banner = event.data
+            log.info("machine banner: firmware v%s, %s line slots, %s blocks", banner.version, banner.lines, banner.blocks)
+            wire_note(f"banner: firmware v{banner.version}")
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "disconnect":
             reason = event.data.get("reason", "")
+            wire_note(f"link closed: {reason}")
             # A close the user asked for is news, not a fault.
             self.publish_message("info" if reason == "disconnected" else "error", f"link closed: {reason}")
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
@@ -2730,8 +2753,11 @@ def create_app(
         return {"resume": None}
 
     @app.get("/api/log")
-    def read_log(lines: int = 200):
-        return {"lines": log_tail(backend.root / "spinny.log", lines)}
+    def read_log(lines: int = 200, file: str = "spinny"):
+        path = log_path(backend.root, file)
+        if path is None:
+            raise HTTPException(status_code=400, detail=f"no log named {file!r}: spinny or wire")
+        return {"lines": log_tail(path, lines)}
 
     @app.post("/api/run/hold")
     def run_hold():
@@ -2871,9 +2897,15 @@ def main(argv: list[str] | None = None) -> int:
         " itself as the controller (else the last url used); a controller that goes quiet or is replugged is"
         " taken up again every few seconds, unless the operator closed the link from the page",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=LEVELS,
+        default=os.environ.get("SPINNY_LOG_LEVEL", "info").lower(),
+        help="how much the backend writes to var/spinny.log and stderr (default: info, or SPINNY_LOG_LEVEL)",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
-    setup_log(args.data)
+    setup_log(args.data, level=args.log_level)
     log.info("spinny-web %s starting on %s:%d", __version__, args.host, args.port)
     backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam)
     backend.autoconnect = args.connect

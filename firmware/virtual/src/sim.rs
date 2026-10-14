@@ -265,6 +265,11 @@ impl Sim {
         if kick {
             self.next_tick = Some(now);
         }
+        // The driver events are the board's; `diag` is answered here with
+        // what a simulation can say, so a host asking gets its lines.
+        if self.machine.take_events().diag {
+            report::message("diag virtual firmware: no board, no reset record", &mut self.out);
+        }
         self.trace.sample(now, self.machine.joint(), self.beam_duty());
         if let Some(due) = self.report_at {
             if Instant::now() >= due {

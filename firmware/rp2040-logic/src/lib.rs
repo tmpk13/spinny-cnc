@@ -3,6 +3,7 @@
 //! pins its build target; this one is a plain workspace member.
 #![cfg_attr(not(test), no_std)]
 
+pub mod diag;
 pub mod flash;
 pub mod laser;
 pub mod line;

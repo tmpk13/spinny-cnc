@@ -20,6 +20,7 @@
 #![no_main]
 
 mod board;
+mod diag;
 mod flash;
 mod step_timer;
 mod tmc;
@@ -33,12 +34,12 @@ use embassy_rp::uart::BufferedInterruptHandler;
 use embassy_rp::usb::InterruptHandler;
 use embassy_rp::watchdog::Watchdog;
 use embassy_time::{Duration, Instant, Ticker};
-use panic_halt as _;
 use spinny_core::hal::{LaserPort, Store};
 use spinny_core::machine::Machine;
 use spinny_core::settings::{Settings, BLOB_LEN};
 use spinny_core::stepper::{self, Shared};
 use spinny_core::{parser, report};
+use spinny_fw_logic::diag::Phase;
 use static_cell::StaticCell;
 
 bind_interrupts!(pub struct Irqs {
@@ -53,6 +54,8 @@ const WATCHDOG_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    // What the last life left, before anything here can fail.
+    diag::init();
     let p = embassy_rp::init(Default::default());
 
     // The stored settings decide which pins the laser output, the probe
@@ -112,15 +115,24 @@ async fn main(spawner: Spawner) {
     watchdog.start(WATCHDOG_TIMEOUT);
 
     let mut ticker = Ticker::every(LOOP_PERIOD);
+    let mut previous_pass = Instant::now();
     loop {
+        diag::phase(Phase::Waiting);
         ticker.next().await;
+        let pass_start = Instant::now();
+        diag::pass_begin(pass_start, previous_pass);
+        previous_pass = pass_start;
         watchdog.feed(WATCHDOG_TIMEOUT);
         board::set_step_width(machine.settings().step_us);
         board::set_sockets(machine.settings());
 
+        diag::phase(Phase::Events);
         while let Ok(event) = usb::EVENTS.try_receive() {
             match event {
-                usb::Event::Connected => report::banner(&mut sink),
+                usb::Event::Connected => {
+                    report::banner(&mut sink);
+                    diag::boot_message(&mut sink);
+                }
                 usb::Event::Disconnected => {
                     usb::clear_output();
                     machine.disconnected(&mut laser);
@@ -136,13 +148,21 @@ async fn main(spawner: Spawner) {
         // line it was meant for finds that line waiting, not last pass's
         // count, and is kept for it.
         machine.note_lines_waiting(usb::LINES.len());
+        diag::phase(Phase::Realtime);
         while let Ok(action) = usb::REALTIME.try_receive() {
             machine.realtime(action, &mut laser, &mut sink);
         }
         if machine.ready_for_line() {
+            diag::phase(Phase::Line);
             match usb::LINES.try_receive() {
-                Ok(usb::Inbound::Line(line)) => machine.submit(line.as_str(), &mut sink),
-                Ok(usb::Inbound::TooLong) => report::error(parser::Error::TooLong, &mut sink),
+                Ok(usb::Inbound::Line(line)) => {
+                    diag::line();
+                    machine.submit(line.as_str(), &mut sink);
+                }
+                Ok(usb::Inbound::TooLong) => {
+                    diag::long_line();
+                    report::error(parser::Error::TooLong, &mut sink);
+                }
                 Err(_) => {}
             }
         }
@@ -152,16 +172,22 @@ async fn main(spawner: Spawner) {
         // The cross slide steps from here rather than from the step
         // timer: nothing is tied to its timing, and it is capped at a
         // rate this loop carries. Before the poll that ends its jog.
+        diag::phase(Phase::Slide);
         machine.poll_slide(now_us, &mut slide);
+        diag::phase(Phase::Poll);
         if machine.poll(now_us, &mut port, &mut laser, &mut store, &mut sink) {
             step_timer::kick();
         }
+        diag::phase(Phase::Drivers);
         let events = machine.take_events();
         if events.driver_config {
             tmc::configure_from(machine.settings());
         }
         if events.driver_report {
             tmc::request_report();
+        }
+        if events.diag {
+            diag::report(&mut sink);
         }
         // A driver that lost its motor supply forgot its configuration and
         // its motor its holding torque. Whatever runs stops as a reset
@@ -170,9 +196,12 @@ async fn main(spawner: Spawner) {
         // is refused rather than run. The loss is seen at the next driver
         // poll, so a supply back within one poll period drives the output
         // at the job's duty until then.
+        diag::phase(Phase::Power);
         if tmc::take_power_lost() {
+            diag::power_lost();
             usb::LINES.clear();
             machine.power_lost(&mut laser, &mut sink);
         }
+        diag::pass_end(pass_start);
     }
 }

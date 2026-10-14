@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -645,3 +646,74 @@ def test_a_restart_while_a_refused_version_line_waits_is_a_restart():
         assert pending.wait(2.0) and not pending.ok
     finally:
         lk.close()
+
+
+def test_a_boot_message_is_kept_and_a_fault_is_an_error():
+    boot = "panic in poll after 12 s, 100 lines, pass max 300 us, gap max 900 us: core/src/machine.rs:1: x"
+    fake = FakeSerial(boot=boot)
+    events = Collector()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    lk.subscribe(events)
+    lk.open()
+    assert wait_for(lambda: lk.boot is not None, 2.0)
+    assert lk.boot == boot
+    message = events.of("message")[0]
+    assert message["level"] == "error"
+    assert message["text"] == f"boot {boot}"
+    lk.close()
+    assert linkmod.boot_is_fault("boot watchdog: the main loop stalled in poll after 3 s")
+    assert linkmod.boot_is_fault("boot hard fault in line after 1 s: pc 0x1 lr 0x2")
+    assert not linkmod.boot_is_fault("boot power on")
+    assert not linkmod.boot_is_fault("boot reset pin")
+    assert not linkmod.boot_is_fault("boot forced reset in boot after 0 s")
+    assert not linkmod.boot_is_fault("reset")
+
+
+def test_a_quiet_boot_message_is_news():
+    fake = FakeSerial(boot="power on")
+    events = Collector()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    lk.subscribe(events)
+    lk.open()
+    assert wait_for(lambda: lk.boot == "power on", 2.0)
+    assert events.of("message")[0]["level"] == "info"
+    lk.close()
+
+
+def test_a_close_logs_what_the_link_saw(log_records):
+    fake = FakeSerial()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=False)
+    lk.open()
+    assert lk.request("go R1")[-1] == "ok"
+    lk.close()
+    record = next(r for r in log_records.records if "link fake:// closed: closed" in r.getMessage())
+    assert record.levelno == logging.INFO
+    text = record.getMessage()
+    assert "1 lines sent, 0 unanswered, 0 polls unanswered" in text
+    assert "last sent 'go R1', last heard 'ok'" in text
+
+
+def test_a_vanished_port_is_logged_as_an_error(log_records):
+    fake = FakeSerial()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=True)
+    lk.open()
+    fake.vanish()
+    assert wait_for(lambda: not lk.is_open, 2.0)
+    errors = [r.getMessage() for r in log_records.records if r.levelno == logging.ERROR]
+    assert any(m.startswith("port fake:// failed:") for m in errors), errors
+    assert any("link fake:// closed: port error" in m for m in errors), errors
+
+
+def test_a_machine_that_stops_answering_is_logged_with_its_last_words(log_records):
+    fake = FakeSerial()
+    lk = Link("fake://", open_port=fake_opener(fake), poll=True, stall=0.3)
+    lk.open()
+    assert lk.request("go R1")[-1] == "ok"
+    assert wait_for(lambda: lk.status is not None, 2.0), "a poll was answered first"
+    # The port stays open but nothing comes back: the polls go unanswered.
+    fake.mute()
+    assert wait_for(lambda: not lk.is_open, 3.0)
+    assert lk.close_reason is not None and lk.close_reason.startswith("no answer from the machine")
+    text = next(r.getMessage() for r in log_records.records if r.levelno == logging.ERROR and "closed: no answer" in r.getMessage())
+    assert "1 polls unanswered" in text and "last sent 'go R1'" in text
+    assert "last heard '<Idle" in text and "last status '<Idle" in text

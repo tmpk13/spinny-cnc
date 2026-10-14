@@ -94,6 +94,7 @@ class FakeSerial:
         banner_at_open: bool = True,
         version: str = "0.1.0",
         hold_ramp: float = 0.0,
+        boot: str | None = None,
     ) -> None:
         self.credits = credits
         self.blocks = blocks
@@ -105,6 +106,9 @@ class FakeSerial:
         # reset lands on a moving machine and raises the alarm.
         self.hold_ramp = hold_ramp
         self.version = version
+        # What the board says after its banner about why it started, as
+        # `[MSG:boot <boot>]`; None for a firmware that says nothing.
+        self.boot = boot
         self.timeout = 0.05
         self.is_open = True
         self.received_lines: list[str] = []
@@ -118,6 +122,7 @@ class FakeSerial:
         # so a test can tell the lines that came after one.
         self.received_at_reset: list[int] = []
         self.max_outstanding = 0
+        self.muted = False
         self.joint = [0.0, 0.0]
         # The cross slide, which moves on its own and never with R or A.
         self.z = 0.0
@@ -162,6 +167,8 @@ class FakeSerial:
         self._worker.start()
         if banner_at_open:
             self._emit(self.banner())
+            if self.boot is not None:
+                self._emit(f"[MSG:boot {self.boot}]")
 
     # --- the serial port interface the link uses ------------------------
 
@@ -202,6 +209,11 @@ class FakeSerial:
         self._answers.put(None)
         with self._rx_cond:
             self._rx_cond.notify_all()
+
+    def mute(self) -> None:
+        """The port stays open and takes bytes, but nothing comes back: a
+        firmware whose writer went quiet."""
+        self.muted = True
 
     def vanish(self) -> None:
         """The device is unplugged: every call raises from now on."""
@@ -389,6 +401,11 @@ class FakeSerial:
             return [self.status(), "ok"]
         if keyword == "help":
             return ["go cut jog jogto dwell mode laser set enable disable unlock", "ok"]
+        if keyword == "diag":
+            if rest:
+                return ["error:2 bad word"]
+            # The board prints its counters after the answer, as `$tmc` does.
+            return ["ok", "[MSG:diag fake firmware: no board, no reset record]"]
         if keyword.startswith("$"):
             return self._setting(text.strip())
         if keyword == "probe":
@@ -648,6 +665,8 @@ class FakeSerial:
     # --- output, one byte at a time ------------------------------------
 
     def _emit(self, line: str) -> None:
+        if self.muted:
+            return
         self._out.put(line + "\n")
 
     def _feed(self) -> None:

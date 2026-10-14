@@ -71,6 +71,8 @@ pub enum Command<'a> {
     SettingsLoad,
     SettingsDefaults,
     DriverReport,
+    /// `diag`: the port prints its diagnostics after the `ok`.
+    Diag,
 }
 
 /// Protocol error codes; `code()` is the number after `error:`.
@@ -448,6 +450,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
         b"version" => bare(tokens, Command::Version),
         b"status" => bare(tokens, Command::Status),
         b"help" => bare(tokens, Command::Help),
+        b"diag" => bare(tokens, Command::Diag),
         _ => Err(Error::UnknownCommand),
     }
 }
@@ -831,6 +834,9 @@ mod tests {
         assert_eq!(parse("$defaults"), Ok(Command::SettingsDefaults));
         assert_eq!(parse("$tmc"), Ok(Command::DriverReport));
         assert_eq!(parse("$ tmc"), Ok(Command::DriverReport));
+        assert_eq!(parse("diag"), Ok(Command::Diag));
+        assert_eq!(parse("DIAG ; counters"), Ok(Command::Diag));
+        assert_eq!(parse("diag all"), Err(Error::BadWord));
         assert_eq!(parse("$nope"), Ok(Command::SettingGet("nope")));
         assert_eq!(parse("$save=1"), Ok(Command::SettingSet("save", "1")));
         assert_eq!(parse("$=5"), Err(Error::UnknownSetting));

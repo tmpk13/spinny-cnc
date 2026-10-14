@@ -19,6 +19,7 @@ import type {
     JobSummary,
     JobsResponse,
     JogRequest,
+    LogFile,
     LogResponse,
     MachinesResponse,
     Mode,
@@ -127,7 +128,7 @@ export interface Api {
     runStop(): Promise<void>;
     run(): Promise<Progress | null>;
     /** The tail of the backend's log, oldest first. */
-    log(lines?: number): Promise<string[]>;
+    log(lines?: number, file?: LogFile): Promise<string[]>;
 
     heightMap(): Promise<HeightMapState>;
     /** Probes the grid, replacing the map; the head's height now is the travel height. */
@@ -410,8 +411,11 @@ export class HttpApi implements Api {
         await this.request("DELETE", "/api/resume");
     }
 
-    async log(lines = 200): Promise<string[]> {
-        const response = await this.request<LogResponse>("GET", `/api/log?lines=${encodeURIComponent(String(lines))}`);
+    async log(lines = 200, file: LogFile = "spinny"): Promise<string[]> {
+        const response = await this.request<LogResponse>(
+            "GET",
+            `/api/log?lines=${encodeURIComponent(String(lines))}&file=${encodeURIComponent(file)}`,
+        );
         return response.lines ?? [];
     }
 
