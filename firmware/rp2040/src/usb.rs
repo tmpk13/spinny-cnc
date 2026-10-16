@@ -109,6 +109,16 @@ fn disconnected() {
     WRITER_RESTART.signal(());
 }
 
+/// The program holding the port closed it: the line it left half sent
+/// and the packet it was not reading go with it, so the next program's
+/// first line is its own. The device stays configured, so the reader
+/// and the writer come straight back for it.
+fn host_closed() {
+    let _ = EVENTS.try_send(Event::HostClosed);
+    READER_RESTART.signal(());
+    WRITER_RESTART.signal(());
+}
+
 const OUT_CAPACITY: usize = 4096;
 static OUT: Mutex<RefCell<OutRing<OUT_CAPACITY>>> = Mutex::new(RefCell::new(OutRing::new()));
 static OUT_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -204,7 +214,11 @@ async fn control_task(control: ControlChanged<'static>) {
         diag::control(dtr, control.rts());
         if dtr != open {
             open = dtr;
-            let _ = EVENTS.try_send(if dtr { Event::HostOpened } else { Event::HostClosed });
+            if dtr {
+                let _ = EVENTS.try_send(Event::HostOpened);
+            } else {
+                host_closed();
+            }
         }
     }
 }
