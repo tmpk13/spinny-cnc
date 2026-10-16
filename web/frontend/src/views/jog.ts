@@ -250,7 +250,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         }, "btn btn-quiet");
         const last = button("Last known", () => {
             const snapshot = ctx.store.get().snapshot;
-            const position = snapshot.position ?? snapshot.resume?.position;
+            const reported = snapshot.position ?? null;
+            const position = reported ?? snapshot.resume?.position;
             if (!position) {
                 ctx.toast("error", "the machine has not reported a position yet");
                 return;
@@ -258,6 +259,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
             for (const field of fields) {
                 const value = position[field.axis.axis];
                 field.input.value = value === null || value === undefined ? "" : String(value);
+            }
+            if (reported) {
+                // How old the numbers are, and what the machine was doing:
+                // a position reported mid-move is less certain than one at rest.
+                const when = new Date(reported.at);
+                const time = Number.isNaN(when.getTime()) ? reported.at : when.toLocaleString();
+                ctx.toast("info", `last reported ${time}, ${reported.state}`);
             }
         }, "btn btn-quiet");
         last.title = "Fill in the last position the machine reported: its last report before the link closed, or a run's record";
