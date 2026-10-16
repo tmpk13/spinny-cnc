@@ -375,8 +375,10 @@ class Link:
         if self.poll:
             self._poller = threading.Thread(target=self._poll_loop, name="link-poll", daemon=True)
             self._poller.start()
-        # A banner sent at connect may have gone by before the port opened,
-        # so the credit and version are asked for when none shows up.
+        # The board greets the open of its port with its banner (the DTR
+        # the open raises), and the virtual firmware greets each client;
+        # a host that raised no DTR, or a board behind a path that lost
+        # it, shows nothing, so the credit and version are then asked for.
         deadline = time.monotonic() + 0.3
         while self.banner is None and time.monotonic() < deadline:
             time.sleep(0.02)
