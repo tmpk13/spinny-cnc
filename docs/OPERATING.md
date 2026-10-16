@@ -14,7 +14,9 @@ read from: a copper layer, or F.Paste, which with deposit burns the paste
 openings out of a film laid where the board would be, a solder paste
 stencil. A gerber is its own layer.
 Open `http://localhost:8000`, connect to the board (or to
-`socket://127.0.0.1:2323` for the virtual firmware), jog the beam over the
+`socket://127.0.0.1:2323` for the virtual firmware, or to
+`socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
+relay-pi -- user@host`), jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
@@ -191,7 +193,9 @@ every few seconds. What to read, in order:
    and its last status report. `machine: boot ...` lines say why the
    board started every time it was connected: a power-on, the reset pin,
    the watchdog (the main loop stalled), a panic with its location, a hard
-   fault with its `pc`, or a forced reset after flashing.
+   fault with its `pc`, or a forced reset after flashing. The board says
+   it at every open of its port, so the same line at a later connect is
+   logged as news; a fault is an error the first time only.
 2. The console's *Wire* (or `var/wire.log`): every line each way with the
    time to the millisecond, the polls marked. The last `rx` line is the
    last thing the machine said; what follows is what was sent into the

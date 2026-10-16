@@ -472,6 +472,8 @@ class Backend:
         # its focus axis at zero wherever the head was.
         self._soft_resets = 0
         self._restarts_seen: int | None = None
+        # The last `boot ...` line reported, so the same one is not a fault twice.
+        self._boot_reported: str | None = None
         # The focus axis frame, counted up whenever it may have changed, and
         # the frame the stored map's heights were probed in (None for a map
         # from before). Focus here ties heights from another frame to this
@@ -879,6 +881,13 @@ class Backend:
             self.broadcast.publish_threadsafe({"type": "console", **event.data})
         elif event.kind == "message":
             text = event.data.get("text", "")
+            if text.startswith("boot "):
+                # The board says why it started at every open of its port,
+                # so a fault in the life before this one would come back as
+                # an error at every reconnect; said once, it is news after.
+                if text == self._boot_reported:
+                    event = Event("message", {**event.data, "level": "info"})
+                self._boot_reported = text
             # The machine's own words go to the log with the backend's: a
             # reset, an alarm, why it booted, its diagnostics.
             (log.error if event.data.get("level") == "error" else log.info)("machine: %s", text)

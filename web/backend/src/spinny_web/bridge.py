@@ -253,9 +253,11 @@ class Bridge:
             await self._notice(writer, f"no controller: {exc}")
             return
         session = Session(self, reader, writer, port, name)
-        self.session = session
         log.info("%s: opened %s", who, name)
         await self._notice(writer, f"opened {name}")
+        # Published only once it runs, so a client arriving during the
+        # notice finds either no session or one that will report its end.
+        self.session = session
         reason = await session.run()
         log.info("%s: closed %s: %s", who, name, reason)
         await self._notice(writer, reason)

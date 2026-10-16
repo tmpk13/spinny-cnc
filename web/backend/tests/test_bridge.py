@@ -19,13 +19,15 @@ from spinny_web import bridge as bridgemod
 from spinny_web.bridge import Bridge, BridgeError, find_device
 
 BANNER = b"[spinny v0.1.0 lines:16 blocks:32]\n"
+STATUS = b"<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>\n"
 
 
 class FakeBoard:
     """The master side of a pty; the bridge opens the slave as the device.
-    Answers `version` with the banner and any other line with `ok`;
-    `?` bytes are realtime and dropped. `reading = False` is a board that
-    takes nothing: the pty fills and the slave's writes stop."""
+    Answers `version` with the banner and `ok`, `?` with a status report,
+    a line starting with `;` with nothing and any other line with `ok`.
+    `reading = False` is a board that takes nothing: the pty fills and
+    the slave's writes stop."""
 
     def __init__(self) -> None:
         self.master, self.slave = pty.openpty()
@@ -51,6 +53,8 @@ class FakeBoard:
             except OSError:
                 return
             self.received += data
+            for _ in range(data.count(b"?")):
+                self._write(STATUS)
             buffer += data.replace(b"?", b"")
             while b"\n" in buffer:
                 line, _, rest = bytes(buffer).partition(b"\n")
@@ -58,10 +62,13 @@ class FakeBoard:
                 self._answer(line.strip())
 
     def _answer(self, line: bytes) -> None:
-        if not line:
+        if not line or line.startswith(b";"):
             return
+        self._write(BANNER + b"ok\n" if line == b"version" else b"ok\n")
+
+    def _write(self, data: bytes) -> None:
         try:
-            os.write(self.master, BANNER if line == b"version" else b"ok\n")
+            os.write(self.master, data)
         except OSError:
             pass
 
@@ -188,7 +195,7 @@ def test_a_device_that_takes_nothing_is_given_up_and_the_next_client_served(boar
     board.reading = False
     # Far more than the pty holds, so the device's writes stop; the client
     # is held once the bridge's own backlog is full, so it sends from a thread.
-    flood = threading.Thread(target=lambda: _send_quietly(sock, b"?" * 1000, 400), daemon=True)
+    flood = threading.Thread(target=lambda: _send_quietly(sock, b";" * 999 + b"\n", 400), daemon=True)
     flood.start()
     text = read_until(sock, b"took nothing", timeout=6.0)
     assert f"[MSG:bridge {board.path} took nothing for 0.5 s]".encode() in text
@@ -197,7 +204,8 @@ def test_a_device_that_takes_nothing_is_given_up_and_the_next_client_served(boar
     board.reading = True
     again = connect(bridge)
     assert b"opened" in read_until(again, b"]\n")
-    again.sendall(b"version\n")
+    # The flood may have left a partial line in the board; end it first.
+    again.sendall(b"\nversion\n")
     assert BANNER in read_until(again, b"[spinny", timeout=5.0)
     again.close()
 
@@ -258,3 +266,25 @@ def test_find_device_with_no_by_id_folder(monkeypatch, tmp_path):
     monkeypatch.setattr(bridgemod, "BY_ID", tmp_path / "missing")
     with pytest.raises(BridgeError):
         find_device("auto")
+
+
+def test_the_backends_link_talks_through_the_bridge_and_hears_why_it_closed(board, start):
+    """The whole path: the link's socket url, the bridge, the device, and
+    the bridge's notice naming the reason when the board goes away."""
+    from spinny_web.link import Link
+
+    bridge = start(board.path, stall=0.5)
+    events: list = []
+    lk = Link(f"socket://127.0.0.1:{bridge.port}", poll=True, stall=1.0)
+    lk.subscribe(events.append)
+    lk.open()
+    assert lk.banner is not None and lk.banner.version == "0.1.0"
+    assert lk.request("go R1")[-1] == "ok"
+    assert any(e.kind == "message" and e.data["text"] == f"bridge opened {board.path}" for e in events)
+    board.vanish()
+    deadline = time.monotonic() + 3.0
+    while lk.is_open and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not lk.is_open
+    assert lk.close_reason is not None and f"bridge: {board.path} gone" in lk.close_reason, lk.close_reason
+    lk.close()

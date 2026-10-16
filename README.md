@@ -38,7 +38,8 @@ toolpath library pulls in `laser-sweep` from `../kicad-to-gcode`.
 | `mise run cam -- cam/mill-3axis.toml board.kicad_pcb` | a design through a CAM profile, gcode for its controller in `var/out/` |
 | `mise run test` | every suite; `test-firmware`, `test-toolpath`, `test-backend`, `test-frontend`, `test-sim` run one |
 
-Connect the page to the board, or to the virtual firmware's socket, and
+Connect the page to the board, to the virtual firmware's socket, or to a
+Pi's bridge forwarded by `relay-pi` (`socket://127.0.0.1:2324`), and
 pick the machine on the Config tab: a file in `machines/` describes
 the axes, their scales and limits, the kinematics (polar or cartesian) and
 the tool (laser or spindle), and loading it writes every firmware setting.

@@ -772,3 +772,44 @@ def test_a_reader_stuck_for_several_stalls_ends_the_link_with_its_own_reason():
     lk.open()
     assert wait_for(lambda: not lk.is_open, 3.0)
     assert lk.close_reason is not None and "reader has not run" in lk.close_reason
+
+
+class _LastWordsPort:
+    """A port that hands over its final bytes and fails on the next read,
+    as a socket does when the far end closes after a last line."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._data = bytearray(b"".join(lines))
+        self.is_open = True
+        self.timeout = 0.05
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self._data)
+
+    def read(self, size: int = 1) -> bytes:
+        if not self._data:
+            raise linkmod.serial.SerialException("read failed: socket disconnected")
+        out = bytes(self._data[:size])
+        del self._data[:size]
+        return out
+
+    def write(self, data: bytes) -> int:
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+def test_a_last_line_before_the_port_fails_is_still_heard():
+    port = _LastWordsPort([b"[MSG:bridge /dev/ttyACM0 gone: end of file]\n"])
+    events = Collector()
+    lk = Link("socket://127.0.0.1:1", open_port=lambda url: port, poll=False)
+    lk.subscribe(events)
+    with pytest.raises(LinkError):
+        lk.open()
+    assert any(m["text"] == "bridge /dev/ttyACM0 gone: end of file" for m in events.of("message"))
+    assert lk.close_reason is not None and "bridge: /dev/ttyACM0 gone: end of file" in lk.close_reason

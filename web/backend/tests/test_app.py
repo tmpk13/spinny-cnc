@@ -915,10 +915,10 @@ def test_the_log_route_serves_either_file_and_refuses_others(client, tmp_path):
 
 def test_a_boot_the_firmware_did_not_mean_is_logged_as_an_error(tmp_path, log_records):
     boot = "watchdog: the main loop stalled in poll after 5 s, 3 lines, pass max 1 us, gap max 2 us"
-    fake = FakeSerial(move_time=0.002, boot=boot)
     backend = Backend(
         root=tmp_path,
-        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        # A fresh port per connect, the same board behind it.
+        link_factory=lambda url: Link(url, open_port=fake_opener(FakeSerial(move_time=0.002, boot=boot))),
         jobs_dir=tmp_path / "jobs",
         config_path=tmp_path / "config.json",
     )
@@ -929,6 +929,13 @@ def test_a_boot_the_firmware_did_not_mean_is_logged_as_an_error(tmp_path, log_re
         record = next(r for r in log_records.records if r.getMessage() == f"machine: boot {boot}")
         assert record.levelno == logging.ERROR
         assert backend.link is not None and backend.link.boot == boot
+        # The board says it again at the next open of its port: the same
+        # life, so news now, not the fault a second time.
+        client.post("/api/disconnect")
+        connect(client)
+        assert wait_for(lambda: any(r.levelno == logging.INFO and r.getMessage() == f"machine: boot {boot}" for r in log_records.records))
+        levels = [r.levelno for r in log_records.records if r.getMessage() == f"machine: boot {boot}"]
+        assert levels[0] == logging.ERROR and levels[-1] == logging.INFO
 
 
 def test_the_last_position_the_machine_reported_is_kept_across_sessions(client, fake, tmp_path):

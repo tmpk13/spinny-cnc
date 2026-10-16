@@ -657,6 +657,8 @@ class Link:
         buffer = bytearray()
         port = self._port
         while not self._closed.is_set():
+            chunk = b""
+            failure: Exception | None = None
             try:
                 chunk = port.read(1)
                 if chunk:
@@ -665,20 +667,16 @@ class Link:
                         chunk += port.read(waiting)
                         waiting = port.in_waiting
             except PORT_ERRORS as exc:
-                if not self._closed.is_set():
-                    reason = f"port error: {exc}"
-                    notice = self._bridge_notice
-                    if notice is not None and time.monotonic() - notice[1] < BRIDGE_NOTICE_SECONDS:
-                        reason = f"{reason} (bridge: {notice[0]})"
-                    log.error("port %s failed: %s", self.url, reason)
-                    self._fail(reason)
-                return
+                # What came in before the port failed is still the last
+                # word of the machine, or of a bridge saying why it closed
+                # the socket: handled before the failure is.
+                failure = exc
             self._reader_seen = time.monotonic()
-            if not chunk:
+            if not chunk and failure is None:
                 continue
             self.rx_bytes += len(chunk)
             buffer += chunk
-            while True:
+            while chunk:
                 cut = buffer.find(b"\n")
                 if cut < 0:
                     if len(buffer) > MAX_PARTIAL:
@@ -700,6 +698,15 @@ class Link:
                     # be answered again.
                     self._fail(f"reader failed: {exc!r}")
                     return
+            if failure is not None:
+                if not self._closed.is_set():
+                    reason = f"port error: {failure}"
+                    notice = self._bridge_notice
+                    if notice is not None and time.monotonic() - notice[1] < BRIDGE_NOTICE_SECONDS:
+                        reason = f"{reason} (bridge: {notice[0]})"
+                    log.error("port %s failed: %s", self.url, reason)
+                    self._fail(reason)
+                return
 
     def _handle_line(self, text: str) -> None:
         self.last_heard = time.monotonic()
@@ -752,7 +759,8 @@ class Link:
             level = "error" if body.endswith("position may be off") or boot_is_fault(body) else "info"
             if body.startswith("boot "):
                 self.boot = body[5:]
-            elif body.startswith("bridge "):
+            elif body.startswith("bridge ") and not body.startswith("bridge opened "):
+                # Every notice but the greeting says why the socket closes.
                 self._bridge_notice = (body[7:], time.monotonic())
             self._publish(Event("message", {"level": level, "text": body}))
         elif text.startswith("ALARM:"):
