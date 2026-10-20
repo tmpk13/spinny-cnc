@@ -4,10 +4,10 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatFixed, parseNumber } from "../format.ts";
-import { isMilling, outputDuty } from "../profile.ts";
+import { isDispensing, isMilling, outputDuty } from "../profile.ts";
 import { boardOfJoint, lerpJoint } from "../kinematics.ts";
 import type { AppState } from "../state.ts";
-import type { Grid, HeightMap, HeightMapState, Job, ProbeRequest, ProbeSettings, TouchMode } from "../types.ts";
+import type { Grid, HeightMap, HeightMapState, Job, PadProbeRequest, ProbeRequest, ProbeSettings, TouchMode } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** A grid when there is neither a map nor a job to take one from. */
@@ -190,6 +190,23 @@ export function signed(value: number): string {
     return value > 0 && Number(text) !== 0 ? `+${text}` : text;
 }
 
+/** The pads' default area floor and point count, as the backend takes them. */
+export const PADS_MIN_AREA = 0.5;
+export const PADS_MAX_POINTS = 100;
+
+/** A pad map: probed at a job's pads, its grid filled in from them. */
+export function isPadMap(map: HeightMap | null): map is HeightMap & { points: [number, number][]; point_heights: (number | null)[] } {
+    return map !== null && Array.isArray(map.points) && Array.isArray(map.point_heights);
+}
+
+/** How many points the map has, and how many are probed: its pads for a pad map, its grid cells otherwise. */
+export function mapCounts(map: HeightMap): { probed: number; total: number } {
+    if (isPadMap(map)) {
+        return { probed: map.point_heights.filter((value) => value !== null).length, total: map.points.length };
+    }
+    return { probed: map.heights.flat().filter((value) => value !== null).length, total: gridPointCount(map.grid) };
+}
+
 /** Probed everywhere and told its focus offset: what a compensated run needs besides covering the job. */
 export function mapUsable(map: HeightMap | null): boolean {
     return map !== null && map.focus_set && mapComplete(map);
@@ -214,14 +231,30 @@ export function gridPointCount(grid: Grid): number {
     return count;
 }
 
-/** Probed at every point of its grid that is to be probed. */
+/** Probed at every point of its grid that is to be probed, or at every pad of a pad map. */
 export function mapComplete(map: HeightMap | null): boolean {
-    return map !== null && map.heights.every((row, iy) => row.every((value, ix) => value !== null || !gridWanted(map.grid, ix, iy)));
+    if (map === null) {
+        return false;
+    }
+    if (isPadMap(map)) {
+        return map.point_heights.every((value) => value !== null);
+    }
+    return map.heights.every((row, iy) => row.every((value, ix) => value !== null || !gridWanted(map.grid, ix, iy)));
 }
 
 /** Probed in part: some points still to come, which probing can go on with. */
 export function mapPartial(map: HeightMap | null): boolean {
-    return map !== null && !mapComplete(map) && map.heights.some((row) => row.some((value) => value !== null));
+    if (map === null || mapComplete(map)) {
+        return false;
+    }
+    return mapCounts(map).probed > 0;
+}
+
+/** What the progress line says of the point being probed: a pad's place on a pad map, a point's otherwise. */
+export function probingText(probe: { done: number; total: number; pad?: number | null; seconds: number; remaining?: number | null }, padMap: boolean): string {
+    const left = aboutTime(probe.remaining);
+    const which = padMap ? `pad ${(probe.pad ?? probe.done) + 1} of ${probe.total}` : `point ${probe.done + 1} of ${probe.total}`;
+    return `Probing ${which}, ${formatFixed(probe.seconds, 0)} s${left ? `, ${left} left` : ""}`;
 }
 
 /** "about 4 min" for a time in seconds; empty for none. */
@@ -268,10 +301,10 @@ export function mapStatus(state: HeightMapState | null): { text: string; kind: s
     if (map === null) {
         return { text: "no map", kind: "none" };
     }
-    const stats = heightStats(map);
-    const total = gridPointCount(map.grid);
-    if (stats === null || stats.probed < total) {
-        return { text: `${stats?.probed ?? 0}/${total} probed`, kind: "partial" };
+    const { probed, total } = mapCounts(map);
+    const pads = isPadMap(map) ? " pads" : "";
+    if (probed < total) {
+        return { text: `${probed}/${total}${pads} probed`, kind: "partial" };
     }
     return { text: map.focus_set ? "ready" : "focus not set", kind: map.focus_set ? "ready" : "partial" };
 }
@@ -464,6 +497,31 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     const continueButton = button("Continue", () => continueProbe(), "btn");
     const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger");
     const probeNote = el("p", { class: "muted hint" });
+    // The pads: for a probe that must land on copper, the board is probed
+    // at the selected job's pads instead of a grid.
+    const minAreaField = numberField({ value: PADS_MIN_AREA, min: 0.05, max: 1000, step: 0.1, width: "5.5rem" });
+    minAreaField.setAttribute("aria-label", "Least pad area");
+    const maxPointsField = numberField({ value: PADS_MAX_POINTS, min: 2, max: 2500, step: 1, width: "5.5rem" });
+    maxPointsField.setAttribute("aria-label", "Most pads probed");
+    const padsPlanButton = button("Plan", () => planPads(), "btn btn-quiet");
+    const padsProbeButton = button("Probe pads", () => startPads(false), "btn btn-primary");
+    const padsContinueButton = button("Continue", () => startPads(true), "btn hidden");
+    const padsNote = el("span", { class: "muted hm-pads-note" });
+    const padsRequest = (resume: boolean): PadProbeRequest | string => {
+        const job = ctx.store.get().job;
+        if (!job) {
+            return "select a job to probe its pads";
+        }
+        const minArea = parseNumber(minAreaField.value);
+        const maxPoints = parseNumber(maxPointsField.value);
+        if (minArea === null || minArea <= 0) {
+            return "the least pad area is in mm^2, above 0";
+        }
+        if (maxPoints === null || !Number.isInteger(maxPoints) || maxPoints < 2) {
+            return "the most pads probed is a whole number, 2 or more";
+        }
+        return { job: job.id, min_area: minArea, max_points: maxPoints, resume };
+    };
     // One probe under the head: the map tied to the frame in use after a
     // power cycle or a position set, or the surface made H 0 without a map.
     const probeHereMap = button("Probe here: tie map", () => probeHere("map"), "btn btn-quiet");
@@ -558,6 +616,19 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "button-row" }, modeField, marginLabel, fit, estimateNote),
         el("div", { class: "button-row" }, probeButton, continueButton, stopButton),
         probeNote,
+        el("div", { class: "button-row hm-pads" },
+            el("span", { class: "choice-label" }, "Pads"),
+            labeled("Min area mm^2", minAreaField, "labeled inline"),
+            labeled("Max points", maxPointsField, "labeled inline"),
+            padsPlanButton,
+            padsProbeButton,
+            padsContinueButton,
+            padsNote,
+        ),
+        el("p", { class: "muted hint" },
+            "Probe pads touches the selected job's pads instead of a grid, for a probe that must land on copper (a conductive probe,"
+            + " or the tool itself): every pad of at least the area, the most spread out of them over the count, in a short tour."
+            + " The map's grid is filled in from the pads probed."),
         el("div", { class: "button-row" }, probeHereMap, probeNearestMap, probeHereZero),
         el("p", { class: "muted hint" }, PROBE_HERE_HINT),
         mapBox,
@@ -593,6 +664,42 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const state = await ctx.call(ctx.api.probe(request));
+        if (state) {
+            ctx.store.set({ heightMap: state });
+        }
+    }
+
+    async function planPads(): Promise<void> {
+        const request = padsRequest(false);
+        if (typeof request === "string") {
+            ctx.toast("error", request);
+            return;
+        }
+        const plan = await ctx.call(ctx.api.planPads(request));
+        if (!plan) {
+            return;
+        }
+        const skipped = plan.skipped > 0 ? `, ${plan.skipped} of ${plan.pads} pads under the area` : `, of ${plan.pads} pads`;
+        padsNote.textContent = `${plan.points.length} points${skipped}, ${aboutTime(plan.seconds)}`;
+    }
+
+    async function startPads(resume: boolean): Promise<void> {
+        const request = padsRequest(resume);
+        if (typeof request === "string") {
+            ctx.toast("error", request);
+            return;
+        }
+        const plan = await ctx.call(ctx.api.planPads(request));
+        if (!plan) {
+            return;
+        }
+        const question = resume
+            ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? The head travels at the height it has now, so it must clear the board.`
+            : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? The head travels between them at the height it has now, so it must clear the board, and it replaces the current map.`;
+        if (!(await askConfirm(question, resume ? "Continue" : "Probe pads"))) {
+            return;
+        }
+        const state = await ctx.call(ctx.api.probePads(request));
         if (state) {
             ctx.store.set({ heightMap: state });
         }
@@ -733,7 +840,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         shownGridOf = map;
         const stats = heightStats(map);
         const probing = state?.probe?.state === "running" ? state.probe.point : null;
-        const showValues = map.grid.nx <= LABELED_POINTS;
+        const showValues = map.grid.nx <= LABELED_POINTS && !isPadMap(map);
         const xs = Array.from({ length: map.grid.nx }, (_, i) => map.grid.x0 + (map.grid.x1 - map.grid.x0) * i / (map.grid.nx - 1));
         const ys = Array.from({ length: map.grid.ny }, (_, j) => map.grid.y0 + (map.grid.y1 - map.grid.y0) * j / (map.grid.ny - 1));
         const table = el("table", { class: "hm-table", "aria-label": "Board height at each probe point, rows from the top of the board" });
@@ -793,6 +900,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const focusAxis = machine?.joint.h !== null && machine?.joint.h !== undefined;
         const idle = machine?.state === "Idle";
         const milling = isMilling(state.snapshot);
+        // The needle stands in for the tool on a dispenser: it is touched
+        // off like one, with no beam to focus.
+        const touchOff = milling || isDispensing(state.snapshot);
         // The tool can be the probe on a spindle machine: a probe run with
         // it turning mills a hole at every point. A stopped spindle on an
         // active-low output reports its pin at full duty.
@@ -800,20 +910,26 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         body.disabled = !connected;
         const canProbe = connected && focusAxis && idle && !probing && !busy && !spinning;
         setLocked(probeButton, !canProbe);
-        const partial = mapPartial(heightMap?.map ?? null);
-        continueButton.classList.toggle("hidden", !partial);
-        setLocked(continueButton, !canProbe || !partial);
+        const stored = heightMap?.map ?? null;
+        const padMap = isPadMap(stored);
+        const partial = mapPartial(stored);
+        continueButton.classList.toggle("hidden", !partial || padMap);
+        setLocked(continueButton, !canProbe || !partial || padMap);
+        padsContinueButton.classList.toggle("hidden", !partial || !padMap);
+        setLocked(padsContinueButton, !canProbe || !partial || !padMap || !state.job);
+        setLocked(padsProbeButton, !canProbe || !state.job);
+        setLocked(padsPlanButton, !state.job);
         setLocked(probeHereMap, !canProbe || !heightMap?.map);
         setLocked(probeNearestMap, !canProbe || !heightMap?.map);
         setLocked(probeHereZero, !canProbe);
         probeHereZero.textContent = milling ? "Probe here: set Z 0" : "Probe here: set H 0";
         setLocked(stopButton, !probing);
         setLocked(focusHere, !connected || !heightMap?.map || !idle || probing);
-        focusHere.textContent = milling ? "Touch off here" : "Focus here";
-        focusHint.textContent = milling ? TOUCH_HINT : FOCUS_HINT;
+        focusHere.textContent = touchOff ? "Touch off here" : "Focus here";
+        focusHint.textContent = touchOff ? TOUCH_HINT : FOCUS_HINT;
         const offsetText = focusLabel.querySelector(".labeled-text");
         if (offsetText) {
-            offsetText.textContent = milling ? "Touch-off offset mm" : "Focus offset mm";
+            offsetText.textContent = touchOff ? "Touch-off offset mm" : "Focus offset mm";
         }
         setLocked(setFocus, !heightMap?.map || probing);
         setLocked(clearButton, !heightMap?.map || probing);
@@ -826,10 +942,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             probeNote.textContent = `Probing ${probe.state}${probe.error ? `: ${probe.error}` : ""}`;
         } else if (probing && probe && probe.done >= probe.total) {
             // The last point is in; the head rises back before probing ends.
-            probeNote.textContent = `Probed all ${probe.total} points, the head is rising, ${formatFixed(probe.seconds, 0)} s`;
+            probeNote.textContent = `Probed all ${probe.total} ${padMap ? "pads" : "points"}, the head is rising, ${formatFixed(probe.seconds, 0)} s`;
         } else if (probing && probe) {
-            const left = aboutTime(probe.remaining);
-            probeNote.textContent = `Probing point ${probe.done + 1} of ${probe.total}, ${formatFixed(probe.seconds, 0)} s${left ? `, ${left} left` : ""}`;
+            probeNote.textContent = probingText(probe, padMap);
         } else if (spinning) {
             probeNote.textContent = "The spindle is turning: stop it before probing.";
         } else {
@@ -845,7 +960,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
                 focusField.value = text;
             }
             focusShown = text;
-            focusState.textContent = focusStateText(map, milling);
+            focusState.textContent = focusStateText(map, touchOff);
         } else {
             focusState.textContent = "";
         }
@@ -867,7 +982,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     }, ["heightMap"]);
     publishDraft();
     requestEstimate();
-    ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress", "settings"]);
+    // The pads' buttons want a selected job, so the job is watched too.
+    ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress", "settings", "job"]);
     ctx.store.subscribe((state) => showQueue(state), ["settings"]);
     showQueue(ctx.store.get());
     renderData(ctx.store.get());

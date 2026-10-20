@@ -61,7 +61,8 @@ const LASER_SETTINGS: Record<string, Bounds> = {
     speed: [0, MAX_VALUE, false],
     height: [-1000, 1000, true],
 };
-const REQUIRED: Record<Tool, string[]> = { spindle: ["rpm", "feed"], laser: ["power", "speed"] };
+/** The keys a tool of each kind must give; a CAM profile has no dispenser tools. */
+const REQUIRED: Partial<Record<Tool, string[]>> = { spindle: ["rpm", "feed"], laser: ["power", "speed"] };
 const OPERATION_KEYS = ["name", "source", "tool", "enabled", "passes", "loops", "pattern", "fill", "marks", "match"];
 
 // --- reading --------------------------------------------------------------------
@@ -351,7 +352,7 @@ function readTool(reader: Reader, table: TomlTable, index: number): CamTool {
     if (passes !== null) {
         settings["passes"] = passes;
     }
-    for (const key of REQUIRED[kind]) {
+    for (const key of REQUIRED[kind] ?? []) {
         if (settings[key] === undefined) {
             throw reader.fail(section, key, "is needed");
         }

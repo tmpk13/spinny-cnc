@@ -2,7 +2,7 @@
 // coupon for the formats only the real backend can read, placement and stats.
 
 import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
-import type { Anchor, Board, CenterRequest, Group, Job, Joint, Path, Point, Stats, UploadOptions } from "../types.ts";
+import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
 type Matrix = [number, number, number, number, number, number];
@@ -70,6 +70,19 @@ export function checkDepth(depth: number, what = "depth"): void {
         throw new Error(`${what} must be above 0 and at most ${formatG(MAX_DEPTH)} mm`);
     }
 }
+
+/** How much paste a dispensed pad gets, mm, as the backend bounds it. */
+export const MIN_THICKNESS = 0.01;
+export const MAX_THICKNESS = 5;
+export const DEFAULT_THICKNESS = 0.12;
+
+export function checkThickness(thickness: number, what = "thickness"): void {
+    if (!(Number.isFinite(thickness) && thickness >= MIN_THICKNESS && thickness <= MAX_THICKNESS)) {
+        throw new Error(`${what} must be ${MIN_THICKNESS} to ${MAX_THICKNESS} mm`);
+    }
+}
+
+const TOOL_NAMES: readonly string[] = ["laser", "spindle", "dispenser"];
 
 export function checkPasses(passes: number, what = "passes"): void {
     if (!(Number.isInteger(passes) && passes >= 1 && passes <= MAX_GROUP_PASSES)) {
@@ -770,8 +783,17 @@ function circlePath(cx: number, cy: number, r: number, steps = 24): Path {
     return path;
 }
 
-/** A small coupon: three pads, a track, isolation loops, drill marks and an outline. */
-export function demoCoupon(): { groups: { label: string; paths: Path[] }[]; copper: Path[]; outline: Path[] } {
+/** What the demo coupon stands for besides its cuts: its pads with their areas and its holes with their diameters. */
+export interface CouponGeometry {
+    groups: { label: string; paths: Path[] }[];
+    copper: Path[];
+    outline: Path[];
+    pads: PadPoint[];
+    holes: HolePoint[];
+}
+
+/** A small coupon: three 3 mm pads with a hole each, a track, isolation loops, drill marks and an outline. */
+export function demoCoupon(): CouponGeometry {
     const pads: Point[] = [[-12, 0], [0, 0], [12, 0]];
     const copper: Path[] = pads.map(([x, y]) => rectPath(x - 1.5, y - 1.5, x + 1.5, y + 1.5));
     copper.push(rectPath(-10.5, -0.3, -1.5, 0.3));
@@ -784,7 +806,41 @@ export function demoCoupon(): { groups: { label: string; paths: Path[] }[]; copp
         { label: "drill marks", paths: pads.map(([x, y]) => circlePath(x, y, 0.4, 16)) },
         { label: "outline", paths: [rectPath(-18, -12, 18, 12)] },
     ];
-    return { groups, copper, outline: [rectPath(-18, -12, 18, 12)] };
+    return {
+        groups,
+        copper,
+        outline: [rectPath(-18, -12, 18, 12)],
+        pads: pads.map(([x, y]) => [x, y, 9] as PadPoint),
+        holes: pads.map(([x, y]) => [x, y, 0.8] as HolePoint),
+    };
+}
+
+/**
+ * A short tour over points: from the first, always on to the nearest one
+ * not yet visited. The backend orders a board's pads the same way, so the
+ * head does not cross the board for every dot.
+ */
+export function shortTour<T extends [number, number, ...number[]]>(points: T[]): T[] {
+    const left = points.slice();
+    const out: T[] = [];
+    let here: [number, number] | null = null;
+    while (left.length > 0) {
+        let best = 0;
+        if (here !== null) {
+            let bestDistance = Infinity;
+            left.forEach((point, index) => {
+                const distance = Math.hypot(point[0] - here![0], point[1] - here![1]);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = index;
+                }
+            });
+        }
+        const next = left.splice(best, 1)[0]!;
+        out.push(next);
+        here = [next[0], next[1]];
+    }
+    return out;
 }
 
 function bounds(paths: Path[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
@@ -807,12 +863,12 @@ function shift(paths: Path[], dx: number, dy: number): Path[] {
     return paths.map((path) => path.map(([x, y]) => [x + dx, y + dy]));
 }
 
-/** Places the geometry: `center` puts the middle of everything on the axis, then the offset applies. */
+/** Places the geometry: `center` puts the middle of everything on the axis, then the offset applies; `shift` says how far it all moved. */
 export function placeJob(
-    geometry: { groups: { label: string; paths: Path[] }[]; copper?: Path[]; outline?: Path[] },
+    geometry: { groups: { label: string; paths: Path[] }[]; copper?: Path[]; outline?: Path[]; pads?: PadPoint[]; holes?: HolePoint[] },
     anchor: Anchor,
     offset: Board,
-): { groups: { label: string; paths: Path[] }[]; copper: Path[]; outline: Path[] } {
+): { groups: { label: string; paths: Path[] }[]; copper: Path[]; outline: Path[]; pads: PadPoint[]; holes: HolePoint[]; shift: [number, number] } {
     const all: Path[] = [...(geometry.copper ?? []), ...(geometry.outline ?? [])];
     for (const group of geometry.groups) {
         all.push(...group.paths);
@@ -830,6 +886,9 @@ export function placeJob(
         groups: geometry.groups.map((group) => ({ label: group.label, paths: shift(group.paths, dx, dy) })),
         copper: shift(geometry.copper ?? [], dx, dy),
         outline: shift(geometry.outline ?? [], dx, dy),
+        pads: (geometry.pads ?? []).map(([x, y, area]) => [x + dx, y + dy, area] as PadPoint),
+        holes: (geometry.holes ?? []).map(([x, y, diameter]) => [x + dx, y + dy, diameter] as HolePoint),
+        shift: [dx, dy],
     };
 }
 
@@ -1023,6 +1082,17 @@ export function computeStats(groups: Group[], limits: RateLimits): Stats {
                 minRadius = Math.min(minRadius, pathMinRadius(path));
             }
         }
+        // A group of dots (one point each, as a dispense import makes them)
+        // is a tour of rapids: the time is the travel, there is no length.
+        if (group.paths.length > 0 && group.paths.every((path) => path.length === 1)) {
+            for (const path of group.paths) {
+                const target = jointOfBoard({ x: path[0]![0], y: path[0]![1] }, joint);
+                minutes += moveMinutes(joint, target, null, limits.rRate, limits.aRate);
+                moves += 1;
+                joint = target;
+            }
+            continue;
+        }
         for (const step of groupMoves(group, joint, limits.tolerance)) {
             if (step.kind === "go") {
                 minutes += moveMinutes(joint, step.target, null, limits.rRate, limits.aRate);
@@ -1109,12 +1179,22 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
         const passes = raw["passes"] === undefined ? 1 : finiteNumber(raw["passes"], `${what}: passes`);
         const depth = raw["depth"] === undefined ? DEFAULT_DEPTH : finiteNumber(raw["depth"], `${what}: depth`);
         const plunge = raw["plunge"] === undefined ? DEFAULT_PLUNGE : finiteNumber(raw["plunge"], `${what}: plunge`);
+        const thickness = raw["thickness"] === undefined ? DEFAULT_THICKNESS : finiteNumber(raw["thickness"], `${what}: thickness`);
         checkSpeed(speed, `${what}: speed`);
         checkPower(power, `${what}: power`);
         checkPower(minPower, `${what}: min power`);
         checkPasses(passes, `${what}: passes`);
         checkDepth(depth, `${what}: depth`);
         checkSpeed(plunge, `${what}: plunge`);
+        checkThickness(thickness, `${what}: thickness`);
+        const tool = raw["tool"] ?? null;
+        if (tool !== null && (typeof tool !== "string" || !TOOL_NAMES.includes(tool))) {
+            throw new Error(`${what}: tool must be one of ${TOOL_NAMES.join(", ")}`);
+        }
+        const areas = raw["areas"] === undefined ? [] : raw["areas"];
+        if (!Array.isArray(areas) || !areas.every((area) => typeof area === "number" && Number.isFinite(area) && area >= 0)) {
+            throw new Error(`${what}: areas must be a list of numbers`);
+        }
         const paths = pathsOf(raw["paths"], what);
         const joints = pathsOf(raw["joints"], what);
         if (joints.some((poly) => poly.length < 2)) {
@@ -1129,6 +1209,9 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
             enabled: raw["enabled"] === undefined ? true : Boolean(raw["enabled"]),
             depth,
             plunge,
+            thickness,
+            tool: tool as Tool | null,
+            areas: areas as number[],
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
         };
         if (joints.length > 0) {
@@ -1150,12 +1233,39 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
     }
     const given = data["name"];
     const name = typeof given === "string" && given !== "" && given !== "job" ? given : stem;
+    const rotation = data["rotation"] === undefined ? 0 : finiteNumber(data["rotation"], "rotation");
+    const triples = (value: unknown, what: string): [number, number, number][] => {
+        if (value === undefined || value === null) {
+            return [];
+        }
+        if (!Array.isArray(value) || !value.every((item) => Array.isArray(item) && item.length === 3 && item.every((v) => typeof v === "number" && Number.isFinite(v)))) {
+            throw new Error(`not a job: ${what} must be a list of [x, y, value] triples`);
+        }
+        return value as [number, number, number][];
+    };
+    let design: DesignMap | null = null;
+    const rawDesign = data["design"];
+    if (rawDesign !== undefined && rawDesign !== null) {
+        if (!isRecord(rawDesign) || !Array.isArray(rawDesign["shift"]) || rawDesign["shift"].length !== 2) {
+            throw new Error("not a job: design must have a shift of two numbers, a rotation and board");
+        }
+        design = {
+            shift: [finiteNumber(rawDesign["shift"][0], "design shift x"), finiteNumber(rawDesign["shift"][1], "design shift y")],
+            rotation: rawDesign["rotation"] === undefined ? 0 : finiteNumber(rawDesign["rotation"], "design rotation"),
+            // A job file carries no board file: the camera cannot look for it.
+            board: false,
+        };
+    }
     const job: Job = {
         id,
         name,
         source: "json",
         spot,
         offset,
+        rotation,
+        pads: triples(data["pads"], "pads"),
+        holes: triples(data["holes"], "holes"),
+        design,
         groups,
         outline: pathsOf(data["outline"], "outline"),
         copper: pathsOf(data["copper"], "copper"),
@@ -1191,8 +1301,8 @@ function layerWord(layer: string | null): string {
     const kind = layer.includes(".") ? layer.slice(layer.lastIndexOf(".") + 1) : layer;
     return words[kind] ?? layer;
 }
-/** What a board import burns, and what a deposit may fill with, as the backend names them. */
-const MODES: string[] = ["isolate", "deposit"];
+/** What a board import makes, and what a deposit may fill with, as the backend names them. */
+const MODES: string[] = ["isolate", "deposit", "dispense"];
 const FILL_CHOICES: string[] = ["contour", "radial", "rings", "lines"];
 
 /** Turns an uploaded file into a job the way the backend would, as far as the browser can. */
@@ -1216,7 +1326,12 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     if (!MODES.includes(mode)) {
         throw new Error(`mode must be one of ${MODES.join(", ")}`);
     }
-    const layer = options.layer ?? "F.Cu";
+    const thickness = options.thickness ?? DEFAULT_THICKNESS;
+    if (mode === "dispense") {
+        checkThickness(thickness);
+    }
+    // A dispense is solder paste on a board already made: its layer is the paste's unless said otherwise.
+    const layer = options.layer ?? (mode === "dispense" ? "F.Paste" : "F.Cu");
     if (layer.length > MAX_LAYER_LENGTH || !LAYER_NAME.test(layer)) {
         throw new Error(`layer must be a KiCad layer name such as F.Cu or F.Paste, not ${JSON.stringify(layer)}`);
     }
@@ -1233,6 +1348,9 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     if (mode === "isolate" && options.fill !== undefined) {
         throw new Error("fill is for a deposit; isolation takes clear instead");
     }
+    if (mode === "dispense" && (clear !== "off" || options.fill !== undefined)) {
+        throw new Error("a dispense lays a dot on every pad: it takes neither clear nor fill");
+    }
 
     if (extension === "json") {
         let data: unknown;
@@ -1246,20 +1364,39 @@ export function buildJob(id: string, name: string, text: string, options: Upload
 
     let source: string;
     let note: string | null = null;
-    let geometry: ParsedGeometry & { copper?: Path[]; outline?: Path[] };
+    let geometry: ParsedGeometry & { copper?: Path[]; outline?: Path[]; pads?: PadPoint[]; holes?: HolePoint[] };
     // A board job keeps the layer it was cut from: a KiCad board's chosen
     // one, a gerber's from its name when the name says.
     let jobLayer: string | null = null;
-    if (extension === "kicad_pcb" || GERBER_EXTENSIONS.includes(extension)) {
-        geometry = demoCoupon();
+    const board = extension === "kicad_pcb" || GERBER_EXTENSIONS.includes(extension);
+    if (mode === "dispense" && !board) {
+        throw new Error("mode dispense is for a gerber or a KiCad board: a dot is laid on every pad of its layer");
+    }
+    if (board) {
+        const coupon = demoCoupon();
         source = extension === "kicad_pcb" ? "kicad" : "gerber";
         jobLayer = extension === "kicad_pcb" ? layer : layerOf(name);
         const word = layerWord(jobLayer);
-        note = mode === "deposit"
-            ? `mock backend: ${word} geometry and deposition need the real backend, showing a demo coupon`
-            : clear === "off"
-                ? `mock backend: ${word} geometry needs the real backend, showing a demo coupon`
-                : `mock backend: ${word} geometry and clearing need the real backend, showing a demo coupon`;
+        if (mode === "dispense") {
+            // One dot per pad, in a short tour over the board; the outline
+            // and the copper stay for the preview, and nothing is cut.
+            const tour = shortTour(coupon.pads);
+            geometry = {
+                groups: [{ label: "paste dots", paths: tour.map(([x, y]) => [[x, y]] as Path) }],
+                copper: coupon.copper,
+                outline: coupon.outline,
+                pads: tour,
+                holes: coupon.holes,
+            };
+            note = `mock backend: ${word} pads need the real backend, showing a demo coupon's`;
+        } else {
+            geometry = coupon;
+            note = mode === "deposit"
+                ? `mock backend: ${word} geometry and deposition need the real backend, showing a demo coupon`
+                : clear === "off"
+                    ? `mock backend: ${word} geometry needs the real backend, showing a demo coupon`
+                    : `mock backend: ${word} geometry and clearing need the real backend, showing a demo coupon`;
+        }
     } else {
         switch (extension) {
             case "svg":
@@ -1287,6 +1424,14 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         enabled: true,
         paths: group.paths,
     }));
+    if (mode === "dispense") {
+        const dots = groups[0];
+        if (dots) {
+            dots.tool = "dispenser";
+            dots.thickness = thickness;
+            dots.areas = placed.pads.map((pad) => pad[2]);
+        }
+    }
     const job: Job = {
         id,
         name: name.replace(/\.[^.]+$/, ""),
@@ -1294,6 +1439,11 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         layer: jobLayer,
         spot,
         offset,
+        rotation: 0,
+        pads: board ? placed.pads : [],
+        holes: board ? placed.holes : [],
+        // The design's frame is the coupon's own here, so the map is the placement.
+        design: board ? { shift: placed.shift, rotation: 0, board: extension === "kicad_pcb" } : null,
         groups,
         outline: placed.outline,
         copper: placed.copper,

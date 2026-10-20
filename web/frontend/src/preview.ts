@@ -826,10 +826,19 @@ export class Preview {
             }
             const spot = job.spot > 0 ? job.spot : 0.1;
             job.groups.forEach((group, index) => {
-                ctx.strokeStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
+                const color = colors.groups[index % colors.groups.length] ?? colors.axis;
+                ctx.strokeStyle = color;
+                ctx.fillStyle = color;
                 ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
                 ctx.lineWidth = Math.max(spot * scale, 1.2);
-                this.strokePaths(ctx, frame, group.paths);
+                this.strokePaths(ctx, frame, group.paths.filter((path) => path.length !== 1));
+                // A path of one point is a dot: a drill, or a dot of paste
+                // the size of its pad.
+                group.paths.forEach((path, dot) => {
+                    if (path.length === 1) {
+                        this.fillDot(ctx, frame, path[0]!, dotRadius(group.areas?.[dot], spot), scale);
+                    }
+                });
             });
             ctx.globalAlpha = 1;
             if (job.outline.length > 0) {
@@ -897,22 +906,45 @@ export class Preview {
                     this.polyline(ctx, frame, Array.from({ length: grid.ny }, (_, iy) => raised(iy * grid.nx + ix)));
                 }
             }
-            points.forEach(([x, y], index) => {
-                const top = raised(index);
-                const probed = heights !== null && (heights[Math.floor(index / grid.nx)]?.[index % grid.nx] ?? null) !== null;
-                const p = project(frame, this.width, this.height, top ?? [x, y, 0]);
-                if (!p) {
-                    return;
-                }
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-                if (probed) {
-                    ctx.fillStyle = top && top[2] !== 0 ? (top[2] < 0 ? colors.low : colors.high) : colors.probe;
-                    ctx.fill();
-                } else {
-                    ctx.stroke();
-                }
-            });
+            // A pad map's points are the pads probed, not the grid's cells:
+            // drawn on the board, filled once probed.
+            const pads = heights !== null && map?.points && map.point_heights ? map : null;
+            if (pads && pads.points && pads.point_heights) {
+                const padHeights = pads.point_heights;
+                pads.points.forEach(([x, y], index) => {
+                    const height = padHeights[index] ?? null;
+                    const top: Vec3 = height !== null && spread ? [x, y, (height - spread.mean) * stretch] : [x, y, 0];
+                    const p = project(frame, this.width, this.height, top);
+                    if (!p) {
+                        return;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                    if (height !== null) {
+                        ctx.fillStyle = top[2] !== 0 ? (top[2] < 0 ? colors.low : colors.high) : colors.probe;
+                        ctx.fill();
+                    } else {
+                        ctx.stroke();
+                    }
+                });
+            } else {
+                points.forEach(([x, y], index) => {
+                    const top = raised(index);
+                    const probed = heights !== null && (heights[Math.floor(index / grid.nx)]?.[index % grid.nx] ?? null) !== null;
+                    const p = project(frame, this.width, this.height, top ?? [x, y, 0]);
+                    if (!p) {
+                        return;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                    if (probed) {
+                        ctx.fillStyle = top && top[2] !== 0 ? (top[2] < 0 ? colors.low : colors.high) : colors.probe;
+                        ctx.fill();
+                    } else {
+                        ctx.stroke();
+                    }
+                });
+            }
         }
         ctx.globalAlpha = 1;
         return exaggeration;
@@ -953,6 +985,17 @@ export class Preview {
             drawn = true;
         }
         return drawn;
+    }
+
+    /** A filled circle on the board at `point`, `radius` mm across the board but at least a couple of pixels. */
+    private fillDot(ctx: CanvasRenderingContext2D, frame: Frame, point: Point, radius: number, scale: number): void {
+        const p = project(frame, this.width, this.height, [point[0], point[1], 0]);
+        if (!p) {
+            return;
+        }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(radius * scale, 1.5), 0, Math.PI * 2);
+        ctx.fill();
     }
 
     private strokePaths(ctx: CanvasRenderingContext2D, frame: Frame, paths: Path[]): void {
@@ -1081,6 +1124,14 @@ export class Preview {
             this.disposers.push(() => media.removeEventListener?.("change", handler));
         }
     }
+}
+
+/** A dot's radius on the board, mm: that of a circle of its pad's area, or half the spot without one. */
+export function dotRadius(area: number | undefined, spot: number): number {
+    if (area !== undefined && area > 0) {
+        return Math.sqrt(area / Math.PI);
+    }
+    return spot / 2;
 }
 
 function sameJoint(a: Joint | null, b: Joint | null): boolean {

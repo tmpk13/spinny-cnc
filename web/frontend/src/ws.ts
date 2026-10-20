@@ -99,6 +99,10 @@ export function parseEvent(raw: unknown): WsEvent | null {
             return { type, data: data as DataOf<"heightmap"> };
         case "message":
             return { type, data: data as DataOf<"message"> };
+        case "camera":
+            return { type, data: data as DataOf<"camera"> };
+        case "align":
+            return { type, data: data as DataOf<"align"> };
         default:
             return null;
     }

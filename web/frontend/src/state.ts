@@ -1,6 +1,8 @@
 // One store for the page. Views subscribe to the keys they draw from.
 
 import type {
+    AlignState,
+    CameraState,
     ConsoleLine,
     Grid,
     HeightMapState,
@@ -83,6 +85,10 @@ export interface AppState {
     heightMap: HeightMapState | null;
     /** The grid the height map panel's fields describe, drawn on the preview before it is probed. */
     probeDraft: Grid | null;
+    /** The camera on the head: its settings, picture, pose and find routine; null until read. */
+    camera: CameraState | null;
+    /** The alignment marks and their fit; null until read. */
+    align: AlignState | null;
     console: ConsoleLine[];
     /** Show the link's status polls in the console. */
     showPolls: boolean;
@@ -107,6 +113,8 @@ export function initialState(mock: boolean): AppState {
         settings: null,
         heightMap: null,
         probeDraft: null,
+        camera: null,
+        align: null,
         console: [],
         showPolls: false,
         toasts: [],

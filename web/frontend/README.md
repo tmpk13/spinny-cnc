@@ -85,6 +85,36 @@ spindle turns, and the spindle start while probing. The status reports the
 output's duty as driven on the pin; the DRO and the probe lock turn it
 around on an active-low output (`laser_invert`), as the backend does.
 
+A dispenser machine (`tool = "dispenser"` in its machine file, `$dispenser=1`
+with `$cartesian=1`) is the X/Y machine with a paste dispenser's plunger
+on the table's driver, `E` in mm on the readout and the jog panel, and the
+focus axis as the needle's height. A board imported with mode *dispense*
+is one group of dots, one per pad, with the paste thickness over each
+(editable in the groups table); the firmware settings panel has what a dot
+is made of (gap, retract, output, extrude rate, dwell), and the run button
+says why a dispenser refuses a job of paths. The preview draws a one-point
+path as a dot the size of its pad. The Height map panel's *Pads* row
+probes the selected job's pads instead of a grid, for a probe that must
+land on copper (*Plan* says how many and how long); the map's grid is
+filled in from the pads as they come, and the preview draws the pads,
+filled once probed.
+
+The Machine page's *Camera* panel (`src/views/vision.ts`; `camera.ts` is
+the preview's camera) shows the picture from the camera on the head,
+refreshed while it shows and the camera runs, the pose pcbv reads off the
+board, the camera's settings and the measured offset, roll and scale,
+loads the selected job's board (a `.kicad_pcb` upload) for the camera to
+look for, and runs the camera offset routine: a mark drilled with the
+tool (or the tool's point recorded over one), found in the picture and
+centered. The *Align* panel (`src/views/align.ts`) collects marks for the
+selected job, the tool put over a pad, a hole or a typed point, or the
+camera's picture centered on the board, shows the fit they give (one mark
+a shift, two or more a turn and a shift by least squares, `src/align.ts`),
+and applies it to the job. The mock has a camera of its own: an SVG
+picture of the loaded board, lying a little off the job so alignment has
+something to find, the mark as a dark dot that follows the head, and the
+find routine stepped on the mock's clock.
+
 The Jobs panel has *Save job* (the selected job's JSON) and *Delete all*
 beside its title, and under a run that stopped short a *Resume from line*
 row: the count of lines done, *from the start of its path*, *Plan* (what
@@ -155,7 +185,10 @@ classDiagram
         AppState
     }
     class views {
-        statusbar tabs dro jog laser jobs center heightmap previewpanel console settings cam config editor toasts
+        statusbar tabs dro jog laser jobs center heightmap previewpanel vision align console settings cam config editor toasts
+    }
+    class align {
+        fitRigid(pairs) rotation, shift, scale, rms, residuals
     }
     class highlight {
         highlightToml(text, errorLine) HTML spans per token
@@ -174,10 +207,11 @@ classDiagram
     }
     class profile {
         profileOf(snapshot) Profile
-        isCartesian / isMilling
+        isCartesian / isMilling / isDispensing
     }
     class controls {
         defaultControls(profile) Controls  the backend's defaults, word for word
+        unitOf(axis, profile) mm or deg
         controlsOf(state) the settings' or the profile's defaults
     }
     class kinematics {
@@ -186,7 +220,13 @@ classDiagram
     }
     class mock_backend {
         MockBackend  Api and EventFeed in one
-        MockMachine  joint motion at the rates, cross slide on its own or as a joint, focus axis, probe, spindle
+        MockMachine  joint motion at the rates, cross slide on its own or as a joint, focus axis, probe, spindle, plunger
+    }
+    class mock_vision {
+        frameSvg boardPose picturePoint  the mock camera's picture and pose
+    }
+    class mock_padmap {
+        selectPads padMapGrid fillPadHeights
     }
     class mock_jobs {
         parseSvg parseGcode placeJob computeStats centerJob
@@ -197,9 +237,13 @@ classDiagram
         buildCamJob / camGcode
     }
     class mock_machines {
-        parseMachine(text, id) MachineDocument  the backend's checks and words
+        parseMachine(text, id) MachineDocument  the backend's checks and words, camera included
         DEFAULT_SETTINGS
     }
+    views --> align
+    mock_backend --> align
+    mock_backend --> mock_vision
+    mock_backend --> mock_padmap
     main --> api
     main --> ws
     main --> state

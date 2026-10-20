@@ -50,8 +50,12 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx): Preview {
         // The board point comes from the backend, which knows the frame: on a
         // cartesian machine the head is not at the joint's polar point. The
         // preview draws nothing for a frame that leaves the head where it was.
+        // On a dispenser the table joint is the plunger: it turns no frame,
+        // so the rail and the limits are drawn at angle 0.
         const machine = state.snapshot.machine;
-        preview.setHead(machine?.joint ?? null, machine?.board ?? null);
+        const joint = machine?.joint ?? null;
+        const head = joint && state.snapshot.profile?.tool === "dispenser" ? { ...joint, a: 0 } : joint;
+        preview.setHead(head, machine?.board ?? null);
     }, ["snapshot"]);
     ctx.store.subscribe((state) => {
         // The profile in every state frame follows a setting changed at the

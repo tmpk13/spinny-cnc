@@ -2,11 +2,11 @@
 // the letter the machine file gives it, board X and Y when the machine has
 // a board pad, laser duty or spindle speed, speed, mode and the probe.
 
-import { controlsOf, sameControls, UNITS } from "../controls.ts";
+import { controlsOf, sameControls, unitOf } from "../controls.ts";
 import { el, replace } from "../dom.ts";
 import { formatDeg, formatDuty, formatMm, formatRate } from "../format.ts";
-import { isMilling, outputDuty } from "../profile.ts";
-import type { Controls, JointAxis, Machine, SettingsResponse } from "../types.ts";
+import { isDispensing, isMilling, outputDuty, profileOf } from "../profile.ts";
+import type { Controls, JointAxis, Machine, Profile, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 export interface DroText {
@@ -28,17 +28,22 @@ export interface DroText {
     homed: string | null;
 }
 
-/** The settings say which way round the output is driven; see outputDuty. */
-export function droText(machine: Machine | null, settings: SettingsResponse | null = null): DroText {
+/**
+ * The settings say which way round the output is driven; see outputDuty.
+ * On a dispenser the table joint is the plunger in mm, shown to the three
+ * decimals the mm axes get rather than the table's four.
+ */
+export function droText(machine: Machine | null, settings: SettingsResponse | null = null, dispensing = false): DroText {
+    const formatA = dispensing ? formatMm : formatDeg;
     if (!machine) {
-        return { r: formatMm(null), a: formatDeg(null), z: formatMm(null), h: null, x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-", probe: null, homed: null };
+        return { r: formatMm(null), a: formatA(null), z: formatMm(null), h: null, x: formatMm(null), y: formatMm(null), laser: formatDuty(null), rate: formatRate(null), mode: "-", queue: "-", motors: "-", probe: null, homed: null };
     }
     const h = machine.joint.h;
     const probe = machine.probe;
     const homed = machine.homed;
     return {
         r: formatMm(machine.joint.r),
-        a: formatDeg(machine.joint.a),
+        a: formatA(machine.joint.a),
         z: formatMm(machine.joint.z),
         h: h === null || h === undefined ? null : formatMm(h),
         x: formatMm(machine.board.x),
@@ -85,13 +90,15 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         homedBox,
     ));
     let drawn: Controls | null = null;
+    let drawnProfile: Profile | null = null;
 
     /** The joint cells, one per control, in the controls' order; the board row only with a pad. */
-    function draw(controls: Controls): void {
+    function draw(controls: Controls, profile: Profile): void {
         drawn = controls;
+        drawnProfile = profile;
         cells.clear();
         const nodes = controls.axes.map((axis) => {
-            const value = bigCell(axis.letter, UNITS[axis.axis], axis.axis);
+            const value = bigCell(axis.letter, unitOf(axis.axis, profile), axis.axis);
             cells.set(axis.axis, value);
             return value.parentElement!;
         });
@@ -101,11 +108,14 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
 
     ctx.store.subscribe((state) => {
         const controls = controlsOf(state);
-        if (drawn === null || !sameControls(drawn, controls)) {
-            draw(controls);
+        const profile = profileOf(state.snapshot);
+        // The units follow the tool as well as the controls: the table's
+        // cell reads mm once the settings say the joint is a plunger.
+        if (drawn === null || !sameControls(drawn, controls) || drawnProfile?.tool !== profile.tool) {
+            draw(controls, profile);
         }
         const machine = state.snapshot.machine;
-        const text = droText(machine, state.settings);
+        const text = droText(machine, state.settings, isDispensing(state.snapshot));
         for (const [axis, cell] of cells) {
             setText(cell, text[axis] ?? "-.---");
         }
@@ -127,7 +137,7 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
         age.classList.toggle("hidden", stale === "");
         root.classList.toggle("laser-on", machine !== null && outputDuty(machine.laser, state.settings) > 0);
     }, ["snapshot", "settings"]);
-    draw(controlsOf(ctx.store.get()));
+    draw(controlsOf(ctx.store.get()), profileOf(ctx.store.get().snapshot));
 }
 
 /** A big cell: the label, the value and its unit; returns the value span, inside its cell. */

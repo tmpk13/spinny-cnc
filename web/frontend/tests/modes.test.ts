@@ -191,7 +191,8 @@ describe("spindle", () => {
         mountSettings(root, ctx);
         store.set({ snapshot: snapshot({ tool: "spindle" }) });
         await ctx.refreshSettings();
-        const fields = Array.from(root.querySelectorAll(".labeled")).filter((label) => label.textContent?.startsWith("Travel"));
+        // The dispensing row has a travel field of its own, hidden on a spindle machine.
+        const fields = Array.from(root.querySelectorAll(".labeled")).filter((label) => label.textContent?.startsWith("Travel") && !label.closest(".button-row")?.classList.contains("hidden"));
         expect(fields.length).toBe(1);
         const clearance = fields[0]!.querySelector("input") as HTMLInputElement;
         expect(clearance.value).toBe("2");

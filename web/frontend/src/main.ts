@@ -6,6 +6,7 @@ import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, initialState, pushToast, Store, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
+import { mountAlign } from "./views/align.ts";
 import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
 import { mountConsole } from "./views/console.ts";
@@ -20,6 +21,7 @@ import { mountSettings } from "./views/settings.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountTabs } from "./views/tabs.ts";
 import { mountToasts } from "./views/toasts.ts";
+import { mountVision } from "./views/vision.ts";
 
 export function createContext(api: Api, store: Store<AppState>): Ctx {
     const toast = (level: MessageLevel, text: string): void => {
@@ -80,6 +82,18 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
             const heightMap = await ctx.call(api.heightMap());
             if (heightMap) {
                 store.set({ heightMap });
+            }
+        },
+        async refreshCamera() {
+            const camera = await ctx.call(api.camera());
+            if (camera) {
+                store.set({ camera });
+            }
+        },
+        async refreshAlign() {
+            const align = await ctx.call(api.align());
+            if (align) {
+                store.set({ align });
             }
         },
         async selectJob(id) {
@@ -153,12 +167,22 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "message":
             ctx.toast(event.data.level, event.data.text);
             break;
+        case "camera":
+            store.set({ camera: event.data });
+            break;
+        case "align":
+            store.set({ align: event.data });
+            // An alignment applied has moved the job: the selected copy is stale.
+            if (event.data.job !== null && event.data.marks.length === 0 && store.get().job?.id === event.data.job) {
+                void ctx.reloadJob(event.data.job);
+            }
+            break;
     }
 }
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -209,6 +233,8 @@ function main(): void {
     mountJobs(panel("jobs"), ctx);
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
+    mountVision(panel("camera"), ctx);
+    mountAlign(panel("align"), ctx);
     mountConsole(panel("console"), ctx);
     // The CAM page has a preview of its own, since the panels of the
     // machine's page are not shown beside it.

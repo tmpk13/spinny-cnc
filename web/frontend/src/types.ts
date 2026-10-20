@@ -78,8 +78,8 @@ export interface Machine {
 /** How the head moves over the board: the rail and the table, or the rail and the cross slide. */
 export type Kinematics = "polar" | "cartesian";
 
-/** What the output drives. */
-export type Tool = "laser" | "spindle";
+/** What the output drives, or what takes the table's driver: a paste dispenser's plunger. */
+export type Tool = "laser" | "spindle" | "dispenser";
 
 /** What the machine is, from its settings as last read. */
 export interface Profile {
@@ -205,6 +205,16 @@ export interface HostSettings {
     spinup?: number;
     /** Milling: the host sets the spindle's speed from the groups; off, the spindle runs full on whenever it runs. */
     speed_control?: boolean;
+    /** Dispensing: the needle's height over the pad while a dot is laid, mm, (0, 10]. */
+    gap?: number;
+    /** Dispensing: how far the plunger is pulled back after each dot, mm, [0, 50]. */
+    retract?: number;
+    /** Dispensing: mm^3 of paste per mm of plunger travel, (0, 100000]. */
+    output?: number;
+    /** Dispensing: plunger speed while a dot is pushed out, mm/min, (0, 10000]. */
+    extrude_rate?: number;
+    /** Dispensing: wait after the push, before the retract, whole ms, [0, 60000]. */
+    dwell_ms?: number;
 }
 
 export interface LogResponse {
@@ -296,10 +306,12 @@ export interface MachineProblem {
     problem: string;
 }
 
-/** A machine file read: its summary, every firmware setting, the host's values and the page's controls. */
+/** A machine file read: its summary, every firmware setting, the host's values, the camera and the page's controls. */
 export interface MachineDocument extends MachineSummary {
     settings: Record<string, number>;
     host: Partial<HostSettings>;
+    /** The file's [camera], filled in from the defaults. */
+    camera: CameraSettings;
     controls: Controls;
 }
 
@@ -338,8 +350,12 @@ export interface Group {
     depth?: number;
     /** Milling: how fast the tool goes down into the cut, mm/min. */
     plunge?: number;
-    /** What a CAM profile made the group for; a run refuses a group made for the other tool. Missing or null runs on either. */
+    /** What a CAM profile or a dispense import made the group for; a run refuses a group made for another tool than the machine has. Missing or null runs on a laser or a spindle. */
     tool?: Tool | null;
+    /** Dispensing: mm of paste over every pad of the group. */
+    thickness?: number;
+    /** Dispensing: each dot's pad area in mm^2, in the order of `paths`; empty or missing on a group of cuts. */
+    areas?: number[];
     paths: Path[];
     /**
      * Joint-space polylines, radius mm and angle degrees, streamed as they
@@ -364,8 +380,8 @@ export type Anchor = "center" | "keep";
 /** How a board import clears the copper the isolation leaves: spokes from the axis, rings about it, or rows along X. */
 export type ClearPattern = "radial" | "rings" | "lines";
 
-/** What a board import burns: around the copper, taking it away, or the copper itself, for a process that lays it down. */
-export type BoardMode = "isolate" | "deposit";
+/** What a board import makes: cuts around the copper, taking it away; the copper itself, for a process that lays it down; or a paste dot on every pad. */
+export type BoardMode = "isolate" | "deposit" | "dispense";
 
 /** How a deposit fills the copper inside its edge loops: loops on in to the middle, or one of the clearing fills. */
 export type DepositFill = "contour" | ClearPattern;
@@ -378,10 +394,32 @@ export interface Job {
     layer?: string | null;
     spot: number;
     offset: Board;
+    /** Degrees the job has been turned counterclockwise about the origin by alignment; missing from a backend that predates it. */
+    rotation?: number;
+    /** The centroid and area (mm^2) of every pad of the layer, in the job's frame; empty for a drawing or a gcode file. */
+    pads?: PadPoint[];
+    /** The drill file's holes with their diameters, in the job's frame. */
+    holes?: HolePoint[];
+    /** How the design's gerber frame maps to the job's: job = turn(rotation) * gerber + shift; null for a job without one. */
+    design?: DesignMap | null;
     groups: Group[];
     outline: Path[];
     copper: Path[];
     stats: Stats;
+}
+
+/** A pad: its centroid and its area in mm^2. */
+export type PadPoint = [number, number, number];
+
+/** A hole: its center and its diameter. */
+export type HolePoint = [number, number, number];
+
+/** The map from the design's gerber frame (the KiCad file's X, its Y negated) to the job's frame. */
+export interface DesignMap {
+    shift: [number, number];
+    rotation: number;
+    /** The `.kicad_pcb` is kept beside the job, so the camera can look for it. */
+    board: boolean;
 }
 
 /** A group as the job list shows it: the path count stands in for the paths. */
@@ -394,6 +432,7 @@ export interface GroupSummary {
     enabled: boolean;
     depth?: number;
     plunge?: number;
+    thickness?: number;
     tool?: Tool | null;
     paths: number;
     joints?: number;
@@ -407,6 +446,7 @@ export interface JobSummary {
     layer?: string | null;
     spot: number;
     offset: Board;
+    rotation?: number;
     groups: GroupSummary[];
     stats: Stats;
 }
@@ -425,6 +465,8 @@ export interface GroupPatch {
     enabled?: boolean;
     depth?: number;
     plunge?: number;
+    /** Dispensing: mm of paste over a pad, 0.01 to 5. */
+    thickness?: number;
 }
 
 export interface JobPatch {
@@ -444,6 +486,8 @@ export interface UploadOptions {
     layer?: string;
     /** Gerber and KiCad boards only; left out, the board is isolated. */
     mode?: BoardMode;
+    /** A dispense only: mm of paste over every pad, 0.01 to 5; left out, 0.12. */
+    thickness?: number;
     /** Isolation only; left out, no copper is cleared. */
     clear?: ClearPattern;
     /** A deposit only; left out, the loops go on in to the middle. */
@@ -563,6 +607,10 @@ export interface HeightMap {
     /** The probe tip from the beam when probed: along the rail, across it, mm, signed as ProbeSettings.offset. */
     probe_offset: [number, number];
     created: string;
+    /** A pad map: the pads probed, board mm; null or missing on a grid map. */
+    points?: [number, number][] | null;
+    /** A pad map: each point's height in the order of `points`, null until probed. */
+    point_heights?: (number | null)[] | null;
 }
 
 export type ProbeState = "running" | "done" | "stopped" | "error";
@@ -571,8 +619,10 @@ export interface ProbeProgress {
     state: ProbeState;
     done: number;
     total: number;
-    /** The point being probed, [ix, iy]. */
+    /** The point being probed, [ix, iy]; null on a pad map. */
     point: [number, number] | null;
+    /** A pad map: the index of the point being probed. */
+    pad?: number | null;
     seconds: number;
     error: string | null;
     /** About how long the whole of it was to take, s; null when nobody guessed. */
@@ -607,6 +657,30 @@ export interface HeightMapState {
     settings: ProbeSettings;
 }
 
+/** Probe the board at a job's pads rather than a grid, for a probe that must land on copper. */
+export interface PadProbeRequest {
+    job: string;
+    /** Pads under this area in mm^2 are left out; 0.05 to 1000, default 0.5. */
+    min_area?: number;
+    /** Over this many pads, the most spread out of them are probed; 2 to 2500, default 100. */
+    max_points?: number;
+    /** Go on with the pad map in the store where it has no height yet. */
+    resume?: boolean;
+}
+
+/** What probing the pads would do, without touching the machine. */
+export interface PadProbePlan {
+    /** The points that would be probed, in their order. */
+    points: [number, number][];
+    /** How many pads the job has. */
+    pads: number;
+    /** How many were under the area asked for. */
+    skipped: number;
+    seconds: number;
+    /** How many points a resume would skip. */
+    resume: number;
+}
+
 export type ConsoleDir = "rx" | "tx";
 
 export interface ConsoleLine {
@@ -628,7 +702,153 @@ export type WsEvent =
     | { type: "console"; data: ConsoleLine }
     | { type: "progress"; data: Progress }
     | { type: "heightmap"; data: HeightMapState }
-    | { type: "message"; data: Message };
+    | { type: "message"; data: Message }
+    | { type: "camera"; data: CameraState }
+    | { type: "align"; data: AlignState };
+
+// --- Camera ---------------------------------------------------------------------
+
+export type CameraSide = "front" | "back";
+
+/** Whether solder mask hides the copper the camera looks for. */
+export type CameraFinish = "masked" | "bare";
+
+/** The camera on the head: what it is read with, and how it sits against the tool. */
+export interface CameraSettings {
+    /** A V4L2 device, socket://host:port of a pcbv serve elsewhere, or a picture or a directory to replay. */
+    device: string;
+    /** Capture size, WIDTHxHEIGHT. */
+    size: string;
+    fps: number;
+    /** The pcbv program: a name on PATH or a path. */
+    pcbv: string;
+    side: CameraSide;
+    finish: CameraFinish;
+    /** The picture's center from the tool, board mm along X and Y; the camera offset routine measures it. */
+    offset: [number, number];
+    /** Degrees from the picture's x axis to board +X, counterclockwise seen from above. */
+    roll: number;
+    /** mm per picture pixel at the board; 0 until measured, or taken from a lock. */
+    mm_per_px: number;
+}
+
+export interface CameraFrame {
+    width: number;
+    height: number;
+    age_ms: number;
+    fps: number;
+}
+
+/** What pcbv makes of the board: locked on it, coasting on the last lock, lost, or none loaded. */
+export type PoseState = "locked" | "coasting" | "lost" | "none";
+
+/** The newest pose; the measured fields only on `locked`. Poses are in the KiCad file's board frame (mm, x right, y down). */
+export interface CameraPose {
+    /** Null with the camera stopped. */
+    state: PoseState | null;
+    center?: [number, number] | null;
+    angle_deg?: number | null;
+    mm_per_px?: number | null;
+    inliers?: number | null;
+    expected?: number | null;
+    rms_mm?: number | null;
+    spots?: number | null;
+    fps?: number | null;
+    age_ms?: number | null;
+    /** The picture's center in the loaded job's frame; null without a lock or a board. */
+    job_center?: [number, number] | null;
+}
+
+export type RoutineState = "running" | "done" | "stopped" | "error";
+
+/** Where the camera offset routine is: lifting, moving over the mark, measuring the scale, centering on it, or done. */
+export type RoutineStep = "lifting" | "moving" | "scale" | "centering" | "done";
+
+/** The last spot the routine found: its distance from the picture's center in pixels and in mm. */
+export interface RoutineSpot {
+    dx: number;
+    dy: number;
+    mm: number;
+}
+
+export interface CameraRoutine {
+    state: RoutineState;
+    step: RoutineStep;
+    done: number;
+    total: number;
+    error: string | null;
+    spot: RoutineSpot | null;
+}
+
+/** The camera state: the settings, whether it runs, the board it looks for, the mark, the newest picture and pose, and the find routine. */
+export interface CameraState extends CameraSettings {
+    running: boolean;
+    /** The job whose board pcbv looks for, or null. */
+    board: string | null;
+    /** The recorded mark's board point, or null. */
+    mark: [number, number] | null;
+    /** Null with the camera stopped, and until its first picture. */
+    frame: CameraFrame | null;
+    /** Null with the camera stopped. */
+    pose: CameraPose | null;
+    /** The find routine's progress; null before any. */
+    routine: CameraRoutine | null;
+}
+
+/** Make a mark with the tool where it stands (a spindle machine), or only record the tool's point as the mark. */
+export interface MarkRequest {
+    depth?: number;
+    plunge?: number;
+    here?: boolean;
+}
+
+// --- Alignment ------------------------------------------------------------------
+
+export type MarkSource = "tool" | "camera";
+
+/** What a mark's design point was taken from: a pad or a hole of the job, a point typed in, or the picture's center. */
+export type MarkKind = "pad" | "hole" | "point" | "center";
+
+/** A design point of the job paired with the board point the machine found it at. */
+export interface AlignMark {
+    design: [number, number];
+    machine: [number, number];
+    source: MarkSource;
+    kind: MarkKind;
+    /** How far the tool was from the pad or hole picked; 0 for a point given. */
+    distance: number;
+    /** The board's turn a camera mark saw, degrees; null for a tool mark. */
+    angle: number | null;
+    /** The mark's distance from where the last fit puts it; null before a fit. */
+    residual: number | null;
+}
+
+/** The turn and shift the marks fit; the scale is reported, never applied. */
+export interface AlignFit {
+    /** Degrees counterclockwise about the origin, applied before the shift. */
+    rotation: number;
+    shift: [number, number];
+    scale: number;
+    rms: number;
+    residuals: number[];
+    marks: number;
+}
+
+export interface AlignState {
+    /** The job the marks are for, or null. */
+    job: string | null;
+    marks: AlignMark[];
+    fit: AlignFit | null;
+}
+
+/** A mark from the tool's point now, paired with a design point given or the nearest pad or hole within reach. */
+export interface AlignMarkRequest {
+    job: string;
+    design?: [number, number] | null;
+    nearest?: "pad" | "hole" | null;
+    /** How far the nearest pad or hole may be, mm; 0.1 to 100, default 5. */
+    within?: number;
+}
 
 // --- CAM profiles -----------------------------------------------------------
 

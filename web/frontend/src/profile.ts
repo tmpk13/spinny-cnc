@@ -17,6 +17,11 @@ export function isMilling(snapshot: Snapshot): boolean {
     return profileOf(snapshot).tool === "spindle";
 }
 
+/** The table's driver turns a paste dispenser's plunger: the machine lays dots rather than cuts. */
+export function isDispensing(snapshot: Snapshot): boolean {
+    return profileOf(snapshot).tool === "dispenser";
+}
+
 /**
  * The output's duty in permille of full power: 0 is the beam dark or the
  * spindle stopped. The status reports the duty driven on the pin, which an
@@ -35,6 +40,8 @@ export function profileBadge(profile: Profile): string {
     }
     if (profile.tool === "spindle") {
         parts.push("spindle");
+    } else if (profile.tool === "dispenser") {
+        parts.push("dispenser");
     }
     return parts.join(" ");
 }

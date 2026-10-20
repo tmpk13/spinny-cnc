@@ -1,6 +1,7 @@
 // In-page fake backend for `?mock=1`: a machine that moves at the firmware's
 // rates, the job store, and the event feed the real WebSocket would carry.
 
+import { fitRigid, turnPoint } from "../align.ts";
 import { ApiError, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
 import {
@@ -9,6 +10,7 @@ import {
     cartesianSurfaceLength,
     distanceToSegment,
     headBoard,
+    jointOfBoard,
     lerpJoint,
     segmentBoardMove,
     surfaceLength,
@@ -33,12 +35,43 @@ import {
     jointPreview,
     pathMoves,
     placeJob,
+    checkThickness,
+    DEFAULT_THICKNESS,
     type PlannedMove,
 } from "./jobs.ts";
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
-import { DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
+import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
+import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
+import {
+    BOARD_MISPLACEMENT,
+    CAMERA_TRUTH,
+    POSE_FPS,
+    boardPose,
+    boardVector,
+    checkCameraSettings,
+    designPoint,
+    frameSvg,
+    inPicture,
+    jobPlacement,
+    parseSize,
+    picturePoint,
+    placedPoint,
+    type Placement,
+} from "./vision.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
+    AlignFit,
+    AlignMark,
+    AlignMarkRequest,
+    AlignState,
+    CameraPose,
+    CameraRoutine,
+    CameraSettings,
+    CameraState,
+    MarkRequest,
+    PadProbePlan,
+    PadProbeRequest,
+    RoutineStep,
     LogFile,
     Board,
     CamGcodeResponse,
@@ -55,6 +88,7 @@ import type {
     Group,
     HeightMap,
     HeightMapState,
+    HostSettings,
     Job,
     JobPatch,
     JobSummary,
@@ -192,12 +226,13 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "z_home_travel", unit: "mm", help: "cross slide travel between its ends; a home seeks a tenth further" },
     { name: "stop_invert", unit: "mask", help: "endstop inputs active high: bit 0 rail, bit 1 table, bit 2 cross slide, bit 3 focus axis" },
     { name: "limits", unit: "mask", help: "endstops that halt a move closing them (ALARM:4, position lost), same bits" },
+    { name: "dispenser", unit: "0/1", help: "1 = the table's joint is a dispenser's plunger in mm (with cartesian)" },
 ];
 
 /** Largest value a float setting takes, as the firmware bounds them. */
 const FLOAT_MAX = 1e7;
 /** Settings the firmware holds as 0 or 1. */
-const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert"]);
+const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser"]);
 /** Settings the firmware holds as unsigned 32-bit integers: decimal text is refused. */
 const INT_SETTINGS = new Set([
     "dir_invert",
@@ -474,11 +509,11 @@ export class MockMachine {
         return (this.settings["h_axis"] ?? 0) !== 0;
     }
 
-    /** What the machine is, as the backend reads it from the settings. */
+    /** What the machine is, as the backend reads it from the settings; with both flags set the spindle's rules hold. */
     profile(): Profile {
         return {
             kinematics: this.cartesian() ? "cartesian" : "polar",
-            tool: this.milling() ? "spindle" : "laser",
+            tool: this.milling() ? "spindle" : this.dispensing() ? "dispenser" : "laser",
             h_axis: this.hasFocusAxis(),
             r_max: this.settings["r_max"] ?? 0,
             z_max: this.settings["z_max"] ?? 0,
@@ -487,6 +522,29 @@ export class MockMachine {
 
     milling(): boolean {
         return (this.settings["spindle"] ?? 0) !== 0;
+    }
+
+    /** The table's joint is a dispenser's plunger in mm: only with the cartesian flag, where the table has no part in the board frame. */
+    dispensing(): boolean {
+        return this.cartesian() && (this.settings["dispenser"] ?? 0) !== 0;
+    }
+
+    /** The output is dark whatever a line says: a spindle's or a dispenser's. */
+    darkOutput(): boolean {
+        return this.milling() || this.dispensing();
+    }
+
+    /** The angle the board frame is turned by: the table's, or none when that joint is a plunger. */
+    frameAngle(joint: Joint = this.joint): number {
+        return this.dispensing() ? 0 : joint.a;
+    }
+
+    /** Board length of a joint move: a plunger moves no board. */
+    boardLength(from: Joint, to: Joint, fromZ: number, toZ: number): number {
+        if (this.dispensing()) {
+            return Math.hypot(to.r - from.r, toZ - fromZ);
+        }
+        return this.cartesian() ? cartesianSurfaceLength(from, to, fromZ, toZ) : surfaceLength(from, to);
     }
 
     /** The cross slide is a joint beside the radius, and the table holds the board still. */
@@ -535,14 +593,14 @@ export class MockMachine {
 
     /** The board point under the beam with the joints at `joint`. */
     headBoard(joint: Joint = this.joint, z: number = this.z): Board {
-        return headBoard(joint, z, this.cartesian());
+        return headBoard({ r: joint.r, a: this.frameAngle(joint) }, z, this.cartesian());
     }
 
     /** The board point under the probe tip with the joints at `joint`: the tip is off the beam along the rail and across it. */
     tipBoard(joint: Joint = this.joint, z: number = this.z): Board {
         const [along, across] = this.probeOffset;
         const slide = this.cartesian() ? z : 0;
-        return turned({ x: joint.r + along, y: slide + across }, joint.a);
+        return turned({ x: joint.r + along, y: slide + across }, this.frameAngle(joint));
     }
 
     /** The H at which the probe touches the board where the tip is now. */
@@ -704,11 +762,12 @@ export class MockMachine {
             throw new MachineError(2, "bad word");
         }
         const milling = this.milling();
-        if (milling && move.kind === "cut" && (move.power > 0 || (move.minPower ?? 0) > 0)) {
-            // A spindle's speed is its own command's: an S on a cut is a laser job.
+        if (this.darkOutput() && move.kind === "cut" && (move.power > 0 || (move.minPower ?? 0) > 0)) {
+            // A spindle's speed is its own command's, and a dispenser's output
+            // is dark: an S on a cut is a laser job.
             throw new MachineError(2, "bad word");
         }
-        if (milling && move.kind === "dwell" && move.power > 0) {
+        if (this.darkOutput() && move.kind === "dwell" && move.power > 0) {
             throw new MachineError(2, "bad word");
         }
         this.checkMotionState(move.kind === "jog");
@@ -794,7 +853,7 @@ export class MockMachine {
     private secondsFor(move: Move, from: Joint, fromH: number, toH: number, fromZ: number, toZ: number): number {
         const s = this.settings;
         const to = move.target;
-        const length = this.cartesian() ? cartesianSurfaceLength(from, to, fromZ, toZ) : surfaceLength(from, to);
+        const length = this.boardLength(from, to, fromZ, toZ);
         const hRate = s["h_rate"] ?? 600;
         const headOnly = Math.abs(to.r - from.r) < 1e-9 && Math.abs(to.a - from.a) < 1e-9 && Math.abs(toZ - fromZ) < 1e-9;
         let rates = [s["r_rate"] ?? 560, s["a_rate"] ?? 400, s["z_rate"] ?? 560];
@@ -809,7 +868,12 @@ export class MockMachine {
                 focusRate = Math.min(feed, hRate);
             }
         }
-        const [rRate = 560, aRate = 400, zRate = 560] = rates;
+        let [rRate = 560, aRate = 400, zRate = 560] = rates;
+        // A plunger alone on a line with a feed moves at that feed, as a
+        // focus axis alone does: no board length asks for it.
+        if (this.dispensing() && feed !== null && feed > 0 && length < AXIS_EPSILON) {
+            aRate = Math.min(feed, aRate);
+        }
         const wanted = feed !== null && feed > 0 && length >= AXIS_EPSILON ? length / feed : 0;
         const minutes = Math.max(wanted, Math.abs(to.r - from.r) / rRate, Math.abs(to.a - from.a) / aRate, Math.abs(toZ - fromZ) / zRate);
         return Math.max(minutes, Math.abs(toH - fromH) / focusRate) * 60;
@@ -817,7 +881,7 @@ export class MockMachine {
 
     /** Duty in permille for a move of board length `length` at the achieved speed; a spindle's output is its own. */
     private dutyFor(move: Move, achieved: number, length: number): number {
-        if (this.milling()) {
+        if (this.darkOutput()) {
             return 0;
         }
         const sMax = this.settings["s_max"] ?? 1000;
@@ -883,7 +947,7 @@ export class MockMachine {
             this.joint = lerpJoint(active.from, active.to, t);
             this.h = active.fromH + (active.toH - active.fromH) * t;
             this.z = active.fromZ + (active.toZ - active.fromZ) * t;
-            const length = this.cartesian() ? cartesianSurfaceLength(active.from, active.to, active.fromZ, active.toZ) : surfaceLength(active.from, active.to);
+            const length = this.boardLength(active.from, active.to, active.fromZ, active.toZ);
             const achieved = (length / active.seconds) * 60;
             this.rate = achieved;
             this.laser = this.dutyFor(active.move, achieved, length);
@@ -1156,7 +1220,7 @@ export class MockMachine {
 
     /** `laser S T`: S over `s_max` is full duty, not more; T past the maximum is refused; a spindle machine has no beam. */
     beam(power: number, ms: number): void {
-        if (this.milling()) {
+        if (this.darkOutput()) {
             throw new MachineError(2, "bad word");
         }
         if (!(power >= 0) || !(ms >= 0) || ms > LASER_MAX_MS) {
@@ -1189,7 +1253,7 @@ export class MockMachine {
 
     /** Takes a whole set of settings, from a write, `$load` or `$defaults`. */
     adopt(settings: Record<string, number>): void {
-        if ((settings["spindle"] ?? 0) !== (this.settings["spindle"] ?? 0)) {
+        if ((settings["spindle"] ?? 0) !== (this.settings["spindle"] ?? 0) || (settings["dispenser"] ?? 0) !== (this.settings["dispenser"] ?? 0)) {
             // The output changes meaning: whatever ran on it stops.
             this.outputOff();
         }
@@ -1236,6 +1300,8 @@ interface ProbeSession {
     joints: ProbeJoint[];
     /** Index into `order` of the point in progress. */
     next: number;
+    /** A pad map: the indices of its points in the order they are probed, in place of `order`. */
+    pads: number[] | null;
     /** Seconds spent on the point in progress. */
     elapsed: number;
     /** The head's height when probing began, which it travels at between points. */
@@ -1244,6 +1310,27 @@ interface ProbeSession {
     /** Seconds unrounded; the state rounds them. */
     progress: ProbeProgress;
 }
+
+/** The camera offset routine under way, on the mock's clock. */
+interface FindSession {
+    /** The mark's board point. */
+    mark: Board;
+    /** How far the head is moved along +X to measure the scale; 0 skips it. */
+    step: number;
+    phase: RoutineStep;
+    /** Centering moves made so far. */
+    centered: number;
+    elapsed: number;
+    progress: CameraRoutine;
+}
+
+/** Mock time one step of the camera offset routine takes, s. */
+export const FIND_STEP_SECONDS = 0.5;
+/** The spot is centered once it is within this of the picture's center, mm. */
+const CENTER_TOLERANCE = 0.02;
+const CENTERING_MOVES = 3;
+/** What the routine moves by when asked for no step but the scale is unknown, mm. */
+const DEFAULT_FIND_STEP = 2;
 
 /** A plain decimal with trailing zeros dropped and no negative zero. */
 function num(value: number, decimals = 3): string {
@@ -1463,11 +1550,22 @@ function probedValues(map: HeightMap): number[] {
     return map.heights.flat().filter((value): value is number => value !== null);
 }
 
+/** A pad map's probed points, with the count of its points; a grid map's probed cells and its cells. */
+function probedCount(map: HeightMap): { probed: number; total: number; pads: boolean } {
+    if (map.points && map.point_heights) {
+        return { probed: map.point_heights.filter((value) => value !== null).length, total: map.points.length, pads: true };
+    }
+    return { probed: probedValues(map).length, total: map.grid.nx * map.grid.ny, pads: false };
+}
+
 /** Refuses a map whose shape does not match its grid. */
 function checkHeightMap(map: HeightMap): void {
     checkGrid(map.grid);
     if (map.heights.length !== map.grid.ny || map.heights.some((row) => row.length !== map.grid.nx)) {
         throw new Error(`heights must be ${map.grid.ny} rows of ${map.grid.nx}`);
+    }
+    if (map.points && (!map.point_heights || map.point_heights.length !== map.points.length)) {
+        throw new Error("point_heights must be one per point");
     }
     if (probedValues(map).some((value) => Math.abs(value) > MAX_VALUE)) {
         throw new Error(`heights must be within ${MAX_VALUE_TEXT} mm`);
@@ -1490,8 +1588,10 @@ function readHeightMap(map: HeightMap): HeightMap {
         focus_set: map.focus_set ?? false,
         probe_offset: map.probe_offset ? [map.probe_offset[0], map.probe_offset[1]] : [0, 0],
         created: map.created ?? "",
+        points: Array.isArray(map.points) ? map.points.map((point) => [point[0], point[1]]) : null,
+        point_heights: Array.isArray(map.point_heights) ? map.point_heights.map((value) => value ?? null) : null,
     };
-    const numbers = [...Object.values(read.grid), ...probedValues(read), read.focus_offset, ...read.probe_offset];
+    const numbers = [...Object.values(read.grid), ...probedValues(read), read.focus_offset, ...read.probe_offset, ...(read.points ?? []).flat()];
     if (!numbers.every((value) => typeof value === "number" && Number.isFinite(value))) {
         throw new ApiError(422, "a height map's numbers must be finite");
     }
@@ -1501,9 +1601,9 @@ function readHeightMap(map: HeightMap): HeightMap {
 /** Refuses a map a run should not follow. */
 function checkUsable(map: HeightMap): void {
     const values = probedValues(map);
-    const total = map.grid.nx * map.grid.ny;
-    if (values.length !== total) {
-        throw new Error(`the height map is not complete: ${values.length} of ${total} points probed`);
+    const { probed, total, pads } = probedCount(map);
+    if (probed !== total) {
+        throw new Error(pads ? `the pad map is not complete: ${probed} of ${total} pads probed` : `the height map is not complete: ${probed} of ${total} points probed`);
     }
     if (!map.focus_set) {
         throw new Error("the focus offset is not set: focus the beam by eye over the probed area and use focus here");
@@ -1631,7 +1731,28 @@ export class MockBackend implements Api, EventFeed {
     /** The host's milling settings: travel height over the surface, mm, and the spin-up dwell, s. */
     clearance = 2;
     spinup = 2;
+    /** The host's dispensing settings: what every dot of a dispensing run is made of. */
+    gap = 0.1;
+    retract = 0.2;
+    output = 100;
+    extrudeRate = 60;
+    dwellMs = 200;
     status: LinkStatus = "closed";
+    /** The camera on the head as the backend keeps it: its settings, whether it runs, the board it looks for and the mark. */
+    cameraConfig: CameraSettings = { ...CAMERA_DEFAULTS, offset: [...CAMERA_DEFAULTS.offset] };
+    cameraRunning = false;
+    private cameraJob: string | null = null;
+    private cameraMarkPoint: Board | null = null;
+    /** Where the loaded board really lies: the job's design a little off, so alignment has something to find. */
+    private placement: Placement | null = null;
+    /** Each board's placement once looked for, so a board loaded again lies where it did. */
+    private placements = new Map<string, Placement>();
+    private routine: CameraRoutine | null = null;
+    private finding: FindSession | null = null;
+    /** The alignment marks, kept for one job at a time. */
+    private alignJob: string | null = null;
+    private alignMarks: AlignMark[] = [];
+    private alignFitLast: AlignFit | null = null;
 
     private jobStore = new Map<string, Job>();
     /** The CAM profiles, by id, as their files read; the shipped ones to start with. */
@@ -1760,6 +1881,7 @@ export class MockBackend implements Api, EventFeed {
             this.drainOutbox();
             this.serviceRun(dt);
             this.serviceProbe(dt);
+            this.serviceFind(dt);
             const period = wasMoving || this.machine.moving() ? 0.1 : 0.2;
             this.stateClock += dt;
             if (this.stateClock >= period - CLOCK_EPSILON) {
@@ -1938,6 +2060,9 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "a job is running");
         }
         this.refuseWhileProbing();
+        if (this.finding) {
+            throw new ApiError(409, "the camera offset routine is running");
+        }
     }
 
     /**
@@ -2081,7 +2206,7 @@ export class MockBackend implements Api, EventFeed {
     private boardMoves(target: Board, feed: number | null): Move[] {
         const start = this.pendingEndpoint();
         if (this.machine.cartesian()) {
-            const joint = turned(target, -this.machine.joint.a);
+            const joint = turned(target, -this.machine.frameAngle());
             return [{ kind: "jog", target: { r: joint.x, a: start.a }, z: joint.y, feed, power: 0, group: -1 }];
         }
         let from = start;
@@ -2163,8 +2288,9 @@ export class MockBackend implements Api, EventFeed {
                 throw new ApiError(400, "a joint move needs a radius, an angle, a focus height or a cross slide position");
             }
             // A relative jog ends where its start does, moved; a turn of a
-            // cartesian table moves the frame that end is kept in.
-            const known = this.startKnown() && !(cartesian && da);
+            // cartesian table moves the frame that end is kept in, which a
+            // plunger does not.
+            const known = this.startKnown() && !(cartesian && da && !this.machine.dispensing());
             this.sendJoint(`jog ${words.join(" ")}${feedWord}`, () => this.machine.jog(dr ?? 0, da ?? 0, feed, dh ? dh : null, dz ? dz : null), known);
             return;
         }
@@ -2435,9 +2561,9 @@ export class MockBackend implements Api, EventFeed {
                 throw new MachineError(2, "bad word");
             }
         };
-        /** Z is a joint on a cartesian machine and nothing on a polar one; A stays off `go` and `cut` on a cartesian one. */
+        /** Z is a joint on a cartesian machine and nothing on a polar one; A stays off `go` and `cut` on a cartesian one unless it is a dispenser's plunger. */
         const boardWords = (words: Map<string, number>): void => {
-            if (words.has(cartesian ? "A" : "Z")) {
+            if (words.has(cartesian && !machine.dispensing() ? "A" : "Z")) {
                 throw new MachineError(2, "bad word");
             }
         };
@@ -2456,16 +2582,17 @@ export class MockBackend implements Api, EventFeed {
                 checkFeed(words);
                 checkPowerWords(words);
                 boardWords(words);
-                // A spindle's speed is its own command's: an S or M here is a
-                // laser job sent to a machine that has no beam.
-                if (milling && (words.has("S") || words.has("M"))) {
+                // A spindle's speed is its own command's, and a dispenser's
+                // output is dark: an S or M here is a laser job sent to a
+                // machine that has no beam.
+                if (machine.darkOutput() && (words.has("S") || words.has("M"))) {
                     return ["error:2 bad word"];
                 }
                 machine.checkCut();
                 // F and S are modal, but a reset forgets them: the first
-                // cut after one must give F again. A spindle leaves S alone.
+                // cut after one must give F again. A dark output leaves S alone.
                 const feed = get(words, "F") ?? machine.feed;
-                const power = milling ? 0 : get(words, "S") ?? machine.power;
+                const power = machine.darkOutput() ? 0 : get(words, "S") ?? machine.power;
                 if (feed === null) {
                     return ["error:3 missing word"];
                 }
@@ -2762,10 +2889,24 @@ export class MockBackend implements Api, EventFeed {
         return {
             values: { ...this.machine.settings },
             schema: SETTINGS_SCHEMA,
-            host: { tolerance: this.tolerance, clearance: this.clearance, spinup: this.spinup },
+            host: this.hostSettings(),
             machine: found?.id ?? null,
             controls_from: source?.id ?? null,
             controls: source?.controls ?? defaultControls(this.machine.profile()),
+        };
+    }
+
+    /** The host's own settings as the settings response carries them. */
+    private hostSettings(): HostSettings {
+        return {
+            tolerance: this.tolerance,
+            clearance: this.clearance,
+            spinup: this.spinup,
+            gap: this.gap,
+            retract: this.retract,
+            output: this.output,
+            extrude_rate: this.extrudeRate,
+            dwell_ms: this.dwellMs,
         };
     }
 
@@ -2871,6 +3012,10 @@ export class MockBackend implements Api, EventFeed {
         }
         await this.updateSettings({ values: { ...read.document.settings }, host: { tolerance: this.tolerance, ...read.document.host } });
         this.loaded = id;
+        // A load puts the file's camera into the backend's camera settings;
+        // a running camera goes on with the old device until restarted.
+        this.cameraConfig = { ...read.document.camera, offset: [read.document.camera.offset[0], read.document.camera.offset[1]] };
+        this.emitCamera();
         if (save) {
             await this.saveSettings();
         }
@@ -2903,6 +3048,26 @@ export class MockBackend implements Api, EventFeed {
         if (!(Number.isFinite(spinup) && spinup >= 0 && spinup <= 600)) {
             throw new ApiError(400, "the spin-up must be 0 to 600 s");
         }
+        const gap = host?.gap ?? this.gap;
+        const retract = host?.retract ?? this.retract;
+        const output = host?.output ?? this.output;
+        const extrudeRate = host?.extrude_rate ?? this.extrudeRate;
+        const dwellMs = host?.dwell_ms ?? this.dwellMs;
+        if (!(Number.isFinite(gap) && gap > 0 && gap <= 10)) {
+            throw new ApiError(400, "the gap must be above 0 and at most 10 mm");
+        }
+        if (!(Number.isFinite(retract) && retract >= 0 && retract <= 50)) {
+            throw new ApiError(400, "the retract must be 0 to 50 mm");
+        }
+        if (!(Number.isFinite(output) && output > 0 && output <= 100000)) {
+            throw new ApiError(400, "the output must be above 0 and at most 100000 mm^3/mm");
+        }
+        if (!(Number.isFinite(extrudeRate) && extrudeRate > 0 && extrudeRate <= 10000)) {
+            throw new ApiError(400, "the extrude rate must be above 0 and at most 10000 mm/min");
+        }
+        if (!(Number.isInteger(dwellMs) && dwellMs >= 0 && dwellMs <= 60000)) {
+            throw new ApiError(400, "the dwell must be a whole number of ms from 0 to 60000");
+        }
         const values = Object.entries(patch.values ?? {});
         if (values.length > 0) {
             this.writeMachineSettings(values);
@@ -2912,6 +3077,11 @@ export class MockBackend implements Api, EventFeed {
         }
         this.clearance = clearance;
         this.spinup = spinup;
+        this.gap = gap;
+        this.retract = retract;
+        this.output = output;
+        this.extrudeRate = extrudeRate;
+        this.dwellMs = dwellMs;
         if (values.length > 0 || tolerance !== null) {
             for (const job of this.jobStore.values()) {
                 job.stats = computeStats(job.groups, this.limits());
@@ -3001,6 +3171,11 @@ export class MockBackend implements Api, EventFeed {
             source: "gerber",
             spot: 0.1,
             offset: { x: 0, y: 14 },
+            rotation: 0,
+            pads: placed.pads,
+            holes: placed.holes,
+            // A gerber keeps no board file for the camera to look for.
+            design: { shift: placed.shift, rotation: 0, board: false },
             groups,
             outline: placed.outline,
             copper: placed.copper,
@@ -3155,6 +3330,7 @@ export class MockBackend implements Api, EventFeed {
                 layer: job.layer ?? null,
                 spot: job.spot,
                 offset: job.offset,
+                rotation: job.rotation ?? 0,
                 groups: job.groups.map((group) => ({
                     label: group.label,
                     power: group.power,
@@ -3162,6 +3338,9 @@ export class MockBackend implements Api, EventFeed {
                     speed: group.speed,
                     passes: group.passes,
                     enabled: group.enabled,
+                    depth: group.depth,
+                    plunge: group.plunge,
+                    thickness: group.thickness,
                     tool: group.tool ?? null,
                     paths: group.paths.length,
                     joints: group.joints?.length ?? 0,
@@ -3212,6 +3391,9 @@ export class MockBackend implements Api, EventFeed {
                 if (change.plunge !== undefined) {
                     checkSpeed(change.plunge, "plunge");
                 }
+                if (change.thickness !== undefined) {
+                    checkThickness(change.thickness);
+                }
             }
             if (patch.offset) {
                 const moved = patch.offset.x !== job.offset.x || patch.offset.y !== job.offset.y;
@@ -3249,6 +3431,9 @@ export class MockBackend implements Api, EventFeed {
             if (change.plunge !== undefined) {
                 group.plunge = change.plunge;
             }
+            if (change.thickness !== undefined) {
+                group.thickness = change.thickness;
+            }
             if (change.enabled !== undefined) {
                 group.enabled = change.enabled;
             }
@@ -3262,6 +3447,11 @@ export class MockBackend implements Api, EventFeed {
             }
             updated.outline = move(updated.outline);
             updated.copper = move(updated.copper);
+            updated.pads = (updated.pads ?? []).map(([x, y, area]) => [x + dx, y + dy, area]);
+            updated.holes = (updated.holes ?? []).map(([x, y, diameter]) => [x + dx, y + dy, diameter]);
+            if (updated.design) {
+                updated.design = { ...updated.design, shift: [updated.design.shift[0] + dx, updated.design.shift[1] + dy] };
+            }
             updated.offset = { ...patch.offset };
         }
         updated.stats = computeStats(updated.groups, this.limits());
@@ -3275,6 +3465,22 @@ export class MockBackend implements Api, EventFeed {
         }
         this.jobStore.delete(id);
         this.order = this.order.filter((other) => other !== id);
+        this.forgetJob(id);
+    }
+
+    /** A job gone takes its marks and the camera's board with it. */
+    private forgetJob(id: string): void {
+        if (this.alignJob === id) {
+            this.alignJob = null;
+            this.alignMarks = [];
+            this.alignFitLast = null;
+            this.emitAlign();
+        }
+        if (this.cameraJob === id) {
+            this.cameraJob = null;
+            this.placement = null;
+            this.emitCamera();
+        }
     }
 
     async deleteAllJobs(): Promise<string[]> {
@@ -3288,6 +3494,9 @@ export class MockBackend implements Api, EventFeed {
             removed.push(id);
         }
         this.order = this.order.filter((id) => id === running);
+        for (const id of removed) {
+            this.forgetJob(id);
+        }
         return removed;
     }
 
@@ -3309,7 +3518,7 @@ export class MockBackend implements Api, EventFeed {
         if (path.length < 2) {
             return [];
         }
-        const angle = this.machine.joint.a;
+        const angle = this.machine.frameAngle();
         const out: Step[] = [];
         let here = { r: joint.r, z };
         path.forEach(([x, y], index) => {
@@ -3362,6 +3571,17 @@ export class MockBackend implements Api, EventFeed {
             const board = machine.headBoard(target, z);
             return heightAt(focus, board.x, board.y) + focus.focus_offset;
         } : null;
+        // A group made for another tool than the machine has is refused;
+        // one made for none runs on a laser or a spindle.
+        const tool = machine.profile().tool;
+        for (const group of job.groups) {
+            if (group.enabled && group.tool && group.tool !== tool) {
+                throw new Error(`${group.label}: made for a ${group.tool}, not this machine's ${tool}`);
+            }
+        }
+        if (machine.dispensing()) {
+            return this.dispensingMoves(job, focus, surface);
+        }
         if (machine.milling()) {
             return this.millingMoves(job, focus, surface);
         }
@@ -3450,6 +3670,19 @@ export class MockBackend implements Api, EventFeed {
             for (let pass = 1; pass <= passes; pass++) {
                 const depth = (total * pass) / passes;
                 for (const path of group.paths) {
+                    // A path of one point is a drill: over the point, the bit
+                    // down to the depth and up again.
+                    if (path.length === 1) {
+                        const over = this.jointOver({ x: path[0]![0], y: path[0]![1] }, joint);
+                        if (Math.abs(over.r - joint.r) >= 0.5e-3 || Math.abs(over.z - z) >= 0.5e-3 || Math.abs(over.a - joint.a) >= 0.5e-4) {
+                            moves.push({ kind: "go", target: { r: over.r, a: over.a }, ...(cartesian ? { z: over.z } : {}), feed: null, power: 0, group: index });
+                            joint = { r: over.r, a: over.a };
+                            z = over.z;
+                        }
+                        moves.push({ kind: "cut", target: joint, h: under(joint, z, depth), headOnly: true, feed: plunge, power: 0, milled: true, group: index });
+                        moves.push(lift(index));
+                        continue;
+                    }
                     let plunged = false;
                     for (const step of this.pathSteps(path, joint, z)) {
                         const slide = cartesian ? { z: step.z } : {};
@@ -3479,6 +3712,81 @@ export class MockBackend implements Api, EventFeed {
             }
         });
         moves.push({ kind: "spindle", target: joint, power: 0, off: true, feed: null, group: lastGroup });
+        return moves;
+    }
+
+    /** The joints that put the head over a board point: the rail and the slide on a cartesian machine, the polar pair otherwise. */
+    private jointOver(point: Board, from: Joint): { r: number; a: number; z: number } {
+        if (this.machine.cartesian()) {
+            const at = turned(point, -this.machine.frameAngle());
+            return { r: at.x, a: from.a, z: at.y };
+        }
+        const joint = jointOfBoard(point, from);
+        return { r: joint.r, a: joint.a, z: this.machine.z };
+    }
+
+    /**
+     * A job dispensed, as the backend streams one: the head lifts to the
+     * travel height, and for every dot goes over the pad, lowers the needle
+     * to the gap over the surface, pushes the plunger out by the dot's
+     * volume over the output plus the last retract at the extrude rate,
+     * waits the dwell, pulls the plunger back by the retract and lifts.
+     * The plunger's position only ever grows by the dots' volumes.
+     */
+    private dispensingMoves(job: Job, map: HeightMap | null, surface: ((target: Joint, z: number) => number) | null): Move[] {
+        const machine = this.machine;
+        const cartesian = machine.cartesian();
+        for (const group of job.groups) {
+            if (!group.enabled) {
+                continue;
+            }
+            if (group.joints && group.joints.length > 0) {
+                throw new Error(`${group.label}: a joint-space group cannot be dispensed`);
+            }
+            if (group.paths.some((path) => path.length !== 1)) {
+                throw new Error(`${group.label}: a dispenser lays dots: import the board with mode dispense`);
+            }
+        }
+        const travel = round4((map ? highestSurface(map) : 0) + this.clearance);
+        const over = (target: Joint, z: number): number => round4((surface ? surface(target, z) : 0) + this.gap);
+        const moves: Move[] = [];
+        let joint = machine.endpoint();
+        let z = machine.endpointZ();
+        let plunger = joint.a;
+        const lift = (group: number): Move => ({ kind: "go", target: joint, h: travel, headOnly: true, feed: null, power: 0, group });
+        moves.push(lift(-1));
+        const dwellMs = Math.round(this.dwellMs);
+        job.groups.forEach((group, index) => {
+            if (!group.enabled) {
+                return;
+            }
+            const thickness = group.thickness ?? DEFAULT_THICKNESS;
+            for (let pass = 0; pass < Math.max(1, group.passes); pass++) {
+                group.paths.forEach((path, dot) => {
+                    const area = group.areas?.[dot];
+                    if (area === undefined) {
+                        throw new Error(`${group.label}: dot ${dot + 1} has no pad area`);
+                    }
+                    const at = this.jointOver({ x: path[0]![0], y: path[0]![1] }, joint);
+                    joint = { r: at.r, a: plunger };
+                    z = at.z;
+                    moves.push({ kind: "go", target: joint, ...(cartesian ? { z } : {}), feed: null, power: 0, group: index });
+                    moves.push({ kind: "go", target: joint, h: over(joint, z), headOnly: true, feed: null, power: 0, group: index });
+                    plunger = round4(plunger + (area * thickness) / this.output + this.retract);
+                    joint = { r: joint.r, a: plunger };
+                    moves.push({ kind: "cut", target: joint, turn: true, feed: this.extrudeRate, power: 0, milled: true, group: index });
+                    if (dwellMs > 0) {
+                        moves.push({ kind: "dwell", target: joint, ms: dwellMs, power: 0, feed: null, group: index });
+                    }
+                    if (this.retract > 0) {
+                        plunger = round4(plunger - this.retract);
+                        joint = { r: joint.r, a: plunger };
+                        moves.push({ kind: "go", target: joint, turn: true, feed: null, power: 0, group: index });
+                    }
+                    moves.push(lift(index));
+                });
+            }
+        });
         return moves;
     }
 
@@ -3525,6 +3833,9 @@ export class MockBackend implements Api, EventFeed {
         this.refuseWhileProbing();
         if (this.machine.milling() && !this.machine.hasFocusAxis()) {
             throw new ApiError(400, "a spindle needs the focus axis as its depth axis: set $h_axis=1");
+        }
+        if (this.machine.dispensing() && !this.machine.hasFocusAxis()) {
+            throw new ApiError(400, "a dispenser needs the focus axis as the needle's height: set $h_axis=1");
         }
         const followed = this.compensation(compensate, job);
         if (this.session) {
@@ -3726,6 +4037,9 @@ export class MockBackend implements Api, EventFeed {
             if (!map) {
                 throw new ApiError(400, "there is no height map to go on with: probe the board first");
             }
+            if (map.points) {
+                throw new ApiError(400, "the height map is a pad map: go on with it by probing the pads again");
+            }
             if (map.heights.every((row, iy) => row.every((value, ix) => value !== null || !gridWanted(map.grid, ix, iy)))) {
                 throw new ApiError(400, "the height map is complete: nothing is left to probe");
             }
@@ -3883,54 +4197,13 @@ export class MockBackend implements Api, EventFeed {
         this.notOwned();
         const { grid, resume } = this.probeGridOf(request);
         const machine = this.machine;
-        if (machine.state !== "Idle") {
-            throw new ApiError(409, `the machine is ${statusLine(machine)}, not Idle`);
-        }
-        if (!machine.hasFocusAxis()) {
-            throw new ApiError(409, "the machine has no focus axis: set $h_axis=1 to probe");
-        }
-        if (machine.probeActive()) {
-            throw new ApiError(409, "the probe is already touching: raise the head clear of the board first");
-        }
-        if (machine.milling() && machine.spindle > 0) {
-            // The tool may be the probe: a turning one would cut at every touch.
-            throw new ApiError(409, "the spindle is turning: stop it before probing");
-        }
+        this.requireProbeReady();
         const settings = structuredClone(this.probeConfig);
         // Every point is checked for reach before the first move, soft limits included.
         const xs = gridXs(grid);
         const ys = gridYs(grid);
         const order = resume ? gridOrder(grid).filter(([ix, iy]) => resume.heights[iy]?.[ix] === null) : gridOrder(grid);
-        const joints: ProbeJoint[] = [];
-        const cartesian = machine.cartesian();
-        const rMax = machine.settings["r_max"] ?? 0;
-        const zMax = machine.settings["z_max"] ?? 0;
-        let angle = machine.joint.a;
-        for (const [ix, iy] of order) {
-            const x = xs[ix] ?? 0;
-            const y = ys[iy] ?? 0;
-            const where = `the probe cannot reach (${x.toFixed(2)}, ${y.toFixed(2)}): the head would go to`;
-            let joint: ProbeJoint;
-            if (cartesian) {
-                // The rail and the cross slide put the tip over the point; the table stays.
-                const head = turned({ x, y }, -machine.joint.a);
-                joint = { r: head.x - settings.offset[0], a: machine.joint.a, z: head.y - settings.offset[1] };
-                if (zMax > 0 && Math.abs(joint.z ?? 0) > zMax + 1e-9) {
-                    throw new ApiError(409, `${where} Z${(joint.z ?? 0).toFixed(3)}, past the soft limit z_max=${formatG(zMax)}`);
-                }
-            } else {
-                try {
-                    joint = probeJoint([x, y], settings.offset, angle, gridSpacing(grid) / 2);
-                } catch (error) {
-                    throw new ApiError(409, errorText(error));
-                }
-                angle = joint.a;
-            }
-            if (rMax > 0 && Math.abs(joint.r) > rMax + 1e-9) {
-                throw new ApiError(409, `${where} R${joint.r.toFixed(3)}, past the soft limit r_max=${formatG(rMax)}`);
-            }
-            joints.push(joint);
-        }
+        const joints = this.jointsForPoints(order.map(([ix, iy]) => [xs[ix] ?? 0, ys[iy] ?? 0]), settings, gridSpacing(grid) / 2);
         if (resume && this.heightsFrame !== this.frame) {
             throw new ApiError(400, "the focus axis was renumbered since the map was probed: probe it anew");
         }
@@ -3969,7 +4242,171 @@ export class MockBackend implements Api, EventFeed {
             remaining: null,
         };
         this.probeProgress = progress;
-        const session: ProbeSession = { settings, order, joints, next: 0, elapsed: 0, travel: machine.h, map, progress };
+        const session: ProbeSession = { settings, order, joints, next: 0, pads: null, elapsed: 0, travel: machine.h, map, progress };
+        this.probing = session;
+        this.emitHeightMap();
+        this.probeBegin(session);
+        return this.heightMapState();
+    }
+
+    /** What probing needs of the machine: Idle, the focus axis, the probe clear of the board and the spindle still. */
+    private requireProbeReady(): void {
+        const machine = this.machine;
+        if (machine.state !== "Idle") {
+            throw new ApiError(409, `the machine is ${statusLine(machine)}, not Idle`);
+        }
+        if (!machine.hasFocusAxis()) {
+            throw new ApiError(409, "the machine has no focus axis: set $h_axis=1 to probe");
+        }
+        if (machine.probeActive()) {
+            throw new ApiError(409, "the probe is already touching: raise the head clear of the board first");
+        }
+        if (machine.milling() && machine.spindle > 0) {
+            // The tool may be the probe: a turning one would cut at every touch.
+            throw new ApiError(409, "the spindle is turning: stop it before probing");
+        }
+    }
+
+    /**
+     * The joints that put the probe tip over each point, every one checked
+     * against the soft limits before the first move; `slack` lets a polar
+     * point inside the tip's circle be probed from its edge.
+     */
+    private jointsForPoints(points: [number, number][], settings: ProbeSettings, slack: number): ProbeJoint[] {
+        const machine = this.machine;
+        const joints: ProbeJoint[] = [];
+        const cartesian = machine.cartesian();
+        const rMax = machine.settings["r_max"] ?? 0;
+        const zMax = machine.settings["z_max"] ?? 0;
+        let angle = machine.joint.a;
+        for (const [x, y] of points) {
+            const where = `the probe cannot reach (${x.toFixed(2)}, ${y.toFixed(2)}): the head would go to`;
+            let joint: ProbeJoint;
+            if (cartesian) {
+                // The rail and the cross slide put the tip over the point; the table stays.
+                const head = turned({ x, y }, -machine.frameAngle());
+                joint = { r: head.x - settings.offset[0], a: machine.joint.a, z: head.y - settings.offset[1] };
+                if (zMax > 0 && Math.abs(joint.z ?? 0) > zMax + 1e-9) {
+                    throw new ApiError(409, `${where} Z${(joint.z ?? 0).toFixed(3)}, past the soft limit z_max=${formatG(zMax)}`);
+                }
+            } else {
+                try {
+                    joint = probeJoint([x, y], settings.offset, angle, slack);
+                } catch (error) {
+                    throw new ApiError(409, errorText(error));
+                }
+                angle = joint.a;
+            }
+            if (rMax > 0 && Math.abs(joint.r) > rMax + 1e-9) {
+                throw new ApiError(409, `${where} R${joint.r.toFixed(3)}, past the soft limit r_max=${formatG(rMax)}`);
+            }
+            joints.push(joint);
+        }
+        return joints;
+    }
+
+    /**
+     * The pads of a job probing would visit, as the backend picks them:
+     * every pad of at least the area, the most spread out of them over the
+     * count, in a short tour; or with `resume` the stored pad map's points
+     * still without a height.
+     */
+    private padPlan(request: PadProbeRequest): { job: Job; map: HeightMap; order: number[]; skipped: number; resume: boolean; pads: number } {
+        const job = this.requireJob(request.job);
+        const minArea = request.min_area ?? MIN_AREA.fallback;
+        const maxPoints = request.max_points ?? MAX_POINTS.fallback;
+        if (!(Number.isFinite(minArea) && minArea >= MIN_AREA.low && minArea <= MIN_AREA.high)) {
+            throw new ApiError(400, `min_area must be ${MIN_AREA.low} to ${MIN_AREA.high} mm^2`);
+        }
+        if (!(Number.isInteger(maxPoints) && maxPoints >= MAX_POINTS.low && maxPoints <= MAX_POINTS.high)) {
+            throw new ApiError(400, `max_points must be a whole number from ${MAX_POINTS.low} to ${MAX_POINTS.high}`);
+        }
+        const pads = job.pads ?? [];
+        const skipped = selectPads(pads, minArea, maxPoints).skipped;
+        if (request.resume) {
+            const map = this.heightmap;
+            if (!map || !map.points || !map.point_heights) {
+                throw new ApiError(400, "there is no pad map to go on with: probe the pads first");
+            }
+            const order = map.point_heights.map((height, index) => (height === null ? index : -1)).filter((index) => index >= 0);
+            if (order.length === 0) {
+                throw new ApiError(400, "the pad map is complete: nothing is left to probe");
+            }
+            return { job, map, order, skipped, resume: true, pads: pads.length };
+        }
+        if (pads.length === 0) {
+            throw new ApiError(400, `${job.name} has no pads: a gerber or a KiCad board carries them`);
+        }
+        const { points } = selectPads(pads, minArea, maxPoints);
+        if (points.length === 0) {
+            throw new ApiError(400, `no pad of ${job.name} is ${formatG(minArea)} mm^2 or more`);
+        }
+        const grid = padMapGrid(job, points);
+        const settings = this.probeConfig;
+        const map: HeightMap = {
+            grid,
+            heights: Array.from({ length: grid.ny }, () => Array<number | null>(grid.nx).fill(null)),
+            focus_offset: 0,
+            focus_set: false,
+            focus_known: false,
+            probe_offset: [settings.offset[0], settings.offset[1]],
+            created: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
+            points,
+            point_heights: points.map(() => null),
+        };
+        return { job, map, order: points.map((_, index) => index), skipped, resume: false, pads: pads.length };
+    }
+
+    async planPads(request: PadProbeRequest): Promise<PadProbePlan> {
+        const plan = this.padPlan(request);
+        const stored = this.heightmap;
+        const skippable = stored?.points && stored.point_heights ? stored.point_heights.filter((height) => height !== null).length : 0;
+        return {
+            points: plan.order.map((index) => [plan.map.points![index]![0], plan.map.points![index]![1]]),
+            pads: plan.pads,
+            skipped: plan.skipped,
+            seconds: Math.round(plan.order.length * PROBE_POINT_SECONDS * 10) / 10,
+            resume: skippable,
+        };
+    }
+
+    /** Probes the board at a job's pads on the mock's clock, as `probe` does a grid; the map is a pad map, its grid filled in from the pads. */
+    async probePads(request: PadProbeRequest): Promise<HeightMapState> {
+        this.requireConnected();
+        this.notOwned();
+        const plan = this.padPlan(request);
+        const machine = this.machine;
+        this.requireProbeReady();
+        const settings = structuredClone(this.probeConfig);
+        const joints = this.jointsForPoints(plan.order.map((index) => plan.map.points![index]!), settings, 0);
+        if (plan.resume && this.heightsFrame !== this.frame) {
+            throw new ApiError(400, "the focus axis was renumbered since the map was probed: probe it anew");
+        }
+        const map = plan.map;
+        const previous = this.heightmap;
+        const sameProbe = previous && previous.probe_offset[0] === settings.offset[0] && previous.probe_offset[1] === settings.offset[1];
+        if (!plan.resume && previous && sameProbe && this.heightsFrame === this.frame) {
+            map.focus_offset = previous.focus_offset;
+            map.focus_set = previous.focus_set;
+            map.focus_known = previous.focus_known ?? false;
+        }
+        this.heightsFrame = this.frame;
+        this.jogTracked = false;
+        this.heightmap = map;
+        const done = plan.resume ? (map.point_heights ?? []).filter((height) => height !== null).length : 0;
+        const progress: ProbeProgress = {
+            state: "running",
+            done,
+            total: map.points?.length ?? 0,
+            point: null,
+            pad: null,
+            seconds: 0,
+            error: null,
+            estimate: Math.round(plan.order.length * PROBE_POINT_SECONDS * 10) / 10,
+            remaining: null,
+        };
+        this.probeProgress = progress;
+        const session: ProbeSession = { settings, order: [], joints, next: 0, pads: plan.order, elapsed: 0, travel: machine.h, map, progress };
         this.probing = session;
         this.emitHeightMap();
         this.probeBegin(session);
@@ -4226,14 +4663,17 @@ export class MockBackend implements Api, EventFeed {
 
     /** Sends the head over the next point, or ends the probing when every point is done. */
     private probeBegin(session: ProbeSession): void {
-        const point = session.order[session.next];
+        const point = session.pads ? null : session.order[session.next];
+        const pad = session.pads ? session.pads[session.next] : null;
         const joint = session.joints[session.next];
-        if (!point || !joint) {
+        if ((point === undefined && pad === undefined) || !joint) {
             session.progress.point = null;
+            session.progress.pad = null;
             this.probeFinish(session, "done", null);
             return;
         }
-        session.progress.point = point;
+        session.progress.point = point ?? null;
+        session.progress.pad = pad ?? null;
         this.emitHeightMap();
         const words = joint.z !== undefined ? `R${coord(joint.r, 3)} Z${coord(joint.z, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
         this.probeRequest(session, `go ${words}`, () => this.probeGo(joint, null));
@@ -4241,8 +4681,9 @@ export class MockBackend implements Api, EventFeed {
 
     /** Touches the point in progress, records it, and goes on to the next. */
     private probePoint(session: ProbeSession): void {
-        const point = session.order[session.next];
-        if (!point) {
+        const point = session.pads ? null : session.order[session.next];
+        const pad = session.pads ? session.pads[session.next] : null;
+        if (point === undefined && pad === undefined) {
             return;
         }
         const { depth, feed, slow, backoff } = session.settings;
@@ -4263,10 +4704,17 @@ export class MockBackend implements Api, EventFeed {
         if (!this.probeRequest(session, `go H${coord(session.travel, 4)}`, () => this.probeGo(null, session.travel))) {
             return;
         }
-        const [ix, iy] = point;
-        const row = session.map.heights[iy];
-        if (row) {
-            row[ix] = round4(height);
+        if (pad !== null && pad !== undefined && session.map.point_heights) {
+            // A pad's height goes into the pad map, and the grid is filled in
+            // from every pad probed so far.
+            session.map.point_heights[pad] = round4(height);
+            fillPadHeights(session.map);
+        } else if (point) {
+            const [ix, iy] = point;
+            const row = session.map.heights[iy];
+            if (row) {
+                row[ix] = round4(height);
+            }
         }
         session.progress.done += 1;
         session.next += 1;
@@ -4355,6 +4803,655 @@ export class MockBackend implements Api, EventFeed {
         session.progress.state = state;
         session.progress.error = error;
         this.emitHeightMap();
+    }
+
+    // Camera.
+
+    private emitCamera(): void {
+        this.emit({ type: "camera", data: this.cameraStateOf() });
+    }
+
+    /** The picture's center on the board: the tool's point plus the camera's real offset, whatever the settings say. */
+    private pictureCenter(): Board {
+        const tool = this.machine.headBoard();
+        return { x: tool.x + CAMERA_TRUTH.offset[0], y: tool.y + CAMERA_TRUTH.offset[1] };
+    }
+
+    private poseOf(): CameraPose | null {
+        if (!this.cameraRunning) {
+            return null;
+        }
+        const job = this.cameraJob ? this.jobStore.get(this.cameraJob) : undefined;
+        if (!job || !this.placement) {
+            return { state: "none" };
+        }
+        return boardPose(this.pictureCenter(), job, this.placement, CAMERA_TRUTH, this.cameraConfig.size);
+    }
+
+    private cameraStateOf(): CameraState {
+        const [width, height] = parseSize(this.cameraConfig.size);
+        return {
+            ...this.cameraConfig,
+            offset: [this.cameraConfig.offset[0], this.cameraConfig.offset[1]],
+            running: this.cameraRunning,
+            board: this.cameraJob,
+            mark: this.cameraMarkPoint ? [this.cameraMarkPoint.x, this.cameraMarkPoint.y] : null,
+            frame: this.cameraRunning ? { width, height, age_ms: 40, fps: POSE_FPS } : null,
+            pose: this.poseOf(),
+            routine: this.routine ? structuredClone(this.routine) : null,
+        };
+    }
+
+    async camera(): Promise<CameraState> {
+        return this.cameraStateOf();
+    }
+
+    async cameraSettings(patch: Partial<CameraSettings>): Promise<CameraState> {
+        try {
+            checkCameraSettings(patch);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const next: CameraSettings = { ...this.cameraConfig, offset: [this.cameraConfig.offset[0], this.cameraConfig.offset[1]] };
+        if (patch.device !== undefined) {
+            next.device = patch.device;
+        }
+        if (patch.size !== undefined) {
+            next.size = patch.size;
+        }
+        if (patch.fps !== undefined) {
+            next.fps = patch.fps;
+        }
+        if (patch.pcbv !== undefined) {
+            next.pcbv = patch.pcbv;
+        }
+        if (patch.side !== undefined) {
+            next.side = patch.side;
+        }
+        if (patch.finish !== undefined) {
+            next.finish = patch.finish;
+        }
+        if (patch.offset !== undefined) {
+            next.offset = [patch.offset[0], patch.offset[1]];
+        }
+        if (patch.roll !== undefined) {
+            next.roll = patch.roll;
+        }
+        if (patch.mm_per_px !== undefined) {
+            next.mm_per_px = patch.mm_per_px;
+        }
+        this.cameraConfig = next;
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async cameraStart(): Promise<CameraState> {
+        if (this.cameraRunning) {
+            throw new ApiError(409, "the camera is running");
+        }
+        this.cameraRunning = true;
+        this.message("info", `camera started on ${this.cameraConfig.device} (mock)`);
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async cameraStop(): Promise<CameraState> {
+        if (this.finding) {
+            throw new ApiError(409, "the camera offset routine is running: abort it first");
+        }
+        this.cameraRunning = false;
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    /** The picture as the mock draws it now: the loaded board where it really lies, the mark, the crosshair and, with `overlay`, the pose. */
+    cameraFrameUrl(width: number, overlay: boolean): string {
+        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        const job = this.cameraJob ? this.jobStore.get(this.cameraJob) : undefined;
+        const placement = this.placement;
+        const real = (point: Board): Board => (job && placement ? placedPoint(designPoint(point, jobPlacement(job)), placement) : point);
+        const pads = job && placement ? (job.pads ?? []).map(([x, y, area]) => {
+            const at = real({ x, y });
+            return [at.x, at.y, area] as [number, number, number];
+        }) : [];
+        const outline = job && placement ? job.outline.map((path) => path.map(([x, y]) => {
+            const at = real({ x, y });
+            return [at.x, at.y] as Point;
+        })) : [];
+        return frameSvg({
+            center: this.pictureCenter(),
+            truth: CAMERA_TRUTH,
+            size: this.cameraConfig.size,
+            pads,
+            outline,
+            mark: this.cameraMarkPoint,
+            finish: this.cameraConfig.finish,
+            pose: this.poseOf(),
+        }, size, overlay);
+    }
+
+    async cameraPose(): Promise<CameraPose> {
+        return this.poseOf() ?? { state: null };
+    }
+
+    async cameraBoard(jobId: string | null): Promise<CameraState> {
+        if (jobId === null) {
+            this.cameraJob = null;
+            this.placement = null;
+            this.emitCamera();
+            return this.cameraStateOf();
+        }
+        const job = this.requireJob(jobId);
+        if (!job.design?.board) {
+            throw new ApiError(400, `${job.name} has no board file: upload the .kicad_pcb for the camera to look for it`);
+        }
+        // The board really lies a little off the job's design, where it lay
+        // the first time it was looked for: aligning the job moves the job,
+        // not the board.
+        let placement = this.placements.get(jobId);
+        if (!placement) {
+            const design = jobPlacement(job);
+            placement = {
+                shift: [design.shift[0] + BOARD_MISPLACEMENT.shift[0], design.shift[1] + BOARD_MISPLACEMENT.shift[1]],
+                rotation: design.rotation + BOARD_MISPLACEMENT.rotation,
+            };
+            this.placements.set(jobId, placement);
+        }
+        this.cameraJob = jobId;
+        this.placement = placement;
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    /**
+     * A mark to measure the camera against: a drill of one point where the
+     * tool stands, stored as a job named camera mark and run, or with
+     * `here` only the tool's point recorded.
+     */
+    async cameraMark(request: MarkRequest): Promise<CameraState> {
+        this.requireConnected();
+        if (request.here) {
+            this.notOwned();
+            const point = this.machine.headBoard();
+            this.cameraMarkPoint = { x: round4(point.x), y: round4(point.y) };
+            this.message("info", `mark recorded at X ${num(point.x)} Y ${num(point.y)}`);
+            this.emitCamera();
+            return this.cameraStateOf();
+        }
+        if (!this.machine.milling()) {
+            throw new ApiError(400, "a mark is cut with a spindle: this machine has none, so record the tool's point over a mark made by hand");
+        }
+        if (!this.machine.hasFocusAxis()) {
+            throw new ApiError(400, "a mark needs the focus axis as the depth axis: set $h_axis=1");
+        }
+        const depth = request.depth ?? 0.1;
+        const plunge = request.plunge ?? 30;
+        if (!(Number.isFinite(depth) && depth >= 0.01 && depth <= 5)) {
+            throw new ApiError(400, "depth must be 0.01 to 5 mm");
+        }
+        if (!(Number.isFinite(plunge) && plunge >= 1 && plunge <= 1000)) {
+            throw new ApiError(400, "plunge must be 1 to 1000 mm/min");
+        }
+        this.notOwned();
+        const point = this.machine.headBoard();
+        const id = this.newId();
+        const groups: Group[] = [{
+            label: "camera mark",
+            power: this.machine.settings["s_max"] ?? 1000,
+            min_power: 0,
+            speed: plunge,
+            passes: 1,
+            enabled: true,
+            depth,
+            plunge,
+            tool: "spindle",
+            paths: [[[point.x, point.y]]],
+        }];
+        const job: Job = {
+            id,
+            name: "camera mark",
+            source: "mark",
+            spot: 0.1,
+            offset: { x: 0, y: 0 },
+            rotation: 0,
+            pads: [],
+            holes: [],
+            design: null,
+            groups,
+            outline: [],
+            copper: [],
+            stats: computeStats(groups, this.limits()),
+        };
+        this.jobStore.set(id, job);
+        this.order.push(id);
+        await this.runJob(id);
+        this.cameraMarkPoint = { x: round4(point.x), y: round4(point.y) };
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async cameraFind(step: number): Promise<CameraState> {
+        this.requireConnected();
+        if (!this.cameraRunning) {
+            throw new ApiError(400, "the camera is not running: start it first");
+        }
+        if (!this.cameraMarkPoint) {
+            throw new ApiError(400, "there is no mark: make one with the tool, or record the tool's point over one");
+        }
+        const stepMm = step ?? DEFAULT_FIND_STEP;
+        if (!(Number.isFinite(stepMm) && stepMm >= 0 && stepMm <= 20)) {
+            throw new ApiError(400, "step must be 0 to 20 mm");
+        }
+        this.notOwned();
+        if (this.machine.state !== "Idle" || this.outbox.length > 0) {
+            throw new ApiError(409, `the machine is ${statusLine(this.machine)}, not Idle`);
+        }
+        const scale = stepMm > 0 || !(this.cameraConfig.mm_per_px > 0);
+        const focus = this.machine.hasFocusAxis();
+        const total = (focus ? 1 : 0) + 1 + (scale ? 1 : 0) + CENTERING_MOVES;
+        const progress: CameraRoutine = { state: "running", step: focus ? "lifting" : "moving", done: 0, total, error: null, spot: null };
+        this.routine = progress;
+        this.finding = { mark: { ...this.cameraMarkPoint }, step: scale ? (stepMm > 0 ? stepMm : DEFAULT_FIND_STEP) : 0, phase: progress.step, centered: 0, elapsed: 0, progress };
+        this.jogTracked = false;
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async cameraAbort(): Promise<CameraState> {
+        const session = this.finding;
+        if (!session) {
+            throw new ApiError(409, "no camera offset routine is running");
+        }
+        this.halt();
+        this.findFinish(session, "stopped", null);
+        this.emit({ type: "state", data: this.snapshot() });
+        return this.cameraStateOf();
+    }
+
+    private serviceFind(dt: number): void {
+        const session = this.finding;
+        if (!session) {
+            return;
+        }
+        session.elapsed += dt;
+        while (this.finding === session && session.elapsed >= FIND_STEP_SECONDS - CLOCK_EPSILON) {
+            session.elapsed -= FIND_STEP_SECONDS;
+            this.findStep(session);
+        }
+    }
+
+    /** The mark's place in the picture now: pixels from the center, y down, and its distance in mm; null once it is out of the picture. */
+    private spotNow(mark: Board): { dx: number; dy: number; mm: number } | null {
+        const center = this.pictureCenter();
+        const p = picturePoint(mark, center, CAMERA_TRUTH.roll, CAMERA_TRUTH.mmPerPx);
+        if (!inPicture(p.px, p.py, this.cameraConfig.size)) {
+            return null;
+        }
+        return { dx: Math.round(p.px * 10) / 10, dy: Math.round(p.py * 10) / 10, mm: round4(Math.hypot(mark.x - center.x, mark.y - center.y)) };
+    }
+
+    /** One line of the routine, taken at once and logged both ways; false once the routine has failed on it. */
+    private findRequest(session: FindSession, line: string, action: () => void): boolean {
+        this.line("tx", line);
+        try {
+            action();
+        } catch (error) {
+            if (!(error instanceof MachineError)) {
+                throw error;
+            }
+            this.line("rx", error.message);
+            this.findFail(session, `'${line}': ${error.message}`);
+            return false;
+        }
+        this.line("rx", "ok");
+        return true;
+    }
+
+    /** Puts the head's board point at `target`, at once. */
+    private findMoveTo(session: FindSession, target: Board): boolean {
+        const machine = this.machine;
+        const over = this.jointOver(target, machine.joint);
+        const joint: ProbeJoint = machine.cartesian() ? { r: over.r, a: machine.joint.a, z: over.z } : { r: over.r, a: over.a };
+        const words = joint.z !== undefined ? `R${coord(joint.r, 3)} Z${coord(joint.z, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
+        return this.findRequest(session, `go ${words}`, () => {
+            this.probeGo(joint, null);
+        });
+    }
+
+    private findMoveBy(session: FindSession, delta: Board): boolean {
+        const here = this.machine.headBoard();
+        return this.findMoveTo(session, { x: here.x + delta.x, y: here.y + delta.y });
+    }
+
+    private findAdvance(session: FindSession, next: RoutineStep): void {
+        session.progress.done += 1;
+        session.phase = next;
+        session.progress.step = next;
+        this.emitCamera();
+    }
+
+    /**
+     * One step of the routine: the head lifts to the travel height, goes
+     * where the camera should see the mark, moves a step along +X and back
+     * to read the scale and the roll off how the spot moved, then moves by
+     * the spot's distance from the center until it is within the tolerance,
+     * and the offset is the mark less the tool's point.
+     */
+    private findStep(session: FindSession): void {
+        const progress = session.progress;
+        const config = this.cameraConfig;
+        switch (session.phase) {
+            case "lifting": {
+                const travel = round4(this.clearance);
+                if (!this.findRequest(session, `go H${coord(travel, 4)}`, () => {
+                    this.probeGo(null, travel);
+                })) {
+                    return;
+                }
+                this.findAdvance(session, "moving");
+                return;
+            }
+            case "moving": {
+                if (!this.findMoveTo(session, { x: session.mark.x - config.offset[0], y: session.mark.y - config.offset[1] })) {
+                    return;
+                }
+                const spot = this.spotNow(session.mark);
+                if (!spot) {
+                    this.findFail(session, "no dark spot in the picture: the mark is not where the offset in force puts it");
+                    return;
+                }
+                progress.spot = spot;
+                this.findAdvance(session, session.step > 0 ? "scale" : "centering");
+                return;
+            }
+            case "scale": {
+                const before = this.spotNow(session.mark);
+                if (!before || !this.findMoveBy(session, { x: session.step, y: 0 })) {
+                    if (!before) {
+                        this.findFail(session, "the spot was lost before the scale was measured");
+                    }
+                    return;
+                }
+                const after = this.spotNow(session.mark);
+                if (!after) {
+                    this.findFail(session, `the spot was lost when the head moved ${formatG(session.step)} mm along X`);
+                    return;
+                }
+                const ddx = after.dx - before.dx;
+                const ddy = after.dy - before.dy;
+                const pixels = Math.hypot(ddx, ddy);
+                if (pixels < 1e-6) {
+                    this.findFail(session, "the spot did not move in the picture");
+                    return;
+                }
+                // The head moved +X, so the spot moved -X in the board frame:
+                // its move in the picture, turned over and by the roll, is
+                // -X, which fixes the roll.
+                config.mm_per_px = Math.round((session.step / pixels) * 1e6) / 1e6;
+                let roll = 180 - (Math.atan2(-ddy, ddx) * 180) / Math.PI;
+                while (roll > 180) {
+                    roll -= 360;
+                }
+                while (roll <= -180) {
+                    roll += 360;
+                }
+                config.roll = Math.round(roll * 1e4) / 1e4;
+                if (!this.findMoveBy(session, { x: -session.step, y: 0 })) {
+                    return;
+                }
+                progress.spot = this.spotNow(session.mark) ?? after;
+                this.findAdvance(session, "centering");
+                return;
+            }
+            case "centering": {
+                const spot = this.spotNow(session.mark);
+                if (!spot) {
+                    this.findFail(session, "the spot was lost while centering");
+                    return;
+                }
+                progress.spot = spot;
+                if (spot.mm <= CENTER_TOLERANCE) {
+                    // The picture's center is on the mark: the offset is the
+                    // mark less the tool's point.
+                    const tool = this.machine.headBoard();
+                    config.offset = [round4(session.mark.x - tool.x), round4(session.mark.y - tool.y)];
+                    progress.done = progress.total;
+                    progress.step = "done";
+                    this.message("info", `camera offset measured: X ${num(config.offset[0])} Y ${num(config.offset[1])}, roll ${num(config.roll, 4)} deg, ${num(config.mm_per_px, 6)} mm/px`);
+                    this.findFinish(session, "done", null);
+                    return;
+                }
+                if (session.centered >= CENTERING_MOVES) {
+                    this.findFail(session, `the spot is still ${num(spot.mm, 3)} mm from the center after ${CENTERING_MOVES} moves`);
+                    return;
+                }
+                if (!this.findMoveBy(session, boardVector(spot.dx, spot.dy, config.roll, config.mm_per_px))) {
+                    return;
+                }
+                session.centered += 1;
+                progress.done += 1;
+                this.emitCamera();
+                return;
+            }
+            case "done":
+                return;
+        }
+    }
+
+    private findFail(session: FindSession, reason: string): void {
+        if (this.machine.state !== "Alarm") {
+            this.halt();
+        }
+        this.message("error", `camera offset routine failed: ${reason}`);
+        this.findFinish(session, "error", reason);
+    }
+
+    private findFinish(session: FindSession, state: CameraRoutine["state"], error: string | null): void {
+        if (this.finding !== session) {
+            return;
+        }
+        this.finding = null;
+        session.progress.state = state;
+        session.progress.error = error;
+        this.emitCamera();
+    }
+
+    // Alignment.
+
+    private alignStateOf(): AlignState {
+        return { job: this.alignJob, marks: structuredClone(this.alignMarks), fit: this.alignFitLast ? structuredClone(this.alignFitLast) : null };
+    }
+
+    private emitAlign(): void {
+        this.emit({ type: "align", data: this.alignStateOf() });
+    }
+
+    /** Marks for another job are replaced: they are kept for one job at a time. */
+    private takeMarksFor(jobId: string): void {
+        if (this.alignJob !== jobId) {
+            this.alignJob = jobId;
+            this.alignMarks = [];
+            this.alignFitLast = null;
+        }
+    }
+
+    /** The fit of the marks for `job`, the residuals written back to them; refused with the backend's words. */
+    private fitMarks(job: Job): AlignFit {
+        if (this.alignMarks.length === 0) {
+            throw new ApiError(400, "there are no marks: mark a pad, a hole or a point first");
+        }
+        if (this.alignJob !== job.id) {
+            throw new ApiError(400, `the marks are for job ${this.alignJob}, not ${job.id}`);
+        }
+        const marks = this.alignMarks;
+        // A lone camera mark gives the turn: the board's angle it saw against the job's.
+        const first = marks[0]!;
+        const fixed = marks.length === 1 && first.angle !== null ? first.angle - (job.design?.rotation ?? job.rotation ?? 0) : null;
+        const fit = fitRigid(marks.map((mark) => ({ design: mark.design, machine: mark.machine })), fixed);
+        marks.forEach((mark, index) => {
+            mark.residual = round4(fit.residuals[index] ?? 0);
+        });
+        const out: AlignFit = {
+            rotation: round4(fit.rotation),
+            shift: [round4(fit.shift[0]), round4(fit.shift[1])],
+            scale: Math.round(fit.scale * 1e6) / 1e6,
+            rms: round4(fit.rms),
+            residuals: fit.residuals.map((value) => round4(value)),
+            marks: marks.length,
+        };
+        this.alignFitLast = out;
+        return out;
+    }
+
+    private refit(): void {
+        const job = this.alignJob ? this.jobStore.get(this.alignJob) : undefined;
+        if (job && this.alignMarks.length > 0) {
+            this.fitMarks(job);
+        } else {
+            this.alignFitLast = null;
+        }
+    }
+
+    async align(): Promise<AlignState> {
+        return this.alignStateOf();
+    }
+
+    async alignMark(request: AlignMarkRequest): Promise<AlignState> {
+        this.requireConnected();
+        this.notOwned();
+        const job = this.requireJob(request.job);
+        const within = request.within ?? 5;
+        if (!(Number.isFinite(within) && within >= 0.1 && within <= 100)) {
+            throw new ApiError(400, "within must be 0.1 to 100 mm");
+        }
+        const tool = this.machine.headBoard();
+        const machine: [number, number] = [round4(tool.x), round4(tool.y)];
+        let mark: AlignMark;
+        if (request.design) {
+            const [x, y] = request.design;
+            if (![x, y].every((v) => typeof v === "number" && Number.isFinite(v))) {
+                throw new ApiError(400, "design must be two numbers");
+            }
+            mark = { design: [x, y], machine, source: "tool", kind: "point", distance: 0, angle: null, residual: null };
+        } else {
+            const nearest = request.nearest ?? null;
+            if (nearest !== "pad" && nearest !== "hole") {
+                throw new ApiError(400, "give a design point, or nearest pad or hole");
+            }
+            const candidates = nearest === "pad" ? job.pads ?? [] : job.holes ?? [];
+            if (candidates.length === 0) {
+                throw new ApiError(400, `${job.name} has no ${nearest}s`);
+            }
+            let best: [number, number, number] | null = null;
+            let bestDistance = Infinity;
+            for (const candidate of candidates) {
+                const distance = Math.hypot(candidate[0] - tool.x, candidate[1] - tool.y);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = candidate;
+                }
+            }
+            if (!best || bestDistance > within) {
+                throw new ApiError(400, `no ${nearest} within ${formatG(within)} mm of the tool`);
+            }
+            mark = { design: [best[0], best[1]], machine, source: "tool", kind: nearest, distance: round4(bestDistance), angle: null, residual: null };
+        }
+        this.takeMarksFor(job.id);
+        this.alignMarks.push(mark);
+        this.refit();
+        this.emitAlign();
+        return this.alignStateOf();
+    }
+
+    async alignCapture(jobId: string): Promise<AlignState> {
+        this.requireConnected();
+        this.notOwned();
+        const job = this.requireJob(jobId);
+        if (!this.cameraRunning) {
+            throw new ApiError(409, "the camera is not running");
+        }
+        if (this.cameraJob !== job.id) {
+            throw new ApiError(409, `the camera is not looking for the board of ${job.name}: load it first`);
+        }
+        const pose = this.poseOf();
+        if (!pose || pose.state !== "locked" || !pose.job_center) {
+            throw new ApiError(409, "the camera has no lock on the board: put it over the board first");
+        }
+        const tool = this.machine.headBoard();
+        const offset = this.cameraConfig.offset;
+        const mark: AlignMark = {
+            design: [pose.job_center[0], pose.job_center[1]],
+            machine: [round4(tool.x + offset[0]), round4(tool.y + offset[1])],
+            source: "camera",
+            kind: "center",
+            distance: 0,
+            angle: round4(this.cameraConfig.roll - (pose.angle_deg ?? 0)),
+            residual: null,
+        };
+        this.takeMarksFor(job.id);
+        this.alignMarks.push(mark);
+        this.refit();
+        this.emitAlign();
+        return this.alignStateOf();
+    }
+
+    async alignDeleteMark(index: number): Promise<AlignState> {
+        if (!Number.isInteger(index) || index < 0 || index >= this.alignMarks.length) {
+            throw new ApiError(404, `no mark ${index}`);
+        }
+        this.alignMarks.splice(index, 1);
+        this.refit();
+        this.emitAlign();
+        return this.alignStateOf();
+    }
+
+    async alignClear(): Promise<AlignState> {
+        this.alignMarks = [];
+        this.alignFitLast = null;
+        this.emitAlign();
+        return this.alignStateOf();
+    }
+
+    async alignFit(jobId: string): Promise<AlignFit> {
+        return this.fitMarks(this.requireJob(jobId));
+    }
+
+    /** Fits, turns the job counterclockwise about the origin and shifts it, its paths, outline, copper, pads and holes with it, and clears the marks. */
+    async alignApply(jobId: string): Promise<{ job: Job; fit: AlignFit }> {
+        const job = this.requireJob(jobId);
+        if (this.session && this.session.job.id === jobId) {
+            throw new ApiError(409, "the job is running");
+        }
+        const fit = this.fitMarks(job);
+        if (job.groups.some((group) => group.joints && group.joints.length > 0)) {
+            throw new ApiError(400, "a joint-space group is fixed to the axis and cannot be aligned");
+        }
+        const updated = structuredClone(job);
+        const place = ([x, y]: Point): Point => {
+            const turnedPoint = turnPoint([x, y], fit.rotation);
+            return [turnedPoint[0] + fit.shift[0], turnedPoint[1] + fit.shift[1]];
+        };
+        for (const group of updated.groups) {
+            group.paths = group.paths.map((path) => path.map(place));
+        }
+        updated.outline = updated.outline.map((path) => path.map(place));
+        updated.copper = updated.copper.map((path) => path.map(place));
+        updated.pads = (updated.pads ?? []).map(([x, y, area]) => [...place([x, y]), area] as [number, number, number]);
+        updated.holes = (updated.holes ?? []).map(([x, y, diameter]) => [...place([x, y]), diameter] as [number, number, number]);
+        updated.rotation = round4((updated.rotation ?? 0) + fit.rotation);
+        const offset = place([updated.offset.x, updated.offset.y]);
+        updated.offset = { x: round4(offset[0]), y: round4(offset[1]) };
+        if (updated.design) {
+            const shift = place(updated.design.shift);
+            updated.design = { ...updated.design, shift: [round4(shift[0]), round4(shift[1])], rotation: round4(updated.design.rotation + fit.rotation) };
+        }
+        updated.stats = computeStats(updated.groups, this.limits());
+        this.jobStore.set(jobId, updated);
+        this.alignMarks = [];
+        this.alignFitLast = null;
+        this.message("info", `${job.name} aligned: turned ${num(fit.rotation, 4)} deg, moved X ${num(fit.shift[0])} Y ${num(fit.shift[1])}, rms ${num(fit.rms)} mm`);
+        this.emitAlign();
+        return { job: structuredClone(updated), fit };
     }
 }
 

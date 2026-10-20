@@ -1,11 +1,12 @@
 // Firmware settings table with inline edits, apply, save to flash, and the
 // host chord tolerance; on a spindle machine also the host's milling travel
-// clearance and spin-up. On the Config page, beside the machine file that
-// is the other way to set every one of them.
+// clearance and spin-up, on a dispenser the travel clearance and what a dot
+// of paste is made of. On the Config page, beside the machine file that is
+// the other way to set every one of them.
 
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
-import { isMilling } from "../profile.ts";
+import { isDispensing, isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { HostSettings, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -41,6 +42,10 @@ function writeFoldOpen(open: boolean): void {
     }
 }
 
+/** The host's numbers the panel has a field for. */
+type HostField = "tolerance" | "clearance" | "spinup" | DispensingKey;
+type DispensingKey = "gap" | "retract" | "output" | "extrude_rate" | "dwell_ms";
+
 export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });
     const clearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
@@ -55,6 +60,23 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         el("label", { class: "muted", title: "Off, the spindle runs full on (S = s_max) whenever a run or the button starts it, whatever a group's speed says" },
             speedControl, " speed from the groups"),
     );
+    // What a dispensing run makes every dot of; the travel height between
+    // dots is the milling clearance, shown again here.
+    const dispenseClearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
+    const gap = numberField({ value: 0.1, min: 0.01, step: 0.05, width: "6rem" });
+    const retract = numberField({ value: 0.2, min: 0, step: 0.05, width: "6rem" });
+    const output = numberField({ value: 100, min: 0.01, step: 1, width: "6rem" });
+    const extrudeRate = numberField({ value: 60, min: 0.01, step: 10, width: "6rem" });
+    const dwellMs = numberField({ value: 200, min: 0, step: 50, width: "6rem" });
+    const dispensing = el("div", { class: "button-row hidden" },
+        labeled("Travel clearance mm", dispenseClearance, "labeled inline"),
+        labeled("Gap mm", gap, "labeled inline"),
+        labeled("Retract mm", retract, "labeled inline"),
+        labeled("Output mm^3/mm", output, "labeled inline"),
+        labeled("Extrude rate mm/min", extrudeRate, "labeled inline"),
+        labeled("Dwell ms", dwellMs, "labeled inline"),
+    );
+    dispensing.title = "Every dot: the head travels the clearance over the surface, the needle stands the gap over the pad, the plunger pushes the pad's area times the paste thickness over the output (plus the last retract) at the extrude rate, waits the dwell, and pulls back the retract";
     const apply = button("Apply", () => applyEdits(), "btn btn-primary");
     const save = button("Save to flash", () => saveFlash(), "btn");
     const reload = button("Reload", () => ctx.refreshSettings(), "btn btn-quiet");
@@ -74,6 +96,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     const body = el("fieldset", { class: "panel-body" },
         actions,
         milling,
+        dispensing,
         table,
         el("p", { class: "muted hint" }, "the values the controller runs with now; a machine file loaded from the panel beside sets every one of them. laser_pin, probe_pin, tool_pin and the endstop pins are read at boot, and tool_out claims its pin then: Save to flash, then restart the board for those."),
     );
@@ -91,12 +114,13 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     let editsFor: string | null = null;
     // The host values the fields were last filled with, to tell a field the
     // operator has typed in from one still showing the backend's value.
-    let hostShown: { tolerance: string; clearance: string; spinup: string } | null = null;
+    let hostShown: Record<HostField, string> | null = null;
 
     const machineOf = (state: AppState): string | null => (state.snapshot.connected ? state.snapshot.url ?? "" : null);
 
-    ctx.store.subscribe((state) => {
+    const followMachine = (state: AppState): void => {
         milling.classList.toggle("hidden", !isMilling(state.snapshot));
+        dispensing.classList.toggle("hidden", !isDispensing(state.snapshot));
         const machine = machineOf(state);
         if (machine !== editsFor) {
             editsFor = machine;
@@ -106,7 +130,10 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
                 render(shown);
             }
         }
-    }, ["snapshot"]);
+    };
+    ctx.store.subscribe(followMachine, ["snapshot"]);
+    // The machine may be known before the panel is: its rows follow it at once.
+    followMachine(ctx.store.get());
 
     ctx.store.subscribe((state) => {
         if (state.settings !== shown) {
@@ -129,12 +156,17 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const focused = document.activeElement;
-        const host = {
+        const host: Record<HostField, string> = {
             tolerance: String(settings.host.tolerance),
             clearance: String(settings.host.clearance ?? 2),
             spinup: String(settings.host.spinup ?? 2),
+            gap: String(settings.host.gap ?? 0.1),
+            retract: String(settings.host.retract ?? 0.2),
+            output: String(settings.host.output ?? 100),
+            extrude_rate: String(settings.host.extrude_rate ?? 60),
+            dwell_ms: String(settings.host.dwell_ms ?? 200),
         };
-        const follow = (field: HTMLInputElement, key: keyof typeof host): void => {
+        const follow = (field: HTMLInputElement, key: HostField): void => {
             const untouched = hostShown === null || field.value === hostShown[key];
             if (untouched && field !== focused) {
                 field.value = host[key];
@@ -142,7 +174,13 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         };
         follow(tolerance, "tolerance");
         follow(clearance, "clearance");
+        follow(dispenseClearance, "clearance");
         follow(spinup, "spinup");
+        follow(gap, "gap");
+        follow(retract, "retract");
+        follow(output, "output");
+        follow(extrudeRate, "extrude_rate");
+        follow(dwellMs, "dwell_ms");
         speedControl.checked = settings.host.speed_control ?? true;
         hostShown = host;
         // The field being typed in keeps its text as it is, parsed or not.
@@ -202,7 +240,9 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "the chord tolerance must be above 0");
             return;
         }
-        const hostClearance = parseNumber(clearance.value);
+        // The clearance has a field in the milling row and one in the
+        // dispensing row; the row shown is the one that counts.
+        const hostClearance = parseNumber((isDispensing(ctx.store.get().snapshot) ? dispenseClearance : clearance).value);
         const hostSpinup = parseNumber(spinup.value);
         if (hostClearance !== null && hostClearance <= 0) {
             ctx.toast("error", "the travel clearance must be above 0");
@@ -233,6 +273,28 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         if (speedControl.checked !== (settings.host.speed_control ?? true)) {
             host.speed_control = speedControl.checked;
             hostChanged = true;
+        }
+        const dispensingFields: [DispensingKey, HTMLInputElement, (value: number) => string | null][] = [
+            ["gap", gap, (value) => (value > 0 && value <= 10 ? null : "the gap must be above 0 and at most 10 mm")],
+            ["retract", retract, (value) => (value >= 0 && value <= 50 ? null : "the retract must be 0 to 50 mm")],
+            ["output", output, (value) => (value > 0 && value <= 100000 ? null : "the output must be above 0 and at most 100000 mm^3/mm")],
+            ["extrude_rate", extrudeRate, (value) => (value > 0 && value <= 10000 ? null : "the extrude rate must be above 0 and at most 10000 mm/min")],
+            ["dwell_ms", dwellMs, (value) => (Number.isInteger(value) && value >= 0 && value <= 60000 ? null : "the dwell is a whole number of ms from 0 to 60000")],
+        ];
+        for (const [key, field, check] of dispensingFields) {
+            const value = parseNumber(field.value);
+            if (value === null) {
+                continue;
+            }
+            const problem = check(value);
+            if (problem !== null) {
+                ctx.toast("error", problem);
+                return;
+            }
+            if (value !== settings.host[key]) {
+                host[key] = value;
+                hostChanged = true;
+            }
         }
         if (hostChanged) {
             patch.host = host;

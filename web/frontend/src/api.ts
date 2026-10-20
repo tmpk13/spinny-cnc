@@ -1,6 +1,11 @@
 // Typed wrappers over the backend routes.
 
 import type {
+    AlignFit,
+    AlignMarkRequest,
+    AlignState,
+    CameraSettings,
+    CameraState,
     CamGcodeResponse,
     CamJobResponse,
     CamPath,
@@ -22,7 +27,10 @@ import type {
     LogFile,
     LogResponse,
     MachinesResponse,
+    MarkRequest,
     Mode,
+    PadProbePlan,
+    PadProbeRequest,
     Port,
     PortsResponse,
     PositionRequest,
@@ -52,7 +60,7 @@ export class ApiError extends Error {
     }
 }
 
-import type { MachineCheck, MachineResponse } from "./types.ts";
+import type { CameraPose, MachineCheck, MachineResponse } from "./types.ts";
 
 export interface Api {
     ports(): Promise<Port[]>;
@@ -145,6 +153,42 @@ export interface Api {
     probeSettings(patch: Partial<ProbeSettings>): Promise<HeightMapState>;
     putHeightMap(map: HeightMap): Promise<HeightMapState>;
     clearHeightMap(): Promise<HeightMapState>;
+    /** Probes the board at a job's pads, replacing the map with a pad map; `resume` goes on with the one in the store. */
+    probePads(request: PadProbeRequest): Promise<HeightMapState>;
+    /** The points probing the pads would visit, how many pads were under the area and about how long, without moving anything. */
+    planPads(request: PadProbeRequest): Promise<PadProbePlan>;
+
+    /** The camera state: its settings, whether it runs, the board it looks for, the mark, the newest pose and the find routine. */
+    camera(): Promise<CameraState>;
+    cameraSettings(patch: Partial<CameraSettings>): Promise<CameraState>;
+    cameraStart(): Promise<CameraState>;
+    cameraStop(): Promise<CameraState>;
+    /**
+     * Where the newest picture is, as an image source: a URL that asks for
+     * a fresh picture every time it is made, shrunk to at most `width`
+     * pixels, with the spots and the pose drawn on it when `overlay`.
+     */
+    cameraFrameUrl(width: number, overlay: boolean): string;
+    cameraPose(): Promise<CameraPose>;
+    /** pcbv looks for the job's board in the pictures; null unloads it. */
+    cameraBoard(jobId: string | null): Promise<CameraState>;
+    /** Makes a mark with the tool where it stands, or with `here` only records the tool's point as the mark. */
+    cameraMark(request: MarkRequest): Promise<CameraState>;
+    /** Finds the mark in the picture and centers the picture on it, measuring the offset, the scale and the roll; on its own thread. */
+    cameraFind(step: number): Promise<CameraState>;
+    cameraAbort(): Promise<CameraState>;
+
+    align(): Promise<AlignState>;
+    /** A mark from the tool's point now. */
+    alignMark(request: AlignMarkRequest): Promise<AlignState>;
+    /** A mark from the camera: the picture's center in the job's frame against the tool's point plus the camera offset. */
+    alignCapture(jobId: string): Promise<AlignState>;
+    alignDeleteMark(index: number): Promise<AlignState>;
+    alignClear(): Promise<AlignState>;
+    /** The fit the marks give, without moving anything. */
+    alignFit(jobId: string): Promise<AlignFit>;
+    /** Fits, turns and shifts the job, and clears the marks. */
+    alignApply(jobId: string): Promise<{ job: Job; fit: AlignFit }>;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -477,5 +521,84 @@ export class HttpApi implements Api {
 
     clearHeightMap(): Promise<HeightMapState> {
         return this.request<HeightMapState>("DELETE", "/api/heightmap");
+    }
+
+    probePads(request: PadProbeRequest): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/pads", request);
+    }
+
+    planPads(request: PadProbeRequest): Promise<PadProbePlan> {
+        return this.request<PadProbePlan>("POST", "/api/heightmap/pads/plan", request);
+    }
+
+    camera(): Promise<CameraState> {
+        return this.request<CameraState>("GET", "/api/camera");
+    }
+
+    cameraSettings(patch: Partial<CameraSettings>): Promise<CameraState> {
+        return this.request<CameraState>("PUT", "/api/camera/settings", patch);
+    }
+
+    cameraStart(): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/start");
+    }
+
+    cameraStop(): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/stop");
+    }
+
+    cameraFrameUrl(width: number, overlay: boolean): string {
+        // The backend sends every picture with no-store; the time on the
+        // query keeps a browser that ignores it from showing an old one.
+        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        return `${this.base}/api/camera/frame.jpg?width=${size}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+    }
+
+    cameraPose(): Promise<CameraPose> {
+        return this.request<CameraPose>("GET", "/api/camera/pose");
+    }
+
+    cameraBoard(jobId: string | null): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/board", { job: jobId });
+    }
+
+    cameraMark(request: MarkRequest): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/mark", request);
+    }
+
+    cameraFind(step: number): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/find", { step });
+    }
+
+    cameraAbort(): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/abort");
+    }
+
+    align(): Promise<AlignState> {
+        return this.request<AlignState>("GET", "/api/align");
+    }
+
+    alignMark(request: AlignMarkRequest): Promise<AlignState> {
+        return this.request<AlignState>("POST", "/api/align/mark", request);
+    }
+
+    alignCapture(jobId: string): Promise<AlignState> {
+        return this.request<AlignState>("POST", "/api/align/capture", { job: jobId });
+    }
+
+    alignDeleteMark(index: number): Promise<AlignState> {
+        return this.request<AlignState>("DELETE", `/api/align/marks/${encodeURIComponent(String(index))}`);
+    }
+
+    alignClear(): Promise<AlignState> {
+        return this.request<AlignState>("DELETE", "/api/align");
+    }
+
+    alignFit(jobId: string): Promise<AlignFit> {
+        return this.request<AlignFit>("POST", "/api/align/fit", { job: jobId });
+    }
+
+    alignApply(jobId: string): Promise<{ job: Job; fit: AlignFit }> {
+        return this.request<{ job: Job; fit: AlignFit }>("POST", "/api/align/apply", { job: jobId });
     }
 }

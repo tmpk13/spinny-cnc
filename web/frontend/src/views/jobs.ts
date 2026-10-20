@@ -2,8 +2,8 @@
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
-import { formatDuration, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
-import { isMilling } from "../profile.ts";
+import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
+import { isDispensing, isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
@@ -82,12 +82,34 @@ interface GroupRow {
     /** Milling only: the depth of the last pass and the plunge rate. */
     depth: HTMLInputElement;
     plunge: HTMLInputElement;
+    /** A dispenser's group only: the paste over every pad, mm. */
+    thickness: HTMLInputElement | null;
     enabled: HTMLInputElement;
 }
 
 /** What a group mills to when a job does not say: through the copper, gently. */
 export const DEFAULT_DEPTH = 0.1;
 export const DEFAULT_PLUNGE = 60;
+/** The paste over a pad when a job does not say, mm. */
+export const DEFAULT_THICKNESS = 0.12;
+
+/** A group of dots: every path one point, as a dispense import makes them. */
+export function isDots(group: { paths: number | unknown[] }): boolean {
+    return Array.isArray(group.paths) && group.paths.length > 0 && group.paths.every((path) => Array.isArray(path) && path.length === 1);
+}
+
+/**
+ * Why a dispenser machine would refuse to run the job, as the backend
+ * refuses it: an enabled group of paths rather than dots. Empty when it
+ * would run, or the machine is not a dispenser.
+ */
+export function dispenseRefusal(job: Job | null, dispensing: boolean): string {
+    if (!job || !dispensing) {
+        return "";
+    }
+    const bad = job.groups.find((group) => group.enabled && (group.paths.length > 0 || (group.joints?.length ?? 0) > 0) && !isDots(group));
+    return bad ? `${bad.label}: a dispenser lays dots: import the board with mode dispense` : "";
+}
 
 /** The labels a milling machine gives the job's numbers, and a laser's. */
 export function jobLabels(milling: boolean): { power: string; speed: string; spot: string } {
@@ -147,7 +169,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     },
         el("option", { value: "isolate" }, "isolate"),
         el("option", { value: "deposit" }, "deposit"),
+        el("option", { value: "dispense" }, "dispense"),
     );
+    // A dispense lays a dot of paste on every pad: the mm of paste over one.
+    const thicknessField = numberField({ value: DEFAULT_THICKNESS, min: 0.01, max: 5, step: 0.01 });
+    thicknessField.setAttribute("aria-label", "Paste thickness");
     const fillField = el("select", {
         class: "field",
         "aria-label": "Fill copper",
@@ -167,6 +193,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const spotLabel = labeled("Spot mm", spotField);
     const clearLabel = labeled("Clear copper", clearField);
     const fillLabel = labeled("Fill copper", fillField);
+    const thicknessLabel = labeled("Paste mm", thicknessField);
+    thicknessLabel.title = "A dispense: mm of solder paste over every pad; a dot's volume is the pad's area times this";
     const options = el("div", { class: "field-grid" },
         powerLabel,
         speedLabel,
@@ -179,13 +207,17 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         labeled("Board", modeField),
         clearLabel,
         fillLabel,
+        thicknessLabel,
     );
     // A deposit has no copper around its own to clear, and isolation
-    // nothing inside the copper to fill: only the one that applies shows.
+    // nothing inside the copper to fill: only the one that applies shows;
+    // a dispense takes neither, only the paste thickness.
     const showMode = (): void => {
         const deposit = modeField.value === "deposit";
-        clearLabel.classList.toggle("hidden", deposit);
+        const dispense = modeField.value === "dispense";
+        clearLabel.classList.toggle("hidden", deposit || dispense);
         fillLabel.classList.toggle("hidden", !deposit);
+        thicknessLabel.classList.toggle("hidden", !dispense);
     };
     modeField.addEventListener("change", showMode);
     showMode();
@@ -264,6 +296,12 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         if (modeField.value === "deposit") {
             out.mode = modeField.value as BoardMode;
             out.fill = fillField.value as DepositFill;
+        } else if (modeField.value === "dispense") {
+            out.mode = modeField.value as BoardMode;
+            const thickness = parseNumber(thicknessField.value);
+            if (thickness !== null) {
+                out.thickness = thickness;
+            }
         } else if (clearField.value !== "off") {
             out.clear = clearField.value as ClearPattern;
         }
@@ -365,8 +403,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     // table would tear out the field the operator is typing in, and the
     // browser fires no change for a field that is gone.
     let groupRows: GroupRow[] = [];
-    let offsetFields: { x: HTMLInputElement; y: HTMLInputElement } | null = null;
+    let offsetFields: { x: HTMLInputElement; y: HTMLInputElement; rotation: HTMLElement } | null = null;
     let statsEl: HTMLElement | null = null;
+    // Why a dispenser would refuse the job, beside the run button.
+    const runNote = el("span", { class: "muted run-note hidden" });
     const progressBar = el("div", { class: "progress-fill" });
     const progressCounts = el("span", { class: "progress-counts" });
     const progressTime = el("span", { class: "progress-time" });
@@ -392,7 +432,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
     const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
     const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
-    const runRow = el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton);
+    const runRow = el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton, runNote);
     // A map that lost its offset is not followed until it is taken again.
     const compensateNote = el("p", { class: "muted hint hidden" });
     const progressBox = el("div", { class: "progress" },
@@ -528,6 +568,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             setUnlessFocused(row.passes, String(group.passes), focused);
             setUnlessFocused(row.depth, String(group.depth ?? DEFAULT_DEPTH), focused);
             setUnlessFocused(row.plunge, String(group.plunge ?? DEFAULT_PLUNGE), focused);
+            if (row.thickness) {
+                setUnlessFocused(row.thickness, String(group.thickness ?? DEFAULT_THICKNESS), focused);
+            }
             if (row.enabled !== focused) {
                 row.enabled.checked = group.enabled;
             }
@@ -536,6 +579,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         if (offsetFields) {
             setUnlessFocused(offsetFields.x, String(job.offset.x), focused);
             setUnlessFocused(offsetFields.y, String(job.offset.y), focused);
+            offsetFields.rotation.textContent = rotationText(job);
         }
         const fresh = statsBlock(job);
         statsEl?.replaceWith(fresh);
@@ -554,7 +598,12 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         progressBox.classList.toggle("hidden", progress === null || (progress.job !== state.job?.id));
         const active = progress !== null && (progress.state === "running" || progress.state === "hold");
         const connected = state.snapshot.connected;
-        setLocked(runButton, !connected || active || !state.job);
+        // A dispenser lays dots: a job of paths is refused before it is sent.
+        const refusal = dispenseRefusal(state.job, isDispensing(state.snapshot));
+        runNote.textContent = refusal;
+        runNote.classList.toggle("hidden", refusal === "");
+        runButton.title = refusal;
+        setLocked(runButton, !connected || active || !state.job || refusal !== "");
         setLocked(holdButton, !connected || !active || progress.state !== "running");
         setLocked(resumeButton, !connected || !active || progress.state !== "hold");
         setLocked(stopButton, !connected || !active);
@@ -614,6 +663,12 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             const depth = groupField(group.depth ?? DEFAULT_DEPTH, 0, "depth");
             depth.step = "0.05";
             const plunge = groupField(group.plunge ?? DEFAULT_PLUNGE, 1, "plunge");
+            // A dispenser's group has the paste thickness in place of a cut's numbers.
+            const dots = group.tool === "dispenser";
+            const thickness = dots ? groupField(group.thickness ?? DEFAULT_THICKNESS, 0.01, "thickness") : null;
+            if (thickness) {
+                thickness.step = "0.01";
+            }
             const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
             enabled.checked = group.enabled;
             const patch = async (): Promise<void> => {
@@ -623,40 +678,50 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 const n = parseNumber(passes.value);
                 const d = parseNumber(depth.value);
                 const u = parseNumber(plunge.value);
+                const t = thickness ? parseNumber(thickness.value) : null;
                 await ctx.call(ctx.api.patchJob(job.id, {
                     groups: [{
                         index,
-                        ...(p !== null ? { power: p } : {}),
-                        ...(m !== null && !milling ? { min_power: m } : {}),
-                        ...(s !== null ? { speed: s } : {}),
+                        ...(p !== null && !dots ? { power: p } : {}),
+                        ...(m !== null && !milling && !dots ? { min_power: m } : {}),
+                        ...(s !== null && !dots ? { speed: s } : {}),
                         ...(n !== null ? { passes: n } : {}),
-                        ...(d !== null && milling ? { depth: d } : {}),
-                        ...(u !== null && milling ? { plunge: u } : {}),
+                        ...(d !== null && milling && !dots ? { depth: d } : {}),
+                        ...(u !== null && milling && !dots ? { plunge: u } : {}),
+                        ...(t !== null ? { thickness: t } : {}),
                         enabled: enabled.checked,
                     }],
                 }));
                 await ctx.reloadJob(job.id);
                 await ctx.refreshJobs();
             };
-            for (const field of [power, minPower, speed, passes, depth, plunge, enabled]) {
+            for (const field of [power, minPower, speed, passes, depth, plunge, enabled, ...(thickness ? [thickness] : [])]) {
                 field.addEventListener("change", () => void patch());
             }
             // Milled, the floor means nothing and the depth and the plunge
-            // take its place: a pass is a step down, not a burn again.
-            const fields = milling ? [power, depth, speed, plunge, passes, enabled] : [power, minPower, speed, passes, enabled];
+            // take its place: a pass is a step down, not a burn again. A
+            // group of paste dots has only its thickness and its passes.
+            const fields = thickness ? [thickness, passes, enabled] : milling ? [power, depth, speed, plunge, passes, enabled] : [power, minPower, speed, passes, enabled];
             // The name has a line of its own above the fields, so they get
             // the whole width of a side panel.
             const body = el("tbody", { class: group.enabled ? "" : "disabled" },
                 el("tr", { class: "group-name" },
                     el("th", { scope: "rowgroup", colspan: String(fields.length) },
                         el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
-                        el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : ` (${group.paths.length})`))),
+                        el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`))),
                 el("tr", { class: "group-fields" }, ...fields.map((field) => el("td", {}, field))),
             );
-            groupRows.push({ body, power, minPower, speed, passes, depth, plunge, enabled });
+            groupRows.push({ body, power, minPower, speed, passes, depth, plunge, thickness, enabled });
             return body;
         });
-        const head = milling
+        const anyDots = job.groups.some((group) => group.tool === "dispenser");
+        const head = anyDots
+            ? [
+                el("th", { title: "Dispensing: mm of paste over every pad of the group" }, "Paste mm"),
+                el("th", { title: "Times the group runs over all of its dots" }, "Passes"),
+                el("th", {}, "On"),
+            ]
+            : milling
             ? [
                 el("th", { title: "Spindle speed" }, "S"),
                 el("th", { title: "How deep under the surface the last pass cuts, mm" }, "Depth"),
@@ -688,10 +753,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         );
     }
 
+    /** The turn alignment gave the job; read only, as the alignment panel is what changes it. */
+    function rotationText(job: Job): string {
+        return `turned ${formatFixed(job.rotation ?? 0, 4)} deg`;
+    }
+
     function offsetRow(job: Job): HTMLElement {
         const x = numberField({ value: job.offset.x, width: "5.5rem" });
         const y = numberField({ value: job.offset.y, width: "5.5rem" });
-        offsetFields = { x, y };
+        const rotation = el("span", { class: "muted job-rotation", title: "Degrees the job has been turned counterclockwise about the origin by alignment" }, rotationText(job));
+        offsetFields = { x, y, rotation };
         const apply = async (): Promise<void> => {
             const ox = parseNumber(x.value);
             const oy = parseNumber(y.value);
@@ -707,6 +778,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             el("span", { class: "choice-label" }, "Offset"),
             x, y,
             button("Move", () => apply(), "btn btn-quiet"),
+            rotation,
         );
     }
 }

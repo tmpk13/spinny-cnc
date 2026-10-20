@@ -1932,3 +1932,84 @@ table.cam-table input[type="checkbox"] {
     font-size: 0.8rem;
     white-space: nowrap;
 }
+
+/* Camera panel: the picture at the panel's width, the sensor's aspect kept. */
+
+.vision-picture-box {
+    width: 100%;
+    margin: 0 0 0.5rem;
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: thin solid var(--border);
+    background: var(--base03);
+}
+
+.vision-picture {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.vision-pose,
+.vision-routine {
+    margin: 0;
+    font-size: 0.82rem;
+    flex: 1 1 12rem;
+}
+
+.badge[data-camera="locked"] {
+    background: var(--jog);
+    color: var(--on-fill);
+}
+
+.badge[data-camera="running"],
+.badge[data-camera="finding mark"] {
+    background: var(--run);
+    color: var(--on-fill);
+}
+
+/* Align panel: the marks table scrolls sideways on a narrow panel. */
+
+.align-marks-scroll {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+    margin-bottom: 0.5rem;
+}
+
+.align-marks {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.align-marks th,
+.align-marks td {
+    padding: 0.25rem 0.4rem;
+    text-align: left;
+    border-bottom: thin solid var(--border);
+    white-space: nowrap;
+}
+
+.align-marks th {
+    color: var(--muted);
+    font-weight: 600;
+}
+
+.align-fit {
+    margin: 0.25rem 0;
+    font-size: 0.82rem;
+}
+
+/* The run note and the pads note sit after their buttons and take the rest of the row. */
+
+.run-note,
+.hm-pads-note {
+    flex: 1 1 10rem;
+    font-size: 0.78rem;
+}
+
+.job-rotation {
+    font-size: 0.82rem;
+    align-self: center;
+}

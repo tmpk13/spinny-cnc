@@ -11,7 +11,7 @@ import polarLaser from "../../../../machines/polar-laser.toml" with { type: "tex
 
 import { defaultControls } from "../controls.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
-import type { AxisControl, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
+import type { AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
 
 /** The shipped files by id, as the backend lists them. */
 export const MOCK_MACHINE_TEXTS: { id: string; text: string }[] = [
@@ -97,6 +97,7 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     z_home_travel: 200,
     stop_invert: 0,
     limits: 0,
+    dispenser: 0,
 };
 
 export const MACHINE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -108,7 +109,7 @@ const HEADERS: Record<number, string> = {
     4: "X-STOP", 3: "Y-STOP", 25: "Z-STOP", 16: "E-STOP", 22: "PROBE", 26: "THB", 27: "TH0",
 };
 const KINEMATICS: Kinematics[] = ["polar", "cartesian"];
-const TOOLS: Tool[] = ["laser", "spindle"];
+const TOOLS: Tool[] = ["laser", "spindle", "dispenser"];
 const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 const SOCKETS = ["X", "Y", "Z", "E"];
 /** Where an axis's endstops are, in the order of the <axis>_stop values. */
@@ -116,7 +117,40 @@ const ENDSTOPS = ["none", "min", "max", "both"];
 const FLOAT_MAX = 1e7;
 const PROBE_MS_MAX = 160;
 const INT_MAX = 4294967295;
-const HOST_KEYS: Record<string, [number, number]> = { tolerance: [0, 10], clearance: [0, 100], spinup: [0, 600] };
+/**
+ * What a machine file may say about the host's own settings: the bounds,
+ * and whether the low one is allowed. The dispensing values are what a dot
+ * of paste is made of: the needle's gap over the pad, the plunger's
+ * pull-back after each dot, the mm^3 of paste a mm of plunger gives, the
+ * plunger's speed while a dot is pushed out, and the wait before the
+ * pull-back.
+ */
+const HOST_KEYS: Record<string, [number, number, boolean]> = {
+    tolerance: [0, 10, false],
+    clearance: [0, 100, false],
+    spinup: [0, 600, true],
+    gap: [0, 10, false],
+    retract: [0, 50, true],
+    output: [0, 1e5, false],
+    extrude_rate: [0, 1e4, false],
+    dwell_ms: [0, 60000, true],
+};
+const HOST_INTEGERS = new Set(["dwell_ms"]);
+/** A camera on the head, as the backend reads it: nothing of it reaches the firmware. What a file leaves out keeps the backend's value. */
+export const CAMERA_DEFAULTS: CameraSettings = {
+    device: "/dev/video0",
+    size: "1280x720",
+    fps: 30,
+    pcbv: "pcbv",
+    side: "front",
+    finish: "masked",
+    offset: [0, 0],
+    roll: 0,
+    mm_per_px: 0,
+};
+export const CAMERA_SIDES: CameraSide[] = ["front", "back"];
+export const CAMERA_FINISHES: CameraFinish[] = ["masked", "bare"];
+export const CAMERA_SIZE = /^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$/;
 const JOINTS: JointAxis[] = ["r", "a", "z", "h"];
 const PAD_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
 const CANCEL_KEY = "Escape";
@@ -258,11 +292,29 @@ export function parseMachine(text: string, id: string): MachineDocument {
     const tool = reader.choice(top, "tool", TOOLS, "laser");
     settings["cartesian"] = kinematics === "cartesian" ? 1 : 0;
     settings["spindle"] = tool === "spindle" ? 1 : 0;
+    settings["dispenser"] = tool === "dispenser" ? 1 : 0;
+    if (tool === "dispenser" && kinematics !== "cartesian") {
+        throw new Error(`${where}: tool = dispenser needs kinematics = cartesian`);
+    }
+    // The dispenser's plunger turns on the table's driver, so its section
+    // stands in for the table's, in millimeters.
+    const plunger = "dispenser" in top;
+    if (plunger) {
+        if ("table" in top) {
+            throw new Error(`${where}: [table] and [dispenser] cannot both be given: the dispenser is the table's driver`);
+        }
+        if (tool !== "dispenser") {
+            throw new Error(`${where}: [dispenser] needs tool = dispenser`);
+        }
+    }
+    const sections = AXES.map(([section]) => (section === "table" && plunger ? "dispenser" : section));
     let dirInvert = 0;
     let stopInvert = 0;
     let limits = 0;
     const sockets = [...SOCKETS];
-    for (const [section, axis, scaleKey, bit] of AXES) {
+    for (const [index, [, axis, axisScaleKey, bit]] of AXES.entries()) {
+        const section = sections[index]!;
+        const scaleKey = section === "dispenser" ? "steps_per_mm" : axisScaleKey;
         const table = reader.table(top, section);
         if ("socket" in table) {
             const socket = reader.text(table, "socket", "", section);
@@ -336,7 +388,7 @@ export function parseMachine(text: string, id: string): MachineDocument {
     sockets.forEach((socket, index) => {
         const other = sockets.indexOf(socket);
         if (other < index) {
-            throw new Error(`${where}: [${AXES[index]![0]}] socket ${socket} is the [${AXES[other]![0]}] socket too`);
+            throw new Error(`${where}: [${sections[index]}] socket ${socket} is the [${sections[other]}] socket too`);
         }
     });
     settings["sockets"] = Number(sockets.map((socket) => SOCKETS.indexOf(socket) + 1).join(""));
@@ -392,7 +444,8 @@ export function parseMachine(text: string, id: string): MachineDocument {
     }
     // A fitted endstop is an input like the probe, which it may share; on
     // an output's pin it would read the output.
-    for (const [section, axis] of AXES) {
+    for (const [index, [, axis]] of AXES.entries()) {
+        const section = sections[index]!;
         if (!settings[`${axis}_stop`]) {
             continue;
         }
@@ -424,24 +477,93 @@ export function parseMachine(text: string, id: string): MachineDocument {
 
     const hostTable = reader.table(top, "host");
     const hostNumbers: Record<string, number> = {};
-    for (const [key, [low, high]] of Object.entries(HOST_KEYS)) {
-        if (key in hostTable) {
-            const value = reader.number(hostTable, key, "host");
-            if (!(low <= value && value <= high) || (key !== "spinup" && value <= 0)) {
+    for (const [key, [low, high, lowOk]] of Object.entries(HOST_KEYS)) {
+        if (!(key in hostTable)) {
+            continue;
+        }
+        if (HOST_INTEGERS.has(key)) {
+            hostNumbers[key] = reader.integer(hostTable, key, "host", low, high);
+            continue;
+        }
+        const value = reader.number(hostTable, key, "host");
+        if (!(low <= value && value <= high) || (!lowOk && value <= low)) {
+            // The spin-up keeps the words it had before the low end was allowed.
+            if (key === "spinup" || !lowOk) {
                 throw new Error(`${where}: [host] ${key} must be above ${low} and at most ${high}`);
             }
-            hostNumbers[key] = value;
+            throw new Error(`${where}: [host] ${key} must be ${low} to ${high}`);
         }
+        hostNumbers[key] = value;
     }
     const host: Partial<HostSettings> = { ...hostNumbers };
     if ("speed_control" in hostTable) {
         host.speed_control = reader.flag(hostTable, "speed_control", true, "host");
     }
     reader.done(hostTable, "host", [...Object.keys(HOST_KEYS), "speed_control"]);
+    const camera = parseCamera(reader, reader.table(top, "camera"));
     const focus = settings["h_axis"] === 1;
     const controls = parseControls(reader, top, kinematics, tool, focus);
-    reader.done(top, null, ["name", "description", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "probe", "output", "enable", "drivers", "host", "controls"]);
-    return { id, name, description, kinematics, tool, focus, settings, host, controls };
+    reader.done(top, null, ["name", "description", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"]);
+    return { id, name, description, kinematics, tool, focus, settings, host, camera, controls };
+}
+
+/** The `[camera]` table over the defaults, each key named checked as the backend checks it. */
+function parseCamera(reader: Reader, table: TomlTable): CameraSettings {
+    const section = "camera";
+    const camera: CameraSettings = { ...CAMERA_DEFAULTS, offset: [...CAMERA_DEFAULTS.offset] };
+    for (const key of ["device", "pcbv"] as const) {
+        if (key in table) {
+            const value = table[key];
+            if (typeof value !== "string" || value.trim() === "") {
+                throw reader.fail(section, key, "must be text");
+            }
+            camera[key] = value;
+        }
+    }
+    if ("size" in table) {
+        const value = table["size"];
+        if (typeof value !== "string" || !CAMERA_SIZE.test(value)) {
+            throw reader.fail(section, "size", "must be WIDTHxHEIGHT");
+        }
+        camera.size = value;
+    }
+    if ("fps" in table) {
+        camera.fps = reader.integer(table, "fps", section, 1, 120);
+    }
+    if ("side" in table) {
+        camera.side = textChoice(reader, table, "side", section, CAMERA_SIDES);
+    }
+    if ("finish" in table) {
+        camera.finish = textChoice(reader, table, "finish", section, CAMERA_FINISHES);
+    }
+    if ("offset" in table) {
+        const value = table["offset"];
+        const ok = Array.isArray(value) && value.length === 2 && value.every((item) => isNumber(item) && Math.abs(item) <= 1000);
+        if (!ok) {
+            throw reader.fail(section, "offset", "must be two numbers within 1000 mm");
+        }
+        camera.offset = [value[0] as number, value[1] as number];
+    }
+    if ("roll" in table) {
+        const value = reader.number(table, "roll", section);
+        if (Math.abs(value) > 360) {
+            throw reader.fail(section, "roll", "must be a number within 360");
+        }
+        camera.roll = value;
+    }
+    if ("mm_per_px" in table) {
+        camera.mm_per_px = reader.nonNegative(table, "mm_per_px", section);
+    }
+    reader.done(table, section, Object.keys(CAMERA_DEFAULTS));
+    return camera;
+}
+
+function textChoice<T extends string>(reader: Reader, table: TomlTable, key: string, section: string, choices: T[]): T {
+    const value = table[key];
+    if (typeof value !== "string" || !(choices as string[]).includes(value)) {
+        throw reader.fail(section, key, `must be one of ${choices.join(", ")}`);
+    }
+    return value as T;
 }
 
 export function summaryOf(document: MachineDocument): MachineSummary {

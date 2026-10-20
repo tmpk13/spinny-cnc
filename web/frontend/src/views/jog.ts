@@ -10,11 +10,12 @@
 // anywhere but a dialog while a machine is connected.
 
 import { askConfirm } from "../confirm.ts";
-import { controlOf, controlsOf, sameControls, UNITS } from "../controls.ts";
+import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
 import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, replace, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
+import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
-import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis } from "../types.ts";
+import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis, Tool } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
 
 export type KeyAction = { dx: number; dy: number } | { axis: JointAxis; sign: 1 | -1 } | "cancel" | null;
@@ -76,6 +77,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
 
     let controls: Controls = controlsOf(ctx.store.get());
     let drawn: Controls | null = null;
+    // The tool the bars were drawn for: the table bar's unit is mm once
+    // the joint is a dispenser's plunger.
+    let drawnTool: Tool | null = null;
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
 
@@ -282,6 +286,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
 
     function draw(): void {
         drawn = controls;
+        const profile = profileOf(ctx.store.get().snapshot);
+        drawnTool = profile.tool;
         const bars = el("div", { class: "axis-bars" });
         if (controls.pad) {
             bars.append(
@@ -291,7 +297,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         }
         for (const axis of controls.axes) {
             const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small") : null;
-            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, UNITS[axis.axis], axis, axis.buttons, (sign) => jogAxis(axis, sign), zero));
+            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, axis.buttons, (sign) => jogAxis(axis, sign), zero));
         }
 
         const rows: HTMLElement[] = [];
@@ -335,7 +341,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
 
     ctx.store.subscribe((state) => {
         const next = controlsOf(state);
-        if (drawn === null || !sameControls(drawn, next)) {
+        if (drawn === null || !sameControls(drawn, next) || drawnTool !== profileOf(state.snapshot).tool) {
             controls = next;
             draw();
         } else {
