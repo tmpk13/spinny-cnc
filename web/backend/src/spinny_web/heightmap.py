@@ -24,6 +24,15 @@ A spindle mills with `focus` only. There the offset is the touch-off: the
 tool jogged down until it just touches the copper over a probed point,
 and "focus here" said, so the map plus the offset is the height of the
 surface under the tool, and a cut goes to that less its depth.
+
+A pad map is probed at the pads of a job instead of a grid, for a probe
+that has to land on copper: the tool itself, or a conductive tip. Its
+heights sit at the pads, and between them the surface is a plane through
+every probed pad plus the nearest pads' deviations from that plane,
+weighted by the inverse square of their distance, so the map reads the
+probed height exactly at a pad and bends smoothly between pads. Its grid
+is only what the page draws and what a run is checked against: the job's
+extent with a margin, filled in from the pads as they are probed.
 """
 
 from __future__ import annotations
@@ -60,6 +69,12 @@ MAX_VALUE = 1.0e6
 # Seconds a probe point spends beyond its moves: coming to rest, the probe's
 # own answer, the lines' turnarounds.
 PROBE_OVERHEAD = 1.5
+# A pad map's grid: about this far between its points, mm, and the margin
+# it keeps around the job and the pads.
+PAD_GRID_SPACING = 2.0
+PAD_GRID_MARGIN = 1.0
+# How many probed pads a point between pads reads its deviation from.
+PAD_NEIGHBORS = 6
 
 FOCUS, POWER, OFF, AUTO = "focus", "power", "off", "auto"
 MODES = (OFF, AUTO, FOCUS, POWER)
@@ -199,23 +214,8 @@ class Grid(Finite):
         where), the slow second touch, the rise back and the answers in
         between. A guess before the first point; the progress's own pace
         takes over once some are done."""
-        order = self.order()
-        if not order:
-            return 0.0
-        h_rate = float(getattr(rates, "h_rate", 600.0)) or 600.0
-        travel_rate = float(getattr(rates, "r_rate", 560.0)) or 560.0
-        feed = min(float(settings.feed), h_rate)
-        descent = float(settings.depth) / 2.0
-        per_point = descent / feed * 60.0 + descent / h_rate * 60.0 + PROBE_OVERHEAD
-        if settings.slow > 0.0:
-            slow = min(float(settings.slow), h_rate)
-            per_point += settings.backoff / h_rate * 60.0 + 2.0 * settings.backoff / slow * 60.0 + PROBE_OVERHEAD
-        seconds = per_point * len(order)
         xs, ys = self.xs, self.ys
-        for (ix0, iy0), (ix1, iy1) in zip(order, order[1:]):
-            distance = math.dist((xs[ix0], ys[iy0]), (xs[ix1], ys[iy1]))
-            seconds += distance / travel_rate * 60.0
-        return seconds
+        return estimate_points_seconds([(xs[ix], ys[iy]) for ix, iy in self.order()], settings, rates)
 
     def covers(self, box: tuple[float, float, float, float], margin: float = COVER_MARGIN) -> bool:
         x0, y0, x1, y1 = box
@@ -227,10 +227,49 @@ class Grid(Finite):
         )
 
 
+def estimate_points_seconds(points: list, settings, rates) -> float:
+    """About how long probing `points` in this order takes: for each the
+    move from the last, the touch down over half the probe depth, the slow
+    second touch, the rise back and the answers in between."""
+    if not points:
+        return 0.0
+    h_rate = float(getattr(rates, "h_rate", 600.0)) or 600.0
+    travel_rate = float(getattr(rates, "r_rate", 560.0)) or 560.0
+    feed = min(float(settings.feed), h_rate)
+    descent = float(settings.depth) / 2.0
+    per_point = descent / feed * 60.0 + descent / h_rate * 60.0 + PROBE_OVERHEAD
+    if settings.slow > 0.0:
+        slow = min(float(settings.slow), h_rate)
+        per_point += settings.backoff / h_rate * 60.0 + 2.0 * settings.backoff / slow * 60.0 + PROBE_OVERHEAD
+    seconds = per_point * len(points)
+    for a, b in zip(points, points[1:]):
+        seconds += math.dist((a[0], a[1]), (b[0], b[1])) / travel_rate * 60.0
+    return seconds
+
+
+def pad_grid(box: tuple[float, float, float, float], margin: float = PAD_GRID_MARGIN) -> Grid:
+    """A pad map's grid: the box with a margin, at about the pad grid
+    spacing, within the point counts a grid may have."""
+    x0, y0, x1, y1 = box
+    x0, y0, x1, y1 = x0 - margin, y0 - margin, x1 + margin, y1 + margin
+    if x1 - x0 < 2.0 * margin:
+        x0, x1 = (x0 + x1) / 2.0 - margin, (x0 + x1) / 2.0 + margin
+    if y1 - y0 < 2.0 * margin:
+        y0, y1 = (y0 + y1) / 2.0 - margin, (y0 + y1) / 2.0 + margin
+    nx = min(MAX_POINTS, max(MIN_POINTS, math.ceil((x1 - x0) / PAD_GRID_SPACING) + 1))
+    ny = min(MAX_POINTS, max(MIN_POINTS, math.ceil((y1 - y0) / PAD_GRID_SPACING) + 1))
+    return Grid(x0=round(x0, 4), y0=round(y0, 4), x1=round(x1, 4), y1=round(y1, 4), nx=nx, ny=ny)
+
+
 class HeightMap(Finite):
     grid: Grid
-    # heights[iy][ix]: H at contact, mm; None where not yet probed.
+    # heights[iy][ix]: H at contact, mm; None where not yet probed. On a
+    # pad map, filled in from the points as they are probed.
     heights: list[list[float | None]]
+    # A pad map: the points probed, and their heights in the same order,
+    # None where not yet; both None on a grid map.
+    points: list[tuple[float, float]] | None = None
+    point_heights: list[float | None] | None = None
     # Focus height minus contact height, mm, and whether anyone has said
     # what it is: until then a run would put the head at contact height.
     focus_offset: float = 0.0
@@ -262,6 +301,31 @@ class HeightMap(Finite):
             created=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         )
 
+    @classmethod
+    def for_points(
+        cls, points: list[tuple[float, float]], box: tuple[float, float, float, float], probe_offset: tuple[float, float] = (0.0, 0.0)
+    ) -> "HeightMap":
+        """A pad map to be probed at `points`, its grid the `box` with a
+        margin: the job's extent and the pads'."""
+        if not points:
+            raise ValueError("a pad map needs at least one pad")
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        box = (min(box[0], min(xs)), min(box[1], min(ys)), max(box[2], max(xs)), max(box[3], max(ys)))
+        grid = pad_grid(box)
+        return cls(
+            grid=grid,
+            heights=[[None] * grid.nx for _ in range(grid.ny)],
+            points=[(round(float(x), 4), round(float(y), 4)) for x, y in points],
+            point_heights=[None] * len(points),
+            probe_offset=probe_offset,
+            created=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        )
+
+    @property
+    def is_pad_map(self) -> bool:
+        return self.points is not None
+
     def check(self) -> None:
         self.grid.check()
         if len(self.heights) != self.grid.ny or any(len(row) != self.grid.nx for row in self.heights):
@@ -272,33 +336,98 @@ class HeightMap(Finite):
                     raise ValueError(f"heights must be within {MAX_VALUE:g} mm")
         if abs(self.focus_offset) > MAX_VALUE:
             raise ValueError(f"focus_offset must be within {MAX_VALUE:g} mm")
+        if (self.points is None) != (self.point_heights is None):
+            raise ValueError("a pad map carries points and point_heights together")
+        if self.points is not None and self.point_heights is not None:
+            if not self.points:
+                raise ValueError("a pad map needs at least one pad")
+            if len(self.point_heights) != len(self.points):
+                raise ValueError("point_heights must have one entry per point")
+            for x, y in self.points:
+                if abs(x) > MAX_VALUE or abs(y) > MAX_VALUE:
+                    raise ValueError(f"points must be within {MAX_VALUE:g} mm")
+            for value in self.point_heights:
+                if value is not None and abs(value) > MAX_VALUE:
+                    raise ValueError(f"heights must be within {MAX_VALUE:g} mm")
 
     @property
     def probed(self) -> int:
+        if self.point_heights is not None:
+            return sum(value is not None for value in self.point_heights)
         return sum(value is not None for row in self.heights for value in row)
 
     @property
     def wanted(self) -> int:
         """How many points the map is to have."""
+        if self.points is not None:
+            return len(self.points)
         return self.grid.points
 
     @property
     def complete(self) -> bool:
+        if self.point_heights is not None:
+            return all(value is not None for value in self.point_heights)
         grid = self.grid
         return all(
             self.heights[iy][ix] is not None for iy in range(grid.ny) for ix in range(grid.nx) if grid.wanted(ix, iy)
         )
 
     def remaining(self) -> list[tuple[int, int]]:
-        """The points still to probe, in probing order."""
+        """The points still to probe, in probing order: (ix, iy) of the
+        grid, or (i, -1) for the i-th pad of a pad map."""
+        if self.point_heights is not None:
+            return [(i, -1) for i, value in enumerate(self.point_heights) if value is None]
         return [(ix, iy) for ix, iy in self.grid.order() if self.heights[iy][ix] is None]
+
+    def point_of(self, key: tuple[int, int]) -> tuple[float, float]:
+        """The board point a probing key names."""
+        ix, iy = key
+        if iy < 0:
+            assert self.points is not None
+            return self.points[ix]
+        return (self.grid.xs[ix], self.grid.ys[iy])
+
+    def record(self, key: tuple[int, int], height: float) -> None:
+        """Keeps a probed height; a pad map's grid is filled in with it."""
+        ix, iy = key
+        if iy < 0:
+            assert self.point_heights is not None
+            self.point_heights[ix] = round(height, 4)
+            self.fill_from_points()
+        else:
+            self.heights[iy][ix] = round(height, 4)
 
     def span(self) -> tuple[float, float] | None:
         """Lowest and highest height probed."""
-        values = [value for row in self.heights for value in row if value is not None]
+        if self.point_heights is not None:
+            values = [value for value in self.point_heights if value is not None]
+        else:
+            values = [value for row in self.heights for value in row if value is not None]
         if not values:
             return None
         return min(values), max(values)
+
+    def _probed_points(self) -> list[tuple[float, float, float]]:
+        assert self.points is not None and self.point_heights is not None
+        return [(x, y, h) for (x, y), h in zip(self.points, self.point_heights) if h is not None]
+
+    def fill_from_points(self) -> None:
+        """A pad map's grid heights from its pads: every cell, once any pad
+        is probed, so the drawing and the coverage follow the pads."""
+        probed = self._probed_points()
+        grid = self.grid
+        if not probed:
+            self.heights = [[None] * grid.nx for _ in range(grid.ny)]
+            return
+        plane = _fit_plane(probed)
+        xs, ys = grid.xs, grid.ys
+        self.heights = [[round(_pad_height(x, y, probed, plane), 4) for x in xs] for y in ys]
+
+    def _point_height(self, x: float, y: float) -> float:
+        probed = self._probed_points()
+        if not probed:
+            raise ValueError("the height map has no probed point")
+        return _pad_height(x, y, probed, _fit_plane(probed))
 
     def height_at(self, x: float, y: float) -> float:
         """The board's height at a board point: bilinear inside the grid,
@@ -306,7 +435,9 @@ class HeightMap(Finite):
         (left out of the mask) the nearest probed corner stands in, and
         with none the nearest probed point of the map; a run is only let
         follow the map where its cuts have probed cells, so that is for a
-        stray point, not a cut."""
+        stray point, not a cut. A pad map reads its pads directly."""
+        if self.points is not None:
+            return self._point_height(x, y)
         grid = self.grid
         i, j, t, s = grid.cell_of(x, y)
         h = self.heights
@@ -345,6 +476,9 @@ class HeightMap(Finite):
         grid = self.grid
         if not grid.covers((x, y, x, y), margin):
             return False
+        if self.points is not None:
+            # A pad map reads anywhere in its box once a pad is probed.
+            return self.probed > 0
         i, j, _, _ = grid.cell_of(x, y)
         h = self.heights
         return all(value is not None for value in (h[j][i], h[j][i + 1], h[j + 1][i], h[j + 1][i + 1]))
@@ -365,6 +499,43 @@ class HeightMap(Finite):
             raise ValueError(
                 f"the height map spans {high - low:.3f} mm, more than {MAX_SPAN:g} mm: probe again or flatten the board"
             )
+
+
+def _fit_plane(points: list[tuple[float, float, float]]) -> tuple[float, float, float]:
+    """The least squares plane `h = a x + b y + c` through probed points;
+    with fewer than three, or all in a line, the level of their mean."""
+    n = len(points)
+    mean = sum(h for _, _, h in points) / n
+    if n < 3:
+        return (0.0, 0.0, mean)
+    cx = sum(x for x, _, _ in points) / n
+    cy = sum(y for _, y, _ in points) / n
+    sxx = sum((x - cx) ** 2 for x, _, _ in points)
+    syy = sum((y - cy) ** 2 for _, y, _ in points)
+    sxy = sum((x - cx) * (y - cy) for x, y, _ in points)
+    sxh = sum((x - cx) * (h - mean) for x, _, h in points)
+    syh = sum((y - cy) * (h - mean) for _, y, h in points)
+    det = sxx * syy - sxy * sxy
+    scale = max(sxx, syy, 1e-12)
+    if det <= 1e-9 * scale * scale:
+        return (0.0, 0.0, mean)
+    a = (sxh * syy - syh * sxy) / det
+    b = (syh * sxx - sxh * sxy) / det
+    return (a, b, mean - a * cx - b * cy)
+
+
+def _pad_height(x: float, y: float, probed: list[tuple[float, float, float]], plane: tuple[float, float, float]) -> float:
+    """The surface at a board point of a pad map: the plane through the
+    probed pads, plus the nearest pads' deviations from it weighted by the
+    inverse square of their distance, exact at a pad."""
+    a, b, c = plane
+    nearest = sorted(((math.dist((px, py), (x, y)), h - (a * px + b * py + c)) for px, py, h in probed))[:PAD_NEIGHBORS]
+    if nearest and nearest[0][0] < 1e-6:
+        return a * x + b * y + c + nearest[0][1]
+    weights = [(1.0 / (d * d), r) for d, r in nearest]
+    total = sum(w for w, _ in weights)
+    deviation = sum(w * r for w, r in weights) / total if total > 0 else 0.0
+    return a * x + b * y + c + deviation
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -534,29 +705,34 @@ def segment_distance(point: tuple[float, float], a: tuple[float, float], b: tupl
 
 def nearest_clear_point(
     heightmap: HeightMap, job, near: tuple[float, float], clearance: float
-) -> tuple[int, int, float] | None:
+) -> tuple[tuple[int, int], tuple[float, float], float] | None:
     """The probed point of the map nearest `near` that no cut of `job`
-    comes within `clearance` of, as (ix, iy, distance). A point counts as
+    comes within `clearance` of, as its key ((ix, iy) of the grid, or
+    (i, -1) for a pad), the point and the distance. A grid point counts as
     probed when the cell it reads the map from has all four corners, which
     is what a touch there needs. None when no point is clear: a probe
     tied in a cut would read the cut's floor as the copper's height."""
-    grid = heightmap.grid
     cuts = list(job_cuts(job))
-    xs, ys = grid.xs, grid.ys
-    best: tuple[int, int, float] | None = None
-    for iy in range(grid.ny):
-        for ix in range(grid.nx):
-            if heightmap.heights[iy][ix] is None:
-                continue
-            point = (xs[ix], ys[iy])
-            distance = math.dist(point, near)
-            if best is not None and distance >= best[2]:
-                continue
-            if not heightmap.cell_probed(*point):
-                continue
-            if any(segment_distance(point, p, q) < clearance for p, q in cuts):
-                continue
-            best = (ix, iy, distance)
+    candidates: list[tuple[tuple[int, int], tuple[float, float]]] = []
+    if heightmap.points is not None and heightmap.point_heights is not None:
+        candidates = [((i, -1), point) for i, (point, h) in enumerate(zip(heightmap.points, heightmap.point_heights)) if h is not None]
+    else:
+        grid = heightmap.grid
+        xs, ys = grid.xs, grid.ys
+        for iy in range(grid.ny):
+            for ix in range(grid.nx):
+                if heightmap.heights[iy][ix] is not None:
+                    candidates.append(((ix, iy), (xs[ix], ys[iy])))
+    best: tuple[tuple[int, int], tuple[float, float], float] | None = None
+    for key, point in candidates:
+        distance = math.dist(point, near)
+        if best is not None and distance >= best[2]:
+            continue
+        if not heightmap.cell_probed(*point):
+            continue
+        if any(segment_distance(point, p, q) < clearance for p, q in cuts):
+            continue
+        best = (key, point, distance)
     return best
 
 
@@ -575,7 +751,8 @@ def check_covers(heightmap: HeightMap, job) -> None:
                 grid.x0, grid.x1, grid.y0, grid.y1, box[0], box[2], box[1], box[3]
             )
         )
-    if grid.mask is None and heightmap.complete:
+    if heightmap.points is not None or (grid.mask is None and heightmap.complete):
+        # A pad map reads anywhere in its box; a whole grid is all probed.
         return
     # Along every cut, at half a cell: a segment that crosses a cell nobody
     # probed would be cut to a guessed height.

@@ -81,6 +81,34 @@ the spin-up (the Config tab's settings panel).
 FAN3 is a low side switch on the fan rail, not a logic output: see the
 spindle note in `firmware/rp2040/README.md` before connecting one.
 
+### Dispensing solder paste
+
+A paste dispenser is a syringe whose plunger a stepper pushes, on the
+table's driver socket: load `cartesian-dispenser` (or your copy of it,
+[MACHINES.md](MACHINES.md)), which makes the machine an X/Y machine with
+the focus axis as the needle's height and the plunger as `E` in mm. The
+jog panel's *Extrude* and *Retract* push and pull the plunger by its step,
+for priming the needle and checking the flow.
+
+1. Upload the board with mode *dispense*: a dot on every pad of its paste
+   layer (`F.Paste`; a copper layer's pads are its flashes), the paste
+   thickness over a pad (0.12 mm by default) in the upload form and in
+   the group's *thickness* afterwards. A dot's volume is the pad's area
+   times the thickness, and the plunger pushes it out over the *output*
+   setting, mm^3 of paste per mm of plunger, which depends on the syringe
+   and is worth measuring once by weight: the Config tab's host settings
+   hold it with the needle's *gap* over the pad, the *retract* after each
+   dot, the *extrude rate* and the *dwell* before the retract.
+2. Line the job up with the board ([below](#lining-a-job-up-with-the-board)).
+3. Touch the needle to a pad and press *Set H=0 here*, or probe the pads
+   ([below](#probing-the-pads)) and run with *height map: auto* so the
+   needle keeps its gap over every pad of a warped board.
+4. Run. The head travels at the clearance, lowers the needle to the gap
+   over each pad, pushes the dot out plus the last retract, waits, pulls
+   the plunger back, and lifts; the plunger ends every dot retracted. A
+   run picks up at a line like any other, the plunger declared where the
+   plan had it.
+
 ### Probing less: around the cuts, and one point
 
 Probing every point of a grid over a sparse board measures mostly bare
@@ -103,6 +131,73 @@ that the loaded job's cuts (or the last run's) keep clear of, says where
 it is and how far, and on a yes goes there, probes and ties the map. *Set
 H 0* (Z 0 on a mill) makes the surface found H 0, for milling without a
 map.
+
+### Probing the pads
+
+A probe that has to land on copper, the tool itself touching grounded
+copper or a conductive tip, finds nothing on the bare board between the
+pads. *Probe pads* in the Height map panel probes the selected job's pads
+instead of a grid: every pad of at least the least area given (half a
+square millimeter by default, so a tip has room), and when the board has
+more pads than the most points asked for, the most spread out of them,
+in a short tour. *Plan* says how many and about how long. The map is then
+a pad map: its heights sit at the pads, exact there, and between pads the
+surface is a plane through every probed pad plus the nearest pads'
+deviations from it, so a warp shows where it is measured and fades
+between. A run follows a pad map as it follows a grid, *Tie map* ties it
+the same way, and *Continue* goes on with the pads it still lacks. A board
+job carries its pads from the layer it was imported from; a drawing or a
+gcode file has none to probe.
+
+### The camera and its offset
+
+A camera on the head ([MACHINES.md](MACHINES.md), `[camera]`) is read by
+the backend through `pcbv serve` from the sibling pcb-vision repository
+(`mise run build-pcbv` builds it; on a Raspberry Pi that runs the
+backend, build it there or point `pcbv` at a binary built for it). The
+Camera panel on the Machine page starts it, shows its picture with a
+crosshair at the center, and, with *Look for board* on a job imported
+from a KiCad file, where on the board the picture is and how well it is
+locked. The camera is useful once the machine knows where it looks from
+the tool:
+
+1. Put a piece of scrap, or a board edge, under the tool and press *Make
+   mark* (a spindle machine: a short plunge at the depth and plunge rate
+   given, run as a one point job named `camera mark`; on another machine
+   make a mark by hand, or use a hole, and press *Mark is here* over it).
+2. Press *Find mark*. The head lifts to the clearance, goes where the
+   camera should see the mark by the offset in force (zero at first: have
+   the camera's field of view cover the tool's position then, or type a
+   rough offset into the settings first), takes the darkest spot nearest
+   the picture's center for the mark, moves 2 mm along X and back to
+   measure the picture's scale and turn against the machine, and moves
+   the head until the center sits on the mark. The offset, roll and scale
+   are saved in the camera settings; copy them into the machine file to
+   keep them with it. A camera that is moved on the head, or a tool that
+   is changed, wants the routine run again.
+
+### Lining a job up with the board
+
+A job imported from a board is placed about the axis; the board on the
+table is wherever it was clamped. The Align panel pairs points of the job
+with where the machine finds them, and turns and shifts the job to match
+(its paths, outline, pads and holes move; the job's *rotation* and
+*offset* record it):
+
+- Without a camera: put the tool's tip over a hole or a pad of the board
+  and press *Mark here* with *nearest hole* or *nearest pad* (the job's
+  nearest within the distance given is paired; a typed X Y pairs any
+  design point). Two marks far apart give the turn and the shift, one
+  mark a shift only; more marks are fitted by least squares, and the
+  residuals and the scale the marks imply show a mistaken pairing.
+- With a camera locked on the board: *Capture* pairs the picture's center
+  with where it is on the machine, with the board's turn from the
+  picture's angle and the camera's roll. One capture lines the job up;
+  two, far apart, do without the roll.
+
+*Apply* moves the job and clears the marks. Check the result in the
+preview, and probe the pads or tie the height map after a large move,
+since the map is in board coordinates too.
 
 ### Picking a run up where it stopped
 

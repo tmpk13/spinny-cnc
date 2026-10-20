@@ -20,7 +20,7 @@
 
 use crate::math;
 use crate::settings::Settings;
-use crate::{max_event_rate_hz, AXES, BLOCKS, H, SURFACE_EPSILON_MM};
+use crate::{max_event_rate_hz, A, AXES, BLOCKS, H, SURFACE_EPSILON_MM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
@@ -41,8 +41,8 @@ pub enum Feed {
     /// Each axis at its max rate; the slower axis paces the move.
     Max,
     /// Board surface speed in mm/min (see `math::joint_surface_length`). A move
-    /// with nothing on the board but a focus axis move takes it as the
-    /// focus axis speed instead.
+    /// with nothing on the board but a focus axis move, or a dispenser's
+    /// plunger pushing, takes it as the speed along those axes instead.
     Surface(f32),
     /// The settings' jog rates, the slower axis pacing.
     Jog,
@@ -261,7 +261,8 @@ impl Planner {
         for i in 0..AXES {
             end[i] = math::steps_to_units(target_steps[i], settings.steps[i]);
         }
-        let surface_mm = math::joint_surface_length(&start, &end, settings.cartesian);
+        let dispensing = settings.dispensing();
+        let surface_mm = math::joint_surface_length(&start, &end, settings.cartesian, dispensing);
         let requested_speed = match feed {
             Feed::Max => axis_limit,
             Feed::Jog => paced_speed(&unit, &effective_jog_rate(settings)),
@@ -278,11 +279,14 @@ impl Planner {
                     axis_limit
                 } else if surface_mm >= SURFACE_EPSILON_MM {
                     length * (mm_per_min / 60.0) / surface_mm
-                } else if steps[H] > 0 {
-                    // Only the head goes up or down (a turn on the axis may
-                    // come with it): F is the focus axis speed, as a jog or
-                    // a probe of it asks for.
-                    length * (mm_per_min / 60.0) / libm::fabsf(delta_units[H])
+                } else if steps[H] > 0 || (dispensing && steps[A] > 0) {
+                    // Nothing moves on the board: only the head goes up or
+                    // down (a turn on the axis may come with it), or a
+                    // dispenser's plunger pushes, or both. F is the speed
+                    // along those axes, as a jog or a probe of the focus
+                    // axis asks for.
+                    let plunger = if dispensing { delta_units[A] } else { 0.0 };
+                    length * (mm_per_min / 60.0) / math::norm(&[delta_units[H], plunger])
                 } else {
                     axis_limit
                 }
@@ -621,6 +625,33 @@ mod tests {
         // The cross slide's own rate paces a rapid along it.
         planner.push([3.0, 0.0, -0.5, 34.0], MoveKind::Rapid, Feed::Max, 0.0, 0.0, &s).unwrap();
         assert!(close(planner.nth(2).unwrap().nominal_speed, 1000.0 / 60.0, 1e-5));
+    }
+
+    #[test]
+    fn a_dispensing_cut_of_the_plunger_alone_takes_f_as_its_speed() {
+        let mut planner = Planner::new();
+        let s = Settings { cartesian: true, dispenser: true, ..settings() };
+        // 1 mm of plunger at F60: 1 mm/s along it, nothing on the board
+        // and so no power.
+        planner.push([0.0, 1.0, 0.0, 0.0], MoveKind::Cut, Feed::Surface(60.0), 400.0, 0.0, &s).unwrap();
+        let b = planner.current().unwrap();
+        assert_eq!(b.surface_mm, 0.0);
+        assert_eq!(b.steps, [0, 889, 0, 0]);
+        assert!(close(b.requested_speed, 1.0, 1e-5));
+        assert!(close(b.nominal_speed, 1.0, 1e-5));
+        assert_eq!(b.power, 0.0);
+    }
+
+    #[test]
+    fn a_dispensing_cut_takes_f_along_the_head_and_the_plunger_together() {
+        let mut planner = Planner::new();
+        let s = Settings { cartesian: true, dispenser: true, ..settings() };
+        // 3 mm of plunger with 4 mm of head: 5 units at F60 is 1 mm/s.
+        planner.push([0.0, 3.0, -4.0, 0.0], MoveKind::Cut, Feed::Surface(60.0), 400.0, 0.0, &s).unwrap();
+        let b = planner.current().unwrap();
+        assert_eq!(b.surface_mm, 0.0);
+        assert_eq!(b.steps, [0, 2667, 1024, 0]);
+        assert!(close(b.requested_speed, 1.0, 1e-5));
     }
 
     #[test]

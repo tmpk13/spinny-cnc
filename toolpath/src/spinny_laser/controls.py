@@ -28,8 +28,9 @@ says nothing gets the controls the page always drew for that machine.
     keys = []                   # two key names for minus and plus
     note = ""                   # under the bar's title
 
-The joint letters and their units are the firmware's: `a` is in degrees,
-`r`, `z` and `h` in millimeters. `place`, which older files say, is still
+The joint letters and their units are the firmware's: `a` is in degrees
+(millimeters on a dispenser, where it is the plunger), `r`, `z` and `h`
+in millimeters. `place`, which older files say, is still
 taken and means nothing: every control is a bar of its own.
 
 Run as a module, this prints the defaults for every kind of machine as
@@ -54,7 +55,11 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
     """The controls for a machine that describes none: the polar laser's
     pad, radius and turn buttons and cross slide frame, with the slide as
     the Y axis when cartesian, and the focus axis as a frame of its own when
-    one is fitted, called the depth axis with a spindle."""
+    one is fitted, called the depth axis with a spindle. A dispenser is an
+    X/Y machine whose table joint is the plunger, so it gets X, Y, the
+    plunger as E and the needle's height."""
+    if tool == "dispenser":
+        return _dispenser_controls(focus)
     cartesian = kinematics == "cartesian"
     milling = tool == "spindle"
     axes = [
@@ -107,13 +112,46 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
     }
 
 
+def _dispenser_controls(focus: bool) -> dict:
+    axes = [
+        _axis("r", "X", "X (rail)", None, ["X-", "X+"], feed=True, goto=True,
+              zero_hint="X is measured from here: put the needle over the job's X origin first."),
+        _axis("z", "Y", "Y (cross slide)", None, ["Y-", "Y+"], feed=True, goto=True,
+              zero_hint="Y is measured from here: put the needle over the job's Y origin first."),
+        # The plunger: small steps, since a dot is a few hundredths of a
+        # millimeter of it; its own rate, not the feed field's.
+        _axis("a", "E", "Dispenser", [0.05, 0.1, 0.5, 1], ["Retract", "Extrude"], feed=False, goto=False,
+              zero_hint="E counts the plunger from here; nothing on the board changes.",
+              note="The plunger, mm pushed out: Extrude lays paste, Retract pulls back"),
+    ]
+    if focus:
+        axes.append(_axis(
+            "h", "H", "Needle height", [0.05, 0.1, 1], ["Down", "Up"], feed=False, goto=False,
+            zero_hint="Touch the needle to the copper first: a dispensing run without a height map holds its gap over H 0."
+            " A height map probed before keeps its heights in the old numbers, so a run follows it"
+            " only after Touch off here again (probe again for another board).",
+            note="Raises and lowers the needle; up is positive, H 0 is the board's surface",
+        ))
+    return {
+        "pad": True,
+        "pad_steps": [0.1, 1.0, 10.0],
+        "pad_step": 1.0,
+        "feed": True,
+        "center": {"r": 0.0, "z": 0.0},
+        "axes": axes,
+    }
+
+
 def kind_id(kinematics: str, tool: str, focus: bool) -> str:
     """A name for a kind of machine: polar-laser, cartesian-spindle-focus."""
     return f"{kinematics}-{tool}" + ("-focus" if focus else "")
 
 
-# Every kind of machine the defaults are drawn for.
-KINDS = tuple((kinematics, tool, focus) for kinematics in ("polar", "cartesian") for tool in ("laser", "spindle") for focus in (False, True))
+# Every kind of machine the defaults are drawn for; a dispenser is only
+# ever cartesian.
+KINDS = tuple(
+    (kinematics, tool, focus) for kinematics in ("polar", "cartesian") for tool in ("laser", "spindle") for focus in (False, True)
+) + (("cartesian", "dispenser", False), ("cartesian", "dispenser", True))
 
 
 def default_controls_by_kind() -> dict[str, dict]:

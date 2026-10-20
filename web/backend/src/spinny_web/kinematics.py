@@ -101,6 +101,42 @@ class Spindle:
             raise ValueError("the full speed must be above 0")
 
 
+@dataclass(frozen=True)
+class Dispense:
+    """What a dot of paste is made of, on a machine whose table joint is a
+    dispenser's plunger: the head travels `clearance` mm over the surface,
+    the needle stands `gap` over the pad, the plunger pushes out the dot's
+    volume (the pad's area times the group's thickness) over `output`
+    mm^3 per mm of plunger, plus the `retract` it took back after the last
+    dot, at `rate` mm/min, waits `dwell_ms`, and pulls back `retract`."""
+
+    clearance: float = 2.0
+    gap: float = 0.1
+    retract: float = 0.2
+    output: float = 100.0
+    rate: float = 60.0
+    dwell_ms: int = 200
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.clearance) and 0.0 < self.clearance <= 100.0):
+            raise ValueError("the clearance must be above 0 and at most 100 mm")
+        if not (math.isfinite(self.gap) and 0.0 < self.gap <= 10.0):
+            raise ValueError("the gap must be above 0 and at most 10 mm")
+        if not (math.isfinite(self.retract) and 0.0 <= self.retract <= 50.0):
+            raise ValueError("the retract must be 0 to 50 mm")
+        if not (math.isfinite(self.output) and 0.0 < self.output <= 1.0e5):
+            raise ValueError("the output must be above 0 and at most 100000 mm^3 per mm")
+        if not (math.isfinite(self.rate) and 0.0 < self.rate <= 1.0e4):
+            raise ValueError("the extrude rate must be above 0 and at most 10000 mm/min")
+        if not 0 <= int(self.dwell_ms) <= 60000:
+            raise ValueError("the dwell must be 0 to 60000 ms")
+
+    def plunger_mm(self, area: float, thickness: float) -> float:
+        """How far the plunger goes for a pad of `area` mm^2 under
+        `thickness` mm of paste."""
+        return area * thickness / self.output
+
+
 def step_ceiling_hz(step_us: int) -> float:
     """Most steps a second the firmware produces at a step pulse width: one
     per 10 us tick, and fewer once the pulse, busy-waited inside the tick at
@@ -281,7 +317,8 @@ class Streamer:
     This one is for the polar machine: a joint is (radius, angle). The
     methods between `start_of` and `_moves` are what a frame decides, and
     `CartesianStreamer` gives them for a machine whose cross slide is a
-    joint. `spindle` turns a job into milling.
+    joint. `spindle` turns a job into milling, `dispense` into dots of
+    paste on a machine whose table joint is a dispenser's plunger.
     """
 
     cartesian = False
@@ -293,12 +330,14 @@ class Streamer:
         decimals: int = DECIMALS,
         angle_decimals: int = ANGLE_DECIMALS,
         spindle: Spindle | None = None,
+        dispense: Dispense | None = None,
     ) -> None:
         self.kinematics = Kinematics(tolerance)
         self.rates = rates or Rates()
         self.decimals = decimals
         self.angle_decimals = angle_decimals
         self.spindle = spindle
+        self.dispense = dispense
         # A segment within this of the axis is cut there and crosses it
         # with a dark turn. Half a word quantum is the least that makes
         # the words agree; the chord tolerance is the most the path may
@@ -415,6 +454,8 @@ class Streamer:
     def job_pieces(self, job: "Job", start: Joint, compensation: "Compensation | None" = None) -> Iterator[Piece]:
         """Every protocol line of the job, lazily, from the machine's joint,
         compensated for the board's height when asked."""
+        if self.dispense is not None:
+            return self._dispense_pieces(job, start, compensation)
         if self.spindle is not None:
             return self._spindle_pieces(job, start, compensation)
         pieces = self._job_pieces(job, start)
@@ -586,12 +627,13 @@ class Streamer:
     # --- milling ----------------------------------------------------------
 
     def travel_height(self, compensation: "Compensation | None") -> float:
-        """Where the tool travels between cuts: the clearance over the
-        surface, which is H 0 without a height map and its highest point
-        with one."""
-        assert self.spindle is not None
+        """Where the tool travels between cuts, or between dots: the
+        clearance over the surface, which is H 0 without a height map and
+        its highest point with one."""
+        tool = self.dispense if self.dispense is not None else self.spindle
+        assert tool is not None
         top = compensation.highest() if compensation is not None else 0.0
-        return top + self.spindle.clearance
+        return top + tool.clearance
 
     def _lift(self, h: float, frm: float | None, group: int | None, joint: Joint = (0.0, 0.0)) -> Piece:
         seconds = abs(h - frm) / self.rates.h_rate * 60.0 if frm is not None else 0.0
@@ -610,16 +652,47 @@ class Streamer:
         """
         self.check_tools(job)
         self._check_speeds(job)
+        self._check_dots(job)
+
+    @property
+    def tool(self) -> str:
+        """What this streamer makes a job for: `laser`, `spindle` or `dispenser`."""
+        if self.dispense is not None:
+            return "dispenser"
+        return "spindle" if self.spindle is not None else "laser"
 
     def check_tools(self, job: "Job") -> None:
-        mine = "spindle" if self.spindle is not None else "laser"
+        mine = self.tool
+        # A group that names no tool was drawn for a beam or a bit, which
+        # follow its paths; a dispenser lays dots, so it takes only groups
+        # made for it.
+        allowed = (mine,) if mine == "dispenser" else (None, mine)
         for group in job.groups:
-            if group.enabled and group.has_cuts and group.tool not in (None, mine):
-                other = "a spindle" if group.tool == "spindle" else "a laser"
+            if group.enabled and group.has_cuts and group.tool not in allowed:
+                if group.tool is None:
+                    raise ValueError(
+                        f"{group.label} is a group of paths and this machine has a dispenser, which lays dots:"
+                        " import the board with mode dispense, or disable the group"
+                    )
                 raise ValueError(
-                    f"{group.label} was made for {other} and this machine has {'a spindle' if mine == 'spindle' else 'a laser'}:"
+                    f"{group.label} was made for {_article(group.tool)} and this machine has {_article(mine)}:"
                     f" disable the group, or load the machine file the profile names"
                 )
+
+    def _check_dots(self, job: "Job") -> None:
+        """A dispensing group is dots: one point a path, with the pad's
+        area beside each."""
+        if self.dispense is None:
+            return
+        for group in job.groups:
+            if not group.enabled or not group.has_cuts:
+                continue
+            if group.joints:
+                raise ValueError(f"{group.label}: a joint-space group cannot be dispensed")
+            if any(len(path) != 1 for path in group.paths):
+                raise ValueError(f"{group.label}: a dispenser lays dots, one point a path: import the board with mode dispense")
+            if len(group.areas) != len(group.paths) or any(not (math.isfinite(a) and a > 0.0) for a in group.areas):
+                raise ValueError(f"{group.label}: every dot needs its pad's area above 0")
 
     def _check_speeds(self, job: "Job") -> None:
         if self.spindle is None:
@@ -763,6 +836,80 @@ class Streamer:
                         h = travel
         yield Piece(line="spindle off", kind="spindle", joint=joint, group=last_group)
 
+    # --- dispensing -------------------------------------------------------
+
+    def _dispense_pieces(self, job: "Job", start: Joint, compensation: "Compensation | None") -> Iterator[Piece]:
+        """Every line of a dispensing job.
+
+        The plunger is declared at 0 first, so its targets count the dots
+        from the run's start whatever it read before, and a run picked up
+        part way can declare it again. The head rises to the travel height,
+        and for each dot goes over the pad, lowers the needle to the gap
+        over the surface, pushes out the dot's volume plus the last retract,
+        waits, pulls the plunger back and rises. The plunger ends every dot
+        retracted, and its position grows by the dots' volumes alone.
+        """
+        dispense = self.dispense
+        assert dispense is not None
+        self.check_tools(job)
+        self._check_dots(job)
+        travel = self.travel_height(compensation)
+        a_rate = self.rates.a_rate
+
+        def surface(point: Point) -> float:
+            return compensation.focus(point) if compensation is not None else 0.0
+
+        joint = start
+        plunger = 0.0
+        yield Piece(line="set A0", kind="plunger", joint=joint)
+        yield self._lift(travel, None, None, joint)
+        h = travel
+        for index, group in enumerate(job.groups):
+            if not group.enabled or not group.has_cuts:
+                continue
+            thickness = float(group.thickness)
+            for path, area in zip(group.paths, group.areas):
+                point = (float(path[0][0]), float(path[0][1]))
+                target = self._path_start(point, joint)
+                if not self._same(joint, target):
+                    yield Piece(line=f"go {self.words(target)}", kind="go", joint=target, seconds=self._rapid_seconds(joint, target), group=index)
+                    joint = target
+                low = surface(point) + dispense.gap
+                yield Piece(
+                    line=f"go H{coord(low, FOCUS_DECIMALS)}",
+                    kind="lower",
+                    joint=joint,
+                    seconds=abs(h - low) / self.rates.h_rate * 60.0,
+                    group=index,
+                    h=low,
+                )
+                h = low
+                volume = dispense.plunger_mm(float(area), thickness)
+                push = dispense.retract + volume
+                yield Piece(
+                    line=f"cut A{coord(plunger + push, FOCUS_DECIMALS)} F{num(dispense.rate)}",
+                    kind="extrude",
+                    joint=joint,
+                    seconds=push / dispense.rate * 60.0,
+                    group=index,
+                    feed=dispense.rate,
+                    h=h,
+                )
+                plunger += volume
+                if dispense.dwell_ms > 0:
+                    yield Piece(line=f"dwell T{int(dispense.dwell_ms)}", kind="dwell", joint=joint, seconds=dispense.dwell_ms / 1000.0, group=index, h=h)
+                if dispense.retract > 0.0:
+                    yield Piece(
+                        line=f"go A{coord(plunger, FOCUS_DECIMALS)}",
+                        kind="retract",
+                        joint=joint,
+                        seconds=dispense.retract / a_rate * 60.0 if a_rate > 0 else 0.0,
+                        group=index,
+                        h=h,
+                    )
+                yield self._lift(travel, h, index, joint)
+                h = travel
+
     # --- picking a job up part way ----------------------------------------
 
     @staticmethod
@@ -795,23 +942,38 @@ class Streamer:
         in force there and given its spin-up, and, when the next line is a
         cut at depth, the tool plunges to the depth that cut starts at.
         With a laser the head goes dark to the point, at the focus height
-        the job had there when it follows the height map.
+        the job had there when it follows the height map. With a dispenser
+        the plunger is declared where the plan had it, the needle rises to
+        the travel height and goes over the pad, and down to the gap when
+        the line picked up is in the middle of a dot.
         """
         if skip <= 0 or skip > len(pieces):
             return []
         joint: Joint | None = None
         h: float | None = None
         speed: float | None = None
+        plunger = 0.0
         for piece in pieces[:skip]:
-            if piece.kind in ("go", "turn", "cut", "plunge"):
+            if piece.kind in ("go", "turn", "cut", "plunge", "lower", "extrude", "dwell", "retract"):
                 joint = piece.joint
             if piece.h is not None:
                 h = piece.h
             if piece.kind == "spindle":
                 speed = _spindle_speed(piece.line)
+            if piece.kind in ("extrude", "retract"):
+                plunger = _plunger_target(piece.line, plunger)
         piece = pieces[skip] if skip < len(pieces) else None
         target = piece.start if piece is not None and piece.kind == "cut" and piece.start is not None else joint
         lines: list[str] = []
+        if self.dispense is not None:
+            travel = self.travel_height(compensation)
+            lines.append(f"set A{coord(plunger, FOCUS_DECIMALS)}")
+            lines.append(f"go H{coord(travel, FOCUS_DECIMALS)}")
+            if target is not None:
+                lines.append(f"go {self.words(target)}")
+            if piece is not None and piece.kind in ("extrude", "dwell", "retract") and h is not None:
+                lines.append(f"go H{coord(h, FOCUS_DECIMALS)}")
+            return lines
         if self.spindle is None:
             if target is not None:
                 lines.append(f"go {self.words(target, h=h)}")
@@ -987,6 +1149,21 @@ class Streamer:
         if feed:
             words.append(f"F{num(feed)}")
         return f"{keyword} {' '.join(words)}"
+
+
+def _article(tool: str | None) -> str:
+    return {"spindle": "a spindle", "dispenser": "a dispenser"}.get(tool or "", "a laser")
+
+
+def _plunger_target(line: str, fallback: float) -> float:
+    """The `A` of a plunger line."""
+    for word in line.split():
+        if word[0] == "A":
+            try:
+                return float(word[1:])
+            except ValueError:
+                return fallback
+    return fallback
 
 
 def turned(point: Point, degrees: float) -> Point:

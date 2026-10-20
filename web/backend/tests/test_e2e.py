@@ -122,6 +122,75 @@ def test_homing_and_an_endstop_halt_on_the_virtual_firmware(stops_firmware):
         link.close()
 
 
+@pytest.fixture
+def dispenser_firmware():
+    """The virtual machine as the shipped paste dispenser: cartesian, the
+    plunger on the table's driver, the focus axis fitted."""
+    if not BINARY or not Path(BINARY).exists():
+        pytest.skip("SPINNY_VIRTUAL does not name a virtual firmware binary")
+    port = free_port()
+    machine = Path(__file__).resolve().parents[3] / "machines" / "cartesian-dispenser.toml"
+    process = subprocess.Popen(
+        [BINARY, "--listen", f"127.0.0.1:{port}", "--fast", "--machine", str(machine)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not wait_port(port):
+            pytest.fail("the virtual firmware did not open its port")
+        yield port
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def test_a_dispensing_job_runs_on_the_virtual_firmware(dispenser_firmware):
+    from spinny_web.kinematics import CartesianStreamer, Dispense
+
+    link = Link(f"socket://127.0.0.1:{dispenser_firmware}")
+    link.open()
+    try:
+        assert link.banner is not None
+        values = {}
+        for line in link.request_ok("$"):
+            name, _, text = line.partition("=")
+            values[name.strip()] = text.strip()
+        assert values["dispenser"] == "1" and values["cartesian"] == "1" and values["h_axis"] == "1"
+        assert link.request_ok("set R0 Z0 H3 A5") == []
+        job = Job(
+            id="e2e-dots",
+            name="dots",
+            groups=[Group(label="paste dots", tool="dispenser", thickness=0.2, paths=[[(4.0, 1.0)], [(6.0, -1.0)]], areas=[1.0, 2.0])],
+        )
+        streamer = CartesianStreamer(dispense=Dispense(gap=0.1, retract=0.2, output=1.0, rate=600.0, dwell_ms=10))
+        expected = list(streamer.job_pieces(job, (0.0, 0.0)))
+        assert expected[0].line == "set A0"
+        runner = Runner()
+        runner.start(job, link, streamer)
+        deadline = time.monotonic() + 120.0
+        while runner.progress.state != DONE and time.monotonic() < deadline:
+            assert runner.progress.state in ("running", "done"), runner.snapshot()
+            time.sleep(0.05)
+        final = runner.snapshot()
+        assert final["state"] == DONE, final
+        assert final["sent"] == final["acked"] == len(expected)
+        status = link.status_now(1.0)
+        assert status.state == "Idle"
+        # The plunger counts the two dots' volumes from the zero the run
+        # declared, the head is back at the travel height over the last pad.
+        assert status.a == pytest.approx(0.2 + 0.4, abs=0.01)
+        assert status.h == pytest.approx(2.0, abs=0.01)
+        assert (status.r, status.z) == (pytest.approx(6.0, abs=0.01), pytest.approx(-1.0, abs=0.01))
+        # The beam's words are refused on a dispenser, and the plunger goes on a cut.
+        assert link.request("cut A1 F60 S100")[-1].startswith("error:2")
+        assert link.request_ok("cut A0.7 F600") == []
+    finally:
+        link.close()
+
+
 def test_small_job_runs_on_the_virtual_firmware(firmware):
     link = Link(f"socket://127.0.0.1:{firmware}")
     link.open()

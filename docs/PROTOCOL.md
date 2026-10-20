@@ -6,10 +6,12 @@ space and drives the laser. Board geometry never reaches it; the host turns
 board paths into short joint moves (see `spinny_laser.polar`) and streams
 them. Everything is ASCII text over USB CDC.
 
-Two settings change what the machine is, and both are off by default:
+Three settings change what the machine is, and all are off by default:
 `cartesian` makes the cross slide `Z` a joint, so the radius is X and the
-slide Y of an X/Y machine (see [Cartesian](#cartesian)), and `spindle`
-turns the laser output into a spindle's (see [Spindle](#spindle)).
+slide Y of an X/Y machine (see [Cartesian](#cartesian)), `spindle`
+turns the laser output into a spindle's (see [Spindle](#spindle)), and
+`dispenser`, with `cartesian`, makes the table's driver a dispenser's
+plunger (see [Dispenser](#dispenser)).
 
 ## Transport
 
@@ -317,6 +319,34 @@ was stopped under it ends at its next cut rather than dragging a still
 tool through the board. `go` and jogs still move. The host waits out the
 spin-up with a `dwell` after `spindle S`.
 
+## Dispenser
+
+With `$dispenser=1` on a cartesian machine the table's driver turns a
+dispenser's plunger instead of a table: `A` is the plunger's position in
+mm, pushed out positive, with `a_steps` in steps/mm and `a_rate`,
+`a_accel`, `a_jerk` and `jog_a` in mm. The head is still the X/Y machine
+of `R` and `Z`, with the focus axis as the needle's height. On a polar
+machine (`$cartesian=0`) the flag means nothing: `A` is the table.
+
+| Command | Effect |
+| --- | --- |
+| `go [R] [Z] [H] [A]`, `cut [R] [Z] [H] [A] [F]` | `A` goes on them like a joint word: `cut A0.35 F60` pushes the plunger 0.35 mm at 60 mm/min with nothing else moving, `go A-0.2` pulls it back 0.2 mm at `a_rate`; with `R`, `Z` or `H` on the line it moves along with them, a bead laid along a line |
+| `jog A`, `jogto A`, `set A` | as on a table, in mm |
+
+- The plunger moves no board: it has no part in the surface speed `F`
+  asks for, and a line with no board length (the plunger alone, or with
+  the focus axis) takes `F` as the speed along the axes it moves, as a
+  focus axis move does.
+- The output is dark: `S` and `M` on `cut`, `S` on `dwell` and `laser S`
+  are refused (`error:2`) as on a spindle machine, and `cut` needs no
+  spindle. The tool output (`tool_out`) follows a job as it does for a
+  beam, for a dispenser's air or valve.
+- `spindle` is not meant to be set with it: with both set the spindle's
+  rules hold too, and a `cut` needs the spindle turning.
+
+Changing `dispenser` stops whatever runs on the output, as changing
+`spindle` does.
+
 ## Laser
 
 | Command | Effect |
@@ -486,6 +516,7 @@ microsteps a power of two up to 256.
 | `r_home_travel`, `a_home_travel`, `h_home_travel`, `z_home_travel` | mm or deg | 200, 400, 50, 200 | the axis's travel between its ends; a home seeks a tenth further than this plus the pull-off, and the positive switch of a two-ended axis reads `home_pos + home_travel`; above 0 |
 | `stop_invert` | mask | 0 | the endstop inputs that are active high: bit 0 the rail, bit 1 the table, bit 2 the cross slide, bit 3 the focus axis, the `dir_invert` order |
 | `limits` | mask | 0 | the endstops that halt a move closing them, same bits (`ALARM:4`); a bit for an axis without a switch does nothing |
+| `dispenser` | 0/1 | 0 | with `cartesian`: the table's joint is a dispenser's plunger in mm, taken on `go` and `cut`, and the output is dark; see Dispenser |
 
 Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
 configuration; a `tmc_*` value and `dir_invert` follow the axis to its
@@ -509,7 +540,7 @@ output runs at the defaults' polarity, which lights an active-low module.
 Settings stored before `z_jerk`, `z_max`, `cartesian` and `spindle` are
 read, with those four at their defaults, settings stored before
 `sockets` with it at 1234, and settings stored before the pins with those
-at their defaults.
+at their defaults, and settings stored before `dispenser` with it 0.
 
 ## Status line
 

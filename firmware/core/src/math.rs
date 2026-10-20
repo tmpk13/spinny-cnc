@@ -17,14 +17,22 @@ pub fn surface_length(r0: f32, a0: f32, r1: f32, a1: f32) -> f32 {
 /// sits `hypot(R, Z)` from the rotation axis, so a turn of the table (a jog
 /// lining a board up; go and cut never turn it there) sweeps that radius:
 /// `hypot(dr, dz, hypot(r_mean, z_mean) * da_rad)`, exact for a move of one
-/// joint and close for the rest. Z is only read on a cartesian machine: a
-/// polar one may still carry the value a cartesian session left in it.
-pub fn joint_surface_length(start: &[f32; AXES], end: &[f32; AXES], cartesian: bool) -> f32 {
+/// joint and close for the rest. When the table's driver turns a
+/// dispenser's plunger (`dispensing`, on a cartesian machine only) `A`
+/// moves no board and the length is `hypot(dr, dz)`. Z is only read on a
+/// cartesian machine: a polar one may still carry the value a cartesian
+/// session left in it.
+pub fn joint_surface_length(start: &[f32; AXES], end: &[f32; AXES], cartesian: bool, dispensing: bool) -> f32 {
     if !cartesian {
         return surface_length(start[R], start[A], end[R], end[A]);
     }
+    let dr = end[R] - start[R];
+    let dz = end[Z] - start[Z];
+    if dispensing {
+        return hypot(dr, dz);
+    }
     let radius = hypot(0.5 * (start[R] + end[R]), 0.5 * (start[Z] + end[Z]));
-    norm(&[end[R] - start[R], end[Z] - start[Z], radius * (end[A] - start[A]).to_radians()])
+    norm(&[dr, dz, radius * (end[A] - start[A]).to_radians()])
 }
 
 pub fn hypot(x: f32, y: f32) -> f32 {
@@ -93,20 +101,33 @@ mod tests {
     fn the_cross_slide_adds_square_to_the_rail() {
         let start = [1.0, 30.0, 0.0, 2.0];
         let end = [4.0, 30.0, -1.0, 6.0];
-        assert!((joint_surface_length(&start, &end, true) - 5.0).abs() < 1e-6, "the focus axis is not on the board");
+        assert!((joint_surface_length(&start, &end, true, false) - 5.0).abs() < 1e-6, "the focus axis is not on the board");
         // A polar machine ignores whatever Z holds.
         let polar = [10.0, 90.0, 0.0, 2.0];
-        assert!((joint_surface_length(&[10.0, 0.0, 0.0, 2.0], &polar, false) - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
+        assert!((joint_surface_length(&[10.0, 0.0, 0.0, 2.0], &polar, false, false) - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
     }
 
     #[test]
     fn a_table_turn_on_a_cartesian_machine_sweeps_the_heads_distance_from_the_axis() {
         // R5 Y20: the head is hypot(5, 20) from the axis.
-        let turn = joint_surface_length(&[5.0, 0.0, 0.0, 20.0], &[5.0, 10.0, 0.0, 20.0], true);
+        let turn = joint_surface_length(&[5.0, 0.0, 0.0, 20.0], &[5.0, 10.0, 0.0, 20.0], true, false);
         let expected = libm::sqrtf(425.0) * 10.0f32.to_radians();
         assert!((turn - expected).abs() < 1e-4, "{turn} vs {expected}");
         // On the axis's rail line but off it along Y it is still an arc.
-        assert!(joint_surface_length(&[0.0, 0.0, 0.0, 20.0], &[0.0, 10.0, 0.0, 20.0], true) > 3.0);
+        assert!(joint_surface_length(&[0.0, 0.0, 0.0, 20.0], &[0.0, 10.0, 0.0, 20.0], true, false) > 3.0);
+    }
+
+    #[test]
+    fn a_dispensing_machines_plunger_moves_no_board() {
+        // R5 Y20 with the plunger pushed 3 mm: no board length at all.
+        assert_eq!(joint_surface_length(&[5.0, 0.0, 0.0, 20.0], &[5.0, 3.0, 0.0, 20.0], true, true), 0.0);
+        // The rail and the cross slide still count, square, with or
+        // without the plunger moving along.
+        assert!((joint_surface_length(&[1.0, 0.0, 0.0, 2.0], &[4.0, 0.0, -1.0, 6.0], true, true) - 5.0).abs() < 1e-6);
+        assert!((joint_surface_length(&[1.0, 0.0, 0.0, 2.0], &[4.0, 2.5, -1.0, 6.0], true, true) - 5.0).abs() < 1e-6);
+        // A polar machine keeps its table whatever the flag says.
+        let turn = joint_surface_length(&[10.0, 0.0, 0.0, 0.0], &[10.0, 90.0, 0.0, 0.0], false, true);
+        assert!((turn - 10.0 * core::f32::consts::FRAC_PI_2).abs() < 1e-4);
     }
 
     #[test]

@@ -37,6 +37,14 @@ run = "deploy/deploy-pi.sh"
 description = "A design through a CAM profile to gcode: mise run cam -- cam/mill-3axis.toml board.kicad_pcb"
 run = "uv run spinny-cam"
 
+[tasks.build-pcbv]
+description = "Build pcbv in the sibling pcb-vision repository; the backend runs it for the camera (pcbv serve)"
+run = "cargo build -q --release --manifest-path ../pcb-vision/Cargo.toml -p pcbv"
+
+[tasks.virtual-dispenser]
+description = "Virtual firmware on socket://127.0.0.1:2323 as the cartesian paste dispenser over a tilted board"
+run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/cartesian-dispenser.toml --surface -1.5,0.01,-0.02"
+
 [tasks.virtual]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the polar laser"
 run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/polar-laser.toml"

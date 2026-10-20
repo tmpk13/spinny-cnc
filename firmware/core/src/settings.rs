@@ -119,6 +119,12 @@ pub struct Settings {
     /// raises `ALARM:4`, the position lost as it is on a reset while
     /// moving. Off, a switch closing under a move is ignored.
     pub limits: u8,
+    /// With `cartesian`, the table's driver turns a dispenser's plunger:
+    /// `A` is its position in mm, taken on `go` and `cut` like a joint
+    /// word, with no part in the board length a surface feed is measured
+    /// over, and the output stays dark. On a polar machine the flag does
+    /// nothing.
+    pub dispenser: bool,
 }
 
 /// An endstop at the negative end of its axis, and one at the positive
@@ -224,12 +230,13 @@ impl Default for Settings {
             home_travel: [200.0, 400.0, 50.0, 200.0],
             stop_invert: 0,
             limits: 0,
+            dispenser: false,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 74] = [
+pub const NAMES: [&str; 75] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -245,10 +252,12 @@ pub const NAMES: [&str; 74] = [
     "h_stop", "h_stop_pin", "h_home_pull", "h_home_pos", "h_home_travel",
     "z_stop", "z_stop_pin", "z_home_pull", "z_home_pos", "z_home_travel",
     "stop_invert", "limits",
+    "dispenser",
 ];
 
 /// First of the endstop settings in `NAMES`: five per joint in the
-/// core's joint order, then the two masks.
+/// core's joint order, then the two masks; the dispenser flag follows
+/// them.
 const STOP_NAMES_AT: usize = 52;
 const STOP_NAMES_PER_JOINT: usize = 5;
 
@@ -267,7 +276,8 @@ pub enum Changed {
     /// `cartesian`: the cross slide changes hands between `slide` and the
     /// joints.
     Kinematics,
-    /// `spindle`: the output changes meaning, so whatever runs on it stops.
+    /// `spindle` and `dispenser`: the output changes meaning, so whatever
+    /// runs on it stops.
     Tool,
     Other,
 }
@@ -282,9 +292,9 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
 /// older firmware is thrown away rather than read as this layout. Versions
-/// 5 to 8 are version 4 with fields appended, so a blob from version 4 on
+/// 5 to 9 are version 4 with fields appended, so a blob from version 4 on
 /// is still read, with the fields added after it at their defaults.
-const BLOB_VERSION: u8 = 8;
+const BLOB_VERSION: u8 = 9;
 /// Oldest version whose fields are a prefix of this layout.
 const BLOB_VERSION_PREFIX: u8 = 4;
 /// Bytes before the first field: magic and version.
@@ -300,8 +310,8 @@ const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
 /// Serialized size of the fields, in blob order: the version 4 fields,
 /// then `z_jerk`, `z_max`, `cartesian` and `spindle` (version 5), then
 /// `sockets` (version 6), then the pins and the tool output (version 7),
-/// then the endstops and homing (version 8).
-const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN;
+/// then the endstops and homing (version 8), then `dispenser` (version 9).
+const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN + 1;
 /// Serialized size of the version 7 fields.
 const PINS_LEN: usize = 4 + 4 + 1 + 4 + 1;
 /// Serialized size of the version 8 fields: per joint the ends, the pin
@@ -338,7 +348,7 @@ fn group(index: usize) -> Changed {
         0..=18 | 33..=38 | 41..=43 => Changed::Motion,
         19..=23 => Changed::Laser,
         44 => Changed::Kinematics,
-        45 => Changed::Tool,
+        45 | 74 => Changed::Tool,
         // The pins are read at boot; the tool output is driven again at
         // the next poll.
         47 | 48 | 50 => Changed::Other,
@@ -502,6 +512,7 @@ impl Settings {
             51 => Slot::Flag(&mut self.tool_invert),
             72 => Slot::Byte(&mut self.stop_invert),
             73 => Slot::Byte(&mut self.limits),
+            74 => Slot::Flag(&mut self.dispenser),
             _ => {
                 let at = index - STOP_NAMES_AT;
                 let joint = [R, A, H, Z][at / STOP_NAMES_PER_JOINT];
@@ -514,6 +525,12 @@ impl Settings {
                 }
             }
         }
+    }
+
+    /// The table's driver turns a dispenser's plunger: the flag acts
+    /// only on a cartesian machine.
+    pub fn dispensing(&self) -> bool {
+        self.cartesian && self.dispenser
     }
 
     /// Joints with an endstop, bit i = joint i.
@@ -724,6 +741,7 @@ impl Settings {
         }
         w.u8(self.stop_invert);
         w.u8(self.limits);
+        w.flag(self.dispenser);
         debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -806,6 +824,9 @@ impl Settings {
             }
             s.stop_invert = r.u8();
             s.limits = r.u8();
+        }
+        if version >= 9 {
+            s.dispenser = r.flag()?;
         }
         if !s.is_valid() {
             return None;
@@ -915,7 +936,8 @@ mod tests {
         z_home_pos=0\n\
         z_home_travel=200\n\
         stop_invert=0\n\
-        limits=0\n";
+        limits=0\n\
+        dispenser=0\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -924,7 +946,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 74> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 75> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -943,7 +965,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 74] = [
+        let table: [(&str, &str, &str, Changed); 75] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -1018,6 +1040,7 @@ mod tests {
             ("z_home_travel", "60", "60", Changed::Other),
             ("stop_invert", "15", "15", Changed::Other),
             ("limits", "9", "9", Changed::Other),
+            ("dispenser", "1", "1", Changed::Tool),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -1041,7 +1064,7 @@ mod tests {
         assert_eq!(settings.jerk[Z], 1.5);
         assert_eq!(settings.tmc_ma[Z], 600);
         assert_eq!(settings.z_max, 8.0);
-        assert!(settings.cartesian && settings.spindle);
+        assert!(settings.cartesian && settings.spindle && settings.dispenser);
         assert!(!settings.tmc_stealth);
     }
 
@@ -1116,6 +1139,7 @@ mod tests {
         accepts("z_max", "0");
         rejects("cartesian", "2");
         rejects("spindle", "0.5");
+        rejects("dispenser", "2");
         rejects("dir_invert", "16");
         rejects("h_steps", "0");
         rejects("h_axis", "2");
@@ -1427,7 +1451,7 @@ mod tests {
             assert_eq!(read_value, Some(value), "{name}");
         }
         let defaults = Settings::default();
-        for name in ["z_jerk", "z_max", "cartesian", "spindle", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert"] {
+        for name in ["z_jerk", "z_max", "cartesian", "spindle", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert", "dispenser"] {
             assert_eq!(line(&read, name).as_str(), line(&defaults, name).as_str(), "{name} came after version 4");
         }
     }
@@ -1450,8 +1474,8 @@ mod tests {
         assert_eq!(blob[end - 4..end], 160u32.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), Some(focus));
         // Then the cross slide's jerk and limit, the two mode flags and
-        // the sockets, then the pins and the tool output, just before the
-        // padding.
+        // the sockets, then the pins and the tool output, then the
+        // endstops and the dispenser flag just before the padding.
         let modes = Settings {
             z_max: 9.5, cartesian: true, spindle: true, sockets: 1423,
             laser_pin: 23, probe_pin: 22, tool_out: true, tool_pin: 18, tool_invert: true,
@@ -1459,7 +1483,7 @@ mod tests {
         };
         modes.to_blob(&mut blob);
         let tail = HEADER_LEN + FIELDS_LEN;
-        let pins = tail - STOPS_LEN - PINS_LEN;
+        let pins = tail - 1 - STOPS_LEN - PINS_LEN;
         assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
         assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
         assert_eq!(blob[pins - 6..pins - 4], [1, 1]);
@@ -1513,6 +1537,43 @@ mod tests {
         let crc = crc32(&blob[..CRC_OFFSET]);
         blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), Some(older));
+    }
+
+    #[test]
+    fn the_dispenser_flag_is_listed_last() {
+        let mut out = Out::new();
+        Settings::default().format_all(&mut out);
+        assert_eq!(out.as_str().lines().count(), 75);
+        assert_eq!(out.as_str().lines().last(), Some("dispenser=0"));
+        assert_eq!(NAMES.len(), 75);
+    }
+
+    #[test]
+    fn the_dispenser_flag_round_trips_the_blob() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.set("dispenser", "1"), Ok(Changed::Tool));
+        assert!(!settings.dispensing(), "the flag acts only on a cartesian machine");
+        settings.set("cartesian", "1").unwrap();
+        assert!(settings.dispensing());
+        let mut blob = [0u8; BLOB_LEN];
+        settings.to_blob(&mut blob);
+        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - 1], 1, "the last field");
+        assert_eq!(Settings::from_blob(&blob), Some(settings));
+    }
+
+    #[test]
+    fn a_version_8_blob_is_read_with_the_dispenser_off() {
+        // Version 8 is this layout without the flag appended after the
+        // endstops: a stale byte there is not read as the flag.
+        let stored = Settings { cartesian: true, dispenser: true, ..Settings::default() };
+        let mut blob = [0u8; BLOB_LEN];
+        stored.to_blob(&mut blob);
+        blob[MAGIC.len()] = 8;
+        let crc = crc32(&blob[..CRC_OFFSET]);
+        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        let read = Settings::from_blob(&blob).expect("a version 8 blob is read");
+        assert!(read.cartesian && !read.dispenser);
+        assert_eq!(read, Settings { cartesian: true, ..Settings::default() });
     }
 
     #[test]

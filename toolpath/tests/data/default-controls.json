@@ -662,5 +662,170 @@
                 "note": "Raises and lowers the tool; up is positive, H 0 is the board's surface"
             }
         ]
+    },
+    "cartesian-dispenser": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0,
+            "z": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "X",
+                "label": "X (rail)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "X-",
+                    "X+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "X is measured from here: put the needle over the job's X origin first.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Y",
+                "label": "Y (cross slide)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Y-",
+                    "Y+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Y is measured from here: put the needle over the job's Y origin first.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "E",
+                "label": "Dispenser",
+                "steps": [
+                    0.05,
+                    0.1,
+                    0.5,
+                    1.0
+                ],
+                "step": 0.5,
+                "buttons": [
+                    "Retract",
+                    "Extrude"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "E counts the plunger from here; nothing on the board changes.",
+                "keys": [],
+                "note": "The plunger, mm pushed out: Extrude lays paste, Retract pulls back"
+            }
+        ]
+    },
+    "cartesian-dispenser-focus": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {
+            "r": 0.0,
+            "z": 0.0
+        },
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "X",
+                "label": "X (rail)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "X-",
+                    "X+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "X is measured from here: put the needle over the job's X origin first.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Y",
+                "label": "Y (cross slide)",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Y-",
+                    "Y+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Y is measured from here: put the needle over the job's Y origin first.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "a",
+                "letter": "E",
+                "label": "Dispenser",
+                "steps": [
+                    0.05,
+                    0.1,
+                    0.5,
+                    1.0
+                ],
+                "step": 0.5,
+                "buttons": [
+                    "Retract",
+                    "Extrude"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "E counts the plunger from here; nothing on the board changes.",
+                "keys": [],
+                "note": "The plunger, mm pushed out: Extrude lays paste, Retract pulls back"
+            },
+            {
+                "axis": "h",
+                "letter": "H",
+                "label": "Needle height",
+                "steps": [
+                    0.05,
+                    0.1,
+                    1.0
+                ],
+                "step": 0.1,
+                "buttons": [
+                    "Down",
+                    "Up"
+                ],
+                "feed": false,
+                "goto": false,
+                "zero": true,
+                "zero_hint": "Touch the needle to the copper first: a dispensing run without a height map holds its gap over H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board).",
+                "keys": [],
+                "note": "Raises and lowers the needle; up is positive, H 0 is the board's surface"
+            }
+        ]
     }
 }

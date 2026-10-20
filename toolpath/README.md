@@ -2,11 +2,12 @@
 
 The Python library behind the web backend and the command line tools:
 polar kinematics (`polar`), copper clearing (`clear`) and deposition
-(`deposit`), the centering coupons (`center`, `fine`), the machine
-configuration files (`machines`), the CAM profiles (`cam`, `camjob`,
-`post`: a design through a profile's operations, gcode for the profile's
-controller), and the gcode emitter for a grblHAL controller (`gcode`,
-`machine`, `report`, `preview`).
+(`deposit`), the centering coupons (`center`, `fine`), the pads and holes
+of a board layer (`pads`), the turn and shift that line a job up with the
+board (`align`), the machine configuration files (`machines`), the CAM
+profiles (`cam`, `camjob`, `post`: a design through a profile's
+operations, gcode for the profile's controller), and the gcode emitter
+for a grblHAL controller (`gcode`, `machine`, `report`, `preview`).
 
 | Command | Job |
 | --- | --- |
@@ -67,6 +68,15 @@ classDiagram
         burnt(groups, along, across)
         readings(design, groups, along, across)
         job_document(groups, name, spot)
+    }
+    class pads {
+        pads_of(image) the layer's fills as pads: centroid and area
+        holes_of(drills) the drill file's holes
+        tour(points) / spread(points, count) / nearest(points, to)
+    }
+    class align {
+        fit_rigid(pairs, angle) Fit: rotation, shift, scale, rms, residuals
+        turn(point, degrees) / turned_paths(paths, degrees)
     }
     class machines {
         load(path) Machine

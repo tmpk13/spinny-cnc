@@ -231,6 +231,7 @@ class Runner:
                     "cartesian": streamer.cartesian,
                     "angle": float(getattr(streamer, "angle", 0.0)),
                     "spindle": streamer.spindle is not None,
+                    "dispense": streamer.dispense is not None,
                     "started": _now_iso(),
                 }
                 self._link = link

@@ -33,6 +33,9 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `jobs.py` | the job model (board `paths`, or `joints` for a group written in joint space), importers (`.svg`, `.gcode`/`.nc`, `.json`, `.gbr`, `.kicad_pcb`), the on-disk store in `jobs/` |
 | `center.py` | the `spinny-center` test burn built in place as a job, coarse (board paths) or fine (joint space) |
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
+| `vision.py` | the camera through pcb-vision's `pcbv serve`: the program started on a device here, or one reached at a `socket://` device, one JSON request a line and the frame's bytes after its reply |
+| `camera.py` | the camera's settings and state, its picture and pose, the mark the tool made, and the routine that finds the mark in the picture and measures the camera's offset, roll and scale |
+| `align.py` | marks that pair a job's design points (pads, holes, any point) with where the machine or the camera found them, the fit (`spinny_laser.align`) and its application to the job |
 | `resume.py` | the resume record (`var/resume.json`, how far the last run got and the plan it was made from) and the machine's last reported position (`var/position.json`), both kept across sessions |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
 | `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
@@ -45,8 +48,10 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `type`: `{"type": "state", "connected": ..., "machine": ...}`,
 `{"type": "console", "dir": "rx", "text": "ok"}`,
 `{"type": "progress", "state": "running", ...}`,
-`{"type": "heightmap", "map": ..., "probe": ..., "settings": ...}` and
-`{"type": "message", "level": "info", "text": "..."}`. Console events
+`{"type": "heightmap", "map": ..., "probe": ..., "settings": ...}`,
+`{"type": "message", "level": "info", "text": "..."}`,
+`{"type": "camera", ...the camera state...}` and
+`{"type": "align", "job": ..., "marks": ..., "fit": ...}`. Console events
 include the status polls and reports.
 
 `GET /api/run` answers `null` before any job has run, like the snapshot's
@@ -120,12 +125,28 @@ classDiagram
     class heightmap {
         Grid, HeightMap, HeightMapStore
         Grid.mask / with_mask_for(job, margin) only around the cuts
-        Grid.estimate_seconds(settings, rates)
+        HeightMap.for_points(points, box) a pad map: a plane through the pads, the nearest pads' deviations between
+        estimate_points_seconds(points, settings, rates)
         Compensation focus / power
         check_covers(map, job) every cut over probed cells
     }
+    class vision {
+        VisionClient.start(device, size, fps, pcbv) / board / pose / frame / spot
+        find_pcbv(name) PATH, else ../pcb-vision/target
+    }
+    class camera {
+        CameraSettings device, size, fps, side, finish, offset, roll, mm_per_px
+        Camera.start / stop / load_board / frame / pose / state
+        Camera.find(access, step) lift, move, scale, center, the offset saved
+        pixel_to_board / scale_from_shift
+    }
+    class align {
+        Alignment.mark_tool(job, machine, design, nearest, within)
+        Alignment.mark_camera(job, design, machine, angle)
+        Alignment.fit / apply(job) a turn and a shift
+    }
     class prober {
-        Prober.start(grid, settings, link, spindle_off, keep_focus, resume, touch)
+        Prober.start(grid, settings, link, spindle_off, keep_focus, resume, touch, points, box)
         Prober.stop / cancel, also while starting
         probe_joint(point, offset)
         cartesian_probe_joint(point, offset, angle)
@@ -169,6 +190,12 @@ classDiagram
     app --> prober
     app --> spinny_laser_machines
     app --> cam
+    app --> vision
+    app --> camera
+    app --> align
+    camera --> vision
+    camera --> link
+    align --> jobs
     cam --> jobs
     cam --> spinny_laser_cam
     prober --> link

@@ -410,3 +410,15 @@
   keeps the machine's last reported joints in `var/position.json` (once a
   second while they change, and at the link's close), run or no run, and
   *Last known* in the Jog panel fills them in for *Set position*.
+- Dispensing, pad probing, the camera and alignment (2026-10-19): the
+  firmware's `dispenser` setting makes the table's joint a paste
+  dispenser's plunger in mm on a cartesian machine (`A` on go and cut, the
+  output dark); the machine files take `tool = "dispenser"`, a
+  `[dispenser]` section, the dispensing host values and a `[camera]`
+  table, with `cartesian-dispenser` shipped; a board imports with mode
+  `dispense` as dots on its pads and every board job carries its pads,
+  holes and the design's map into the job frame; the height map can be a
+  pad map probed at a job's pads; the camera is read through pcb-vision's
+  new `pcbv serve`, with a routine that cuts a mark and measures the
+  camera's offset, roll and scale from it; marks from the tool or the
+  camera fit a turn and a shift that is applied to the job.

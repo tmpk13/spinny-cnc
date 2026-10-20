@@ -75,6 +75,7 @@ DEFAULT_SETTINGS = {
     "tool_out": 0,
     "tool_pin": 17,
     "tool_invert": 0,
+    "dispenser": 0,
     "r_stop": 0, "r_stop_pin": 4, "r_home_pull": 1.0, "r_home_pos": 0.0, "r_home_travel": 200.0,
     "a_stop": 0, "a_stop_pin": 3, "a_home_pull": 1.0, "a_home_pos": 0.0, "a_home_travel": 400.0,
     "h_stop": 0, "h_stop_pin": 16, "h_home_pull": 1.0, "h_home_pos": 0.0, "h_home_travel": 50.0,
@@ -382,7 +383,10 @@ class FakeSerial:
         rest = " ".join(words[1:])
         values = {k.upper(): float(v) for k, v in WORD.findall(rest)}
         spindle = bool(self.settings["spindle"])
-        if spindle and (
+        # A dispenser's output is dark like a spindle's, and its `A` is the
+        # plunger, taken on go and cut.
+        dispensing = bool(self.settings["dispenser"]) and bool(self.settings["cartesian"])
+        if (spindle or dispensing) and (
             (keyword == "cut" and ("S" in values or "M" in values))
             or (keyword == "dwell" and "S" in values)
             or (keyword == "laser" and "S" in values)
@@ -512,8 +516,9 @@ class FakeSerial:
         return ["error:1 unknown command"]
 
     def _cartesian(self, keyword: str, values: dict) -> list[str]:
-        """A move with the cross slide as a joint beside the others."""
-        if keyword in ("go", "cut") and "A" in values:
+        """A move with the cross slide as a joint beside the others; with
+        a dispenser, `A` is the plunger and goes on go and cut too."""
+        if keyword in ("go", "cut") and "A" in values and not self.settings["dispenser"]:
             return ["error:2 bad word"]
         if "H" in values and not self.settings["h_axis"]:
             return ["error:2 bad word"]

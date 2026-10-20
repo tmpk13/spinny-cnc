@@ -10,7 +10,9 @@ endstops, no homing.
 Two optional modes use the same wiring. `$cartesian=1` steps the cross
 slide from the step timer as a fourth joint, so the rail is X and the
 slide Y of an X/Y machine. `$spindle=1` makes the FAN3 output a spindle's
-speed signal and the focus axis its depth axis.
+speed signal and the focus axis its depth axis. `$dispenser=1`, with
+`$cartesian=1`, makes the table's driver socket a dispenser's plunger
+in mm; no pin changes.
 
 ## Pins
 

@@ -221,7 +221,10 @@ def test_settings_read_write_save(client, fake, tmp_path):
     connect(client)
     settings = client.get("/api/settings").json()
     assert settings["values"]["r_rate"] == 1000 and settings["values"]["a_steps"] == 888.889
-    assert settings["host"] == {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": True}
+    assert settings["host"] == {
+        "tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": True,
+        "gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200,
+    }
     assert {"name": "r_steps", "unit": "steps/mm", "help": "radius motor"} in settings["schema"]
     asked = fake.received_lines.count("$")
     client.get("/api/settings")

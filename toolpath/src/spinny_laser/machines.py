@@ -2,16 +2,18 @@
 
 A machine is a TOML file: its axes with their scales, rates and limits,
 the kinematics (the rail as the radius over a turning table, or as X
-beside the cross slide as Y) and the tool on the output (a laser, or a
-spindle with the focus axis as its depth). Loading one writes every
+beside the cross slide as Y), the tool (a laser, a spindle with the focus
+axis as its depth, or a paste dispenser whose plunger turns on the table's
+driver) and the camera on the head, if any. Loading one writes every
 firmware setting, so swapping files swaps machines. What a file leaves
 out stays at the firmware's own default.
 
 The sections and keys, with the firmware setting each one sets:
 
-    name, description, kinematics (polar | cartesian), tool (laser | spindle)
+    name, description, kinematics (polar | cartesian), tool (laser | spindle | dispenser)
     [rail]    R, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (r_max), invert, current_ma, microsteps
     [table]   A, deg: steps_per_deg, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
+    [dispenser] A, mm, in place of [table] with tool = dispenser: steps_per_mm and the table's other keys
     [slide]   Z, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (z_max), invert, current_ma, microsteps
     [focus]   H, mm: fitted (h_axis), steps_per_mm, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
               each axis also takes socket, the driver socket it is wired to (X, Y, Z or E, each once: sockets),
@@ -22,7 +24,9 @@ The sections and keys, with the firmware setting each one sets:
     [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms), pin (laser_pin)
     [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth
-    [host]    tolerance, clearance, spinup, speed_control: the host's own settings, not the firmware's
+    [host]    tolerance, clearance, spinup, speed_control, and for dispensing gap, retract, output, extrude_rate,
+              dwell_ms: the host's own settings, not the firmware's
+    [camera]  device, size, fps, pcbv, side, finish, offset, roll, mm_per_px: a camera on the head, the backend's
     [controls] the page's jog panel and readout (spinny_laser.controls); left out, drawn from the kinematics, tool and focus axis
 """
 
@@ -31,16 +35,16 @@ from __future__ import annotations
 import math
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from spinny_laser.controls import default_controls, parse_controls
 
 KINEMATICS = ("polar", "cartesian")
-TOOLS = ("laser", "spindle")
+TOOLS = ("laser", "spindle", "dispenser")
 
 # The firmware's defaults, in the order it lists them. A file sets what it
-# names and leaves the rest here, so a machine is always all 74 settings.
+# names and leaves the rest here, so a machine is always all 75 settings.
 FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "r_steps": 10240.0, "a_steps": 14222.222, "r_rate": 560.0, "a_rate": 400.0,
     "r_accel": 50.0, "a_accel": 50.0, "r_jerk": 3.0, "a_jerk": 2.0,
@@ -59,9 +63,10 @@ FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "h_stop": 0, "h_stop_pin": 16, "h_home_pull": 1.0, "h_home_pos": 0.0, "h_home_travel": 50.0,
     "z_stop": 0, "z_stop_pin": 22, "z_home_pull": 1.0, "z_home_pos": 0.0, "z_home_travel": 200.0,
     "stop_invert": 0, "limits": 0,
+    "dispenser": 0,
 }
 
-FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert"})
+FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser"})
 INTEGERS = frozenset({
     "dir_invert", "idle_ms", "step_us", "laser_hz", "laser_ms", "tmc_hold_pct", "probe_ms",
     "tmc_r_ma", "tmc_a_ma", "tmc_z_ma", "tmc_h_ma", "tmc_r_micro", "tmc_a_micro", "tmc_z_micro", "tmc_h_micro",
@@ -101,8 +106,39 @@ AXES = {
 # Driver sockets as the board labels them. The sockets setting is a digit
 # per axis, in dir_invert bit order, each the socket's place here from 1.
 SOCKETS = ("X", "Y", "Z", "E")
-# What a machine file may say about the host's own settings, and their bounds.
-HOST_KEYS = {"tolerance": (0.0, 10.0), "clearance": (0.0, 100.0), "spinup": (0.0, 600.0)}
+# What a machine file may say about the host's own settings: the bounds,
+# and whether the low one is allowed. The dispensing values are what a
+# dot of paste is made of: the needle's gap over the pad, the plunger's
+# pull-back after each dot, the mm^3 of paste a mm of plunger gives, the
+# plunger's speed while a dot is pushed out, and the wait before the
+# pull-back.
+HOST_KEYS = {
+    "tolerance": (0.0, 10.0, False),
+    "clearance": (0.0, 100.0, False),
+    "spinup": (0.0, 600.0, True),
+    "gap": (0.0, 10.0, False),
+    "retract": (0.0, 50.0, True),
+    "output": (0.0, 1.0e5, False),
+    "extrude_rate": (0.0, 1.0e4, False),
+    "dwell_ms": (0.0, 60000.0, True),
+}
+HOST_INTEGERS = frozenset({"dwell_ms"})
+# A camera on the head, as the backend reads it: nothing of it reaches the
+# firmware. What a file leaves out keeps the backend's value.
+CAMERA_DEFAULTS: dict[str, object] = {
+    "device": "/dev/video0",
+    "size": "1280x720",
+    "fps": 30,
+    "pcbv": "pcbv",
+    "side": "front",
+    "finish": "masked",
+    "offset": [0.0, 0.0],
+    "roll": 0.0,
+    "mm_per_px": 0.0,
+}
+CAMERA_SIDES = ("front", "back")
+CAMERA_FINISHES = ("masked", "bare")
+_CAMERA_SIZE = re.compile(r"^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$")
 
 
 class MachineError(ValueError):
@@ -133,6 +169,8 @@ class Machine:
     host: dict[str, float]
     # The page's controls, as spinny_laser.controls lays them out.
     controls: dict
+    # What the file says of the camera, only the keys it names.
+    camera: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
         return {
@@ -145,7 +183,13 @@ class Machine:
         }
 
     def document(self) -> dict:
-        return {**self.summary(), "settings": dict(self.settings), "host": dict(self.host), "controls": self.controls}
+        return {
+            **self.summary(),
+            "settings": dict(self.settings),
+            "host": dict(self.host),
+            "camera": {**CAMERA_DEFAULTS, **self.camera},
+            "controls": self.controls,
+        }
 
 
 def load(path: Path | str) -> Machine:
@@ -188,12 +232,24 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     tool = reader.choice(top, "tool", TOOLS, "laser")
     settings["cartesian"] = int(kinematics == "cartesian")
     settings["spindle"] = int(tool == "spindle")
+    settings["dispenser"] = int(tool == "dispenser")
+    if tool == "dispenser" and kinematics != "cartesian":
+        raise MachineError(f"{where}: tool = dispenser needs kinematics = cartesian")
+    # The dispenser's plunger turns on the table's driver, so its section
+    # stands in for the table's, in millimeters.
+    if "dispenser" in top:
+        if "table" in top:
+            raise MachineError(f"{where}: [table] and [dispenser] cannot both be given: the dispenser is the table's driver")
+        if tool != "dispenser":
+            raise MachineError(f"{where}: [dispenser] needs tool = dispenser")
     dir_invert = 0
     stop_invert = 0
     limits = 0
     # The socket of each axis, as labeled unless the file says otherwise.
     sockets = list(SOCKETS)
     for section, (axis, scale_key, bit) in AXES.items():
+        if section == "table" and "dispenser" in top:
+            section, scale_key = "dispenser", "steps_per_mm"
         table = reader.table(top, section)
         if "socket" in table:
             sockets[bit] = reader.text_choice(table, "socket", section, SOCKETS)
@@ -231,7 +287,7 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     settings["dir_invert"] = dir_invert
     settings["stop_invert"] = stop_invert
     settings["limits"] = limits
-    sections = list(AXES)
+    sections = ["dispenser" if section == "table" and "dispenser" in top else section for section in AXES]
     for i, socket in enumerate(sockets):
         if socket in sockets[:i]:
             other = sections[sockets.index(socket)]
@@ -300,17 +356,24 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
 
     host_table = reader.table(top, "host")
     host: dict[str, float] = {}
-    for key, (low, high) in HOST_KEYS.items():
-        if key in host_table:
-            value = reader.number(host_table, key, "host")
-            if not (low <= value <= high) or (key != "spinup" and value <= 0):
+    for key, (low, high, low_ok) in HOST_KEYS.items():
+        if key not in host_table:
+            continue
+        if key in HOST_INTEGERS:
+            host[key] = float(reader.integer(host_table, key, "host", int(low), int(high)))
+            continue
+        value = reader.number(host_table, key, "host")
+        if not (low <= value <= high) or (not low_ok and value <= low):
+            if key == "spinup" or not low_ok:
                 raise MachineError(f"{where}: [host] {key} must be above {low:g} and at most {high:g}")
-            host[key] = value
+            raise MachineError(f"{where}: [host] {key} must be {low:g} to {high:g}")
+        host[key] = value
     if "speed_control" in host_table:
         host["speed_control"] = float(reader.flag(host_table, "speed_control", True, "host"))
     reader.done(host_table, "host", {*HOST_KEYS, "speed_control"})
+    camera = _parse_camera(reader, reader.table(top, "camera"))
     controls = parse_controls(reader, top, kinematics, tool, bool(settings["h_axis"]))
-    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "probe", "output", "enable", "drivers", "host", "controls"})
+    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"})
 
     return Machine(
         id=machine_id,
@@ -322,7 +385,48 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         settings=settings,
         host=host,
         controls=controls,
+        camera=camera,
     )
+
+
+def _parse_camera(reader: "_Reader", table: dict) -> dict:
+    """The `[camera]` table, only the keys it names, each checked."""
+    camera: dict = {}
+    for key in ("device", "pcbv"):
+        if key in table:
+            value = table[key]
+            if not isinstance(value, str) or not value.strip():
+                raise reader.fail("camera", key, "must be text")
+            camera[key] = value
+    if "size" in table:
+        value = table["size"]
+        if not isinstance(value, str) or not _CAMERA_SIZE.match(value):
+            raise reader.fail("camera", "size", "must be WIDTHxHEIGHT")
+        camera["size"] = value
+    if "fps" in table:
+        camera["fps"] = reader.integer(table, "fps", "camera", 1, 120)
+    if "side" in table:
+        camera["side"] = reader.text_choice(table, "side", "camera", CAMERA_SIDES)
+    if "finish" in table:
+        camera["finish"] = reader.text_choice(table, "finish", "camera", CAMERA_FINISHES)
+    if "offset" in table:
+        value = table["offset"]
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or abs(v) > 1000.0 for v in value)
+        ):
+            raise reader.fail("camera", "offset", "must be two numbers within 1000 mm")
+        camera["offset"] = [float(value[0]), float(value[1])]
+    if "roll" in table:
+        value = reader.number(table, "roll", "camera")
+        if abs(value) > 360.0:
+            raise reader.fail("camera", "roll", "must be a number within 360")
+        camera["roll"] = value
+    if "mm_per_px" in table:
+        camera["mm_per_px"] = reader.non_negative(table, "mm_per_px", "camera")
+    reader.done(table, "camera", set(CAMERA_DEFAULTS))
+    return camera
 
 
 class _Reader:

@@ -8,7 +8,9 @@ use spinny_core::settings::Settings;
 use toml::{Table, Value};
 
 /// Section, the axis letter in the setting names, the key its scale goes
-/// by, and its bit in `dir_invert`.
+/// by, and its bit in `dir_invert`. With `tool = "dispenser"` a
+/// `[dispenser]` section stands in for `[table]`, the same keys with
+/// `steps_per_mm`: the same driver turns the plunger.
 const AXES: [(&str, &str, &str, u8); 4] = [
     ("rail", "r", "steps_per_mm", 0),
     ("table", "a", "steps_per_deg", 1),
@@ -26,7 +28,8 @@ const ENDSTOPS: [&str; 4] = ["none", "min", "max", "both"];
 pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     let top: Table = text.parse().map_err(|e| format!("{e}"))?;
     let mut writes: Vec<(String, String)> = Vec::new();
-    let mut known_top = vec!["name", "description", "kinematics", "tool", "probe", "output", "enable", "drivers", "host", "controls"];
+    let mut known_top =
+        vec!["name", "description", "kinematics", "tool", "probe", "output", "enable", "drivers", "host", "controls", "camera"];
 
     if let Some(value) = top.get("name") {
         value.as_str().ok_or("name must be a string")?;
@@ -40,11 +43,25 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
         Some(Some("cartesian")) => writes.push(("cartesian".into(), "1".into())),
         Some(_) => return Err("kinematics must be one of polar, cartesian".into()),
     }
-    match top.get("tool").map(|v| v.as_str()) {
-        None => {}
-        Some(Some("laser")) => writes.push(("spindle".into(), "0".into())),
-        Some(Some("spindle")) => writes.push(("spindle".into(), "1".into())),
-        Some(_) => return Err("tool must be one of laser, spindle".into()),
+    let tool = match top.get("tool").map(|v| v.as_str()) {
+        None => None,
+        Some(Some(tool @ ("laser" | "spindle" | "dispenser"))) => Some(tool),
+        Some(_) => return Err("tool must be one of laser, spindle, dispenser".into()),
+    };
+    if let Some(tool) = tool {
+        writes.push(("spindle".into(), flag_text(tool == "spindle")));
+        writes.push(("dispenser".into(), flag_text(tool == "dispenser")));
+    }
+    if tool == Some("dispenser") && top.get("kinematics").and_then(|v| v.as_str()) != Some("cartesian") {
+        return Err("tool = dispenser needs kinematics = cartesian".into());
+    }
+    // The plunger is described in place of the table, on its driver.
+    let dispenser = top.contains_key("dispenser");
+    if dispenser && top.contains_key("table") {
+        return Err("[table] and [dispenser] cannot both be given: the dispenser is the table's driver".into());
+    }
+    if dispenser && tool != Some("dispenser") {
+        return Err("[dispenser] needs tool = dispenser".into());
     }
 
     let mut dir_invert = 0u8;
@@ -53,6 +70,8 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     // The socket of each axis, as labeled unless the file says otherwise.
     let mut sockets = [0usize, 1, 2, 3];
     for (section, axis, scale_key, bit) in AXES {
+        let (section, scale_key) =
+            if section == "table" && dispenser { ("dispenser", "steps_per_mm") } else { (section, scale_key) };
         known_top.push(section);
         let table = table_of(&top, section)?;
         let mut known =
@@ -210,13 +229,20 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
 
     // The host's own values are not the firmware's: checked for shape only.
     let host = table_of(&top, "host")?;
-    for key in ["tolerance", "clearance", "spinup"] {
+    for key in ["tolerance", "clearance", "spinup", "gap", "retract", "output", "extrude_rate", "dwell_ms"] {
         number(&host, key, "host")?;
     }
-    only(&host, "host", &["tolerance", "clearance", "spinup"])?;
-    // The page's controls (the pad, the jog buttons, the readout) are the
-    // host's business: only their shape is checked here.
+    flag(&host, "speed_control", "host")?;
+    only(
+        &host,
+        "host",
+        &["tolerance", "clearance", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"],
+    )?;
+    // The page's controls (the pad, the jog buttons, the readout) and a
+    // camera on the head are the host's business: only their shape is
+    // checked here.
     table_of(&top, "controls")?;
+    table_of(&top, "camera")?;
     only(&top, "", &known_top)?;
 
     // Applied in one go on a copy: a value the firmware refuses leaves
@@ -334,6 +360,11 @@ mod tests {
         for name in ["polar-laser", "polar-laser-focus", "cartesian-laser"] {
             assert_eq!(applied(&shipped(name)).sockets, 1234, "{name}");
         }
+        // The paste dispenser: the mill's X/Y machine with the plunger on
+        // the table's settings.
+        let dispenser = applied(&shipped("cartesian-dispenser"));
+        assert!(dispenser.cartesian && dispenser.dispenser && !dispenser.spindle);
+        assert!(dispenser.dispensing() && dispenser.h_axis);
     }
 
     #[test]
@@ -391,6 +422,54 @@ mod tests {
         assert_eq!(settings.step_us, 4);
         assert_eq!(settings.tmc_hold_pct, 30);
         assert!(!settings.tmc_stealth);
+    }
+
+    #[test]
+    fn a_dispenser_file_puts_the_plunger_on_the_tables_settings() {
+        let text = "kinematics = \"cartesian\"\ntool = \"dispenser\"\n\
+             [dispenser]\nsteps_per_mm = 1600\nmax_rate = 300\njog_rate = 60\ninvert = true\nsocket = \"E\"\n\
+             [focus]\nsocket = \"Y\"\n\
+             [host]\ngap = 0.1\nretract = 0.2\noutput = 100\nextrude_rate = 60\ndwell_ms = 200\nspeed_control = false\n";
+        let mut settings = applied(text);
+        assert!(settings.cartesian && settings.dispenser && !settings.spindle);
+        assert!(settings.dispensing());
+        assert_eq!(settings.steps[A], 1600.0);
+        assert_eq!(settings.max_rate[A], 300.0);
+        assert_eq!(settings.jog_rate[A], 60.0);
+        assert_eq!(settings.dir_invert, 0b0010, "the table's bit");
+        assert_eq!(settings.sockets, 1432, "the table's slot");
+        // A laser or a spindle file takes the flag back off.
+        apply(&mut settings, "tool = \"laser\"\n").unwrap();
+        assert!(!settings.dispenser && !settings.spindle);
+        apply(&mut settings, "tool = \"spindle\"\n").unwrap();
+        assert!(!settings.dispenser && settings.spindle);
+    }
+
+    #[test]
+    fn a_table_and_a_dispenser_do_not_go_in_one_file() {
+        let text = "kinematics = \"cartesian\"\ntool = \"dispenser\"\n[table]\nsteps_per_deg = 100\n[dispenser]\nsteps_per_mm = 1600\n";
+        assert_eq!(
+            apply(&mut Settings::default(), text).unwrap_err(),
+            "[table] and [dispenser] cannot both be given: the dispenser is the table's driver"
+        );
+    }
+
+    #[test]
+    fn a_dispenser_section_needs_the_dispenser_tool() {
+        let refused = |text: &str| apply(&mut Settings::default(), text).unwrap_err();
+        let laser = "kinematics = \"cartesian\"\ntool = \"laser\"\n[dispenser]\nsteps_per_mm = 1600\n";
+        assert_eq!(refused(laser), "[dispenser] needs tool = dispenser");
+        assert_eq!(refused("[dispenser]\nsteps_per_mm = 1600\n"), "[dispenser] needs tool = dispenser");
+        let degrees = "kinematics = \"cartesian\"\ntool = \"dispenser\"\n[dispenser]\nsteps_per_deg = 100\n";
+        assert!(refused(degrees).contains("[dispenser] steps_per_deg"));
+    }
+
+    #[test]
+    fn a_dispenser_needs_a_cartesian_machine() {
+        for text in ["tool = \"dispenser\"\n", "kinematics = \"polar\"\ntool = \"dispenser\"\n[dispenser]\nsteps_per_mm = 1600\n"] {
+            assert_eq!(apply(&mut Settings::default(), text).unwrap_err(), "tool = dispenser needs kinematics = cartesian", "{text}");
+        }
+        assert!(apply(&mut Settings::default(), "tool = \"glue\"\n").unwrap_err().contains("laser, spindle, dispenser"));
     }
 
     #[test]

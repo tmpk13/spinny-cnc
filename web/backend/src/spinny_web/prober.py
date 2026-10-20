@@ -26,7 +26,7 @@ from typing import Callable
 
 from spinny_laser import polar
 
-from .heightmap import Finite, Grid, HeightMap, HeightMapStore
+from .heightmap import Finite, Grid, HeightMap, HeightMapStore, estimate_points_seconds
 from .kinematics import FOCUS_DECIMALS, Streamer, coord, num, turned
 from .link import Link, LinkError, parse_probe
 from .runner import halt
@@ -75,6 +75,12 @@ class ProbeSettings(Finite):
             raise ValueError("the probe offset must be within 1000 mm")
         if not 0.001 <= self.rayleigh <= 100.0:
             raise ValueError("rayleigh must be 0.001 to 100 mm")
+
+
+def _box_of(points: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (min(xs), min(ys), max(xs), max(ys))
 
 
 def probe_joint(
@@ -161,8 +167,10 @@ class ProbeProgress:
     state: str = RUNNING
     done: int = 0
     total: int = 0
-    # The point being probed, (ix, iy).
+    # The point being probed, (ix, iy) of the grid; None on a pad map,
+    # where `pad` is the index of the pad being probed instead.
     point: tuple[int, int] | None = None
+    pad: int | None = None
     error: str | None = None
     # About how long the whole of it was to take, s, from the grid before
     # the first point; None when nobody guessed.
@@ -196,6 +204,7 @@ class ProbeProgress:
             "done": self.done,
             "total": self.total,
             "point": list(self.point) if self.point is not None else None,
+            "pad": self.pad,
             "seconds": round(end - self.started, 1),
             "estimate": round(self.estimate, 1) if self.estimate is not None else None,
             "remaining": round(remaining, 1) if remaining is not None else None,
@@ -272,6 +281,8 @@ class Prober:
         resume: HeightMap | None = None,
         touch: Callable[[float, float], None] | None = None,
         target: tuple[float, float] | None = None,
+        points: list[tuple[float, float]] | None = None,
+        box: tuple[float, float, float, float] | None = None,
     ) -> dict:
         """Starts probing `grid`. `spindle_off` is the output's duty with a
         spindle stopped, on a machine whose output drives one: probing is
@@ -290,10 +301,16 @@ class Prober:
         once the head is back up and at rest, before probing is reported
         done; the map in the store is left alone. With `target`, a joint
         the caller has checked for reach, the head goes there at the
-        travel height first and the probe goes down under it there."""
+        travel height first and the probe goes down under it there.
+        `points` makes it a pad map rather than a grid: those board points
+        are probed, in their order, and the map's grid is `box` (the job's
+        extent) with a margin, filled in from them; `resume` goes on with a
+        pad map the same way, its points being the ones."""
         try:
-            if touch is None:
+            if touch is None and points is None:
                 grid.check()
+            if points is not None and not points:
+                raise ProberError("no pads to probe")
             settings.check()
             if link is None or not link.is_open:
                 raise ProberError("not connected")
@@ -313,7 +330,7 @@ class Prober:
                 self._claim(link)
         try:
             return self._start(
-                grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch, target
+                grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch, target, points, box
             )
         finally:
             self._starting = False
@@ -331,6 +348,8 @@ class Prober:
         resume: HeightMap | None = None,
         touch: Callable[[float, float], None] | None = None,
         target: tuple[float, float] | None = None,
+        points: list[tuple[float, float]] | None = None,
+        box: tuple[float, float, float, float] | None = None,
     ) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
@@ -372,23 +391,14 @@ class Prober:
                 self._thread.start()
             self._emit(progress, None)
             return progress.to_dict()
-        # Every point is checked for reach before the first move.
-        angle = status.a
-        joints = {}
-        todo = resume.remaining() if resume is not None else grid.order()
-        for ix, iy in todo:
-            point = (grid.xs[ix], grid.ys[iy])
-            # On a cartesian machine the joint is the rail and the cross
-            # slide, the table staying where the streamer's frame has it;
-            # on a polar one each angle unwraps from the point before.
-            joints[(ix, iy)] = reach_joint(point, settings.offset, streamer, angle, grid.spacing / 2.0, r_max, z_max)
-            if not streamer.cartesian:
-                angle = joints[(ix, iy)][1]
         if resume is not None:
             heightmap = resume
             done = heightmap.probed
         else:
-            heightmap = HeightMap.empty(grid, settings.offset)
+            if points is not None:
+                heightmap = HeightMap.for_points(points, box if box is not None else _box_of(points), settings.offset)
+            else:
+                heightmap = HeightMap.empty(grid, settings.offset)
             done = 0
             # A map probed before keeps its focus offset only if the probe has
             # not changed: the offset is contact to focus for that probe.
@@ -398,6 +408,22 @@ class Prober:
                 heightmap.focus_set = previous.focus_set
                 heightmap.focus_known = previous.focus_known
                 heightmap.focus_gap = previous.focus_gap
+        grid = heightmap.grid
+        # Every point is checked for reach before the first move. A grid
+        # point inside the tip's circle about the axis is probed from the
+        # circle when near enough; a pad is where it is.
+        angle = status.a if not streamer.cartesian else float(getattr(streamer, "angle", 0.0))
+        slack = 0.0 if heightmap.is_pad_map else grid.spacing / 2.0
+        joints = {}
+        todo = heightmap.remaining()
+        for key in todo:
+            point = heightmap.point_of(key)
+            # On a cartesian machine the joint is the rail and the cross
+            # slide, the table staying where the streamer's frame has it;
+            # on a polar one each angle unwraps from the point before.
+            joints[key] = reach_joint(point, settings.offset, streamer, angle, slack, r_max, z_max)
+            if not streamer.cartesian:
+                angle = joints[key][1]
         with self._lock:
             if self._abort.is_set():
                 raise ProberError("probing was stopped before it started")
@@ -407,10 +433,10 @@ class Prober:
             # shows its grid filling in rather than the old heights.
             self.store.put(heightmap)
             try:
-                estimate = grid.estimate_seconds(settings, streamer.rates, streamer.cartesian) * len(todo) / max(1, len(grid.order()))
+                estimate = estimate_points_seconds([heightmap.point_of(key) for key in todo], settings, streamer.rates)
             except (TypeError, ValueError, ZeroDivisionError):
                 estimate = None
-            self.progress = ProbeProgress(total=grid.points, done=done, started_done=done, estimate=estimate)
+            self.progress = ProbeProgress(total=heightmap.wanted, done=done, started_done=done, estimate=estimate)
             progress = self.progress
             self._link = link
             start = streamer.start_of(status)
@@ -519,13 +545,14 @@ class Prober:
         joint = start
         rise = 0.0
         try:
-            for ix, iy in grid.order() if todo is None else todo:
+            for key in grid.order() if todo is None else todo:
                 if self._abort.is_set():
                     return
                 with self._lock:
-                    progress.point = (ix, iy)
+                    progress.point = key if key[1] >= 0 else None
+                    progress.pad = key[0] if key[1] < 0 else None
                 self._emit(progress, None)
-                target = joints[(ix, iy)]
+                target = joints[key]
                 self._request(link, f"go {streamer.words(target)}", LINE_TIMEOUT)
                 self._settle(link, rise / h_rate * 60.0 + streamer._rapid_seconds(joint, target), restarts)
                 joint = target
@@ -536,7 +563,7 @@ class Prober:
                     height = self._touch(link, settings.slow, 2.0 * settings.backoff, h_rate)
                 self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
                 rise = abs(travel - height)
-                heightmap.heights[iy][ix] = round(height, 4)
+                heightmap.record(key, height)
                 with self._lock:
                     progress.done += 1
                 if link.restarts != restarts:
@@ -549,6 +576,7 @@ class Prober:
             self._settle(link, rise / h_rate * 60.0, restarts)
             with self._lock:
                 progress.point = None
+                progress.pad = None
             self._finish(progress, DONE, None, heightmap)
         except (LinkError, ValueError) as exc:
             if self._abort.is_set():

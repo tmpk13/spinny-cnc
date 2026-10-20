@@ -20,6 +20,11 @@ slide Y of an X/Y machine while the table holds its angle.
 With `$spindle=1` the laser output drives a spindle, which keeps turning
 through moves and holds, and the focus axis is its depth axis.
 
+With `$dispenser=1` on a cartesian machine the table's driver turns a
+solder paste dispenser's plunger instead: `A` is its position in mm and
+goes on `go` and `cut` with the other joints, a line with no board
+length takes `F` as the plunger's speed, and the output stays dark.
+
 The line protocol is [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
 | Crate | What |
@@ -153,3 +158,10 @@ A spindle (`$spindle=1`) is the machine's alone: `Shared::spindle` keeps
 the interrupt from writing the output, and the machine drives it at the
 speed `spindle S` set from the main loop, through motion and holds, until
 `spindle off`, a reset, a disconnect or an alarm.
+
+A dispenser (`$dispenser=1` with `$cartesian=1`) changes no wiring: the
+table's joint is the plunger, `check_board_words` lets `A` onto `go` and
+`cut`, `joint_surface_length` leaves it out of the board length, and
+the planner takes a line with no board length as a move at `F` along
+the plunger and the focus axis. The output is dark, with `S` refused as
+under a spindle.

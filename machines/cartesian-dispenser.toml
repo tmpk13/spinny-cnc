@@ -1,0 +1,78 @@
+# The X/Y machine laying solder paste: the mill's rail, slide and depth
+# axis, with a dispenser's plunger on the table's driver (the E socket)
+# and a camera on the head. The needle's height is the focus axis, the
+# plunger is E in millimeters, and the host keeps what a dot is made of.
+
+name = "Cartesian dispenser"
+description = "X/Y machine with a paste dispenser's plunger on the table's driver and the focus axis as the needle's height"
+kinematics = "cartesian"
+tool = "dispenser"
+
+[rail]
+socket = "X"
+steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn
+limit = 60
+
+# The plunger on the table's driver, in millimeters: 200 steps and 16
+# microsteps on a 2 mm lead. max_rate is the retract's speed and the
+# ceiling of a plunger jog; jog_rate is the Extrude and Retract buttons'.
+[dispenser]
+socket = "E"
+steps_per_mm = 1600
+max_rate = 300
+accel = 50
+jerk = 1
+jog_rate = 60
+current_ma = 600
+microsteps = 16
+
+[slide]
+socket = "Y"
+steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn
+max_rate = 560
+accel = 50
+jerk = 3
+jog_rate = 120
+limit = 40
+
+[focus]
+socket = "Z"
+fitted = true
+steps_per_mm = 10240        # 200 steps, 256 microsteps, 5 mm per turn
+max_rate = 600
+accel = 50
+jerk = 1
+jog_rate = 120
+current_ma = 600
+
+[probe]
+invert = true
+brake_ms = 1
+
+# What a dot is made of. The volume is the pad's area times the job's
+# paste thickness, pushed out at extrude_rate over output; the needle
+# stands gap over the pad and the head travels clearance over the surface.
+[host]
+tolerance = 0.005
+clearance = 2.0
+gap = 0.1
+retract = 0.2
+output = 100
+extrude_rate = 60
+dwell_ms = 200
+
+# The camera on the head. offset, roll and mm_per_px are what the camera
+# offset routine on the page measures; copy them here to keep them.
+[camera]
+device = "/dev/video0"
+size = "1280x720"
+fps = 30
+side = "front"
+finish = "masked"
+offset = [0.0, 0.0]
+roll = 0.0
+mm_per_px = 0.0
+
+# The controls are the dispenser's defaults: the rail and the cross slide
+# as X and Y, the plunger as E with Extrude and Retract, and the needle's
+# height as H. polar-laser.toml says what each key means.

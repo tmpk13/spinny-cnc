@@ -110,8 +110,8 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true}, "machine": "polar-laser", "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `controls` is what the page draws for jogging and the readout ([MACHINES.md](MACHINES.md), `[controls]`): that file's, or, for values that are no file's, those of the file last loaded from this host when it is this kind of machine (kinematics, tool, focus axis), else of the one file that is, else the defaults for what the values say the machine is; `controls_from` is the file the controls are, `null` for the defaults |
-| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm or a spin-up outside `[0, 600]` s answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
+| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}, "machine": "polar-laser", "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `controls` is what the page draws for jogging and the readout ([MACHINES.md](MACHINES.md), `[controls]`): that file's, or, for values that are no file's, those of the file last loaded from this host when it is this kind of machine (kinematics, tool, focus axis), else of the one file that is, else the defaults for what the values say the machine is; `controls_from` is the file the controls are, `null` for the defaults |
+| `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm, a spin-up outside `[0, 600]` s, a gap outside `(0, 10]` mm, a retract outside `[0, 50]` mm, an output outside `(0, 100000]` mm^3/mm, an extrude rate outside `(0, 10000]` mm/min or a dwell outside `[0, 60000]` ms answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
 
 `clearance` and `spinup` are for milling: the tool travels `clearance` mm
 over the surface (H 0 without a height map, the map's highest point with
@@ -119,6 +119,9 @@ one), and a run dwells `spinup` seconds after starting the spindle or
 changing its speed. `speed_control` false runs the spindle full on: every
 `spindle S` a run or the page sends asks for `s_max`, whatever a group's
 speed says, for a spindle with its own speed knob or one behind a switch.
+`gap`, `retract`, `output`, `extrude_rate` and `dwell_ms` are for
+dispensing, what every dot of a dispensing run is made of (see Jobs); the
+travel height between dots is `clearance`.
 | `POST /api/settings/save` | writes the firmware settings to flash |
 
 ## Machines
@@ -129,8 +132,8 @@ the host's own.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser", "focus": false}, ...], "current": "polar-laser", "problems": [{"id": "broken", "problem": "..."}]}`; `current` is the file the connected machine's settings are, `null` with no machine connected or settings of no file's; `problems` names each file that could not be read with what is wrong, the others are listed; such a file still opens below, to be mended |
-| `GET /api/machines/{id}` | `{"document": {...}, "problems": [], "text": "..."}`: the entry above plus `settings` (all 52 values), `host` and `controls` (the file's `[controls]`, filled in from the defaults) as `document`, and the file as written; a file that does not read answers with `document` null and the problem named, its text with it; 404 for a file that is not there, 400 for an id that is not lower case letters, digits, `-` and `_` |
+| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser" (or `spindle`, `dispenser`), "focus": false}, ...], "current": "polar-laser", "problems": [{"id": "broken", "problem": "..."}]}`; `current` is the file the connected machine's settings are, `null` with no machine connected or settings of no file's; `problems` names each file that could not be read with what is wrong, the others are listed; such a file still opens below, to be mended |
+| `GET /api/machines/{id}` | `{"document": {...}, "problems": [], "text": "..."}`: the entry above plus `settings` (all 75 values), `host`, `camera` (the file's `[camera]`, filled in from the defaults: `device`, `size`, `fps`, `pcbv`, `side`, `finish`, `offset`, `roll`, `mm_per_px`) and `controls` (the file's `[controls]`, filled in from the defaults) as `document`, and the file as written; a file that does not read answers with `document` null and the problem named, its text with it; 404 for a file that is not there, 400 for an id that is not lower case letters, digits, `-` and `_` |
 | `PUT /api/machines/{id}` | `{"text": "..."}`: writes the text as the file once it reads as a machine, creating the file when it is new; answers as `GET`; 400 names what is wrong and leaves the file as it was |
 | `POST /api/machines/{id}/check` | `{"text": "..."}`: `{"document": {...} or null, "problems": [...]}`, what the text would read as and what is wrong with it, without writing anything |
 | `DELETE /api/machines/{id}` | removes the file; `{"deleted": id}`, 404 when it is not there |
@@ -156,14 +159,14 @@ operations a design goes through, and how the gcode is written.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, or with `mode` `deposit` edge loops inside it, not the group passes below), `layer` (a KiCad layer name, `F.Cu` when left out: the layer a `.kicad_pcb` is read from, a copper layer or `F.Paste`, which with `mode` `deposit` is a solder paste stencil; a gerber is its own layer, and one named the way kicad-cli names them, `board-F_Paste.gtp`, is known for it; a name that is not a layer name answers 400, a layer the board does not have `has no layer`), `mode` (`isolate`, the default, or `deposit`: gerber and KiCad only, see below), `clear` (`off`, `radial`, `rings` or `lines`: isolation only, gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead), `fill` (`contour`, the default, `radial`, `rings` or `lines`: a deposit only); `clear` other than `off` with a deposit, or `fill` with isolation, answers 400; a file over 64 MB answers 413 |
+| `POST /api/jobs` | multipart: `file` plus optional fields `power`, `speed`, `spot`, `anchor` (`center`/`keep`), `offset_x`, `offset_y`, `passes` (1 to 50: isolation loops offset around the copper, or with `mode` `deposit` edge loops inside it, not the group passes below), `layer` (a KiCad layer name, `F.Cu` when left out: the layer a `.kicad_pcb` is read from, a copper layer or `F.Paste`, which with `mode` `deposit` is a solder paste stencil; a gerber is its own layer, and one named the way kicad-cli names them, `board-F_Paste.gtp`, is known for it; a name that is not a layer name answers 400, a layer the board does not have `has no layer`), `mode` (`isolate`, the default, `deposit` or `dispense`: gerber and KiCad only, see below; with `dispense` a `layer` left out is `F.Paste`), `thickness` (`dispense` only: mm of paste over every pad, 0.01 to 5, default 0.12), `clear` (`off`, `radial`, `rings` or `lines`: isolation only, gerber and KiCad only, a `copper clearing` group of everything the isolation leaves inside the board outline, placed before the outline group; outline pieces whose ends meet within 0.001 mm are joined into one loop first, and with no closed outline, or one that holds less than half the copper (a lone cutout), the X/Y box the isolation spans is cleared instead), `fill` (`contour`, the default, `radial`, `rings` or `lines`: a deposit only); `clear` other than `off` with a deposit, or `fill` with isolation, answers 400; a file over 64 MB answers 413 |
 | `POST /api/center` | the polar laser's only (400 on a cartesian or spindle machine); JSON, every field optional: `{"fine": false, "lines": 4, "reach": 6, "ring": 8, "angle": 3, "cross": 4, "arm": 2.5, "spiral": 5, "show_error": [0.02, 0.01], "power": 400, "speed": 200, "spot": 0.1}`, the options of `spinny-center` (a missing `reach` or `ring` takes the pattern's default, `lines` belongs to the coarse pattern, `angle`, `cross`, `arm`, `spiral` and `show_error` to the fine one); stores the pattern as a job with `source` `center` and answers `{"job": job, "summary": [lines], "notes": [how to read it]}`. The table rate paces the ring and spirals; a power over the last read `s_max` is refused |
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
-| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm |
+| `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30, "thickness": 0.15}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm, a thickness 0.01 to 5 mm |
 | `DELETE /api/jobs/{id}` | |
 | `DELETE /api/jobs` | every job but the one running: `{"deleted": [ids], "kept": [id]}` |
-| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out (on a spindle machine `off` cuts from H 0 as the copper's height, and is 400 when a probe in this frame found the copper more than 1 mm from there); 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less, and for an enabled group whose `tool` is the other than the machine's |
+| `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out (on a spindle machine `off` cuts from H 0 as the copper's height, and is 400 when a probe in this frame found the copper more than 1 mm from there); 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less, for an enabled group whose `tool` is not the machine's (`laser`, `spindle` or `dispenser`), and on a dispenser machine for an enabled group of paths rather than dots (a dispenser lays dots: import the board with `mode` `dispense`) and for a machine without the focus axis, which is the needle's height |
 | `POST /api/jobs/{id}/resume` | picks the job up at a line: `{"line": 27213, "rewind": true, "compensate": "focus"}`. `line` is the count of lines done, as the progress reports it (`acked`); the lines before it count as done, and the head is brought from where it stands to where that line begins (a spindle: up to the travel height, over the point, the spindle started at the speed the job had there and given its spin-up, then down to the depth the cut starts at; a laser: a dark move to the cut's start, at the focus height when the map is followed), then the job goes on. `rewind` (default true) starts over at the first line of the path that line belongs to, so a count one line off cannot leave a gap. `compensate` left out takes the way the recorded run followed the board. The plan is made from where the recorded run began when the record is this job's, so its lines are the ones counted; otherwise from where the head is, which on a cartesian machine changes at most the first rapid. On the polar machine a `set A` first gives the table the plan's count of turns. Answers the progress, with `resumed_from`; the same refusals as a run, plus 400 for a line past the job |
 | `POST /api/jobs/{id}/resume/plan` | the same body; what the resume would do without moving anything: `{"job", "line", "skip", "total", "compensate", "planned_from_record", "next", "group", "approach": [lines]}`, `skip` the line the run starts at, `next` that line, `approach` the lines that bring the head there |
 | `GET /api/resume` | `{"resume": record or null}`: the last run's progress (see below) plus `start` (the joint its plan began from), `compensate`, `cartesian`, `angle`, `spindle`, `started`, `updated` and `position` (the machine's last report, `{"r", "a", "z", "h"}`), written every second as a run goes and at its end, so a host that dies, or a controller powered down with the job half done, leaves behind what a later session needs |
@@ -203,15 +206,38 @@ of `layer` `F.Paste` is a solder paste stencil: the paste openings burnt
 out of a film laid where the board would be, the outline group there to
 cut the film to the board's shape.
 
+A board with `mode` `dispense` is solder paste on a board that is already
+made: a dot on every pad of the layer (`F.Paste` unless `layer` says
+otherwise; a copper layer's pads are its flashes, and a pad poured into a
+zone is lost in it). One group:
+
+| Group | Paths |
+| --- | --- |
+| `paste dots` | one path of one point per pad, at the pad's centroid, in a short tour over the board; `areas` holds each pad's area in mm^2 in the same order, `thickness` the mm of paste over a pad, and `tool` is `dispenser` |
+
+The dot's volume is the pad's area times `thickness`, pushed out over the
+machine's `output` ([Settings](#settings)); no outline group is made, since
+a dispenser cuts nothing, but the outline is kept for the preview.
+
+Every kicad and gerber job also carries `pads`, the centroid and area of
+every pad of its layer (every flash or region of the gerber, pads joined
+by their copper counted once), and `holes`, the drill file's holes with
+their diameters, both in the job's frame, for probing the pads and for
+alignment ([Alignment](#alignment)); and `design`, how the file's
+coordinates map to the job's (see [Camera](#camera)). A `.kicad_pcb`
+upload is kept beside the job, so the camera can look for it.
+
 Job:
 
 ```json
 {
   "id": "a1b2", "name": "board", "source": "gerber", "layer": "F.Cu",
-  "spot": 0.1, "offset": {"x": 0, "y": 14},
+  "spot": 0.1, "offset": {"x": 0, "y": 14}, "rotation": 0,
+  "pads": [[x, y, area], ...], "holes": [[x, y, diameter], ...],
+  "design": {"shift": [sx, sy], "rotation": 0, "board": true},
   "groups": [
     {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "passes": 1, "enabled": true,
-     "depth": 0.1, "plunge": 60, "tool": null, "paths": [[[x, y], ...], ...]},
+     "depth": 0.1, "plunge": 60, "thickness": 0.12, "tool": null, "paths": [[[x, y], ...], ...], "areas": []},
     {"label": "rail line through the axis", "power": 400, "min_power": 0, "speed": 200, "passes": 1, "enabled": true,
      "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]}
   ],
@@ -222,7 +248,14 @@ Job:
 ```
 
 Path coordinates are board mm with the rotation axis at the origin; the
-offset is already applied. `min_power` is the group's floor in the
+offset is already applied, and so is `rotation`, the degrees the job has
+been turned counterclockwise about the origin by alignment. `pads`,
+`holes` and `design` are `[]` and `null` for a drawing, a gcode file or a
+job file without them; `design` is the map from the design's gerber frame
+(the KiCad file's X, and its Y negated, as kicad-cli plots it) to the
+job's: `job = turn(rotation) * gerber + shift`, kept current through
+every offset and alignment, and `board` says whether the `.kicad_pcb` is
+kept beside the job. `min_power` is the group's floor in the
 firmware's `dyn` mode, sent as `M` on each of its cuts when above 0 (a
 floor above `power` goes out as `power`); a job without it loads with 0.
 `passes` (1 to 100) is how many times the group streams: all of its
@@ -255,10 +288,20 @@ groups that ask for another and stops at the end. Without a height map
 the surface is H 0, so zero H with the tool touching the copper first.
 A job without `depth` or `plunge` loads with 0.1 mm and 60 mm/min. A
 path of one point is a drill on a spindle machine: the bit goes down at
-the point to the depth and up again; a laser skips it. `tool` is `laser`
-or `spindle` for a group a CAM profile made ([CAM.md](CAM.md)), and a run
-refuses an enabled group made for the other tool than the machine has;
-null, or missing, runs on either.
+the point to the depth and up again; a laser skips it. `tool` is `laser`,
+`spindle` or `dispenser` for a group a CAM profile or a dispense import
+made ([CAM.md](CAM.md)), and a run refuses an enabled group made for
+another tool than the machine has; null, or missing, runs on a laser or a
+spindle.
+
+On a dispenser machine a job is dispensed: the head lifts to the travel
+height (`clearance` over H 0, or over the map's highest point when the
+run follows one), and for every dot goes over the pad, lowers the needle
+to `gap` over the surface there (the map's height plus the focus offset,
+or H 0), pushes the plunger out by the dot's volume over `output` plus the
+last `retract`, at `extrude_rate`, waits `dwell_ms`, pulls the plunger
+back by `retract` and lifts. The plunger's position `A` only ever grows by
+the dots' volumes, so a run may be picked up at a line like any other.
 
 `group` is `null` until the first line has gone out. `state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
 the reason when it is `error`, why a run was stopped from outside (a reset
@@ -303,6 +346,8 @@ across a frame change.
 | `POST /api/heightmap/estimate` | the same body; `{"seconds": 420.0, "points": 60, "grid": grid}` without touching the machine: about how long the probing takes (each point its moves, a touch down over half the probe depth, the slow touch, the rise and the answers), and the grid it would probe, mask included, for the page to draw |
 | `POST /api/heightmap/touch` | `{"mode": "map" \| "zero", "at": "here" \| "nearest", "job": id}`: one probe down where the head is or, `at` nearest (map only), at the probed point of the map nearest the tip that no cut of the job (the one named, else the last run's) comes within 1 mm plus half the job's spot of, which the head goes to first (400 when no point is clear, 409 when it is past a soft limit); back up, and then: `map` ties the height map to the focus axis frame in use by the shift it finds, the surface's height there against the map's (the offset becomes the map's `focus_gap`, the focus or touch-off over the probe's contact, plus that shift, so tying again in the same frame changes nothing), so a map probed before a power cycle, a restart or a position set follows the board again without being probed anew (the tip must be over a probed cell, and a laser's map must have been focused by eye once; a spindle's touch-off is the probe itself, so its first touch sets the offset); `zero` makes the contact height H 0 (`set H`), for milling without a map, and takes the map's offset back as any position set does. Reported as a probing of one point; the same refusals as a probing |
 | `POST /api/heightmap/touch/plan` | the same body; `{"point": [x, y], "index": [ix, iy] \| null, "distance": 8.1, "lines": ["go R5.000 A90.0000"]}` without moving anything: where the probe would go down, the map point picked, how far the tip is from it, and the lines that take the head there (none for a touch under the head) |
+| `POST /api/heightmap/pads` | `{"job": "a1b2", "min_area": 0.5, "max_points": 100, "resume": false}`: probes the board at the job's pads instead of a grid, for a probe that must land on copper (a conductive probe, or the tool itself): every pad of at least `min_area` mm^2 (0.05 to 1000, default 0.5), and when there are more than `max_points` (2 to 2500, default 100) the most spread out of them, in a short tour over the board; replaces the map with a pad map (below); `resume` goes on with the pad map in the store where it has no height yet. 400 for a job without pads, or with none large enough; 409 as `/probe` |
+| `POST /api/heightmap/pads/plan` | the same body; `{"points": [[x, y], ...], "pads": 240, "skipped": 12, "seconds": 310.0, "resume": 0}` without touching the machine: the points that would be probed, how many pads the job has, how many were under `min_area`, about how long, and how many points a `resume` would skip |
 | `POST /api/heightmap/stop` | holds and resets like a run's stop; a probing still starting (checking the machine) ends before anything moves, and so it does on `POST /api/realtime` `reset`; 409 when nothing is being probed |
 | `POST /api/heightmap/focus` | `{"offset": 1.2}` sets the focus offset, for a map probed in the focus axis frame in use (400 otherwise); `{}` takes it from where the head is: the operator has focused the beam by eye over the probed area, and the offset is the head's height (`h`, or 0 without a focus axis) less the map's height under the beam; 400 with the beam more than 1 mm outside the grid, where the map would only guess |
 | `PUT /api/heightmap/settings` | any of `{"depth": 5, "feed": 60, "slow": 15, "backoff": 0.3, "offset": [along, across], "rayleigh": 0.5}`, kept in the backend's config: the most the probe goes down from the travel height, the first and second touch speeds (mm/min, `slow` 0 for one touch), how far it backs off between them, the probe tip from the beam along the rail (outward positive) and across it (positive to the left of outward seen from above: board +Y at table angle 0, +Z on a cartesian machine), in mm, and the beam's Rayleigh length for power compensation (mm) |
@@ -320,7 +365,19 @@ Map:
 
 `heights[iy][ix]` is `null` where not yet probed. Probing progress:
 `{"state": "running" | "done" | "stopped" | "error", "done": 3, "total":
-20, "point": [ix, iy] or null, "seconds": 12.5, "error": null}`.
+20, "point": [ix, iy] or null, "pad": i or null, "seconds": 12.5, "error": null}`.
+
+A pad map, from `POST /api/heightmap/pads`, carries `"points": [[x, y],
+...]` and `"point_heights": [h or null, ...]`, the pads probed and their
+heights in the same order (both `null` on a grid map), and `pad` in the
+progress is the index of the point being probed. Its `grid` is the job's
+extent and the pads' with a 1 mm margin, at about 2 mm spacing, and its
+`heights` are filled in from the pads as they are probed: a plane through
+the probed pads, plus the nearest pads' deviations from it weighted by
+the inverse square of their distance, so the map reads exactly the probed
+height at a pad and bends smoothly between them. A run follows a pad map
+the same way as a grid map, and `touch` ties it the same way; it is
+complete when every point has a height.
 
 Probing starts from the head's height at the time, which is the travel
 height between points: raise the head so the probe clears the board
@@ -377,6 +434,83 @@ websocket opened by one; only the server's own origin and any
 are not a page's and pass. `--allowed-host` restricts the `Host` header as
 well.
 
+## Camera
+
+A camera on the head (`[camera]` in the machine file,
+[MACHINES.md](MACHINES.md)) is read through `pcbv serve` from the sibling
+pcb-vision repository, which the backend runs as a program on the device
+named, or reaches over TCP at a `socket://host:port` device (a `pcbv
+serve --listen` on the Pi, say). The page shows its picture, and the
+backend uses it to measure the camera's offset from the tool and to align
+a job to the board. Poses are in the KiCad file's board frame (mm, x
+right, y down); the picture's center in the job's frame comes with them
+when a job's board is loaded, through the job's `design`.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/camera` | the camera state (below) |
+| `PUT /api/camera/settings` | any of `{"device": "/dev/video0", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "side": "front", "finish": "masked", "offset": [dx, dy], "roll": 0.4, "mm_per_px": 0.021}`, kept in the backend's config; 400 for a size that is not `WIDTHxHEIGHT`, a side or finish that is not one of its two words, an offset past 1000 mm, a roll past 360 degrees or a negative scale. A running camera goes on with the old device until stopped and started again. Returns the state |
+| `POST /api/camera/start` | starts pcbv on the device (`pcbv serve`, or a connection to the socket) with the size and fps; 502 when the program is not found or does not answer `hello` within 5 s, 409 when running. Returns the state; the first frame may take a moment, `frame` is null until then |
+| `POST /api/camera/stop` | stops it; 409 while the find routine runs. The state |
+| `GET /api/camera/frame.jpg?width=640&overlay=1` | the newest picture as JPEG, shrunk to at most `width` (160 to 4096; left out, 640), with the spots and the pose drawn on it when `overlay` is 1 and a crosshair at the center always; 404 when the camera is not running or has no frame yet, 502 when pcbv fails. `Cache-Control: no-store`; the page asks again for every picture |
+| `GET /api/camera/pose` | the newest pose: `{"state": "locked" \| "coasting" \| "lost" \| "none" \| null, "center": [x, y], "angle_deg": 1.3, "mm_per_px": 0.021, "inliers": 171, "expected": 190, "rms_mm": 0.04, "spots": 190, "fps": 14.0, "age_ms": 40, "job_center": [x, y] or null}`; `null` state with the camera stopped, `none` with no board loaded, and the pose fields only on `locked`; `job_center` is the picture's center in the loaded job's frame |
+| `POST /api/camera/board` | `{"job": "a1b2"}`: pcbv looks for the job's board in the pictures (a `.kicad_pcb` upload only: 400 for a job without its board file; the camera's `side` and `finish` apply); `{"job": null}` unloads it. The state |
+| `POST /api/camera/mark` | `{"depth": 0.1, "plunge": 30, "speed": 1000}`: makes a mark with the tool where it stands, to measure the camera against: a job of one drill named `camera mark` is stored and run from the tool's point (a spindle machine with the focus axis, 400 otherwise; `depth` 0.01 to 5 mm, `plunge` 1 to 1000 mm/min, `speed` the spindle's `S`, `s_max` when left out; 409 while a run or probing owns the machine), its progress coming as `progress` events, and the tool's board point is recorded as the mark. `{"here": true}` only records the tool's point, for a mark made by hand or a hole in the board. The state |
+| `POST /api/camera/find` | `{"step": 2.0}`: finds the mark in the picture and puts the picture's center on it, which measures the offset. On its own thread, owning the machine as probing does: the head lifts to the travel height (`clearance`) when the machine has a focus axis, goes where the camera should see the mark (the mark less the offset in force), and the dark spot nearest the picture's center is taken for the mark (400 with no mark or no running camera, 409 unless Idle and free); with `step` above 0 (0 to 20 mm, default 2), or with `mm_per_px` 0, the head is moved `step` along +X and back, and how the spot moved in the picture gives `mm_per_px` and `roll`; then the head is moved by the spot's distance from the center, up to three times, until the spot is within 0.02 mm of it, and `offset` is the mark less the tool's point, saved in the settings. The routine's progress comes as `camera` events; a spot lost on the way ends it as `error` with the head where it stopped. The state |
+| `POST /api/camera/abort` | stops the find routine as a probing is stopped (hold, reset); 409 when none runs. The state |
+
+Camera state:
+
+```json
+{"running": true, "device": "/dev/video0", "size": "1280x720", "fps": 30, "pcbv": "pcbv",
+ "side": "front", "finish": "masked",
+ "offset": [12.5, -3.2], "roll": 0.4, "mm_per_px": 0.021,
+ "board": "a1b2", "mark": [10.0, 5.0],
+ "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 14.2} ,
+ "pose": {"state": "locked", "center": [61.2, 43.9], "angle_deg": 1.3, "mm_per_px": 0.021, "inliers": 171, "expected": 190, "rms_mm": 0.04, "spots": 190, "fps": 14.0, "age_ms": 40, "job_center": [1.3, -2.0]},
+ "routine": {"state": "running", "step": "centering", "done": 3, "total": 6, "error": null, "spot": {"dx": 12.4, "dy": -3.1, "mm": 0.27}}}
+```
+
+`frame` and `pose` are `null` with the camera stopped (and `frame` until
+the first picture); `board` is the job whose board pcbv looks for, or
+`null`; `mark` is the recorded mark's board point or `null`; `routine` is
+the find routine's progress, `null` before any, with `step` one of
+`lifting`, `moving`, `scale`, `centering`, `done`, `spot` the last spot
+found, its distance from the center in picture pixels and in mm, and
+`seconds` how long the routine has run.
+The pose is read from pcbv when the state is asked for; the page polls
+`GET /api/camera` while its camera panel shows.
+
+## Alignment
+
+Lining a job up with the board on the table. Marks pair a design point, a
+pad or a hole of the job or any point typed in, with the board point the
+machine finds it at: the tool put over it by hand, or the camera's
+picture centered on it. One mark gives a shift; two or more give a turn
+and a shift fitted by least squares (the scale is reported, never
+applied), and a mark from the camera alone gives the turn from the pose's
+angle and the camera's `roll`. Applying it turns the job counterclockwise
+about the origin and shifts it: its paths, outline, copper, pads and holes
+move, and its `rotation`, `offset` and `design` record it. Marks are kept
+for one job at a time, in memory; a mark for another job replaces them.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/align` | `{"job": "a1b2" or null, "marks": [mark, ...], "fit": fit or null}`: the marks collected and what they fit |
+| `POST /api/align/mark` | `{"job": "a1b2", "design": [x, y] or null, "nearest": "pad" \| "hole" \| null, "within": 5.0}`: a mark from the tool's point now (the head's board point, read from the machine; 409 while a run or probing owns it); paired with `design` when given, else with the pad or hole (`nearest`) of the job nearest that point within `within` mm (0.1 to 100, default 5; 400 when none is, or the job has none). Returns the alignment state; the mark's `source` is `tool` |
+| `POST /api/align/capture` | `{"job": "a1b2"}`: a mark from the camera: needs a running camera with this job's board loaded and locked (409 otherwise); the design point is the picture's center in the job's frame, the machine point the tool's board point plus the camera offset, and the mark carries the board's `angle` (the turn the pose and the roll say the board has against the machine). `source` `camera` |
+| `DELETE /api/align/marks/{i}` | removes one mark; 404 past the end |
+| `DELETE /api/align` | clears the marks |
+| `POST /api/align/fit` | `{"job": "a1b2"}`: the fit without moving anything: `{"rotation": -0.4, "shift": [0.31, -0.08], "scale": 1.0003, "rms": 0.02, "residuals": [0.01, 0.03], "marks": 2}`; `rotation` is the turn applied before the shift; 400 with no mark, or when the marks are another job's |
+| `POST /api/align/apply` | `{"job": "a1b2"}`: fits, turns and shifts the job (400 as `fit`, and for a job with a joint-space group), clears the marks and answers `{"job": job, "fit": fit}` |
+
+Mark: `{"design": [x, y], "machine": [x, y], "source": "tool" \| "camera",
+"kind": "pad" \| "hole" \| "point" \| "center", "distance": 0.3, "angle":
+-0.4 or null, "residual": 0.01 or null}`; `distance` is how far the tool
+was from the pad or hole picked (0 for a point given), `angle` the
+board's turn a camera mark saw, and `residual` the mark's distance from
+where the last fit puts it.
+
 ## Events
 
 `WS /ws` sends JSON events; the client sends nothing. The payload's fields
@@ -393,3 +527,5 @@ it does not watch then.
 | `progress` | the progress object |
 | `heightmap` | what `GET /api/heightmap` returns, whenever the map, the probing or the probe settings change |
 | `message` | `{"level": "info" \| "error", "text": "..."}` |
+| `camera` | the camera state, whenever it changes: started or stopped, settings, a board loaded, a mark recorded, every step of the find routine; not for every picture, which the page asks for |
+| `align` | the alignment state (`GET /api/align`), whenever a mark is added, removed or applied |

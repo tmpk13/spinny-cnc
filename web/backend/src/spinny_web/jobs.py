@@ -18,9 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+from spinny_laser import align as alignment
 from spinny_laser import board
 from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
+from spinny_laser import pads as board_pads
 
 from . import kinematics
 from .kinematics import Streamer
@@ -57,9 +59,16 @@ MAX_GROUP_PASSES = 100
 CLEAR_OFF = "off"
 CLEAR_CHOICES = (CLEAR_OFF, *copper_clearing.PATTERNS)
 # What a board import burns: around the copper, taking it away, or the
-# copper itself, for a process that lays it down.
-MODE_ISOLATE, MODE_DEPOSIT = "isolate", "deposit"
-MODES = (MODE_ISOLATE, MODE_DEPOSIT)
+# copper itself, for a process that lays it down; or, with a dispenser, a
+# dot of paste on every pad of the layer.
+MODE_ISOLATE, MODE_DEPOSIT, MODE_DISPENSE = "isolate", "deposit", "dispense"
+MODES = (MODE_ISOLATE, MODE_DEPOSIT, MODE_DISPENSE)
+# Dispensing: the paste over a pad, mm, whose product with the pad's area
+# is the dot's volume. A stencil's foil is about this thick.
+DEFAULT_THICKNESS = 0.12
+MIN_THICKNESS, MAX_THICKNESS = 0.01, 5.0
+# The tools a group may be made for.
+LASER, SPINDLE, DISPENSER = "laser", "spindle", "dispenser"
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -93,11 +102,18 @@ class Group(Finite):
     # speed is `power`, its feed `speed`.
     depth: float = DEFAULT_DEPTH
     plunge: float = DEFAULT_PLUNGE
-    # What the group was made for, `laser` or `spindle`, when a CAM profile
-    # said; None runs on either. A run refuses a group made for the other
-    # tool, since its numbers mean something else there.
+    # Dispensing only: the paste over each pad, mm. A dot's volume is the
+    # pad's area times this.
+    thickness: float = DEFAULT_THICKNESS
+    # What the group was made for, `laser`, `spindle` or `dispenser`, when
+    # a CAM profile or a dispense import said; None runs on a laser or a
+    # spindle. A run refuses a group made for another tool, since its
+    # numbers mean something else there.
     tool: str | None = None
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
+    # Dispensing: the area in mm^2 of the pad under each path, which is a
+    # single point, in the paths' order; empty for every other group.
+    areas: list[float] = Field(default_factory=list)
     # Joint-space polylines, radius mm and angle degrees, streamed as they
     # are with no kinematics in between: a negative radius is the far side
     # of the axis, which is how a calibration burn lands on a board point
@@ -113,6 +129,27 @@ class Group(Finite):
 class Offset(Finite):
     x: float = 0.0
     y: float = 0.0
+
+
+class Design(Finite):
+    """How the design's own frame maps to the job's: the gerber frame a
+    board was plotted in (the KiCad file's X, and its Y negated) turned
+    counterclockwise by `rotation` about the origin and moved by `shift`,
+    kept current through every move of the job. `board` says whether the
+    KiCad file is kept beside the job, so a camera can look for it."""
+
+    shift: tuple[float, float] = (0.0, 0.0)
+    rotation: float = 0.0
+    board: bool = False
+
+    def to_job(self, point: tuple[float, float]) -> tuple[float, float]:
+        """A gerber frame point in the job's frame."""
+        x, y = alignment.turn(point, self.rotation)
+        return (x + self.shift[0], y + self.shift[1])
+
+    def board_to_job(self, point: tuple[float, float]) -> tuple[float, float]:
+        """A KiCad board frame point (mm, y down) in the job's frame."""
+        return self.to_job((point[0], -point[1]))
 
 
 class JobStats(Finite):
@@ -134,9 +171,18 @@ class Job(Finite):
     layer: str | None = None
     spot: float = DEFAULT_SPOT
     offset: Offset = Field(default_factory=Offset)
+    # Degrees the job has been turned counterclockwise about the origin
+    # since import, by alignment; applied already, like the offset.
+    rotation: float = 0.0
     groups: list[Group] = Field(default_factory=list)
     outline: list[list[tuple[float, float]]] = Field(default_factory=list)
     copper: list[list[tuple[float, float]]] = Field(default_factory=list)
+    # The pads of a board layer (x, y, area in mm^2) and the holes of its
+    # drill file (x, y, diameter), in the job's frame, for probing on
+    # copper and for lining the job up; empty for a drawing or a gcode file.
+    pads: list[tuple[float, float, float]] = Field(default_factory=list)
+    holes: list[tuple[float, float, float]] = Field(default_factory=list)
+    design: Design | None = None
     stats: JobStats = Field(default_factory=JobStats)
 
     def summary(self) -> dict:
@@ -147,6 +193,10 @@ class Job(Finite):
             "layer": self.layer,
             "spot": self.spot,
             "offset": self.offset.model_dump(),
+            "rotation": self.rotation,
+            "pads": len(self.pads),
+            "holes": len(self.holes),
+            "design": self.design.model_dump() if self.design is not None else None,
             "groups": [
                 {
                     "label": group.label,
@@ -157,9 +207,11 @@ class Job(Finite):
                     "enabled": group.enabled,
                     "depth": group.depth,
                     "plunge": group.plunge,
+                    "thickness": group.thickness,
                     "tool": group.tool,
                     "paths": len(group.paths),
                     "joints": len(group.joints),
+                    "areas": len(group.areas),
                 }
                 for group in self.groups
             ],
@@ -178,7 +230,42 @@ class Job(Finite):
             group.paths = [_shifted(path, dx, dy) for path in group.paths]
         self.outline = [_shifted(path, dx, dy) for path in self.outline]
         self.copper = [_shifted(path, dx, dy) for path in self.copper]
+        self.pads = [(x + dx, y + dy, area) for x, y, area in self.pads]
+        self.holes = [(x + dx, y + dy, d) for x, y, d in self.holes]
         self.offset = Offset(x=self.offset.x + dx, y=self.offset.y + dy)
+        if self.design is not None:
+            self.design = Design(
+                shift=(self.design.shift[0] + dx, self.design.shift[1] + dy),
+                rotation=self.design.rotation,
+                board=self.design.board,
+            )
+
+    def turn(self, degrees: float) -> None:
+        """Turn everything on the board counterclockwise about the origin,
+        the offset with it, as lining the job up with the board asks."""
+        if degrees == 0.0:
+            return
+        if any(group.joints for group in self.groups):
+            raise ValueError("a joint-space group is fixed to the axis and cannot be turned")
+
+        def turned(path):
+            return [alignment.turn((float(x), float(y)), degrees) for x, y in path]
+
+        for group in self.groups:
+            group.paths = [turned(path) for path in group.paths]
+        self.outline = [turned(path) for path in self.outline]
+        self.copper = [turned(path) for path in self.copper]
+        self.pads = [(*alignment.turn((x, y), degrees), area) for x, y, area in self.pads]
+        self.holes = [(*alignment.turn((x, y), degrees), d) for x, y, d in self.holes]
+        ox, oy = alignment.turn((self.offset.x, self.offset.y), degrees)
+        self.offset = Offset(x=ox, y=oy)
+        self.rotation += degrees
+        if self.design is not None:
+            self.design = Design(
+                shift=alignment.turn(self.design.shift, degrees),
+                rotation=self.design.rotation + degrees,
+                board=self.design.board,
+            )
 
     def refresh_stats(self, streamer: Streamer) -> None:
         try:
@@ -201,6 +288,7 @@ class GroupPatch(Finite):
     enabled: bool | None = None
     depth: float | None = None
     plunge: float | None = None
+    thickness: float | None = None
 
 
 class JobPatch(Finite):
@@ -220,6 +308,11 @@ def check_speed(speed: float, what: str = "speed") -> None:
     if speed < kinematics.MIN_FEED:
         # Written with three decimals it would reach the firmware as F0.
         raise ValueError(f"{what} must be at least {kinematics.MIN_FEED:g} mm/min")
+
+
+def check_thickness(thickness: float) -> None:
+    if not (math.isfinite(thickness) and MIN_THICKNESS <= thickness <= MAX_THICKNESS):
+        raise ValueError(f"thickness must be {MIN_THICKNESS:g} to {MAX_THICKNESS:g} mm")
 
 
 def check_depth(depth: float) -> None:
@@ -254,6 +347,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             check_depth(change.depth)
         if change.plunge is not None:
             check_speed(change.plunge, "plunge")
+        if change.thickness is not None:
+            check_thickness(change.thickness)
     if patch.offset is not None:
         dx, dy = patch.offset.x - job.offset.x, patch.offset.y - job.offset.y
         if (dx != 0.0 or dy != 0.0) and any(group.joints for group in job.groups):
@@ -279,6 +374,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             group.depth = change.depth
         if change.plunge is not None:
             group.plunge = change.plunge
+        if change.thickness is not None:
+            group.thickness = change.thickness
     if patch.offset is not None:
         updated.shift(patch.offset.x - updated.offset.x, patch.offset.y - updated.offset.y)
     updated.refresh_stats(streamer)
@@ -312,6 +409,8 @@ class ImportOptions:
     # How a deposit fills the copper inside its edge loops; left out, with
     # loops on in to the middle.
     fill: str | None = None
+    # Dispensing: the paste over every pad, mm.
+    thickness: float = DEFAULT_THICKNESS
 
     def check(self) -> None:
         if self.anchor not in (ANCHOR_CENTER, ANCHOR_KEEP):
@@ -322,10 +421,14 @@ class ImportOptions:
             raise JobImportError(f"clear must be one of {', '.join(CLEAR_CHOICES)}")
         if self.fill is not None and self.fill not in copper_deposition.FILLS:
             raise JobImportError(f"fill must be one of {', '.join(copper_deposition.FILLS)}")
-        if self.mode == MODE_DEPOSIT and self.clear != CLEAR_OFF:
+        if self.mode != MODE_ISOLATE and self.clear != CLEAR_OFF:
             raise JobImportError("clear is for isolation; a deposit takes fill instead")
-        if self.mode == MODE_ISOLATE and self.fill is not None:
+        if self.mode != MODE_DEPOSIT and self.fill is not None:
             raise JobImportError("fill is for a deposit; isolation takes clear instead")
+        try:
+            check_thickness(self.thickness)
+        except ValueError as exc:
+            raise JobImportError(str(exc)) from exc
         try:
             board.check_layer(self.layer)
             check_power(self.power)
@@ -383,8 +486,11 @@ def from_json(text: str, name: str) -> Job:
             if not 0.0 < group.depth <= MAX_DEPTH:
                 raise JobImportError(f"group {group.label!r}: depth must be above 0 and at most {MAX_DEPTH:g} mm")
             check_speed(group.plunge, f"group {group.label!r}: plunge")
+            check_thickness(group.thickness)
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
+        if group.areas and len(group.areas) != len(group.paths):
+            raise JobImportError(f"group {group.label!r}: areas must have one entry per path")
         if any(len(poly) < 2 for poly in group.joints):
             raise JobImportError("a joint-space path needs at least two points")
         for poly in group.paths + group.joints:
@@ -565,18 +671,23 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     deg/min, which a radial clearing or fill orders its spokes by."""
     from laser_sweep import geom, gerber, isocli, isolate
 
+    from laser_sweep import excellon
+
     temporary: tempfile.TemporaryDirectory | None = None
     layer: str | None = options.layer
+    holes: list[tuple[float, float, float]] = []
     try:
         if path.suffix.lower() == ".kicad_pcb":
             temporary = tempfile.TemporaryDirectory(prefix="spinny-web-")
             into = Path(temporary.name)
-            isocli.export_board(path, options.layer, outline=True, drill=False, into=into)
+            isocli.export_board(path, options.layer, outline=True, drill=True, into=into)
             try:
                 copper_path = board.find_layer(into, options.layer)
             except board.LayerError:
                 raise JobImportError(f"{path.name} has no layer {options.layer}") from None
             source = "kicad"
+            for drill_path in sorted(into.glob("*.drl")):
+                holes.extend(board_pads.holes_of(excellon.read(drill_path)))
         else:
             copper_path = path
             into = path.parent
@@ -591,6 +702,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         copper = geom.copper(image)
         if not copper:
             raise JobImportError(f"{copper_path.name} draws no {word}")
+        pads = board_pads.pads_of(image)
         outline: list = []
         if outline_path is not None:
             outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
@@ -601,7 +713,14 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             origin=options.offset,
         )
         isolate.offsets_for(config)
-        if options.mode == MODE_DEPOSIT:
+        if options.mode == MODE_DISPENSE:
+            if not pads:
+                raise JobImportError(f"{copper_path.name} has no pads to dispense on")
+            shift = isolate.placement(copper, config, 0.0, [(outline, 0.0)])
+            placed = isolate.transform(copper, config, shift)
+            outline = [list(p) for p in isolate.transform(outline, config, shift)]
+            groups = dispense_groups(pads, shift, options, word)
+        elif options.mode == MODE_DEPOSIT:
             # The beam keeps inside the copper, but over a trace narrower
             # than itself it reaches half a spot past the middle.
             reach = options.spot / 2.0
@@ -635,13 +754,21 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                     pace=pace,
                 )
             groups = isolation_groups(plan, cleared, options, word)
+            # The plan moved the copper; the pads and holes follow it by
+            # the same amount, read back from the first point.
+            shift = (0.0, 0.0)
+            if copper and plan.copper:
+                shift = (plan.copper[0][0][0] - copper[0][0][0], plan.copper[0][0][1] - copper[0][0][1])
     except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
         raise JobImportError(str(exc)) from exc
     finally:
         if temporary is not None:
             temporary.cleanup()
 
-    if outline:
+    dx, dy = shift
+    pads = [(round(x + dx, 4), round(y + dy, 4), area) for x, y, area in pads]
+    holes = [(round(x + dx, 4), round(y + dy, 4), d) for x, y, d in holes]
+    if outline and options.mode != MODE_DISPENSE:
         groups.append(
             Group(
                 label="board outline pass 1",
@@ -663,7 +790,30 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         groups=groups,
         outline=[[tuple(p) for p in path] for path in outline],
         copper=[[tuple(p) for p in contour] for contour in placed],
+        pads=pads,
+        holes=holes,
+        design=Design(shift=(float(dx), float(dy)), rotation=0.0, board=source == "kicad"),
     )
+
+
+def dispense_groups(pads: list, shift: tuple[float, float], options: ImportOptions, word: str = "copper") -> list[Group]:
+    """One group of dots: a path of one point per pad at its centroid, in a
+    short tour over the board from the pad nearest the origin, with the
+    pad's area beside it; `word` is what the layer draws, for the label."""
+    dx, dy = shift
+    placed = [(x + dx, y + dy, area) for x, y, area in pads]
+    order = board_pads.tour(placed)
+    return [
+        Group(
+            label=f"{word} dots",
+            power=options.power,
+            speed=options.speed,
+            thickness=options.thickness,
+            tool=DISPENSER,
+            paths=[[(round(placed[i][0], 4), round(placed[i][1], 4))] for i in order],
+            areas=[placed[i][2] for i in order],
+        )
+    ]
 
 
 def isolation_groups(plan, cleared: list, options: ImportOptions, word: str = "copper") -> list[Group]:
@@ -780,11 +930,33 @@ class JobStore:
             if job is None:
                 return False
             if self.directory is not None:
-                try:
-                    (self.directory / f"{job_id}.json").unlink()
-                except OSError:
-                    pass
+                for path in (self.directory / f"{job_id}.json", self.directory / f"{job_id}.kicad_pcb"):
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
         return True
+
+    def keep_board(self, job_id: str, data: bytes) -> bool:
+        """Keeps the KiCad board a job was imported from beside it, so the
+        camera can look for it; False when there is nowhere to keep it."""
+        if self.directory is None:
+            return False
+        try:
+            target = self.directory / f"{job_id}.kicad_pcb"
+            temp = target.with_suffix(".kicad_pcb.tmp")
+            temp.write_bytes(data)
+            temp.replace(target)
+        except OSError:
+            return False
+        return True
+
+    def board_path(self, job_id: str) -> Path | None:
+        """The board file kept for a job, when there is one."""
+        if self.directory is None:
+            return None
+        path = self.directory / f"{job_id}.kicad_pcb"
+        return path if path.is_file() else None
 
     def _write(self, job: Job) -> None:
         if self.directory is None:

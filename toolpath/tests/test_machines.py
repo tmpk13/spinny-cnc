@@ -18,7 +18,7 @@ FIXTURE = Path(__file__).parent / "data" / "default-controls.json"
 
 
 def test_the_defaults_cover_every_setting_once():
-    assert len(FIRMWARE_DEFAULTS) == 74
+    assert len(FIRMWARE_DEFAULTS) == 75
     assert machines.FLAGS <= set(FIRMWARE_DEFAULTS) and machines.INTEGERS <= set(FIRMWARE_DEFAULTS)
     for name in machines.FLAGS | machines.INTEGERS:
         assert isinstance(FIRMWARE_DEFAULTS[name], int)
@@ -57,7 +57,7 @@ def test_an_empty_file_is_the_firmware_at_its_defaults():
 def test_the_shipped_files_load_and_say_what_they_are():
     found, problems = load_all(SHIPPED)
     assert problems == []
-    assert [m.id for m in found] == ["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]
+    assert [m.id for m in found] == ["cartesian-dispenser", "cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]
     by_id = {m.id: m for m in found}
     assert by_id["polar-laser"].settings == FIRMWARE_DEFAULTS
     assert by_id["polar-laser-focus"].focus and by_id["polar-laser-focus"].settings["h_axis"] == 1
@@ -77,7 +77,15 @@ def test_the_shipped_files_load_and_say_what_they_are():
     assert mill.document()["settings"]["z_max"] == mill.settings["z_max"] > 0
     # Wired as a three axis mill: rail on X, table on E, slide on Y, depth on Z.
     assert mill.settings["sockets"] == 1423 and mill.settings["tmc_a_ma"] == 0
-    assert {m.settings["sockets"] for m in found if m.id != "cartesian-mill"} == {1234}
+    assert {m.settings["sockets"] for m in found if m.id not in ("cartesian-mill", "cartesian-dispenser")} == {1234}
+    dispenser = by_id["cartesian-dispenser"]
+    assert (dispenser.kinematics, dispenser.tool, dispenser.focus) == ("cartesian", "dispenser", True)
+    assert (dispenser.settings["dispenser"], dispenser.settings["spindle"], dispenser.settings["cartesian"]) == (1, 0, 1)
+    # The plunger on the E socket, on the table's settings in millimeters.
+    assert (dispenser.settings["sockets"], dispenser.settings["a_steps"], dispenser.settings["jog_a"]) == (1423, 1600.0, 60.0)
+    assert dispenser.host == {"tolerance": 0.005, "clearance": 2.0, "gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200.0}
+    assert dispenser.camera["device"] == "/dev/video0" and dispenser.camera["offset"] == [0.0, 0.0]
+    assert [axis["letter"] for axis in dispenser.controls["axes"]] == ["X", "Y", "E", "H"]
 
 
 def test_sockets_are_named_per_axis():
@@ -212,6 +220,26 @@ def test_every_key_lands_on_its_setting():
         ("[host]\ntolerance = 0\n", "[host] tolerance must be above 0"),
         ("[host]\nclearance = 200\n", "[host] clearance must be above 0 and at most 100"),
         ("[host]\nfeed = 1\n", "[host] feed is not a key here"),
+        ("[host]\ngap = 0\n", "[host] gap must be above 0 and at most 10"),
+        ("[host]\nretract = -1\n", "[host] retract must be 0 to 50"),
+        ("[host]\ndwell_ms = 1.5\n", "[host] dwell_ms must be a whole number"),
+        ("[host]\ndwell_ms = 70000\n", "[host] dwell_ms must be 0 to 60000"),
+        ("[host]\nextrude_rate = 20000\n", "[host] extrude_rate must be above 0 and at most 10000"),
+        ("[host]\noutput = 0\n", "[host] output must be above 0 and at most 100000"),
+        ('tool = "glue"\n', "tool must be one of laser, spindle, dispenser"),
+        ('tool = "dispenser"\n', "tool = dispenser needs kinematics = cartesian"),
+        ('kinematics = "cartesian"\ntool = "dispenser"\n[table]\n[dispenser]\n', "[table] and [dispenser] cannot both be given"),
+        ("[dispenser]\nsteps_per_mm = 100\n", "[dispenser] needs tool = dispenser"),
+        ('kinematics = "cartesian"\ntool = "dispenser"\n[dispenser]\nsteps_per_deg = 5\n', "[dispenser] steps_per_deg is not a key here"),
+        ('[camera]\nsize = "big"\n', "[camera] size must be WIDTHxHEIGHT"),
+        ("[camera]\nfps = 0\n", "[camera] fps must be 1 to 120"),
+        ('[camera]\nside = "top"\n', "[camera] side must be one of front, back"),
+        ('[camera]\nfinish = "gold"\n', "[camera] finish must be one of masked, bare"),
+        ("[camera]\noffset = [1]\n", "[camera] offset must be two numbers within 1000 mm"),
+        ("[camera]\nroll = 400\n", "[camera] roll must be a number within 360"),
+        ("[camera]\nmm_per_px = -1\n", "[camera] mm_per_px must be 0 or more"),
+        ("[camera]\nzoom = 2\n", "[camera] zoom is not a key here"),
+        ("[camera]\ndevice = 3\n", "[camera] device must be text"),
         ("rail = 5\n", "rail must be a table"),
         ('[slide]\nsocket = "Y"\n', "[slide] socket Y is the [table] socket too"),
         ('[focus]\nsocket = "W"\n', "[focus] socket must be one of X, Y, Z, E"),
@@ -231,6 +259,29 @@ def test_mistakes_are_named(text, said):
     with pytest.raises(MachineError) as caught:
         parse(text, "rig", "rig")
     assert said in str(caught.value)
+
+
+def test_a_dispenser_is_the_table_s_driver_in_millimeters():
+    text = (
+        'kinematics = "cartesian"\ntool = "dispenser"\n'
+        '[dispenser]\nsteps_per_mm = 800\nmax_rate = 200\njog_rate = 30\ninvert = true\nsocket = "E"\n'
+        '[focus]\nfitted = true\nsocket = "Y"\n'
+        "[host]\ngap = 0.15\nretract = 0.5\noutput = 120\nextrude_rate = 90\ndwell_ms = 300\n"
+        '[camera]\ndevice = "socket://pi.local:2325"\nsize = "640x480"\nfps = 15\noffset = [12.5, -3.25]\nroll = 0.4\nmm_per_px = 0.02\n'
+    )
+    found = parse(text, "paste")
+    s = found.settings
+    assert (found.tool, s["dispenser"], s["spindle"], s["cartesian"]) == ("dispenser", 1, 0, 1)
+    assert (s["a_steps"], s["a_rate"], s["jog_a"], s["dir_invert"], s["sockets"]) == (800.0, 200.0, 30.0, 0b0010, 1432)
+    assert found.host == {"gap": 0.15, "retract": 0.5, "output": 120.0, "extrude_rate": 90.0, "dwell_ms": 300.0}
+    assert found.camera == {"device": "socket://pi.local:2325", "size": "640x480", "fps": 15, "offset": [12.5, -3.25], "roll": 0.4, "mm_per_px": 0.02}
+    document = found.document()
+    # The document fills the camera in from the defaults; the machine keeps only what the file said.
+    assert document["camera"]["pcbv"] == "pcbv" and document["camera"]["side"] == "front" and document["camera"]["fps"] == 15
+    assert [axis["letter"] for axis in found.controls["axes"]] == ["X", "Y", "E", "H"]
+    assert parse("", "bare").camera == {} and parse("", "bare").document()["camera"]["device"] == "/dev/video0"
+    # A dispenser's defaults are the dispenser's, a retract of 0 is allowed, and a spinup of 0 still is.
+    assert parse("[host]\nretract = 0\nspinup = 0\n", "zero").host == {"retract": 0.0, "spinup": 0.0}
 
 
 def test_a_bad_file_is_reported_beside_the_good_ones(tmp_path):
@@ -321,7 +372,7 @@ def test_the_default_controls_fixture_is_current():
     # The page checks its copy of the defaults against the same file.
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert fixture == default_controls_by_kind(), "the defaults changed: mise run controls-fixture"
-    assert list(fixture) == [kind_id(*kind) for kind in KINDS] and len(fixture) == 8
+    assert list(fixture) == [kind_id(*kind) for kind in KINDS] and len(fixture) == 10
     assert kind_id("cartesian", "spindle", True) == "cartesian-spindle-focus"
 
 

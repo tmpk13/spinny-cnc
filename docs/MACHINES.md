@@ -2,9 +2,10 @@
 
 A machine is a TOML file in `machines/`: its axes with their scales,
 rates and limits, the kinematics (the rail as the radius over a turning
-table, or as X beside the cross slide as Y), the tool on the output (a
-laser, or a spindle with the focus axis as its depth) and the controls
-the page draws for it. Loading a file
+table, or as X beside the cross slide as Y), the tool (a laser, a
+spindle with the focus axis as its depth, or a solder paste dispenser
+whose plunger takes the table's driver), the camera on the head, if any,
+and the controls the page draws for it. Loading a file
 writes every firmware setting, so swapping files swaps machines. The same
 files start the virtual firmware, and give the gcode tools their defaults.
 
@@ -18,8 +19,10 @@ files start the virtual firmware, and give the gcode tools their defaults.
 
 The shipped files: `polar-laser` (the firmware's defaults, every key
 spelled out), `polar-laser-focus` (the focus axis fitted),
-`cartesian-laser` (rail X, slide Y, the table holding) and
-`cartesian-mill` (cartesian with a spindle and the focus axis as depth).
+`cartesian-laser` (rail X, slide Y, the table holding),
+`cartesian-mill` (cartesian with a spindle and the focus axis as depth)
+and `cartesian-dispenser` (the mill's axes with a paste dispenser's
+plunger on the table's socket and a camera on the head).
 Copy the one nearest your machine, name it, and change what differs. A
 file that cannot be read is listed by the backend as a problem and shown
 on the page; the others still load.
@@ -35,7 +38,7 @@ or nothing.
 name = "Polar laser"            # shown on the page; default: the file name
 description = "..."             # shown beside the pick
 kinematics = "polar"            # polar | cartesian        -> $cartesian
-tool = "laser"                  # laser | spindle          -> $spindle
+tool = "laser"                  # laser | spindle | dispenser -> $spindle, $dispenser (a dispenser needs cartesian)
 
 [rail]                          # R, mm: the radius, or X when cartesian
 steps_per_mm = 10240            # -> r_steps
@@ -67,6 +70,17 @@ current_ma = 800                # -> tmc_a_ma
 microsteps = 256                # -> tmc_a_micro
                                 # endstop, endstop_pin (3 Y-STOP), endstop_invert, endstop_halt,
                                 # home_pull, home_pos, home_travel (400 deg) as under [rail]: a_stop ...
+
+[dispenser]                     # in place of [table], with tool = "dispenser": the same driver turns the plunger, A in mm
+steps_per_mm = 1600             # -> a_steps (200 steps, 16 microsteps, a 2 mm lead)
+max_rate = 300                  # mm/min: the retract, and the Extrude and Retract buttons' ceiling -> a_rate
+accel = 50                      # -> a_accel
+jerk = 1                        # -> a_jerk
+jog_rate = 60                   # mm/min of the Extrude and Retract buttons -> jog_a
+invert = false                  # -> dir_invert bit 1
+current_ma = 600                # -> tmc_a_ma
+microsteps = 16                 # -> tmc_a_micro
+socket = "E"                    # -> sockets; endstop keys as under [rail]: a_stop ...
 
 [slide]                         # Z, mm: a setup axis when polar, Y when cartesian
 steps_per_mm = 10240            # -> z_steps
@@ -124,6 +138,22 @@ tolerance = 0.005               # chord tolerance, mm, (0, 10]
 clearance = 2.0                 # milling: travel height over the surface, mm, (0, 100]
 spinup = 2.0                    # milling: dwell after the spindle starts, s, [0, 600]
 speed_control = true            # milling: false runs the spindle full on (S = s_max), never at a group's rpm
+gap = 0.1                       # dispensing: the needle's height over the pad while a dot is laid, mm, (0, 10]
+retract = 0.2                   # dispensing: how far the plunger is pulled back after each dot, mm, [0, 50]
+output = 100                    # dispensing: mm^3 of paste per mm of plunger travel, (0, 100000]
+extrude_rate = 60               # dispensing: plunger speed while a dot is pushed out, mm/min, (0, 10000]
+dwell_ms = 200                  # dispensing: wait after the push, before the retract, ms, [0, 60000]
+
+[camera]                        # a camera on the head, read by the backend through pcb-vision; nothing of it reaches the firmware
+device = "/dev/video0"          # a V4L2 device; socket://host:port of a pcbv serve elsewhere; or a picture or a directory to replay
+size = "1280x720"               # capture size, WIDTHxHEIGHT
+fps = 30
+pcbv = "pcbv"                   # the pcbv program: a name on PATH or a path; left out, ../pcb-vision/target is looked in
+side = "front"                  # front | back: the side the camera sees
+finish = "masked"               # masked | bare: whether solder mask hides the copper
+offset = [0.0, 0.0]             # the picture's center from the tool, board mm along X and Y; the camera offset routine measures it
+roll = 0.0                      # degrees from the picture's x axis to board +X, counterclockwise seen from above; measured with the offset
+mm_per_px = 0.0                 # mm per picture pixel at the board; 0 until measured, or taken from a lock
 
 [controls]                      # the page's jog panel and readout; left out: the defaults below
 pad = true                      # a board X/Y pad, on the arrow keys when no field has the focus
@@ -133,10 +163,10 @@ feed = true                     # a feed field (mm/min, blank = the firmware's j
 center = { r = 0 }              # where Center sends the joints; left out: no button
 
 [[controls.axes]]               # one per joint shown, in this order
-axis = "r"                      # the firmware's joint: r, a, z or h (h needs [focus] fitted)
+axis = "r"                      # the firmware's joint: r, a, z or h (h needs [focus] fitted; a is the plunger with tool = dispenser)
 letter = "R"                    # 1 to 3 characters: the readout's, and in "Set R=0 here"
 label = "Radius"                # the bar's title
-steps = [0.1, 1, 10]            # deg for a, mm otherwise; left out or []: the pad's step
+steps = [0.1, 1, 10]            # deg for a (mm on a dispenser), mm otherwise; left out or []: the pad's step
 step = 1                        # left out: the middle one
 buttons = ["Radius -", "Radius +"]  # minus and plus
 feed = true                     # the feed field applies; false: the firmware's jog rate for the axis
@@ -205,6 +235,43 @@ invert` is wrong when the beam or the spindle is on with nothing asked for
 (and dangerous, so it is the first thing to check at power on); `[enable]
 invert` when the relay is on while the machine is idle. Flip the one that
 is wrong in the file, load it again and check again.
+
+## Dispenser
+
+A solder paste dispenser is a syringe, or an auger valve, whose plunger a
+stepper drives. The machine is the X/Y machine with the focus axis as the
+needle's height, and the plunger takes the table's place: `tool =
+"dispenser"` sets `$dispenser=1` (and needs `kinematics = "cartesian"`),
+and `[dispenser]` describes the plunger on the table's settings in
+millimeters: `steps_per_mm` for the screw behind it (200 steps and 16
+microsteps on a 2 mm lead is 1600), `max_rate` for the retract and the
+ceiling of a plunger jog, `jog_rate` for the page's *Extrude* and
+*Retract* buttons. `[table]` and `[dispenser]` do not go in one file. The
+page's readout and jog panel show the plunger as `E` in mm (the defaults;
+`[controls]` may say otherwise), and a board imported with mode
+`dispense` lays a dot of paste on every pad of a layer
+([WEB_API.md](WEB_API.md)). What a dot is made of is the host's, under
+`[host]`: the head travels `clearance` over the surface, the needle stands
+`gap` over the pad (over the height map when the run follows one, else
+over H 0), the plunger pushes out the dot's volume, the pad's area times
+the job's paste thickness, over `output`, plus the `retract` it took back
+after the last dot, at `extrude_rate`, waits `dwell_ms`, pulls back
+`retract` at `max_rate`, and the head lifts for the move to the next pad.
+The shipped `cartesian-dispenser` has the plunger on the E socket beside
+the mill's rail, slide and depth axis.
+
+## Camera
+
+`[camera]` is a camera on the head looking at the board. The backend reads
+it through `pcbv serve` from the sibling pcb-vision repository, which
+finds the board of a KiCad file in the picture; nothing of it reaches the
+firmware. A load puts the table's values into the backend's camera
+settings (`GET /api/camera`), and the page starts and stops the camera.
+`offset`, `roll` and `mm_per_px` are what the camera offset routine on the
+page measures: a mark made with the tool is found in the picture and the
+picture's center is put on it. Write them back into the file to keep
+them; a camera that is moved, or a tool that is changed, wants them
+measured again.
 
 ## The controls
 

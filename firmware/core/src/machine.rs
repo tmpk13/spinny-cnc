@@ -76,6 +76,12 @@
 //! then stays at that speed through moves, jogs, dwells and holds; only
 //! `spindle off`, `laser off`, a reset, a disconnect or an alarm stop it.
 //! `S` and `M` on a `cut` or a `dwell`, and a lit `laser`, are refused.
+//!
+//! With the `dispenser` setting on a cartesian machine the table's driver
+//! turns a dispenser's plunger: `A` is its position in mm and goes on `go`
+//! and `cut` like a joint word, the planner takes a line with no board
+//! length at `F` along the plunger and the head, and the output is dark,
+//! with `S`, `M` and a lit `laser` refused as under a spindle.
 
 use crate::hal::{LaserPort, Sink, SlidePort, StepPort, Store};
 use crate::math;
@@ -418,9 +424,11 @@ impl<'a> Machine<'a> {
             }
             Command::Cut { target, feed, power, min_power } => {
                 self.check_board_words(&target)?;
-                // A spindle's speed is its own command's: an `S` here is a
-                // laser job sent to a machine that has none.
-                if self.settings.spindle && (power.is_some() || min_power.is_some()) {
+                // A spindle's speed is its own command's, and a dispenser
+                // has no beam: an `S` here is a laser job sent to a machine
+                // that has none.
+                let dark = self.dark_tool();
+                if dark && (power.is_some() || min_power.is_some()) {
                     return Err(Error::BadWord);
                 }
                 self.check_motion_state(false)?;
@@ -433,10 +441,10 @@ impl<'a> Machine<'a> {
                 let feed = feed.or(self.feed).ok_or(Error::MissingWord)?;
                 // `M` is not modal: a cut without it has no floor.
                 let min_power = min_power.unwrap_or(0.0);
-                let power = if self.settings.spindle { 0.0 } else { power.unwrap_or(self.power) };
+                let power = if dark { 0.0 } else { power.unwrap_or(self.power) };
                 self.queue_motion(target, false, MoveKind::Cut, Feed::Surface(feed), power, min_power)?;
                 self.feed = Some(feed);
-                if !self.settings.spindle {
+                if !dark {
                     self.power = power;
                 }
                 Ok(false)
@@ -529,7 +537,7 @@ impl<'a> Machine<'a> {
                 Ok(false)
             }
             Command::Dwell { ms, power } => {
-                if self.settings.spindle && power.is_some() {
+                if self.dark_tool() && power.is_some() {
                     return Err(Error::BadWord);
                 }
                 self.check_motion_state(false)?;
@@ -541,7 +549,7 @@ impl<'a> Machine<'a> {
                 Ok(false)
             }
             Command::LaserOn { power, ms } => {
-                if self.settings.spindle {
+                if self.dark_tool() {
                     return Err(Error::BadWord);
                 }
                 self.require_idle()?;
@@ -628,7 +636,7 @@ impl<'a> Machine<'a> {
             Command::SettingSet(name, value) => {
                 self.require_idle()?;
                 let was_cartesian = self.settings.cartesian;
-                let was_spindle = self.settings.spindle;
+                let was_tool = self.tool_flags();
                 let slide_at = self.joint()[Z];
                 let changed = self.settings.set(name, value).map_err(|error| match error {
                     SetError::Unknown => Error::UnknownSetting,
@@ -639,7 +647,7 @@ impl<'a> Machine<'a> {
                     Changed::Laser => self.apply_laser = true,
                     Changed::Driver => self.events.driver_config = true,
                     Changed::Kinematics => self.hand_over_cross_slide(was_cartesian, slide_at),
-                    Changed::Tool if was_spindle != self.settings.spindle => self.stop_output(),
+                    Changed::Tool if was_tool != self.tool_flags() => self.stop_output(),
                     Changed::Tool => {}
                     Changed::Other => {}
                 }
@@ -695,13 +703,33 @@ impl<'a> Machine<'a> {
 
     /// `Z` on a `go` or `cut` is a joint on a cartesian machine and
     /// nothing on a polar one, where the slide moves alone; `A` stays off
-    /// them on a cartesian machine, whose table holds the board still.
+    /// them on a cartesian machine, whose table holds the board still,
+    /// unless its driver turns a dispenser's plunger.
     fn check_board_words(&self, target: &[Option<f32>; AXES]) -> Result<(), Error> {
-        let stray = if self.settings.cartesian { target[A] } else { target[Z] };
+        let stray = if !self.settings.cartesian {
+            target[Z]
+        } else if self.settings.dispensing() {
+            None
+        } else {
+            target[A]
+        };
         if stray.is_some() {
             return Err(Error::BadWord);
         }
         Ok(())
+    }
+
+    /// The settings that give the output its meaning: a change of either
+    /// stops whatever runs on it.
+    fn tool_flags(&self) -> (bool, bool) {
+        (self.settings.spindle, self.settings.dispenser)
+    }
+
+    /// The output is no beam: a spindle's speed signal, or dark under a
+    /// dispenser. `S` and `M` on a `cut` or a `dwell` and a lit `laser`
+    /// are refused.
+    fn dark_tool(&self) -> bool {
+        self.settings.spindle || self.settings.dispensing()
     }
 
     /// Past the cross slide's soft limit, on the step the value rounds to.
@@ -1763,11 +1791,11 @@ impl<'a> Machine<'a> {
 
     fn adopt(&mut self, settings: Settings) {
         let was_cartesian = self.settings.cartesian;
-        let was_spindle = self.settings.spindle;
+        let was_tool = self.tool_flags();
         let slide_at = self.joint()[Z];
         self.settings = settings;
         self.hand_over_cross_slide(was_cartesian, slide_at);
-        if was_spindle != self.settings.spindle {
+        if was_tool != self.tool_flags() {
             self.stop_output();
         }
         self.events.driver_config = true;
@@ -1888,6 +1916,7 @@ focus axis probe (h_axis=1): probe H [F]\n\
 home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop\n\
 dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]\n\
 spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S\n\
+dispenser=1 (with cartesian): A is the plunger in mm, on go and cut too; no S or M on cut and dwell, no laser S\n\
 enable | disable | unlock | version | status | help | diag\n\
 $ | $name | $name=value | $save | $load | $defaults | $tmc\n\
 realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel\n";
@@ -3064,7 +3093,7 @@ mod tests {
         assert_eq!(rig.line("diag now"), "error:2 bad word\n");
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("z_home_travel=200\nstop_invert=0\nlimits=0\nok\n"));
+        assert!(listing.ends_with("z_home_travel=200\nstop_invert=0\nlimits=0\ndispenser=0\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -3906,6 +3935,64 @@ mod tests {
         assert_eq!(rig.line("go R1 Z-5"), "ok\n");
         rig.run();
         assert_eq!(rig.machine.joint()[Z], -5.0);
+    }
+
+    #[test]
+    fn a_dispensing_machine_pushes_the_plunger_on_go_and_cut() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("$cartesian=1"), "ok\n");
+        assert_eq!(rig.line("go A1"), "error:2 bad word\n", "a table holds the board still");
+        assert_eq!(rig.line("$dispenser=1"), "ok\n");
+        assert_eq!(rig.line("go A1"), "ok\n");
+        rig.run();
+        assert_eq!(rig.port.count, [0, 889, 0, 0], "the plunger alone");
+        assert_eq!(rig.line("cut A0.35 F60"), "ok\n");
+        rig.run();
+        assert_eq!(rig.executed_steps(), [0, 311, 0, 0]);
+        assert!((rig.machine.joint()[A] - 0.35).abs() < 1e-3);
+        assert_eq!(rig.line("cut R1 A0.2 F100"), "ok\n");
+        rig.run();
+        assert_eq!(rig.executed_steps(), [256, 178, 0, 0], "the rail and the plunger together");
+        assert_eq!(rig.max_duty_while_stepping, 0, "the output stays dark");
+    }
+
+    #[test]
+    fn a_dispensing_machine_refuses_a_beam() {
+        let mut rig = Rig::with(Settings { cartesian: true, dispenser: true, ..bench_settings() });
+        rig.take_out();
+        assert_eq!(rig.line("cut A1 F60 S100"), "error:2 bad word\n");
+        assert_eq!(rig.line("cut A1 F60 M10"), "error:2 bad word\n");
+        assert_eq!(rig.line("dwell T10 S5"), "error:2 bad word\n");
+        assert_eq!(rig.line("laser S100"), "error:2 bad word\n");
+        assert_eq!(rig.line("laser off"), "ok\n");
+        assert_eq!(rig.line("spindle S100"), "error:2 bad word\n", "no spindle either");
+        assert_eq!(rig.port.count, [0; AXES]);
+        assert_eq!(rig.laser.duty, 0);
+    }
+
+    #[test]
+    fn on_a_polar_machine_the_dispenser_flag_changes_nothing() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("$dispenser=1"), "ok\n");
+        assert_eq!(rig.line("cut R1 A2 F100 S100"), "ok\n");
+        rig.run();
+        assert_eq!(rig.executed_steps(), [256, 1778, 0, 0]);
+        assert_eq!(rig.max_duty_while_stepping, 100, "the table turns under a lit beam");
+        assert_eq!(rig.line("go Z1"), "error:2 bad word\n", "the slide is still the setup axis");
+    }
+
+    #[test]
+    fn changing_the_dispenser_flag_turns_a_lit_beam_off() {
+        let mut rig = Rig::new();
+        rig.take_out();
+        assert_eq!(rig.line("laser S500 T1000"), "ok\n");
+        assert_eq!(rig.laser.duty, 500);
+        assert_eq!(rig.line("$dispenser=1"), "ok\n");
+        rig.advance(POLL_US);
+        assert_eq!(rig.laser.duty, 0, "the output changed meaning");
+        assert_eq!(rig.state(), State::Idle);
     }
 
     #[test]

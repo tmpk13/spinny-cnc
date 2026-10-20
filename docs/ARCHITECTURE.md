@@ -8,18 +8,24 @@ laser power to the speed it reaches. Board geometry never reaches it: the
 backend turns gerber, KiCad, SVG and gcode jobs into short joint moves
 with the toolpath library's kinematics, so board jogs, independent radius
 and turn jogs, and whole jobs all arrive as the same few line commands.
+With a paste dispenser the table's driver turns the plunger instead, as
+`A` in mm, and a job is dots on the pads; a camera on the head is read
+through the sibling pcb-vision repository's `pcbv serve`, which finds the
+board in its picture, for measuring the camera's offset from the tool and
+lining a job up with the board.
 
 | Part | What | Build, test, run |
 | --- | --- | --- |
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import, streaming, probing, API, serves the page | `uv run spinny-web` |
+| `web/backend` | serial link, job import, streaming, probing (grid or pads), dispensing, the camera through pcbv, alignment, API, serves the page | `uv run spinny-web` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
-| `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, machine configs, gcode tools | `uv run pytest toolpath/tests` |
+| `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, pads and holes of a layer, the alignment fit, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
+| `../pcb-vision` | `pcbv`: the camera's capture and the localizer that finds a KiCad board in its picture, served to the backend over JSON lines | `mise run build-pcbv`; its own `mise run test` |
 
 The line protocol is [PROTOCOL.md](PROTOCOL.md), the web API
 [WEB_API.md](WEB_API.md), the machine configuration files
@@ -31,16 +37,19 @@ flowchart LR
         FE[frontend, TypeScript] <-->|REST, WebSocket| BE[backend, FastAPI]
         BE --> KIN[spinny_laser.polar, or R Z in the table frame when cartesian]
         BE --> LS[laser_sweep: gerber, isolation]
-        BE --> HM[height map: probing, focus or power compensation, spindle depth]
+        BE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
-        MF[machines/*.toml: axes, pins, kinematics, tool, the page's controls] <--> BE
+        BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
+        BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
+        PV --> VID[/dev/videoN on the head]
+        MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
         CF[cam/*.toml: axes, tools, operations, post] --> CAM
         CF --> CLI[spinny-cam]
     end
     MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
-        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, tool output, probe and endstop inputs on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, homing and endstop limits, spindle, tool output, machine]
+        RP[rp2040: embassy, USB, step timer, laser or spindle PWM, tool output, probe and endstop inputs on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, homing and endstop limits, spindle, a dispenser's plunger on A, tool output, machine]
         VIRT[virtual: TCP server, virtual clock, board surface, endstops] --> CORE
     end
 ```
@@ -83,7 +92,12 @@ uploaded to `http://host.local:8000` streams from the Pi whether or not
 the page stays open, and a controller that is replugged, or goes quiet and
 is given up, is taken up again by itself. The Pi needs no bun or Rust, and
 `firmware/` and `sim/` stay behind. Jobs, the height map and the resume
-record are the Pi's own.
+record are the Pi's own. A camera on the head is read where the backend
+runs: on a Pi running the whole thing `pcbv` has to be built for it
+(`cargo build --release -p pcbv` in a pcb-vision checkout on the Pi, the
+binary named in the machine file's `[camera] pcbv`); with the Pi as a
+bridge, `pcbv serve --listen` on the Pi and a `socket://pi:2325` device
+here reach its camera over the network.
 
 Either way, `mise run usb-log -- user@host` (or with no host, here)
 follows the kernel's USB and serial lines, which settle whether the board

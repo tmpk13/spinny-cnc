@@ -24,15 +24,18 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, Web
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
+from spinny_laser import pads as board_pads
 from spinny_laser.cam import CamError
 
 from . import __version__, center
+from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
+from .camera import Camera, CameraError, MachineAccess
 from .heightmap import (
     AUTO,
     FOCUS,
@@ -44,13 +47,29 @@ from .heightmap import (
     HeightMap,
     HeightMapStore,
     check_covers,
+    estimate_points_seconds,
+    job_extent,
     nearest_clear_point,
 )
-from .jobs import ImportOptions, Job, JobImportError, JobPatch, JobStore, apply_patch, import_file
+from .jobs import (
+    DEFAULT_THICKNESS,
+    DISPENSER,
+    MODE_DISPENSE,
+    Group,
+    ImportOptions,
+    Job,
+    JobImportError,
+    JobPatch,
+    JobStore,
+    apply_patch,
+    check_thickness,
+    import_file,
+)
 from .machines import MachineStore
 from .kinematics import (
     DEFAULT_TOLERANCE,
     CartesianStreamer,
+    Dispense,
     Rates,
     Spindle,
     Streamer,
@@ -74,6 +93,7 @@ from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as 
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
 from .resume import PositionStore, ResumeStore
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
+from .vision import VisionError
 
 # The repository's layout gives the defaults: the page's build beside this
 # package, and the runtime files (jobs, config, height map) in var/ at the
@@ -176,6 +196,7 @@ SETTINGS_SCHEMA = [
     {"name": "z_home_pull", "unit": "mm", "help": "how far a home backs off the switch, and leaves the slide from it"},
     {"name": "z_home_pos", "unit": "mm", "help": "what the cross slide reads at its switch"},
     {"name": "z_home_travel", "unit": "mm", "help": "cross slide travel between its ends; a home seeks a tenth further"},
+    {"name": "dispenser", "unit": "0/1", "help": "1 = the table's joint is a dispenser's plunger in mm (with cartesian)"},
     {"name": "stop_invert", "unit": "mask", "help": "endstop inputs active high: bit 0 rail, bit 1 table, bit 2 cross slide, bit 3 focus axis"},
     {"name": "limits", "unit": "mask", "help": "endstops that halt a move closing them (ALARM:4, position lost), same bits"},
 ]
@@ -186,6 +207,14 @@ HOME_TIMEOUT = 600.0
 
 POLAR, CARTESIAN = "polar", "cartesian"
 LASER, SPINDLE = "laser", "spindle"
+# What a dispensing run is made of when the config says nothing.
+DISPENSE_DEFAULTS = {"gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200}
+# Pad probing: how small a pad the probe still lands on, mm^2, and how
+# many points at most, by default.
+PAD_MIN_AREA = 0.5
+PAD_MAX_POINTS = 100
+# The widest picture the page asks for, px.
+FRAME_MIN_WIDTH, FRAME_MAX_WIDTH, FRAME_DEFAULT_WIDTH = 160, 4096, 640
 
 NO_FRONTEND = """<!doctype html>
 <html><head><meta charset="utf-8"><title>spinny</title></head>
@@ -368,6 +397,56 @@ class TouchBody(BaseModel):
     job: str | None = None
 
 
+class PadsBody(BaseModel):
+    # Probing at a job's pads: those of at least `min_area` mm^2, at most
+    # `max_points` of them spread over the board; `resume` goes on with
+    # the pad map in the store.
+    job: str | None = None
+    min_area: float = PAD_MIN_AREA
+    max_points: int = PAD_MAX_POINTS
+    resume: bool = False
+
+
+class CameraSettingsBody(Finite):
+    device: str | None = None
+    size: str | None = None
+    fps: int | None = None
+    pcbv: str | None = None
+    side: str | None = None
+    finish: str | None = None
+    offset: tuple[float, float] | None = None
+    roll: float | None = None
+    mm_per_px: float | None = None
+
+
+class CameraBoardBody(BaseModel):
+    job: str | None = None
+
+
+class CameraMarkBody(Finite):
+    # A mark cut with the tool where it stands: how deep and how fast the
+    # plunge; `here` only records the tool's point as the mark.
+    depth: float = 0.1
+    plunge: float = 30.0
+    speed: float | None = None
+    here: bool = False
+
+
+class CameraFindBody(Finite):
+    step: float = 2.0
+
+
+class AlignMarkBody(Finite):
+    job: str
+    design: tuple[float, float] | None = None
+    nearest: str | None = None
+    within: float = 5.0
+
+
+class AlignJobBody(BaseModel):
+    job: str
+
+
 # --- fan-out ------------------------------------------------------------------
 
 
@@ -446,6 +525,10 @@ class Backend:
         self.autoconnect_paused = False
         self._autoconnect_failed: str | None = None
         self.prober = Prober(self.heightmaps, publish=self._publish_probe, message=self.publish_message)
+        # The camera on the head, through pcbv, and the marks that line a
+        # job up with the board.
+        self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
+        self.alignment = Alignment()
         self.rates = Rates()
         # What the machine is, from its settings: polar or cartesian, laser
         # or spindle. A laser on the polar machine until the first read.
@@ -545,13 +628,35 @@ class Backend:
         the spindle runs full on whenever it runs."""
         return bool(self.config.get("speed_control", True))
 
+    def dispense_config(self) -> Dispense:
+        """What a dot of paste is made of, from the config; the defaults
+        where it says nothing or something unusable."""
+        values = {key: _host_number(self.config, key, float(default)) for key, default in DISPENSE_DEFAULTS.items()}
+        try:
+            return Dispense(
+                clearance=self.spindle_config().clearance,
+                gap=values["gap"],
+                retract=values["retract"],
+                output=values["output"],
+                rate=values["extrude_rate"],
+                dwell_ms=int(values["dwell_ms"]),
+            )
+        except (TypeError, ValueError):
+            return Dispense(clearance=self.spindle_config().clearance)
+
     def host_settings(self) -> dict:
         spindle = self.spindle_config()
+        dispense = self.dispense_config()
         return {
             "tolerance": self.tolerance,
             "clearance": spindle.clearance,
             "spinup": spindle.spinup,
             "speed_control": self.speed_control,
+            "gap": dispense.gap,
+            "retract": dispense.retract,
+            "output": dispense.output,
+            "extrude_rate": dispense.rate,
+            "dwell_ms": dispense.dwell_ms,
         }
 
     @property
@@ -562,17 +667,27 @@ class Backend:
     def milling(self) -> bool:
         return self.profile["tool"] == SPINDLE
 
+    @property
+    def dispensing(self) -> bool:
+        return self.profile["tool"] == DISPENSER
+
+    def table_angle(self, status) -> float:
+        """The table's angle a status reports: on a dispenser `A` is the
+        plunger, and the table holds at zero."""
+        return 0.0 if self.dispensing else float(status.a)
+
     def streamer(self, status=None) -> Streamer:
         """The streamer for the machine as its settings were last read. A
         cartesian one works in the frame of the table angle in `status`, or
         in the last status polled."""
         spindle = self.spindle_config() if self.milling else None
+        dispense = self.dispense_config() if self.dispensing else None
         if self.cartesian:
             if status is None and self.link is not None and self.link.is_open:
                 status = self.link.status
-            angle = status.a if status is not None else 0.0
-            return CartesianStreamer(angle=angle, tolerance=self.tolerance, rates=self.rates, spindle=spindle)
-        return Streamer(tolerance=self.tolerance, rates=self.rates, spindle=spindle)
+            angle = self.table_angle(status) if status is not None else 0.0
+            return CartesianStreamer(angle=angle, tolerance=self.tolerance, rates=self.rates, spindle=spindle, dispense=dispense)
+        return Streamer(tolerance=self.tolerance, rates=self.rates, spindle=spindle, dispense=dispense)
 
     # --- connection -----------------------------------------------------------
 
@@ -736,6 +851,7 @@ class Backend:
         return 1000 if isinstance(invert, (int, float)) and invert else 0
 
     def shutdown(self) -> None:
+        self.camera.shutdown()
         self.disconnect()
 
     def require_link(self) -> Link:
@@ -753,6 +869,8 @@ class Backend:
             raise HTTPException(status_code=409, detail="a job is running")
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
+        if self.camera.routine_active:
+            raise HTTPException(status_code=409, detail="the camera is finding the mark")
         return link
 
     def move_start(self, link: Link, streamer: Streamer, status=None) -> tuple[tuple[float, float], bool]:
@@ -840,7 +958,7 @@ class Backend:
                 }
             status = link.status
             if status is not None:
-                x, y = head_board(status.r, status.a, status.z, self.cartesian)
+                x, y = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
                 machine = {
                     "state": status.state,
                     "alarm": status.alarm,
@@ -986,6 +1104,12 @@ class Backend:
 
     def publish_heightmap(self) -> None:
         self.broadcast.publish_threadsafe({"type": "heightmap", **self.heightmap_state()})
+
+    def publish_camera(self) -> None:
+        self.broadcast.publish_threadsafe({"type": "camera", **self.camera_state()})
+
+    def publish_align(self) -> None:
+        self.broadcast.publish_threadsafe({"type": "align", **self.alignment.state()})
 
     def publish_message(self, level: str, text: str) -> None:
         if level == "error":
@@ -1449,6 +1573,21 @@ class Backend:
                 )
             except (TypeError, ValueError) as exc:
                 raise ValueError(str(exc)) from exc
+        dispensing: dict | None = None
+        if host and any(key in host for key in DISPENSE_DEFAULTS):
+            current = self.dispense_config()
+            try:
+                checked = Dispense(
+                    clearance=milling.clearance if milling is not None else current.clearance,
+                    gap=_host_number(host, "gap", current.gap),
+                    retract=_host_number(host, "retract", current.retract),
+                    output=_host_number(host, "output", current.output),
+                    rate=_host_number(host, "extrude_rate", current.rate),
+                    dwell_ms=int(_host_number(host, "dwell_ms", float(current.dwell_ms))),
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(str(exc)) from exc
+            dispensing = {"gap": checked.gap, "retract": checked.retract, "output": checked.output, "extrude_rate": checked.rate, "dwell_ms": checked.dwell_ms}
         if values:
             # A setting changed between a run's lines, or two probe points,
             # would change what the rest of them mean; a run or probing
@@ -1462,7 +1601,9 @@ class Backend:
             self.config["spinup"] = milling.spinup
         if speed_control is not None:
             self.config["speed_control"] = speed_control
-        if tolerance is not None or milling is not None or speed_control is not None:
+        if dispensing is not None:
+            self.config.update(dispensing)
+        if tolerance is not None or milling is not None or speed_control is not None or dispensing is not None:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
@@ -1508,6 +1649,9 @@ class Backend:
                 f"its firmware predates them, flash the current firmware to load {machine_id!r}"
             )
         result = self.write_settings(dict(machine.settings), dict(machine.host) or None)
+        if machine.camera:
+            self.camera.update(dict(machine.camera))
+            self.publish_camera()
         if self.config.get("last_machine") != machine_id:
             # Remembered, so the page keeps this file's controls once a
             # setting changed by hand makes the values no file's.
@@ -1656,7 +1800,13 @@ class Backend:
                 job = import_file(path, path.stem, options, self.streamer())
         except OSError as exc:
             raise JobImportError(f"cannot store the upload {name!r}: {exc}") from exc
-        return self.store.add(job)
+        job = self.store.add(job)
+        if job.design is not None:
+            kept = path.suffix.lower() == ".kicad_pcb" and self.store.keep_board(job.id, data)
+            if job.design.board != kept:
+                job.design.board = kept
+                self.store.save(job)
+        return job
 
     def cam_import(self, profile_id: str, files: list[tuple[str, bytes]], name: str | None) -> dict:
         """The uploaded files through a CAM profile into a stored job: a board
@@ -1731,6 +1881,8 @@ class Backend:
                 values = self.read_settings(force=True)["values"]
                 if self.milling and not values.get("h_axis"):
                     raise ValueError("a spindle needs the focus axis as its depth axis: set $h_axis=1")
+                if self.dispensing and not values.get("h_axis"):
+                    raise ValueError("a dispenser needs the focus axis as the needle's height: set $h_axis=1")
             compensation = self.compensation(compensate, job)
             # A cartesian plan is made in the frame of the table as it is now.
             status = None
@@ -1772,6 +1924,8 @@ class Backend:
                 values = self.read_settings(force=True)["values"]
                 if self.milling and not values.get("h_axis"):
                     raise ValueError("a spindle needs the focus axis as its depth axis: set $h_axis=1")
+                if self.dispensing and not values.get("h_axis"):
+                    raise ValueError("a dispenser needs the focus axis as the needle's height: set $h_axis=1")
                 compensation = self.compensation(compensate, job)
                 status = link.status_now(1.0, routine=True)
                 streamer = self.streamer(status)
@@ -1986,7 +2140,7 @@ class Backend:
                     frame = self._frame
                     settings = self.probe_settings()
                     streamer = self.streamer(status)
-                    tip = _tip_point(status, settings.offset, self.cartesian)
+                    tip = _tip_point(status, settings.offset, self.cartesian, self.table_angle(status))
                     target = None
                     found = None
                     if job is not None:
@@ -2000,14 +2154,14 @@ class Backend:
                                 f"no probed point of the map is {clearance:g} mm clear of the job's cuts:"
                                 " jog the tip over copper the map covers and probe here"
                             )
-                        tip = (heightmap.grid.xs[found[0]], heightmap.grid.ys[found[1]])
+                        tip = found[1]
                         # Refused past a soft limit before anything moves,
                         # as a grid's points are.
-                        target = reach_joint(tip, settings.offset, streamer, status.a, 0.0, r_max, z_max)
+                        target = reach_joint(tip, settings.offset, streamer, self.table_angle(status), 0.0, r_max, z_max)
                     if dry_run:
                         return {
                             "point": [round(tip[0], 4), round(tip[1], 4)],
-                            "index": [found[0], found[1]] if found is not None else None,
+                            "index": list(found[0]) if found is not None else None,
                             "distance": round(found[2], 3) if found is not None else 0.0,
                             "lines": [f"go {streamer.words(target)}"] if target is not None else [],
                         }
@@ -2123,6 +2277,283 @@ class Backend:
         self.prober.stop()
         return self.heightmap_state()
 
+    # --- pad probing ----------------------------------------------------------------
+
+    def pad_points(self, body: PadsBody) -> tuple[list[tuple[float, float]], dict, HeightMap | None, tuple | None]:
+        """The points a pad probing would probe, in order, with what was
+        left out; the map to go on with when resuming; and the box the
+        map's grid covers."""
+        if body.resume:
+            heightmap = self.heightmaps.get()
+            if heightmap is None or heightmap.points is None:
+                raise ValueError("there is no pad map to go on with: probe the pads first")
+            if heightmap.complete:
+                raise ValueError("the pad map is complete: nothing is left to probe")
+            left = [heightmap.points[ix] for ix, _ in heightmap.remaining()]
+            return left, {"pads": len(heightmap.points), "skipped": 0, "resume": heightmap.probed}, heightmap, None
+        if body.job is None:
+            raise ValueError("name the job whose pads to probe")
+        job = self.store.get(body.job)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        if not (math.isfinite(body.min_area) and 0.05 <= body.min_area <= 1000.0):
+            raise ValueError("min_area must be 0.05 to 1000 mm^2")
+        if not 2 <= body.max_points <= 2500:
+            raise ValueError("max_points must be 2 to 2500")
+        if not job.pads:
+            raise ValueError("the job has no pads: import it from a board, a KiCad file or a gerber")
+        large = [(x, y) for x, y, area in job.pads if area >= body.min_area]
+        if not large:
+            raise ValueError(f"no pad of the job is {body.min_area:g} mm^2 or more: lower the least area")
+        skipped = len(job.pads) - len(large)
+        chosen = [large[i] for i in board_pads.spread(large, body.max_points)] if len(large) > body.max_points else large
+        points = [chosen[i] for i in board_pads.tour(chosen)]
+        box = job_extent(job)
+        if box is None:
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            box = (min(xs), min(ys), max(xs), max(ys))
+        return points, {"pads": len(job.pads), "skipped": skipped, "resume": 0}, None, box
+
+    def pads_plan(self, body: PadsBody) -> dict:
+        points, counts, _, _ = self.pad_points(body)
+        seconds = estimate_points_seconds(points, self.probe_settings(), self.rates)
+        return {"points": [[round(x, 4), round(y, 4)] for x, y in points], "seconds": round(seconds, 1), **counts}
+
+    def start_pads(self, body: PadsBody) -> dict:
+        points, _, resume, box = self.pad_points(body)
+        with self._owner_lock:
+            link = self._movable()
+            self.prober.reserve(link)
+            try:
+                r_max, z_max = _soft_limits(self.read_settings(force=True)["values"])
+                spindle_off = self._off_duty() if self.milling else None
+                with self._move_lock:
+                    self._jog_target = None
+                    status = link.status_now(1.0, routine=True)
+                    frame = self._frame
+                    if resume is not None and self._heights_frame != frame:
+                        raise ValueError(
+                            "the focus axis was renumbered since the map was probed (a connect, a restart or a"
+                            " position set): its heights and the new ones would not agree, so probe it anew"
+                        )
+                    placeholder = resume.grid if resume is not None else Grid(x0=-1.0, y0=-1.0, x1=1.0, y1=1.0, nx=2, ny=2)
+                    self.prober.start(
+                        placeholder,
+                        self.probe_settings(),
+                        link,
+                        self.streamer(status),
+                        r_max,
+                        z_max,
+                        spindle_off,
+                        keep_focus=self._heights_frame == frame,
+                        reserved=True,
+                        resume=resume,
+                        points=resume.points if resume is not None else points,
+                        box=box,
+                    )
+                    self._heights_frame = frame
+            finally:
+                self.prober.release()
+        log.info("probing the pads: %d points%s", len(points), ", going on with the map" if resume is not None else "")
+        return self.heightmap_state()
+
+    # --- the camera -----------------------------------------------------------------
+
+    def camera_state(self) -> dict:
+        return self.camera.state(job_center=self._job_center)
+
+    def _job_center(self, raw: dict) -> list | None:
+        """The picture's center in the loaded job's frame, from a pose."""
+        job_id = self.camera.board_job
+        center = raw.get("center")
+        if job_id is None or not isinstance(center, (list, tuple)) or len(center) != 2:
+            return None
+        job = self.store.get(job_id)
+        if job is None or job.design is None:
+            return None
+        x, y = job.design.board_to_job((float(center[0]), float(center[1])))
+        return [round(x, 4), round(y, 4)]
+
+    def camera_settings(self, body: CameraSettingsBody) -> dict:
+        patch = {key: value for key, value in body.model_dump().items() if value is not None}
+        self.camera.update(patch)
+        self.publish_camera()
+        return self.camera_state()
+
+    def camera_start(self) -> dict:
+        self.camera.start()
+        self.publish_camera()
+        return self.camera_state()
+
+    def camera_stop(self) -> dict:
+        self.camera.stop()
+        self.publish_camera()
+        return self.camera_state()
+
+    def camera_frame(self, width: int, overlay: bool) -> bytes:
+        if not (FRAME_MIN_WIDTH <= width <= FRAME_MAX_WIDTH):
+            raise ValueError(f"width must be {FRAME_MIN_WIDTH} to {FRAME_MAX_WIDTH}")
+        return self.camera.frame(width, overlay)
+
+    def camera_pose(self) -> dict:
+        raw = self.camera.pose()
+        if raw is None:
+            return {"state": None, "job_center": None}
+        from .camera import pose_summary
+
+        pose = pose_summary(raw)
+        if pose.get("state") == "locked":
+            pose["job_center"] = self._job_center(raw)
+        return pose
+
+    def camera_board(self, job_id: str | None) -> dict:
+        if job_id is None:
+            self.camera.load_board(None, None)
+        else:
+            job = self.store.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="no such job")
+            path = self.store.board_path(job_id)
+            if job.design is None or not job.design.board or path is None:
+                raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
+            self.camera.load_board(job_id, str(path))
+        self.publish_camera()
+        return self.camera_state()
+
+    def camera_mark(self, body: CameraMarkBody) -> dict:
+        """Records the tool's point as the mark, and cuts it with the tool
+        unless `here`."""
+        if not (math.isfinite(body.depth) and 0.01 <= body.depth <= 5.0):
+            raise ValueError("depth must be 0.01 to 5 mm")
+        if not (math.isfinite(body.plunge) and 1.0 <= body.plunge <= 1000.0):
+            raise ValueError("plunge must be 1 to 1000 mm/min")
+        with self._owner_lock:
+            link = self._movable()
+            status = link.status_now(1.0, routine=True)
+            point = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+            if not body.here:
+                if not self.milling:
+                    raise ValueError("a mark is cut with a spindle: on another machine, make it by hand and say the mark is here")
+                values = self.read_settings(force=True)["values"]
+                if not values.get("h_axis"):
+                    raise ValueError("a mark needs the depth axis: set $h_axis=1")
+                speed = body.speed if body.speed is not None else float(values.get("s_max", 1000.0) or 1000.0)
+                job = Job(
+                    name="camera mark",
+                    source="mark",
+                    groups=[
+                        Group(
+                            label="camera mark",
+                            power=speed,
+                            speed=body.plunge,
+                            depth=body.depth,
+                            plunge=body.plunge,
+                            tool=SPINDLE,
+                            paths=[[(round(point[0], 4), round(point[1], 4))]],
+                        )
+                    ],
+                )
+                job.refresh_stats(self.streamer(status))
+                job = self.store.add(job)
+            self.camera.set_mark(point)
+        if not body.here:
+            self._run_job(job.id, OFF)
+        self.publish_camera()
+        return self.camera_state()
+
+    def camera_find(self, step: float) -> dict:
+        with self._owner_lock:
+            link = self._movable()
+            values = self.read_settings(force=True)["values"]
+            status = link.status_now(1.0, routine=True)
+            streamer = self.streamer(status)
+            access = MachineAccess(
+                link=link,
+                streamer=streamer,
+                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
+                clearance=self.spindle_config().clearance,
+                has_focus_axis=bool(values.get("h_axis")),
+            )
+            self.camera.find(access, step)
+        return self.camera_state()
+
+    def camera_abort(self) -> dict:
+        self.camera.abort()
+        return self.camera_state()
+
+    # --- alignment ------------------------------------------------------------------
+
+    def align_mark(self, body: AlignMarkBody) -> dict:
+        job = self.store.get(body.job)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        with self._owner_lock:
+            link = self._movable()
+            status = link.status_now(1.0, routine=True)
+        point = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+        state = self.alignment.mark_tool(job, point, body.design, body.nearest, body.within)
+        self.publish_align()
+        return state
+
+    def align_capture(self, job_id: str) -> dict:
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        if not self.camera.running:
+            raise CameraError("the camera is not running")
+        if self.camera.board_job != job_id or job.design is None:
+            raise CameraError("the camera is not looking for this job's board: load it first")
+        raw = self.camera.pose()
+        if raw is None or raw.get("state") != "locked" or not isinstance(raw.get("center"), (list, tuple)):
+            raise CameraError("the camera has no lock on the board: move it over the board and wait for one")
+        link = self.require_link()
+        status = link.status_now(1.0, routine=True)
+        head = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+        settings = self.camera.settings()
+        machine = (head[0] + settings.offset[0], head[1] + settings.offset[1])
+        design = job.design.board_to_job((float(raw["center"][0]), float(raw["center"][1])))
+        angle = None
+        if settings.side == "front" and isinstance(raw.get("angle_deg"), (int, float)):
+            # The picture's x axis points `roll` from board +X on the
+            # machine and `angle_deg` from it on the design: the design is
+            # turned by the difference.
+            angle = settings.roll - float(raw["angle_deg"])
+        state = self.alignment.mark_camera(job, design, machine, angle)
+        self.publish_align()
+        return state
+
+    def align_remove(self, index: int) -> dict:
+        try:
+            state = self.alignment.remove(index)
+        except IndexError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        self.publish_align()
+        return state
+
+    def align_clear(self) -> dict:
+        state = self.alignment.clear()
+        self.publish_align()
+        return state
+
+    def align_fit(self, job_id: str) -> dict:
+        if self.store.get(job_id) is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return self.alignment.fit(job_id).to_dict()
+
+    def align_apply(self, job_id: str) -> dict:
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        if self.runner.active and self.runner.progress.job == job_id:
+            raise HTTPException(status_code=409, detail="the job is running")
+        updated, fit = self.alignment.apply(job)
+        updated.refresh_stats(self.streamer())
+        self.store.save(updated)
+        self.publish_align()
+        log.info("job %s aligned: turned %.4f degrees, moved (%.4f, %.4f), rms %.4f over %d marks", job_id, fit.rotation, fit.shift[0], fit.shift[1], fit.rms, fit.marks)
+        return {"job": updated.model_dump(), "fit": fit.to_dict()}
+
     def focus(self, offset: float | None) -> dict:
         """Sets the focus offset: given, or from the head's height over the
         board point under the beam, which the operator has just focused.
@@ -2156,7 +2587,7 @@ class Backend:
                 # is as good a name for it as any: the map only needs the
                 # same one.
                 here = status.h if status.h is not None else 0.0
-                x, y = head_board(status.r, status.a, status.z, self.cartesian)
+                x, y = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
                 grid = heightmap.grid
                 if not grid.covers((x, y, x, y)):
                     # The edge height would stand in for copper nobody
@@ -2249,14 +2680,15 @@ def _soft_limits(values: dict) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _tip_point(status, offset: tuple[float, float], cartesian: bool) -> tuple[float, float]:
+def _tip_point(status, offset: tuple[float, float], cartesian: bool, table_angle: float | None = None) -> tuple[float, float]:
     """The board point under the probe tip: the head's place along the rail
     and across it plus the tip's offset in those directions, turned by the
-    table's angle. On the polar machine the head sits on the rail (across
-    0), on a cartesian one at the cross slide's position."""
+    table's angle (the status's, unless given: a dispenser's `A` is its
+    plunger). On the polar machine the head sits on the rail (across 0),
+    on a cartesian one at the cross slide's position."""
     along = status.r + offset[0]
     across = (status.z if cartesian else 0.0) + offset[1]
-    angle = math.radians(status.a)
+    angle = math.radians(status.a if table_angle is None else table_angle)
     return (
         along * math.cos(angle) - across * math.sin(angle),
         along * math.sin(angle) + across * math.cos(angle),
@@ -2332,9 +2764,15 @@ def profile_of(values: dict) -> dict:
         value = values.get(name, 0)
         return float(value) if isinstance(value, (int, float)) and math.isfinite(value) else 0.0
 
+    if number("spindle"):
+        tool = SPINDLE
+    elif number("dispenser") and number("cartesian"):
+        tool = DISPENSER
+    else:
+        tool = LASER
     return {
         "kinematics": CARTESIAN if number("cartesian") else POLAR,
-        "tool": SPINDLE if number("spindle") else LASER,
+        "tool": tool,
         "h_axis": bool(number("h_axis")),
         "r_max": number("r_max"),
         "z_max": number("z_max"),
@@ -2502,7 +2940,9 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except NotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except LinkError as exc:
+        except CameraError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (LinkError, VisionError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     # --- connection ---
@@ -2679,10 +3119,16 @@ def create_app(
         clear: str | None = Form(None),
         mode: str | None = Form(None),
         fill: str | None = Form(None),
+        thickness: float | None = Form(None),
     ):
         options = ImportOptions(tolerance=backend.tolerance)
         if layer:
             options.layer = layer.strip()
+        elif mode and mode.strip().lower() == MODE_DISPENSE:
+            # Paste goes where the paste layer says.
+            options.layer = "F.Paste"
+        if thickness is not None:
+            options.thickness = thickness
         if power is not None:
             options.power = power
         if speed is not None:
@@ -2835,6 +3281,97 @@ def create_app(
     @app.post("/api/heightmap/focus")
     def focus(body: FocusBody):
         return guarded(lambda: backend.focus(body.offset))
+
+    @app.post("/api/heightmap/pads")
+    def start_pads(body: PadsBody):
+        return guarded(lambda: backend.start_pads(body))
+
+    @app.post("/api/heightmap/pads/plan")
+    def pads_plan(body: PadsBody):
+        return guarded(lambda: backend.pads_plan(body))
+
+    # --- camera ---
+
+    @app.get("/api/camera")
+    def camera_state():
+        return guarded(backend.camera_state)
+
+    @app.put("/api/camera/settings")
+    def camera_settings(body: CameraSettingsBody):
+        return guarded(lambda: backend.camera_settings(body))
+
+    @app.post("/api/camera/start")
+    def camera_start():
+        return guarded(backend.camera_start)
+
+    @app.post("/api/camera/stop")
+    def camera_stop():
+        return guarded(backend.camera_stop)
+
+    @app.get("/api/camera/frame.jpg")
+    def camera_frame(width: int = FRAME_DEFAULT_WIDTH, overlay: int = 1):
+        try:
+            data = backend.camera_frame(width, bool(overlay))
+        except CameraError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except VisionError as exc:
+            if "no frame" in str(exc):
+                raise HTTPException(status_code=404, detail="no picture yet") from exc
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/camera/pose")
+    def camera_pose():
+        return guarded(backend.camera_pose)
+
+    @app.post("/api/camera/board")
+    def camera_board(body: CameraBoardBody):
+        return guarded(lambda: backend.camera_board(body.job))
+
+    @app.post("/api/camera/mark")
+    def camera_mark(body: CameraMarkBody):
+        return guarded(lambda: backend.camera_mark(body))
+
+    @app.post("/api/camera/find")
+    def camera_find(body: CameraFindBody | None = None):
+        step = body.step if body is not None else 2.0
+        return guarded(lambda: backend.camera_find(step))
+
+    @app.post("/api/camera/abort")
+    def camera_abort():
+        return guarded(backend.camera_abort)
+
+    # --- alignment ---
+
+    @app.get("/api/align")
+    def align_state():
+        return backend.alignment.state()
+
+    @app.post("/api/align/mark")
+    def align_mark(body: AlignMarkBody):
+        return guarded(lambda: backend.align_mark(body))
+
+    @app.post("/api/align/capture")
+    def align_capture(body: AlignJobBody):
+        return guarded(lambda: backend.align_capture(body.job))
+
+    @app.delete("/api/align/marks/{index}")
+    def align_remove(index: int):
+        return guarded(lambda: backend.align_remove(index))
+
+    @app.delete("/api/align")
+    def align_clear():
+        return guarded(backend.align_clear)
+
+    @app.post("/api/align/fit")
+    def align_fit(body: AlignJobBody):
+        return guarded(lambda: backend.align_fit(body.job))
+
+    @app.post("/api/align/apply")
+    def align_apply(body: AlignJobBody):
+        return guarded(lambda: backend.align_apply(body.job))
 
     # --- events ---
 

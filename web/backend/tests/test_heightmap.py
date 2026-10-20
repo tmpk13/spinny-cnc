@@ -349,14 +349,14 @@ def test_the_nearest_clear_point_keeps_off_the_cuts():
 
     # The point nearest the tip at (8, 4) is (10, 5), but a cut runs through it.
     through = job([(9.0, 5.0), (11.0, 5.0)])
-    assert nearest_clear_point(heightmap, through, (8.0, 4.0), 1.0) == (1, 1, pytest.approx(math.hypot(8, 1)))
+    assert nearest_clear_point(heightmap, through, (8.0, 4.0), 1.0) == ((1, 1), (0.0, 5.0), pytest.approx(math.hypot(8, 1)))
     # Within the clearance counts as in the cut.
     beside = job([(9.0, 5.6), (11.0, 5.6)])
-    assert nearest_clear_point(heightmap, beside, (8.0, 4.0), 1.0)[:2] == (1, 1)
-    assert nearest_clear_point(heightmap, beside, (8.0, 4.0), 0.5)[:2] == (2, 1)
+    assert nearest_clear_point(heightmap, beside, (8.0, 4.0), 1.0)[0] == (1, 1)
+    assert nearest_clear_point(heightmap, beside, (8.0, 4.0), 0.5)[0] == (2, 1)
     # A point that reads the map from a cell with a corner still to probe is not offered.
     heightmap.heights[0][2] = None
-    assert nearest_clear_point(heightmap, through, (8.0, 4.0), 1.0)[:2] == (0, 1)
+    assert nearest_clear_point(heightmap, through, (8.0, 4.0), 1.0)[0] == (0, 1)
     # Cuts along every edge leave no point clear.
     edges = job([(-10.0, -5.0), (10.0, -5.0), (10.0, 5.0), (-10.0, 5.0), (-10.0, -5.0)])
     assert nearest_clear_point(heightmap, edges, (0.0, 0.0), 1.0) is None
