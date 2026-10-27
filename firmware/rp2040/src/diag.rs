@@ -45,6 +45,7 @@ static USB_RESETS: AtomicU32 = AtomicU32::new(0);
 static USB_SUSPENDS: AtomicU32 = AtomicU32::new(0);
 static USB_RESUMES: AtomicU32 = AtomicU32::new(0);
 static USB_DISABLED: AtomicU32 = AtomicU32::new(0);
+static USB_LOCKUPS: AtomicU32 = AtomicU32::new(0);
 static USB_EVENT_MS: AtomicU32 = AtomicU32::new(0);
 static USB_EVENT_SEEN: AtomicBool = AtomicBool::new(false);
 static DTR: AtomicBool = AtomicBool::new(false);
@@ -156,6 +157,8 @@ pub enum UsbEvent {
     Suspended,
     Resumed,
     Disabled,
+    /// The controller stopped answering the bus and was forced off it.
+    Lockup,
 }
 
 /// A device state change, from the USB device task.
@@ -167,6 +170,7 @@ pub fn usb(event: UsbEvent) {
         UsbEvent::Suspended => &USB_SUSPENDS,
         UsbEvent::Resumed => &USB_RESUMES,
         UsbEvent::Disabled => &USB_DISABLED,
+        UsbEvent::Lockup => &USB_LOCKUPS,
     };
     counter.store(counter.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
     USB_EVENT_MS.store(now_ms(), Ordering::Relaxed);
@@ -238,6 +242,7 @@ fn live() -> Live {
         usb_suspends: USB_SUSPENDS.load(Ordering::Relaxed),
         usb_resumes: USB_RESUMES.load(Ordering::Relaxed),
         usb_disabled: USB_DISABLED.load(Ordering::Relaxed),
+        usb_lockups: USB_LOCKUPS.load(Ordering::Relaxed),
         usb_event_age_ms: age(&USB_EVENT_SEEN, &USB_EVENT_MS, now),
         dtr: DTR.load(Ordering::Relaxed),
         rts: RTS.load(Ordering::Relaxed),

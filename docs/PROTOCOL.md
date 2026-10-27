@@ -419,13 +419,16 @@ loses the record; the board's RESET button keeps it.
 ```
 [MSG:diag boot <the boot line's text>]
 [MSG:diag up 56 s in waiting, pass max 310 us, gap max 1200 us, 120 lines, 0 too long]
-[MSG:diag usb configured 1, deconfigured 0, resets 1, suspends 0, resumes 0, disabled 0, last 56000 ms ago, dtr 1 rts 1, control changes 2]
+[MSG:diag usb configured 1, deconfigured 0, resets 1, suspends 0, resumes 0, disabled 0, lockups 0, last 56000 ms ago, dtr 1 rts 1, control changes 2]
 [MSG:diag rx 3456 bytes, last 200 ms ago; tx 12345 bytes, dropped 0, writer idle, longest write 12 ms]
 [MSG:diag motor power lost 0 times]
 ```
 
 `usb` counts the device state changes the host caused (a suspend is taken
-as the host going away); `dtr` and `rts` are the host's control lines,
+as the host going away); `lockups` counts the times the USB controller
+stopped answering the bus (RP2040 erratum E15: the frame number stood
+still for 100 ms on a bus that was not suspended) and the board dropped
+off the bus so the host would enumerate it again; `dtr` and `rts` are the host's control lines,
 raised while a program holds the port open: DTR rising is answered with
 the banner and the boot line, DTR falling is taken as a disconnect. `rx`
 is bytes from the host

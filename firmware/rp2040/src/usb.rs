@@ -10,25 +10,32 @@
 //! closing the port shows as the host's DTR line, which the control task
 //! turns into events of its own: the opener is greeted, and a closer,
 //! which may be a host that died mid-job, leaves nothing running.
+//!
+//! The controller can also lock up on a bus error (RP2040 erratum E15)
+//! and answer nothing while staying on the bus; a guard task spots that
+//! from the frame number and drops off the bus so the host starts over.
 
 use core::cell::RefCell;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use critical_section::Mutex;
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
+use embassy_rp::pac;
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::Driver;
 use embassy_rp::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, ControlChanged, Receiver, Sender, State};
 use embassy_usb::{Builder, Config, Handler, UsbDevice};
 use spinny_core::hal::Sink;
 use spinny_core::parser::Realtime;
 use spinny_fw_logic::line::{Event as LineEvent, Line, LineAssembler};
 use spinny_fw_logic::out::{zlp_after, OutRing, PACKET};
+use spinny_fw_logic::usb_guard::FrameWatch;
 use static_cell::StaticCell;
 
 use crate::diag::{self, UsbEvent};
@@ -64,6 +71,13 @@ pub static EVENTS: Channel<CriticalSectionRawMutex, Event, 8> = Channel::new();
 /// configuration. One signal each, since a signal has one waiter.
 static READER_RESTART: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static WRITER_RESTART: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The host has configured the device, and not reset or dropped it since.
+static CONFIGURED: AtomicBool = AtomicBool::new(false);
+/// How often the guard looks at the frame number.
+const GUARD_PERIOD: Duration = Duration::from_millis(10);
+/// How long the pull-up stays off after a lockup: long enough for the
+/// host to take it as an unplug.
+const UNPLUG_TIME: Duration = Duration::from_millis(200);
 
 /// Device state changes, called from the device task.
 struct DeviceEvents;
@@ -71,21 +85,25 @@ struct DeviceEvents;
 impl Handler for DeviceEvents {
     fn enabled(&mut self, enabled: bool) {
         if !enabled {
+            CONFIGURED.store(false, Ordering::Relaxed);
             diag::usb(UsbEvent::Disabled);
             disconnected();
         }
     }
 
     fn reset(&mut self) {
+        CONFIGURED.store(false, Ordering::Relaxed);
         diag::usb(UsbEvent::Reset);
         disconnected();
     }
 
     fn configured(&mut self, configured: bool) {
         if configured {
+            CONFIGURED.store(true, Ordering::Relaxed);
             diag::usb(UsbEvent::Configured);
             let _ = EVENTS.try_send(Event::Connected);
         } else {
+            CONFIGURED.store(false, Ordering::Relaxed);
             diag::usb(UsbEvent::Deconfigured);
             disconnected();
         }
@@ -198,6 +216,7 @@ pub fn start(spawner: &Spawner, usb: Peri<'static, USB>, serial: &'static str) {
     spawner.spawn(reader_task(receiver).expect("usb reader task"));
     spawner.spawn(writer_task(sender).expect("usb writer task"));
     spawner.spawn(control_task(control).expect("usb control task"));
+    spawner.spawn(guard_task().expect("usb guard task"));
 }
 
 /// Watches the host's DTR and RTS, which the host raises when a program
@@ -220,6 +239,33 @@ async fn control_task(control: ControlChanged<'static>) {
                 host_closed();
             }
         }
+    }
+}
+
+/// Watches for the controller locking up: a frame number that stands
+/// still while the device is configured on a bus that is not suspended.
+/// The board then treats the host as gone, as an unplug would, and drops
+/// its pull-up long enough for the host to see one; the host's new
+/// enumeration resets the controller and brings it back.
+#[embassy_executor::task]
+async fn guard_task() {
+    let regs = pac::USB;
+    let mut watch = FrameWatch::new();
+    let mut ticker = Ticker::every(GUARD_PERIOD);
+    loop {
+        ticker.next().await;
+        let active = CONFIGURED.load(Ordering::Relaxed) && !regs.sie_status().read().suspended();
+        let frame = regs.sof_rd().read().count();
+        if !watch.check(Instant::now().as_millis() as u32, active, frame) {
+            continue;
+        }
+        diag::usb(UsbEvent::Lockup);
+        CONFIGURED.store(false, Ordering::Relaxed);
+        disconnected();
+        // Nothing else writes this register after the driver set it up.
+        regs.sie_ctrl().modify(|w| w.set_pullup_en(false));
+        Timer::after(UNPLUG_TIME).await;
+        regs.sie_ctrl().modify(|w| w.set_pullup_en(true));
     }
 }
 

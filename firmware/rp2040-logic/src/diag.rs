@@ -347,6 +347,8 @@ pub struct Live {
     pub usb_suspends: u32,
     pub usb_resumes: u32,
     pub usb_disabled: u32,
+    /// Times the controller stopped answering the bus and was forced off it.
+    pub usb_lockups: u32,
     /// Since the last of those, or `None` for none yet.
     pub usb_event_age_ms: Option<u32>,
     pub dtr: bool,
@@ -409,6 +411,8 @@ pub fn diag_messages(boot: Boot, record: Option<&Record>, live: &Live, out: &mut
     uint(u64::from(live.usb_resumes), out);
     out.write(b", disabled ");
     uint(u64::from(live.usb_disabled), out);
+    out.write(b", lockups ");
+    uint(u64::from(live.usb_lockups), out);
     out.write(b", last ");
     write_age(live.usb_event_age_ms, out);
     out.write(b", dtr ");
@@ -609,7 +613,7 @@ mod tests {
         assert_eq!(lines[1], "[MSG:diag up 56 s in waiting, pass max 310 us, gap max 1200 us, 120 lines, 1 too long]");
         assert_eq!(
             lines[2],
-            "[MSG:diag usb configured 1, deconfigured 0, resets 1, suspends 0, resumes 0, disabled 0, last 56000 ms ago, dtr 1 rts 1, control changes 2]"
+            "[MSG:diag usb configured 1, deconfigured 0, resets 1, suspends 0, resumes 0, disabled 0, lockups 0, last 56000 ms ago, dtr 1 rts 1, control changes 2]"
         );
         assert_eq!(
             lines[3],
@@ -624,6 +628,6 @@ mod tests {
         let mut idle = Out::default();
         diag_messages(Boot::Unknown, None, &Live::default(), &mut idle);
         assert!(idle.text().contains("rx 0 bytes, last never; tx 0 bytes, dropped 0, writer idle, longest write 0 ms]"));
-        assert!(idle.text().contains("usb configured 0, deconfigured 0, resets 0, suspends 0, resumes 0, disabled 0, last never,"));
+        assert!(idle.text().contains("usb configured 0, deconfigured 0, resets 0, suspends 0, resumes 0, disabled 0, lockups 0, last never,"));
     }
 }

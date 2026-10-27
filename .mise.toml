@@ -25,6 +25,10 @@ run = "uv run spinny-bridge"
 description = "Follow the kernel's USB and serial lines here, or on a Pi over ssh: mise run usb-log -- pi@spinny.local"
 run = "relay/usb-log.sh"
 
+[tasks.usb-reset]
+description = "Reset the controller's USB port, here or on a Pi over ssh, to bring back a locked-up USB controller: mise run usb-reset -- pi@spinny.local"
+run = "relay/usb-reset.sh"
+
 [tasks.pi-logs]
 description = "The backend's journal and the tails of spinny.log and wire.log on a Pi running the service: mise run pi-logs -- pi@spinny.local"
 run = "relay/pi-logs.sh"

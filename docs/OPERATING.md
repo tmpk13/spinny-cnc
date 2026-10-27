@@ -305,6 +305,17 @@ every few seconds. What to read, in order:
    its journal and both log tails instead. With socat standing in for
    the bridge, its terminal prints each connection, open and error.
 
+A board that stays on the bus, answers nothing, and greets no open with
+its banner, while the kernel logs nothing at all, is most likely a USB
+controller lockup (RP2040 erratum E15: a bus error during a transfer to
+the host leaves the controller deaf until a bus reset). `usbmon` on the
+host shows every transfer, control ones included, failing at once with
+-71. Firmware from 2026-10-27 on notices within 100 ms, stops what was
+running as an unplug would, and drops off the bus for the host to
+enumerate it again; `diag` counts these as `lockups`. Older firmware
+needs `mise run usb-reset -- user@host` (or with no host, here), which
+brings it back without a reset of the board.
+
 Bring a board that stopped answering back with its RESET button rather
 than a power cycle when you can: the record of its last life survives
 the one and not the other, and the next connect logs it. `diag` typed at

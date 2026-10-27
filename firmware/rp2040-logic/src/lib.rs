@@ -11,3 +11,4 @@ pub mod out;
 pub mod pins;
 pub mod step;
 pub mod tmc;
+pub mod usb_guard;
