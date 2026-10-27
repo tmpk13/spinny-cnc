@@ -12,7 +12,13 @@ tool = "spindle"
 # socket with its driver left alone.
 [rail]
 socket = "X"
-steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn; the step generator caps it near 470 mm/min
+# 32 microsteps: the driver interpolates every step to 256, so the motion
+# is as smooth as at 256 and 0.6 um per step is far below what the screw
+# holds, while the step generator's 100 kHz ceiling moves from 470 mm/min
+# to 3750. max_rate is a first step up; raise it while nothing stalls.
+microsteps = 32
+steps_per_mm = 1600         # 200 steps, 32 microsteps, 4 mm per turn
+max_rate = 1200
 limit = 60
 
 [table]
@@ -21,8 +27,9 @@ current_ma = 0
 
 [slide]
 socket = "Y"
-steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn
-max_rate = 560
+microsteps = 32
+steps_per_mm = 1600         # 200 steps, 32 microsteps, 4 mm per turn
+max_rate = 1200
 accel = 50
 jerk = 3
 jog_rate = 120
@@ -31,7 +38,8 @@ limit = 40
 [focus]
 socket = "Z"
 fitted = true
-steps_per_mm = 10240        # 200 steps, 256 microsteps, 5 mm per turn
+microsteps = 32
+steps_per_mm = 1280         # 200 steps, 32 microsteps, 5 mm per turn
 max_rate = 600
 accel = 50
 jerk = 1
