@@ -292,6 +292,8 @@
   file leaves the rail's bar out.
 - `mise run uf2` builds the board firmware as a uf2 and `scp-uf2` copies
   it to a host given after `--`.
+- `mise run load-uf2` writes the uf2 onto a board in BOOTSEL through the
+  `/mnt/pico` automount, here or on a Pi given after `--`.
 
 ## Fourth full review (2026-10-11)
 

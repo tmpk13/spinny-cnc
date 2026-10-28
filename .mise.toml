@@ -109,3 +109,8 @@ run = "scp firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
 [tasks.controls-fixture]
 description = "Write the default controls fixture the toolpath and page tests check their copies of the defaults against"
 run = "uv run python -m spinny_laser.controls > toolpath/tests/data/default-controls.json"
+
+[tasks.load-uf2]
+description = "Build the uf2 and write it onto a board held in BOOTSEL, here or on a Pi over ssh, through the /mnt/pico automount from relay/pico-udev-setup.sh: mise run load-uf2 -- pi@spinny.local"
+depends = ["uf2"]
+run = "relay/load-uf2.sh"

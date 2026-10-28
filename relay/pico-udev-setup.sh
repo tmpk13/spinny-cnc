@@ -1,7 +1,7 @@
 # Ensure mount directory exists
 sudo mkdir -p /mnt/pico
 
-# Write udev rules
+# Write rules
 sudo tee /etc/udev/rules.d/99-pico.rules << 'EOF'
 # ----------------------------------------------------------------------------------
 # Raspberry Pi Pico (Vendor ID: 2e8a)
@@ -19,14 +19,14 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", MODE="0666", GROUP="dialout", SYMLINK
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="0004", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000c", MODE="0666", GROUP="plugdev", TAG+="uaccess"
 
-# Mount partition on insert
-ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ATTRS{idVendor}=="2e8a", RUN+="/usr/bin/systemd-mount --no-block --automount=yes %E{DEVNAME} /mnt/pico"
+# Mount partition on insert with full user write permissions (umask=000)
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ATTRS{idVendor}=="2e8a", RUN+="/usr/bin/systemd-mount -o umask=000 --no-block --automount=yes %E{DEVNAME} /mnt/pico"
 
 # Unmount cleanly on removal
 ACTION=="remove", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_VENDOR_ID}=="2e8a", RUN+="/usr/bin/systemd-mount --umount /mnt/pico"
 EOF
 
-# Reload udev engine
+# Reload rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 
 sudo usermod -aG plugdev,dialout $USER
