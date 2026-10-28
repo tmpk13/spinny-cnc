@@ -10,6 +10,7 @@ import {
     cellColor,
     focusAgainText,
     gridForJob,
+    goOnTravel,
     heightStats,
     jobBox,
     jointLineBoard,
@@ -479,5 +480,14 @@ describe("compensated runs", () => {
         expect(note()).toContain("Touch off here before a run follows it");
         expect(focusAgainText(heightMap([[0, null]]), false)).toBe("");
         expect(focusAgainText(null, false)).toBe("");
+    });
+});
+
+describe("going on with a map", () => {
+    test("says the head rises back to the travel height a miss left it below", () => {
+        expect(goOnTravel(heightMap([[-1.5, null]], { travel: 0.25 }))).toContain("first rises to H 0.250");
+        // A map saved before the travel height was kept travels where the head is.
+        expect(goOnTravel(heightMap([[-1.5, null]]))).toContain("at the height it has now");
+        expect(goOnTravel(null)).toContain("at the height it has now");
     });
 });

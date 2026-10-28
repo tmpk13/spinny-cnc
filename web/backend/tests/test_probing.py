@@ -137,6 +137,52 @@ def test_a_miss_stops_probing_and_leaves_the_alarm(client, fake):
     assert fake.received_lines[-1].startswith("probe")
 
 
+def deep_corner(x: float, y: float) -> float:
+    """The board, sagging out of a 5 mm probe's reach past X 5."""
+    return surface(x, y) - (5.0 if x > 5 else 0.0)
+
+
+def test_going_on_after_a_miss_rises_to_the_travel_height_first(client, fake):
+    fake.surface = deep_corner
+    state = probe(client)
+    assert state["probe"]["state"] == "error"
+    assert state["map"]["travel"] == 0.0
+    # The miss left the head the probe's depth down.
+    assert fake.h == pytest.approx(-5.0)
+    assert client.post("/api/unlock").status_code == 200
+    assert client.put("/api/heightmap/settings", json={"depth": 8}).status_code == 200
+    sent = len(fake.received_lines)
+    response = client.post("/api/heightmap/probe", json={**state["map"]["grid"], "resume": True})
+    assert response.status_code == 200, response.text
+    state = wait_probe(client)
+    assert state["probe"]["state"] == "done", state["probe"]
+    lines = [line for line in fake.received_lines[sent:] if line.split()[0] in ("go", "probe")]
+    # Up before anything moves across, then travelling at the old height.
+    assert lines[0] == "go H0.0000"
+    assert lines[1].startswith("go R") and "H" not in words(lines[1])
+    assert [line for line in lines if line.startswith("go H0")] == ["go H0.0000"] * 5
+    for iy, y in enumerate([-5, 5]):
+        for ix, x in enumerate([-10, 0, 10]):
+            assert state["map"]["heights"][iy][ix] == pytest.approx(deep_corner(x, y), abs=1e-4)
+    assert fake.h == 0.0
+
+
+def test_going_on_keeps_a_travel_height_raised_above_the_first(client, fake):
+    fake.surface = lambda x, y: None if x > 5 else surface(x, y)
+    grid = probe(client)["map"]["grid"]
+    client.post("/api/unlock")
+    fake.surface = surface
+    fake.h = 2.0
+    sent = len(fake.received_lines)
+    assert client.post("/api/heightmap/probe", json={**grid, "resume": True}).status_code == 200
+    state = wait_probe(client)
+    assert state["probe"]["state"] == "done", state["probe"]
+    assert state["map"]["travel"] == 2.0
+    lines = [line for line in fake.received_lines[sent:] if line.split()[0] in ("go", "probe")]
+    assert lines[0].startswith("go R")
+    assert fake.h == 2.0
+
+
 def test_probing_is_refused_without_a_focus_axis_or_with_the_probe_down(client, fake):
     fake.settings["h_axis"] = 0
     body = {"x0": -10, "y0": -5, "x1": 10, "y1": 5}

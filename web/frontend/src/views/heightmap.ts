@@ -250,6 +250,15 @@ export function mapPartial(map: HeightMap | null): boolean {
     return mapCounts(map).probed > 0;
 }
 
+/** What going on with `map` does with the head: back up to the height probing travelled at, which a miss leaves it below. */
+export function goOnTravel(map: HeightMap | null | undefined): string {
+    if (map?.travel === null || map?.travel === undefined) {
+        return "The head travels at the height it has now, so it must clear the board.";
+    }
+    return `The head first rises to H ${formatFixed(map.travel, 3)}, where probing began, if it is lower, and travels there;`
+        + " a point the probe missed is probed again from that height, so deepen the probe if it fell short.";
+}
+
 /** What the progress line says of the point being probed: a pad's place on a pad map, a point's otherwise. */
 export function probingText(probe: { done: number; total: number; pad?: number | null; seconds: number; remaining?: number | null }, padMap: boolean): string {
     const left = aboutTime(probe.remaining);
@@ -694,7 +703,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const question = resume
-            ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? The head travels at the height it has now, so it must clear the board.`
+            ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? ${goOnTravel(ctx.store.get().heightMap?.map)}`
             : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? The head travels between them at the height it has now, so it must clear the board, and it replaces the current map.`;
         if (!(await askConfirm(question, resume ? "Continue" : "Probe pads"))) {
             return;
@@ -712,8 +721,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const left = gridPointCount(map.grid) - map.heights.flat().filter((value) => value !== null).length;
         const ok = await askConfirm(
-            `Go on probing the ${left} points the map still lacks? The head travels at the height it has now,`
-            + " so it must clear the board.",
+            `Go on probing the ${left} points the map still lacks? ${goOnTravel(map)}`,
             "Continue",
         );
         if (!ok) {

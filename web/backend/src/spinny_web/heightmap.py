@@ -288,6 +288,11 @@ class HeightMap(Finite):
     # Where the probe tip sat from the beam when the map was probed, along
     # the rail and across it, mm; kept to say how it was made.
     probe_offset: tuple[float, float] = (0.0, 0.0)
+    # The focus axis height the head travels at between points, mm: where
+    # it was when probing began. Going on with the map rises to it first,
+    # since a miss leaves the head a probe's depth lower. None on a map
+    # saved before it was kept.
+    travel: float | None = None
     # When probing started, ISO 8601.
     created: str = ""
 

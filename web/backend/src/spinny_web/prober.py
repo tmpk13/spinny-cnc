@@ -409,6 +409,14 @@ class Prober:
                 heightmap.focus_known = previous.focus_known
                 heightmap.focus_gap = previous.focus_gap
         grid = heightmap.grid
+        # A map gone on with keeps the travel height it was begun at, or a
+        # higher one the head has been raised to: a missed probe leaves the
+        # head its depth below that, and travelling from there would drag
+        # it through the board.
+        travel = status.h
+        if resume is not None and heightmap.travel is not None:
+            travel = max(travel, heightmap.travel)
+        heightmap.travel = travel
         # Every point is checked for reach before the first move. A grid
         # point inside the tip's circle about the axis is probed from the
         # circle when near enough; a pad is where it is.
@@ -442,7 +450,7 @@ class Prober:
             start = streamer.start_of(status)
             self._thread = threading.Thread(
                 target=self._run,
-                args=(grid, settings, link, streamer, start, status.h, joints, heightmap, progress, self._restarts, todo),
+                args=(grid, settings, link, streamer, start, travel, joints, heightmap, progress, self._restarts, todo, status.h),
                 name="prober",
                 daemon=True,
             )
@@ -536,7 +544,7 @@ class Prober:
             self._message("error", f"probing failed: {exc!r}")
             self._finish(progress, ERROR, f"probing failed: {exc!r}")
 
-    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress, restarts, todo=None) -> None:
+    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress, restarts, todo=None, at=None) -> None:
         if restarts is None:
             restarts = link.restarts
         h_rate = streamer.rates.h_rate
@@ -545,6 +553,10 @@ class Prober:
         joint = start
         rise = 0.0
         try:
+            if at is not None and at < travel:
+                # Up to the travel height before anything moves across.
+                self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
+                rise = travel - at
             for key in grid.order() if todo is None else todo:
                 if self._abort.is_set():
                     return

@@ -606,6 +606,8 @@ export interface HeightMap {
     focus_gap?: number | null;
     /** The probe tip from the beam when probed: along the rail, across it, mm, signed as ProbeSettings.offset. */
     probe_offset: [number, number];
+    /** The focus axis height probing travels at, mm: where the head was when it began; going on rises to it first. */
+    travel?: number | null;
     created: string;
     /** A pad map: the pads probed, board mm; null or missing on a grid map. */
     points?: [number, number][] | null;
