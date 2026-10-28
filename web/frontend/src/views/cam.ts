@@ -33,7 +33,7 @@ export interface NumberSpec {
 
 /** The cutting settings of a spindle operation, in the order shown. */
 export const SPINDLE_FIELDS: NumberSpec[] = [
-    { key: "depth", label: "Depth mm", step: 0.05, min: 0 },
+    { key: "depth", label: "Depth mm", step: 0.01, min: 0 },
     { key: "step_down", label: "Step down mm", step: 0.1, min: 0 },
     { key: "feed", label: "Feed mm/min", step: 10, min: 0 },
     { key: "plunge", label: "Plunge mm/min", step: 5, min: 0 },

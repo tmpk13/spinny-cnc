@@ -661,7 +661,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             const speed = groupField(group.speed, 1, milling ? "feed" : "speed");
             const passes = groupField(group.passes, 1, "passes");
             const depth = groupField(group.depth ?? DEFAULT_DEPTH, 0, "depth");
-            depth.step = "0.05";
+            depth.step = "0.01";
             const plunge = groupField(group.plunge ?? DEFAULT_PLUNGE, 1, "plunge");
             // A dispenser's group has the paste thickness in place of a cut's numbers.
             const dots = group.tool === "dispenser";
