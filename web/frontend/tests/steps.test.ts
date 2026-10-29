@@ -98,6 +98,11 @@ describe("the steps panel", () => {
         document.body.append(page);
         goToPanel("target-panel");
         expect(panel.classList.contains("flash")).toBe(true);
-        expect(document.querySelector('.tab[aria-selected="true"]')?.getAttribute("data-page") ?? "config").toBe("config");
+        expect(localStorage.getItem("spinny.page")).toBe("config");
+        // The page and the picks are remembered in storage the other test files share.
+        localStorage.removeItem("spinny.page");
+        localStorage.removeItem("test.pick.setup");
+        localStorage.removeItem("test.steps.setup");
+        page.remove();
     });
 });
