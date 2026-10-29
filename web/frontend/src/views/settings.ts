@@ -1,15 +1,44 @@
 // Firmware settings table with inline edits, apply, save to flash, and the
-// host chord tolerance; on a spindle machine also the host's milling travel
-// clearance and spin-up, on a dispenser the travel clearance and what a dot
-// of paste is made of. On the Config page, beside the machine file that is
-// the other way to set every one of them.
+// host chord tolerance and travel height; on a spindle machine also the
+// host's milling travel clearance and spin-up, on a dispenser the travel
+// clearance and what a dot of paste is made of. On the Config page, beside
+// the machine file that is the other way to set every one of them. What is
+// typed and not applied is marked and counted, and so is what was applied
+// and not saved to flash.
 
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
-import { isDispensing, isMilling } from "../profile.ts";
-import type { AppState } from "../state.ts";
+import { isDispensing, isMilling, profileOf } from "../profile.ts";
+import { setPending, type AppState } from "../state.ts";
 import type { HostSettings, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
+import { readTravel } from "./jog.ts";
+
+/** Where the panel's edits stand: typed and not applied, applied and not saved to flash, or all applied. */
+export interface ApplyState {
+    kind: "pending" | "unsaved" | "applied";
+    text: string;
+    detail: string;
+}
+
+/** What the panel says of its edits: `pending` typed and not applied, `unsaved` the settings written since the last save. */
+export function applyState(pending: number, unsaved: string[]): ApplyState {
+    if (pending > 0) {
+        return {
+            kind: "pending",
+            text: `${pending} not applied`,
+            detail: "the marked values are typed in and not sent: Apply sends them, Reload drops them",
+        };
+    }
+    if (unsaved.length > 0) {
+        return {
+            kind: "unsaved",
+            text: "applied, not saved to flash",
+            detail: `written since the last save: ${unsaved.join(", ")}; a restart reads flash again, so Save to flash keeps them`,
+        };
+    }
+    return { kind: "applied", text: "all applied", detail: "the controller runs with every value shown" };
+}
 
 /** The values that differ from what the backend reported. */
 export function changedValues(settings: SettingsResponse, edits: Record<string, number>): Record<string, number> {
@@ -43,11 +72,16 @@ function writeFoldOpen(open: boolean): void {
 }
 
 /** The host's numbers the panel has a field for. */
-type HostField = "tolerance" | "clearance" | "spinup" | DispensingKey;
+type HostField = "tolerance" | "travel" | "clearance" | "spinup" | DispensingKey;
 type DispensingKey = "gap" | "retract" | "output" | "extrude_rate" | "dwell_ms";
 
 export function mountSettings(root: HTMLElement, ctx: Ctx): void {
     const tolerance = numberField({ value: 0.005, min: 0.0001, step: 0.001, width: "6rem" });
+    // The travel height, blank for none: on a machine with a focus axis.
+    const travel = numberField({ step: 0.5, placeholder: "off", width: "6rem" });
+    travel.setAttribute("aria-label", "Travel height H mm");
+    const travelLabel = labeled("Travel H mm", travel, "labeled inline hidden");
+    travelLabel.title = "The H the head rises to before a goto, probing or a camera routine moves it across the board; blank for none";
     const clearance = numberField({ value: 2, min: 0.1, step: 0.5, width: "6rem" });
     const spinup = numberField({ value: 2, min: 0, step: 0.5, width: "6rem" });
     // Off, every spindle line asks for s_max: a spindle with its own speed
@@ -77,12 +111,17 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         labeled("Dwell ms", dwellMs, "labeled inline"),
     );
     dispensing.title = "Every dot: the head travels the clearance over the surface, the needle stands the gap over the pad, the plunger pushes the pad's area times the paste thickness over the output (plus the last retract) at the extrude rate, waits the dwell, and pulls back the retract";
-    const apply = button("Apply", () => applyEdits(), "btn btn-primary");
+    const apply = button("Apply", () => applyEdits(), "btn");
     const save = button("Save to flash", () => saveFlash(), "btn");
     const reload = button("Reload", () => ctx.refreshSettings(), "btn btn-quiet");
     const table = el("table", { class: "settings" });
+    // Whether what is shown is what the controller runs with, beside the
+    // buttons and again in the head, which shows while the panel is folded.
+    const stateChip = el("span", { class: "badge apply-state hidden" });
+    const headChip = el("span", { class: "badge apply-state hidden" });
     // The buttons stay in view while the long table scrolls under them.
-    const actions = el("div", { class: "button-row settings-actions" }, labeled("Chord tolerance mm", tolerance, "labeled inline"), apply, save, reload);
+    const actions = el("div", { class: "button-row settings-actions" },
+        labeled("Chord tolerance mm", tolerance, "labeled inline"), travelLabel, apply, save, reload, stateChip);
     // On the narrow layout the page scrolls under the status bar, which is
     // stuck to its top; the row is stuck under that, however tall it is
     // (it wraps onto two lines on a phone). The wide layout scrolls each
@@ -101,7 +140,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         el("p", { class: "muted hint" }, "the values the controller runs with now; a machine file loaded from the panel beside sets every one of them. laser_pin, probe_pin, tool_pin and the endstop pins are read at boot, and tool_out claims its pin then: Save to flash, then restart the board for those."),
     );
     const fold = el("details", { class: "panel-fold", open: readFoldOpen() },
-        el("summary", { class: "panel-head" }, el("h2", {}, "Firmware settings")),
+        el("summary", { class: "panel-head" }, el("h2", {}, "Firmware settings"), headChip),
         body,
     );
     fold.addEventListener("toggle", () => writeFoldOpen(fold.open));
@@ -118,9 +157,63 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
 
     const machineOf = (state: AppState): string | null => (state.snapshot.connected ? state.snapshot.url ?? "" : null);
 
+    // The host fields of the rows shown, each with the key it stands for.
+    const hostFields = (): [HTMLInputElement, HostField][] => {
+        const snapshot = ctx.store.get().snapshot;
+        const fields: [HTMLInputElement, HostField][] = [[tolerance, "tolerance"]];
+        if (profileOf(snapshot).h_axis) {
+            fields.push([travel, "travel"]);
+        }
+        if (isMilling(snapshot)) {
+            fields.push([clearance, "clearance"], [spinup, "spinup"]);
+        }
+        if (isDispensing(snapshot)) {
+            fields.push([dispenseClearance, "clearance"], [gap, "gap"], [retract, "retract"], [output, "output"], [extrudeRate, "extrude_rate"], [dwellMs, "dwell_ms"]);
+        }
+        return fields;
+    };
+
+    /** Marks the host fields typed in, counts every edit not applied, and says where the panel stands. */
+    function showState(): void {
+        const settings = ctx.store.get().settings;
+        let count = Object.keys(edits).length;
+        const shownFields = hostFields();
+        for (const field of [tolerance, travel, clearance, spinup, dispenseClearance, gap, retract, output, extrudeRate, dwellMs]) {
+            field.closest(".labeled")?.classList.remove("edited");
+        }
+        if (settings && hostShown) {
+            for (const [field, key] of shownFields) {
+                if (field.value !== hostShown[key]) {
+                    field.closest(".labeled")?.classList.add("edited");
+                    count += 1;
+                }
+            }
+            if (isMilling(ctx.store.get().snapshot) && speedControl.checked !== (settings.host.speed_control ?? true)) {
+                count += 1;
+            }
+        }
+        setPending(ctx.store, "settings", settings ? count : 0);
+        apply.classList.toggle("btn-primary", count > 0);
+        const now = settings ? applyState(count, settings.unsaved ?? []) : null;
+        save.classList.toggle("btn-primary", now?.kind === "unsaved");
+        for (const chip of [stateChip, headChip]) {
+            chip.classList.toggle("hidden", now === null);
+            if (now) {
+                chip.textContent = now.text;
+                chip.title = now.detail;
+                chip.setAttribute("data-apply", now.kind);
+            }
+        }
+    }
+    for (const field of [tolerance, travel, clearance, spinup, dispenseClearance, gap, retract, output, extrudeRate, dwellMs]) {
+        field.addEventListener("input", () => showState());
+    }
+    speedControl.addEventListener("change", () => showState());
+
     const followMachine = (state: AppState): void => {
         milling.classList.toggle("hidden", !isMilling(state.snapshot));
         dispensing.classList.toggle("hidden", !isDispensing(state.snapshot));
+        travelLabel.classList.toggle("hidden", !profileOf(state.snapshot).h_axis);
         const machine = machineOf(state);
         if (machine !== editsFor) {
             editsFor = machine;
@@ -130,6 +223,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
                 render(shown);
             }
         }
+        showState();
     };
     ctx.store.subscribe(followMachine, ["snapshot"]);
     // The machine may be known before the panel is: its rows follow it at once.
@@ -153,11 +247,13 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             edits = {};
             hostShown = null;
             replace(table, el("tbody", {}, el("tr", {}, el("td", { class: "muted" }, "no settings loaded"))));
+            showState();
             return;
         }
         const focused = document.activeElement;
         const host: Record<HostField, string> = {
             tolerance: String(settings.host.tolerance),
+            travel: settings.host.travel === null || settings.host.travel === undefined ? "" : String(settings.host.travel),
             clearance: String(settings.host.clearance ?? 2),
             spinup: String(settings.host.spinup ?? 2),
             gap: String(settings.host.gap ?? 0.1),
@@ -173,6 +269,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             }
         };
         follow(tolerance, "tolerance");
+        follow(travel, "travel");
         follow(clearance, "clearance");
         follow(dispenseClearance, "clearance");
         follow(spinup, "spinup");
@@ -200,9 +297,16 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             const input = numberField({ value: entry.name in kept ? kept[entry.name] : current ?? null, width: "6.5rem" });
             input.setAttribute("aria-label", entry.name);
             inputs.set(entry.name, input);
-            const row = el("tr", { class: entry.name in kept ? "edited" : "" },
+            // What the controller has, beside a value typed over it.
+            const was = el("span", { class: "was" });
+            const mark = (): void => {
+                const edited = entry.name in edits;
+                row.classList.toggle("edited", edited);
+                was.textContent = edited ? `was ${current ?? "none"}` : "";
+            };
+            const row = el("tr", {},
                 el("td", { class: "mono" }, entry.name),
-                el("td", {}, input),
+                el("td", {}, input, was),
                 el("td", { class: "muted" }, entry.unit),
                 el("td", { class: "muted help" }, entry.help),
             );
@@ -213,20 +317,25 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
                 } else {
                     edits[entry.name] = value;
                 }
-                row.classList.toggle("edited", entry.name in edits);
+                mark();
+                showState();
             });
-            return row;
+            return { row, mark };
         });
         edits = kept;
+        for (const { mark } of rows) {
+            mark();
+        }
         replace(table,
             el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Value"), el("th", {}, "Unit"), el("th", {}, "Help"))),
-            el("tbody", {}, ...rows),
+            el("tbody", {}, ...rows.map(({ row }) => row)),
         );
         const again = typing?.name ? inputs.get(typing.name) : undefined;
         if (typing && again) {
             again.value = typing.text;
             again.focus();
         }
+        showState();
     }
 
     async function applyEdits(): Promise<void> {
@@ -252,12 +361,21 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "the spin-up cannot be negative");
             return;
         }
+        const travelRead = readTravel(travel.value);
+        if ("problem" in travelRead && profileOf(ctx.store.get().snapshot).h_axis) {
+            ctx.toast("error", travelRead.problem);
+            return;
+        }
         const patch: { values?: Record<string, number>; host?: HostSettings } = {};
         if (Object.keys(values).length > 0) {
             patch.values = values;
         }
         const host: HostSettings = { tolerance: settings.host.tolerance };
         let hostChanged = false;
+        if ("travel" in travelRead && profileOf(ctx.store.get().snapshot).h_axis && travelRead.travel !== (settings.host.travel ?? null)) {
+            host.travel = travelRead.travel;
+            hostChanged = true;
+        }
         if (hostTolerance !== null && hostTolerance > 0 && hostTolerance !== settings.host.tolerance) {
             host.tolerance = hostTolerance;
             hostChanged = true;
@@ -317,5 +435,7 @@ export function mountSettings(root: HTMLElement, ctx: Ctx): void {
         if (done) {
             ctx.toast("info", "settings saved to flash");
         }
+        // The list of what is not saved is the settings' to say.
+        await ctx.refreshSettings();
     }
 }

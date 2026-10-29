@@ -2926,9 +2926,16 @@ export class MockBackend implements Api, EventFeed {
             schema: SETTINGS_SCHEMA,
             host: this.hostSettings(),
             machine: found?.id ?? null,
+            unsaved: this.unsavedSettings(),
             controls_from: source?.id ?? null,
             controls: source?.controls ?? defaultControls(this.machine.profile()),
         };
+    }
+
+    /** The settings that differ from what flash holds: the mock keeps a copy of flash, which the backend can only follow by what it sent. */
+    private unsavedSettings(): string[] {
+        const { settings, flash } = this.machine;
+        return Object.keys(settings).filter((name) => settings[name] !== flash[name]).sort();
     }
 
     /** The host's own settings as the settings response carries them. */

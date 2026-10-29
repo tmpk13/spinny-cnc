@@ -230,6 +230,46 @@ input[type="checkbox"] {
     border-bottom-color: var(--accent);
 }
 
+/* Edits on that page not applied yet: their count beside the tab's name. */
+.tabs .tab[data-pending]::after {
+    content: attr(data-pending);
+    display: inline-block;
+    margin-left: 0.45em;
+    min-width: 1.4em;
+    padding: 0.05em 0.4em;
+    border-radius: 1em;
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-align: center;
+    color: var(--on-fill);
+    background: color-mix(in oklab, var(--hold) 85%, var(--base03));
+}
+
+/* Where a panel says whether its edits are applied: typed and not sent,
+   sent and not saved to flash, or all applied. */
+.apply-state {
+    --tone: var(--jog);
+}
+
+.apply-state[data-apply="pending"] { --tone: var(--hold); }
+.apply-state[data-apply="unsaved"] { --tone: var(--orange); }
+.apply-state[data-apply="applied"] { --tone: var(--jog); background: transparent; }
+
+/* A host value or camera field typed in and not applied. */
+.labeled.edited > input,
+.labeled.edited > select {
+    border-color: var(--hold);
+    box-shadow: 0 0 0 0.12rem color-mix(in oklab, var(--hold) 35%, transparent);
+}
+
+table.settings .was {
+    margin-left: 0.4em;
+    font-size: 0.8em;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
 .grid {
     display: grid;
     gap: var(--gap);

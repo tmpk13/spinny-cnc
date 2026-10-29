@@ -558,6 +558,10 @@ class Backend:
         # its focus axis at zero wherever the head was.
         self._soft_resets = 0
         self._restarts_seen: int | None = None
+        # The settings written since the controller's were last saved to
+        # flash, or loaded from it, as far as this side has seen: a connect
+        # knows of none, and a restart reads them all from flash again.
+        self._unsaved: set[str] = set()
         # The last `boot ...` line reported, so the same one is not a fault twice.
         self._boot_reported: str | None = None
         # The focus axis frame, counted up whenever it may have changed, and
@@ -729,6 +733,7 @@ class Backend:
             link.subscribe(self._on_link_event)
             self._soft_resets = 0
             self._restarts_seen = None
+            self._unsaved.clear()
             self.link = link
             try:
                 link.open()
@@ -1066,6 +1071,7 @@ class Backend:
         unasked = link.restarts - self._soft_resets
         if unasked > seen:
             self._restarts_seen = unasked
+            self._unsaved.clear()
             self._frame_changed("the machine restarted")
 
     def _frame_changed(self, reason: str) -> None:
@@ -1412,6 +1418,8 @@ class Backend:
             lines = send()
         if reframes and lines and lines[-1] == "ok":
             self._frame_changed("a position or setting changed at the console")
+        if lines and lines[-1] == "ok":
+            self._note_flash(text)
         if setting:
             # A setting typed at the console: what this side remembers of
             # the machine's settings is stale, and the page's idea of what
@@ -1571,6 +1579,8 @@ class Backend:
             self._settings_cache = (now, values)
             self.rates = Rates.from_settings(values)
             self.profile = profile_of(values)
+        # A restart since the last look has read every setting from flash.
+        self._check_restart()
         return self._settings_response(values)
 
     def _settings_response(self, values: dict) -> dict:
@@ -1591,6 +1601,7 @@ class Backend:
             "schema": SETTINGS_SCHEMA,
             "host": self.host_settings(),
             "machine": found.id if found is not None else None,
+            "unsaved": sorted(self._unsaved),
             "controls_from": source.id if source is not None else None,
             "controls": source.controls if source is not None else controls_of(profile),
         }
@@ -1749,6 +1760,7 @@ class Backend:
                 link.request_ok(f"${name}={text}")
                 applied.append(name)
                 sending = None
+            self._unsaved.update(applied)
         except Exception as exc:
             if isinstance(exc, CommandError):
                 sending = None
@@ -1784,8 +1796,25 @@ class Backend:
                 self.publish_message("error", f"could not put {name} back to {value}: {exc}")
                 return
 
+    def _note_flash(self, text: str) -> None:
+        """What a line typed at the console and taken did to the settings
+        flash holds: `$name=value` writes one that is not saved yet,
+        `$save` saves them all, `$load` reads them back, and `$defaults`
+        changes them without saving."""
+        if not text.startswith("$"):
+            return
+        name, sep, _ = text[1:].partition("=")
+        word = name.strip().lower()
+        if sep:
+            self._unsaved.add(name.strip())
+        elif word in ("save", "load"):
+            self._unsaved.clear()
+        elif word == "defaults":
+            self._unsaved.add("$defaults")
+
     def save_settings(self) -> dict:
         self.require_link().request_ok("$save")
+        self._unsaved.clear()
         return {"saved": True}
 
     # --- ports and jobs --------------------------------------------------------------

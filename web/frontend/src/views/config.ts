@@ -7,6 +7,7 @@
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, replace, setLocked } from "../dom.ts";
+import { setPending } from "../state.ts";
 import type { MachineDocument, MachineProblem, MachineResponse, MachineSummary } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
@@ -97,9 +98,14 @@ export function mountConfig(root: HTMLElement, ctx: Ctx): void {
     let picked: string | null = readPick();
     let shown: MachineResponse | null = null;
     let dirty = false;
+    // An edit not saved is counted on the page's tab.
+    const setDirty = (value: boolean): void => {
+        dirty = value;
+        setPending(ctx.store, "machine-file", value ? 1 : 0);
+    };
 
     editor.onInput((problem) => {
-        dirty = true;
+        setDirty(true);
         setStatus(problem ?? "edited, not saved", problem !== null);
     });
     pick.addEventListener("change", () => {
@@ -212,7 +218,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx): void {
 
     function show(response: MachineResponse): void {
         shown = response;
-        dirty = false;
+        setDirty(false);
         editor.setText(response.text);
         showProblems(response.problems);
         note.textContent = response.document ? describeMachine(response.document) : "the file does not read; mend it and Save";
@@ -273,7 +279,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx): void {
     function revertText(): void {
         if (shown) {
             editor.setText(shown.text);
-            dirty = false;
+            setDirty(false);
             showProblems(shown.problems);
             setStatus(shown.document ? "" : "does not read", shown.document === null);
         }

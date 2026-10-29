@@ -116,6 +116,16 @@ for priming the needle and checking the flow.
    run picks up at a line like any other, the plunger declared where the
    plan had it.
 
+### Edits not applied
+
+A value typed into the Firmware settings panel is marked (the row shows
+what the controller has beside it) until *Apply* sends it, and the
+panel's chip counts them: *2 not applied*, then *applied, not saved to
+flash* until *Save to flash*, then *all applied*. The camera settings,
+the machine file and the CAM profile editors count their edits the same
+way, and every tab shows the count of edits not applied on its page;
+leaving the page with any asks first.
+
 ### The travel height
 
 *Travel H* in the Jog panel (on a machine with a focus axis) is an H the

@@ -92,6 +92,8 @@ export interface AppState {
     align: AlignState | null;
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;
+    /** Edits typed and not applied yet, counted by the panel that holds them (`pendingPages` puts them on a tab). */
+    pending: Record<string, number>;
     console: ConsoleLine[];
     /** Show the link's status polls in the console. */
     showPolls: boolean;
@@ -119,6 +121,7 @@ export function initialState(mock: boolean): AppState {
         camera: null,
         align: null,
         mapChoice: "off",
+        pending: {},
         console: [],
         showPolls: false,
         toasts: [],
@@ -137,6 +140,26 @@ export function appendConsole(store: Store<AppState>, line: ConsoleLine): void {
     const next = lines.length >= CONSOLE_LIMIT ? lines.slice(lines.length - CONSOLE_LIMIT + 1) : lines.slice();
     next.push(line);
     store.set({ console: next });
+}
+
+/** Says how many edits a panel holds that are not applied; 0 when it has none. */
+export function setPending(store: Store<AppState>, source: string, count: number): void {
+    const pending = store.get().pending;
+    if ((pending[source] ?? 0) === count) {
+        return;
+    }
+    const next = { ...pending };
+    if (count > 0) {
+        next[source] = count;
+    } else {
+        delete next[source];
+    }
+    store.set({ pending: next });
+}
+
+/** All the edits not applied yet, over every panel. */
+export function pendingTotal(pending: Record<string, number>): number {
+    return Object.values(pending).reduce((sum, count) => sum + count, 0);
 }
 
 let nextToast = 1;

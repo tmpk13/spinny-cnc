@@ -9,7 +9,7 @@ import { askConfirm } from "../confirm.ts";
 import { activePage, button, el, labeled, numberField, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
-import type { AppState } from "../state.ts";
+import { setPending, type AppState } from "../state.ts";
 import type { CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
@@ -126,6 +126,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     scale.setAttribute("aria-label", "Camera mm per px");
     const applySettings = button("Apply", () => apply(), "btn");
     const applyMeasured = button("Apply", () => apply(), "btn");
+    // How many settings fields are typed in and not applied, beside each Apply.
+    const pendingChips = [el("span", { class: "badge apply-state hidden" }), el("span", { class: "badge apply-state hidden" })];
 
     const lookButton = button("Look for board", () => lookForBoard(), "btn");
     const unloadButton = button("Unload", () => act(ctx.api.cameraBoard(null)), "btn btn-quiet");
@@ -153,14 +155,14 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             labeled("Side", side),
             labeled("Finish", finish),
         ),
-        el("div", { class: "button-row" }, applySettings),
+        el("div", { class: "button-row" }, applySettings, pendingChips[0]),
         el("div", { class: "field-grid" },
             labeled("Offset x mm", offsetX),
             labeled("Offset y mm", offsetY),
             labeled("Roll deg", roll),
             labeled("mm per px", scale),
         ),
-        el("div", { class: "button-row" }, applyMeasured, el("span", { class: "muted" }, "the measured values: what the routine below finds, kept in the backend's settings; write them into the machine file to keep them")),
+        el("div", { class: "button-row" }, applyMeasured, pendingChips[1], el("span", { class: "muted" }, "the measured values: what the routine below finds, kept in the backend's settings; write them into the machine file to keep them")),
         el("div", { class: "button-row" }, lookButton, unloadButton, boardNote),
         el("div", { class: "button-row" },
             labeled("Depth mm", depth, "labeled inline"),
@@ -200,6 +202,32 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         }
         shown.set(field, value);
     };
+    const settingsFields: (HTMLInputElement | HTMLSelectElement)[] = [device, size, fps, side, finish];
+    const measuredFields: (HTMLInputElement | HTMLSelectElement)[] = [offsetX, offsetY, roll, scale];
+    /** Marks the fields typed in and not applied, and counts them for the chips and the page's tab. */
+    const showPending = (): void => {
+        const counts = [settingsFields, measuredFields].map((fields) => {
+            let count = 0;
+            for (const field of fields) {
+                const edited = shown.has(field) && field.value !== shown.get(field);
+                field.closest(".labeled")?.classList.toggle("edited", edited);
+                count += edited ? 1 : 0;
+            }
+            return count;
+        });
+        counts.forEach((count, index) => {
+            const chip = pendingChips[index]!;
+            chip.classList.toggle("hidden", count === 0);
+            chip.textContent = `${count} not applied`;
+            chip.title = "the marked fields are typed in and not sent: Apply sends them";
+            chip.setAttribute("data-apply", "pending");
+        });
+        setPending(ctx.store, "camera", counts[0]! + counts[1]!);
+    };
+    for (const field of [...settingsFields, ...measuredFields]) {
+        field.addEventListener("input", showPending);
+        field.addEventListener("change", showPending);
+    }
 
     /** A camera request; its answer is the state, which goes into the store. */
     async function act(promise: Promise<CameraState>): Promise<void> {
@@ -348,6 +376,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             follow(roll, String(camera.roll));
             follow(scale, String(camera.mm_per_px));
         }
+        showPending();
         const job = state.job;
         const hasBoard = job?.design?.board === true;
         setLocked(lookButton, !job || !hasBoard || finding);

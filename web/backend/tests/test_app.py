@@ -244,6 +244,24 @@ def test_settings_read_write_save(client, fake, tmp_path):
     assert fake.saved == 1
 
 
+def test_the_settings_say_which_were_written_since_the_last_save(client, fake):
+    connect(client)
+    assert client.get("/api/settings").json()["unsaved"] == []
+    response = client.put("/api/settings", json={"values": {"r_rate": 800, "a_rate": 1080}})
+    # a_rate already had that value and was not sent: only r_rate is new.
+    assert response.json()["unsaved"] == ["r_rate"]
+    assert client.post("/api/command", json={"line": "$a_rate=900"}).status_code == 200
+    assert client.get("/api/settings").json()["unsaved"] == ["a_rate", "r_rate"]
+    assert client.post("/api/settings/save").status_code == 200
+    assert client.get("/api/settings").json()["unsaved"] == []
+    client.post("/api/command", json={"line": "$r_rate=700"})
+    client.post("/api/command", json={"line": "$save"})
+    assert client.get("/api/settings").json()["unsaved"] == []
+    # A refused write leaves nothing behind it.
+    assert client.put("/api/settings", json={"values": {"r_rate": -5}}).status_code == 400
+    assert client.get("/api/settings").json()["unsaved"] == []
+
+
 def test_jobs_upload_list_get_patch_delete(client, tmp_path):
     files = {"file": ("drawing.svg", SVG.encode(), "image/svg+xml")}
     data = {"power": "250", "speed": "150", "anchor": "center", "offset_x": "0", "offset_y": "14", "spot": "0.2"}

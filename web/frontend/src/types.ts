@@ -233,6 +233,8 @@ export interface SettingsResponse {
     host: HostSettings;
     /** The machine file these settings are, every one of them; null for settings of no file's. */
     machine?: string | null;
+    /** The settings written since the controller's were last saved to flash or read from it (a connect knows of none); missing from an older backend. */
+    unsaved?: string[];
     /**
      * The file the controls are drawn from: that one, or for settings of no
      * file's the file last loaded from this host or the one file for this

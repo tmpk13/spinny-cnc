@@ -3,7 +3,7 @@
 
 import { HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
-import { appendConsole, initialState, pushToast, Store, type AppState } from "./state.ts";
+import { appendConsole, initialState, pendingTotal, pushToast, Store, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
@@ -228,7 +228,7 @@ function main(): void {
     };
     mountStatusBar(panel("status"), ctx);
     mountFocusBanner(panel("status"), ctx);
-    mountTabs(panel("tabs"));
+    mountTabs(panel("tabs"), store);
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);
     mountLaser(panel("laser"), ctx);
@@ -246,6 +246,14 @@ function main(): void {
     mountConfig(panel("machine-file"), ctx);
     mountSettings(panel("settings"), ctx);
     mountToasts(panel("toasts"), ctx);
+
+    // Leaving with edits not applied asks first; the browser words it.
+    window.addEventListener("beforeunload", (event) => {
+        if (pendingTotal(store.get().pending) > 0) {
+            event.preventDefault();
+            event.returnValue = "";
+        }
+    });
 
     if (mock) {
         ctx.toast("info", "mock backend: nothing here touches the machine");

@@ -6,7 +6,7 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, parseNumber } from "../format.ts";
-import type { AppState } from "../state.ts";
+import { setPending, type AppState } from "../state.ts";
 import type {
     CamGcodeReport,
     CamOperation,
@@ -193,10 +193,15 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     let shown: CamProfileResponse | null = null;
     let picked: string | null = readPick();
     let dirty = false;
+    // An edit not saved is counted on the page's tab.
+    const setDirty = (value: boolean): void => {
+        dirty = value;
+        setPending(ctx.store, "cam-profile", value ? 1 : 0);
+    };
     let lastJob: string | null = null;
 
     fileEditor.onInput((problem) => {
-        dirty = true;
+        setDirty(true);
         setStatus(problem ?? "edited, not saved", problem !== null);
     });
     pick.addEventListener("change", () => {
@@ -252,7 +257,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     async function load(id: string): Promise<void> {
         const response = await ctx.call(ctx.api.camProfile(id));
         if (response && picked === id) {
-            dirty = false;
+            setDirty(false);
             show(response);
         }
     }
@@ -408,7 +413,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         try {
             const response = await ctx.api.saveCamProfile(id, textArea.value);
             if (picked === id) {
-                dirty = false;
+                setDirty(false);
                 show(response);
                 setStatus("saved", false);
             }
@@ -421,7 +426,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     function revertText(): void {
         if (shown) {
             fileEditor.setText(shown.text);
-            dirty = false;
+            setDirty(false);
             setStatus("", false);
         }
     }
@@ -447,7 +452,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
             newId.value = "";
             picked = id;
             writePick(id);
-            dirty = false;
+            setDirty(false);
             await refreshList();
             show(response);
             ctx.toast("info", `saved cam/${id}.toml`);
@@ -470,7 +475,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
             return;
         }
         picked = null;
-        dirty = false;
+        setDirty(false);
         await refresh();
     }
 
