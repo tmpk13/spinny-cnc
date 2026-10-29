@@ -4594,7 +4594,25 @@ export class MockBackend implements Api, EventFeed {
         // In the heights' own frame the offset is the gap itself; set in another, the gap waits for a tie.
         map.focus_gap = this.heightsFrame === this.frame ? round4(value) : null;
         map.focus_set = true;
+        map.focus_known = true;
         this.focusFrame = this.frame;
+        this.emitHeightMap();
+        return this.heightMapState();
+    }
+
+    async keepFocus(): Promise<HeightMapState> {
+        this.refuseWhileProbing();
+        const map = this.heightmap;
+        if (!map) {
+            throw new ApiError(400, "there is no height map: probe the board first");
+        }
+        if (!map.focus_known) {
+            throw new ApiError(400, "the map has never been focused, so there is no offset to keep: focus here");
+        }
+        map.focus_set = true;
+        this.focusFrame = this.frame;
+        const what = this.machine.milling() ? "touch-off" : "focus";
+        this.message("info", `kept the height map's ${what} offset ${map.focus_offset.toFixed(4)} from before`);
         this.emitHeightMap();
         return this.heightMapState();
     }

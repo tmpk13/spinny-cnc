@@ -636,6 +636,27 @@ input[type="number"].field {
     z-index: 5;
 }
 
+/* A prompt on a line of its own at the bottom of the status bar, so it
+   stays in view while the page scrolls. */
+.banner {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--hold) 14%, var(--panel));
+    border-left: 0.3rem solid var(--hold);
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+.banner-text {
+    flex: 1 1 20rem;
+    min-width: 0;
+}
+
 /* The mark is the page icon: a beam spot on the rotation axis. */
 .brand {
     display: inline-flex;

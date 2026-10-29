@@ -714,6 +714,30 @@ def test_a_connect_takes_the_offset_back(tmp_path):
         assert response.status_code == 400 and "renumbered" in response.json()["detail"]
 
 
+def test_the_operator_can_keep_the_offset_a_connect_took_back(tmp_path):
+    backend, _ = backend_for(tmp_path, lambda: focus_fake(move_time=0.002))
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        probe(client)
+        # Never focused: there is nothing to keep.
+        response = client.post("/api/heightmap/focus/keep")
+        assert response.status_code == 400 and "never been focused" in response.json()["detail"]
+        assert not focused(client)
+        assert client.post("/api/heightmap/focus", json={"offset": 2.0}).status_code == 200
+        client.post("/api/disconnect")
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        assert not focused(client)
+        response = client.post("/api/heightmap/focus/keep")
+        assert response.status_code == 200, response.text
+        assert response.json()["map"]["focus_offset"] == 2.0
+        assert focused(client)
+        # Kept in this frame, so a run does not take it back as stale.
+        job = client.post("/api/center", json={"reach": 4, "ring": 3}).json()["job"]
+        response = client.post(f"/api/jobs/{job['id']}/run", json={"compensate": "focus"})
+        assert response.status_code == 200, response.text
+        assert focused(client)
+
+
 class QueuedProbeFake(FakeSerial):
     """Answers a probe only once the motion queued ahead of it has run, as
     the firmware does."""

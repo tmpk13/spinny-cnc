@@ -7,6 +7,7 @@ import { appendConsole, initialState, pushToast, Store, type AppState } from "./
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
+import { mountFocusBanner } from "./views/banner.ts";
 import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
 import { mountConsole } from "./views/console.ts";
@@ -226,6 +227,7 @@ function main(): void {
         return node;
     };
     mountStatusBar(panel("status"), ctx);
+    mountFocusBanner(panel("status"), ctx);
     mountTabs(panel("tabs"));
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);

@@ -150,6 +150,8 @@ export interface Api {
     probeStop(): Promise<HeightMapState>;
     /** Sets the focus offset; null takes it from the head over the board now. */
     focus(offset: number | null): Promise<HeightMapState>;
+    /** Takes back the offset a connect or a restart dropped, on the operator's word that the focus axis has not moved. */
+    keepFocus(): Promise<HeightMapState>;
     probeSettings(patch: Partial<ProbeSettings>): Promise<HeightMapState>;
     putHeightMap(map: HeightMap): Promise<HeightMapState>;
     clearHeightMap(): Promise<HeightMapState>;
@@ -509,6 +511,10 @@ export class HttpApi implements Api {
 
     focus(offset: number | null): Promise<HeightMapState> {
         return this.request<HeightMapState>("POST", "/api/heightmap/focus", offset === null ? {} : { offset });
+    }
+
+    keepFocus(): Promise<HeightMapState> {
+        return this.request<HeightMapState>("POST", "/api/heightmap/focus/keep");
     }
 
     probeSettings(patch: Partial<ProbeSettings>): Promise<HeightMapState> {

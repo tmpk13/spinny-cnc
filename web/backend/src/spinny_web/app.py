@@ -2616,6 +2616,32 @@ class Backend:
         self.publish_heightmap()
         return self.heightmap_state()
 
+    def keep_focus(self) -> dict:
+        """Takes the offset a frame change took back as it stood, on the
+        operator's word that the focus axis has not moved since: a link
+        that dropped and came back to a board that kept its position, say.
+        Nothing here can check that word; a wrong one runs every line off
+        by however far the axis moved."""
+        if self.prober.active:
+            raise HTTPException(status_code=409, detail="the board is being probed")
+        # A restart not yet seen would take the kept offset straight back.
+        self._check_restart()
+        with self._map_lock:
+            heightmap = self.heightmaps.get()
+            if heightmap is None:
+                raise ValueError("there is no height map: probe the board first")
+            if not heightmap.focus_known:
+                raise ValueError("the map has never been focused, so there is no offset to keep: focus here")
+            heightmap.focus_set = True
+            self.heightmaps.put(heightmap)
+            self._focus_frame = self._frame
+            offset = heightmap.focus_offset
+        what = "touch-off" if self.milling else "focus"
+        log.info("focus offset %.4f kept from before the frame change, on the operator's word", offset)
+        self.publish_heightmap()
+        self.publish_message("info", f"kept the height map's {what} offset {offset:.4f} from before")
+        return self.heightmap_state()
+
     def _check_surface_at_zero(self) -> None:
         """A spindle's run without the height map cuts from H 0 as the
         copper's height. Refused when a probe in this frame found the
@@ -3281,6 +3307,10 @@ def create_app(
     @app.post("/api/heightmap/focus")
     def focus(body: FocusBody):
         return guarded(lambda: backend.focus(body.offset))
+
+    @app.post("/api/heightmap/focus/keep")
+    def keep_focus():
+        return guarded(backend.keep_focus)
 
     @app.post("/api/heightmap/pads")
     def start_pads(body: PadsBody):

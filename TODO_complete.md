@@ -424,3 +424,8 @@
   new `pcbv serve`, with a routine that cuts a mark and measures the
   camera's offset, roll and scale from it; marks from the tool or the
   camera fit a turn and a shift that is applied to the job.
+- Resume from line without a fresh focus (2026-10-29): a connect or
+  restart still drops the height map's focus offset, but a banner under
+  the status bar offers to keep it (`POST /api/heightmap/focus/keep`) on
+  the operator's word that the focus axis has not moved, and names a run
+  that stopped with an error.
