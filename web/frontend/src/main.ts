@@ -20,6 +20,7 @@ import { mountLaser } from "./views/laser.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountSettings } from "./views/settings.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
+import { mountSteps } from "./views/steps.ts";
 import { mountTabs } from "./views/tabs.ts";
 import { mountToasts } from "./views/toasts.ts";
 import { mountVision } from "./views/vision.ts";
@@ -229,6 +230,7 @@ function main(): void {
     mountStatusBar(panel("status"), ctx);
     mountFocusBanner(panel("status"), ctx);
     mountTabs(panel("tabs"), store);
+    mountSteps(panel("steps"), ctx);
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);
     mountLaser(panel("laser"), ctx);

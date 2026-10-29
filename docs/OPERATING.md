@@ -116,6 +116,16 @@ for priming the needle and checking the flow.
    run picks up at a line like any other, the plunger declared where the
    plan had it.
 
+### Setup steps
+
+The Setup panel at the top of the machine page shows a common setup as a
+row of numbered circles: *Probe and follow a height map*, *Mill a board*
+or *Measure the camera offset* (only the ones the machine has what for,
+once it is connected). A step fills in when the page sees it done (a job
+picked, a travel height set, the map probed, the focus taken, the map on
+for the run), the next one is ringed and said in words under the row,
+and a press on any step goes to the panel that does it.
+
 ### Edits not applied
 
 A value typed into the Firmware settings panel is marked (the row shows

@@ -276,6 +276,7 @@ table.settings .was {
     padding: var(--gap);
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
+        "steps"
         "dro"
         "preview"
         "jog"
@@ -357,6 +358,7 @@ table.settings .was {
     }
 }
 
+#steps { grid-area: steps; }
 #dro { grid-area: dro; }
 #preview { grid-area: preview; }
 #jog { grid-area: jog; }
@@ -2078,4 +2080,114 @@ table.cam-table input[type="checkbox"] {
 .job-rotation {
     font-size: 0.82rem;
     align-self: center;
+}
+
+/* Setup steps: a row of numbered circles joined by a line, filled in as
+   each step is done; the next one is ringed. The row scrolls inside its
+   panel when it is wider than the screen. */
+.roadmap {
+    display: flex;
+    margin: 0;
+    padding: 0.25rem 0 0.5rem;
+    list-style: none;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.roadmap-step {
+    position: relative;
+    flex: 1 0 5.5rem;
+    min-width: 5.5rem;
+}
+
+/* The line from the step before, through the middle of the circles. */
+.roadmap-step + .roadmap-step::before {
+    content: "";
+    position: absolute;
+    top: calc(0.25rem + 1rem - 0.1rem);
+    left: calc(-50% + 1.1rem);
+    right: calc(50% + 1.1rem);
+    height: 0.2rem;
+    border-radius: 0.1rem;
+    background: var(--border-strong);
+}
+
+.roadmap-step[data-step="done"] + .roadmap-step::before {
+    background: var(--jog);
+}
+
+.roadmap-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0.25rem 0.25rem 0;
+    font: inherit;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.roadmap-dot {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--muted);
+    background: var(--panel);
+    border: 0.15rem solid var(--border-strong);
+}
+
+.roadmap-label {
+    font-size: 0.8rem;
+    line-height: 1.2;
+    text-align: center;
+}
+
+.roadmap-step[data-step="done"] .roadmap-dot {
+    color: var(--on-fill);
+    background: color-mix(in oklab, var(--jog) 85%, var(--base03));
+    border-color: color-mix(in oklab, var(--jog) 85%, var(--base03));
+}
+
+.roadmap-step[data-step="next"] .roadmap-dot {
+    color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.25rem var(--ring);
+}
+
+.roadmap-step[data-step="next"] .roadmap-label,
+.roadmap-step[data-step="done"] .roadmap-label {
+    color: var(--strong);
+}
+
+.roadmap-step[data-step="next"] .roadmap-label {
+    font-weight: 700;
+}
+
+.roadmap-button:hover .roadmap-dot,
+.roadmap-button:focus-visible .roadmap-dot {
+    border-color: var(--accent);
+}
+
+.roadmap-next {
+    margin: 0.25rem 0 0;
+}
+
+.badge.roadmap-count[data-apply="pending"] { --tone: var(--accent); }
+.badge.roadmap-count[data-apply="applied"] { --tone: var(--jog); }
+
+/* The panel a setup step was pressed for, briefly marked. */
+.panel.flash {
+    animation: flash 1.6s ease-out;
+}
+
+@keyframes flash {
+    0%, 30% { box-shadow: 0 0 0 0.25rem var(--ring), var(--shadow); }
+    100% { box-shadow: var(--shadow); }
 }
