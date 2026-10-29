@@ -978,6 +978,11 @@ def test_probe_nearest_goes_to_a_probed_point_clear_of_the_cuts(client, fake):
     assert plan["distance"] == pytest.approx(10.0, abs=1e-3)
     assert len(plan["lines"]) == 1 and words(plan["lines"][0])["R"] == pytest.approx(5.0, abs=1e-3)
     assert not any(line.startswith(("go", "probe")) for line in fake.received_lines[sent:]), "a plan moves nothing"
+    # With a travel height above the head, the plan names the rise the touch makes first.
+    assert client.put("/api/settings", json={"host": {"travel": 3}}).status_code == 200
+    risen = client.post("/api/heightmap/touch/plan", json=body).json()["lines"]
+    assert len(risen) == 2 and words(risen[0]) == {"H": 3.0} and risen[1] == plan["lines"][0]
+    assert client.put("/api/settings", json={"host": {"travel": None}}).status_code == 200
 
     response = client.post("/api/heightmap/touch", json=body)
     assert response.status_code == 200, response.text

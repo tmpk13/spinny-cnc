@@ -140,7 +140,7 @@ describe("the pnp page", () => {
     test("lists the parts, picks one from the list or the drawing, counts edits, and steps through the setup", async () => {
         // This machine places the parts unless a G-code device was picked before.
         localStorage.removeItem("spinny.pnp.target");
-        const { store, ctx, backend } = setup();
+        const { store, ctx, backend, calls } = setup();
         const roots = {
             steps: document.createElement("section"),
             parts: document.createElement("section"),
@@ -183,6 +183,12 @@ describe("the pnp page", () => {
         await settle();
         expect(store.get().pnp?.device).toBe("/dev/video9");
         expect(store.get().pending["pnp"]).toBeUndefined();
+        // A job moved after its parts were read: they are read again where it lies now.
+        const asked = calls.filter((call) => call.name === "components").length;
+        const moved = store.get().job!;
+        store.set({ job: { ...moved, offset: { x: moved.offset.x + 5, y: moved.offset.y } } });
+        await settle();
+        expect(calls.filter((call) => call.name === "components").length).toBe(asked + 1);
         // Go to part goes over the picked one.
         click(roots.parts, "Go to part");
         await settle();

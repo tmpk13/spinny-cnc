@@ -212,6 +212,9 @@ describe("the up camera on the mock's G-code device", () => {
         expect(sent).toContain("G0 X150 Y30 F6000");
         expect(sent).toContain("G0 Z-10 F1200");
         expect(sent).toContain("G0 X39.85 Y30.08 A0 F6000");
+        // The look's lines are counted as the backend counts them.
+        expect(done.progress?.sent).toBe(done.progress?.total);
+        expect(done.taken).toEqual({ "r-10k-0603": 1 });
     });
 });
 

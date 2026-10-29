@@ -438,11 +438,16 @@ class MachineMover(Mover):
     def height(self) -> float | None:
         return self._status.h if self.access.has_focus_axis else None
 
+    def _h_seconds(self, distance: float) -> float:
+        """About how long the focus axis takes for a move, by its rate."""
+        rate = getattr(getattr(self.access.streamer, "rates", None), "h_rate", 0.0) or 100.0
+        return abs(distance) / rate * 60.0
+
     def lift(self) -> None:
         lift, h = self.access.lift, self._status.h
         if self.access.has_focus_axis and h is not None and h < lift - 1e-6:
             self._line(f"go H{coord(lift, FOCUS_DECIMALS)}")
-            self._status = self._settle(abs(lift - h) / 100.0 * 60.0)
+            self._status = self._settle(self._h_seconds(lift - h))
 
     def go(self, point: Point) -> None:
         streamer = self.access.streamer
@@ -454,7 +459,7 @@ class MachineMover(Mover):
         h = self._status.h
         if self.access.has_focus_axis and h is not None and abs(h - height) > 1e-6:
             self._line(f"go H{coord(height, FOCUS_DECIMALS)}")
-            self._status = self._settle(abs(height - h) / 100.0 * 60.0)
+            self._status = self._settle(self._h_seconds(height - h))
 
     def halt(self) -> None:
         from .runner import halt

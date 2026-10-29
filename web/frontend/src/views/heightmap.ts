@@ -266,6 +266,14 @@ export function goOnTravel(map: HeightMap | null | undefined, travel: number | n
         + " a point the probe missed is probed again from that height, so deepen the probe if it fell short.";
 }
 
+/** How a fresh probing travels, for its confirm: at the head's height, or up to the travel height first. */
+export function freshTravel(travel: number | null | undefined): string {
+    if (travel === null || travel === undefined) {
+        return "The head travels between them at the height it has now, so it must clear the board,";
+    }
+    return `The head first rises to the travel height, H ${formatFixed(travel, 3)}, if it is lower, and travels between them there,`;
+}
+
 /** What the probe note says before probing: the height the head travels at, the travel height's or the head's. */
 export function probeTravelText(travel: number | null | undefined): string {
     if (travel === null || travel === undefined) {
@@ -785,8 +793,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const points = estimate ? estimate.points : gridPointCount(request);
         const time = estimate ? `, ${aboutTime(estimate.seconds)}` : "";
         const ok = await askConfirm(
-            `Probe ${points} points${time}? The head travels between them at the height it has now,`
-            + " so it must clear the board, and it replaces the current map.",
+            `Probe ${points} points${time}? ${freshTravel(ctx.store.get().settings?.host.travel)}`
+            + " and it replaces the current map.",
             "Probe",
         );
         if (!ok) {
@@ -824,7 +832,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const question = resume
             ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? ${goOnTravel(ctx.store.get().heightMap?.map, ctx.store.get().settings?.host.travel ?? null)}`
-            : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? The head travels between them at the height it has now, so it must clear the board, and it replaces the current map.`;
+            : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? ${freshTravel(ctx.store.get().settings?.host.travel)} and it replaces the current map.`;
         if (!(await askConfirm(question, resume ? "Continue" : "Probe pads"))) {
             return;
         }

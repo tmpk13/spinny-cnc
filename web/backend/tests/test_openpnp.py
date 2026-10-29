@@ -182,7 +182,24 @@ class FakeMarlin:
         self.position = tuple(position)
         self.closed = False
         self.silent = False
+        # While set and not yet released, an M400 is answered only once
+        # released, and every answer after it waits behind it, in order.
+        self.hold: threading.Event | None = None
+        self._behind: list[bytes] | None = None
         self.out.put(b"start\r\necho: External Reset\r\n")
+
+    def _answer(self, data: bytes) -> None:
+        if self._behind is not None:
+            self._behind.append(data)
+        else:
+            self.out.put(data)
+
+    def _release(self, gate: threading.Event) -> None:
+        gate.wait(5.0)
+        behind, self._behind = self._behind or [], None
+        self.out.put(b"ok\r\n")
+        for data in behind:
+            self.out.put(data)
 
     def read(self, size: int) -> bytes:
         try:
@@ -200,16 +217,20 @@ class FakeMarlin:
                 for letter, value in re.findall(r"([XYZ])(-?\d+(?:\.\d+)?)", line):
                     moved["XYZ".index(letter)] = float(value)
                 self.position = tuple(moved)
+            if line == "M400" and self.hold is not None and not self.hold.is_set() and self._behind is None:
+                self._behind = []
+                threading.Thread(target=self._release, args=(self.hold,), daemon=True).start()
+                continue
             if line.startswith("BAD"):
-                self.out.put(b"Error:Unknown command\r\nok\r\n")
+                self._answer(b"Error:Unknown command\r\nok\r\n")
             elif line == "M114":
                 x, y, z = self.position
-                self.out.put(f"X:{x:.2f} Y:{y:.2f} Z:{z:.2f} E:0.00 Count X:0 Y:0 Z:0\r\nok\r\n".encode())
+                self._answer(f"X:{x:.2f} Y:{y:.2f} Z:{z:.2f} E:0.00 Count X:0 Y:0 Z:0\r\nok\r\n".encode())
             elif line == "G28":
-                self.out.put(b"echo:busy: processing\r\n")
-                self.out.put(b"ok\r\n")
+                self._answer(b"echo:busy: processing\r\n")
+                self._answer(b"ok\r\n")
             else:
-                self.out.put(b"ok\r\n")
+                self._answer(b"ok\r\n")
         return len(data)
 
     def close(self) -> None:
@@ -501,4 +522,92 @@ def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(
     # off the nozzle at A0, (0.05, 0.12) once turned.
     assert "G0 X150 Y30 F3000" in sent and "G0 Z-4 F600" in sent
     assert "G0 X99.95 Y49.88 A90 F3000" in sent
+    # The look's lines are counted: the run ends with every line it sent.
+    assert state["progress"]["sent"] == state["progress"]["total"]
     assert client.get("/api/pnp").json()["part_offset"]["dx"] == pytest.approx(0.12, abs=0.005)
+
+
+# --- what the sweep for bugs found -------------------------------------------------------
+
+
+def test_a_lost_link_can_be_connected_again():
+    ports = [FakeMarlin(), FakeMarlin()]
+    link = GcodeDevice(lambda: None, opener=lambda url, baud: ports.pop(0))
+    link.connect("socket://127.0.0.1:9", 115200, 0, (), 2.0)
+    first = link._port
+
+    def gone(size: int) -> bytes:
+        raise OSError("the cable was pulled")
+
+    first.read = gone
+    wait_for(lambda: link.state()["lost"] is not None)
+    assert link.state()["connected"] is False
+    link.connect("socket://127.0.0.1:9", 115200, 0, (), 2.0)
+    assert link.connected and first.closed and link.command("M114", 2.0)[-1] == "ok"
+
+
+def test_any_axis_letter_reads_from_a_position():
+    assert read_position(["X:1.00 Y:2.00 Z:3.00 U:4.50 Count X:0", "ok"], ("X", "Y", "W", "U")) == {"x": 1.0, "y": 2.0, "rotation": 4.5}
+
+
+def test_a_part_whose_look_fails_still_counts_against_its_feeder(client):
+    pnp_dir = client.backend.pnp_devices.directory
+    (pnp_dir / "tray.toml").write_text(TRAY, encoding="utf-8")
+    job = Job(
+        name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True),
+    )
+    client.backend.store.add(job)
+    client.backend.store.keep_board(job.id, BOARD.replace('"10k"', '"STM32"', 1).encode())
+    camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True)
+    client.backend.pnp.client = camera
+    client.put("/api/pnp/device", json={"profile": "tray"})
+    client.post("/api/pnp/device/connect")
+    client.backend._device_config()["camera"] = {"position": [150.0, 30.0], "mm_per_px": 0.01, "roll": 0.0, "mirror": True}
+    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "R1", "at": [100.0, 50.0]})
+    # The part is nowhere in the picture: the pick happened, the place did not.
+    camera.part = (50.0, 50.0)
+    client.put("/api/pnp/settings", json={"part_spot": "bright"})
+    assert client.post("/api/pnp/device/run", json={"job": job.id, "refs": ["R1"]}).status_code == 200
+    wait_for(lambda: not client.get("/api/pnp/device").json()["running"])
+    state = client.get("/api/pnp/device").json()
+    assert state["progress"]["state"] == "error" and "no part in the picture" in state["progress"]["error"]
+    assert state["progress"]["placed"] == [] and state["taken"] == {"ic": 1}
+
+
+def test_an_abort_of_a_routine_on_the_device_stops_it_at_once(client):
+    pnp_dir = client.backend.pnp_devices.directory
+    (pnp_dir / "tray.toml").write_text(TRAY, encoding="utf-8")
+    client.backend.pnp.client = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True)
+    client.put("/api/pnp/device", json={"profile": "tray"})
+    client.post("/api/pnp/device/connect")
+    client.post("/api/pnp/device/command", json={"line": "G0 X150 Y30"})
+    # The device holds the routine's first wait as a long move would.
+    client.fake.hold = threading.Event()
+    assert client.post("/api/pnp/device/nozzle", json={"step": 1.0}).status_code == 200
+    wait_for(lambda: "M400" in client.fake.lines)
+    assert client.post("/api/pnp/abort").status_code == 200
+    # The stop went out while the routine still waited on the device.
+    assert "M410" in client.fake.lines and client.backend.pnp.routine_active
+    client.fake.hold.set()
+    wait_for(lambda: not client.backend.pnp.routine_active)
+    assert client.get("/api/pnp").json()["routine"]["state"] == "stopped"
+
+
+def test_a_config_save_reads_the_config_again_when_another_thread_changed_it(client, tmp_path, monkeypatch):
+    from spinny_web import app as app_module
+
+    real = app_module.json.dumps
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("dictionary changed size during iteration")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(app_module.json, "dumps", flaky)
+    client.backend.config["travel"] = 7.5
+    client.backend._save_config()
+    monkeypatch.setattr(app_module.json, "dumps", real)
+    assert calls["n"] == 2 and '"travel": 7.5' in (tmp_path / "config.json").read_text()

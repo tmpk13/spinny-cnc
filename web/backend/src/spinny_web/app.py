@@ -85,6 +85,7 @@ from .kinematics import (
     head_board,
     num,
 )
+from .kinematics import FOCUS_DECIMALS, coord
 from .link import (
     check_url,
     CommandError,
@@ -589,6 +590,9 @@ class Backend:
         pnp_dir: Path | None = None,
     ) -> None:
         self.root = root
+        # Saves of the config from the request threads and from the run,
+        # probing and routine threads take turns.
+        self._config_lock = threading.Lock()
         self.machines_dir = machines_dir if machines_dir is not None else MACHINES_DIR
         self.machine_store = MachineStore(self.machines_dir)
         self.cam = ProfileStore(cam_dir if cam_dir is not None else CAM_DIR)
@@ -684,14 +688,25 @@ class Backend:
         return data
 
     def _save_config(self) -> None:
-        try:
-            text = json.dumps(self.config, indent=4, allow_nan=False)
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            self.config_path.write_text(text + "\n", encoding="utf-8")
-        except (OSError, ValueError) as exc:
-            # The value is in force for this process; say that it will not
-            # outlive it rather than lose it in silence.
-            self.publish_message("error", f"could not save {self.config_path}: {exc}")
+        with self._config_lock:
+            try:
+                text = None
+                for _ in range(5):
+                    try:
+                        text = json.dumps(self.config, indent=4, allow_nan=False)
+                        break
+                    except RuntimeError:
+                        # Another thread changed the config while it was
+                        # read (a run counting a feeder): read it again.
+                        time.sleep(0.005)
+                if text is None:
+                    raise ValueError("the config kept changing while it was saved")
+                self.config_path.parent.mkdir(parents=True, exist_ok=True)
+                self.config_path.write_text(text + "\n", encoding="utf-8")
+            except (OSError, ValueError) as exc:
+                # The value is in force for this process; say that it will not
+                # outlive it rather than lose it in silence.
+                self.publish_message("error", f"could not save {self.config_path}: {exc}")
 
     @property
     def tolerance(self) -> float:
@@ -2360,7 +2375,7 @@ class Backend:
                             "point": [round(tip[0], 4), round(tip[1], 4)],
                             "index": list(found[0]) if found is not None else None,
                             "distance": round(found[2], 3) if found is not None else 0.0,
-                            "lines": [f"go {streamer.words(target)}"] if target is not None else [],
+                            "lines": self._touch_lines(status, streamer, target),
                         }
 
                     def touched(height: float, travel: float) -> None:
@@ -2401,6 +2416,19 @@ class Backend:
         if job is None:
             raise HTTPException(status_code=404, detail="no such job")
         return job
+
+    def _touch_lines(self, status, streamer: Streamer, target) -> list[str]:
+        """What a touch at a target sends before it probes: up to the travel
+        height first when the head is lower, as the prober does, then over
+        the target."""
+        if target is None:
+            return []
+        lines = []
+        travel = self.travel_height
+        if travel is not None and status.h is not None and status.h < travel - 1e-6:
+            lines.append(f"go H{coord(travel, FOCUS_DECIMALS)}")
+        lines.append(f"go {streamer.words(target)}")
+        return lines
 
     def _touched(self, link: Link, mode: str, height: float, travel: float, tip: tuple[float, float], frame: int) -> None:
         """What a probe under the head found, with the head back up at rest.
@@ -2724,6 +2752,14 @@ class Backend:
 
     def pnp_abort(self) -> dict:
         self.pnp.abort()
+        if self.pnp.target == "device":
+            # The routine waits on a move and its wait command: the device
+            # is told to stop at once, not once that move has run out.
+            try:
+                line = self.device_profile().stop
+            except (ValueError, DeviceNotFound):
+                line = ""
+            self.pnp_device.stop(line)
         return self.pnp.state()
 
     # --- a G-code pick and place machine --------------------------------------------
@@ -2952,8 +2988,9 @@ class Backend:
             return [rise, *place_lines(device, (block.target[0] - ox, block.target[1] - oy), block.turn, block.place_z)]
 
         def picked(block) -> None:
-            taken = config.setdefault("taken", {})
-            taken[block.feeder] = max(int(taken.get(block.feeder, 0)), block.index + 1)
+            with self._config_lock:
+                taken = config.setdefault("taken", {})
+                taken[block.feeder] = max(int(taken.get(block.feeder, 0)), block.index + 1)
             self._save_config()
 
         def ended(progress) -> None:

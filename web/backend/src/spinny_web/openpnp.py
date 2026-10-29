@@ -365,6 +365,9 @@ class DeviceStore:
 
     def __init__(self, directory: Path) -> None:
         self.directory = Path(directory)
+        # Each profile as last parsed, by the time its file was written: the
+        # device's state asks for it on every change it publishes.
+        self._parsed: dict[str, tuple[int, Device]] = {}
 
     def list(self) -> dict:
         devices, problems = [], []
@@ -389,7 +392,19 @@ class DeviceStore:
             raise DeviceError(f"{path}: {exc.strerror or exc}") from exc
 
     def get(self, device_id: str) -> Device:
-        return parse(self.text(device_id), device_id)
+        path = self.path(device_id)
+        try:
+            stamp = path.stat().st_mtime_ns
+        except FileNotFoundError:
+            raise NotFound(f"no device profile {device_id!r}") from None
+        except OSError as exc:
+            raise DeviceError(f"{path}: {exc.strerror or exc}") from exc
+        cached = self._parsed.get(device_id)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        device = parse(self.text(device_id), device_id)
+        self._parsed[device_id] = (stamp, device)
+        return device
 
     def document(self, device_id: str) -> dict:
         text = self.text(device_id)
@@ -615,7 +630,7 @@ def board_goto(device: Device, fit: Fit, part: dict) -> list[str]:
     ]
 
 
-POSITION = re.compile(r"\b([XYZABCE]):\s*(-?\d+(?:\.\d+)?)")
+POSITION = re.compile(r"\b([A-Z]):\s*(-?\d+(?:\.\d+)?)")
 
 
 def read_position(lines: list[str], axes: tuple[str, str, str, str]) -> dict:

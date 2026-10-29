@@ -289,6 +289,8 @@ export interface PnpRoots {
 export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     let selected: string | null = null;
     // The job the parts were asked for, so a reply for another is dropped.
+    // The job, and where it lay, the parts were asked for: a reply for
+    // another is dropped, and a job moved, turned or aligned is asked again.
     let asked: string | null = null;
 
     // The steps follow the machine the parts are placed with.
@@ -672,17 +674,19 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     // The parts of the selected job, asked for once it changes.
     async function loadParts(state: AppState): Promise<void> {
-        const id = state.job?.id ?? null;
-        if (id === asked) {
+        const job = state.job;
+        const id = job?.id ?? null;
+        const key = job ? JSON.stringify([job.id, job.offset, job.rotation ?? 0, job.design ?? null]) : null;
+        if (key === asked) {
             return;
         }
-        asked = id;
+        asked = key;
         if (id === null) {
             ctx.store.set({ components: null });
             return;
         }
         const parts = await ctx.call(ctx.api.components(id));
-        if (parts && asked === id) {
+        if (parts && asked === key) {
             ctx.store.set({ components: parts });
         }
     }

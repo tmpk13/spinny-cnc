@@ -116,7 +116,10 @@ class GcodeDevice:
 
     def connect(self, url: str, baud: int, wait_ms: int, init: tuple[str, ...], timeout: float) -> None:
         if self._port is not None:
-            raise DeviceLinkError("the device is already connected: disconnect first")
+            if self._lost is None:
+                raise DeviceLinkError("the device is already connected: disconnect first")
+            # A link that was lost lets its port go before a new one opens.
+            self.disconnect()
         if not url:
             raise DeviceLinkError("the device profile names no port: set [port] url")
         try:
@@ -255,15 +258,16 @@ class GcodeDevice:
         self,
         plan: Plan,
         timeout: float,
-        on_block: Callable[[Block], None],
+        on_pick: Callable[[Block], None],
         on_end: Callable[[RunProgress], None] | None = None,
         look: Callable[[Block], list[str]] | None = None,
     ) -> None:
-        """Sends a program on its own thread; `on_block` hears of every part
-        once its last line is answered, so a stop leaves the feeders counted
-        by what was picked. `look`, for a part marked for the up camera, is
-        called between its pick and its place and answers the place lines
-        to send instead, made from where the part was seen."""
+        """Sends a program on its own thread; `on_pick` hears of every part
+        once its pick lines are answered, so a stop or a failure after a pick
+        leaves the feeders counted by what was taken from them. `look`, for
+        a part marked for the up camera, is called between its pick and its
+        place and answers the place lines to send instead, made from where
+        the part was seen."""
         if not self.connected:
             raise DeviceLinkError(self._lost or "the device is not connected")
         if self.running:
@@ -274,7 +278,7 @@ class GcodeDevice:
         self._stop.clear()
         self.progress = RunProgress(total=sum(1 for line in lines if line))
         progress = self.progress
-        self._thread = threading.Thread(target=self._run, args=(plan, timeout, progress, on_block, on_end, look), name="gcode-device-run", daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(plan, timeout, progress, on_pick, on_end, look), name="gcode-device-run", daemon=True)
         self._thread.start()
         self._publish()
 
@@ -287,7 +291,7 @@ class GcodeDevice:
         self.command(code, timeout)
         progress.sent += 1
 
-    def _run(self, plan: Plan, timeout: float, progress: RunProgress, on_block, on_end, look) -> None:
+    def _run(self, plan: Plan, timeout: float, progress: RunProgress, on_pick, on_end, look) -> None:
         try:
             for line in plan.head:
                 self._send(line, timeout, progress)
@@ -296,16 +300,18 @@ class GcodeDevice:
                 self._publish()
                 for line in block.pick:
                     self._send(line, timeout, progress)
+                on_pick(block)
                 place = block.place
                 if block.vision and look is not None:
                     if self._stop.is_set():
                         raise DeviceLinkError("stopped")
                     place = look(block)
+                    # The look's lines take the planned place lines' room.
+                    progress.total += sum(1 for line in place if code_of(line)) - sum(1 for line in block.place if code_of(line))
                     self._publish()
                 for line in place:
                     self._send(line, timeout, progress)
                 progress.placed.append(block.ref)
-                on_block(block)
                 self._publish()
             for line in plan.tail:
                 self._send(line, timeout, progress)

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { HeightMap } from "../src/types.ts";
-import { goOnTravel, probeTravelText } from "../src/views/heightmap.ts";
+import { freshTravel, goOnTravel, probeTravelText } from "../src/views/heightmap.ts";
 import { mountJog, readTravel, travelText } from "../src/views/jog.ts";
 import { connected, runUntilIdle, settle, setup } from "./harness.ts";
 
@@ -31,6 +31,11 @@ describe("travel height text", () => {
         expect(travelText(3)).toContain("rise to H 3");
         expect(probeTravelText(null)).toContain("Raise the head");
         expect(probeTravelText(2)).toContain("H 2.000");
+    });
+
+    test("a fresh probing's confirm says where the head travels", () => {
+        expect(freshTravel(null)).toContain("at the height it has now");
+        expect(freshTravel(4)).toContain("first rises to the travel height, H 4.000");
     });
 
     test("going on rises to the higher of where probing began and the travel height", () => {

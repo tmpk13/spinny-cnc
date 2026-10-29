@@ -176,6 +176,8 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     let picked: string | null = null;
     let dirty = false;
     let plan: DevicePlan | null = null;
+    // The job the plan shown is of: the download is its program, once one planned.
+    let planJob: string | null = null;
     // The angle the field was last filled with, to tell a typed one.
     let angleShown = "";
 
@@ -271,6 +273,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             setDirty(false);
             setStatus(`saved: ${saved.document.name}, ${saved.document.feeders.length} feeders`, false);
             plan = null;
+            planJob = null;
             renderPlan();
         }
     }
@@ -347,6 +350,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const result = await ctx.call(ctx.api.devicePlan(job.id));
         if (result) {
             plan = result;
+            planJob = job.id;
             renderPlan();
         }
     }
@@ -363,6 +367,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         plan = planned;
+        planJob = job.id;
         renderPlan();
         const device = state.device?.profile ?? "the device";
         const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts are left out (listed below).` : "";
@@ -385,6 +390,12 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     }
 
     function renderPlan(): void {
+        // Only a program that planned is offered for download: a refused one
+        // would save the refusal as the file.
+        const job = ctx.store.get().job;
+        const ready = plan !== null && planJob !== null && job?.id === planJob;
+        download.href = ready ? ctx.api.deviceProgramUrl(planJob!) : "";
+        download.classList.toggle("disabled", !ready);
         planLine.textContent = plan ? planText(plan) : "";
         replace(skipped, ...(plan?.skipped ?? []).map((entry) => el("li", {}, `${entry.ref}: ${entry.reason}`)));
         program.textContent = plan?.text ?? "";
@@ -433,8 +444,12 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             angle.value = angleText;
         }
         angleShown = angleText;
-        download.href = job && picked !== null ? ctx.api.deviceProgramUrl(job.id) : "";
-        download.classList.toggle("disabled", !job || picked === null);
+        if (planJob !== null && job?.id !== planJob) {
+            // Another job: its plan is not the one shown.
+            plan = null;
+            planJob = null;
+            renderPlan();
+        }
         runLine.textContent = device?.lost ? `The link was lost: ${device.lost}` : deviceRunText(device);
         const taken = Object.entries(device?.taken ?? {});
         takenLine.textContent = taken.length > 0 ? `Picked so far: ${taken.map(([feeder, count]) => `${feeder} ${count}`).join(", ")}` : "";

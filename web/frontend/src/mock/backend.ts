@@ -1803,7 +1803,7 @@ export class MockBackend implements Api, EventFeed {
     };
     private devicePositionRead = false;
     private deviceProgress: DeviceRun | null = null;
-    private deviceSession: { lines: { code: string; block: MockBlock | null; look?: MockBlock }[]; next: number; elapsed: number; device: MockDevice; progress: DeviceRun } | null = null;
+    private deviceSession: { lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[]; next: number; elapsed: number; device: MockDevice; progress: DeviceRun } | null = null;
     /** Where the up camera sits on the device, as centering the nozzle over it there measured. */
     private deviceCamera: { position: [number, number] | null; mm_per_px: number; roll: number; mirror: boolean } = { position: null, mm_per_px: 0, roll: 0, mirror: true };
     private deviceRoutine: { elapsed: number; device: MockDevice; progress: PnpRoutine } | null = null;
@@ -6150,14 +6150,13 @@ export class MockBackend implements Api, EventFeed {
         if (plan.blocks.some((block) => block.vision) && !this.pnpRunning) {
             throw new ApiError(400, "the up camera is not running: start it, since some parts are to be looked at over it");
         }
-        const lines: { code: string; block: MockBlock | null; look?: MockBlock }[] = [];
+        const lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[] = [];
         for (const line of plan.head) {
             lines.push({ code: codeOf(line), block: null });
         }
         for (const block of plan.blocks) {
-            for (const line of block.pick) {
-                lines.push({ code: codeOf(line), block: null });
-            }
+            // A part counts against its feeder once its pick lines are answered.
+            block.pick.forEach((line, index) => lines.push({ code: codeOf(line), block: null, ...(index === block.pick.length - 1 ? { picked: block } : {}) }));
             if (block.vision) {
                 // The place lines are made once the part has been looked at.
                 lines.push({ code: "", block: null, look: block });
@@ -6168,7 +6167,7 @@ export class MockBackend implements Api, EventFeed {
         for (const line of plan.tail) {
             lines.push({ code: codeOf(line), block: null });
         }
-        const progress: DeviceRun = { state: "running", sent: 0, total: lines.filter((line) => line.code !== "").length, part: null, placed: [], error: null, seconds: 0 };
+        const progress: DeviceRun = { state: "running", sent: 0, total: planSummary(plan).lines, part: null, placed: [], error: null, seconds: 0 };
         this.deviceProgress = progress;
         this.deviceSession = { lines, next: 0, elapsed: 0, device, progress };
         this.emitDevice();
@@ -6185,20 +6184,25 @@ export class MockBackend implements Api, EventFeed {
         session.progress.seconds = Math.round(session.elapsed * 10) / 10;
         const due = Math.min(session.lines.length, Math.floor(session.elapsed * DEVICE_LINES_PER_SECOND) + 1);
         while (session.next < due) {
-            const { code, block, look } = session.lines[session.next]!;
+            const { code, block, look, picked } = session.lines[session.next]!;
             session.next += 1;
             if (look) {
-                session.lines.splice(session.next, 0, ...this.deviceLook(session.device, look));
+                const lines = this.deviceLook(session.device, look);
+                session.lines.splice(session.next, 0, ...lines);
+                // The look's lines are counted as the backend counts them.
+                session.progress.total += lines.filter((line) => line.code !== "").length - look.place.filter((line) => codeOf(line) !== "").length;
                 continue;
             }
             if (code) {
                 this.deviceLine(session.device, code);
                 session.progress.sent += 1;
             }
+            if (picked) {
+                session.progress.part = picked.ref;
+                this.deviceConfig.taken[picked.feeder] = Math.max(this.deviceConfig.taken[picked.feeder] ?? 0, picked.index + 1);
+            }
             if (block) {
                 session.progress.placed.push(block.ref);
-                session.progress.part = block.ref;
-                this.deviceConfig.taken[block.feeder] = Math.max(this.deviceConfig.taken[block.feeder] ?? 0, block.index + 1);
             }
         }
         if (session.next >= session.lines.length) {
