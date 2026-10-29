@@ -429,3 +429,30 @@
   the status bar offers to keep it (`POST /api/heightmap/focus/keep`) on
   the operator's word that the focus axis has not moved, and names a run
   that stopped with an error.
+- Travel height setting (2026-10-29): *Travel H* in the Jog panel and the
+  Config page (`[host] travel`, `host.travel`) is an H that gotos across
+  the board, probing, Probe nearest and the camera and PNP routines rise
+  to first; a higher head stays put, and probing's depth counts from it.
+- Make the map being applied clearer (2026-10-29): a chip beside the run's
+  choice says what Run will do with the height map (map on and how, map
+  off, or why it would be refused), the Height map panel's head says the
+  same, the status bar shows what a run follows, and the progress carries
+  the settled mode.
+- Applied indicator (2026-10-29): the settings panel counts values typed
+  and not applied (rows show the controller's value, host fields marked)
+  and says *N not applied*, *applied, not saved to flash* (the backend
+  lists what was written since the last save) or *all applied*; the
+  camera settings, machine file and CAM profile count theirs, each tab
+  shows its page's count, and leaving with edits asks first.
+- Steps for common setups (2026-10-29): a Setup panel shows a setup
+  (probe and follow a map, mill a board, the camera offset, and on the
+  PNP page placing parts) as numbered circles on a line that fill in from
+  the page's state, says what the next step takes, and goes to its panel.
+- PNP mode (2026-10-29): a PNP tab with the selected board job's parts
+  (read from its kept `.kicad_pcb`) in a filtered list and on a drawing of
+  the board, an up camera fixed to the machine (its own `pcbv serve`)
+  whose picture shows beside them, a routine that centers the nozzle over
+  it (measuring its place, scale, roll and mirror), one that reads where a
+  part sits on the nozzle, and a goto over a part's place, corrected by
+  that offset when asked. X/Y machines only; vacuum and nozzle turn not
+  driven yet.

@@ -489,6 +489,45 @@ found, its distance from the center in picture pixels and in mm, and
 The pose is read from pcbv when the state is asked for; the page polls
 `GET /api/camera` while its camera panel shows.
 
+## Pick and place
+
+A second camera, fixed to the machine and looking up at what the head
+holds over it, is read through its own `pcbv serve` the same way; its
+settings are kept in the backend's config. `position` is the rail and
+cross slide joints that put the nozzle over its picture's center, and a
+spot's pixels are a head displacement through `mm_per_px`, `roll` and
+`mirror` (looking up turns the picture over). Its routines need an X/Y
+machine (`$cartesian=1`): on the polar one only the rail crosses the
+picture. They own the machine as the camera's find routine does: a run,
+probing or a goto is 409 while one is under way.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/pnp` | the up camera state, below |
+| `PUT /api/pnp/settings` | `{"device": "/dev/video1", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "nozzle_spot": "dark", "part_spot": "dark", "position": [60.0, 20.0], "height": 2.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "clear": ["position", "height"]}`, any of them; the whole set is checked (400): the spots are `dark` or `bright`, the position within 2000 mm, the height within 100 mm, `mm_per_px` 0 to 1, the roll within 360 degrees; `clear` takes the position or the height back to `null` |
+| `POST /api/pnp/start`, `POST /api/pnp/stop` | starts or stops its pcbv (409 when already running, or stopping during a routine) |
+| `GET /api/pnp/frame.jpg?width=640&overlay=1` | its newest picture, as `GET /api/camera/frame.jpg` |
+| `POST /api/pnp/nozzle` | `{"step": 1.0}`: centers the nozzle over the up camera, on its own thread: the head rises to the travel height (else the milling clearance as an H) when lower, goes over the camera when its `position` is known (otherwise the nozzle must be in the picture already), goes to `height` when set; the spot nearest the picture's center of the `nozzle_spot` polarity is the nozzle; with `step` above 0 (to 10 mm), or with `mm_per_px` 0, the head moves `step` along +X and back and along +Y and back, and how the spot moved gives `mm_per_px`, `roll` and `mirror`; then the head is moved by the nozzle's distance from the center, up to four times, until it is within 0.02 mm, and `position` (and `height`, the H it is at) is saved. 400 with the camera stopped or on a polar machine, 409 unless Idle and free |
+| `POST /api/pnp/part` | looks at the part on the nozzle: over the camera as above, the `part_spot` spot nearest the center is the part, and `part_offset` is its center from the nozzle's in the machine's frame, with its length and width from the spot's axes; 400 until the nozzle has been centered |
+| `POST /api/pnp/abort` | stops a routine as the camera's is stopped; 409 when none runs |
+| `GET /api/jobs/{id}/components` | `{"job", "components": [{"ref": "R1", "value": "10k", "footprint": "Resistor_SMD:R_0603_1608Metric", "side": "front", "x": 10.0, "y": -10.0, "rotation": 90.0, "pads": 2, "smd": true, "dnp": false}], "note": null}`: the footprints of the job's kept `.kicad_pcb` in the job's frame through its `design` (a move or a turn of the job moves them too), without those left out of position files, on the board only, or with no reference; for a job that keeps no board, none and the `note` says why |
+| `POST /api/pnp/goto` | `{"job": "a1b2", "ref": "R1", "correct": false}`: the nozzle over the part's place as a board goto (risen to the travel height first); with `correct`, the part's center as last seen on the nozzle goes over the place instead (400 when no part has been looked at); 404 for a part the job does not have |
+
+Up camera state:
+
+```json
+{"running": true, "device": "/dev/video1", "size": "1280x720", "fps": 30, "pcbv": "pcbv",
+ "nozzle_spot": "dark", "part_spot": "dark", "position": [60.0, 20.0], "height": 2.0,
+ "mm_per_px": 0.01, "roll": 2.5, "mirror": true,
+ "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 15.0},
+ "routine": {"kind": "nozzle", "state": "done", "step": "done", "done": 5, "total": 5, "error": null, "spot": {"dx": 0.4, "dy": -0.2, "mm": 0.004}, "seconds": 6.2},
+ "part_offset": {"dx": 0.12, "dy": -0.05, "mm": 0.13, "length": 1.6, "width": 0.8}}
+```
+
+`routine.kind` is `nozzle` or `part`, its `step` one of `lifting`,
+`moving`, `lowering`, `scale`, `centering` (the nozzle) or `looking` (a
+part), then `done`.
+
 ## Alignment
 
 Lining a job up with the board on the table. Marks pair a design point, a
@@ -537,3 +576,4 @@ it does not watch then.
 | `message` | `{"level": "info" \| "error", "text": "..."}` |
 | `camera` | the camera state, whenever it changes: started or stopped, settings, a board loaded, a mark recorded, every step of the find routine; not for every picture, which the page asks for |
 | `align` | the alignment state (`GET /api/align`), whenever a mark is added, removed or applied |
+| `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |

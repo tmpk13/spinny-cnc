@@ -17,6 +17,7 @@ import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobs } from "./views/jobs.ts";
 import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
+import { mountPnp } from "./views/pnp.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountSettings } from "./views/settings.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
@@ -98,6 +99,12 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
                 store.set({ align });
             }
         },
+        async refreshPnp() {
+            const pnp = await ctx.call(api.pnp());
+            if (pnp) {
+                store.set({ pnp });
+            }
+        },
         async selectJob(id) {
             const ticket = ++selection;
             if (id === null) {
@@ -172,6 +179,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "camera":
             store.set({ camera: event.data });
             break;
+        case "pnp":
+            store.set({ pnp: event.data });
+            break;
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.
@@ -184,7 +194,7 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -244,6 +254,8 @@ function main(): void {
     // machine's page are not shown beside it.
     mountCam(panel("cam"), ctx, panel("cam-file"));
     mountPreviewPanel(panel("cam-preview"), ctx);
+    // The PNP page: the parts, the board, the up camera and the nozzle.
+    mountPnp({ steps: panel("pnp-steps"), parts: panel("pnp-parts"), board: panel("pnp-board"), camera: panel("pnp-camera"), nozzle: panel("pnp-nozzle") }, ctx);
     // The Config page: the machine files beside the live firmware settings.
     mountConfig(panel("machine-file"), ctx);
     mountSettings(panel("settings"), ctx);

@@ -115,6 +115,18 @@ picture of the loaded board, lying a little off the job so alignment has
 something to find, the mark as a dark dot that follows the head, and the
 find routine stepped on the mock's clock.
 
+The *PNP* page (`src/views/pnp.ts`) lists the selected board job's parts
+(read by the backend from its `.kicad_pcb`), draws them on the board with
+the head and the up camera, shows the up camera's picture and settings,
+and runs the nozzle routines: center the nozzle over the up camera, look
+at a part on it, and go over a picked part's place. The mock's up camera
+(`src/mock/pnp.ts`) draws the nozzle where the head is against where the
+camera really sits, and makes a board job's pads its parts. The *Setup*
+panels (`src/views/steps.ts`, on the Machine and PNP pages) show a common
+setup as a row of numbered circles filled in from the page's state. A
+panel's edits not applied yet are counted per panel in the store and on
+its page's tab.
+
 The Jobs panel has *Save job* (the selected job's JSON) and *Delete all*
 beside its title, and under a run that stopped short a *Resume from line*
 row: the count of lines done, *from the start of its path*, *Plan* (what
@@ -185,7 +197,7 @@ classDiagram
         AppState
     }
     class views {
-        statusbar tabs dro jog laser jobs center heightmap previewpanel vision align console settings cam config editor toasts
+        statusbar tabs steps dro jog laser jobs center heightmap previewpanel vision align pnp console settings cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals

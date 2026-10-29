@@ -103,6 +103,8 @@ export function parseEvent(raw: unknown): WsEvent | null {
             return { type, data: data as DataOf<"camera"> };
         case "align":
             return { type, data: data as DataOf<"align"> };
+        case "pnp":
+            return { type, data: data as DataOf<"pnp"> };
         default:
             return null;
     }

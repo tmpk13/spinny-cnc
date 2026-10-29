@@ -717,7 +717,90 @@ export type WsEvent =
     | { type: "heightmap"; data: HeightMapState }
     | { type: "message"; data: Message }
     | { type: "camera"; data: CameraState }
-    | { type: "align"; data: AlignState };
+    | { type: "align"; data: AlignState }
+    | { type: "pnp"; data: PnpState };
+
+// --- Pick and place -----------------------------------------------------------
+
+/** What the spot finder looks for: a dark spot, or a bright one. */
+export type SpotPolarity = "dark" | "bright";
+
+/** The up camera, fixed to the machine and looking up at what the head holds. */
+export interface PnpSettings {
+    device: string;
+    size: string;
+    fps: number;
+    pcbv: string;
+    /** The spot the nozzle shows (its bore), and the one a part on it shows. */
+    nozzle_spot: SpotPolarity;
+    part_spot: SpotPolarity;
+    /** The rail and cross slide joints that put the nozzle over the picture's center; null until measured or typed. */
+    position: [number, number] | null;
+    /** The H the nozzle is seen sharp at over the camera; null keeps the travel height. */
+    height: number | null;
+    mm_per_px: number;
+    roll: number;
+    /** Looking up turns the picture over: the routine measures it. */
+    mirror: boolean;
+}
+
+export type PnpStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "looking" | "done";
+
+/** The nozzle routine (center the nozzle over the camera) or the part routine (see where a part sits on it). */
+export interface PnpRoutine {
+    kind: "nozzle" | "part";
+    state: RoutineState;
+    step: PnpStep;
+    done: number;
+    total: number;
+    error: string | null;
+    spot: RoutineSpot | null;
+    seconds?: number;
+}
+
+/** Where the last part looked at sits against the nozzle's center, mm in the machine's frame, and how big it looked. */
+export interface PartOffset {
+    dx: number;
+    dy: number;
+    mm: number;
+    length: number;
+    width: number;
+}
+
+export interface PnpState extends PnpSettings {
+    running: boolean;
+    frame: { width: number; height: number; age_ms: number | null; fps: number | null } | null;
+    routine: PnpRoutine | null;
+    part_offset: PartOffset | null;
+}
+
+/** A part of a board job: its footprint's place and angle in the job's frame. */
+export interface Component {
+    ref: string;
+    value: string;
+    footprint: string;
+    side: "front" | "back";
+    x: number;
+    y: number;
+    rotation: number;
+    pads: number;
+    smd: boolean;
+    dnp: boolean;
+}
+
+export interface ComponentsResponse {
+    job: string;
+    components: Component[];
+    /** Why there are none: the job keeps no board file. */
+    note: string | null;
+}
+
+/** The nozzle over a part's place; with `correct`, the part's center as last seen on the nozzle instead. */
+export interface PnpGotoRequest {
+    job: string;
+    ref: string;
+    correct?: boolean;
+}
 
 // --- Camera ---------------------------------------------------------------------
 

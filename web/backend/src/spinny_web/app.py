@@ -26,7 +26,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
@@ -36,6 +36,8 @@ from . import __version__, center
 from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
+from .pnp import MachineAccess as PnpAccess
+from .pnp import PnpError, UpCamera, job_components
 from .heightmap import (
     AUTO,
     FOCUS,
@@ -439,6 +441,36 @@ class CameraFindBody(Finite):
     step: float = 2.0
 
 
+class PnpSettingsBody(Finite):
+    device: str | None = None
+    size: str | None = None
+    fps: int | None = None
+    pcbv: str | None = None
+    nozzle_spot: str | None = None
+    part_spot: str | None = None
+    position: tuple[float, float] | None = None
+    height: float | None = None
+    mm_per_px: float | None = None
+    roll: float | None = None
+    mirror: bool | None = None
+    # The settings to take back to none: position, height.
+    clear: list[str] = Field(default_factory=list)
+
+
+class PnpNozzleBody(Finite):
+    # How far the head moves along X and Y to measure the picture; 0 keeps
+    # the scale, roll and mirror measured before.
+    step: float = 1.0
+
+
+class PnpGotoBody(Finite):
+    job: str
+    ref: str
+    # Put the part's center, as the up camera last saw it on the nozzle,
+    # over the place rather than the nozzle's.
+    correct: bool = False
+
+
 class AlignMarkBody(Finite):
     job: str
     design: tuple[float, float] | None = None
@@ -531,6 +563,7 @@ class Backend:
         # The camera on the head, through pcbv, and the marks that line a
         # job up with the board.
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
+        self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
         self.alignment = Alignment()
         self.rates = Rates()
         # What the machine is, from its settings: polar or cartesian, laser
@@ -879,6 +912,7 @@ class Backend:
 
     def shutdown(self) -> None:
         self.camera.shutdown()
+        self.pnp.shutdown()
         self.disconnect()
 
     def require_link(self) -> Link:
@@ -896,9 +930,16 @@ class Backend:
             raise HTTPException(status_code=409, detail="a job is running")
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
+        self._no_routine()
+        return link
+
+    def _no_routine(self) -> None:
+        """Refuses a request that would move the head under a camera
+        routine moving it."""
         if self.camera.routine_active:
             raise HTTPException(status_code=409, detail="the camera is finding the mark")
-        return link
+        if self.pnp.routine_active:
+            raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
 
     def move_start(self, link: Link, streamer: Streamer, status=None) -> tuple[tuple[float, float], bool]:
         """Where the next move starts, and whether that is certain.
@@ -1135,6 +1176,9 @@ class Backend:
 
     def publish_camera(self) -> None:
         self.broadcast.publish_threadsafe({"type": "camera", **self.camera_state()})
+
+    def publish_pnp(self) -> None:
+        self.broadcast.publish_threadsafe({"type": "pnp", **self.pnp.state()})
 
     def publish_align(self) -> None:
         self.broadcast.publish_threadsafe({"type": "align", **self.alignment.state()})
@@ -1962,6 +2006,7 @@ class Backend:
             raise HTTPException(status_code=404, detail="no such job")
         if self.prober.active:
             raise HTTPException(status_code=409, detail="the board is being probed")
+        self._no_routine()
         # Claimed before the settings are read: a stop, hold or reset while
         # they are keeps the run from starting, as one during its planning
         # does. The restart count is taken with it for the same reason.
@@ -2576,6 +2621,83 @@ class Backend:
         self.camera.abort()
         return self.camera_state()
 
+    # --- pick and place -------------------------------------------------------------
+
+    def pnp_settings(self, body: PnpSettingsBody) -> dict:
+        patch = {key: value for key, value in body.model_dump(exclude={"clear"}).items() if value is not None}
+        self.pnp.update(patch, tuple(body.clear))
+        self.publish_pnp()
+        return self.pnp.state()
+
+    def pnp_start(self) -> dict:
+        self.pnp.start()
+        self.publish_pnp()
+        return self.pnp.state()
+
+    def pnp_stop(self) -> dict:
+        self.pnp.stop()
+        self.publish_pnp()
+        return self.pnp.state()
+
+    def pnp_frame(self, width: int, overlay: bool) -> bytes:
+        if not (FRAME_MIN_WIDTH <= width <= FRAME_MAX_WIDTH):
+            raise ValueError(f"width must be {FRAME_MIN_WIDTH} to {FRAME_MAX_WIDTH}")
+        return self.pnp.frame(width, overlay)
+
+    def _pnp_access(self, link: Link) -> PnpAccess:
+        values = self.read_settings(force=True)["values"]
+        status = link.status_now(1.0, routine=True)
+        return PnpAccess(link=link, streamer=self.streamer(status), lift=self.lift_height(), has_focus_axis=bool(values.get("h_axis")))
+
+    def pnp_nozzle(self, step: float) -> dict:
+        with self._owner_lock:
+            link = self._movable()
+            self.pnp.center_nozzle(self._pnp_access(link), step)
+        return self.pnp.state()
+
+    def pnp_part(self) -> dict:
+        with self._owner_lock:
+            link = self._movable()
+            self.pnp.measure_part(self._pnp_access(link))
+        return self.pnp.state()
+
+    def pnp_abort(self) -> dict:
+        self.pnp.abort()
+        return self.pnp.state()
+
+    def job_parts(self, job_id: str) -> dict:
+        """The parts of a job's board in the job's frame; none for a job
+        that keeps no board file, with why."""
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        path = self.store.board_path(job_id)
+        if job.design is None or not job.design.board or path is None:
+            return {"job": job_id, "components": [], "note": "only a .kicad_pcb upload keeps the board its parts are read from"}
+        return {"job": job_id, "components": job_components(job, path), "note": None}
+
+    def pnp_goto(self, body: PnpGotoBody) -> dict:
+        """The nozzle over a part's place, by a goto (so at the travel height
+        first); with `correct`, the part's center as the up camera last saw
+        it on the nozzle goes over the place instead."""
+        parts = self.job_parts(body.job)["components"]
+        part = next((entry for entry in parts if entry["ref"] == body.ref), None)
+        if part is None:
+            raise HTTPException(status_code=404, detail=f"the job has no part {body.ref!r}")
+        target = (float(part["x"]), float(part["y"]))
+        with self._owner_lock, self._move_lock:
+            link = self._movable()
+            if not body.correct:
+                return self._goto(link, GotoBody(kind="board", x=target[0], y=target[1]))
+            seen = self.pnp.part_offset
+            if seen is None:
+                raise ValueError("no part has been looked at on the nozzle: measure it over the up camera first")
+            streamer, _ = self._move_frame(link)
+            if not streamer.cartesian:
+                raise ValueError("the up camera needs an X/Y machine ($cartesian=1)")
+            joint = streamer.joint_at(target)
+            return self._goto(link, GotoBody(kind="joint", r=joint[0] - seen["dx"], z=joint[1] - seen["dy"]))
+
     # --- alignment ------------------------------------------------------------------
 
     def align_mark(self, body: AlignMarkBody) -> dict:
@@ -3060,7 +3182,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except NotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except CameraError as exc:
+        except (CameraError, PnpError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (LinkError, VisionError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -3466,6 +3588,58 @@ def create_app(
     @app.post("/api/camera/abort")
     def camera_abort():
         return guarded(backend.camera_abort)
+
+    # --- pick and place ---
+
+    @app.get("/api/pnp")
+    def pnp_state():
+        return guarded(backend.pnp.state)
+
+    @app.put("/api/pnp/settings")
+    def pnp_settings(body: PnpSettingsBody):
+        return guarded(lambda: backend.pnp_settings(body))
+
+    @app.post("/api/pnp/start")
+    def pnp_start():
+        return guarded(backend.pnp_start)
+
+    @app.post("/api/pnp/stop")
+    def pnp_stop():
+        return guarded(backend.pnp_stop)
+
+    @app.get("/api/pnp/frame.jpg")
+    def pnp_frame(width: int = FRAME_DEFAULT_WIDTH, overlay: int = 1):
+        try:
+            data = backend.pnp_frame(width, bool(overlay))
+        except PnpError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except VisionError as exc:
+            if "no frame" in str(exc):
+                raise HTTPException(status_code=404, detail="no picture yet") from exc
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/pnp/nozzle")
+    def pnp_nozzle(body: PnpNozzleBody | None = None):
+        return guarded(lambda: backend.pnp_nozzle(body.step if body is not None else 1.0))
+
+    @app.post("/api/pnp/part")
+    def pnp_part():
+        return guarded(backend.pnp_part)
+
+    @app.post("/api/pnp/abort")
+    def pnp_abort():
+        return guarded(backend.pnp_abort)
+
+    @app.post("/api/pnp/goto")
+    def pnp_goto(body: PnpGotoBody):
+        return guarded(lambda: backend.pnp_goto(body))
+
+    @app.get("/api/jobs/{job_id}/components")
+    def job_components_route(job_id: str):
+        return guarded(lambda: backend.job_parts(job_id))
 
     # --- alignment ---
 

@@ -35,6 +35,7 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `vision.py` | the camera through pcb-vision's `pcbv serve`: the program started on a device here, or one reached at a `socket://` device, one JSON request a line and the frame's bytes after its reply |
 | `camera.py` | the camera's settings and state, its picture and pose, the mark the tool made, and the routine that finds the mark in the picture and measures the camera's offset, roll and scale |
+| `pnp.py` | pick and place: the parts of a board job read from its kept `.kicad_pcb` (an s-expression reader, KiCad 5 to 10) and placed in the job's frame, and the up camera fixed to the machine, with the routine that centers the nozzle over it (measuring where it is and how its picture scales, turns and mirrors) and the one that reads where a part sits on the nozzle |
 | `align.py` | marks that pair a job's design points (pads, holes, any point) with where the machine or the camera found them, the fit (`spinny_laser.align`) and its application to the job |
 | `resume.py` | the resume record (`var/resume.json`, how far the last run got and the plan it was made from) and the machine's last reported position (`var/position.json`), both kept across sessions |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
@@ -50,7 +51,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `{"type": "progress", "state": "running", ...}`,
 `{"type": "heightmap", "map": ..., "probe": ..., "settings": ...}`,
 `{"type": "message", "level": "info", "text": "..."}`,
-`{"type": "camera", ...the camera state...}` and
+`{"type": "camera", ...the camera state...}`,
+`{"type": "pnp", ...the up camera state...}` and
 `{"type": "align", "job": ..., "marks": ..., "fit": ...}`. Console events
 include the status polls and reports.
 
@@ -140,6 +142,14 @@ classDiagram
         Camera.find(access, step) lift, move, scale, center, the offset saved
         pixel_to_board / scale_from_shift
     }
+    class pnp {
+        footprints_of(text) the parts of a board file
+        job_components(job, path) in the job's frame
+        UpCameraSettings device, size, fps, spots, position, height, mm_per_px, roll, mirror
+        UpCamera.center_nozzle(access, step) lift, over the camera, down, scale, center, the position saved
+        UpCamera.measure_part(access) the part's offset from the nozzle
+        picture_to_machine / calibrate
+    }
     class align {
         Alignment.mark_tool(job, machine, design, nearest, within)
         Alignment.mark_camera(job, design, machine, angle)
@@ -192,9 +202,12 @@ classDiagram
     app --> cam
     app --> vision
     app --> camera
+    app --> pnp
     app --> align
     camera --> vision
     camera --> link
+    pnp --> vision
+    pnp --> link
     align --> jobs
     cam --> jobs
     cam --> spinny_laser_cam

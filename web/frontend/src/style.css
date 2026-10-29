@@ -187,7 +187,12 @@ input[type="checkbox"] {
 
 /* Two pages under one status bar; the tabs set which is up on #app. */
 #app[data-page="cam"] > #page-machine,
+#app[data-page="pnp"] > #page-machine,
 #app[data-page="config"] > #page-machine {
+    display: none;
+}
+
+#app:not([data-page="pnp"]) > #page-pnp {
     display: none;
 }
 
@@ -2086,6 +2091,7 @@ table.cam-table input[type="checkbox"] {
    each step is done; the next one is ringed. The row scrolls inside its
    panel when it is wider than the screen. */
 .roadmap {
+    position: relative;
     display: flex;
     margin: 0;
     padding: 0.25rem 0 0.5rem;
@@ -2190,4 +2196,140 @@ table.cam-table input[type="checkbox"] {
 @keyframes flash {
     0%, 30% { box-shadow: 0 0 0 0.25rem var(--ring), var(--shadow); }
     100% { box-shadow: var(--shadow); }
+}
+
+/* PNP page: the parts list, the board drawing, the up camera and the nozzle. */
+.pnp-parts-box {
+    max-height: 60vh;
+    overflow: auto;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+table.pnp-parts {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+table.pnp-parts th,
+table.pnp-parts td {
+    padding: 0.3rem 0.45rem;
+    text-align: left;
+    border-bottom: thin solid var(--border);
+    white-space: nowrap;
+}
+
+table.pnp-parts th {
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+table.pnp-parts tbody tr {
+    cursor: pointer;
+}
+
+table.pnp-parts tbody tr:hover td {
+    background: var(--panel-2);
+}
+
+table.pnp-parts tr.selected td {
+    background: color-mix(in oklab, var(--accent) 14%, var(--panel));
+}
+
+table.pnp-parts tr.dnp td {
+    color: var(--muted);
+}
+
+.pnp-chosen {
+    margin: 0.25rem 0;
+}
+
+.pnp-drawing {
+    width: 100%;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--pv-bg);
+}
+
+.pnp-board {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 60vh;
+}
+
+.pnp-board .pnp-outline {
+    fill: none;
+    stroke: var(--pv-outline);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.pnp-board .pnp-pad {
+    fill: var(--pv-copper);
+    opacity: 0.45;
+}
+
+.pnp-board .pnp-part {
+    cursor: pointer;
+}
+
+.pnp-board .pnp-part circle {
+    fill: var(--accent);
+}
+
+.pnp-board .pnp-part.back circle {
+    fill: var(--pv-bg);
+    stroke: var(--accent);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.pnp-board .pnp-part.dnp circle {
+    fill: var(--muted);
+}
+
+.pnp-board .pnp-part.selected circle {
+    fill: var(--magenta);
+}
+
+.pnp-board text {
+    fill: var(--pv-text);
+    text-anchor: middle;
+    font-family: var(--mono);
+}
+
+.pnp-board .pnp-part.selected text {
+    fill: var(--strong);
+    font-weight: 700;
+}
+
+.pnp-board .pnp-head line,
+.pnp-board .pnp-head circle,
+.pnp-board .pnp-camera-mark line,
+.pnp-board .pnp-camera-mark circle {
+    fill: none;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+}
+
+.pnp-board .pnp-head line,
+.pnp-board .pnp-head circle {
+    stroke: var(--pv-head);
+}
+
+.pnp-board .pnp-camera-mark line,
+.pnp-board .pnp-camera-mark circle {
+    stroke: var(--cyan);
+}
+
+.pnp-board .pnp-head text,
+.pnp-board .pnp-camera-mark text {
+    text-anchor: start;
 }

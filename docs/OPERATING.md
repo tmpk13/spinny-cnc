@@ -215,6 +215,29 @@ the tool:
    keep them with it. A camera that is moved on the head, or a tool that
    is changed, wants the routine run again.
 
+### Pick and place
+
+The PNP tab is for placing parts with a nozzle on the head of an X/Y
+machine and a camera fixed to the machine, looking up at the nozzle. Its
+Setup panel leads through it:
+
+1. Start the up camera (its device, size and fps in the Up camera panel;
+   the spots say whether the finder looks for something dark or bright).
+2. Jog the nozzle over the camera until it shows in the picture and press
+   *Center nozzle*: the head rises to the travel height, comes down to
+   *Sharp at H* when that is set, moves the step along X and along Y to
+   measure how the picture scales, turns and mirrors, and centers the
+   nozzle. The head's R and Z there are the camera's place, kept for the
+   next time, when the routine goes there by itself.
+3. Pick a board job uploaded as a `.kicad_pcb`: its footprints are listed
+   and drawn on the board; a press on a row or a dot picks one.
+4. With a part on the nozzle, *Look at part* reads where its center sits
+   against the nozzle's. *Go to part* takes the nozzle over the picked
+   part's place at the travel height, or, ticked, the part's center.
+
+The routines need `$cartesian=1`; the vacuum and the nozzle's turn are not
+driven yet.
+
 ### Lining a job up with the board
 
 A job imported from a board is placed about the axis; the board on the

@@ -4,12 +4,14 @@ import type {
     AlignState,
     CameraState,
     Compensate,
+    ComponentsResponse,
     ConsoleLine,
     Grid,
     HeightMapState,
     Job,
     JobSummary,
     MessageLevel,
+    PnpState,
     Port,
     Progress,
     SettingsResponse,
@@ -90,6 +92,10 @@ export interface AppState {
     camera: CameraState | null;
     /** The alignment marks and their fit; null until read. */
     align: AlignState | null;
+    /** The up camera of the PNP page; null until read. */
+    pnp: PnpState | null;
+    /** The parts of the selected job's board; null until read. */
+    components: ComponentsResponse | null;
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;
     /** Edits typed and not applied yet, counted by the panel that holds them (`pendingPages` puts them on a tab). */
@@ -120,6 +126,8 @@ export function initialState(mock: boolean): AppState {
         probeDraft: null,
         camera: null,
         align: null,
+        pnp: null,
+        components: null,
         mapChoice: "off",
         pending: {},
         console: [],

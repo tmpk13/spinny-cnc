@@ -17,6 +17,7 @@ export interface Ctx {
     refreshHeightMap(): Promise<void>;
     refreshCamera(): Promise<void>;
     refreshAlign(): Promise<void>;
+    refreshPnp(): Promise<void>;
     /**
      * Loads a job in full and makes it the selected one; null clears the
      * selection. The last call wins, whatever order the replies come in.

@@ -1,16 +1,18 @@
-// The page's tabs: the machine's page (the dashboard), the CAM page and
-// the Config page (the machine files and the firmware settings). The pick
+// The page's tabs: the machine's page (the dashboard), the CAM page, the
+// PNP page (parts, the board and the up camera) and the Config page (the
+// machine files and the firmware settings). The pick
 // is set on #app for the stylesheet and remembered per browser. A tab
 // whose page holds edits not applied yet carries their count.
 
 import { el } from "../dom.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "machine" | "cam" | "config";
+export type PageId = "machine" | "cam" | "pnp" | "config";
 
 export const PAGES: { id: PageId; label: string }[] = [
     { id: "machine", label: "Machine" },
     { id: "cam", label: "CAM" },
+    { id: "pnp", label: "PNP" },
     { id: "config", label: "Config" },
 ];
 
@@ -22,6 +24,7 @@ export const PENDING_PAGES: Record<string, PageId> = {
     "machine-file": "config",
     camera: "machine",
     "cam-profile": "cam",
+    pnp: "pnp",
 };
 
 /** The count of edits not applied yet on a page. */
@@ -39,7 +42,7 @@ function isPage(value: string | null | undefined): value is PageId {
     return PAGES.some((page) => page.id === value);
 }
 
-/** The page named in the address (`?page=cam`, `?page=config`), else the one last shown in this browser, else the machine's. */
+/** The page named in the address (`?page=cam`, `?page=pnp`, `?page=config`), else the one last shown in this browser, else the machine's. */
 export function readPage(): PageId {
     try {
         const asked = new URLSearchParams(globalThis.location?.search ?? "").get("page");

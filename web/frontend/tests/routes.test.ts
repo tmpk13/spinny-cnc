@@ -27,6 +27,34 @@ function fakeFetch(): { calls: Call[]; fetchFn: (url: string, init?: RequestInit
     return { calls, fetchFn };
 }
 
+describe("HttpApi pick and place routes", () => {
+    test("methods, paths and bodies follow the contract", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.pnp();
+        await api.pnpSettings({ device: "/dev/video2", clear: ["height"] });
+        await api.pnpStart();
+        await api.pnpStop();
+        await api.pnpNozzle(1.5);
+        await api.pnpPart();
+        await api.pnpAbort();
+        await api.pnpGoto({ job: "a1", ref: "R1", correct: true });
+        await api.components("a 1");
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["GET", "/api/pnp", null],
+            ["PUT", "/api/pnp/settings", { device: "/dev/video2", clear: ["height"] }],
+            ["POST", "/api/pnp/start", null],
+            ["POST", "/api/pnp/stop", null],
+            ["POST", "/api/pnp/nozzle", { step: 1.5 }],
+            ["POST", "/api/pnp/part", null],
+            ["POST", "/api/pnp/abort", null],
+            ["POST", "/api/pnp/goto", { job: "a1", ref: "R1", correct: true }],
+            ["GET", "/api/jobs/a%201/components", null],
+        ]);
+        expect(api.pnpFrameUrl(50, false)).toMatch(/^http:\/\/host\/api\/pnp\/frame\.jpg\?width=160&overlay=0&t=\d+$/);
+    });
+});
+
 describe("HttpApi camera, alignment and pad routes", () => {
     test("methods, paths and bodies follow the contract", async () => {
         const { calls, fetchFn } = fakeFetch();

@@ -60,7 +60,7 @@ export class ApiError extends Error {
     }
 }
 
-import type { CameraPose, MachineCheck, MachineResponse } from "./types.ts";
+import type { CameraPose, ComponentsResponse, MachineCheck, MachineResponse, PnpGotoRequest, PnpSettings, PnpState } from "./types.ts";
 
 export interface Api {
     ports(): Promise<Port[]>;
@@ -191,6 +191,24 @@ export interface Api {
     alignFit(jobId: string): Promise<AlignFit>;
     /** Fits, turns and shifts the job, and clears the marks. */
     alignApply(jobId: string): Promise<{ job: Job; fit: AlignFit }>;
+
+    /** The up camera: its settings, whether it runs, the routine and the part last looked at. */
+    pnp(): Promise<PnpState>;
+    /** Keeps settings; `clear` takes the position or the height back to none. */
+    pnpSettings(patch: Partial<PnpSettings> & { clear?: ("position" | "height")[] }): Promise<PnpState>;
+    pnpStart(): Promise<PnpState>;
+    pnpStop(): Promise<PnpState>;
+    /** The up camera's newest picture as an image source, as `cameraFrameUrl` is the head camera's. */
+    pnpFrameUrl(width: number, overlay: boolean): string;
+    /** Centers the nozzle over the up camera, measuring where it is and how its picture lies; `step` 0 keeps the scale. */
+    pnpNozzle(step: number): Promise<PnpState>;
+    /** Looks at the part on the nozzle over the up camera. */
+    pnpPart(): Promise<PnpState>;
+    pnpAbort(): Promise<PnpState>;
+    /** The nozzle over a part's place at the travel height. */
+    pnpGoto(request: PnpGotoRequest): Promise<void>;
+    /** The parts of a board job; none for a job that keeps no board file. */
+    components(jobId: string): Promise<ComponentsResponse>;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -606,5 +624,46 @@ export class HttpApi implements Api {
 
     alignApply(jobId: string): Promise<{ job: Job; fit: AlignFit }> {
         return this.request<{ job: Job; fit: AlignFit }>("POST", "/api/align/apply", { job: jobId });
+    }
+
+    pnp(): Promise<PnpState> {
+        return this.request<PnpState>("GET", "/api/pnp");
+    }
+
+    pnpSettings(patch: Partial<PnpSettings> & { clear?: ("position" | "height")[] }): Promise<PnpState> {
+        return this.request<PnpState>("PUT", "/api/pnp/settings", patch);
+    }
+
+    pnpStart(): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/start");
+    }
+
+    pnpStop(): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/stop");
+    }
+
+    pnpFrameUrl(width: number, overlay: boolean): string {
+        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        return `${this.base}/api/pnp/frame.jpg?width=${size}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+    }
+
+    pnpNozzle(step: number): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/nozzle", { step });
+    }
+
+    pnpPart(): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/part");
+    }
+
+    pnpAbort(): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/abort");
+    }
+
+    async pnpGoto(request: PnpGotoRequest): Promise<void> {
+        await this.request("POST", "/api/pnp/goto", request);
+    }
+
+    components(jobId: string): Promise<ComponentsResponse> {
+        return this.request<ComponentsResponse>("GET", `/api/jobs/${encodeURIComponent(jobId)}/components`);
     }
 }

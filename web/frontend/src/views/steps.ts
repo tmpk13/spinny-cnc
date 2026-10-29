@@ -243,6 +243,11 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
             }
             return item;
         }));
+        // A row wider than its panel scrolls by itself to the next step.
+        const current = list.querySelector<HTMLElement>('[aria-current="step"]');
+        if (current && list.scrollWidth > list.clientWidth) {
+            list.scrollLeft = Math.max(0, current.offsetLeft - (list.clientWidth - current.offsetWidth) / 2);
+        }
         const at = states.indexOf("next");
         next.textContent = at < 0 ? "Every step is done." : `Next, ${steps[at]!.label}: ${steps[at]!.hint}`;
         const done = states.filter((entry) => entry === "done").length;
@@ -250,6 +255,6 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
         count.setAttribute("data-apply", done === steps.length ? "applied" : "pending");
     }
 
-    ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice"]);
+    ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components"]);
     render(ctx.store.get());
 }

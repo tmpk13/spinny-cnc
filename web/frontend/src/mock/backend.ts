@@ -42,9 +42,11 @@ import {
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
+import { PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
 import {
     BOARD_MISPLACEMENT,
     CAMERA_TRUTH,
+    POSE_AGE_MS,
     POSE_FPS,
     boardPose,
     boardVector,
@@ -83,6 +85,7 @@ import type {
     CenterRequest,
     CenterResponse,
     Compensate,
+    ComponentsResponse,
     GotoRequest,
     Grid,
     Group,
@@ -103,7 +106,13 @@ import type {
     MachineState,
     MapMode,
     Mode,
+    PartOffset,
     Path,
+    PnpGotoRequest,
+    PnpRoutine,
+    PnpSettings,
+    PnpState,
+    PnpStep,
     Point,
     Port,
     PositionRequest,
@@ -1334,6 +1343,8 @@ const CENTER_TOLERANCE = 0.02;
 const CENTERING_MOVES = 3;
 /** What the routine moves by when asked for no step but the scale is unknown, mm. */
 const DEFAULT_FIND_STEP = 2;
+/** Mock time one step of an up camera routine takes, s. */
+export const PNP_STEP_SECONDS = 0.4;
 
 /** A plain decimal with trailing zeros dropped and no negative zero. */
 function num(value: number, decimals = 3): string {
@@ -1754,6 +1765,14 @@ export class MockBackend implements Api, EventFeed {
     private placements = new Map<string, Placement>();
     private routine: CameraRoutine | null = null;
     private finding: FindSession | null = null;
+    /** The up camera of the PNP page: its settings, whether it runs, its routine, and the part last looked at. */
+    pnpConfig: PnpSettings = { ...PNP_DEFAULTS };
+    pnpRunning = false;
+    private pnpRoutine: PnpRoutine | null = null;
+    private pnpSession: { kind: "nozzle" | "part"; steps: PnpStep[]; elapsed: number; moved: boolean; progress: PnpRoutine } | null = null;
+    private pnpPartOffset: PartOffset | null = null;
+    /** Whether a part hangs on the mock's nozzle: from the first look at one on. */
+    private pnpHolding = false;
     /** The alignment marks, kept for one job at a time. */
     private alignJob: string | null = null;
     private alignMarks: AlignMark[] = [];
@@ -1887,6 +1906,7 @@ export class MockBackend implements Api, EventFeed {
             this.serviceRun(dt);
             this.serviceProbe(dt);
             this.serviceFind(dt);
+            this.servicePnp(dt);
             const period = wasMoving || this.machine.moving() ? 0.1 : 0.2;
             this.stateClock += dt;
             if (this.stateClock >= period - CLOCK_EPSILON) {
@@ -2068,6 +2088,9 @@ export class MockBackend implements Api, EventFeed {
         this.refuseWhileProbing();
         if (this.finding) {
             throw new ApiError(409, "the camera offset routine is running");
+        }
+        if (this.pnpSession) {
+            throw new ApiError(409, "the up camera routine is moving the head");
         }
     }
 
@@ -5519,6 +5542,213 @@ export class MockBackend implements Api, EventFeed {
         this.message("info", `${job.name} aligned: turned ${num(fit.rotation, 4)} deg, moved X ${num(fit.shift[0])} Y ${num(fit.shift[1])}, rms ${num(fit.rms)} mm`);
         this.emitAlign();
         return { job: structuredClone(updated), fit };
+    }
+
+    // --- pick and place -----------------------------------------------------
+
+    private pnpStateOf(): PnpState {
+        const [width, height] = parseSize(this.pnpConfig.size);
+        return {
+            ...this.pnpConfig,
+            position: this.pnpConfig.position ? [this.pnpConfig.position[0], this.pnpConfig.position[1]] : null,
+            running: this.pnpRunning,
+            frame: this.pnpRunning ? { width, height, age_ms: POSE_AGE_MS, fps: POSE_FPS } : null,
+            routine: this.pnpRoutine ? { ...this.pnpRoutine } : null,
+            part_offset: this.pnpPartOffset ? { ...this.pnpPartOffset } : null,
+        };
+    }
+
+    private emitPnp(): void {
+        this.emit({ type: "pnp", data: this.pnpStateOf() });
+    }
+
+    async pnp(): Promise<PnpState> {
+        return this.pnpStateOf();
+    }
+
+    async pnpSettings(patch: Partial<PnpSettings> & { clear?: ("position" | "height")[] }): Promise<PnpState> {
+        const { clear, ...given } = patch;
+        const next: PnpSettings = { ...this.pnpConfig };
+        for (const [key, value] of Object.entries(given) as [keyof PnpSettings, unknown][]) {
+            if (value !== undefined && value !== null) {
+                (next as unknown as Record<string, unknown>)[key] = value;
+            }
+        }
+        for (const key of clear ?? []) {
+            next[key] = null;
+        }
+        try {
+            checkPnpSettings(next);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        this.pnpConfig = next;
+        this.emitPnp();
+        return this.pnpStateOf();
+    }
+
+    async pnpStart(): Promise<PnpState> {
+        if (this.pnpRunning) {
+            throw new ApiError(409, "the up camera is already running");
+        }
+        this.pnpRunning = true;
+        this.message("info", `up camera started on ${this.pnpConfig.device} (mock)`);
+        this.emitPnp();
+        return this.pnpStateOf();
+    }
+
+    async pnpStop(): Promise<PnpState> {
+        if (this.pnpSession) {
+            throw new ApiError(409, "the up camera routine is under way: abort it first");
+        }
+        this.pnpRunning = false;
+        this.emitPnp();
+        return this.pnpStateOf();
+    }
+
+    /** The nozzle's place from the camera's, mm in the machine's frame: the head's joints against where the camera really is. */
+    private nozzleFromCamera(): [number, number] {
+        return [this.machine.joint.r - UP_TRUTH.where[0], this.machine.z - UP_TRUTH.where[1]];
+    }
+
+    pnpFrameUrl(width: number, overlay: boolean): string {
+        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        return upFrameSvg({ nozzle: this.nozzleFromCamera(), holding: this.pnpHolding, size: this.pnpConfig.size, truth: UP_TRUTH }, size, overlay);
+    }
+
+    private startPnp(kind: "nozzle" | "part"): PnpState {
+        this.requireMovable();
+        if (!this.machine.cartesian()) {
+            throw new ApiError(400, "the up camera needs an X/Y machine ($cartesian=1): on the polar one only the rail crosses its picture");
+        }
+        if (!this.pnpRunning) {
+            throw new ApiError(400, "the up camera is not running: start it first");
+        }
+        if (this.machine.state !== "Idle" || this.outbox.length > 0) {
+            throw new ApiError(409, `the machine is ${statusLine(this.machine)}, not Idle`);
+        }
+        const steps: PnpStep[] = kind === "nozzle"
+            ? ["lifting", "moving", "lowering", "scale", "centering", "done"]
+            : ["lifting", "moving", "lowering", "looking", "done"];
+        const progress: PnpRoutine = { kind, state: "running", step: steps[0]!, done: 0, total: steps.length - 1, error: null, spot: null, seconds: 0 };
+        this.pnpRoutine = progress;
+        this.pnpSession = { kind, steps, elapsed: 0, moved: false, progress };
+        this.jogTracked = false;
+        this.emitPnp();
+        return this.pnpStateOf();
+    }
+
+    async pnpNozzle(step: number): Promise<PnpState> {
+        if (!(Number.isFinite(step) && step >= 0 && step <= 10)) {
+            throw new ApiError(400, "the step must be 0 to 10 mm");
+        }
+        const known = this.pnpConfig.position;
+        // Without a place to go to, the nozzle must already be in the picture.
+        if (!known && !upInPicture(this.nozzleFromCamera(), UP_TRUTH, this.pnpConfig.size)) {
+            this.requireMovable();
+            throw new ApiError(400, "no nozzle in the picture: jog it over the up camera and center again");
+        }
+        return this.startPnp("nozzle");
+    }
+
+    async pnpPart(): Promise<PnpState> {
+        if (!this.pnpConfig.position || !(this.pnpConfig.mm_per_px > 0)) {
+            throw new ApiError(400, "the nozzle is not centered over the up camera yet: center it first");
+        }
+        this.pnpHolding = true;
+        return this.startPnp("part");
+    }
+
+    async pnpAbort(): Promise<PnpState> {
+        const session = this.pnpSession;
+        if (!session) {
+            throw new ApiError(409, "no up camera routine is under way");
+        }
+        session.progress.state = "stopped";
+        session.progress.error = "stopped";
+        this.pnpSession = null;
+        this.emitPnp();
+        return this.pnpStateOf();
+    }
+
+    /** The routine on the mock's clock: a step at a time, the result from where the camera really is. */
+    private servicePnp(dt: number): void {
+        const session = this.pnpSession;
+        if (!session) {
+            return;
+        }
+        session.elapsed += dt;
+        session.progress.seconds = Math.round(session.elapsed * 10) / 10;
+        // The head's last move made, the routine ends once it is at rest there.
+        if (session.moved) {
+            if (this.machine.state === "Idle" && this.machine.queue.length === 0) {
+                session.progress.step = "done";
+                session.progress.done = session.steps.length - 1;
+                session.progress.state = "done";
+                this.pnpSession = null;
+                this.emitPnp();
+            }
+            return;
+        }
+        // The steps before the last, one at a time; the last one moves the head.
+        const index = Math.min(session.steps.length - 2, Math.floor(session.elapsed / PNP_STEP_SECONDS));
+        if (session.steps[index] !== session.progress.step) {
+            session.progress.step = session.steps[index]!;
+            session.progress.done = index;
+            this.emitPnp();
+        }
+        if (session.elapsed < (session.steps.length - 1) * PNP_STEP_SECONDS) {
+            return;
+        }
+        session.moved = true;
+        const lift = this.travel ?? this.clearance;
+        if (session.kind === "nozzle") {
+            const [r, z] = UP_TRUTH.where;
+            const height = this.pnpConfig.height ?? (this.machine.hasFocusAxis() ? Math.max(this.machine.h, lift) : null);
+            this.machine.jogTo(r, null, null, height, z);
+            this.pnpConfig = { ...this.pnpConfig, position: [r, z], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, height };
+            session.progress.spot = { dx: 0, dy: 0, mm: 0 };
+            this.message("info", `nozzle centered over the up camera at R ${num(r)} Z ${num(z)} (mock)`);
+        } else {
+            const position = this.pnpConfig.position!;
+            this.machine.jogTo(position[0], null, null, this.pnpConfig.height, position[1]);
+            const [dx, dy] = UP_TRUTH.part;
+            this.pnpPartOffset = { dx, dy, mm: round4(Math.hypot(dx, dy)), length: UP_TRUTH.partSize[0], width: UP_TRUTH.partSize[1] };
+            this.message("info", `the part sits X ${num(dx)} Y ${num(dy)} mm from the nozzle's center (mock)`);
+        }
+        this.emitPnp();
+    }
+
+    async components(jobId: string): Promise<ComponentsResponse> {
+        const job = this.requireJob(jobId);
+        if (!job.design?.board) {
+            return { job: jobId, components: [], note: "only a .kicad_pcb upload keeps the board its parts are read from" };
+        }
+        return { job: jobId, components: mockComponents(job), note: null };
+    }
+
+    async pnpGoto(request: PnpGotoRequest): Promise<void> {
+        const { components } = await this.components(request.job);
+        const part = components.find((entry) => entry.ref === request.ref);
+        if (!part) {
+            throw new ApiError(404, `the job has no part '${request.ref}'`);
+        }
+        if (!request.correct) {
+            await this.goto({ kind: "board", x: part.x, y: part.y });
+            return;
+        }
+        const seen = this.pnpPartOffset;
+        if (!seen) {
+            throw new ApiError(400, "no part has been looked at on the nozzle: measure it over the up camera first");
+        }
+        if (!this.machine.cartesian()) {
+            throw new ApiError(400, "the up camera needs an X/Y machine ($cartesian=1)");
+        }
+        // The board frame is the joints' turned by the table's angle.
+        const angle = (this.machine.joint.a * Math.PI) / 180;
+        const r = part.x * Math.cos(angle) + part.y * Math.sin(angle);
+        const z = -part.x * Math.sin(angle) + part.y * Math.cos(angle);
+        await this.goto({ kind: "joint", r: r - seen.dx, z: z - seen.dy } as GotoRequest);
     }
 }
 

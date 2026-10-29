@@ -12,14 +12,17 @@ With a paste dispenser the table's driver turns the plunger instead, as
 `A` in mm, and a job is dots on the pads; a camera on the head is read
 through the sibling pcb-vision repository's `pcbv serve`, which finds the
 board in its picture, for measuring the camera's offset from the tool and
-lining a job up with the board.
+lining a job up with the board. For pick and place a second camera,
+fixed to the machine and looking up, is read the same way: it centers the
+nozzle and sees where a part sits on it, and a board job's parts are read
+from its KiCad file.
 
 | Part | What | Build, test, run |
 | --- | --- | --- |
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import, streaming, probing (grid or pads), dispensing, the camera through pcbv, alignment, API, serves the page | `uv run spinny-web` |
+| `web/backend` | serial link, job import, streaming, probing (grid or pads), dispensing, the cameras through pcbv, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, pads and holes of a layer, the alignment fit, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
@@ -40,8 +43,11 @@ flowchart LR
         BE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
+        BE --> PNP[pick and place: a board's parts from its KiCad file, the nozzle centered over the up camera, a part's offset on it]
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
+        BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot]
         PV --> VID[/dev/videoN on the head]
+        PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
         CF[cam/*.toml: axes, tools, operations, post] --> CAM
         CF --> CLI[spinny-cam]
