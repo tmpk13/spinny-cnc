@@ -225,6 +225,11 @@ survives the host as well as the controller.
    pickup without the map is refused when a probe in this frame found the
    copper more than 1 mm from H 0, which is what a power cycle with the
    head raised looks like.
+   When nothing moved the axes since the offset was set (the link dropped
+   and came back to a board that did not restart: `diag` at the connect
+   shows its `up` time still counting), the banner under the status bar
+   offers *Keep* for the dropped offset instead of a tie. Nothing checks
+   that, so keep it only when you know the head was not moved.
 3. *Plan* says which line the run starts at, how the head gets there and
    what goes out first; *Resume from line* does it after a confirmation.
    Leave *from the start of its path* on: the run then redoes the path the
@@ -238,6 +243,14 @@ silence: the state badge first shows the age of its last report, then the
 run ends as an error with the reason and the link closes. Reconnect, and
 pick the job up as above; the console's *Log* shows the backend's log,
 which keeps what happened when no page was open.
+
+A link closed with `bridge ... gone: No such device` while `diag` at the
+next connect shows `lockups` counted at that moment is the board's USB
+lockup guard (RP2040 erratum E15): the controller stopped answering, the
+board dropped off the bus to reset it and came back within a second. The
+board stops the run as for any host that goes away (`Alarm:1` with the
+spindle or beam off) but keeps its position, so the pickup can keep the
+focus offset.
 
 ### Checking the directions and the probe
 
