@@ -64,6 +64,29 @@ export function anyOf(names: string[]): string {
     return `${names.slice(0, -1).join(", ")} and/or ${names[names.length - 1]}`;
 }
 
+/** The travel height's bounds, mm: an H, so it may be below H 0. */
+export const TRAVEL_LIMIT = 100;
+
+/** The travel height typed: a number, null for a blank field (off), or what is wrong with it. */
+export function readTravel(text: string): { travel: number | null } | { problem: string } {
+    if (text.trim() === "") {
+        return { travel: null };
+    }
+    const value = parseNumber(text);
+    if (value === null || Math.abs(value) > TRAVEL_LIMIT) {
+        return { problem: `the travel height is an H from -${TRAVEL_LIMIT} to ${TRAVEL_LIMIT} mm, or blank for none` };
+    }
+    return { travel: value };
+}
+
+/** What the travel row says it does: rise to the height before moving across, or nothing. */
+export function travelText(travel: number | null | undefined): string {
+    if (travel === null || travel === undefined) {
+        return "off: gotos, probing and camera moves go across at the height the head has";
+    }
+    return `gotos, probing and camera moves rise to H ${travel} before going across; a higher head stays where it is`;
+}
+
 export function mountJog(root: HTMLElement, ctx: Ctx): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
     // a step typed in, which is the step while it is there.
@@ -82,6 +105,19 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
     let drawnTool: Tool | null = null;
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
+    // The travel height, a host value: written when the field changes, and
+    // filled from the settings while it is not being typed in.
+    const travelField = numberField({ step: 0.5, placeholder: "off", width: "6rem" });
+    travelField.setAttribute("aria-label", "Travel height H");
+    const travelNote = el("span", { class: "muted travel-note" });
+    travelField.addEventListener("change", () => void writeTravel());
+    // Enter takes the value as leaving the field does.
+    travelField.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            travelField.blur();
+        }
+    });
 
     /** The choices of a bar: the joint's own steps, or the pad's for one without. */
     const choicesOf = (axis?: AxisControl): number[] => axis?.steps ?? controls.pad_steps;
@@ -176,6 +212,38 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
             ),
             zero,
         );
+    }
+
+    async function writeTravel(): Promise<void> {
+        const read = readTravel(travelField.value);
+        if ("problem" in read) {
+            ctx.toast("error", read.problem);
+            showTravel(ctx.store.get(), true);
+            return;
+        }
+        if (read.travel === (ctx.store.get().settings?.host.travel ?? null)) {
+            return;
+        }
+        const done = await ctx.call(ctx.api.updateSettings({ host: { travel: read.travel } }).then(() => true));
+        await ctx.refreshSettings();
+        if (done) {
+            ctx.toast("info", read.travel === null ? "travel height off" : `travel height H ${read.travel}`);
+        }
+    }
+
+    /** The field and its note from the settings; a field being typed in keeps its text unless `force`. */
+    function showTravel(state: AppState, force = false): void {
+        const travel = state.settings?.host.travel ?? null;
+        if (force || travelField !== document.activeElement) {
+            travelField.value = travel === null ? "" : String(travel);
+        }
+        travelNote.textContent = travelText(travel);
+    }
+
+    function travelRow(): HTMLDivElement {
+        const row = el("div", { class: "goto-row travel-row" }, el("span", { class: "choice-label" }, "Travel H"), travelField, travelNote);
+        row.title = "The H the head rises to before a goto, probing or a camera routine moves it across the board; blank for none. Jogs and runs keep their own heights.";
+        return row;
     }
 
     function boardGotoRow(): HTMLDivElement {
@@ -314,6 +382,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         if (controls.axes.length > 0) {
             rows.push(positionRow(controls.axes));
         }
+        if (profile.h_axis) {
+            rows.push(travelRow());
+        }
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
         // Only a machine with an endstop reports what is homed, and only
@@ -337,6 +408,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
         if (home) {
             home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string");
         }
+        showTravel(state);
     }
 
     ctx.store.subscribe((state) => {

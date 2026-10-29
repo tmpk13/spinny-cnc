@@ -292,6 +292,8 @@ const INT_SETTING_MAX = U32_MAX;
 const SETTING_MAX = 1e7;
 /** Largest chord tolerance the backend takes, mm. */
 const MAX_TOLERANCE = 10;
+/** The travel height's bounds, mm: an H, so it may be below H 0. */
+const TRAVEL_LIMIT = 100;
 
 /**
  * The firmware's check of a whole set of settings, so the rules that span
@@ -1731,6 +1733,8 @@ export class MockBackend implements Api, EventFeed {
     /** The host's milling settings: travel height over the surface, mm, and the spin-up dwell, s. */
     clearance = 2;
     spinup = 2;
+    /** The H the page's moves and probing rise to before going across; null leaves the head where it is. */
+    travel: number | null = null;
     /** The host's dispensing settings: what every dot of a dispensing run is made of. */
     gap = 0.1;
     retract = 0.2;
@@ -2248,6 +2252,34 @@ export class MockBackend implements Api, EventFeed {
         this.jogTracked = true;
     }
 
+    /** The height probing travels at: the head's, or the travel height when that is higher. */
+    private probeTravel(h: number): number {
+        return this.travel !== null ? Math.max(h, this.travel) : h;
+    }
+
+    /**
+     * Up to the travel height before a goto goes across, as the backend
+     * does: not without one or a focus axis, not for a goto that names the
+     * height or moves nothing across, and not for a head already as high.
+     */
+    private travelRise(request: GotoRequest): void {
+        const travel = this.travel;
+        if (travel === null || !this.machine.hasFocusAxis()) {
+            return;
+        }
+        const named = request as { r?: number; a?: number; h?: number; z?: number };
+        if (named.h !== undefined) {
+            return;
+        }
+        if (request.kind === "joint" && named.r === undefined && named.a === undefined && named.z === undefined) {
+            return;
+        }
+        if (this.machine.endpointH() >= travel - 1e-6) {
+            return;
+        }
+        this.exchange(`jogto H${num(travel, 4)}`, () => this.machine.jogTo(null, null, null, travel));
+    }
+
     /** A joint line through the API; the tracked end follows the backend's rule for it. */
     private sendJoint(line: string, action: () => void, tracked: boolean): void {
         try {
@@ -2307,6 +2339,7 @@ export class MockBackend implements Api, EventFeed {
         this.checkFeed(feed);
         const feedWord = feed ? ` F${num(feed)}` : "";
         const cartesian = this.machine.cartesian();
+        this.travelRise(request);
         if (request.kind === "joint") {
             const { r, a, h, z } = request as { r?: number; a?: number; h?: number; z?: number };
             if (z !== undefined && !cartesian) {
@@ -2901,6 +2934,7 @@ export class MockBackend implements Api, EventFeed {
         return {
             tolerance: this.tolerance,
             clearance: this.clearance,
+            travel: this.travel,
             spinup: this.spinup,
             gap: this.gap,
             retract: this.retract,
@@ -3042,6 +3076,11 @@ export class MockBackend implements Api, EventFeed {
         }
         const clearance = host?.clearance ?? this.clearance;
         const spinup = host?.spinup ?? this.spinup;
+        // The travel height: a number, or null to turn it off.
+        const travel = host && "travel" in host ? host.travel ?? null : this.travel;
+        if (travel !== null && !(typeof travel === "number" && Number.isFinite(travel) && Math.abs(travel) <= TRAVEL_LIMIT)) {
+            throw new ApiError(400, `the travel height must be -${TRAVEL_LIMIT} to ${TRAVEL_LIMIT} mm, or none`);
+        }
         if (!(Number.isFinite(clearance) && clearance > 0 && clearance <= 100)) {
             throw new ApiError(400, "the clearance must be above 0 and at most 100 mm");
         }
@@ -3077,6 +3116,7 @@ export class MockBackend implements Api, EventFeed {
         }
         this.clearance = clearance;
         this.spinup = spinup;
+        this.travel = travel;
         this.gap = gap;
         this.retract = retract;
         this.output = output;
@@ -4242,7 +4282,7 @@ export class MockBackend implements Api, EventFeed {
             remaining: null,
         };
         this.probeProgress = progress;
-        const session: ProbeSession = { settings, order, joints, next: 0, pads: null, elapsed: 0, travel: machine.h, map, progress };
+        const session: ProbeSession = { settings, order, joints, next: 0, pads: null, elapsed: 0, travel: this.probeTravel(machine.h), map, progress };
         this.probing = session;
         this.emitHeightMap();
         this.probeBegin(session);
@@ -4406,7 +4446,7 @@ export class MockBackend implements Api, EventFeed {
             remaining: null,
         };
         this.probeProgress = progress;
-        const session: ProbeSession = { settings, order: [], joints, next: 0, pads: plan.order, elapsed: 0, travel: machine.h, map, progress };
+        const session: ProbeSession = { settings, order: [], joints, next: 0, pads: plan.order, elapsed: 0, travel: this.probeTravel(machine.h), map, progress };
         this.probing = session;
         this.emitHeightMap();
         this.probeBegin(session);

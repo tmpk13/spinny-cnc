@@ -357,7 +357,7 @@ def test_host_milling_settings_are_kept(client, tmp_path):
     response = client.put("/api/settings", json={"host": {"clearance": 3.5, "spinup": 4}})
     assert response.status_code == 200, response.text
     assert response.json()["host"] == {
-        "tolerance": 0.005, "clearance": 3.5, "spinup": 4.0, "speed_control": True,
+        "tolerance": 0.005, "clearance": 3.5, "travel": None, "spinup": 4.0, "speed_control": True,
         "gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200,
     }
     assert client.put("/api/settings", json={"host": {"clearance": 0}}).status_code == 400

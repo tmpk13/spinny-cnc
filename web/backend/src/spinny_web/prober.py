@@ -283,6 +283,7 @@ class Prober:
         target: tuple[float, float] | None = None,
         points: list[tuple[float, float]] | None = None,
         box: tuple[float, float, float, float] | None = None,
+        travel: float | None = None,
     ) -> dict:
         """Starts probing `grid`. `spindle_off` is the output's duty with a
         spindle stopped, on a machine whose output drives one: probing is
@@ -305,7 +306,10 @@ class Prober:
         `points` makes it a pad map rather than a grid: those board points
         are probed, in their order, and the map's grid is `box` (the job's
         extent) with a margin, filled in from them; `resume` goes on with a
-        pad map the same way, its points being the ones."""
+        pad map the same way, its points being the ones. `travel`, the
+        host's travel height, is what the head rises to before it goes
+        across, when the head is lower; a single probe where the head is
+        goes down from where it is."""
         try:
             if touch is None and points is None:
                 grid.check()
@@ -330,7 +334,7 @@ class Prober:
                 self._claim(link)
         try:
             return self._start(
-                grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch, target, points, box
+                grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch, target, points, box, travel
             )
         finally:
             self._starting = False
@@ -350,6 +354,7 @@ class Prober:
         target: tuple[float, float] | None = None,
         points: list[tuple[float, float]] | None = None,
         box: tuple[float, float, float, float] | None = None,
+        travel: float | None = None,
     ) -> dict:
         try:
             status = link.status_now(1.0, routine=True)
@@ -372,18 +377,23 @@ class Prober:
                 self.progress = ProbeProgress(total=1)
                 progress = self.progress
                 self._link = link
+                # A probe where the head is goes down from there and comes
+                # back to it; one that moves first rises to the travel
+                # height for the move, when the head is lower.
+                rise = status.h if target is None or travel is None else max(status.h, travel)
                 self._thread = threading.Thread(
                     target=self._run_touch,
                     args=(
                         settings,
                         link,
                         streamer,
-                        status.h,
+                        rise,
                         progress,
                         self._restarts,
                         touch,
                         streamer.start_of(status),
                         target,
+                        status.h,
                     ),
                     name="prober",
                     daemon=True,
@@ -413,9 +423,13 @@ class Prober:
         # higher one the head has been raised to: a missed probe leaves the
         # head its depth below that, and travelling from there would drag
         # it through the board.
+        # The host's travel height, when set, is a floor under all of it.
+        travel_from = travel
         travel = status.h
         if resume is not None and heightmap.travel is not None:
             travel = max(travel, heightmap.travel)
+        if travel_from is not None:
+            travel = max(travel, travel_from)
         heightmap.travel = travel
         # Every point is checked for reach before the first move. A grid
         # point inside the tip's circle about the axis is probed from the
@@ -495,10 +509,11 @@ class Prober:
 
     # --- the probing thread -----------------------------------------------
 
-    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch, start, target) -> None:
+    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch, start, target, at=None) -> None:
         """One probe down where the head is, or at `target` after a move
-        there from `start`, then back up; `touch` gets the contact height
-        with the head at rest at the travel height."""
+        there from `start` (risen from `at` to the travel height first, if
+        lower), then back up; `touch` gets the contact height with the head
+        at rest at the travel height."""
         if restarts is None:
             restarts = link.restarts
         h_rate = streamer.rates.h_rate
@@ -507,6 +522,9 @@ class Prober:
                 progress.point = (0, 0)
             self._emit(progress, None)
             if target is not None:
+                if at is not None and at < travel - 1e-6:
+                    self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
+                    self._settle(link, (travel - at) / h_rate * 60.0, restarts)
                 self._request(link, f"go {streamer.words(target)}", LINE_TIMEOUT)
                 self._settle(link, streamer._rapid_seconds(start, target), restarts)
             height = self._touch(link, settings.feed, settings.depth, h_rate)

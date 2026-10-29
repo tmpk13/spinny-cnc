@@ -201,6 +201,8 @@ export interface HostSettings {
     tolerance: number;
     /** Milling: travel height over the surface, mm. */
     clearance?: number;
+    /** The H the page's moves, probing and the camera routines rise to before going across, mm; null leaves the head at the height it has. */
+    travel?: number | null;
     /** Milling: dwell after the spindle starts, s. */
     spinup?: number;
     /** Milling: the host sets the spindle's speed from the groups; off, the spindle runs full on whenever it runs. */
@@ -330,7 +332,8 @@ export interface MachineCheck {
 
 export interface SettingsUpdate {
     values?: Record<string, number>;
-    host?: HostSettings;
+    /** The host values to change; one left out keeps its value, and a null travel turns it off. */
+    host?: Partial<HostSettings>;
 }
 
 export type Point = [number, number];

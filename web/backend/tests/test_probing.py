@@ -1075,3 +1075,66 @@ def test_a_spindle_run_without_the_map_needs_the_copper_near_zero(client, fake):
     response = client.post(f"/api/jobs/{job_id}/run", json={"compensate": "off"})
     assert response.status_code == 200, response.text
     client.post("/api/run/stop")
+
+
+# --- the travel height --------------------------------------------------------
+
+
+def test_the_travel_height_is_a_host_setting_that_can_be_turned_off(client, tmp_path):
+    response = client.put("/api/settings", json={"host": {"travel": 4.5}})
+    assert response.status_code == 200, response.text
+    assert response.json()["host"]["travel"] == 4.5
+    assert json.loads((tmp_path / "config.json").read_text())["travel"] == 4.5
+    # Below H 0 is an H like any other; past the bounds or not a number is not.
+    assert client.put("/api/settings", json={"host": {"travel": -2}}).json()["host"]["travel"] == -2.0
+    assert client.put("/api/settings", json={"host": {"travel": 101}}).status_code == 400
+    assert client.put("/api/settings", json={"host": {"travel": "high"}}).status_code == 400
+    assert client.get("/api/settings").json()["host"]["travel"] == -2.0
+    response = client.put("/api/settings", json={"host": {"travel": None}})
+    assert response.status_code == 200, response.text
+    assert response.json()["host"]["travel"] is None
+    assert "travel" not in json.loads((tmp_path / "config.json").read_text())
+
+
+def test_a_goto_across_rises_to_the_travel_height_first(client, fake):
+    assert client.put("/api/settings", json={"host": {"travel": 3}}).status_code == 200
+    response = client.post("/api/goto", json={"kind": "board", "x": 10, "y": 0})
+    assert response.status_code == 200, response.text
+    lines = response.json()["lines"]
+    assert lines[0].startswith("jogto ") and words(lines[0]) == {"H": 3.0}
+    assert len(lines) > 1 and "H" not in words(lines[1])
+    deadline = time.monotonic() + 5.0
+    while (fake.state() != "Idle" or fake.answered_lines != fake.received_lines) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert fake.h == pytest.approx(3.0)
+    # At rest at or above it, the head is left where it is; a goto of the
+    # height alone, or one naming it, is the operator's own.
+    response = client.post("/api/goto", json={"kind": "board", "x": 0, "y": 5})
+    assert not any(line.startswith("jogto H") for line in response.json()["lines"])
+    response = client.post("/api/goto", json={"kind": "joint", "h": 1})
+    (line,) = response.json()["lines"]
+    assert words(line) == {"H": 1.0}
+
+
+def test_probing_travels_at_the_travel_height_when_the_head_is_lower(client, fake):
+    assert client.put("/api/settings", json={"host": {"travel": 2}}).status_code == 200
+    state = probe(client, nx=2, ny=2)
+    assert state["probe"]["state"] == "done", state["probe"]
+    assert state["map"]["travel"] == pytest.approx(2.0)
+    lines = [line for line in fake.received_lines if line.split()[0] in ("go", "probe")]
+    # Up first, then across, and back up to it after every touch.
+    assert lines[0] == "go H2.0000"
+    assert words(lines[1]).get("H") is None
+    assert lines.count("go H2.0000") == 1 + 4
+    assert fake.h == pytest.approx(2.0)
+
+
+def test_a_higher_head_probes_from_where_it_is(client, fake):
+    fake.h = 5.0
+    assert client.put("/api/settings", json={"host": {"travel": 2}}).status_code == 200
+    # The depth counts down from the height probing travels at.
+    assert client.put("/api/heightmap/settings", json={"depth": 10}).status_code == 200
+    state = probe(client, nx=2, ny=2)
+    assert state["probe"]["state"] == "done", state["probe"]
+    assert state["map"]["travel"] == pytest.approx(5.0)
+    assert "go H2.0000" not in fake.received_lines

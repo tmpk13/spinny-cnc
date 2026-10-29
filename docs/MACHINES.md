@@ -136,6 +136,7 @@ stealth = true                  # stealthChop              -> tmc_stealth
 [host]                          # the host's own settings, not the firmware's
 tolerance = 0.005               # chord tolerance, mm, (0, 10]
 clearance = 2.0                 # milling: travel height over the surface, mm, (0, 100]
+travel = 5.0                    # the H the page's moves and probing rise to before going across, mm, [-100, 100]; left out: off
 spinup = 2.0                    # milling: dwell after the spindle starts, s, [0, 600]
 speed_control = true            # milling: false runs the spindle full on (S = s_max), never at a group's rpm
 gap = 0.1                       # dispensing: the needle's height over the pad while a dot is laid, mm, (0, 10]

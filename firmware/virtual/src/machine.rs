@@ -229,14 +229,14 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
 
     // The host's own values are not the firmware's: checked for shape only.
     let host = table_of(&top, "host")?;
-    for key in ["tolerance", "clearance", "spinup", "gap", "retract", "output", "extrude_rate", "dwell_ms"] {
+    for key in ["tolerance", "clearance", "travel", "spinup", "gap", "retract", "output", "extrude_rate", "dwell_ms"] {
         number(&host, key, "host")?;
     }
     flag(&host, "speed_control", "host")?;
     only(
         &host,
         "host",
-        &["tolerance", "clearance", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"],
+        &["tolerance", "clearance", "travel", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"],
     )?;
     // The page's controls (the pad, the jog buttons, the readout) and a
     // camera on the head are the host's business: only their shape is
@@ -429,7 +429,7 @@ mod tests {
         let text = "kinematics = \"cartesian\"\ntool = \"dispenser\"\n\
              [dispenser]\nsteps_per_mm = 1600\nmax_rate = 300\njog_rate = 60\ninvert = true\nsocket = \"E\"\n\
              [focus]\nsocket = \"Y\"\n\
-             [host]\ngap = 0.1\nretract = 0.2\noutput = 100\nextrude_rate = 60\ndwell_ms = 200\nspeed_control = false\n";
+             [host]\ngap = 0.1\nretract = 0.2\noutput = 100\nextrude_rate = 60\ndwell_ms = 200\nspeed_control = false\ntravel = 4\n";
         let mut settings = applied(text);
         assert!(settings.cartesian && settings.dispenser && !settings.spindle);
         assert!(settings.dispensing());

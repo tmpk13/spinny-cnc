@@ -35,8 +35,10 @@ the board, and a run can then follow it: the focus axis tracks the board
 under the beam, or, without a focus axis, the power is raised where the
 board sits out of focus.
 
-1. Jog the head up until the probe clears the board: probing travels at
-   that height. Set the probe's offset from the beam under *Probe*.
+1. Jog the head up until the probe clears the board, or type a *Travel H*
+   in the Jog panel: probing travels at the higher of the two, and the
+   probe's depth counts down from there. Set the probe's offset from the
+   beam under *Probe*.
 2. *Fit to job* (the preview shows the grid), then *Probe*.
 3. Jog the beam over the board, focus it by eye with the focus axis, and
    press *Focus here*.
@@ -109,6 +111,17 @@ for priming the needle and checking the flow.
    run picks up at a line like any other, the plunger declared where the
    plan had it.
 
+### The travel height
+
+*Travel H* in the Jog panel (on a machine with a focus axis) is an H the
+head rises to before the page moves it across the board: a goto of the
+board or of a joint across it, probing, *Probe nearest* and the camera
+routines. A head already higher stays where it is, a goto that names its
+own H is left alone, and jogs and runs keep their own heights (a milling
+run travels at its clearance over the surface). Blank turns it off. It is
+a host value: `[host] travel` in a machine file, `host.travel` in
+`PUT /api/settings`.
+
 ### Probing less: around the cuts, and one point
 
 Probing every point of a grid over a sparse board measures mostly bare
@@ -165,7 +178,8 @@ the tool:
    mark* (a spindle machine: a short plunge at the depth and plunge rate
    given, run as a one point job named `camera mark`; on another machine
    make a mark by hand, or use a hole, and press *Mark is here* over it).
-2. Press *Find mark*. The head lifts to the clearance, goes where the
+2. Press *Find mark*. The head lifts to the travel height (the milling
+   clearance as an H when none is set), goes where the
    camera should see the mark by the offset in force (zero at first: have
    the camera's field of view cover the tool's position then, or type a
    rough offset into the settings first), takes the darkest spot nearest

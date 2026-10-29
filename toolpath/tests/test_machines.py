@@ -226,6 +226,7 @@ def test_every_key_lands_on_its_setting():
         ("[host]\ndwell_ms = 70000\n", "[host] dwell_ms must be 0 to 60000"),
         ("[host]\nextrude_rate = 20000\n", "[host] extrude_rate must be above 0 and at most 10000"),
         ("[host]\noutput = 0\n", "[host] output must be above 0 and at most 100000"),
+        ("[host]\ntravel = 101\n", "[host] travel must be -100 to 100"),
         ('tool = "glue"\n', "tool must be one of laser, spindle, dispenser"),
         ('tool = "dispenser"\n', "tool = dispenser needs kinematics = cartesian"),
         ('kinematics = "cartesian"\ntool = "dispenser"\n[table]\n[dispenser]\n', "[table] and [dispenser] cannot both be given"),
@@ -282,6 +283,8 @@ def test_a_dispenser_is_the_table_s_driver_in_millimeters():
     assert parse("", "bare").camera == {} and parse("", "bare").document()["camera"]["device"] == "/dev/video0"
     # A dispenser's defaults are the dispenser's, a retract of 0 is allowed, and a spinup of 0 still is.
     assert parse("[host]\nretract = 0\nspinup = 0\n", "zero").host == {"retract": 0.0, "spinup": 0.0}
+    # The travel height is an H: below H 0 is allowed.
+    assert parse("[host]\ntravel = -1.5\n", "below").host == {"travel": -1.5}
 
 
 def test_a_bad_file_is_reported_beside_the_good_ones(tmp_path):

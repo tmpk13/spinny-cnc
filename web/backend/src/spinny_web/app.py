@@ -209,6 +209,9 @@ POLAR, CARTESIAN = "polar", "cartesian"
 LASER, SPINDLE = "laser", "spindle"
 # What a dispensing run is made of when the config says nothing.
 DISPENSE_DEFAULTS = {"gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200}
+# The travel height's bounds, mm: an H, so it may be below H 0 when the
+# surface is not where H counts from.
+TRAVEL_LIMIT = 100.0
 # Pad probing: how small a pad the probe still lands on, mm^2, and how
 # many points at most, by default.
 PAD_MIN_AREA = 0.5
@@ -628,6 +631,24 @@ class Backend:
         the spindle runs full on whenever it runs."""
         return bool(self.config.get("speed_control", True))
 
+    @property
+    def travel_height(self) -> float | None:
+        """The H the head rises to before a move from the page, probing or
+        a camera routine goes across the board; None leaves the head at
+        the height it has. Never a reason to go down: a head above it
+        stays where it is."""
+        value = self.config.get("travel")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        return value if math.isfinite(value) and abs(value) <= TRAVEL_LIMIT else None
+
+    def lift_height(self) -> float:
+        """The H a camera routine rises to before it moves the head: the
+        travel height, else the milling clearance taken as an H."""
+        travel = self.travel_height
+        return travel if travel is not None else self.spindle_config().clearance
+
     def dispense_config(self) -> Dispense:
         """What a dot of paste is made of, from the config; the defaults
         where it says nothing or something unusable."""
@@ -650,6 +671,7 @@ class Backend:
         return {
             "tolerance": self.tolerance,
             "clearance": spindle.clearance,
+            "travel": self.travel_height,
             "spinup": spindle.spinup,
             "speed_control": self.speed_control,
             "gap": dispense.gap,
@@ -1221,8 +1243,32 @@ class Backend:
             end = targets[-1][0] if targets else start
         else:
             raise ValueError("kind must be joint or board")
+        rise = self._travel_rise(link, status, streamer, body)
+        if rise is not None:
+            lines = [rise, *lines]
         self._send_jog(link, lines, end)
         return {"lines": lines}
+
+    def _travel_rise(self, link: Link, status, streamer: Streamer, body: GotoBody) -> str | None:
+        """The line that takes the head up to the travel height before a
+        goto moves it across the board, or None: no travel height, no
+        focus axis, a goto that names the height itself or moves nothing
+        across, or a head at rest at or above it. A head still moving may
+        end anywhere, so it is taken to the travel height either way.
+        `status` is the report the goto was planned from, or None for one
+        read here."""
+        travel = self.travel_height
+        if travel is None or body.h is not None:
+            return None
+        if body.kind == "joint" and body.r is None and body.a is None and body.z is None:
+            return None
+        if status is None:
+            status = link.status_now(1.0, routine=True)
+        if status.h is None:
+            return None
+        if status.state == "Idle" and status.h >= travel - 1e-6:
+            return None
+        return streamer.joint_goto(None, None, None, travel)
 
     def set_position(self, body: PositionBody) -> dict:
         # Checked under both locks: a run or probing that starts meanwhile
@@ -1559,6 +1605,17 @@ class Backend:
         tolerance = _tolerance(host["tolerance"]) if host and "tolerance" in host else None
         milling = None
         speed_control = None
+        # The travel height: a number, or None to turn it off.
+        travel: tuple[float | None] | None = None
+        if host and "travel" in host:
+            given = host["travel"]
+            if given is None:
+                travel = (None,)
+            else:
+                value = _host_number(host, "travel", 0.0)
+                if not (math.isfinite(value) and abs(value) <= TRAVEL_LIMIT):
+                    raise ValueError(f"the travel height must be -{TRAVEL_LIMIT:g} to {TRAVEL_LIMIT:g} mm, or none")
+                travel = (value,)
         if host and "speed_control" in host:
             flag = host["speed_control"]
             if not isinstance(flag, (bool, int, float)) or isinstance(flag, float) and not math.isfinite(flag):
@@ -1601,9 +1658,14 @@ class Backend:
             self.config["spinup"] = milling.spinup
         if speed_control is not None:
             self.config["speed_control"] = speed_control
+        if travel is not None:
+            if travel[0] is None:
+                self.config.pop("travel", None)
+            else:
+                self.config["travel"] = travel[0]
         if dispensing is not None:
             self.config.update(dispensing)
-        if tolerance is not None or milling is not None or speed_control is not None or dispensing is not None:
+        if tolerance is not None or milling is not None or speed_control is not None or dispensing is not None or travel is not None:
             self._save_config()
         if self.link is not None and self.link.is_open:
             return self.read_settings(force=True)
@@ -2097,6 +2159,7 @@ class Backend:
                         spindle_off,
                         keep_focus=self._heights_frame == frame,
                         reserved=True,
+                        travel=self.travel_height,
                         resume=resume,
                     )
                     self._heights_frame = frame
@@ -2178,6 +2241,7 @@ class Backend:
                         z_max,
                         spindle_off,
                         reserved=True,
+                        travel=self.travel_height,
                         touch=touched,
                         target=target,
                     )
@@ -2348,6 +2412,7 @@ class Backend:
                         spindle_off,
                         keep_focus=self._heights_frame == frame,
                         reserved=True,
+                        travel=self.travel_height,
                         resume=resume,
                         points=resume.points if resume is not None else points,
                         box=box,
@@ -2472,7 +2537,7 @@ class Backend:
                 link=link,
                 streamer=streamer,
                 head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
-                clearance=self.spindle_config().clearance,
+                clearance=self.lift_height(),
                 has_focus_axis=bool(values.get("h_axis")),
             )
             self.camera.find(access, step)

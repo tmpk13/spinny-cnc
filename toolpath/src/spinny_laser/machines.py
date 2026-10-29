@@ -111,10 +111,12 @@ SOCKETS = ("X", "Y", "Z", "E")
 # dot of paste is made of: the needle's gap over the pad, the plunger's
 # pull-back after each dot, the mm^3 of paste a mm of plunger gives, the
 # plunger's speed while a dot is pushed out, and the wait before the
-# pull-back.
+# pull-back. The travel height is an H the head rises to before the page's
+# moves and probing go across the board; it may be below H 0.
 HOST_KEYS = {
     "tolerance": (0.0, 10.0, False),
     "clearance": (0.0, 100.0, False),
+    "travel": (-100.0, 100.0, True),
     "spinup": (0.0, 600.0, True),
     "gap": (0.0, 10.0, False),
     "retract": (0.0, 50.0, True),

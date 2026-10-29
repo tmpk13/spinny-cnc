@@ -183,7 +183,7 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     assert body["values"]["cartesian"] == 1 and body["values"]["spindle"] == 1 and body["values"]["h_axis"] == 1
     assert body["values"]["a_rate"] == 270 and body["values"]["z_max"] == 25
     assert body["host"] == {
-        "tolerance": 0.02, "clearance": 3.0, "spinup": 1.0, "speed_control": True,
+        "tolerance": 0.02, "clearance": 3.0, "travel": None, "spinup": 1.0, "speed_control": True,
         "gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200,
     }
     assert json.loads((tmp_path / "config.json").read_text())["tolerance"] == 0.02

@@ -250,13 +250,28 @@ export function mapPartial(map: HeightMap | null): boolean {
     return mapCounts(map).probed > 0;
 }
 
-/** What going on with `map` does with the head: back up to the height probing travelled at, which a miss leaves it below. */
-export function goOnTravel(map: HeightMap | null | undefined): string {
-    if (map?.travel === null || map?.travel === undefined) {
+/**
+ * What going on with `map` does with the head: back up to the height probing
+ * travelled at, which a miss leaves it below, or to the travel height
+ * (`travel`, the jog panel's) when that is higher.
+ */
+export function goOnTravel(map: HeightMap | null | undefined, travel: number | null = null): string {
+    const began = map?.travel ?? null;
+    if (began === null && travel === null) {
         return "The head travels at the height it has now, so it must clear the board.";
     }
-    return `The head first rises to H ${formatFixed(map.travel, 3)}, where probing began, if it is lower, and travels there;`
+    const height = Math.max(began ?? -Infinity, travel ?? -Infinity);
+    const where = began !== null && began >= height ? "where probing began" : "the travel height";
+    return `The head first rises to H ${formatFixed(height, 3)}, ${where}, if it is lower, and travels there;`
         + " a point the probe missed is probed again from that height, so deepen the probe if it fell short.";
+}
+
+/** What the probe note says before probing: the height the head travels at, the travel height's or the head's. */
+export function probeTravelText(travel: number | null | undefined): string {
+    if (travel === null || travel === undefined) {
+        return "Raise the head so the probe clears the board: probing travels at that height (or set a travel height in the jog panel).";
+    }
+    return `Probing rises to the travel height, H ${formatFixed(travel, 3)}, and travels there (a higher head stays higher); Depth counts down from that height.`;
 }
 
 /** What the progress line says of the point being probed: a pad's place on a pad map, a point's otherwise. */
@@ -612,7 +627,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
                 labeled("Brake queue ms", queueField),
             ),
             el("p", { class: "muted hint" },
-                "Depth is the most the probe goes down from where the head starts. Slow 0 touches once."
+                "Depth is the most the probe goes down from the height it travels at: the travel height (jog panel) or the head's, whichever is higher. Slow 0 touches once."
                 + " The tip offset is from the beam: along the rail, outward positive, and across it,"
                 + " positive to the left of outward seen from above (board +Y at table angle 0, +Z on an"
                 + " X/Y machine). To check the signs, probe one point, then jog the beam over it and compare."
@@ -703,7 +718,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const question = resume
-            ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? ${goOnTravel(ctx.store.get().heightMap?.map)}`
+            ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? ${goOnTravel(ctx.store.get().heightMap?.map, ctx.store.get().settings?.host.travel ?? null)}`
             : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? The head travels between them at the height it has now, so it must clear the board, and it replaces the current map.`;
         if (!(await askConfirm(question, resume ? "Continue" : "Probe pads"))) {
             return;
@@ -721,7 +736,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const left = gridPointCount(map.grid) - map.heights.flat().filter((value) => value !== null).length;
         const ok = await askConfirm(
-            `Go on probing the ${left} points the map still lacks? ${goOnTravel(map)}`,
+            `Go on probing the ${left} points the map still lacks? ${goOnTravel(map, ctx.store.get().settings?.host.travel ?? null)}`,
             "Continue",
         );
         if (!ok) {
@@ -956,7 +971,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         } else if (spinning) {
             probeNote.textContent = "The spindle is turning: stop it before probing.";
         } else {
-            probeNote.textContent = "Raise the head so the probe clears the board: probing travels at that height.";
+            probeNote.textContent = probeTravelText(state.settings?.host.travel);
         }
         const map = heightMap?.map ?? null;
         if (map) {

@@ -123,11 +123,13 @@ const INT_MAX = 4294967295;
  * of paste is made of: the needle's gap over the pad, the plunger's
  * pull-back after each dot, the mm^3 of paste a mm of plunger gives, the
  * plunger's speed while a dot is pushed out, and the wait before the
- * pull-back.
+ * pull-back. The travel height is an H the head rises to before the page's
+ * moves and probing go across the board; it may be below H 0.
  */
 const HOST_KEYS: Record<string, [number, number, boolean]> = {
     tolerance: [0, 10, false],
     clearance: [0, 100, false],
+    travel: [-100, 100, true],
     spinup: [0, 600, true],
     gap: [0, 10, false],
     retract: [0, 50, true],
