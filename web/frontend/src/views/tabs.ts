@@ -25,6 +25,7 @@ export const PENDING_PAGES: Record<string, PageId> = {
     camera: "machine",
     "cam-profile": "cam",
     pnp: "pnp",
+    "pnp-device": "pnp",
 };
 
 /** The count of edits not applied yet on a page. */

@@ -138,6 +138,8 @@ describe("pnp in the mock", () => {
 
 describe("the pnp page", () => {
     test("lists the parts, picks one from the list or the drawing, counts edits, and steps through the setup", async () => {
+        // This machine places the parts unless a G-code device was picked before.
+        localStorage.removeItem("spinny.pnp.target");
         const { store, ctx, backend } = setup();
         const roots = {
             steps: document.createElement("section"),

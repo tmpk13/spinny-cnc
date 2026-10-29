@@ -6,6 +6,7 @@ import type {
     Compensate,
     ComponentsResponse,
     ConsoleLine,
+    DeviceState,
     Grid,
     HeightMapState,
     Job,
@@ -96,6 +97,12 @@ export interface AppState {
     pnp: PnpState | null;
     /** The parts of the selected job's board; null until read. */
     components: ComponentsResponse | null;
+    /** The part picked on the PNP page, by its reference. */
+    pnpPart: string | null;
+    /** Which machine the PNP page places with: this one, or a G-code device. */
+    pnpTarget: "machine" | "device";
+    /** The G-code device; null until read. */
+    device: DeviceState | null;
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;
     /** Edits typed and not applied yet, counted by the panel that holds them (`pendingPages` puts them on a tab). */
@@ -128,6 +135,9 @@ export function initialState(mock: boolean): AppState {
         align: null,
         pnp: null,
         components: null,
+        pnpPart: null,
+        pnpTarget: "machine",
+        device: null,
         mapChoice: "off",
         pending: {},
         console: [],

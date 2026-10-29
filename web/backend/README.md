@@ -36,6 +36,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `vision.py` | the camera through pcb-vision's `pcbv serve`: the program started on a device here, or one reached at a `socket://` device, one JSON request a line and the frame's bytes after its reply |
 | `camera.py` | the camera's settings and state, its picture and pose, the mark the tool made, and the routine that finds the mark in the picture and measures the camera's offset, roll and scale |
 | `pnp.py` | pick and place: the parts of a board job read from its kept `.kicad_pcb` (an s-expression reader, KiCad 5 to 10) and placed in the job's frame, and the up camera fixed to the machine, with the routine that centers the nozzle over it (measuring where it is and how its picture scales, turns and mirrors) and the one that reads where a part sits on the nozzle |
+| `openpnp.py` | a pick and place machine driven with the G-code OpenPnP's GcodeDriver sends: device profiles in `pnp/` (port, dialect, heights, feeders) read and checked, the board's fit on the device from reference parts, and the placement program (pick from the first feeder whose words the part holds, place turned from the feeder's angle, the wait command before every vacuum switch) |
+| `gcode_device.py` | the link to that machine: a serial port or a `socket://` url, a line at a time, each answered `ok` (a refusal's trailing `ok` taken with it, Marlin's `busy:` keeping a slow line alive), a program sent on its own thread and stopped with the profile's quickstop |
 | `align.py` | marks that pair a job's design points (pads, holes, any point) with where the machine or the camera found them, the fit (`spinny_laser.align`) and its application to the job |
 | `resume.py` | the resume record (`var/resume.json`, how far the last run got and the plan it was made from) and the machine's last reported position (`var/position.json`), both kept across sessions |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
@@ -52,7 +54,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `{"type": "heightmap", "map": ..., "probe": ..., "settings": ...}`,
 `{"type": "message", "level": "info", "text": "..."}`,
 `{"type": "camera", ...the camera state...}`,
-`{"type": "pnp", ...the up camera state...}` and
+`{"type": "pnp", ...the up camera state...}`,
+`{"type": "pnp_device", ...the G-code device state...}` and
 `{"type": "align", "job": ..., "marks": ..., "fit": ...}`. Console events
 include the status polls and reports.
 
@@ -150,6 +153,17 @@ classDiagram
         UpCamera.measure_part(access) the part's offset from the nozzle
         picture_to_machine / calibrate
     }
+    class openpnp {
+        parse(text, id) Device: port, dialect, heights, feeders
+        DeviceStore.list / document / check / save
+        board_fit(references, angle) a turn and a shift
+        plan(device, parts, fit, taken, refs) head, blocks per part, tail, skipped
+    }
+    class gcode_device {
+        GcodeDevice.connect(url, baud, wait_ms, init, timeout) / disconnect
+        GcodeDevice.command(line, timeout) the answer, or a refusal
+        GcodeDevice.run(plan, timeout, on_block) / stop(line)
+    }
     class align {
         Alignment.mark_tool(job, machine, design, nearest, within)
         Alignment.mark_camera(job, design, machine, angle)
@@ -203,6 +217,9 @@ classDiagram
     app --> vision
     app --> camera
     app --> pnp
+    app --> openpnp
+    app --> gcode_device
+    gcode_device --> openpnp
     app --> align
     camera --> vision
     camera --> link

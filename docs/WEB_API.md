@@ -528,6 +528,65 @@ Up camera state:
 `moving`, `lowering`, `scale`, `centering` (the nozzle) or `looking` (a
 part), then `done`.
 
+## A G-code pick and place machine
+
+The parts can be placed by another machine, one whose controller takes
+the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
+RepRapFirmware, Grbl): a line at a time, each answered `ok`, a refusal
+`error...` or `!!` (an `ok` that follows a refusal is taken with it),
+Marlin's `busy:` keeping a slow line alive. A device profile in `pnp/`
+(`--pnp DIR` moves it; `pnp/openpnp-marlin.toml` is shipped, every key
+commented) says how to talk to it: `[port]` `url` (a serial device or
+`socket://host:port`), `baud`, `wait_ms` (a board that resets when its
+port opens boots this long first), `timeout` (s per line; a home gets
+three times it); `[gcode]` `init` and `end` (lines), `move` (the move
+word), `x`, `y`, `z`, `rotation` (axis letters), `wait` (answered once
+the moves queued have run, sent before every vacuum switch), `pick` and
+`place` (vacuum on and off), `dwell` (`{ms}` or `{s}` for the time),
+`home`, `position`, `stop` (a quickstop, sent ahead of its turn);
+`[motion]` `feed_xy`, `feed_z`, `safe_z`, `place_z`, `pick_dwell_ms`,
+`place_dwell_ms`; and `[[feeder]]` tables: `id`, `match` (words a part's
+value and footprint must all hold), `at` (the first part's X Y Z),
+`pitch` (X Y from one part to the next), `count` (0 for a feeder that
+presents every part at `at`), `rotation` (the parts' angle in it),
+`place_z`, `feed` (a line sent before each pick). The board's place on the
+device is fitted from references, a part of the job paired with where it
+is on the device: one gives a shift, turned by the typed `angle`; two or
+more a turn and a shift. The backend keeps the profile picked, the
+references, the angle and how many parts each feeder has given.
+
+| Route | Does |
+| --- | --- |
+| `GET /api/pnp/devices` | `{"devices": [{"id", "name", "description", "url", "feeders": 1}], "problems": [{"id", "problem"}]}` |
+| `GET /api/pnp/devices/{id}` | `{"document": {...}, "text": "..."}`; 404 for none |
+| `PUT /api/pnp/devices/{id}` | `{"text": "..."}`: saved once it reads, 400 naming the key otherwise |
+| `POST /api/pnp/devices/{id}/check` | `{"text": "..."}`: `{"document" or null, "problems": [...]}` |
+| `GET /api/pnp/device` | the device state, below |
+| `PUT /api/pnp/device` | `{"profile": "openpnp-marlin", "angle": 90, "clear_angle": false}`, any of them; another profile is 409 while connected |
+| `POST /api/pnp/device/connect`, `.../disconnect` | opens the profile's port, waits `wait_ms`, and sends `init`; 502 when the port does not open or a line is refused; a disconnect is 409 while a program is sent |
+| `POST /api/pnp/device/command` | `{"line": "M114"}`: one line and its answer, `{"reply": [...], ...state}`; 400 for anything but one printable line, 502 for a refusal or no answer |
+| `POST /api/pnp/device/home`, `.../position` | the profile's home (the state's `homed` then true), or its position command, read into `position` (`x`, `y`, `z`, `rotation` by the profile's letters) |
+| `POST /api/pnp/device/references` | `{"job", "ref", "at": [x, y]}`: the part's place on the device; `at` left out reads the device's position |
+| `DELETE /api/pnp/device/references?job=ID&ref=R1` | drops a reference, or every one of the job without `ref` |
+| `POST /api/pnp/device/plan` | `{"job", "refs": ["R1"]}` (`refs` left out: every part that can be): `{"parts": [{"ref", "feeder", "index"}], "skipped": [{"ref", "reason"}], "fit": {...}, "lines": 42, "text": "..."}`; a part on the back, one not to be fitted, one no feeder holds and one whose feeder is empty are skipped, with why; 400 without a reference |
+| `GET /api/pnp/device/program.gcode?job=ID&refs=R1,C2` | the program as a file |
+| `POST /api/pnp/device/run` | plans and sends the program on its own thread; each part counts against its feeder once its last line is answered; 409 while one is sent |
+| `POST /api/pnp/device/stop` | sends the profile's `stop` at once and nothing after the line in flight |
+| `POST /api/pnp/device/goto` | `{"job", "ref"}`: the nozzle to `safe_z` and over the part's place |
+| `POST /api/pnp/device/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
+
+Device state:
+
+```json
+{"profile": "openpnp-marlin", "angle": null,
+ "references": [{"job": "a1b2", "ref": "R1", "at": [100.0, 50.0]}],
+ "taken": {"r-10k-0603": 2},
+ "connected": true, "url": "/dev/ttyACM1", "lost": null, "running": false, "homed": true,
+ "position": {"x": 100.0, "y": 50.0, "z": 0.0},
+ "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"], "error": null, "seconds": 12.3},
+ "log": [{"dir": "tx", "text": "M114"}, {"dir": "rx", "text": "ok"}]}
+```
+
 ## Alignment
 
 Lining a job up with the board on the table. Marks pair a design point, a
@@ -577,3 +636,4 @@ it does not watch then.
 | `camera` | the camera state, whenever it changes: started or stopped, settings, a board loaded, a mark recorded, every step of the find routine; not for every picture, which the page asks for |
 | `align` | the alignment state (`GET /api/align`), whenever a mark is added, removed or applied |
 | `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
+| `pnp_device` | the G-code device state (`GET /api/pnp/device`), whenever it changes: connected, a line answered by a command, every part of a program, a reference or a feeder count |

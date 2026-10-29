@@ -10,7 +10,19 @@ import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import type { Ctx } from "./context.ts";
+import { DEVICE_SETUP, mountDevice } from "./device.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
+
+const TARGET_KEY = "spinny.pnp.target";
+
+/** Which machine places the parts, as remembered in this browser: this one unless a G-code device was picked. */
+export function readTarget(): "machine" | "device" {
+    try {
+        return globalThis.localStorage?.getItem(TARGET_KEY) === "device" ? "device" : "machine";
+    } catch {
+        return "machine";
+    }
+}
 
 /** How often the picture is asked for while it shows, ms, and the width it is asked at. */
 export const PNP_FRAME_MS = 250;
@@ -270,6 +282,8 @@ export interface PnpRoots {
     board: HTMLElement;
     camera: HTMLElement;
     nozzle: HTMLElement;
+    /** The G-code device's panel; left out, the page has none. */
+    device?: HTMLElement;
 }
 
 export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
@@ -277,7 +291,25 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     // The job the parts were asked for, so a reply for another is dropped.
     let asked: string | null = null;
 
-    mountSteps(roots.steps, ctx, [PNP_SETUP], "spinny.steps.pnp");
+    // The steps follow the machine the parts are placed with.
+    mountSteps(roots.steps, ctx, [PNP_SETUP, DEVICE_SETUP], "spinny.steps.pnp", (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP]);
+    if (roots.device) {
+        mountDevice(roots.device, ctx);
+    }
+    const target = el("select", { class: "field", "aria-label": "Place with" },
+        el("option", { value: "machine" }, "this machine"),
+        el("option", { value: "device" }, "a G-code device (OpenPnP compatible)"),
+    ) as HTMLSelectElement;
+    target.addEventListener("change", () => {
+        const value = target.value === "device" ? "device" : "machine";
+        try {
+            globalThis.localStorage?.setItem(TARGET_KEY, value);
+        } catch {
+            // Not remembered; the pick holds for this page.
+        }
+        ctx.store.set({ pnpTarget: value });
+    });
+    ctx.store.set({ pnpTarget: readTarget() });
 
     // --- the parts ---
     const jobPick = el("select", { class: "field", "aria-label": "Board job" }) as HTMLSelectElement;
@@ -287,14 +319,16 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const partsNote = el("p", { class: "muted hint" });
     const table = el("table", { class: "pnp-parts" });
     const correct = el("input", { type: "checkbox", "aria-label": "Correct by the part on the nozzle" }) as HTMLInputElement;
+    const correctLabel = el("label", { class: "muted" }, correct, " part center over the place");
     const gotoButton = button("Go to part", () => gotoPart(), "btn btn-primary");
     const chosenLine = el("p", { class: "muted pnp-chosen" });
     roots.parts.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Parts")),
         el("fieldset", { class: "panel-body" },
+            el("div", { class: "button-row" }, labeled("Place with", target, "labeled inline")),
             el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), sidePick),
             el("div", { class: "button-row" }, filter),
-            el("div", { class: "button-row" }, gotoButton, el("label", { class: "muted" }, correct, " part center over the place")),
+            el("div", { class: "button-row" }, gotoButton, correctLabel),
             chosenLine,
             partsNote,
             el("div", { class: "pnp-parts-box" }, table),
@@ -487,9 +521,17 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     }
 
     async function gotoPart(): Promise<void> {
-        const job = ctx.store.get().job;
+        const state = ctx.store.get();
+        const job = state.job;
         if (!job || selected === null) {
             ctx.toast("error", "pick a part first");
+            return;
+        }
+        if (state.pnpTarget === "device") {
+            const device = await ctx.call(ctx.api.deviceGoto(job.id, selected));
+            if (device) {
+                ctx.store.set({ device });
+            }
             return;
         }
         await ctx.call(ctx.api.pnpGoto({ job: job.id, ref: selected, correct: correct.checked }));
@@ -497,6 +539,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     function pick(ref: string): void {
         selected = selected === ref ? null : ref;
+        ctx.store.set({ pnpPart: selected });
         const state = ctx.store.get();
         renderParts(state);
         renderBoard(state);
@@ -517,6 +560,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const all = partsOf(state);
         if (selected !== null && !all.some((part) => part.ref === selected)) {
             selected = null;
+            ctx.store.set({ pnpPart: null });
         }
         renderActions(state);
         const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, selected]);
@@ -553,9 +597,12 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     /** The goto's button and box, which follow the machine and the up camera. */
     function renderActions(state: AppState): void {
-        const busy = state.pnp?.routine?.state === "running";
+        const onDevice = state.pnpTarget === "device";
+        const busy = onDevice ? state.device?.running === true : state.pnp?.routine?.state === "running";
         const chosen = selected !== null && partsOf(state).some((part) => part.ref === selected);
-        setLocked(gotoButton, !state.snapshot.connected || !chosen || busy);
+        const linked = onDevice ? state.device?.connected === true : state.snapshot.connected;
+        setLocked(gotoButton, !linked || !chosen || busy);
+        correctLabel.classList.toggle("hidden", onDevice);
         correct.disabled = !state.pnp?.part_offset;
         if (correct.disabled) {
             correct.checked = false;
@@ -680,6 +727,17 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         renderActions(state);
         renderBoard(state);
     }, ["pnp", "snapshot"]);
+    // This machine's camera and nozzle, or the G-code device.
+    const showTarget = (state: AppState): void => {
+        const onDevice = state.pnpTarget === "device";
+        target.value = state.pnpTarget;
+        roots.camera.classList.toggle("hidden", onDevice);
+        roots.nozzle.classList.toggle("hidden", onDevice);
+        roots.device?.classList.toggle("hidden", !onDevice);
+        renderActions(state);
+    };
+    ctx.store.subscribe(showTarget, ["pnpTarget", "device"]);
+    showTarget(ctx.store.get());
     const now = ctx.store.get();
     renderJobs(now);
     renderParts(now);

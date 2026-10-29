@@ -105,6 +105,12 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
                 store.set({ pnp });
             }
         },
+        async refreshDevice() {
+            const device = await ctx.call(api.deviceState());
+            if (device) {
+                store.set({ device });
+            }
+        },
         async selectJob(id) {
             const ticket = ++selection;
             if (id === null) {
@@ -182,6 +188,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "pnp":
             store.set({ pnp: event.data });
             break;
+        case "pnp_device":
+            store.set({ device: event.data });
+            break;
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.
@@ -194,7 +203,7 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshDevice()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -255,7 +264,7 @@ function main(): void {
     mountCam(panel("cam"), ctx, panel("cam-file"));
     mountPreviewPanel(panel("cam-preview"), ctx);
     // The PNP page: the parts, the board, the up camera and the nozzle.
-    mountPnp({ steps: panel("pnp-steps"), parts: panel("pnp-parts"), board: panel("pnp-board"), camera: panel("pnp-camera"), nozzle: panel("pnp-nozzle") }, ctx);
+    mountPnp({ steps: panel("pnp-steps"), parts: panel("pnp-parts"), board: panel("pnp-board"), camera: panel("pnp-camera"), nozzle: panel("pnp-nozzle"), device: panel("pnp-device") }, ctx);
     // The Config page: the machine files beside the live firmware settings.
     mountConfig(panel("machine-file"), ctx);
     mountSettings(panel("settings"), ctx);

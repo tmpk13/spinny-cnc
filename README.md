@@ -14,10 +14,11 @@ lines a job up with the board.
 | --- | --- | --- |
 | `firmware/` | the controller: portable core, SKR Pico port, virtual firmware on TCP | Rust |
 | `web/backend/` | serial link, job import, streaming, probing (a grid or the pads), dispensing, the cameras, alignment, a board's parts, API, serves the page | Python, FastAPI |
-| `web/frontend/` | the page: setup steps, position, jog, jobs, height map, camera, alignment, 3D preview, the CAM tab, the PNP tab (parts, board, up camera, nozzle) and the Config tab (machine files, pins, firmware settings) | TypeScript, Bun |
+| `web/frontend/` | the page: setup steps, position, jog, jobs, height map, camera, alignment, 3D preview, the CAM tab, the PNP tab (parts, board, up camera, nozzle, or a G-code device) and the Config tab (machine files, pins, firmware settings) | TypeScript, Bun |
 | `toolpath/` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering coupons, pads and holes, the alignment fit, machine configs, gcode tools | Python |
 | `machines/` | machine configurations in TOML, one file per axis setup | |
 | `cam/` | CAM profiles in TOML: a machine's axes, its tools with every cutting setting, the operations, the gcode post | |
+| `pnp/` | device profiles in TOML for a pick and place machine that takes OpenPnP's G-code: port, dialect, heights, feeders | |
 | `sim/` | plays gcode jobs back on a model of the machine | Rust |
 | `docs/` | protocol, web API, architecture, machine configs, operating, calibration, gcode toolchain | |
 | `var/` | runtime files: jobs, config, height map, tool output (not tracked) | |

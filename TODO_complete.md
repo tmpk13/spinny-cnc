@@ -456,3 +456,11 @@
   part sits on the nozzle, and a goto over a part's place, corrected by
   that offset when asked. X/Y machines only; vacuum and nozzle turn not
   driven yet.
+- G-code sending to OpenPnP compatible devices (2026-10-29): *Place with: a
+  G-code device* on the PNP tab drives another pick and place machine
+  whose controller takes OpenPnP's G-code (Marlin, Smoothieware,
+  RepRapFirmware, Grbl). A device profile in `pnp/` holds the port, the
+  dialect, heights and feeders; the board is placed on the device from
+  reference parts read off it; a placement program is planned, shown,
+  downloaded, or sent a line at a time with each `ok` awaited, and
+  stopped with the profile's quickstop; feeders count what was picked.

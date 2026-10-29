@@ -43,6 +43,8 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setV
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
+import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
+import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, parseDevice, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
 import {
     BOARD_MISPLACEMENT,
     CAMERA_TRUTH,
@@ -85,7 +87,16 @@ import type {
     CenterRequest,
     CenterResponse,
     Compensate,
+    Component,
     ComponentsResponse,
+    DeviceCheck,
+    DeviceFile,
+    DevicePlan,
+    DeviceReference,
+    DeviceRun,
+    DeviceState,
+    DeviceSummary,
+    DevicesResponse,
     GotoRequest,
     Grid,
     Group,
@@ -1345,6 +1356,8 @@ const CENTERING_MOVES = 3;
 const DEFAULT_FIND_STEP = 2;
 /** Mock time one step of an up camera routine takes, s. */
 export const PNP_STEP_SECONDS = 0.4;
+/** How fast the mock's G-code device takes a program's lines. */
+export const DEVICE_LINES_PER_SECOND = 40;
 
 /** A plain decimal with trailing zeros dropped and no negative zero. */
 function num(value: number, decimals = 3): string {
@@ -1773,6 +1786,24 @@ export class MockBackend implements Api, EventFeed {
     private pnpPartOffset: PartOffset | null = null;
     /** Whether a part hangs on the mock's nozzle: from the first look at one on. */
     private pnpHolding = false;
+    /** The G-code device: its profiles by id, what the backend keeps of it, and a link that answers every line `ok`. */
+    private deviceTexts = new Map<string, string>([["openpnp-marlin", openpnpMarlinText]]);
+    private deviceConfig: { profile: string | null; angle: number | null; references: DeviceReference[]; taken: Record<string, number> } = {
+        profile: null,
+        angle: null,
+        references: [],
+        taken: {},
+    };
+    private deviceLink: { connected: boolean; url: string | null; homed: boolean; position: { x: number; y: number; z: number; rotation: number }; log: { dir: string; text: string }[] } = {
+        connected: false,
+        url: null,
+        homed: false,
+        position: { x: 0, y: 0, z: 0, rotation: 0 },
+        log: [],
+    };
+    private devicePositionRead = false;
+    private deviceProgress: DeviceRun | null = null;
+    private deviceSession: { lines: { code: string; block: MockBlock | null }[]; next: number; elapsed: number; device: MockDevice; progress: DeviceRun } | null = null;
     /** The alignment marks, kept for one job at a time. */
     private alignJob: string | null = null;
     private alignMarks: AlignMark[] = [];
@@ -1914,6 +1945,8 @@ export class MockBackend implements Api, EventFeed {
                 this.emit({ type: "state", data: this.snapshot() });
             }
         }
+        // The G-code device is a machine of its own, connected or not with this one.
+        this.serviceDevice(dt);
     }
 
     /** Sends a board move now when a slot is free, else keeps it for the next tick. */
@@ -5749,6 +5782,382 @@ export class MockBackend implements Api, EventFeed {
         const r = part.x * Math.cos(angle) + part.y * Math.sin(angle);
         const z = -part.x * Math.sin(angle) + part.y * Math.cos(angle);
         await this.goto({ kind: "joint", r: r - seen.dx, z: z - seen.dy } as GotoRequest);
+    }
+
+    // --- a G-code pick and place machine -------------------------------------------
+
+    private deviceOf(id: string): MockDevice {
+        if (!DEVICE_ID.test(id)) {
+            throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
+        }
+        const text = this.deviceTexts.get(id);
+        if (text === undefined) {
+            throw new ApiError(404, `no device profile '${id}'`);
+        }
+        try {
+            return parseDevice(text, id);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    private pickedDevice(): MockDevice {
+        if (this.deviceConfig.profile === null) {
+            throw new ApiError(400, "no device profile is picked: pick one of pnp/*.toml");
+        }
+        return this.deviceOf(this.deviceConfig.profile);
+    }
+
+    private deviceStateOf(): DeviceState {
+        const link = this.deviceLink;
+        return {
+            profile: this.deviceConfig.profile,
+            angle: this.deviceConfig.angle,
+            references: this.deviceConfig.references.map((entry) => ({ ...entry, at: [entry.at[0], entry.at[1]] })),
+            taken: { ...this.deviceConfig.taken },
+            connected: link.connected,
+            url: link.url,
+            lost: null,
+            running: this.deviceSession !== null,
+            homed: link.homed,
+            position: this.devicePositionRead ? { ...link.position } : null,
+            progress: this.deviceProgress ? { ...this.deviceProgress, placed: [...this.deviceProgress.placed] } : null,
+            log: link.log.slice(-60),
+        };
+    }
+
+    private emitDevice(): void {
+        this.emit({ type: "pnp_device", data: this.deviceStateOf() });
+    }
+
+    private deviceNote(dir: string, text: string): void {
+        this.deviceLink.log.push({ dir, text });
+        if (this.deviceLink.log.length > 200) {
+            this.deviceLink.log.splice(0, this.deviceLink.log.length - 200);
+        }
+    }
+
+    /** One line to the mock device and its answer: a move moves it, the position command reports, home zeroes it. */
+    private deviceLine(device: MockDevice, line: string): string[] {
+        const code = codeOf(line);
+        if (!code) {
+            return [];
+        }
+        if (!this.deviceLink.connected) {
+            throw new ApiError(502, "the device is not connected");
+        }
+        this.deviceNote("tx", code);
+        const reply: string[] = [];
+        const [x, y, z, a] = device.axes;
+        const word = code.split(/\s+/)[0]!;
+        if (word === device.move) {
+            const position = this.deviceLink.position;
+            for (const [letter, key] of [[x, "x"], [y, "y"], [z, "z"], [a, "rotation"]] as const) {
+                const found = code.match(new RegExp(`\\b${letter}(-?\\d+(?:\\.\\d+)?)`));
+                if (found) {
+                    position[key] = Number(found[1]);
+                }
+            }
+        } else if (code === device.position) {
+            const position = this.deviceLink.position;
+            reply.push(`${x}:${position.x.toFixed(2)} ${y}:${position.y.toFixed(2)} ${z}:${position.z.toFixed(2)} E:0.00 Count X:0 Y:0 Z:0`);
+        } else if (code === device.home) {
+            this.deviceLink.position = { x: 0, y: 0, z: 0, rotation: 0 };
+        }
+        reply.push("ok");
+        for (const text of reply) {
+            this.deviceNote("rx", text);
+        }
+        return reply;
+    }
+
+    private deviceIdle(): MockDevice {
+        if (this.deviceSession !== null) {
+            throw new ApiError(409, "a program is being sent to the device");
+        }
+        return this.pickedDevice();
+    }
+
+    async devices(): Promise<DevicesResponse> {
+        const devices: DeviceSummary[] = [];
+        const problems: { id: string; problem: string }[] = [];
+        for (const [id, text] of [...this.deviceTexts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+            try {
+                const device = parseDevice(text, id);
+                devices.push({ id, name: device.name, description: device.description, url: device.url, feeders: device.feeders.length });
+            } catch (error) {
+                problems.push({ id, problem: error instanceof Error ? error.message : String(error) });
+            }
+        }
+        return { devices, problems };
+    }
+
+    async deviceFile(id: string): Promise<DeviceFile> {
+        const device = this.deviceOf(id);
+        return { document: deviceDocument(device), text: this.deviceTexts.get(id)! };
+    }
+
+    async saveDeviceFile(id: string, text: string): Promise<DeviceFile> {
+        if (!DEVICE_ID.test(id)) {
+            throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
+        }
+        let device: MockDevice;
+        try {
+            device = parseDevice(text, id);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        const kept = text.endsWith("\n") ? text : `${text}\n`;
+        this.deviceTexts.set(id, kept);
+        this.emitDevice();
+        return { document: deviceDocument(device), text: kept };
+    }
+
+    async checkDeviceFile(id: string, text: string): Promise<DeviceCheck> {
+        try {
+            return { document: deviceDocument(parseDevice(text, id)), problems: [] };
+        } catch (error) {
+            return { document: null, problems: [error instanceof Error ? error.message : String(error)] };
+        }
+    }
+
+    async deviceState(): Promise<DeviceState> {
+        return this.deviceStateOf();
+    }
+
+    async deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean }): Promise<DeviceState> {
+        if (patch.profile !== undefined) {
+            if (this.deviceLink.connected && patch.profile !== this.deviceConfig.profile) {
+                throw new ApiError(409, "disconnect the device before picking another profile");
+            }
+            this.deviceOf(patch.profile);
+            this.deviceConfig.profile = patch.profile;
+        }
+        if (patch.clear_angle) {
+            this.deviceConfig.angle = null;
+        } else if (patch.angle !== undefined) {
+            if (!(Number.isFinite(patch.angle) && Math.abs(patch.angle) <= 360)) {
+                throw new ApiError(400, "the board's turn must be within 360 degrees");
+            }
+            this.deviceConfig.angle = patch.angle;
+        }
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceConnect(): Promise<DeviceState> {
+        const device = this.pickedDevice();
+        if (this.deviceLink.connected) {
+            throw new ApiError(502, "the device is already connected: disconnect first");
+        }
+        if (!device.url) {
+            throw new ApiError(502, "the device profile names no port: set [port] url");
+        }
+        this.deviceLink = { ...this.deviceLink, connected: true, url: device.url, homed: false };
+        this.devicePositionRead = false;
+        this.deviceNote("info", `connected to ${device.url} at ${device.baud} baud (mock)`);
+        for (const line of device.init) {
+            this.deviceLine(device, line);
+        }
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceDisconnect(): Promise<DeviceState> {
+        if (this.deviceSession !== null) {
+            throw new ApiError(409, "a program is being sent to the device: stop it first");
+        }
+        if (this.deviceLink.url !== null) {
+            this.deviceNote("info", `disconnected from ${this.deviceLink.url}`);
+        }
+        this.deviceLink = { ...this.deviceLink, connected: false, url: null };
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceCommand(line: string): Promise<DeviceState & { reply: string[] }> {
+        const device = this.deviceIdle();
+        if (!/^[\x20-\x7e]*$/.test(line) || line.trim() === "") {
+            throw new ApiError(400, "a line is one line of printable ASCII");
+        }
+        const reply = this.deviceLine(device, line);
+        this.emitDevice();
+        return { reply, ...this.deviceStateOf() };
+    }
+
+    async deviceHome(): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        this.deviceLine(device, device.home);
+        this.deviceLink.homed = true;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async devicePosition(): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        this.deviceLine(device, device.position);
+        this.devicePositionRead = true;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    private devicePart(jobId: string, ref: string): Component {
+        const part = mockComponents(this.requireJob(jobId)).find((entry) => entry.ref === ref);
+        if (!part) {
+            throw new ApiError(404, `the job has no part '${ref}'`);
+        }
+        return part;
+    }
+
+    async deviceReference(request: { job: string; ref: string; at?: [number, number] }): Promise<DeviceState> {
+        this.devicePart(request.job, request.ref);
+        let at = request.at;
+        if (at === undefined) {
+            await this.devicePosition();
+            at = [this.deviceLink.position.x, this.deviceLink.position.y];
+        } else if (!at.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {
+            throw new ApiError(400, "a reference's place must be within 10000 mm");
+        }
+        this.deviceConfig.references = this.deviceConfig.references.filter((entry) => !(entry.job === request.job && entry.ref === request.ref));
+        this.deviceConfig.references.push({ job: request.job, ref: request.ref, at: [round4(at[0]), round4(at[1])] });
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceDropReferences(job: string, ref?: string): Promise<DeviceState> {
+        this.deviceConfig.references = this.deviceConfig.references.filter((entry) => !(entry.job === job && (ref === undefined || entry.ref === ref)));
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    private devicePlanOf(jobId: string, refs: string[] | null): { device: MockDevice; plan: ReturnType<typeof planDevice> } {
+        const device = this.pickedDevice();
+        const job = this.requireJob(jobId);
+        const parts = mockComponents(job);
+        if (parts.length === 0) {
+            throw new ApiError(400, "only a .kicad_pcb upload keeps the board its parts are read from");
+        }
+        const byRef = new Map(parts.map((part) => [part.ref, part]));
+        const pairs: [[number, number], [number, number]][] = [];
+        for (const entry of this.deviceConfig.references) {
+            const part = byRef.get(entry.ref);
+            if (entry.job === jobId && part) {
+                pairs.push([[part.x, part.y], [entry.at[0], entry.at[1]]]);
+            }
+        }
+        let fit: AlignFit;
+        try {
+            fit = deviceFit(pairs, this.deviceConfig.angle);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        return { device, plan: planDevice(device, parts, fit, this.deviceConfig.taken, refs, job.name) };
+    }
+
+    async devicePlan(job: string, refs?: string[]): Promise<DevicePlan> {
+        return planSummary(this.devicePlanOf(job, refs ?? null).plan);
+    }
+
+    deviceProgramUrl(job: string, refs?: string[]): string {
+        try {
+            return `data:text/plain;charset=utf-8,${encodeURIComponent(planText(this.devicePlanOf(job, refs ?? null).plan))}`;
+        } catch {
+            return "data:text/plain;charset=utf-8,";
+        }
+    }
+
+    async deviceRun(job: string, refs?: string[]): Promise<DevicePlan & DeviceState> {
+        if (this.deviceSession !== null) {
+            throw new ApiError(409, "a program is already being sent to the device");
+        }
+        const { device, plan } = this.devicePlanOf(job, refs ?? null);
+        if (!this.deviceLink.connected) {
+            throw new ApiError(502, "the device is not connected");
+        }
+        if (plan.blocks.length === 0) {
+            throw new ApiError(502, "the program places no part");
+        }
+        const lines: { code: string; block: MockBlock | null }[] = [];
+        for (const line of plan.head) {
+            lines.push({ code: codeOf(line), block: null });
+        }
+        for (const block of plan.blocks) {
+            block.lines.forEach((line, index) => lines.push({ code: codeOf(line), block: index === block.lines.length - 1 ? block : null }));
+        }
+        for (const line of plan.tail) {
+            lines.push({ code: codeOf(line), block: null });
+        }
+        const progress: DeviceRun = { state: "running", sent: 0, total: lines.filter((line) => line.code !== "").length, part: null, placed: [], error: null, seconds: 0 };
+        this.deviceProgress = progress;
+        this.deviceSession = { lines, next: 0, elapsed: 0, device, progress };
+        this.emitDevice();
+        return { ...planSummary(plan), ...this.deviceStateOf() };
+    }
+
+    /** The program on the mock's clock, a few dozen lines a second. */
+    private serviceDevice(dt: number): void {
+        const session = this.deviceSession;
+        if (!session) {
+            return;
+        }
+        session.elapsed += dt;
+        session.progress.seconds = Math.round(session.elapsed * 10) / 10;
+        const due = Math.min(session.lines.length, Math.floor(session.elapsed * DEVICE_LINES_PER_SECOND) + 1);
+        while (session.next < due) {
+            const { code, block } = session.lines[session.next]!;
+            session.next += 1;
+            if (code) {
+                this.deviceLine(session.device, code);
+                session.progress.sent += 1;
+            }
+            if (block) {
+                session.progress.placed.push(block.ref);
+                session.progress.part = block.ref;
+                this.deviceConfig.taken[block.feeder] = Math.max(this.deviceConfig.taken[block.feeder] ?? 0, block.index + 1);
+            }
+        }
+        if (session.next >= session.lines.length) {
+            session.progress.state = "done";
+            session.progress.part = null;
+            this.deviceSession = null;
+            this.message("info", `placing on ${session.device.name} done: ${session.progress.placed.length} parts placed (mock)`);
+        }
+        this.emitDevice();
+    }
+
+    async deviceStop(): Promise<DeviceState> {
+        const session = this.deviceSession;
+        if (session) {
+            session.progress.state = "stopped";
+            session.progress.error = "stopped";
+            this.deviceSession = null;
+            if (session.device.stop) {
+                this.deviceNote("tx", session.device.stop);
+            }
+        }
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceGoto(job: string, ref: string): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        const part = this.devicePart(job, ref);
+        const { plan } = this.devicePlanOf(job, []);
+        for (const line of deviceGotoLines(device, plan.fit, part)) {
+            this.deviceLine(device, line);
+        }
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceResetFeeders(feeder?: string): Promise<DeviceState> {
+        if (feeder === undefined) {
+            this.deviceConfig.taken = {};
+        } else {
+            delete this.deviceConfig.taken[feeder];
+        }
+        this.emitDevice();
+        return this.deviceStateOf();
     }
 }
 

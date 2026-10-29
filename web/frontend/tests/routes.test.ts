@@ -55,6 +55,58 @@ describe("HttpApi pick and place routes", () => {
     });
 });
 
+describe("HttpApi G-code device routes", () => {
+    test("methods, paths and bodies follow the contract", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.devices();
+        await api.deviceFile("marlin");
+        await api.saveDeviceFile("marlin", "name = 1");
+        await api.checkDeviceFile("marlin", "x");
+        await api.deviceState();
+        await api.deviceSelect({ profile: "marlin", angle: 90 });
+        await api.deviceConnect();
+        await api.deviceDisconnect();
+        await api.deviceCommand("M114");
+        await api.deviceHome();
+        await api.devicePosition();
+        await api.deviceReference({ job: "a1", ref: "R1" });
+        await api.deviceDropReferences("a1", "R 1");
+        await api.deviceDropReferences("a1");
+        await api.devicePlan("a1");
+        await api.devicePlan("a1", ["R1", "C2"]);
+        await api.deviceRun("a1");
+        await api.deviceStop();
+        await api.deviceGoto("a1", "R1");
+        await api.deviceResetFeeders("tape");
+        await api.deviceResetFeeders();
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["GET", "/api/pnp/devices", null],
+            ["GET", "/api/pnp/devices/marlin", null],
+            ["PUT", "/api/pnp/devices/marlin", { text: "name = 1" }],
+            ["POST", "/api/pnp/devices/marlin/check", { text: "x" }],
+            ["GET", "/api/pnp/device", null],
+            ["PUT", "/api/pnp/device", { profile: "marlin", angle: 90 }],
+            ["POST", "/api/pnp/device/connect", null],
+            ["POST", "/api/pnp/device/disconnect", null],
+            ["POST", "/api/pnp/device/command", { line: "M114" }],
+            ["POST", "/api/pnp/device/home", null],
+            ["POST", "/api/pnp/device/position", null],
+            ["POST", "/api/pnp/device/references", { job: "a1", ref: "R1" }],
+            ["DELETE", "/api/pnp/device/references?job=a1&ref=R%201", null],
+            ["DELETE", "/api/pnp/device/references?job=a1", null],
+            ["POST", "/api/pnp/device/plan", { job: "a1" }],
+            ["POST", "/api/pnp/device/plan", { job: "a1", refs: ["R1", "C2"] }],
+            ["POST", "/api/pnp/device/run", { job: "a1" }],
+            ["POST", "/api/pnp/device/stop", null],
+            ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1" }],
+            ["POST", "/api/pnp/device/feeders/reset", { feeder: "tape" }],
+            ["POST", "/api/pnp/device/feeders/reset", {}],
+        ]);
+        expect(api.deviceProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/device/program.gcode?job=a1&refs=R1%2CC2");
+    });
+});
+
 describe("HttpApi camera, alignment and pad routes", () => {
     test("methods, paths and bodies follow the contract", async () => {
         const { calls, fetchFn } = fakeFetch();

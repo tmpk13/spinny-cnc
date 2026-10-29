@@ -105,6 +105,8 @@ export function parseEvent(raw: unknown): WsEvent | null {
             return { type, data: data as DataOf<"align"> };
         case "pnp":
             return { type, data: data as DataOf<"pnp"> };
+        case "pnp_device":
+            return { type, data: data as DataOf<"pnp_device"> };
         default:
             return null;
     }

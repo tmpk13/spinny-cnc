@@ -60,7 +60,20 @@ export class ApiError extends Error {
     }
 }
 
-import type { CameraPose, ComponentsResponse, MachineCheck, MachineResponse, PnpGotoRequest, PnpSettings, PnpState } from "./types.ts";
+import type {
+    CameraPose,
+    ComponentsResponse,
+    DeviceCheck,
+    DeviceFile,
+    DevicePlan,
+    DeviceState,
+    DevicesResponse,
+    MachineCheck,
+    MachineResponse,
+    PnpGotoRequest,
+    PnpSettings,
+    PnpState,
+} from "./types.ts";
 
 export interface Api {
     ports(): Promise<Port[]>;
@@ -209,6 +222,31 @@ export interface Api {
     pnpGoto(request: PnpGotoRequest): Promise<void>;
     /** The parts of a board job; none for a job that keeps no board file. */
     components(jobId: string): Promise<ComponentsResponse>;
+
+    /** The G-code device profiles in `pnp/`, and the ones that do not read. */
+    devices(): Promise<DevicesResponse>;
+    deviceFile(id: string): Promise<DeviceFile>;
+    saveDeviceFile(id: string, text: string): Promise<DeviceFile>;
+    checkDeviceFile(id: string, text: string): Promise<DeviceCheck>;
+    /** The G-code device: the profile picked, the board's references, the feeders' counts, the link and a program being sent. */
+    deviceState(): Promise<DeviceState>;
+    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean }): Promise<DeviceState>;
+    deviceConnect(): Promise<DeviceState>;
+    deviceDisconnect(): Promise<DeviceState>;
+    deviceCommand(line: string): Promise<DeviceState & { reply: string[] }>;
+    deviceHome(): Promise<DeviceState>;
+    devicePosition(): Promise<DeviceState>;
+    /** A reference for a part: where it is on the device, read off it when `at` is left out. */
+    deviceReference(request: { job: string; ref: string; at?: [number, number] }): Promise<DeviceState>;
+    deviceDropReferences(job: string, ref?: string): Promise<DeviceState>;
+    devicePlan(job: string, refs?: string[]): Promise<DevicePlan>;
+    /** Where the program's G-code downloads from. */
+    deviceProgramUrl(job: string, refs?: string[]): string;
+    deviceRun(job: string, refs?: string[]): Promise<DevicePlan & DeviceState>;
+    deviceStop(): Promise<DeviceState>;
+    deviceGoto(job: string, ref: string): Promise<DeviceState>;
+    /** Counts a feeder (or every one) from its first part again. */
+    deviceResetFeeders(feeder?: string): Promise<DeviceState>;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -665,5 +703,83 @@ export class HttpApi implements Api {
 
     components(jobId: string): Promise<ComponentsResponse> {
         return this.request<ComponentsResponse>("GET", `/api/jobs/${encodeURIComponent(jobId)}/components`);
+    }
+
+    devices(): Promise<DevicesResponse> {
+        return this.request<DevicesResponse>("GET", "/api/pnp/devices");
+    }
+
+    deviceFile(id: string): Promise<DeviceFile> {
+        return this.request<DeviceFile>("GET", `/api/pnp/devices/${encodeURIComponent(id)}`);
+    }
+
+    saveDeviceFile(id: string, text: string): Promise<DeviceFile> {
+        return this.request<DeviceFile>("PUT", `/api/pnp/devices/${encodeURIComponent(id)}`, { text });
+    }
+
+    checkDeviceFile(id: string, text: string): Promise<DeviceCheck> {
+        return this.request<DeviceCheck>("POST", `/api/pnp/devices/${encodeURIComponent(id)}/check`, { text });
+    }
+
+    deviceState(): Promise<DeviceState> {
+        return this.request<DeviceState>("GET", "/api/pnp/device");
+    }
+
+    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean }): Promise<DeviceState> {
+        return this.request<DeviceState>("PUT", "/api/pnp/device", patch);
+    }
+
+    deviceConnect(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/connect");
+    }
+
+    deviceDisconnect(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/disconnect");
+    }
+
+    deviceCommand(line: string): Promise<DeviceState & { reply: string[] }> {
+        return this.request<DeviceState & { reply: string[] }>("POST", "/api/pnp/device/command", { line });
+    }
+
+    deviceHome(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/home");
+    }
+
+    devicePosition(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/position");
+    }
+
+    deviceReference(request: { job: string; ref: string; at?: [number, number] }): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/references", request);
+    }
+
+    deviceDropReferences(job: string, ref?: string): Promise<DeviceState> {
+        const query = `job=${encodeURIComponent(job)}${ref !== undefined ? `&ref=${encodeURIComponent(ref)}` : ""}`;
+        return this.request<DeviceState>("DELETE", `/api/pnp/device/references?${query}`);
+    }
+
+    devicePlan(job: string, refs?: string[]): Promise<DevicePlan> {
+        return this.request<DevicePlan>("POST", "/api/pnp/device/plan", refs !== undefined ? { job, refs } : { job });
+    }
+
+    deviceProgramUrl(job: string, refs?: string[]): string {
+        const query = `job=${encodeURIComponent(job)}${refs !== undefined ? `&refs=${encodeURIComponent(refs.join(","))}` : ""}`;
+        return `${this.base}/api/pnp/device/program.gcode?${query}`;
+    }
+
+    deviceRun(job: string, refs?: string[]): Promise<DevicePlan & DeviceState> {
+        return this.request<DevicePlan & DeviceState>("POST", "/api/pnp/device/run", refs !== undefined ? { job, refs } : { job });
+    }
+
+    deviceStop(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/stop");
+    }
+
+    deviceGoto(job: string, ref: string): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/goto", { job, ref });
+    }
+
+    deviceResetFeeders(feeder?: string): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/feeders/reset", feeder !== undefined ? { feeder } : {});
     }
 }

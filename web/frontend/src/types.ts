@@ -718,7 +718,8 @@ export type WsEvent =
     | { type: "message"; data: Message }
     | { type: "camera"; data: CameraState }
     | { type: "align"; data: AlignState }
-    | { type: "pnp"; data: PnpState };
+    | { type: "pnp"; data: PnpState }
+    | { type: "pnp_device"; data: DeviceState };
 
 // --- Pick and place -----------------------------------------------------------
 
@@ -800,6 +801,102 @@ export interface PnpGotoRequest {
     job: string;
     ref: string;
     correct?: boolean;
+}
+
+// --- A G-code pick and place machine ---------------------------------------------
+
+/** A device profile in `pnp/`: a machine whose controller takes the G-code OpenPnP's GcodeDriver sends. */
+export interface DeviceSummary {
+    id: string;
+    name: string;
+    description: string;
+    url: string;
+    /** How many feeders it has. */
+    feeders: number;
+}
+
+export interface FeederSummary {
+    id: string;
+    /** Words a part's value and footprint must all hold, any case. */
+    match: string;
+    at: [number, number, number];
+    pitch: [number, number];
+    count: number;
+    rotation: number;
+}
+
+export interface DeviceDocument {
+    id: string;
+    name: string;
+    description: string;
+    url: string;
+    baud: number;
+    wait_ms: number;
+    timeout: number;
+    axes: string[];
+    safe_z: number;
+    place_z: number;
+    feeders: FeederSummary[];
+}
+
+export interface DevicesResponse {
+    devices: DeviceSummary[];
+    problems: { id: string; problem: string }[];
+}
+
+export interface DeviceFile {
+    document: DeviceDocument;
+    text: string;
+}
+
+export interface DeviceCheck {
+    document: DeviceDocument | null;
+    problems: string[];
+}
+
+/** A part's place in the job paired with where it is on the device. */
+export interface DeviceReference {
+    job: string;
+    ref: string;
+    at: [number, number];
+}
+
+export interface DeviceRun {
+    state: "running" | "done" | "stopped" | "error";
+    sent: number;
+    total: number;
+    part: string | null;
+    placed: string[];
+    error: string | null;
+    seconds: number;
+}
+
+export interface DeviceState {
+    /** The profile picked, or null. */
+    profile: string | null;
+    /** Degrees the board is turned on the device, for a fit from one reference. */
+    angle: number | null;
+    references: DeviceReference[];
+    /** How many parts each feeder has given. */
+    taken: Record<string, number>;
+    connected: boolean;
+    url: string | null;
+    /** Why the link was lost, or null. */
+    lost: string | null;
+    running: boolean;
+    homed: boolean;
+    position: { x?: number; y?: number; z?: number; rotation?: number } | null;
+    progress: DeviceRun | null;
+    log: { dir: string; text: string }[];
+}
+
+/** A placement program: the parts it places, from which feeder, the parts it leaves, the board's fit and the G-code. */
+export interface DevicePlan {
+    parts: { ref: string; feeder: string; index: number }[];
+    skipped: { ref: string; reason: string }[];
+    fit: AlignFit;
+    lines: number;
+    text: string;
 }
 
 // --- Camera ---------------------------------------------------------------------

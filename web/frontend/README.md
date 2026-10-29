@@ -121,7 +121,12 @@ the head and the up camera, shows the up camera's picture and settings,
 and runs the nozzle routines: center the nozzle over the up camera, look
 at a part on it, and go over a picked part's place. The mock's up camera
 (`src/mock/pnp.ts`) draws the nozzle where the head is against where the
-camera really sits, and makes a board job's pads its parts. The *Setup*
+camera really sits, and makes a board job's pads its parts. With *Place with* set to a
+G-code device, the up camera and nozzle panels give way to the *G-code
+device* panel (`src/views/device.ts`): the device profile in the TOML
+editor, connect, home and the position, references for the board, and the
+placement program planned, downloaded, run and stopped; the mock's twin of
+the backend's profile reader and planner is `src/mock/openpnp.ts`. The *Setup*
 panels (`src/views/steps.ts`, on the Machine and PNP pages) show a common
 setup as a row of numbered circles filled in from the page's state. A
 panel's edits not applied yet are counted per panel in the store and on

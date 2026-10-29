@@ -2333,3 +2333,50 @@ table.pnp-parts tr.dnp td {
 .pnp-board .pnp-camera-mark text {
     text-anchor: start;
 }
+
+/* PNP page: the G-code device. */
+.device-references,
+.device-skipped {
+    margin: 0.25rem 0 0.5rem;
+    padding-left: 1.25rem;
+    font-size: 0.85rem;
+}
+
+.device-references li {
+    margin: 0.15rem 0;
+}
+
+.device-program,
+.device-console {
+    margin: 0.5rem 0 0;
+    padding: 0.5rem 0.6rem;
+    max-height: 16rem;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--text);
+    background: var(--panel-2);
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    white-space: pre;
+}
+
+.device-console {
+    max-height: 10rem;
+}
+
+.badge.device-badge[data-device="connected"] { --tone: var(--jog); }
+.badge.device-badge[data-device="sending"] { --tone: var(--run); }
+.badge.device-badge[data-device="lost"] { --tone: var(--alarm); }
+.badge.device-badge[data-device="disconnected"],
+.badge.device-badge[data-device="no device"] { --tone: var(--muted); background: transparent; }
+
+a.btn {
+    text-decoration: none;
+}
+
+a.btn.disabled {
+    pointer-events: none;
+    opacity: 0.5;
+}

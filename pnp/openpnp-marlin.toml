@@ -1,0 +1,47 @@
+# A pick and place machine whose Marlin firmware takes the G-code OpenPnP's
+# GcodeDriver sends: absolute millimeters, the nozzle's turn as an axis in
+# degrees, the vacuum on a fan output. Every command below is the
+# firmware's to check: Smoothieware, RepRapFirmware and Grbl take the same
+# moves but name the vacuum, the dwell and the stop their own way.
+name = "OpenPnP Marlin"
+description = "Marlin, as OpenPnP's GcodeDriver drives it: vacuum on a fan output, rotation on A"
+
+[port]
+url = ""                 # a serial device (/dev/ttyACM1) or socket://host:port
+baud = 115200
+wait_ms = 2000           # a board that resets when its port opens boots this long before the first line
+timeout = 60             # s a line may take to be answered; a home gets three times this
+
+[gcode]
+init = ["G21", "G90"]    # millimeters, absolute; sent at connect and before a program (add M82 when rotation is E)
+end = []                 # sent after a program
+move = "G0"              # the move word; every move carries its F
+x = "X"
+y = "Y"
+z = "Z"                  # grows upward
+rotation = "A"           # the nozzle's turn, degrees, absolute
+wait = "M400"            # answered once every move queued has run
+pick = "M106"            # vacuum on
+place = "M107"           # vacuum off
+dwell = "G4 P{ms}"       # {ms} milliseconds or {s} seconds (Grbl's P); empty for none
+home = "G28"
+position = "M114"        # answered with X:... Y:... Z:...
+stop = "M410"            # quickstop, sent ahead of its turn; empty sends nothing
+
+[motion]
+feed_xy = 6000           # mm/min
+feed_z = 1200
+safe_z = 0               # the height moves go across at
+place_z = -20            # the nozzle tip with a part on it at the board's top
+pick_dwell_ms = 200
+place_dwell_ms = 150
+
+# One table per feeder; a part is picked from the first one whose words its
+# value and footprint all hold.
+[[feeder]]
+id = "r-10k-0603"
+match = "10k 0603"
+at = [100.0, 50.0, -22.0]  # the first part's place, X Y Z
+pitch = [4.0, 0.0]         # from one part to the next along the tape, X Y
+count = 50                 # parts in it; 0 for one that presents every part at `at`
+rotation = 0               # the parts' angle as they sit in it, degrees

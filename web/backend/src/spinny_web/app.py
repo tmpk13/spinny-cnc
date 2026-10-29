@@ -36,6 +36,10 @@ from . import __version__, center
 from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
+from .gcode_device import DeviceLinkError, GcodeDevice
+from .openpnp import LINE as GCODE_LINE
+from .openpnp import Device, DeviceStore, board_fit, board_goto, plan, read_position
+from .openpnp import NotFound as DeviceNotFound
 from .pnp import MachineAccess as PnpAccess
 from .pnp import PnpError, UpCamera, job_components
 from .heightmap import (
@@ -104,6 +108,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = REPO_ROOT / "var"
 MACHINES_DIR = REPO_ROOT / "machines"
 CAM_DIR = REPO_ROOT / "cam"
+PNP_DIR = REPO_ROOT / "pnp"
 FRONTEND_DIST = REPO_ROOT / "web" / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
@@ -463,6 +468,44 @@ class PnpNozzleBody(Finite):
     step: float = 1.0
 
 
+class DeviceSelectBody(Finite):
+    profile: str | None = None
+    # Degrees the board is turned on the device, for a fit from one reference.
+    angle: float | None = None
+    clear_angle: bool = False
+
+
+class DeviceTextBody(BaseModel):
+    text: str
+
+
+class DeviceLineBody(BaseModel):
+    line: str
+
+
+class DeviceReferenceBody(Finite):
+    job: str
+    ref: str
+    # Where the part's place is on the device; left out, the device is asked.
+    at: tuple[float, float] | None = None
+
+
+class DevicePlanBody(BaseModel):
+    job: str
+    # The parts to place; left out, every one that can be.
+    refs: list[str] | None = None
+
+
+class DeviceGotoBody(BaseModel):
+    job: str
+    ref: str
+
+
+class DeviceFeederBody(BaseModel):
+    # The feeder to count from its first part again; left out, every one.
+    feeder: str | None = None
+
+
 class PnpGotoBody(Finite):
     job: str
     ref: str
@@ -535,11 +578,15 @@ class Backend:
         heightmap_path: Path | None = None,
         machines_dir: Path | None = None,
         cam_dir: Path | None = None,
+        pnp_dir: Path | None = None,
     ) -> None:
         self.root = root
         self.machines_dir = machines_dir if machines_dir is not None else MACHINES_DIR
         self.machine_store = MachineStore(self.machines_dir)
         self.cam = ProfileStore(cam_dir if cam_dir is not None else CAM_DIR)
+        # A pick and place machine of its own, driven with G-code: the
+        # profiles that say how, and the link to the one connected.
+        self.pnp_devices = DeviceStore(pnp_dir if pnp_dir is not None else PNP_DIR)
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
@@ -564,6 +611,7 @@ class Backend:
         # job up with the board.
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
+        self.pnp_device = GcodeDevice(self.publish_pnp_device)
         self.alignment = Alignment()
         self.rates = Rates()
         # What the machine is, from its settings: polar or cartesian, laser
@@ -913,6 +961,7 @@ class Backend:
     def shutdown(self) -> None:
         self.camera.shutdown()
         self.pnp.shutdown()
+        self.pnp_device.disconnect()
         self.disconnect()
 
     def require_link(self) -> Link:
@@ -1179,6 +1228,9 @@ class Backend:
 
     def publish_pnp(self) -> None:
         self.broadcast.publish_threadsafe({"type": "pnp", **self.pnp.state()})
+
+    def publish_pnp_device(self) -> None:
+        self.broadcast.publish_threadsafe({"type": "pnp_device", **self.device_state()})
 
     def publish_align(self) -> None:
         self.broadcast.publish_threadsafe({"type": "align", **self.alignment.state()})
@@ -2665,6 +2717,207 @@ class Backend:
         self.pnp.abort()
         return self.pnp.state()
 
+    # --- a G-code pick and place machine --------------------------------------------
+
+    def _device_config(self) -> dict:
+        """What the backend keeps of the G-code device: the profile picked,
+        the board's references on it per job, a typed turn, and how many
+        parts each feeder has given."""
+        value = self.config.get("pnp_device")
+        if not isinstance(value, dict):
+            value = {}
+            self.config["pnp_device"] = value
+        return value
+
+    def device_profile(self) -> Device:
+        chosen = self._device_config().get("profile")
+        if not isinstance(chosen, str):
+            raise ValueError("no device profile is picked: pick one of pnp/*.toml")
+        return self.pnp_devices.get(chosen)
+
+    def device_state(self) -> dict:
+        config = self._device_config()
+        return {
+            "profile": config.get("profile"),
+            "angle": config.get("angle"),
+            "references": [dict(entry) for entry in config.get("references", [])],
+            "taken": dict(config.get("taken", {})),
+            **self.pnp_device.state(),
+        }
+
+    def device_select(self, body: DeviceSelectBody) -> dict:
+        config = self._device_config()
+        if body.profile is not None:
+            if self.pnp_device.connected and body.profile != config.get("profile"):
+                raise HTTPException(status_code=409, detail="disconnect the device before picking another profile")
+            self.pnp_devices.get(body.profile)
+            config["profile"] = body.profile
+        if body.clear_angle:
+            config.pop("angle", None)
+        elif body.angle is not None:
+            if abs(body.angle) > 360.0:
+                raise ValueError("the board's turn must be within 360 degrees")
+            config["angle"] = body.angle
+        self._save_config()
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def _device_idle(self) -> Device:
+        if self.pnp_device.running:
+            raise HTTPException(status_code=409, detail="a program is being sent to the device")
+        return self.device_profile()
+
+    def device_connect(self) -> dict:
+        device = self.device_profile()
+        self.pnp_device.connect(device.url, device.baud, device.wait_ms, device.init, device.timeout)
+        return self.device_state()
+
+    def device_disconnect(self) -> dict:
+        if self.pnp_device.running:
+            raise HTTPException(status_code=409, detail="a program is being sent to the device: stop it first")
+        self.pnp_device.disconnect()
+        return self.device_state()
+
+    def device_command(self, line: str) -> dict:
+        device = self._device_idle()
+        if not GCODE_LINE.match(line) or not line.strip():
+            raise ValueError("a line is one line of printable ASCII")
+        reply = self.pnp_device.command(line, device.timeout)
+        self.publish_pnp_device()
+        return {"reply": reply, **self.device_state()}
+
+    def device_home(self) -> dict:
+        device = self._device_idle()
+        if not device.home:
+            raise ValueError("the device profile has no home command")
+        self.pnp_device.command(device.home, device.timeout * 3)
+        self.pnp_device.homed = True
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def device_position(self) -> dict:
+        device = self._device_idle()
+        if not device.position:
+            raise ValueError("the device profile has no position command")
+        reply = self.pnp_device.command(device.position, device.timeout)
+        position = read_position(reply, device.axes)
+        if "x" not in position or "y" not in position:
+            raise DeviceLinkError(f"'{device.position}' answered no {device.axes[0]} and {device.axes[1]}: {' | '.join(reply)}")
+        self.pnp_device.position = position
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def _part(self, job_id: str, ref: str) -> dict:
+        parts = self.job_parts(job_id)["components"]
+        part = next((entry for entry in parts if entry["ref"] == ref), None)
+        if part is None:
+            raise HTTPException(status_code=404, detail=f"the job has no part {ref!r}")
+        return part
+
+    def device_reference(self, body: DeviceReferenceBody) -> dict:
+        """A reference: a part's place in the job paired with where it is on
+        the device, read off it when not given."""
+        self._part(body.job, body.ref)
+        if body.at is None:
+            self.device_position()
+            position = self.pnp_device.position or {}
+            at = (float(position["x"]), float(position["y"]))
+        else:
+            if any(abs(value) > 10000.0 for value in body.at):
+                raise ValueError("a reference's place must be within 10000 mm")
+            at = (float(body.at[0]), float(body.at[1]))
+        config = self._device_config()
+        kept = [entry for entry in config.get("references", []) if not (entry.get("job") == body.job and entry.get("ref") == body.ref)]
+        kept.append({"job": body.job, "ref": body.ref, "at": [round(at[0], 4), round(at[1], 4)]})
+        config["references"] = kept
+        self._save_config()
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def device_drop_references(self, job_id: str, ref: str | None) -> dict:
+        config = self._device_config()
+        config["references"] = [
+            entry for entry in config.get("references", [])
+            if not (entry.get("job") == job_id and (ref is None or entry.get("ref") == ref))
+        ]
+        self._save_config()
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def _device_fit(self, job_id: str, parts: list[dict]):
+        by_ref = {part["ref"]: part for part in parts}
+        pairs = []
+        for entry in self._device_config().get("references", []):
+            part = by_ref.get(entry.get("ref"))
+            if entry.get("job") == job_id and part is not None:
+                pairs.append(((float(part["x"]), float(part["y"])), (float(entry["at"][0]), float(entry["at"][1]))))
+        angle = self._device_config().get("angle")
+        return board_fit(pairs, float(angle) if isinstance(angle, (int, float)) and not isinstance(angle, bool) else None)
+
+    def _device_plan(self, job_id: str, refs: list[str] | None):
+        device = self.device_profile()
+        listing = self.job_parts(job_id)
+        parts = listing["components"]
+        if not parts:
+            raise ValueError(listing["note"] or "the job's board has no parts")
+        job = self.store.get(job_id)
+        taken = {key: int(value) for key, value in self._device_config().get("taken", {}).items()}
+        return device, plan(device, parts, self._device_fit(job_id, parts), taken, refs, title=job.name if job else job_id)
+
+    def device_plan(self, body: DevicePlanBody) -> dict:
+        _, program = self._device_plan(body.job, body.refs)
+        return program.summary()
+
+    def device_program(self, job_id: str, refs: list[str] | None) -> str:
+        _, program = self._device_plan(job_id, refs)
+        return program.text()
+
+    def device_run(self, body: DevicePlanBody) -> dict:
+        if self.pnp_device.running:
+            raise HTTPException(status_code=409, detail="a program is already being sent to the device")
+        device, program = self._device_plan(body.job, body.refs)
+        config = self._device_config()
+
+        def picked(block) -> None:
+            taken = config.setdefault("taken", {})
+            taken[block.feeder] = max(int(taken.get(block.feeder, 0)), block.index + 1)
+            self._save_config()
+
+        def ended(progress) -> None:
+            level = "info" if progress.state == "done" else "error"
+            self.publish_message(level, f"placing on {device.name} {progress.state}: {len(progress.placed)} parts placed{f', {progress.error}' if progress.error and progress.state == 'error' else ''}")
+
+        self.pnp_device.run(program, device.timeout, picked, ended)
+        return {**program.summary(), **self.device_state()}
+
+    def device_stop(self) -> dict:
+        try:
+            line = self.device_profile().stop
+        except (ValueError, DeviceNotFound):
+            line = ""
+        self.pnp_device.stop(line)
+        return self.device_state()
+
+    def device_goto(self, body: DeviceGotoBody) -> dict:
+        device = self._device_idle()
+        parts = self.job_parts(body.job)["components"]
+        part = self._part(body.job, body.ref)
+        for line in board_goto(device, self._device_fit(body.job, parts), part):
+            self.pnp_device.command(line, device.timeout)
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def device_reset_feeders(self, body: DeviceFeederBody) -> dict:
+        config = self._device_config()
+        taken = config.setdefault("taken", {})
+        if body.feeder is None:
+            taken.clear()
+        else:
+            taken.pop(body.feeder, None)
+        self._save_config()
+        self.publish_pnp_device()
+        return self.device_state()
+
     def job_parts(self, job_id: str) -> dict:
         """The parts of a job's board in the job's frame; none for a job
         that keeps no board file, with why."""
@@ -3180,8 +3433,10 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (JobImportError, CamError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except NotFound as exc:
+        except (NotFound, DeviceNotFound) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DeviceLinkError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (CameraError, PnpError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (LinkError, VisionError) as exc:
@@ -3641,6 +3896,88 @@ def create_app(
     def job_components_route(job_id: str):
         return guarded(lambda: backend.job_parts(job_id))
 
+    # --- a G-code pick and place machine ---
+
+    @app.get("/api/pnp/devices")
+    def device_profiles():
+        return guarded(backend.pnp_devices.list)
+
+    @app.get("/api/pnp/devices/{device_id}")
+    def device_profile(device_id: str):
+        return guarded(lambda: backend.pnp_devices.document(device_id))
+
+    @app.put("/api/pnp/devices/{device_id}")
+    def device_profile_save(device_id: str, body: DeviceTextBody):
+        result = guarded(lambda: backend.pnp_devices.save(device_id, body.text))
+        backend.publish_pnp_device()
+        return result
+
+    @app.post("/api/pnp/devices/{device_id}/check")
+    def device_profile_check(device_id: str, body: DeviceTextBody):
+        return guarded(lambda: backend.pnp_devices.check(device_id, body.text))
+
+    @app.get("/api/pnp/device")
+    def device_state():
+        return guarded(backend.device_state)
+
+    @app.put("/api/pnp/device")
+    def device_select(body: DeviceSelectBody):
+        return guarded(lambda: backend.device_select(body))
+
+    @app.post("/api/pnp/device/connect")
+    def device_connect():
+        return guarded(backend.device_connect)
+
+    @app.post("/api/pnp/device/disconnect")
+    def device_disconnect():
+        return guarded(backend.device_disconnect)
+
+    @app.post("/api/pnp/device/command")
+    def device_command(body: DeviceLineBody):
+        return guarded(lambda: backend.device_command(body.line))
+
+    @app.post("/api/pnp/device/home")
+    def device_home():
+        return guarded(backend.device_home)
+
+    @app.post("/api/pnp/device/position")
+    def device_position():
+        return guarded(backend.device_position)
+
+    @app.post("/api/pnp/device/references")
+    def device_reference(body: DeviceReferenceBody):
+        return guarded(lambda: backend.device_reference(body))
+
+    @app.delete("/api/pnp/device/references")
+    def device_drop_references(job: str, ref: str | None = None):
+        return guarded(lambda: backend.device_drop_references(job, ref))
+
+    @app.post("/api/pnp/device/plan")
+    def device_plan(body: DevicePlanBody):
+        return guarded(lambda: backend.device_plan(body))
+
+    @app.get("/api/pnp/device/program.gcode")
+    def device_program(job: str, refs: str | None = None):
+        wanted = [ref for ref in refs.split(",") if ref] if refs else None
+        text = guarded(lambda: backend.device_program(job, wanted))
+        return Response(content=text, media_type="text/plain", headers={"Content-Disposition": 'attachment; filename="placement.gcode"', "Cache-Control": "no-store"})
+
+    @app.post("/api/pnp/device/run")
+    def device_run(body: DevicePlanBody):
+        return guarded(lambda: backend.device_run(body))
+
+    @app.post("/api/pnp/device/stop")
+    def device_stop():
+        return guarded(backend.device_stop)
+
+    @app.post("/api/pnp/device/goto")
+    def device_goto(body: DeviceGotoBody):
+        return guarded(lambda: backend.device_goto(body))
+
+    @app.post("/api/pnp/device/feeders/reset")
+    def device_reset_feeders(body: DeviceFeederBody | None = None):
+        return guarded(lambda: backend.device_reset_feeders(body or DeviceFeederBody()))
+
     # --- alignment ---
 
     @app.get("/api/align")
@@ -3744,6 +4081,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"directory of CAM profiles, one TOML file per machine and tool set (default: {CAM_DIR})",
     )
     parser.add_argument(
+        "--pnp",
+        type=Path,
+        default=PNP_DIR,
+        help=f"directory of pick and place device profiles, one TOML file per G-code machine (default: {PNP_DIR})",
+    )
+    parser.add_argument(
         "--connect",
         metavar="URL",
         help="keep a link open to this port without a page: a url, or `auto` for the port that announces"
@@ -3760,7 +4103,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_log(args.data, level=args.log_level)
     log.info("spinny-web %s starting on %s:%d", __version__, args.host, args.port)
-    backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam)
+    backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam, pnp_dir=args.pnp)
     backend.autoconnect = args.connect
     uvicorn.run(
         create_app(

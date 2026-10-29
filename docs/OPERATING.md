@@ -238,6 +238,29 @@ Setup panel leads through it:
 The routines need `$cartesian=1`; the vacuum and the nozzle's turn are not
 driven yet.
 
+### Placing with a G-code machine (OpenPnP compatible)
+
+*Place with: a G-code device* on the PNP tab hands the parts to another
+pick and place machine, one whose controller takes the G-code OpenPnP's
+GcodeDriver sends. Its setup steps:
+
+1. Pick a device profile (`pnp/openpnp-marlin.toml` is shipped) and set
+   its `[port] url`, the dialect's commands as its firmware names them
+   (the vacuum's on and off, the dwell, the stop), the heights and the
+   feeders, then Save.
+2. Connect, and Home.
+3. Pick the board job, jog the device's nozzle over a part's place (the
+   line field sends any G-code), pick that part and press *Here*; a second
+   part gives the board's turn too, else type it in *Turned deg*.
+4. *Plan* lists what is placed from which feeder and what is left out and
+   why, and shows the G-code; *Download* saves it; *Run* sends it a line
+   at a time, and *Stop* sends the quickstop at once. Each part placed
+   counts against its feeder; *Count feeders again* once they are refilled.
+
+Nothing here has run against a real machine yet: check the profile's
+commands against the firmware before the first run, with the vacuum line
+disconnected and the nozzle well above the board.
+
 ### Lining a job up with the board
 
 A job imported from a board is placed about the axis; the board on the

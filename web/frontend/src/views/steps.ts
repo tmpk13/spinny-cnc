@@ -196,9 +196,10 @@ export function setupsFor(setups: Setup[], state: AppState): Setup[] {
 /**
  * Mounts a steps panel for `setups` in `root`; `key` names what is
  * remembered of it (the setup picked, the fold), so another page can have
- * a panel of its own.
+ * a panel of its own, and `offer`, when given, picks the setups offered
+ * instead of what the connected machine fits.
  */
-export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS, key = "spinny.steps"): void {
+export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS, key = "spinny.steps", offer?: (state: AppState) => Setup[]): void {
     const pick = el("select", { class: "field", "aria-label": "Setup" }) as HTMLSelectElement;
     const list = el("ol", { class: "roadmap" });
     const next = el("p", { class: "muted hint roadmap-next" });
@@ -221,7 +222,7 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
     });
 
     function render(state: AppState): void {
-        const fitting = setupsFor(setups, state);
+        const fitting = offer ? offer(state) : setupsFor(setups, state);
         const ids = fitting.map((setup) => setup.id).join(" ");
         if (ids !== offered) {
             offered = ids;
@@ -255,6 +256,6 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
         count.setAttribute("data-apply", done === steps.length ? "applied" : "pending");
     }
 
-    ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components"]);
+    ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components", "device", "pnpTarget"]);
     render(ctx.store.get());
 }
