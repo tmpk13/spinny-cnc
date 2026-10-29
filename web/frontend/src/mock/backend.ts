@@ -42,9 +42,9 @@ import {
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
-import { PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
+import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
-import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, parseDevice, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
+import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, parseDevice, placeLines, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
 import {
     BOARD_MISPLACEMENT,
     CAMERA_TRUTH,
@@ -1803,7 +1803,10 @@ export class MockBackend implements Api, EventFeed {
     };
     private devicePositionRead = false;
     private deviceProgress: DeviceRun | null = null;
-    private deviceSession: { lines: { code: string; block: MockBlock | null }[]; next: number; elapsed: number; device: MockDevice; progress: DeviceRun } | null = null;
+    private deviceSession: { lines: { code: string; block: MockBlock | null; look?: MockBlock }[]; next: number; elapsed: number; device: MockDevice; progress: DeviceRun } | null = null;
+    /** Where the up camera sits on the device, as centering the nozzle over it there measured. */
+    private deviceCamera: { position: [number, number] | null; mm_per_px: number; roll: number; mirror: boolean } = { position: null, mm_per_px: 0, roll: 0, mirror: true };
+    private deviceRoutine: { elapsed: number; device: MockDevice; progress: PnpRoutine } | null = null;
     /** The alignment marks, kept for one job at a time. */
     private alignJob: string | null = null;
     private alignMarks: AlignMark[] = [];
@@ -1947,6 +1950,7 @@ export class MockBackend implements Api, EventFeed {
         }
         // The G-code device is a machine of its own, connected or not with this one.
         this.serviceDevice(dt);
+        this.serviceDeviceRoutine(dt);
     }
 
     /** Sends a board move now when a slot is free, else keeps it for the next tick. */
@@ -5815,6 +5819,7 @@ export class MockBackend implements Api, EventFeed {
             angle: this.deviceConfig.angle,
             references: this.deviceConfig.references.map((entry) => ({ ...entry, at: [entry.at[0], entry.at[1]] })),
             taken: { ...this.deviceConfig.taken },
+            camera: { ...this.deviceCamera, position: this.deviceCamera.position ? [...this.deviceCamera.position] : null, height: this.deviceCameraZ() },
             connected: link.connected,
             url: link.url,
             lost: null,
@@ -5875,7 +5880,71 @@ export class MockBackend implements Api, EventFeed {
         if (this.deviceSession !== null) {
             throw new ApiError(409, "a program is being sent to the device");
         }
+        if (this.deviceRoutine !== null) {
+            throw new ApiError(409, "the up camera routine is moving the device");
+        }
         return this.pickedDevice();
+    }
+
+    private deviceCameraZ(): number | null {
+        try {
+            return this.deviceConfig.profile !== null ? this.pickedDevice().camera_z : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async deviceNozzle(step: number): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        if (!(Number.isFinite(step) && step >= 0 && step <= 10)) {
+            throw new ApiError(400, "the step must be 0 to 10 mm");
+        }
+        if (!this.deviceLink.connected) {
+            throw new ApiError(400, "the device is not connected");
+        }
+        if (!this.pnpRunning) {
+            throw new ApiError(400, "the up camera is not running: start it first");
+        }
+        if (this.pnpSession) {
+            throw new ApiError(409, "an up camera routine is already under way");
+        }
+        const at = this.deviceLink.position;
+        if (!this.deviceCamera.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
+            throw new ApiError(400, "no nozzle in the picture: jog it over the up camera and center again");
+        }
+        const progress: PnpRoutine = { kind: "nozzle", target: "device", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, seconds: 0 };
+        this.pnpRoutine = progress;
+        this.deviceRoutine = { elapsed: 0, device, progress };
+        this.emitPnp();
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    /** The device's nozzle routine on the mock's clock: a step at a time, the camera's place from where it really is. */
+    private serviceDeviceRoutine(dt: number): void {
+        const routine = this.deviceRoutine;
+        if (!routine) {
+            return;
+        }
+        routine.elapsed += dt;
+        routine.progress.seconds = Math.round(routine.elapsed * 10) / 10;
+        const steps: PnpStep[] = ["lifting", "moving", "lowering", "scale", "centering", "done"];
+        const index = Math.min(steps.length - 1, Math.floor(routine.elapsed / PNP_STEP_SECONDS));
+        routine.progress.step = steps[index]!;
+        routine.progress.done = index;
+        if (index === steps.length - 1) {
+            const [x, y] = DEVICE_CAMERA_WHERE;
+            const z = routine.device.camera_z ?? routine.device.safe_z;
+            this.deviceLine(routine.device, `${routine.device.move} ${routine.device.axes[0]}${gnum(x)} ${routine.device.axes[1]}${gnum(y)} F${gnum(routine.device.feed_xy, 0)}`);
+            this.deviceLine(routine.device, `${routine.device.move} ${routine.device.axes[2]}${gnum(z)} F${gnum(routine.device.feed_z, 0)}`);
+            this.deviceCamera = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror };
+            routine.progress.state = "done";
+            routine.progress.spot = { dx: 0, dy: 0, mm: 0 };
+            this.deviceRoutine = null;
+            this.message("info", `nozzle centered over the up camera at X ${num(x)} Y ${num(y)} (mock)`);
+            this.emitDevice();
+        }
+        this.emitPnp();
     }
 
     async devices(): Promise<DevicesResponse> {
@@ -6051,7 +6120,8 @@ export class MockBackend implements Api, EventFeed {
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
-        return { device, plan: planDevice(device, parts, fit, this.deviceConfig.taken, refs, job.name) };
+        const ready = this.deviceCamera.position !== null && this.deviceCamera.mm_per_px > 0;
+        return { device, plan: planDevice(device, parts, fit, this.deviceConfig.taken, refs, job.name, ready) };
     }
 
     async devicePlan(job: string, refs?: string[]): Promise<DevicePlan> {
@@ -6077,12 +6147,23 @@ export class MockBackend implements Api, EventFeed {
         if (plan.blocks.length === 0) {
             throw new ApiError(502, "the program places no part");
         }
-        const lines: { code: string; block: MockBlock | null }[] = [];
+        if (plan.blocks.some((block) => block.vision) && !this.pnpRunning) {
+            throw new ApiError(400, "the up camera is not running: start it, since some parts are to be looked at over it");
+        }
+        const lines: { code: string; block: MockBlock | null; look?: MockBlock }[] = [];
         for (const line of plan.head) {
             lines.push({ code: codeOf(line), block: null });
         }
         for (const block of plan.blocks) {
-            block.lines.forEach((line, index) => lines.push({ code: codeOf(line), block: index === block.lines.length - 1 ? block : null }));
+            for (const line of block.pick) {
+                lines.push({ code: codeOf(line), block: null });
+            }
+            if (block.vision) {
+                // The place lines are made once the part has been looked at.
+                lines.push({ code: "", block: null, look: block });
+                continue;
+            }
+            block.place.forEach((line, index) => lines.push({ code: codeOf(line), block: index === block.place.length - 1 ? block : null }));
         }
         for (const line of plan.tail) {
             lines.push({ code: codeOf(line), block: null });
@@ -6104,8 +6185,12 @@ export class MockBackend implements Api, EventFeed {
         session.progress.seconds = Math.round(session.elapsed * 10) / 10;
         const due = Math.min(session.lines.length, Math.floor(session.elapsed * DEVICE_LINES_PER_SECOND) + 1);
         while (session.next < due) {
-            const { code, block } = session.lines[session.next]!;
+            const { code, block, look } = session.lines[session.next]!;
             session.next += 1;
+            if (look) {
+                session.lines.splice(session.next, 0, ...this.deviceLook(session.device, look));
+                continue;
+            }
             if (code) {
                 this.deviceLine(session.device, code);
                 session.progress.sent += 1;
@@ -6123,6 +6208,33 @@ export class MockBackend implements Api, EventFeed {
             this.message("info", `placing on ${session.device.name} done: ${session.progress.placed.length} parts placed (mock)`);
         }
         this.emitDevice();
+    }
+
+    /**
+     * Over the up camera with a part just picked, as the backend does
+     * between its pick and its place: the camera's moves, then the place
+     * lines that put the part's center, seen off the nozzle's and turned
+     * with it, on the place.
+     */
+    private deviceLook(device: MockDevice, block: MockBlock): { code: string; block: MockBlock | null }[] {
+        const [x, y, z] = device.axes;
+        const camera = this.deviceCamera.position ?? DEVICE_CAMERA_WHERE;
+        const lines = [
+            `${device.move} ${z}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`,
+            `${device.move} ${x}${gnum(camera[0])} ${y}${gnum(camera[1])} F${gnum(device.feed_xy, 0)}`,
+            ...(device.camera_z !== null ? [`${device.move} ${z}${gnum(device.camera_z)} F${gnum(device.feed_z, 0)}`] : []),
+        ];
+        const [dx, dy] = UP_TRUTH.part;
+        this.pnpPartOffset = { dx, dy, mm: round4(Math.hypot(dx, dy)), length: UP_TRUTH.partSize[0], width: UP_TRUTH.partSize[1] };
+        this.emitPnp();
+        const radians = (block.turn * Math.PI) / 180;
+        const ox = dx * Math.cos(radians) - dy * Math.sin(radians);
+        const oy = dx * Math.sin(radians) + dy * Math.cos(radians);
+        const place = [`${device.move} ${z}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`, ...placeLines(device, [block.target[0] - ox, block.target[1] - oy], block.turn, block.place_z)];
+        return [
+            ...lines.map((line) => ({ code: line, block: null })),
+            ...place.map((line, index) => ({ code: line, block: index === place.length - 1 ? block : null })),
+        ];
     }
 
     async deviceStop(): Promise<DeviceState> {

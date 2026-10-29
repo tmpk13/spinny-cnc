@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
-import { deviceFit, parseDevice, planDevice, planSummary } from "../src/mock/openpnp.ts";
+import { blockLines, deviceFit, parseDevice, planDevice, planSummary, VISION_NOTE } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
 import { DEVICE_SETUP, deviceBadge, deviceRunText, referencesOf } from "../src/views/device.ts";
 import { mountPnp } from "../src/views/pnp.ts";
@@ -79,7 +79,7 @@ describe("the mock's G-code device twin", () => {
             { ref: "C2", reason: "not to be fitted (dnp)" },
             { ref: "C3", reason: "on the back" },
         ]);
-        expect(plan.blocks[0]!.lines).toEqual([
+        expect(blockLines(plan.blocks[0]!)).toEqual([
             "; R1 10k from res #2",
             "G0 Z5 F600",
             "G0 X12 Y20.5 A0 F3000",
@@ -94,7 +94,7 @@ describe("the mock's G-code device twin", () => {
             "M107",
             "G0 Z5 F600",
         ]);
-        const c1 = plan.blocks[1]!.lines;
+        const c1 = blockLines(plan.blocks[1]!);
         expect(c1[1]).toBe("M600 N1");
         expect(c1).toContain("G0 X105 Y56 A45 F3000");
         expect(c1).toContain("G0 Z-0.5 F600");
@@ -105,6 +105,35 @@ describe("the mock's G-code device twin", () => {
         // Two references fit the board's turn.
         const turned = deviceFit([[[0, 0], [100, 50]], [[10, 0], [100, 60]]], null);
         expect(turned.rotation).toBeCloseTo(90, 9);
+    });
+});
+
+describe("trays, feeders told to advance, and the up camera in the twin", () => {
+    const TRAY = PROFILE.replace(
+        'feed = "M600 N1"',
+        'feed = ["M600 N1", "M400"]\n[[feeder]]\nid = "ic"\nmatch = "STM32"\nat = [50.0, 10.0, -3.0]\npitch = [10.0, 0.0]\n'
+        + "count = 6\ncolumns = 3\nrow_pitch = [0.0, 12.0]\nvision = true\n[camera]\nz = -4",
+    );
+
+    test("reads and plans them as the backend does", () => {
+        const device = parseDevice(TRAY, "test");
+        expect(device.feeders[1]!.feed).toEqual(["M600 N1", "M400"]);
+        expect(device.camera_z).toBe(-4);
+        expect(() => parseDevice(TRAY.replace("count = 6\n", ""), "test")).toThrow("needs its count");
+        expect(() => parseDevice(TRAY.replace("columns = 3\n", ""), "test")).toThrow("row_pitch is for a tray");
+        const fit = deviceFit([[[0, 0], [100, 50]]], null);
+        const parts = [part("C1", "100n", "C_0402", 5, 6), part("U1", "STM32", "LQFP-32", 2, 3, 90)];
+        const blind = planDevice(device, parts, fit, { ic: 4 }, null, "");
+        expect(blind.blocks.map((block) => block.ref)).toEqual(["C1"]);
+        expect(blind.skipped[0]!.reason).toContain("wants the up camera");
+        const seen = planDevice(device, parts, fit, { ic: 4 }, null, "", true);
+        const [c1, u1] = seen.blocks;
+        expect(c1!.pick.slice(1, 3)).toEqual(["M600 N1", "M400"]);
+        expect(u1!.vision).toBe(true);
+        expect(u1!.pick).toContain("G0 X60 Y22 A0 F3000");
+        expect(blockLines(u1!)).toContain(VISION_NOTE);
+        expect(u1!.place[0]).toBe("G0 X102 Y53 A90 F3000");
+        expect(planSummary(seen).parts[1]).toEqual({ ref: "U1", feeder: "ic", index: 4, vision: true });
     });
 });
 
@@ -145,6 +174,47 @@ describe("the G-code device in the mock", () => {
     });
 });
 
+describe("the up camera on the mock's G-code device", () => {
+    test("centers the nozzle over it, then each part marked for it is placed where its center lands", async () => {
+        const backend = new MockBackend({ timers: false });
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        const { components } = await backend.components(job.id);
+        await backend.deviceSelect({ profile: "openpnp-marlin" });
+        const file = await backend.deviceFile("openpnp-marlin");
+        const text = file.text
+            .replace('url = ""', 'url = "/dev/ttyACM1"')
+            .replace('match = "10k 0603"', 'match = "TestPoint"\nvision = true')
+            + "\n[camera]\nz = -10\n";
+        await backend.saveDeviceFile("openpnp-marlin", text);
+        await backend.deviceConnect();
+        await backend.pnpStart();
+        // Out of the picture: refused; over the camera, centered.
+        await expect(backend.deviceNozzle(1)).rejects.toMatchObject({ status: 400 });
+        await backend.deviceCommand("G0 X150.5 Y29.8");
+        await backend.deviceNozzle(1);
+        for (let i = 0; i < 200 && (await backend.pnp()).routine?.state === "running"; i++) {
+            backend.step(0.1);
+        }
+        const state = await backend.deviceState();
+        expect(state.camera.position).toEqual([150, 30]);
+        expect(state.camera.height).toBe(-10);
+        expect((await backend.pnp()).routine?.target).toBe("device");
+        await backend.deviceReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
+        const plan = await backend.devicePlan(job.id, [components[0]!.ref]);
+        expect(plan.parts[0]!.vision).toBe(true);
+        await backend.deviceRun(job.id, [components[0]!.ref]);
+        runDevice(backend);
+        const done = await backend.deviceState();
+        expect(done.progress?.state).toBe("done");
+        // At the camera, down to where the nozzle is sharp, then the place
+        // moved against the part's offset (0.15, -0.08), not turned here.
+        const sent = done.log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        expect(sent).toContain("G0 X150 Y30 F6000");
+        expect(sent).toContain("G0 Z-10 F1200");
+        expect(sent).toContain("G0 X39.85 Y30.08 A0 F6000");
+    });
+});
+
 describe("the G-code device on the PNP page", () => {
     test("takes the camera's and nozzle's place, references the picked part, plans and runs", async () => {
         const { store, ctx, backend } = setup();
@@ -171,7 +241,8 @@ describe("the G-code device on the PNP page", () => {
         placeWith.value = "device";
         placeWith.dispatchEvent(new Event("change"));
         expect(store.get().pnpTarget).toBe("device");
-        expect(roots.camera.classList.contains("hidden")).toBe(true);
+        expect(roots.nozzle.classList.contains("hidden")).toBe(true);
+        expect(roots.camera.classList.contains("hidden")).toBe(false);
         expect(roots.device.classList.contains("hidden")).toBe(false);
         expect(roots.steps.querySelector(".roadmap-label")?.textContent).toBe("Profile");
         const profile = roots.device.querySelector('select[aria-label="Device profile"]') as HTMLSelectElement;

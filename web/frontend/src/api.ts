@@ -247,6 +247,8 @@ export interface Api {
     deviceGoto(job: string, ref: string): Promise<DeviceState>;
     /** Counts a feeder (or every one) from its first part again. */
     deviceResetFeeders(feeder?: string): Promise<DeviceState>;
+    /** Centers the device's nozzle over the up camera, measuring where the camera is on the device; `step` 0 keeps the scale. */
+    deviceNozzle(step: number): Promise<DeviceState>;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -781,5 +783,9 @@ export class HttpApi implements Api {
 
     deviceResetFeeders(feeder?: string): Promise<DeviceState> {
         return this.request<DeviceState>("POST", "/api/pnp/device/feeders/reset", feeder !== undefined ? { feeder } : {});
+    }
+
+    deviceNozzle(step: number): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/nozzle", { step });
     }
 }

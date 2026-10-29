@@ -23,6 +23,9 @@ export interface UpTruth {
 
 export const UP_TRUTH: UpTruth = { where: [60, 20], roll: 2.5, mirror: true, mmPerPx: 0.01, part: [0.15, -0.08], partSize: [1.6, 0.8] };
 
+/** Where the up camera really sits on the mock's G-code device, its X and Y, when it is mounted there. */
+export const DEVICE_CAMERA_WHERE: [number, number] = [150, 30];
+
 export const PNP_DEFAULTS: PnpSettings = {
     device: "/dev/video1",
     size: "1280x720",

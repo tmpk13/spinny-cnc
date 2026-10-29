@@ -3,7 +3,9 @@ the placement program, the link that sends it, and the routes."""
 
 from __future__ import annotations
 
+import math
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -14,7 +16,7 @@ from fastapi.testclient import TestClient
 from spinny_web.app import Backend, create_app
 from spinny_web.gcode_device import DeviceLinkError, GcodeDevice
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import DeviceError, board_fit, parse, plan, read_position, wrap
+from spinny_web.openpnp import VISION_NOTE, DeviceError, board_fit, parse, plan, read_position, wrap
 
 REPO = Path(__file__).resolve().parents[3]
 SHIPPED = REPO / "pnp" / "openpnp-marlin.toml"
@@ -78,7 +80,7 @@ def test_the_shipped_profile_reads():
         (('init = ["G21", "G90"]', 'init = ["G21", "G90"]\nz = "F"'), "[gcode] z must be one capital letter, not F"),
         (("safe_z = 5", ""), "[motion] safe_z is needed"),
         (('id = "cap"', 'id = "res"'), "[feeder 2] id 'res' is another feeder's too"),
-        (('feed = "M600 N1"', 'feed = "M600\\nG28"'), "[feeder 2] feed must be one line of printable ASCII"),
+        (('feed = "M600 N1"', 'feed = "M600\\nG28"'), "[feeder 2] feed must be a line, or a list of lines of printable ASCII"),
         (("count = 2", "count = 2\nspeed = 3"), "[feeder 1] speed is not a key here"),
         (('at = [30.0, 20.0, -2.5]', 'at = [30.0, 20.0]'), "[feeder 2] at must be 3 numbers"),
     ],
@@ -170,13 +172,14 @@ def test_the_program_picks_from_the_feeders_and_places_on_the_fitted_board():
 
 class FakeMarlin:
     """A port that answers like Marlin: `ok` for every line, a position for
-    M114, `echo:busy` for a slow G28, and a refusal followed by `ok` for a
-    line that starts with BAD; it records every line it was sent."""
+    M114 (where its moves took it), `echo:busy` for a slow G28, and a
+    refusal followed by `ok` for a line that starts with BAD; it records
+    every line it was sent."""
 
     def __init__(self, position=(12.5, -3.0, 0.0)) -> None:
         self.out: queue.Queue[bytes] = queue.Queue()
         self.lines: list[str] = []
-        self.position = position
+        self.position = tuple(position)
         self.closed = False
         self.silent = False
         self.out.put(b"start\r\necho: External Reset\r\n")
@@ -192,6 +195,11 @@ class FakeMarlin:
             self.lines.append(line)
             if self.silent:
                 continue
+            if line.startswith(("G0 ", "G1 ")):
+                moved = list(self.position)
+                for letter, value in re.findall(r"([XYZ])(-?\d+(?:\.\d+)?)", line):
+                    moved["XYZ".index(letter)] = float(value)
+                self.position = tuple(moved)
             if line.startswith("BAD"):
                 self.out.put(b"Error:Unknown command\r\nok\r\n")
             elif line == "M114":
@@ -371,3 +379,126 @@ def test_a_board_is_referenced_planned_sent_and_its_feeders_counted(client):
     assert client.post("/api/pnp/device/command", json={"line": "G0\nG28"}).status_code == 400
     assert client.delete(f"/api/pnp/device/references?job={job_id}&ref=R2").json()["references"] == [{"job": job_id, "ref": "R1", "at": [100.0, 50.0]}]
     assert client.post("/api/pnp/device/disconnect").json()["connected"] is False
+
+
+# --- trays, feeders told to advance, and the up camera on the device ---------------------
+
+TRAY = PROFILE.replace(
+    'feed = "M600 N1"',
+    'feed = ["M600 N1", "M400"]\n[[feeder]]\nid = "ic"\nmatch = "STM32"\nat = [50.0, 10.0, -3.0]\npitch = [10.0, 0.0]\n'
+    "count = 6\ncolumns = 3\nrow_pitch = [0.0, 12.0]\nvision = true\n[camera]\nz = -4",
+)
+
+
+def test_a_tray_is_taken_row_by_row_and_a_feeder_told_to_advance_gets_every_line():
+    device = parse(TRAY, "test")
+    ic = device.feeders[2]
+    assert [ic.place_of(index)[:2] for index in (0, 2, 3, 5)] == [(50.0, 10.0), (70.0, 10.0), (50.0, 22.0), (70.0, 22.0)]
+    assert device.feeders[1].feed == ("M600 N1", "M400") and device.camera_z == -4.0
+    with pytest.raises(DeviceError, match="needs its count"):
+        parse(TRAY.replace("count = 6\n", ""), "test")
+    with pytest.raises(DeviceError, match="row_pitch is for a tray"):
+        parse(TRAY.replace("columns = 3\n", ""), "test")
+    fit = board_fit([((0.0, 0.0), (100.0, 50.0))], None)
+    parts = [part("C1", "100n", "C_0402", 5.0, 6.0), part("U1", "STM32", "LQFP-32", 2.0, 3.0, 90.0)]
+    # Without the camera centered, a part its feeder wants looked at is left.
+    blind = plan(device, parts, fit, {"ic": 4})
+    assert [block.ref for block in blind.blocks] == ["C1"] and "wants the up camera" in blind.skipped[0]["reason"]
+    seen = plan(device, parts, fit, {"ic": 4}, vision_ready=True)
+    c1, u1 = seen.blocks
+    assert c1.pick[1:3] == ["M600 N1", "M400"] and not c1.vision
+    assert u1.vision and "G0 X60 Y22 A0 F3000" in u1.pick and VISION_NOTE in u1.lines
+    assert u1.target == pytest.approx((102.0, 53.0)) and u1.turn == pytest.approx(90.0) and u1.place[0] == "G0 X102 Y53 A90 F3000"
+    assert seen.summary()["parts"][1] == {"ref": "U1", "feeder": "ic", "index": 4, "vision": True}
+
+
+class DeviceUpCamera:
+    """An up camera fixed to the fake device at `where` (its X, Y), seeing
+    the nozzle there through its true scale, roll and mirror, and for the
+    bright spot a part held `part` mm off the nozzle."""
+
+    def __init__(self, fake: FakeMarlin, where, roll: float, mirror: bool, scale: float = 0.01, part=(0.12, -0.05)) -> None:
+        self.fake = fake
+        self.where = where
+        self.roll = roll
+        self.mirror = mirror
+        self.scale = scale
+        self.part = part
+        self.running = True
+
+    def spot(self, radius=None, polarity="dark"):
+        dx_mm, dy_mm = self.fake.position[0] - self.where[0], self.fake.position[1] - self.where[1]
+        if polarity == "bright":
+            dx_mm, dy_mm = dx_mm + self.part[0], dy_mm + self.part[1]
+        radians = math.radians(-self.roll)
+        u = (dx_mm * math.cos(radians) - dy_mm * math.sin(radians)) / self.scale
+        v = (dx_mm * math.sin(radians) + dy_mm * math.cos(radians)) / self.scale
+        u, v = (-u if self.mirror else u), -v
+        if math.hypot(u, v) > 350.0:
+            return {"found": False}
+        return {"found": True, "dx": u, "dy": v, "x": 640 + u, "y": 360 + v, "area": 900.0, "major": 160.0, "minor": 80.0, "contrast": 70.0}
+
+    def pose(self):
+        return {"state": "none", "width": 1280, "height": 720, "frame": 1, "age_ms": 4, "fps": 15.0, "spots": 0}
+
+    def close(self):
+        self.running = False
+
+
+def wait_for(check, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() > deadline:
+            raise AssertionError("waited too long")
+        time.sleep(0.02)
+
+
+def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(client):
+    pnp_dir = client.backend.pnp_devices.directory
+    (pnp_dir / "tray.toml").write_text(TRAY, encoding="utf-8")
+    job = Job(
+        name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True),
+    )
+    board = BOARD.replace('"10k"', '"STM32"', 1)
+    client.backend.store.add(job)
+    client.backend.store.keep_board(job.id, board.encode())
+    camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=4.0, mirror=True)
+    client.backend.pnp.client = camera
+    assert client.put("/api/pnp/device", json={"profile": "tray"}).status_code == 200
+    assert client.post("/api/pnp/device/connect").status_code == 200
+    # The nozzle jogged roughly over the camera, then centered.
+    client.post("/api/pnp/device/command", json={"line": "G0 X150.6 Y29.7"})
+    response = client.post("/api/pnp/device/nozzle", json={"step": 1.0})
+    assert response.status_code == 200, response.text
+    wait_for(lambda: client.get("/api/pnp").json()["routine"]["state"] != "running")
+    assert client.get("/api/pnp").json()["routine"]["state"] == "done", client.get("/api/pnp").json()["routine"]
+    placed = client.get("/api/pnp/device").json()["camera"]
+    assert placed["position"] == pytest.approx([150.0, 30.0], abs=0.02) and placed["mirror"] is True
+    assert placed["mm_per_px"] == pytest.approx(0.01, rel=0.01) and placed["height"] == -4.0
+    # The machine's own routines are free meanwhile: the camera was on the device.
+    assert client.backend.pnp.target == "device"
+    # A reference, then a run: U1 (from the tray, looked at) lands where
+    # its center does, the offset turned with the nozzle.
+    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "R2", "at": [100.0, 60.0]})
+    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "R1", "at": [100.0, 50.0]})
+    # The stand-in shows the part as the bright spot.
+    assert client.put("/api/pnp/settings", json={"part_spot": "bright"}).status_code == 200
+    # A part to be looked at needs the up camera running.
+    camera.running = False
+    response = client.post("/api/pnp/device/run", json={"job": job.id, "refs": ["R1"]})
+    assert response.status_code == 400 and "up camera is not running" in response.text
+    camera.running = True
+    lines_before = len(client.fake.lines)
+    response = client.post("/api/pnp/device/run", json={"job": job.id, "refs": ["R1"]})
+    assert response.status_code == 200, response.text
+    wait_for(lambda: not client.get("/api/pnp/device").json()["running"])
+    state = client.get("/api/pnp/device").json()
+    assert state["progress"]["state"] == "done", state["progress"]
+    sent = client.fake.lines[lines_before:]
+    # R1 is at (1, 0) in the job, (100, 50) on the device, turned 90 with
+    # the board, 0 in the tray: placed at A90; the part sits (0.12, -0.05)
+    # off the nozzle at A0, (0.05, 0.12) once turned.
+    assert "G0 X150 Y30 F3000" in sent and "G0 Z-4 F600" in sent
+    assert "G0 X99.95 Y49.88 A90 F3000" in sent
+    assert client.get("/api/pnp").json()["part_offset"]["dx"] == pytest.approx(0.12, abs=0.005)

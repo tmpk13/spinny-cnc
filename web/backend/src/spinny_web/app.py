@@ -30,18 +30,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
+from spinny_laser.align import turn
 from spinny_laser.cam import CamError
 
 from . import __version__, center
 from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
-from .gcode_device import DeviceLinkError, GcodeDevice
+from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import Device, DeviceStore, board_fit, board_goto, plan, read_position
+from .openpnp import Device, DeviceStore, board_fit, board_goto, place_lines, plan, read_position
+from .openpnp import num as gnum
 from .openpnp import NotFound as DeviceNotFound
 from .pnp import MachineAccess as PnpAccess
-from .pnp import PnpError, UpCamera, job_components
+from .pnp import CameraPlace, MachineMover, PnpError, UpCamera, job_components
 from .heightmap import (
     AUTO,
     FOCUS,
@@ -499,6 +501,12 @@ class DevicePlanBody(BaseModel):
 class DeviceGotoBody(BaseModel):
     job: str
     ref: str
+
+
+class DeviceNozzleBody(Finite):
+    # How far the head moves along X and Y to measure the picture; 0 keeps
+    # the scale, roll and mirror measured before.
+    step: float = 1.0
 
 
 class DeviceFeederBody(BaseModel):
@@ -987,7 +995,7 @@ class Backend:
         routine moving it."""
         if self.camera.routine_active:
             raise HTTPException(status_code=409, detail="the camera is finding the mark")
-        if self.pnp.routine_active:
+        if self.pnp.routine_active and self.pnp.target == "machine":
             raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
 
     def move_start(self, link: Link, streamer: Streamer, status=None) -> tuple[tuple[float, float], bool]:
@@ -2696,21 +2704,22 @@ class Backend:
             raise ValueError(f"width must be {FRAME_MIN_WIDTH} to {FRAME_MAX_WIDTH}")
         return self.pnp.frame(width, overlay)
 
-    def _pnp_access(self, link: Link) -> PnpAccess:
+    def _pnp_mover(self, link: Link) -> MachineMover:
         values = self.read_settings(force=True)["values"]
         status = link.status_now(1.0, routine=True)
-        return PnpAccess(link=link, streamer=self.streamer(status), lift=self.lift_height(), has_focus_axis=bool(values.get("h_axis")))
+        access = PnpAccess(link=link, streamer=self.streamer(status), lift=self.lift_height(), has_focus_axis=bool(values.get("h_axis")))
+        return MachineMover(access, self.pnp.aborting, self.publish_message)
 
     def pnp_nozzle(self, step: float) -> dict:
         with self._owner_lock:
             link = self._movable()
-            self.pnp.center_nozzle(self._pnp_access(link), step)
+            self.pnp.center_nozzle(self._pnp_mover(link), step)
         return self.pnp.state()
 
     def pnp_part(self) -> dict:
         with self._owner_lock:
             link = self._movable()
-            self.pnp.measure_part(self._pnp_access(link))
+            self.pnp.measure_part(self._pnp_mover(link))
         return self.pnp.state()
 
     def pnp_abort(self) -> dict:
@@ -2737,13 +2746,55 @@ class Backend:
 
     def device_state(self) -> dict:
         config = self._device_config()
+        try:
+            camera = self._device_camera_place(self.device_profile())
+        except (ValueError, DeviceNotFound, HTTPException):
+            camera = self._device_camera_place(None)
         return {
             "profile": config.get("profile"),
             "angle": config.get("angle"),
             "references": [dict(entry) for entry in config.get("references", [])],
             "taken": dict(config.get("taken", {})),
+            "camera": camera.to_dict(),
             **self.pnp_device.state(),
         }
+
+    def _device_camera_place(self, device: Device | None) -> CameraPlace:
+        """Where the up camera sits on the device, as centering the nozzle
+        over it measured, at the height the profile says the nozzle is
+        sharp at."""
+        kept = self._device_config().get("camera")
+        kept = kept if isinstance(kept, dict) else {}
+        position = kept.get("position")
+        try:
+            return CameraPlace(
+                position=(float(position[0]), float(position[1])) if isinstance(position, list) and len(position) == 2 else None,
+                height=device.camera_z if device is not None else None,
+                mm_per_px=float(kept.get("mm_per_px", 0.0)),
+                roll=float(kept.get("roll", 0.0)),
+                mirror=bool(kept.get("mirror", True)),
+            )
+        except (TypeError, ValueError):
+            return CameraPlace(height=device.camera_z if device is not None else None)
+
+    def _keep_device_camera(self, place: CameraPlace) -> None:
+        self._device_config()["camera"] = {
+            "position": [place.position[0], place.position[1]] if place.position is not None else None,
+            "mm_per_px": place.mm_per_px,
+            "roll": place.roll,
+            "mirror": place.mirror,
+        }
+        self._save_config()
+        self.publish_pnp_device()
+
+    def device_nozzle(self, step: float) -> dict:
+        """Centers the device's nozzle over the up camera, measuring where
+        the camera is on the device and how its picture lies against the
+        device's moves; on the up camera's routine thread."""
+        device = self._device_idle()
+        mover = DeviceMover(self.pnp_device, device, aborted=self.pnp.aborting)
+        self.pnp.center_nozzle(mover, step, place=self._device_camera_place(device), keep=self._keep_device_camera)
+        return self.device_state()
 
     def device_select(self, body: DeviceSelectBody) -> dict:
         config = self._device_config()
@@ -2765,6 +2816,8 @@ class Backend:
     def _device_idle(self) -> Device:
         if self.pnp_device.running:
             raise HTTPException(status_code=409, detail="a program is being sent to the device")
+        if self.pnp.routine_active and self.pnp.target == "device":
+            raise HTTPException(status_code=409, detail="the up camera routine is moving the device")
         return self.device_profile()
 
     def device_connect(self) -> dict:
@@ -2862,7 +2915,8 @@ class Backend:
             raise ValueError(listing["note"] or "the job's board has no parts")
         job = self.store.get(job_id)
         taken = {key: int(value) for key, value in self._device_config().get("taken", {}).items()}
-        return device, plan(device, parts, self._device_fit(job_id, parts), taken, refs, title=job.name if job else job_id)
+        ready = self._device_camera_place(device).measured
+        return device, plan(device, parts, self._device_fit(job_id, parts), taken, refs, title=job.name if job else job_id, vision_ready=ready)
 
     def device_plan(self, body: DevicePlanBody) -> dict:
         _, program = self._device_plan(body.job, body.refs)
@@ -2875,8 +2929,27 @@ class Backend:
     def device_run(self, body: DevicePlanBody) -> dict:
         if self.pnp_device.running:
             raise HTTPException(status_code=409, detail="a program is already being sent to the device")
+        self._device_idle()
         device, program = self._device_plan(body.job, body.refs)
         config = self._device_config()
+        place = self._device_camera_place(device)
+        if any(block.vision for block in program.blocks) and not self.pnp.running:
+            raise ValueError("the up camera is not running: start it, since some parts are to be looked at over it")
+
+        def look(block) -> list[str]:
+            """Over the up camera with the part just picked; the place lines
+            that put its center, not the nozzle's, on the place. The offset
+            seen turns with the nozzle as the part is turned to its angle."""
+            mover = DeviceMover(self.pnp_device, device, in_run=True)
+            try:
+                seen = self.pnp.look_at_part(mover, place)
+            except (PnpError, VisionError) as exc:
+                raise DeviceLinkError(f"looking at {block.ref} over the up camera: {exc}") from exc
+            self.pnp.part_offset = seen
+            self.publish_pnp()
+            ox, oy = turn((seen["dx"], seen["dy"]), block.turn)
+            rise = f"{device.move} {device.axes[2]}{gnum(device.safe_z)} F{gnum(device.feed_z, 0)}"
+            return [rise, *place_lines(device, (block.target[0] - ox, block.target[1] - oy), block.turn, block.place_z)]
 
         def picked(block) -> None:
             taken = config.setdefault("taken", {})
@@ -2887,7 +2960,7 @@ class Backend:
             level = "info" if progress.state == "done" else "error"
             self.publish_message(level, f"placing on {device.name} {progress.state}: {len(progress.placed)} parts placed{f', {progress.error}' if progress.error and progress.state == 'error' else ''}")
 
-        self.pnp_device.run(program, device.timeout, picked, ended)
+        self.pnp_device.run(program, device.timeout, picked, ended, look)
         return {**program.summary(), **self.device_state()}
 
     def device_stop(self) -> dict:
@@ -3973,6 +4046,10 @@ def create_app(
     @app.post("/api/pnp/device/goto")
     def device_goto(body: DeviceGotoBody):
         return guarded(lambda: backend.device_goto(body))
+
+    @app.post("/api/pnp/device/nozzle")
+    def device_nozzle(body: DeviceNozzleBody | None = None):
+        return guarded(lambda: backend.device_nozzle(body.step if body is not None else 1.0))
 
     @app.post("/api/pnp/device/feeders/reset")
     def device_reset_feeders(body: DeviceFeederBody | None = None):

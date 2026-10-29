@@ -731,7 +731,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const showTarget = (state: AppState): void => {
         const onDevice = state.pnpTarget === "device";
         target.value = state.pnpTarget;
-        roots.camera.classList.toggle("hidden", onDevice);
+        // The up camera's picture serves either machine; the nozzle panel is this machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
         roots.device?.classList.toggle("hidden", !onDevice);
         renderActions(state);

@@ -750,6 +750,8 @@ export type PnpStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 /** The nozzle routine (center the nozzle over the camera) or the part routine (see where a part sits on it). */
 export interface PnpRoutine {
     kind: "nozzle" | "part";
+    /** The machine it moves: this one, or the G-code device. */
+    target?: "machine" | "device";
     state: RoutineState;
     step: PnpStep;
     done: number;
@@ -822,7 +824,11 @@ export interface FeederSummary {
     at: [number, number, number];
     pitch: [number, number];
     count: number;
+    /** A tray's columns; 0 for a strip. */
+    columns: number;
     rotation: number;
+    /** Each part is looked at over the up camera before it is placed. */
+    vision: boolean;
 }
 
 export interface DeviceDocument {
@@ -836,6 +842,8 @@ export interface DeviceDocument {
     axes: string[];
     safe_z: number;
     place_z: number;
+    /** The height the nozzle is seen sharp at over the up camera, when it sits on this device. */
+    camera_z: number | null;
     feeders: FeederSummary[];
 }
 
@@ -879,6 +887,8 @@ export interface DeviceState {
     references: DeviceReference[];
     /** How many parts each feeder has given. */
     taken: Record<string, number>;
+    /** Where the up camera sits on the device and how its picture lies, as centering the nozzle over it measured. */
+    camera: { position: [number, number] | null; height: number | null; mm_per_px: number; roll: number; mirror: boolean };
     connected: boolean;
     url: string | null;
     /** Why the link was lost, or null. */
@@ -892,7 +902,8 @@ export interface DeviceState {
 
 /** A placement program: the parts it places, from which feeder, the parts it leaves, the board's fit and the G-code. */
 export interface DevicePlan {
-    parts: { ref: string; feeder: string; index: number }[];
+    /** `vision`: the part is looked at over the up camera between its pick and its place. */
+    parts: { ref: string; feeder: string; index: number; vision: boolean }[];
     skipped: { ref: string; reason: string }[];
     fit: AlignFit;
     lines: number;

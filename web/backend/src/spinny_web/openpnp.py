@@ -10,10 +10,14 @@ the machine is fitted from reference parts whose places were read off it
 (one gives a shift, with a typed turn; two or more a turn and a shift).
 
 A placement program picks each part from the first feeder whose words
-its value and footprint all hold, at the feeder's next place, and puts it
-on its place on the machine, turned from the feeder's angle to its own.
-`ok` after a move means queued, so the wait command goes out before every
-vacuum switch, which must happen with the head at rest.
+its value and footprint all hold, at the feeder's next place (along a
+strip, or row by row in a tray), and puts it on its place on the
+machine, turned from the feeder's angle to its own. `ok` after a move
+means queued, so the wait command goes out before every vacuum switch,
+which must happen with the head at rest. A part from a feeder marked for
+the up camera is looked at over it between its pick and its place, which
+moves to where the part's center lands on its place: the offset seen
+turns with the nozzle as the part is turned to its angle.
 """
 
 from __future__ import annotations
@@ -55,22 +59,35 @@ class Feeder:
     id: str
     # Words a part's value and footprint must all hold, any case.
     match: str
-    # The first part's place, X Y Z, and the step from one part to the next.
+    # The first part's place, X Y Z, and the step from one part to the next:
+    # along a strip, or with `columns` from column to column of a tray,
+    # `row_pitch` from row to row.
     at: tuple[float, float, float]
     pitch: tuple[float, float] = (0.0, 0.0)
     # Parts in it; 0 for one that presents every part at `at`.
     count: int = 0
+    columns: int = 0
+    row_pitch: tuple[float, float] = (0.0, 0.0)
     # The parts' angle as they sit in it, degrees.
     rotation: float = 0.0
     place_z: float | None = None
-    # A line sent before each pick, for a feeder that is told to advance.
-    feed: str = ""
+    # Lines sent before each pick, for a feeder that is told to advance.
+    feed: tuple[str, ...] = ()
+    # Each part is looked at over the up camera before it is placed.
+    vision: bool = False
 
     def holds(self, value: str, footprint: str) -> bool:
         hay = f"{value} {footprint}".lower()
         return all(word in hay for word in self.match.lower().split())
 
     def place_of(self, index: int) -> tuple[float, float, float]:
+        if self.columns > 0:
+            column, row = index % self.columns, index // self.columns
+            return (
+                self.at[0] + column * self.pitch[0] + row * self.row_pitch[0],
+                self.at[1] + column * self.pitch[1] + row * self.row_pitch[1],
+                self.at[2],
+            )
         return (self.at[0] + index * self.pitch[0], self.at[1] + index * self.pitch[1], self.at[2])
 
 
@@ -105,6 +122,9 @@ class Device:
     pick_dwell_ms: int
     place_dwell_ms: int
     feeders: tuple[Feeder, ...] = field(default_factory=tuple)
+    # The height the nozzle tip is seen sharp at over the up camera, when
+    # the camera sits on this machine; None keeps the safe height.
+    camera_z: float | None = None
 
     def summary(self) -> dict:
         return {"id": self.id, "name": self.name, "description": self.description, "url": self.url, "feeders": len(self.feeders)}
@@ -118,8 +138,18 @@ class Device:
             "axes": list(self.axes),
             "safe_z": self.safe_z,
             "place_z": self.place_z,
+            "camera_z": self.camera_z,
             "feeders": [
-                {"id": f.id, "match": f.match, "at": list(f.at), "pitch": list(f.pitch), "count": f.count, "rotation": f.rotation}
+                {
+                    "id": f.id,
+                    "match": f.match,
+                    "at": list(f.at),
+                    "pitch": list(f.pitch),
+                    "count": f.count,
+                    "columns": f.columns,
+                    "rotation": f.rotation,
+                    "vision": f.vision,
+                }
                 for f in self.feeders
             ],
         }
@@ -149,10 +179,12 @@ class _Reader:
             raise self.fail(section, key, "must be one line of printable ASCII")
         return value.strip()
 
-    def lines(self, table: dict, key: str, section: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    def lines(self, table: dict, key: str, section: str, default: tuple[str, ...], one: bool = False) -> tuple[str, ...]:
         value = table.get(key, list(default))
+        if one and isinstance(value, str):
+            value = [value]
         if not isinstance(value, list) or not all(isinstance(item, str) and LINE.match(item) for item in value):
-            raise self.fail(section, key, "must be a list of lines of printable ASCII")
+            raise self.fail(section, key, f"must be {'a line, or ' if one else ''}a list of lines of printable ASCII")
         return tuple(item.strip() for item in value if item.strip())
 
     def number(self, table: dict, key: str, section: str, default: float | None, low: float = -COORD_LIMIT, high: float = COORD_LIMIT) -> float:
@@ -184,6 +216,12 @@ class _Reader:
         ):
             raise self.fail(section, key, f"must be {size} numbers within {COORD_LIMIT:g}")
         return tuple(float(v) for v in value)
+
+    def flag(self, table: dict, key: str, section: str, default: bool) -> bool:
+        value = table.get(key, default)
+        if not isinstance(value, bool):
+            raise self.fail(section, key, "must be true or false")
+        return value
 
     def done(self, table: dict, section: str | None, known: set[str]) -> None:
         unknown = sorted(set(table) - known)
@@ -265,20 +303,32 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         if not match:
             raise read.fail(section, "match", "must hold the words of a part's value or footprint")
         place_z_of = read.number(table, "place_z", section, None) if "place_z" in table else None
+        count = read.integer(table, "count", section, 0, 0, 100000)
+        columns = read.integer(table, "columns", section, 0, 0, 10000)
+        if columns > 0 and count == 0:
+            raise read.fail(section, "columns", "makes a tray, which needs its count of parts")
+        if "row_pitch" in table and columns == 0:
+            raise read.fail(section, "row_pitch", "is for a tray: give its columns too")
         feeders.append(
             Feeder(
                 id=feeder_id,
                 match=match,
                 at=read.point(table, "at", section, 3, None),
                 pitch=read.point(table, "pitch", section, 2, (0.0, 0.0)),
-                count=read.integer(table, "count", section, 0, 0, 100000),
+                count=count,
+                columns=columns,
+                row_pitch=read.point(table, "row_pitch", section, 2, (0.0, 0.0)),
                 rotation=read.number(table, "rotation", section, 0.0, -360.0, 360.0),
                 place_z=place_z_of,
-                feed=read.text(table, "feed", section, ""),
+                feed=read.lines(table, "feed", section, (), one=True),
+                vision=read.flag(table, "vision", section, False),
             )
         )
-        read.done(table, section, {"id", "match", "at", "pitch", "count", "rotation", "place_z", "feed"})
-    read.done(top, None, {"name", "description", "port", "gcode", "motion", "feeder"})
+        read.done(table, section, {"id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision"})
+    camera = read.table(top, "camera")
+    camera_z = read.number(camera, "z", "camera", None) if "z" in camera else None
+    read.done(camera, "camera", {"z"})
+    read.done(top, None, {"name", "description", "port", "gcode", "motion", "feeder", "camera"})
     return Device(
         id=device_id,
         name=name or device_id,
@@ -305,6 +355,7 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         pick_dwell_ms=pick_dwell_ms,
         place_dwell_ms=place_dwell_ms,
         feeders=tuple(feeders),
+        camera_z=camera_z,
     )
 
 
@@ -397,14 +448,29 @@ def board_fit(references: list[tuple[tuple[float, float], tuple[float, float]]],
         raise DeviceError(str(exc)) from exc
 
 
+VISION_NOTE = "; looked at over the up camera: placed where its center lands"
+
+
 @dataclass
 class Block:
-    """One part's lines, the feeder it comes from and which of its parts."""
+    """One part: the feeder it comes from and which of its parts, the lines
+    that pick it and the ones that place it, and what the place lines are
+    made from, so a look at the part can make them again where its
+    center lands."""
 
     ref: str
     feeder: str
     index: int
-    lines: list[str]
+    pick: list[str]
+    place: list[str]
+    target: tuple[float, float] = (0.0, 0.0)
+    turn: float = 0.0
+    place_z: float = 0.0
+    vision: bool = False
+
+    @property
+    def lines(self) -> list[str]:
+        return [*self.pick, *([VISION_NOTE] if self.vision else []), *self.place]
 
 
 @dataclass
@@ -424,7 +490,7 @@ class Plan:
 
     def summary(self) -> dict:
         return {
-            "parts": [{"ref": block.ref, "feeder": block.feeder, "index": block.index} for block in self.blocks],
+            "parts": [{"ref": block.ref, "feeder": block.feeder, "index": block.index, "vision": block.vision} for block in self.blocks],
             "skipped": self.skipped,
             "fit": self.fit.to_dict(),
             "lines": sum(1 for line in self.text().splitlines() if code_of(line)),
@@ -443,14 +509,38 @@ def dwell_line(device: Device, ms: int) -> list[str]:
     return [device.dwell.replace("{ms}", str(ms)).replace("{s}", num(ms / 1000.0))]
 
 
-def plan(device: Device, parts: list[dict], fit: Fit, taken: dict[str, int], refs: list[str] | None = None, title: str = "") -> Plan:
+def place_lines(device: Device, point: tuple[float, float], turn: float, place_z: float) -> list[str]:
+    """The lines that put a held part down: across at the safe height,
+    turned to its angle, down, the vacuum off, and back up."""
+    x, y, z, a = device.axes
+    move = device.move
+    return [
+        f"{move} {x}{num(point[0])} {y}{num(point[1])} {a}{num(turn)} F{num(device.feed_xy, 0)}",
+        f"{move} {z}{num(place_z)} F{num(device.feed_z, 0)}",
+        *([device.wait] if device.wait else []),
+        device.place,
+        *dwell_line(device, device.place_dwell_ms),
+        f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
+    ]
+
+
+def plan(
+    device: Device,
+    parts: list[dict],
+    fit: Fit,
+    taken: dict[str, int],
+    refs: list[str] | None = None,
+    title: str = "",
+    vision_ready: bool = False,
+) -> Plan:
     """The placement program for a board job's parts on the device.
 
     `parts` are the job's components (job frame), `fit` takes them to the
     device, `taken` is how many parts each feeder has given already, and
     `refs` the parts to place, every one that can be by default. A part on
-    the back, one not to be fitted, and one no feeder holds (or whose
-    feeder is empty) is skipped, with why."""
+    the back, one not to be fitted, one no feeder holds (or whose feeder is
+    empty), and one whose feeder wants the up camera while the nozzle has
+    not been centered over it (`vision_ready`) is skipped, with why."""
     x, y, z, a = device.axes
     move = device.move
     given = dict(taken)
@@ -474,6 +564,9 @@ def plan(device: Device, parts: list[dict], fit: Fit, taken: dict[str, int], ref
         if feeder is None:
             skipped.append({"ref": ref, "reason": "no feeder holds it"})
             continue
+        if feeder.vision and not vision_ready:
+            skipped.append({"ref": ref, "reason": f"feeder {feeder.id} wants the up camera: center the nozzle over it first"})
+            continue
         index = given.get(feeder.id, 0)
         if feeder.count > 0 and index >= feeder.count:
             skipped.append({"ref": ref, "reason": f"feeder {feeder.id} is empty"})
@@ -483,10 +576,9 @@ def plan(device: Device, parts: list[dict], fit: Fit, taken: dict[str, int], ref
         qx, qy = fit.apply((float(part["x"]), float(part["y"])))
         turn = wrap(float(part.get("rotation", 0.0)) + fit.rotation - feeder.rotation)
         place_z = feeder.place_z if feeder.place_z is not None else device.place_z
-        lines = [f"; {ref} {part.get('value', '')} from {feeder.id} #{index + 1}".rstrip()]
-        if feeder.feed:
-            lines.append(feeder.feed)
-        lines += [
+        pick = [f"; {ref} {part.get('value', '')} from {feeder.id} #{index + 1}".rstrip()]
+        pick += list(feeder.feed)
+        pick += [
             f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
             f"{move} {x}{num(px)} {y}{num(py)} {a}0 F{num(device.feed_xy, 0)}",
             f"{move} {z}{num(pz)} F{num(device.feed_z, 0)}",
@@ -494,14 +586,20 @@ def plan(device: Device, parts: list[dict], fit: Fit, taken: dict[str, int], ref
             device.pick,
             *dwell_line(device, device.pick_dwell_ms),
             f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
-            f"{move} {x}{num(qx)} {y}{num(qy)} {a}{num(turn)} F{num(device.feed_xy, 0)}",
-            f"{move} {z}{num(place_z)} F{num(device.feed_z, 0)}",
-            *([device.wait] if device.wait else []),
-            device.place,
-            *dwell_line(device, device.place_dwell_ms),
-            f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
         ]
-        blocks.append(Block(ref=ref, feeder=feeder.id, index=index, lines=lines))
+        blocks.append(
+            Block(
+                ref=ref,
+                feeder=feeder.id,
+                index=index,
+                pick=pick,
+                place=place_lines(device, (qx, qy), turn, place_z),
+                target=(qx, qy),
+                turn=turn,
+                place_z=place_z,
+                vision=feeder.vision,
+            )
+        )
     head = [f"; {title or 'placement'} on {device.name}: {len(blocks)} parts", *device.init]
     tail = [*([device.wait] if device.wait else []), *device.end]
     return Plan(head=head, blocks=blocks, tail=tail, skipped=skipped, fit=fit)

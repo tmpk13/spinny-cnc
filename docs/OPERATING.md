@@ -257,6 +257,13 @@ GcodeDriver sends. Its setup steps:
    at a time, and *Stop* sends the quickstop at once. Each part placed
    counts against its feeder; *Count feeders again* once they are refilled.
 
+Feeders can be tape strips, trays (`columns`, `row_pitch`) or feeders
+told to advance (`feed`, one line or several). With the up camera fixed
+to the device, start it in the Up camera panel, jog the nozzle over it
+and press *Center nozzle* under *Up camera on the device*; then parts of
+a feeder marked `vision = true` are looked at over it after the pick and
+placed where their center lands.
+
 Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the vacuum line
 disconnected and the nozzle well above the board.

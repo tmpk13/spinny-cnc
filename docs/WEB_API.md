@@ -545,11 +545,20 @@ the moves queued have run, sent before every vacuum switch), `pick` and
 `place` (vacuum on and off), `dwell` (`{ms}` or `{s}` for the time),
 `home`, `position`, `stop` (a quickstop, sent ahead of its turn);
 `[motion]` `feed_xy`, `feed_z`, `safe_z`, `place_z`, `pick_dwell_ms`,
-`place_dwell_ms`; and `[[feeder]]` tables: `id`, `match` (words a part's
-value and footprint must all hold), `at` (the first part's X Y Z),
-`pitch` (X Y from one part to the next), `count` (0 for a feeder that
-presents every part at `at`), `rotation` (the parts' angle in it),
-`place_z`, `feed` (a line sent before each pick). The board's place on the
+`place_dwell_ms`; `[camera]` `z` (the height the nozzle is sharp at over
+the up camera, when it is fixed to this machine); and `[[feeder]]`
+tables: `id`, `match` (words a part's value and footprint must all hold),
+`at` (the first part's X Y Z), `pitch` (X Y from one part to the next, or
+from column to column of a tray), `count` (0 for a feeder that presents
+every part at `at`), `columns` and `row_pitch` (a tray, taken row by
+row), `rotation` (the parts' angle in it), `place_z`, `feed` (a line or a
+list of lines sent before each pick), `vision` (each part is looked at
+over the up camera between its pick and its place: the nozzle goes over
+the camera at `[camera] z`, the part's spot gives its center's offset
+from the nozzle's, and the place moves by that offset turned with the
+nozzle; a part of such a feeder is skipped until the nozzle has been
+centered over the camera on the device, and a run needs the camera
+running). The board's place on the
 device is fitted from references, a part of the job paired with where it
 is on the device: one gives a shift, turned by the typed `angle`; two or
 more a turn and a shift. The backend keeps the profile picked, the
@@ -568,12 +577,13 @@ references, the angle and how many parts each feeder has given.
 | `POST /api/pnp/device/home`, `.../position` | the profile's home (the state's `homed` then true), or its position command, read into `position` (`x`, `y`, `z`, `rotation` by the profile's letters) |
 | `POST /api/pnp/device/references` | `{"job", "ref", "at": [x, y]}`: the part's place on the device; `at` left out reads the device's position |
 | `DELETE /api/pnp/device/references?job=ID&ref=R1` | drops a reference, or every one of the job without `ref` |
-| `POST /api/pnp/device/plan` | `{"job", "refs": ["R1"]}` (`refs` left out: every part that can be): `{"parts": [{"ref", "feeder", "index"}], "skipped": [{"ref", "reason"}], "fit": {...}, "lines": 42, "text": "..."}`; a part on the back, one not to be fitted, one no feeder holds and one whose feeder is empty are skipped, with why; 400 without a reference |
+| `POST /api/pnp/device/plan` | `{"job", "refs": ["R1"]}` (`refs` left out: every part that can be): `{"parts": [{"ref", "feeder", "index", "vision"}], "skipped": [{"ref", "reason"}], "fit": {...}, "lines": 42, "text": "..."}`; a part on the back, one not to be fitted, one no feeder holds and one whose feeder is empty are skipped, with why; 400 without a reference |
 | `GET /api/pnp/device/program.gcode?job=ID&refs=R1,C2` | the program as a file |
 | `POST /api/pnp/device/run` | plans and sends the program on its own thread; each part counts against its feeder once its last line is answered; 409 while one is sent |
 | `POST /api/pnp/device/stop` | sends the profile's `stop` at once and nothing after the line in flight |
 | `POST /api/pnp/device/goto` | `{"job", "ref"}`: the nozzle to `safe_z` and over the part's place |
 | `POST /api/pnp/device/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
+| `POST /api/pnp/device/nozzle` | `{"step": 1.0}`: the up camera's nozzle routine (as `POST /api/pnp/nozzle`) on the device: its moves are the profile's move word and wait command, its place read with the position command; what it measures is kept as the state's `camera`. The routine shows in the up camera state with `"target": "device"`, and other device lines are 409 meanwhile |
 
 Device state:
 
@@ -581,6 +591,7 @@ Device state:
 {"profile": "openpnp-marlin", "angle": null,
  "references": [{"job": "a1b2", "ref": "R1", "at": [100.0, 50.0]}],
  "taken": {"r-10k-0603": 2},
+ "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true},
  "connected": true, "url": "/dev/ttyACM1", "lost": null, "running": false, "homed": true,
  "position": {"x": 100.0, "y": 50.0, "z": 0.0},
  "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"], "error": null, "seconds": 12.3},

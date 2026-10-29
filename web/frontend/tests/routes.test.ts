@@ -80,6 +80,7 @@ describe("HttpApi G-code device routes", () => {
         await api.deviceGoto("a1", "R1");
         await api.deviceResetFeeders("tape");
         await api.deviceResetFeeders();
+        await api.deviceNozzle(0.5);
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["GET", "/api/pnp/devices", null],
             ["GET", "/api/pnp/devices/marlin", null],
@@ -102,6 +103,7 @@ describe("HttpApi G-code device routes", () => {
             ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1" }],
             ["POST", "/api/pnp/device/feeders/reset", { feeder: "tape" }],
             ["POST", "/api/pnp/device/feeders/reset", {}],
+            ["POST", "/api/pnp/device/nozzle", { step: 0.5 }],
         ]);
         expect(api.deviceProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/device/program.gcode?job=a1&refs=R1%2CC2");
     });

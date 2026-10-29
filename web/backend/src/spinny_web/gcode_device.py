@@ -9,6 +9,9 @@ a slow line (a home, a wait for the moves) alive past its timeout. Lines
 nobody asked for (a boot banner, `echo:`, `wait`) go to the log only, and
 any left over are cleared before the next line goes out, so a late `ok`
 can never be taken for the next line's.
+
+`DeviceMover` lets the up camera's routines move the device's head: a
+move, then the wait command, so a picture is read with the head at rest.
 """
 
 from __future__ import annotations
@@ -25,7 +28,8 @@ import serial
 
 from .link import check_url
 from .log import log
-from .openpnp import Block, Plan, code_of
+from .openpnp import Block, Device, Plan, code_of, num, read_position
+from .pnp import Mover, PnpError
 
 OK = re.compile(r"^ok\b", re.IGNORECASE)
 REFUSED = re.compile(r"^(error|!!)", re.IGNORECASE)
@@ -104,6 +108,11 @@ class GcodeDevice:
     def running(self) -> bool:
         thread = self._thread
         return thread is not None and thread.is_alive()
+
+    @property
+    def stopping(self) -> bool:
+        """A program being sent has been told to stop."""
+        return self._stop.is_set() and self.running
 
     def connect(self, url: str, baud: int, wait_ms: int, init: tuple[str, ...], timeout: float) -> None:
         if self._port is not None:
@@ -242,10 +251,19 @@ class GcodeDevice:
 
     # --- a program ---------------------------------------------------------------
 
-    def run(self, plan: Plan, timeout: float, on_block: Callable[[Block], None], on_end: Callable[[RunProgress], None] | None = None) -> None:
+    def run(
+        self,
+        plan: Plan,
+        timeout: float,
+        on_block: Callable[[Block], None],
+        on_end: Callable[[RunProgress], None] | None = None,
+        look: Callable[[Block], list[str]] | None = None,
+    ) -> None:
         """Sends a program on its own thread; `on_block` hears of every part
         once its last line is answered, so a stop leaves the feeders counted
-        by what was picked."""
+        by what was picked. `look`, for a part marked for the up camera, is
+        called between its pick and its place and answers the place lines
+        to send instead, made from where the part was seen."""
         if not self.connected:
             raise DeviceLinkError(self._lost or "the device is not connected")
         if self.running:
@@ -256,7 +274,7 @@ class GcodeDevice:
         self._stop.clear()
         self.progress = RunProgress(total=sum(1 for line in lines if line))
         progress = self.progress
-        self._thread = threading.Thread(target=self._run, args=(plan, timeout, progress, on_block, on_end), name="gcode-device-run", daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(plan, timeout, progress, on_block, on_end, look), name="gcode-device-run", daemon=True)
         self._thread.start()
         self._publish()
 
@@ -269,14 +287,22 @@ class GcodeDevice:
         self.command(code, timeout)
         progress.sent += 1
 
-    def _run(self, plan: Plan, timeout: float, progress: RunProgress, on_block, on_end) -> None:
+    def _run(self, plan: Plan, timeout: float, progress: RunProgress, on_block, on_end, look) -> None:
         try:
             for line in plan.head:
                 self._send(line, timeout, progress)
             for block in plan.blocks:
                 progress.part = block.ref
                 self._publish()
-                for line in block.lines:
+                for line in block.pick:
+                    self._send(line, timeout, progress)
+                place = block.place
+                if block.vision and look is not None:
+                    if self._stop.is_set():
+                        raise DeviceLinkError("stopped")
+                    place = look(block)
+                    self._publish()
+                for line in place:
                     self._send(line, timeout, progress)
                 progress.placed.append(block.ref)
                 on_block(block)
@@ -328,3 +354,78 @@ class GcodeDevice:
             "progress": self.progress.to_dict() if self.progress is not None else None,
             "log": list(self.log)[-60:],
         }
+
+
+class DeviceMover(Mover):
+    """A G-code device's head for the up camera's routines: X and Y, Z as
+    the height, every move followed by the wait command so a picture is
+    read with the head at rest. `in_run` lets a program being sent use it
+    between a pick and a place; `aborted` is the routine's own stop."""
+
+    name = "device"
+    letters = ("X", "Y")
+
+    def __init__(self, link: GcodeDevice, device: Device, in_run: bool = False, aborted: Callable[[], bool] | None = None) -> None:
+        self.link = link
+        self.device = device
+        self.in_run = in_run
+        self._aborted = aborted or (lambda: False)
+        self._at: list[float | None] = [0.0, 0.0, None]
+
+    def check(self) -> None:
+        if not self.link.connected:
+            raise ValueError("the device is not connected")
+        if self.link.running and not self.in_run:
+            raise PnpError("a program is being sent to the device")
+        if not self.device.position:
+            raise ValueError("the device profile has no position command, which the up camera's routines need")
+
+    def begin(self) -> None:
+        position = read_position(self._command(self.device.position), self.device.axes)
+        if "x" not in position or "y" not in position:
+            raise PnpError(f"'{self.device.position}' answered no {self.device.axes[0]} and {self.device.axes[1]}")
+        self._at = [position["x"], position["y"], position.get("z")]
+
+    def stopped(self) -> bool:
+        return self.link.stopping or self._aborted()
+
+    def here(self):
+        return (float(self._at[0]), float(self._at[1]))
+
+    def height(self) -> float | None:
+        return self._at[2]
+
+    def lift(self) -> None:
+        z = self._at[2]
+        if z is None or z < self.device.safe_z - 1e-6:
+            self._z(self.device.safe_z)
+
+    def go(self, point) -> None:
+        x, y, _, _ = self.device.axes
+        self._command(f"{self.device.move} {x}{num(point[0])} {y}{num(point[1])} F{num(self.device.feed_xy, 0)}")
+        self._wait()
+        self._at[0], self._at[1] = float(point[0]), float(point[1])
+
+    def lower(self, height: float) -> None:
+        self._z(height)
+
+    def halt(self) -> None:
+        if not self.in_run:
+            self.link.stop(self.device.stop)
+
+    def _z(self, height: float) -> None:
+        self._command(f"{self.device.move} {self.device.axes[2]}{num(height)} F{num(self.device.feed_z, 0)}")
+        self._wait()
+        self._at[2] = height
+
+    def _wait(self) -> None:
+        if self.device.wait:
+            self._command(self.device.wait)
+
+    def _command(self, line: str) -> list[str]:
+        if self.stopped():
+            raise PnpError("stopped")
+        try:
+            return self.link.command(line, self.device.timeout)
+        except DeviceLinkError as exc:
+            raise PnpError(str(exc)) from exc

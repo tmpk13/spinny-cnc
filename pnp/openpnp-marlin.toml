@@ -36,6 +36,12 @@ place_z = -20            # the nozzle tip with a part on it at the board's top
 pick_dwell_ms = 200
 place_dwell_ms = 150
 
+# The up camera (the PNP tab's), when it is fixed to this machine: Center
+# nozzle on the device measures where it is; parts of a feeder marked
+# `vision` are looked at over it and placed where their center lands.
+# [camera]
+# z = -15                 # the height the nozzle tip is seen sharp at over it
+
 # One table per feeder; a part is picked from the first one whose words its
 # value and footprint all hold.
 [[feeder]]
@@ -45,3 +51,15 @@ at = [100.0, 50.0, -22.0]  # the first part's place, X Y Z
 pitch = [4.0, 0.0]         # from one part to the next along the tape, X Y
 count = 50                 # parts in it; 0 for one that presents every part at `at`
 rotation = 0               # the parts' angle as they sit in it, degrees
+
+# A tray, row by row, its parts looked at over the up camera:
+# [[feeder]]
+# id = "mcu-tray"
+# match = "STM32"
+# at = [200.0, 20.0, -24.0]
+# pitch = [12.0, 0.0]        # from column to column
+# columns = 4
+# row_pitch = [0.0, 12.0]    # from row to row
+# count = 16
+# vision = true
+# feed = ["M400"]            # lines sent before each pick, for a feeder told to advance

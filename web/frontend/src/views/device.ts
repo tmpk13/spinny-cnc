@@ -14,6 +14,7 @@ import { setPending, type AppState } from "../state.ts";
 import type { DevicePlan, DeviceReference, DeviceState } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
+import { pnpRoutineText } from "./pnp.ts";
 import type { Setup } from "./steps.ts";
 
 /** The references of one job. */
@@ -57,7 +58,19 @@ export function deviceRunText(device: DeviceState | null): string {
 /** The plan in words: what it places, and what it leaves and why. */
 export function planText(plan: DevicePlan): string {
     const fit = plan.fit.marks > 1 ? `, the board turned ${formatFixed(plan.fit.rotation, 2)} deg (rms ${formatFixed(plan.fit.rms, 3)} mm)` : "";
-    return `${plan.parts.length} parts in ${plan.lines} lines${fit}.`;
+    const looked = plan.parts.filter((part) => part.vision).length;
+    return `${plan.parts.length} parts in ${plan.lines} lines${fit}${looked > 0 ? `; ${looked} looked at over the up camera` : ""}.`;
+}
+
+/** Where the up camera sits on the device, in words. */
+export function deviceCameraText(device: DeviceState | null): string {
+    const camera = device?.camera;
+    if (!camera?.position || !(camera.mm_per_px > 0)) {
+        return "The up camera's place on the device is not measured: jog the nozzle over it so it shows in the picture, then Center nozzle.";
+    }
+    const sharp = camera.height !== null ? `, the nozzle sharp at Z ${formatFixed(camera.height, 3)}` : "";
+    return `Up camera at X ${formatFixed(camera.position[0], 3)} Y ${formatFixed(camera.position[1], 3)}${sharp}, `
+        + `${formatFixed(camera.mm_per_px * 1000, 1)} um per pixel, roll ${formatFixed(camera.roll, 2)} deg${camera.mirror ? ", mirrored" : ""}.`;
 }
 
 /** The PNP page's setup when a G-code device places the parts. */
@@ -119,6 +132,12 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const programFold = el("details", { class: "device-program-fold" }, el("summary", {}, "G-code"), program);
     const takenLine = el("p", { class: "muted" });
     const consoleBox = el("pre", { class: "device-console", "aria-label": "Device lines" });
+    const cameraLine = el("p", { class: "muted" });
+    const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
+    step.setAttribute("aria-label", "Device centering step mm");
+    const center = button("Center nozzle", () => centerNozzle(), "btn");
+    center.title = "Over the up camera on this device: measures where it is and how its picture lies, for the feeders marked vision";
+    const routineLine = el("p", { class: "muted vision-routine" });
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "G-code device"), badge),
@@ -129,6 +148,10 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             el("div", { class: "button-row" }, check, save, revert, status),
             el("div", { class: "button-row" }, connect, home, readPosition, positionLine),
             el("div", { class: "button-row" }, line, send),
+            el("h3", {}, "Up camera on the device"),
+            cameraLine,
+            el("div", { class: "button-row" }, labeled("Step mm", step, "labeled inline"), center),
+            routineLine,
             el("h3", {}, "Board on the device"),
             el("div", { class: "button-row" }, here, labeled("Turned deg", angle, "labeled inline"), clearRefs),
             refList,
@@ -142,8 +165,9 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             consoleBox,
             el("p", { class: "muted hint" },
                 "A machine whose controller takes the G-code OpenPnP's GcodeDriver sends, a line at a time with each one answered ok."
-                + " The profile names its port, the words of its dialect, its heights and its feeders; a part is picked from the first"
-                + " feeder whose words its value and footprint hold. Here pairs the picked part with where the nozzle is: one reference"
+                + " The profile names its port, the words of its dialect, its heights and its feeders (strips, trays, ones told to advance);"
+                + " a part is picked from the first feeder whose words its value and footprint hold, and one from a feeder marked vision is"
+                + " looked at over the up camera (its picture is in the Up camera panel) and placed where its center lands. Here pairs the picked part with where the nozzle is: one reference"
                 + " places the board (turned by Turned deg), two or more fit its turn too. Plan shows the program, Run sends it, Stop"
                 + " sends the stop command at once and nothing after the line in flight."),
         ),
@@ -304,6 +328,16 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         void ctx.call(ctx.api.deviceSelect(text === "" ? { clear_angle: true } : { angle: value! })).then(take);
     });
 
+    async function centerNozzle(): Promise<void> {
+        const value = parseNumber(step.value);
+        if (value === null || value < 0 || value > 10) {
+            ctx.toast("error", "the step is 0 to 10 mm");
+            return;
+        }
+        take(await ctx.call(ctx.api.deviceNozzle(value)));
+        await ctx.refreshPnp();
+    }
+
     async function planNow(): Promise<void> {
         const job = ctx.store.get().job;
         if (!job) {
@@ -372,9 +406,14 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         connect.textContent = connected ? "Disconnect" : "Connect";
         connect.classList.toggle("btn-primary", !connected);
         setLocked(connect, picked === null || running);
+        const routine = state.pnp?.routine;
+        const moving = routine?.state === "running" && routine.target === "device";
         for (const control of [home, readPosition, send, here]) {
-            setLocked(control, !connected || running);
+            setLocked(control, !connected || running || moving);
         }
+        setLocked(center, !connected || running || moving || state.pnp?.running !== true);
+        cameraLine.textContent = deviceCameraText(device);
+        routineLine.textContent = routine?.target === "device" ? pnpRoutineText(state.pnp) : "";
         setLocked(planButton, !state.job || picked === null);
         setLocked(run, !connected || running || !state.job);
         setLocked(stop, !running);
@@ -403,7 +442,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         consoleBox.scrollTop = consoleBox.scrollHeight;
     }
 
-    ctx.store.subscribe((state) => render(state), ["device", "job", "pnpPart", "components"]);
+    ctx.store.subscribe((state) => render(state), ["device", "job", "pnpPart", "components", "pnp"]);
     render(ctx.store.get());
     renderPlan();
     void loadList();
