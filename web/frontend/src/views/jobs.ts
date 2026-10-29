@@ -3,11 +3,11 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
-import { isDispensing, isMilling } from "../profile.ts";
+import { isDispensing, isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
 import { centerTest } from "./center.ts";
-import { focusAgainText, mapUsable } from "./heightmap.ts";
+import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gts,.gbs,.gtp,.gbp,.gto,.gbo,.gm1,.kicad_pcb,.gcode,.nc";
@@ -428,11 +428,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     let compensateTouched = false;
     compensate.addEventListener("change", () => {
         compensateTouched = true;
+        renderProgress(ctx.store.get());
     });
+    // What Run does with the map, or what the run under way does with it.
+    const mapChip = el("span", { class: "badge map-use" });
     const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
     const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
     const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
-    const runRow = el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton, runNote);
+    const runRow = el("div", { class: "run-row" }, runButton, compensate, mapChip, holdButton, resumeButton, stopButton, runNote);
     // A map that lost its offset is not followed until it is taken again.
     const compensateNote = el("p", { class: "muted hint hidden" });
     const progressBox = el("div", { class: "progress" },
@@ -622,6 +625,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         const again = focusAgainText(map, milling);
         compensateNote.textContent = again;
         compensateNote.classList.toggle("hidden", again === "");
+        const choice = compensate.value as Compensate;
+        const ours = active && progress.job === state.job?.id;
+        const planned = mapUse(choice, map, state.job, profileOf(state.snapshot));
+        showMapUse(mapChip, ours ? runMapUse(progress, milling) ?? planned : planned);
+        // The other panels say what the choice does; set last, since it
+        // calls them back.
+        ctx.store.set({ mapChoice: choice });
         // A run of this job that stopped short can be picked up where it
         // got to, this session's or an earlier one's.
         const record = state.snapshot.resume ?? null;

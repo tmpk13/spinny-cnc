@@ -63,6 +63,9 @@ class Progress:
     error: str | None = None
     # The line the run picked the job up at, None for a run from the top.
     resumed_from: int | None = None
+    # How the run follows the height map: off, focus or power, the way
+    # the backend settled an auto.
+    compensate: str = "off"
     started: float = field(default=0.0, repr=False)
     finished: float | None = field(default=None, repr=False)
 
@@ -80,6 +83,7 @@ class Progress:
             "group": self.group,
             "error": self.error,
             "resumed_from": self.resumed_from,
+            "compensate": self.compensate,
         }
 
 
@@ -222,6 +226,7 @@ class Runner:
                     total=stats.moves,
                     estimate=stats.seconds,
                     resumed_from=skip if skip > 0 else None,
+                    compensate=compensation.mode if compensation is not None else "off",
                     started=time.monotonic(),
                 )
                 progress = self.progress

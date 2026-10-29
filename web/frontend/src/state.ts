@@ -3,6 +3,7 @@
 import type {
     AlignState,
     CameraState,
+    Compensate,
     ConsoleLine,
     Grid,
     HeightMapState,
@@ -89,6 +90,8 @@ export interface AppState {
     camera: CameraState | null;
     /** The alignment marks and their fit; null until read. */
     align: AlignState | null;
+    /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
+    mapChoice: Compensate;
     console: ConsoleLine[];
     /** Show the link's status polls in the console. */
     showPolls: boolean;
@@ -115,6 +118,7 @@ export function initialState(mock: boolean): AppState {
         probeDraft: null,
         camera: null,
         align: null,
+        mapChoice: "off",
         console: [],
         showPolls: false,
         toasts: [],

@@ -42,7 +42,12 @@ board sits out of focus.
 2. *Fit to job* (the preview shows the grid), then *Probe*.
 3. Jog the beam over the board, focus it by eye with the focus axis, and
    press *Focus here*.
-4. Run with *height map: auto*.
+4. Run with *height map: auto*. The chip beside the choice says what Run
+   will do with the map before it is pressed (*map on: focus axis*, *map
+   off*, or why the run would be refused, such as *focus not set* or *map
+   short of job*); the Height map panel's head says the same for the
+   selected job, and while a run lasts the status bar shows what it
+   follows.
 
 Wiring and bring-up are in `firmware/rp2040/README.md`; nothing of this has
 run on hardware yet.

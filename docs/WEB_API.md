@@ -274,11 +274,15 @@ are left out. Progress:
 
 ```json
 {"job": "a1b2", "state": "running", "sent": 120, "acked": 118, "total": 900,
- "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null, "resumed_from": null}
+ "seconds": 12.5, "estimate": 95.0, "group": 0, "error": null, "resumed_from": null,
+ "compensate": "focus"}
 ```
 
 `resumed_from` is the line a run picked the job up at, null for a run from
-the top; its `sent` and `acked` count from there.
+the top; its `sent` and `acked` count from there. `compensate` is how the
+run follows the height map, `off`, `focus` or `power`, an `auto` settled
+the way the run settled it; the page shows it beside the run's choice, in
+the Height map panel's head and in the status bar while the run lasts.
 
 On a spindle machine a job is milled: `power` is the spindle's `S`,
 `speed` the feed, `depth` how far under the surface the group's last pass

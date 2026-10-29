@@ -119,7 +119,8 @@ export interface LastPosition {
 export interface ResumeRecord extends Progress {
     /** Where the plan began: the joint the head was at, [r, a] or [r, z] on a cartesian machine. */
     start?: [number, number] | null;
-    compensate?: Compensate;
+    /** How the run followed the height map, an auto settled. */
+    compensate?: MapMode;
     cartesian?: boolean;
     angle?: number;
     spindle?: boolean;
@@ -537,10 +538,15 @@ export interface Progress {
     error?: string | null;
     /** The line the run picked the job up at; null or missing for a run from the top. */
     resumed_from?: number | null;
+    /** How the run follows the height map, an auto settled: missing from a backend that predates it. */
+    compensate?: MapMode;
 }
 
 /** How a run follows the height map: not at all, the focus axis where fitted, else power, or one of the two. */
 export type Compensate = "off" | "auto" | "focus" | "power";
+
+/** How a run follows the height map once an auto is settled. */
+export type MapMode = Exclude<Compensate, "auto">;
 
 /** Probe points `nx` by `ny` over a board rectangle, corners included. */
 export interface Grid {

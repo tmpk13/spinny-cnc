@@ -256,10 +256,13 @@ def test_a_focus_run_follows_the_map(client, fake):
     before = len(fake.received_lines)
     response = client.post(f"/api/jobs/{job['id']}/run", json={"compensate": "auto"})
     assert response.status_code == 200, response.text
+    # The progress names what the auto settled on, for the page to show.
+    assert response.json()["compensate"] == "focus"
     deadline = time.monotonic() + 20
     while client.get("/api/run").json()["state"] == "running" and time.monotonic() < deadline:
         time.sleep(0.05)
     assert client.get("/api/run").json()["state"] == "done"
+    assert client.get("/api/run").json()["compensate"] == "focus"
     sent = fake.received_lines[before:]
     motion = [line for line in sent if line.split()[0] in ("go", "cut")]
     assert motion and all("H" in words(line) for line in motion)
@@ -280,6 +283,7 @@ def test_a_power_run_raises_the_power_and_leaves_the_head(client, fake):
     before = len(fake.received_lines)
     response = client.post(f"/api/jobs/{job['id']}/run", json={"compensate": "power"})
     assert response.status_code == 200, response.text
+    assert response.json()["compensate"] == "power"
     deadline = time.monotonic() + 20
     while client.get("/api/run").json()["state"] == "running" and time.monotonic() < deadline:
         time.sleep(0.05)

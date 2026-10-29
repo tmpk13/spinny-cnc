@@ -1,9 +1,10 @@
 // Connection selector, machine state, firmware version and the event link.
 
 import { button, el, replace } from "../dom.ts";
-import { profileBadge, profileOf } from "../profile.ts";
+import { isMilling, profileBadge, profileOf } from "../profile.ts";
 import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
+import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
 
 /** How often the ports are listed again while nothing is connected, ms: a controller plugged in shows up by itself. */
 export const PORT_POLL_MS = 10_000;
@@ -68,13 +69,15 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const firmware = el("span", { class: "firmware muted" }, "");
     // Shown only for a machine that is not the polar laser.
     const profile = el("span", { class: "badge profile hidden" }, "");
+    // Shown only while a run is under way: whether it follows the height map.
+    const mapChip = el("span", { class: "badge map-use hidden" });
     const link = el("span", { class: "link", "data-link": "closed" }, "feed off");
     const mock = ctx.store.get().mock ? el("span", { class: "badge mock" }, "mock") : null;
 
     root.append(
         el("div", { class: "brand" }, "Spinny Laser"),
         el("div", { class: "connection" }, select, urlInput, refresh, connect, hideLabel),
-        el("div", { class: "status" }, stateBadge, profile, firmware, link, mock),
+        el("div", { class: "status" }, stateBadge, mapChip, profile, firmware, link, mock),
     );
 
     select.addEventListener("change", () => {
@@ -165,5 +168,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
         profile.classList.toggle("hidden", badgeName === "");
         link.setAttribute("data-link", state.link);
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";
-    }, ["snapshot", "link"]);
+        const progress = state.progress ?? snapshot.run;
+        showMapUse(mapChip, runActive(progress) ? runMapUse(progress, isMilling(snapshot)) : null);
+    }, ["snapshot", "link", "progress"]);
 }

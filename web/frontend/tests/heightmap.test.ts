@@ -4,7 +4,7 @@ import type { Api } from "../src/api.ts";
 import { createContext } from "../src/main.ts";
 import { gridPoints, sameGrid } from "../src/preview.ts";
 import { initialState, Store, type AppState } from "../src/state.ts";
-import type { Grid, HeightMap, HeightMapState, Job, Machine, ProbeSettings, Snapshot } from "../src/types.ts";
+import type { Grid, HeightMap, HeightMapState, Job, Machine, ProbeSettings, Profile, Progress, Snapshot } from "../src/types.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
 import {
     cellColor,
@@ -18,11 +18,14 @@ import {
     LABELED_POINTS,
     mapStatus,
     mapUsable,
+    mapUse,
     MAX_TINT,
     mountHeightMap,
     readGrid,
+    runMapUse,
     signed,
 } from "../src/views/heightmap.ts";
+import { mountStatusBar } from "../src/views/statusbar.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
 import { mountLaser } from "../src/views/laser.ts";
@@ -489,5 +492,76 @@ describe("going on with a map", () => {
         // A map saved before the travel height was kept travels where the head is.
         expect(goOnTravel(heightMap([[-1.5, null]]))).toContain("at the height it has now");
         expect(goOnTravel(null)).toContain("at the height it has now");
+    });
+});
+
+describe("whether a run follows the map", () => {
+    const laser: Profile = { kinematics: "polar", tool: "laser", h_axis: true, r_max: 0, z_max: 0 };
+    const ready = heightMap([[0, 0.1, 0.2], [0.2, 0.3, 0.4]], { focus_set: true });
+    const running = (compensate: Progress["compensate"]): Progress => ({
+        job: "j1", state: "running", sent: 3, acked: 2, total: 10, seconds: 1, estimate: 5, group: 0, compensate,
+    });
+
+    test("auto is the focus axis where one is fitted, else power, and off says a ready map is left alone", () => {
+        expect(mapUse("auto", ready, job(), laser)).toMatchObject({ kind: "on", text: "map on: focus axis" });
+        expect(mapUse("auto", ready, job(), { ...laser, h_axis: false })).toMatchObject({ kind: "on", text: "map on: power" });
+        expect(mapUse("auto", ready, job(), { ...laser, tool: "spindle" })).toMatchObject({ kind: "on", text: "map on: depth axis" });
+        const off = mapUse("off", ready, job(), laser);
+        expect(off).toMatchObject({ kind: "off", text: "map off" });
+        expect(off.detail).toContain("ready");
+    });
+
+    test("a run the backend would refuse is named before it is started", () => {
+        expect(mapUse("auto", null, job(), laser)).toMatchObject({ kind: "refused", text: "no map" });
+        expect(mapUse("auto", heightMap([[0, null, 0], [0, 0, 0]], { focus_set: true }), job(), laser)).toMatchObject({ kind: "refused", text: "map not done" });
+        expect(mapUse("auto", { ...ready, focus_set: false }, job(), laser)).toMatchObject({ kind: "refused", text: "focus not set" });
+        expect(mapUse("auto", { ...ready, focus_set: false }, job(), { ...laser, tool: "spindle" })).toMatchObject({ text: "no touch-off" });
+        expect(mapUse("focus", ready, job(), { ...laser, h_axis: false })).toMatchObject({ kind: "refused", text: "no focus axis" });
+        expect(mapUse("power", ready, job(), { ...laser, tool: "spindle" })).toMatchObject({ kind: "refused", text: "not by power" });
+        // The job reaches X 6 and Y 2.05 against a grid to X 10, Y 5: covered;
+        // a grid to X 4 is short of it by more than the margin.
+        const short = { ...ready, grid: { ...ready.grid, x1: 4 } };
+        const refusal = mapUse("auto", short, job(), laser);
+        expect(refusal).toMatchObject({ kind: "refused", text: "map short of job" });
+        expect(refusal.detail).toContain("the job reaches X -4.0..6.0");
+    });
+
+    test("a run under way says what it settled on", () => {
+        expect(runMapUse(running("focus"), false)).toMatchObject({ kind: "on", text: "map on: focus axis" });
+        expect(runMapUse(running("off"), false)).toMatchObject({ kind: "off" });
+        expect(runMapUse(running(undefined), false)).toBeNull();
+        expect(runMapUse(null, false)).toBeNull();
+    });
+
+    test("the run row, the height map panel and the status bar carry it", () => {
+        const { store, ctx, root } = setup({ map: ready, probe: null, settings: SETTINGS });
+        const panel = document.createElement("section");
+        const bar = document.createElement("header");
+        document.body.append(panel, bar);
+        mountJobs(root, ctx);
+        mountHeightMap(panel, ctx);
+        mountStatusBar(bar, ctx);
+        store.set({ snapshot: { ...connected(), profile: laser }, job: job(), heightMap: { map: ready, probe: null, settings: SETTINGS } });
+        const chip = root.querySelector(".run-row .map-use") as HTMLElement;
+        expect(chip.textContent).toBe("map on: focus axis");
+        expect(chip.getAttribute("data-use")).toBe("on");
+        expect(store.get().mapChoice).toBe("auto");
+        const panelChip = panel.querySelector(".panel-head .map-use") as HTMLElement;
+        expect(panelChip.textContent).toBe("next run: map on: focus axis");
+        const select = root.querySelector('select[aria-label="Height map"]') as HTMLSelectElement;
+        select.value = "off";
+        select.dispatchEvent(new Event("change"));
+        expect(chip.textContent).toBe("map off");
+        expect(panelChip.textContent).toBe("next run: map off");
+        // Nothing in the bar until a run is under way, then what it follows.
+        const barChip = bar.querySelector(".map-use") as HTMLElement;
+        expect(barChip.classList.contains("hidden")).toBe(true);
+        store.set({ progress: running("focus") });
+        expect(barChip.classList.contains("hidden")).toBe(false);
+        expect(barChip.textContent).toBe("map on: focus axis");
+        expect(panelChip.textContent).toBe("run: map on: focus axis");
+        expect(chip.textContent).toBe("map on: focus axis");
+        store.set({ progress: { ...running("focus"), state: "done" } });
+        expect(barChip.classList.contains("hidden")).toBe(true);
     });
 });

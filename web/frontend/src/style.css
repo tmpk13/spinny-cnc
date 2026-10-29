@@ -1595,6 +1595,11 @@ dialog.confirm::backdrop {
 
 /* Height map */
 
+/* What a run does with the height map: follows it, runs without it, or is refused. */
+.badge.map-use[data-use="on"] { --tone: var(--magenta); }
+.badge.map-use[data-use="off"] { --tone: var(--muted); background: transparent; }
+.badge.map-use[data-use="refused"] { --tone: var(--orange); }
+
 .hm-badge[data-map="none"] { --tone: var(--muted); background: transparent; }
 .hm-badge[data-map="partial"] { --tone: var(--hold); }
 .hm-badge[data-map="running"] { --tone: var(--run); }

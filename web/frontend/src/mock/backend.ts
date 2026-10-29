@@ -101,6 +101,7 @@ import type {
     MachineResponse,
     MachinesResponse,
     MachineState,
+    MapMode,
     Mode,
     Path,
     Point,
@@ -1276,7 +1277,7 @@ interface RunSession {
     group: number;
     /** The line the run picked the job up at; null for a run from the top. */
     resumedFrom?: number | null;
-    compensate?: Compensate;
+    compensate?: MapMode;
 }
 
 /** Points per side of a probe grid. */
@@ -1769,7 +1770,7 @@ export class MockBackend implements Api, EventFeed {
     /** Every line either way, as the backend's log would hold them. */
     private consoleLog: string[] = [];
     /** What the last run was planned from, kept with its progress as the resume record. */
-    private lastPlan: { start: [number, number]; compensate: Compensate; cartesian: boolean; spindle: boolean } | null = null;
+    private lastPlan: { start: [number, number]; compensate: MapMode; cartesian: boolean; spindle: boolean } | null = null;
     /** Board moves waiting for a free line slot, sent as the machine drains. */
     private outbox: { line: string; move: Move }[] = [];
     private eventListeners = new Set<(event: WsEvent) => void>();
@@ -1948,6 +1949,7 @@ export class MockBackend implements Api, EventFeed {
             estimate: session.job.stats.seconds,
             group: session.group,
             resumed_from: session.resumedFrom ?? null,
+            compensate: session.compensate ?? "off",
         };
     }
 
@@ -3902,7 +3904,7 @@ export class MockBackend implements Api, EventFeed {
         this.serviceRun(0);
     }
 
-    private planOf(compensate: Compensate): { start: [number, number]; compensate: Compensate; cartesian: boolean; spindle: boolean } {
+    private planOf(compensate: MapMode): { start: [number, number]; compensate: MapMode; cartesian: boolean; spindle: boolean } {
         const machine = this.machine;
         const cartesian = machine.cartesian();
         return {
@@ -3914,7 +3916,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     /** The moves of a job and where picking it up at `request.line` would start. */
-    private resumePlanOf(id: string, request: ResumeRequest): { job: Job; moves: Move[]; skip: number; line: number; compensate: Compensate } {
+    private resumePlanOf(id: string, request: ResumeRequest): { job: Job; moves: Move[]; skip: number; line: number; compensate: MapMode } {
         const job = this.requireJob(id);
         if (!Number.isInteger(request.line) || request.line < 0) {
             throw new ApiError(400, "the line to pick the job up at cannot be negative");

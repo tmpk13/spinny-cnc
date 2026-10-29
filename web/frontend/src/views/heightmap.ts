@@ -4,10 +4,10 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatFixed, parseNumber } from "../format.ts";
-import { isDispensing, isMilling, outputDuty } from "../profile.ts";
+import { isDispensing, isMilling, outputDuty, profileOf } from "../profile.ts";
 import { boardOfJoint, lerpJoint } from "../kinematics.ts";
 import type { AppState } from "../state.ts";
-import type { Grid, HeightMap, HeightMapState, Job, PadProbeRequest, ProbeRequest, ProbeSettings, TouchMode } from "../types.ts";
+import type { Compensate, Grid, HeightMap, HeightMapState, Job, PadProbeRequest, ProbeRequest, ProbeSettings, Profile, Progress, TouchMode } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** A grid when there is neither a map nor a job to take one from. */
@@ -333,10 +333,115 @@ export function mapStatus(state: HeightMapState | null): { text: string; kind: s
     return { text: map.focus_set ? "ready" : "focus not set", kind: map.focus_set ? "ready" : "partial" };
 }
 
+/** How far past the grid a job may reach and still be followed, mm, as the backend allows. */
+export const COVER_MARGIN = 1;
+
+/** What a run does with the height map: follows it (and how), runs without it, or is refused before it starts. */
+export interface MapUse {
+    kind: "on" | "off" | "refused";
+    /** The few words of the chip. */
+    text: string;
+    /** The sentence behind them. */
+    detail: string;
+}
+
+/** How a mode of following the map reads: a spindle's focus axis is its depth axis. */
+export function compensateWords(mode: "focus" | "power", milling: boolean): string {
+    return mode === "power" ? "power" : milling ? "depth axis" : "focus axis";
+}
+
+/**
+ * What a run of `job` started now with `choice` does with `map`, decided the
+ * way the backend decides it as far as the page can tell: auto is the focus
+ * axis where one is fitted, else power; a map not probed everywhere, without
+ * its focus offset, or short of the job refuses the run rather than run it
+ * without the map. Cells left out of a map probed around another job's cuts
+ * are the backend's to find.
+ */
+export function mapUse(choice: Compensate, map: HeightMap | null, job: Job | null, profile: Profile): MapUse {
+    const milling = profile.tool === "spindle";
+    if (choice === "off") {
+        return {
+            kind: "off",
+            text: "map off",
+            detail: mapUsable(map)
+                ? "A height map is ready, but the run will not follow it: pick height map: auto to follow it."
+                : "The run cuts at the job's own heights: no height map is followed.",
+        };
+    }
+    const refused = (text: string, detail: string): MapUse => ({ kind: "refused", text, detail });
+    const mode: "focus" | "power" = choice === "auto" ? (profile.h_axis ? "focus" : "power") : choice;
+    if (mode === "focus" && !profile.h_axis) {
+        return refused("no focus axis", "The focus axis is not fitted ($h_axis=0): follow the map by power instead.");
+    }
+    if (mode === "power" && milling) {
+        return refused("not by power", "A spindle follows the board with its depth axis: pick auto or the depth axis.");
+    }
+    if (map === null) {
+        return refused("no map", "There is no height map: probe the board first, or run with no height map.");
+    }
+    if (!mapComplete(map)) {
+        const { probed, total } = mapCounts(map);
+        return refused("map not done", `The map is probed at ${probed} of ${total} points: go on probing before a run follows it.`);
+    }
+    if (!map.focus_set) {
+        return refused(milling ? "no touch-off" : "focus not set", focusAgainText(map, milling));
+    }
+    const box = job ? jobBox(job) : null;
+    const grid = map.grid;
+    if (box && (box.x0 < grid.x0 - COVER_MARGIN || box.y0 < grid.y0 - COVER_MARGIN || box.x1 > grid.x1 + COVER_MARGIN || box.y1 > grid.y1 + COVER_MARGIN)) {
+        return refused(
+            "map short of job",
+            `The height map does not cover the job: probed X ${formatFixed(grid.x0, 1)}..${formatFixed(grid.x1, 1)} Y ${formatFixed(grid.y0, 1)}..${formatFixed(grid.y1, 1)},`
+            + ` the job reaches X ${formatFixed(box.x0, 1)}..${formatFixed(box.x1, 1)} Y ${formatFixed(box.y0, 1)}..${formatFixed(box.y1, 1)}.`,
+        );
+    }
+    return { kind: "on", text: `map on: ${compensateWords(mode, milling)}`, detail: followText(mode, milling) };
+}
+
+function followText(mode: "focus" | "power", milling: boolean): string {
+    if (mode === "power") {
+        return "The run follows the height map by power: the beam is driven harder where the board sits out of focus.";
+    }
+    return milling
+        ? "The run follows the height map: the depth axis keeps every cut its depth under the surface."
+        : "The run follows the height map: the focus axis keeps the beam at focus over the board.";
+}
+
+/** What a run under way does with the map, from its progress; null for a backend that does not say. */
+export function runMapUse(progress: Progress | null, milling: boolean): MapUse | null {
+    const mode = progress?.compensate;
+    if (mode === undefined || progress === null) {
+        return null;
+    }
+    if (mode === "off") {
+        return { kind: "off", text: "map off", detail: "This run follows no height map." };
+    }
+    return { kind: "on", text: `map on: ${compensateWords(mode, milling)}`, detail: followText(mode, milling) };
+}
+
+/** Whether a run is under way: running, or held. */
+export function runActive(progress: Progress | null): boolean {
+    return progress !== null && (progress.state === "running" || progress.state === "hold");
+}
+
+/** A chip that says what a run does with the map; hidden for null. */
+export function showMapUse(chip: HTMLElement, use: MapUse | null, prefix = ""): void {
+    chip.classList.toggle("hidden", use === null);
+    if (use === null) {
+        return;
+    }
+    chip.textContent = `${prefix}${use.text}`;
+    chip.title = use.detail;
+    chip.setAttribute("data-use", use.kind);
+}
+
 export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     const badge = el("span", { class: "badge hm-badge" }, "no map");
+    // Whether the run under way, or the next one, follows this map.
+    const useChip = el("span", { class: "badge map-use hidden" });
     const body = el("fieldset", { class: "panel-body" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Height map"), badge), body);
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Height map"), el("div", { class: "button-row" }, useChip, badge)), body);
 
     // --- where to probe ---
     const gridFields = {
@@ -915,6 +1020,14 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const status = mapStatus(heightMap);
         badge.textContent = status.text;
         badge.setAttribute("data-map", status.kind);
+        const runProgress = state.progress ?? state.snapshot.run;
+        if (runActive(runProgress)) {
+            showMapUse(useChip, runMapUse(runProgress, isMilling(state.snapshot)), "run: ");
+        } else if (state.job && heightMap?.map) {
+            showMapUse(useChip, mapUse(state.mapChoice, heightMap.map, state.job, profileOf(state.snapshot)), "next run: ");
+        } else {
+            showMapUse(useChip, null);
+        }
         const machine = state.snapshot.machine;
         const connected = state.snapshot.connected;
         const probing = heightMap?.probe?.state === "running";
@@ -1006,7 +1119,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     publishDraft();
     requestEstimate();
     // The pads' buttons want a selected job, so the job is watched too.
-    ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress", "settings", "job"]);
+    ctx.store.subscribe((state) => render(state), ["heightMap", "snapshot", "progress", "settings", "job", "mapChoice"]);
     ctx.store.subscribe((state) => showQueue(state), ["settings"]);
     showQueue(ctx.store.get());
     renderData(ctx.store.get());
