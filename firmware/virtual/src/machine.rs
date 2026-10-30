@@ -365,6 +365,13 @@ mod tests {
         let dispenser = applied(&shipped("cartesian-dispenser"));
         assert!(dispenser.cartesian && dispenser.dispenser && !dispenser.spindle);
         assert!(dispenser.dispensing() && dispenser.h_axis);
+        // The K40: a laser on X and Y with each motor on its labeled
+        // socket, the empty table on Z, and the back switch on Y-STOP.
+        let k40 = applied(&shipped("k40"));
+        assert!(k40.cartesian && !k40.spindle && !k40.dispenser && !k40.h_axis);
+        assert_eq!(k40.sockets, 1324);
+        assert_eq!([R, Z].map(|j| k40.stop_pin[j]), [4, 3]);
+        assert!(!k40.laser_invert);
     }
 
     #[test]

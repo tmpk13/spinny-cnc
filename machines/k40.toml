@@ -1,0 +1,123 @@
+# A K40 CO2 laser with the SKR Pico in place of its M2 Nano: the stock
+# gantry's two steppers, its optical endstops at the back left, and the
+# laser supply's fire input on FAN3. The supply's panel knob still sets
+# the tube's current ceiling, and the PWM sets the power under it.
+#
+# Wiring, by the supply's labels H, L, WP, G, IN, 5V:
+#   L      a small diode's anode; its cathode (band) to FAN3 pin 2, the
+#          switched side. FAN3's indicator LED and its 10K pull pin 2
+#          toward the fan rail while FAN3 is off (SKR Pico V1.0
+#          schematic); the diode keeps that off L. FAN3 pin 1 is the rail
+#          and stays empty.
+#   G      the board's ground, so L and the board share a reference.
+#   H      nothing: it fires on a high level, where FAN3 pin 2 sits
+#          whenever FAN3 is off.
+#   WP, IN, 5V   left as they are: the water and enable switches on WP,
+#          the knob on IN and 5V.
+#   Motors on the X and Y sockets. Endstops on X-STOP and Y-STOP: signal
+#   on pin 1, ground on pin 2, 5 V on pin 3. The STOP inputs go through a
+#   buffer whose inputs take 5 V; PROBE goes straight to the RP2040.
+
+name = "K40 laser"
+description = "K40 CO2 laser on the SKR Pico in place of its M2 Nano"
+kinematics = "cartesian"
+tool = "laser"
+
+# X across the gantry, Y the bed's depth with +Y toward the back, so a
+# board reads as it lies seen from the front, with the front left corner
+# as X 0, Y 0 once homed. Each motor is on its labeled socket; the table
+# has no motor and takes the empty Z driver.
+#
+# 16 microsteps: the driver interpolates every step to 256, and the step
+# generator's 100 kHz ceiling stays far above what the gantry can do. The
+# rates are a first step up; raise them while nothing skips. The travels
+# are the K40's nominal bed: measure yours and set them.
+[rail]
+socket = "X"
+microsteps = 16
+steps_per_mm = 157.48       # 200 steps, 16 microsteps, 20.32 mm of belt per turn: the usual K40 start; measure over a long move
+max_rate = 6000
+accel = 500
+jerk = 5
+jog_rate = 3000
+limit = 300                 # either side of zero: refuses no move on the bed wherever the zero is, only a runaway
+invert = false              # flip when X+ moves the head left
+current_ma = 600            # under the motor's rating; raise it if the gantry skips
+endstop = "min"             # the switch at the left
+endstop_pin = 4             # X-STOP
+endstop_invert = false      # flip when `?` reads the switch closed with its flag clear
+endstop_halt = true
+home_pull = 2
+home_pos = 0
+home_travel = 300
+
+[table]
+socket = "Z"
+current_ma = 0
+
+[slide]
+socket = "Y"
+microsteps = 16
+steps_per_mm = 157.48
+max_rate = 6000
+accel = 500
+jerk = 5
+jog_rate = 3000
+limit = 200
+invert = false              # flip when Y+ moves the head toward the front
+current_ma = 600
+endstop = "max"             # the switch at the back
+endstop_pin = 3             # Y-STOP: the slide's default, PROBE, takes 3.3 V only
+endstop_invert = false
+endstop_halt = true
+home_pull = 2
+home_pos = 200              # the back switch reads as the depth, so the front edge is Y 0
+home_travel = 200
+
+# The fire output: FAN3 conducts to fire, so it is active high, and FAN3
+# is held off from power-on until the firmware runs, after a watchdog
+# reset and in BOOTSEL.
+[output]
+pin = 20                    # FAN3
+invert = false
+pwm_hz = 5000
+s_max = 1000
+test_ms = 100               # a test pulse; a CO2 beam burns through in a second or two
+
+[host]
+tolerance = 0.01            # mm; a step is 0.0064 mm
+
+# The page's controls: X and Y bars on the arrow keys, each with its own
+# zero. The board pad would move the same two joints, so it is left out,
+# and with it the board row of the readout. The table has no motor, so it
+# has no bar.
+[controls]
+pad = false
+feed = true
+center = {}
+
+[[controls.axes]]
+axis = "r"
+letter = "X"
+label = "X"
+steps = [0.1, 1, 10]
+step = 1
+buttons = ["X-", "X+"]
+feed = true
+goto = true
+zero = true
+zero_hint = "X is measured from here: put the beam over the job's X origin first."
+keys = ["ArrowLeft", "ArrowRight"]
+
+[[controls.axes]]
+axis = "z"
+letter = "Y"
+label = "Y"
+steps = [0.1, 1, 10]
+step = 1
+buttons = ["Y-", "Y+"]
+feed = true
+goto = true
+zero = true
+zero_hint = "Y is measured from here: put the beam over the job's Y origin first."
+keys = ["ArrowDown", "ArrowUp"]

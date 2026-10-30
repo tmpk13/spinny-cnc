@@ -20,9 +20,11 @@ files start the virtual firmware, and give the gcode tools their defaults.
 The shipped files: `polar-laser` (the firmware's defaults, every key
 spelled out), `polar-laser-focus` (the focus axis fitted),
 `cartesian-laser` (rail X, slide Y, the table holding),
-`cartesian-mill` (cartesian with a spindle and the focus axis as depth)
-and `cartesian-dispenser` (the mill's axes with a paste dispenser's
-plunger on the table's socket and a camera on the head).
+`cartesian-mill` (cartesian with a spindle and the focus axis as depth),
+`cartesian-dispenser` (the mill's axes with a paste dispenser's
+plunger on the table's socket and a camera on the head) and `k40` (a K40
+CO2 laser with the board in place of its M2 Nano, its wiring in the
+file's header).
 Copy the one nearest your machine, name it, and change what differs. A
 file that cannot be read is listed by the backend as a problem and shown
 on the page; the others still load.

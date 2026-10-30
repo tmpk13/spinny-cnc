@@ -57,7 +57,7 @@ def test_an_empty_file_is_the_firmware_at_its_defaults():
 def test_the_shipped_files_load_and_say_what_they_are():
     found, problems = load_all(SHIPPED)
     assert problems == []
-    assert [m.id for m in found] == ["cartesian-dispenser", "cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]
+    assert [m.id for m in found] == ["cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "polar-laser-focus", "polar-laser"]
     by_id = {m.id: m for m in found}
     assert by_id["polar-laser"].settings == FIRMWARE_DEFAULTS
     assert by_id["polar-laser-focus"].focus and by_id["polar-laser-focus"].settings["h_axis"] == 1
@@ -77,7 +77,7 @@ def test_the_shipped_files_load_and_say_what_they_are():
     assert mill.document()["settings"]["z_max"] == mill.settings["z_max"] > 0
     # Wired as a three axis mill: rail on X, table on E, slide on Y, depth on Z.
     assert mill.settings["sockets"] == 1423 and mill.settings["tmc_a_ma"] == 0
-    assert {m.settings["sockets"] for m in found if m.id not in ("cartesian-mill", "cartesian-dispenser")} == {1234}
+    assert {m.settings["sockets"] for m in found if m.id not in ("cartesian-mill", "cartesian-dispenser", "k40")} == {1234}
     dispenser = by_id["cartesian-dispenser"]
     assert (dispenser.kinematics, dispenser.tool, dispenser.focus) == ("cartesian", "dispenser", True)
     assert (dispenser.settings["dispenser"], dispenser.settings["spindle"], dispenser.settings["cartesian"]) == (1, 0, 1)
@@ -86,6 +86,15 @@ def test_the_shipped_files_load_and_say_what_they_are():
     assert dispenser.host == {"tolerance": 0.005, "clearance": 2.0, "gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200.0}
     assert dispenser.camera["device"] == "/dev/video0" and dispenser.camera["offset"] == [0.0, 0.0]
     assert [axis["letter"] for axis in dispenser.controls["axes"]] == ["X", "Y", "E", "H"]
+    # The K40: each motor on its labeled socket and the empty table on Z,
+    # the left switch on X-STOP and the back one moved off PROBE (3.3 V
+    # only) to Y-STOP, and the fire output active high on FAN3.
+    k40 = by_id["k40"]
+    assert (k40.kinematics, k40.tool, k40.focus) == ("cartesian", "laser", False)
+    assert (k40.settings["sockets"], k40.settings["tmc_a_ma"]) == (1324, 0)
+    assert (k40.settings["r_stop"], k40.settings["r_stop_pin"], k40.settings["z_stop"], k40.settings["z_stop_pin"]) == (1, 4, 2, 3)
+    assert (k40.settings["laser_pin"], k40.settings["laser_invert"]) == (20, 0)
+    assert [axis["letter"] for axis in k40.controls["axes"]] == ["X", "Y"]
 
 
 def test_sockets_are_named_per_axis():
