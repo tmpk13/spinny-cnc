@@ -675,6 +675,15 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             const plunge = groupField(group.plunge ?? DEFAULT_PLUNGE, 1, "plunge");
             // A dispenser's group has the paste thickness in place of a cut's numbers.
             const dots = group.tool === "dispenser";
+            // A model's moves carry their own depths, level after level: its
+            // depth is the deepest they go, and it has no passes to set.
+            const carved = (group.moves?.length ?? 0) > 0;
+            if (carved) {
+                for (const field of [depth, passes]) {
+                    field.disabled = true;
+                    field.title = "set by the model's moves";
+                }
+            }
             const thickness = dots ? groupField(group.thickness ?? DEFAULT_THICKNESS, 0.01, "thickness") : null;
             if (thickness) {
                 thickness.step = "0.01";
@@ -695,8 +704,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                         ...(p !== null && !dots ? { power: p } : {}),
                         ...(m !== null && !milling && !dots ? { min_power: m } : {}),
                         ...(s !== null && !dots ? { speed: s } : {}),
-                        ...(n !== null ? { passes: n } : {}),
-                        ...(d !== null && milling && !dots ? { depth: d } : {}),
+                        ...(n !== null && !carved ? { passes: n } : {}),
+                        ...(d !== null && milling && !dots && !carved ? { depth: d } : {}),
                         ...(u !== null && milling && !dots ? { plunge: u } : {}),
                         ...(t !== null ? { thickness: t } : {}),
                         enabled: enabled.checked,
@@ -718,7 +727,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 el("tr", { class: "group-name" },
                     el("th", { scope: "rowgroup", colspan: String(fields.length) },
                         el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
-                        el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`))),
+                        el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : carved ? ` (${group.moves!.length}, 3D)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`))),
                 el("tr", { class: "group-fields" }, ...fields.map((field) => el("td", {}, field))),
             );
             groupRows.push({ body, power, minPower, speed, passes, depth, plunge, thickness, enabled });

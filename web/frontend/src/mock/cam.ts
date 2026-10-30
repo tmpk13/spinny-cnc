@@ -5,6 +5,7 @@
 // coupon's: copper needs the real backend.
 
 import laserText from "../../../../cam/cartesian-laser.toml" with { type: "text" };
+import modelText from "../../../../cam/mill-3d.toml" with { type: "text" };
 import millText from "../../../../cam/mill-3axis.toml" with { type: "text" };
 import polarText from "../../../../cam/polar-laser.toml" with { type: "text" };
 
@@ -12,17 +13,21 @@ import type {
     CamAxis,
     CamGcodeReport,
     CamGcodeResponse,
+    CamMaterial,
     CamOperation,
     CamPath,
     CamPlacement,
     CamPost,
     CamProfile,
     CamSettingValue,
+    CamShape,
+    CamStock,
     CamSummary,
     CamTool,
     CamValue,
     Group,
     Job,
+    Move,
     Path,
     Point,
     Tool,
@@ -33,12 +38,22 @@ import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 export const SHIPPED_PROFILES: { id: string; text: string }[] = [
     { id: "cartesian-laser", text: laserText },
     { id: "mill-3axis", text: millText },
+    { id: "mill-3d", text: modelText },
     { id: "polar-laser", text: polarText },
 ];
 
 export const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const ROLES = ["x", "y", "depth", "radius", "angle", "setup"];
-const SOURCES = ["isolation", "clearing", "outline", "drills", "deposit", "paths"];
+const MODEL_SOURCES = ["rough", "waterline", "parallel"];
+const SOURCES = ["isolation", "clearing", "outline", "drills", "deposit", "paths", ...MODEL_SOURCES];
+const SHAPES = ["flat", "ball", "bull", "vee"];
+const DIRECTIONS = ["climb", "conventional"];
+const DEFAULT_FLUTES = 2;
+const DEFAULT_RPM_MAX = 24000;
+const DEFAULT_ROUGH_STEPOVER = 0.4;
+const DEFAULT_LEAVE = 0.2;
+const DEFAULT_RAMP = 3;
+const DEFAULT_MARGIN = 2;
 const PATTERNS = ["radial", "rings", "lines"];
 const FILLS = ["contour", "radial", "rings", "lines"];
 const MARKS = ["circle", "cross", "dot"];
@@ -54,7 +69,16 @@ const SPINDLE_SETTINGS: Record<string, Bounds> = {
     depth: [0, MAX_DEPTH, false],
     step_down: [0, MAX_DEPTH, true],
     stepover: [0, 1, false],
+    // A model's operations: the stock left on walls and floors, the
+    // steepest entry, how far round the model, how far under its bottom.
+    leave: [0, MAX_DEPTH, true],
+    leave_floor: [0, MAX_DEPTH, true],
+    ramp: [0, 90, false],
+    band: [0, 1000, true],
+    below: [-MAX_DEPTH, MAX_DEPTH, true],
 };
+/** The settings only a model's operations read. */
+const MODEL_SETTINGS = ["leave", "leave_floor", "ramp", "band", "below"];
 const LASER_SETTINGS: Record<string, Bounds> = {
     power: [0, MAX_VALUE, true],
     min_power: [0, MAX_VALUE, true],
@@ -63,7 +87,7 @@ const LASER_SETTINGS: Record<string, Bounds> = {
 };
 /** The keys a tool of each kind must give; a CAM profile has no dispenser tools. */
 const REQUIRED: Partial<Record<Tool, string[]>> = { spindle: ["rpm", "feed"], laser: ["power", "speed"] };
-const OPERATION_KEYS = ["name", "source", "tool", "enabled", "passes", "loops", "pattern", "fill", "marks", "match"];
+const OPERATION_KEYS = ["name", "source", "tool", "enabled", "passes", "loops", "pattern", "fill", "marks", "match", "direction", "flats", "angle"];
 
 // --- reading --------------------------------------------------------------------
 
@@ -164,6 +188,20 @@ class Reader {
         return value as string[];
     }
 
+    triple(table: TomlTable, section: string, key: string, low: number, high: number, lowOk = false): [number, number, number] | null {
+        const value = table[key];
+        if (value === undefined) {
+            return null;
+        }
+        if (
+            !Array.isArray(value) || value.length !== 3
+            || !value.every((v) => typeof v === "number" && Number.isFinite(v) && v <= high && (v > low || (v === low && lowOk)))
+        ) {
+            throw this.fail(section, key, `must be [x, y, z], each ${lowOk ? "at least" : "above"} ${low} and at most ${high}`);
+        }
+        return [value[0] as number, value[1] as number, value[2] as number];
+    }
+
     done(table: TomlTable, section: string | null, known: string[]): void {
         const unknown = Object.keys(table).filter((key) => !known.includes(key)).sort();
         if (unknown.length > 0) {
@@ -176,8 +214,92 @@ function isTable(value: TomlValue | undefined): value is TomlTable {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The settings an operation cuts with: the tool's, its own over them, and the pass count. */
-export function resolveCutting(tool: CamTool, settings: Record<string, CamSettingValue>): Record<string, number> {
+/** A mill's full width: a V bit's shank, else its cut. */
+export function toolDiameter(tool: CamTool): number {
+    return tool.angle !== undefined && tool.shank !== undefined ? tool.shank : tool.width;
+}
+
+/** The chip a tooth takes at a diameter, read straight between the material's points. */
+export function chipLoad(material: CamMaterial, diameter: number): number {
+    const points = material.chip_load;
+    if (diameter <= points[0]![0]) {
+        return points[0]![1];
+    }
+    for (let i = 1; i < points.length; i += 1) {
+        const [d0, c0] = points[i - 1]!;
+        const [d1, c1] = points[i]!;
+        if (diameter <= d1) {
+            return c0 + (c1 - c0) * (diameter - d0) / (d1 - d0);
+        }
+    }
+    return points[points.length - 1]![1];
+}
+
+/**
+ * The rpm and feed a material asks of a mill, held to the spindle's range
+ * and the plane's slowest axis, the rpm brought down with a held feed so
+ * each tooth still takes its chip; and a rough's defaults. As the
+ * backend's profile reader works them out.
+ */
+export function materialDefaults(
+    material: CamMaterial | null,
+    spindle: { min: number; max: number },
+    axes: CamAxis[],
+    tool: CamTool,
+    source: string,
+): { defaults: Record<string, number>; note: string } {
+    if (material === null || tool.kind !== "spindle") {
+        return { defaults: {}, note: "" };
+    }
+    const diameter = toolDiameter(tool);
+    const flutes = tool.flutes ?? DEFAULT_FLUTES;
+    let rpm = material.speed * 1000 / (Math.PI * diameter);
+    const held: string[] = [];
+    if (rpm > spindle.max) {
+        rpm = spindle.max;
+        held.push(`the rpm held to the spindle's ${spindle.max}`);
+    } else if (rpm < spindle.min) {
+        rpm = spindle.min;
+        held.push(`the rpm raised to the spindle's least ${spindle.min}`);
+    }
+    const chip = chipLoad(material, diameter);
+    let feed = rpm * flutes * chip;
+    const plane = axes.filter((axis) => ["x", "y", "radius"].includes(axis.role) && axis.rate !== null).map((axis) => axis.rate!);
+    const cap = plane.length > 0 ? Math.min(...plane) : null;
+    if (cap !== null && feed > cap) {
+        feed = cap;
+        held.push(`the feed held to the axes' ${cap} mm/min and the rpm brought down to keep the chip`);
+        rpm = Math.max(feed / (flutes * chip), spindle.min);
+    }
+    let plunge = feed * material.plunge;
+    const depth = axes.find((axis) => axis.role === "depth" && axis.rate !== null);
+    if (depth) {
+        plunge = Math.min(plunge, depth.rate!);
+    }
+    const defaults: Record<string, number> = { rpm: Math.round(rpm), feed: Math.round(feed), plunge: Math.max(1, Math.round(plunge)) };
+    if (source === "rough") {
+        defaults["step_down"] = Math.round(material.depth * diameter * 1000) / 1000;
+        defaults["stepover"] = material.stepover;
+        defaults["leave"] = material.leave;
+    }
+    if (MODEL_SOURCES.includes(source)) {
+        defaults["ramp"] = material.ramp;
+    }
+    const actual = defaults["rpm"]! > 0 ? defaults["feed"]! / (defaults["rpm"]! * flutes) : 0;
+    let note = `${material.name} with ${tool.name}: ${defaults["rpm"]} rpm, ${defaults["feed"]} mm/min, ${actual.toFixed(3)} mm a tooth on ${flutes} flutes`;
+    if (held.length > 0) {
+        note += `; ${held.join(", ")}`;
+    }
+    return { defaults, note };
+}
+
+/** The settings an operation cuts with: the tool's, its own over them, a material's under the tool's, and the pass count. */
+export function resolveCutting(
+    tool: CamTool,
+    settings: Record<string, CamSettingValue>,
+    defaults: Record<string, number> = {},
+    source: string | null = null,
+): Record<string, number> {
     const cutting: Record<string, number> = {};
     const keys = [...Object.keys(tool.kind === "spindle" ? SPINDLE_SETTINGS : LASER_SETTINGS), "passes"];
     for (const key of keys) {
@@ -186,7 +308,28 @@ export function resolveCutting(tool: CamTool, settings: Record<string, CamSettin
             cutting[key] = own;
         } else if (tool.settings[key] !== undefined) {
             cutting[key] = tool.settings[key]!;
+        } else if (defaults[key] !== undefined) {
+            cutting[key] = defaults[key]!;
         }
+    }
+    if (tool.kind === "spindle" && source !== null && MODEL_SOURCES.includes(source)) {
+        const diameter = toolDiameter(tool);
+        if (source === "rough") {
+            cutting["step_down"] ??= Math.round(0.5 * diameter * 1000) / 1000;
+            cutting["stepover"] ??= DEFAULT_ROUGH_STEPOVER;
+            cutting["leave"] ??= DEFAULT_LEAVE;
+        } else if (source === "waterline") {
+            cutting["step_down"] ??= Math.round(diameter * 1000) / 1000;
+            cutting["stepover"] ??= DEFAULT_ROUGH_STEPOVER;
+            cutting["leave"] ??= 0;
+        } else {
+            cutting["stepover"] ??= 0.1;
+            cutting["leave"] ??= 0;
+        }
+        cutting["leave_floor"] ??= cutting["leave"]!;
+        cutting["ramp"] ??= DEFAULT_RAMP;
+        cutting["below"] ??= 0;
+        cutting["passes"] = 1;
     }
     if (tool.kind === "spindle") {
         cutting["plunge"] ??= DEFAULT_PLUNGE;
@@ -221,16 +364,27 @@ export function parseProfile(text: string, id: string): CamProfile {
         throw reader.fail(null, "machine", "must be the stem of a file in machines/");
     }
     const axes = reader.tables(data, "axes").map((table, index) => readAxis(reader, table, index));
-    const tools = reader.tables(data, "tools").map((table, index) => readTool(reader, table, index));
+    const materials = reader.tables(data, "materials").map((table, index) => readMaterial(reader, table, index));
+    for (const material of materials) {
+        if (materials.filter((other) => other.id === material.id).length > 1) {
+            throw reader.fail("[[materials]]", "id", `'${material.id}' is given twice`);
+        }
+    }
+    const stock = readStock(reader, data, materials.map((material) => material.id));
+    const modelSetup = readModel(reader, data);
+    const spindle = readSpindle(reader, data);
+    const material = materials.find((candidate) => candidate.id === stock.material) ?? null;
+    const tools = reader.tables(data, "tools").map((table, index) => readTool(reader, table, index, material !== null));
     for (const tool of tools) {
         if (tools.filter((other) => other.id === tool.id).length > 1) {
             throw reader.fail("[[tools]]", "id", `'${tool.id}' is given twice`);
         }
     }
-    const operations = reader.tables(data, "operations").map((table, index) => readOperation(reader, table, index, tools));
+    const feeds = (tool: CamTool, source: string) => materialDefaults(material, spindle, axes, tool, source);
+    const operations = reader.tables(data, "operations").map((table, index) => readOperation(reader, table, index, tools, feeds));
     const post = readPost(reader, data);
     const placement = readPlacement(reader, data);
-    reader.done(data, null, ["name", "description", "machine", "axes", "tools", "operations", "post", "placement"]);
+    reader.done(data, null, ["name", "description", "machine", "axes", "tools", "operations", "post", "placement", "materials", "stock", "model", "spindle"]);
     checkAxes(reader, axes);
     if (tools.length === 0) {
         throw reader.fail(null, "tools", "the profile needs a tool: a [[tools]] table");
@@ -241,7 +395,103 @@ export function parseProfile(text: string, id: string): CamProfile {
         }
     }
     const kinematics = axes.some((axis) => axis.role === "x") ? "cartesian" : "polar";
-    return { id, name, description, machine, kinematics, axes, tools, operations, post, placement };
+    const model = operations.some((operation) => MODEL_SOURCES.includes(operation.source));
+    return {
+        id, name, description, machine, kinematics, axes, tools, operations, post, placement,
+        material: material?.name ?? null,
+        model,
+        materials,
+        stock,
+        model_setup: modelSetup,
+        spindle,
+    };
+}
+
+function readMaterial(reader: Reader, table: TomlTable, index: number): CamMaterial {
+    let section = `[[materials]] ${index + 1}`;
+    const id = reader.text(table, section, "id", "");
+    if (!ID_PATTERN.test(id)) {
+        throw reader.fail(section, "id", "is needed: lower case letters, digits, - and _");
+    }
+    section = `[[materials]] ${id}`;
+    const name = reader.text(table, section, "name", id);
+    const speed = reader.bounded(table, section, "speed", [0, 5000, false]);
+    if (speed === null) {
+        throw reader.fail(section, "speed", "is needed: the cutting edge's speed in m/min");
+    }
+    let raw = table["chip_load"];
+    if (raw === undefined) {
+        throw reader.fail(section, "chip_load", "is needed: [[diameter mm, mm per tooth], ...]");
+    }
+    if (typeof raw === "number") {
+        raw = [[1, raw]];
+    }
+    if (!Array.isArray(raw) || raw.length === 0) {
+        throw reader.fail(section, "chip_load", "must be [[diameter mm, mm per tooth], ...]");
+    }
+    const pairs: [number, number][] = [];
+    for (const pair of raw) {
+        if (!Array.isArray(pair) || pair.length !== 2 || !pair.every((v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1000)) {
+            throw reader.fail(section, "chip_load", "must be [[diameter mm, mm per tooth], ...] with every number above 0");
+        }
+        pairs.push([pair[0] as number, pair[1] as number]);
+    }
+    pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (pairs.some((pair, i) => i > 0 && pairs[i - 1]![0] === pair[0])) {
+        throw reader.fail(section, "chip_load", "gives one diameter twice");
+    }
+    const material: CamMaterial = {
+        id,
+        name,
+        speed,
+        chip_load: pairs,
+        depth: reader.bounded(table, section, "depth", [0, 10, false]) ?? 0.5,
+        stepover: reader.bounded(table, section, "stepover", [0, 1, false]) ?? DEFAULT_ROUGH_STEPOVER,
+        ramp: reader.bounded(table, section, "ramp", [0, 90, false]) ?? DEFAULT_RAMP,
+        plunge: reader.bounded(table, section, "plunge", [0, 1, false]) ?? 0.3,
+        leave: reader.bounded(table, section, "leave", [0, MAX_DEPTH, true]) ?? DEFAULT_LEAVE,
+        note: reader.text(table, section, "note", ""),
+    };
+    reader.done(table, section, ["id", "name", "speed", "chip_load", "depth", "stepover", "ramp", "plunge", "leave", "note"]);
+    return material;
+}
+
+function readStock(reader: Reader, top: TomlTable, materialIds: string[]): CamStock {
+    const table = reader.table(top, "stock");
+    const section = "[stock]";
+    const material = reader.text(table, section, "material", "") || null;
+    if (material !== null && !materialIds.includes(material)) {
+        throw reader.fail(section, "material", `must name a [[materials]] id: ${materialIds.join(", ") || "none yet"}`);
+    }
+    const stock: CamStock = {
+        material,
+        margin: reader.bounded(table, section, "margin", [0, 1000, true]) ?? DEFAULT_MARGIN,
+        top: reader.bounded(table, section, "top", [0, MAX_DEPTH, true]) ?? 0,
+        size: reader.triple(table, section, "size", 0, 1000),
+    };
+    reader.done(table, section, ["material", "margin", "top", "size"]);
+    return stock;
+}
+
+function readModel(reader: Reader, top: TomlTable): { turn: [number, number, number]; scale: number } {
+    const table = reader.table(top, "model");
+    const section = "[model]";
+    const turn = reader.triple(table, section, "turn", -360, 360, true) ?? [0, 0, 0];
+    const scale = reader.bounded(table, section, "scale", [0, 1000, false]) ?? 1;
+    reader.done(table, section, ["turn", "scale"]);
+    return { turn, scale };
+}
+
+function readSpindle(reader: Reader, top: TomlTable): { min: number; max: number } {
+    const table = reader.table(top, "spindle");
+    const section = "[spindle]";
+    const min = reader.bounded(table, section, "min", [0, MAX_VALUE, true]) ?? 0;
+    const max = reader.bounded(table, section, "max", [0, MAX_VALUE, false]) ?? DEFAULT_RPM_MAX;
+    if (min > max) {
+        throw reader.fail(section, "min", "must be at most max");
+    }
+    reader.done(table, section, ["min", "max"]);
+    return { min, max };
 }
 
 function checkAxes(reader: Reader, axes: CamAxis[]): void {
@@ -306,7 +556,7 @@ function readAxis(reader: Reader, table: TomlTable, index: number): CamAxis {
     return { letter, kind, role, min, max, rate, rapid, offset, home, safe, park };
 }
 
-function readTool(reader: Reader, table: TomlTable, index: number): CamTool {
+function readTool(reader: Reader, table: TomlTable, index: number, material = false): CamTool {
     let section = `[[tools]] ${index + 1}`;
     const id = reader.text(table, section, "id", "");
     if (!ID_PATTERN.test(id)) {
@@ -353,11 +603,20 @@ function readTool(reader: Reader, table: TomlTable, index: number): CamTool {
         settings["passes"] = passes;
     }
     for (const key of REQUIRED[kind] ?? []) {
-        if (settings[key] === undefined) {
-            throw reader.fail(section, key, "is needed");
+        if (settings[key] === undefined && !(material && kind === "spindle")) {
+            throw reader.fail(section, key, "is needed, or a [stock] material to work it out from");
         }
     }
-    reader.done(table, section, ["id", "kind", "name", "diameter", "spot", "passes", "angle", "tip", ...Object.keys(bounds)]);
+    const millKeys = ["shape", "corner", "flutes", "length"];
+    let end: Partial<CamTool> = {};
+    if (kind === "spindle") {
+        end = readMillEnd(reader, table, section, angle, angle !== null ? diameter : width);
+    } else {
+        for (const key of millKeys.filter((key) => key in table).sort()) {
+            throw reader.fail(section, key, "is for a mill; a beam has a spot");
+        }
+    }
+    reader.done(table, section, ["id", "kind", "name", "diameter", "spot", "passes", "angle", "tip", ...Object.keys(bounds), ...millKeys]);
     if (angle !== null) {
         // The nominal width is the cut at the tool's own default depth.
         const depth = settings["depth"] ?? DEFAULT_DEPTH;
@@ -366,11 +625,43 @@ function readTool(reader: Reader, table: TomlTable, index: number): CamTool {
         if (width <= 0) {
             throw reader.fail(section, "tip", "or the depth must give the cut some width");
         }
+        return { id, kind, name, width, settings, angle, tip: tip ?? 0, ...(diameter !== null ? { shank: diameter } : {}), ...end };
     }
-    return { id, kind, name, width: width ?? 0, settings };
+    return { id, kind, name, width: width ?? 0, settings, ...end };
 }
 
-function readOperation(reader: Reader, table: TomlTable, index: number, tools: CamTool[]): CamOperation {
+/** A mill's shape, corner, flutes and reach. */
+function readMillEnd(reader: Reader, table: TomlTable, section: string, angle: number | null, diameter: number | null): Partial<CamTool> {
+    const shape = reader.choice(table, section, "shape", SHAPES, angle !== null ? "vee" : "flat") as CamShape;
+    if (shape === "vee" && angle === null) {
+        throw reader.fail(section, "shape", "vee needs angle: the included angle of the V bit's point, degrees");
+    }
+    if (angle !== null && shape !== "vee") {
+        throw reader.fail(section, "angle", `is a V bit's; this mill's shape is ${shape}`);
+    }
+    const corner = reader.bounded(table, section, "corner", [0, 1000, false]);
+    if (shape === "bull") {
+        if (corner === null) {
+            throw reader.fail(section, "corner", "is needed for a bull nose: the radius of its rounded corners, mm");
+        }
+        if (diameter !== null && corner > diameter / 2) {
+            throw reader.fail(section, "corner", "must be at most half the diameter");
+        }
+    } else if (corner !== null) {
+        throw reader.fail(section, "corner", "is a bull nose's corner radius; give shape = \"bull\"");
+    }
+    const flutes = reader.integer(table, section, "flutes", 1, 12) ?? DEFAULT_FLUTES;
+    const length = reader.bounded(table, section, "length", [0, 1000, false]);
+    return { shape, flutes, ...(shape === "bull" ? { corner: corner! } : {}), ...(length !== null ? { length } : {}) };
+}
+
+function readOperation(
+    reader: Reader,
+    table: TomlTable,
+    index: number,
+    tools: CamTool[],
+    feeds: (tool: CamTool, source: string) => { defaults: Record<string, number>; note: string } = () => ({ defaults: {}, note: "" }),
+): CamOperation {
     let section = `[[operations]] ${index + 1}`;
     const name = reader.text(table, section, "name", "");
     if (name.trim() === "") {
@@ -427,12 +718,49 @@ function readOperation(reader: Reader, table: TomlTable, index: number, tools: C
         }
         settings["match"] = reader.text(table, section, "match", "");
     }
+    if (MODEL_SOURCES.includes(source)) {
+        if (tool.kind !== "spindle") {
+            throw reader.fail(section, "tool", "must be a mill: a model is cut, not burned");
+        }
+        if (tool.shape === "vee" && source !== "parallel") {
+            throw reader.fail(section, "tool", "is a V bit, which cuts parallel passes only");
+        }
+    } else {
+        for (const key of MODEL_SETTINGS) {
+            if (key in settings) {
+                throw reader.fail(section, key, "is for a model's operations: rough, waterline or parallel");
+            }
+        }
+    }
+    if ("direction" in table) {
+        if (source !== "rough" && source !== "waterline") {
+            throw reader.fail(section, "direction", "is which way a rough or a waterline goes round; this operation is neither");
+        }
+        settings["direction"] = reader.choice(table, section, "direction", DIRECTIONS, null);
+    }
+    if ("flats" in table) {
+        if (source !== "rough" && source !== "waterline") {
+            throw reader.fail(section, "flats", "adds a rough's or a waterline's levels at the flat faces; this operation is neither");
+        }
+        settings["flats"] = reader.flag(table, section, "flats", true);
+    }
+    if ("angle" in table) {
+        if (source !== "parallel") {
+            throw reader.fail(section, "angle", "is the direction of parallel lines; this operation is not parallel");
+        }
+        settings["angle"] = reader.bounded(table, section, "angle", [-360, 360, true])!;
+    }
     reader.done(table, section, [...OPERATION_KEYS, ...Object.keys(bounds)]);
-    const cutting = resolveCutting(tool, settings);
+    const { defaults, note } = feeds(tool, source);
+    const cutting = resolveCutting(tool, settings, defaults, source);
     if (tool.kind === "spindle" && cutting["passes"]! > MAX_PASSES) {
         throw reader.fail(section, "step_down", `gives more than ${MAX_PASSES} passes to the depth`);
     }
-    return { name, source, tool: toolId, enabled, settings, cutting };
+    if (tool.kind === "spindle" && source === "rough" && cutting["step_down"]! > 0 && cutting["step_down"]! < 0.01) {
+        throw reader.fail(section, "step_down", "must be 0.01 mm or more for a rough");
+    }
+    const used = ["rpm", "feed"].some((key) => settings[key] === undefined && tool.settings[key] === undefined) ? note : "";
+    return { name, source, tool: toolId, enabled, settings, cutting, feeds: used };
 }
 
 function readPost(reader: Reader, top: TomlTable): CamPost {
@@ -490,6 +818,8 @@ export function summaryOf(profile: CamProfile): CamSummary {
         tools: kinds,
         axes: profile.axes.map((axis) => axis.letter).join(""),
         operations: profile.operations.filter((operation) => operation.enabled).length,
+        material: profile.material ?? null,
+        model: profile.model ?? false,
     };
 }
 
@@ -855,6 +1185,221 @@ export function buildCamJob(id: string, profile: CamProfile, name: string, fileN
     return { job, notes };
 }
 
+// --- a 3D model ------------------------------------------------------------------------
+
+/** An STL's box and triangle count: binary when its length says so, else ASCII. */
+export function stlBounds(bytes: Uint8Array): { min: [number, number, number]; max: [number, number, number]; triangles: number } {
+    const min: [number, number, number] = [Infinity, Infinity, Infinity];
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    const take = (v: [number, number, number]): void => {
+        for (let k = 0; k < 3; k++) {
+            min[k] = Math.min(min[k]!, v[k]!);
+            max[k] = Math.max(max[k]!, v[k]!);
+        }
+    };
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const count = bytes.length >= 84 ? view.getUint32(80, true) : -1;
+    let triangles = 0;
+    if (count >= 0 && 84 + count * 50 === bytes.length) {
+        for (let i = 0; i < count; i++) {
+            for (let k = 0; k < 3; k++) {
+                const at = 84 + i * 50 + 12 + k * 12;
+                take([view.getFloat32(at, true), view.getFloat32(at + 4, true), view.getFloat32(at + 8, true)]);
+            }
+        }
+        triangles = count;
+    } else {
+        const text = new TextDecoder().decode(bytes);
+        let vertices = 0;
+        for (const match of text.matchAll(/vertex\s+(\S+)\s+(\S+)\s+(\S+)/gi)) {
+            const v: [number, number, number] = [Number(match[1]), Number(match[2]), Number(match[3])];
+            if (!v.every(Number.isFinite)) {
+                throw new Error(`${match[0]} is not a vertex`);
+            }
+            take(v);
+            vertices += 1;
+        }
+        triangles = Math.floor(vertices / 3);
+    }
+    if (triangles === 0) {
+        throw new Error("no triangles in the file");
+    }
+    return { min, max, triangles };
+}
+
+/** A box's corners turned about X, then Y, then Z by degrees, and the box of those. */
+function turnedBox(min: [number, number, number], max: [number, number, number], turn: [number, number, number], scale: number): { min: [number, number, number]; max: [number, number, number] } {
+    const [ax, ay, az] = turn.map((d) => (d * Math.PI) / 180) as [number, number, number];
+    const low: [number, number, number] = [Infinity, Infinity, Infinity];
+    const high: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (let corner = 0; corner < 8; corner++) {
+        let x = corner & 1 ? max[0] : min[0];
+        let y = corner & 2 ? max[1] : min[1];
+        let z = corner & 4 ? max[2] : min[2];
+        [y, z] = [y * Math.cos(ax) - z * Math.sin(ax), y * Math.sin(ax) + z * Math.cos(ax)];
+        [x, z] = [x * Math.cos(ay) + z * Math.sin(ay), -x * Math.sin(ay) + z * Math.cos(ay)];
+        [x, y] = [x * Math.cos(az) - y * Math.sin(az), x * Math.sin(az) + y * Math.cos(az)];
+        const v = [x * scale, y * scale, z * scale];
+        for (let k = 0; k < 3; k++) {
+            low[k] = Math.min(low[k]!, Math.round(v[k]! * 1e9) / 1e9);
+            high[k] = Math.max(high[k]!, Math.round(v[k]! * 1e9) / 1e9);
+        }
+    }
+    return { min: low, max: high };
+}
+
+/** A rectangle's loop, closed: the box from (x0, y0) to (x1, y1) at z. */
+function ring(x0: number, y0: number, x1: number, y1: number, z: number): Move[] {
+    return [[x0, y0, z, 1], [x1, y0, z, 1], [x1, y1, z, 1], [x0, y1, z, 1], [x0, y0, z, 1]];
+}
+
+/** What a model's job costs without a machine: every move at its feed, as the backend prices it. */
+export function modelStats(groups: Group[]): Job["stats"] {
+    let length = 0;
+    let seconds = 0;
+    let moves = 0;
+    for (const group of groups) {
+        if (!group.enabled) {
+            continue;
+        }
+        for (const path of group.moves ?? []) {
+            moves += path.length;
+            for (let i = 1; i < path.length; i++) {
+                const [x0, y0, z0] = path[i - 1]!;
+                const [x1, y1, z1, kind] = path[i]!;
+                if (kind === 0) {
+                    continue;
+                }
+                length += Math.hypot(x1 - x0, y1 - y0);
+                const rate = kind === 2 ? group.plunge ?? DEFAULT_PLUNGE : group.speed;
+                seconds += rate > 0 ? (Math.hypot(x1 - x0, y1 - y0, z1 - z0) / rate) * 60 : 0;
+            }
+        }
+    }
+    return { length_mm: length, seconds, max_radius: 0, min_radius: 0, limited_fraction: 0, moves };
+}
+
+/**
+ * A model through the profile's rough, waterline and parallel operations.
+ * The mock has no kernel: it reads the model's box and cuts loops round
+ * the box, level by level, and lines over its top, so the page has moves
+ * to show and write.
+ */
+export function buildModelJob(id: string, profile: CamProfile, name: string, fileName: string, bytes: Uint8Array): { job: Job; notes: string[] } {
+    const depthAxis = profile.axes.find((axis) => axis.role === "depth");
+    if (profile.kinematics !== "cartesian" || !depthAxis || depthAxis.safe === null) {
+        throw new Error(`${profile.name}: a 3D model is cut on an X/Y machine with a depth axis`);
+    }
+    const operations = profile.operations.filter((operation) => MODEL_SOURCES.includes(operation.source));
+    if (operations.length === 0) {
+        throw new Error(`${profile.name} has no rough, waterline or parallel operation for a 3D model`);
+    }
+    let read: ReturnType<typeof stlBounds>;
+    try {
+        read = stlBounds(bytes);
+    } catch (error) {
+        throw new Error(`${fileName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const setup = profile.model_setup ?? { turn: [0, 0, 0] as [number, number, number], scale: 1 };
+    const box = turnedBox(read.min, read.max, setup.turn, setup.scale);
+    const size = [box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]];
+    const stockSpec = profile.stock ?? { material: null, margin: DEFAULT_MARGIN, top: 0, size: null };
+    let margin: [number, number] = [stockSpec.margin, stockSpec.margin];
+    let top = stockSpec.top;
+    if (stockSpec.size) {
+        const block = stockSpec.size;
+        const short = [0, 1, 2].find((k) => block[k]! < size[k]! - 1e-6);
+        if (short !== undefined) {
+            throw new Error(`the stock is ${block[short]} mm in ${"XYZ"[short]}, the model ${size[short]!.toFixed(3)} mm: the model does not fit`);
+        }
+        margin = [(block[0] - size[0]!) / 2, (block[1] - size[1]!) / 2];
+        top = block[2] - size[2]!;
+    }
+    const width = size[0]! + 2 * margin[0];
+    const height = size[1]! + 2 * margin[1];
+    const anchor = profile.placement.anchor;
+    const [ox, oy] = profile.placement.offset;
+    const low: [number, number] = anchor === "corner" ? [ox, oy] : anchor === "center" ? [ox - width / 2, oy - height / 2] : [box.min[0] - margin[0] + ox, box.min[1] - margin[1] + oy];
+    const x0 = low[0] + margin[0];
+    const y0 = low[1] + margin[1];
+    const x1 = x0 + size[0]!;
+    const y1 = y0 + size[1]!;
+    const bottom = -(size[2]! + top);
+    const clearance = Math.min(1, depthAxis.safe / 2);
+    const groups: Group[] = [];
+    for (const operation of operations) {
+        const tool = profile.tools.find((candidate) => candidate.id === operation.tool)!;
+        const cutting = operation.cutting;
+        const radius = toolDiameter(tool) / 2;
+        const keep = radius + (cutting["leave"] ?? 0);
+        const floor = bottom - (cutting["below"] ?? 0);
+        const step = cutting["step_down"] ?? 0;
+        const levels: number[] = [];
+        for (let k = 1; step > 0 && -k * step > floor + 1e-6; k++) {
+            levels.push(-k * step);
+        }
+        levels.push(floor);
+        const moves: Move[][] = [];
+        if (operation.source === "parallel") {
+            const pitch = (cutting["stepover"] ?? 0.1) * toolDiameter(tool);
+            const path: Move[] = [[x0, y0, -top + clearance, 0], [x0, y0, -top, 2]];
+            let flip = false;
+            for (let y = y0; y <= y1 + 1e-9; y += pitch) {
+                path.push([flip ? x1 : x0, y, -top, 1], [flip ? x0 : x1, y, -top, 1]);
+                flip = !flip;
+            }
+            moves.push(path);
+        } else {
+            let above = 0;
+            for (const z of levels) {
+                const path: Move[] = [[x0 - keep, y0 - keep, above + clearance, 0], [x0 - keep, y0 - keep, z, 2]];
+                const band = operation.source === "rough" ? cutting["band"] ?? radius : 0;
+                const pitch = (cutting["stepover"] ?? DEFAULT_ROUGH_STEPOVER) * toolDiameter(tool);
+                for (let out = keep; out <= keep + band + 1e-9; out += pitch) {
+                    path.push(...ring(x0 - out, y0 - out, x1 + out, y1 + out, z));
+                }
+                moves.push(path);
+                above = z;
+            }
+        }
+        const deepest = -Math.min(...moves.flat().map((m) => m[2]));
+        groups.push({
+            label: `${operation.name}: ${tool.name}`,
+            power: cutting["rpm"]!,
+            min_power: 0,
+            speed: cutting["feed"]!,
+            passes: 1,
+            enabled: operation.enabled,
+            depth: Math.max(deepest, 0.01),
+            plunge: cutting["plunge"]!,
+            tool: "spindle",
+            paths: [],
+            moves,
+        });
+    }
+    const notes = [
+        `${name}: ${size.map((v) => Number(v.toFixed(3))).join(" x ")} mm, ${read.triangles} triangles, in a ${Number(width.toFixed(3))} x ${Number(height.toFixed(3))} x ${Number((-bottom).toFixed(3))} mm block with its top at Z 0`,
+        "mock backend: a model's toolpaths need the real backend and its kernel; showing loops round the model's box",
+        ...operations.filter((operation) => operation.feeds).map((operation) => `${operation.name}: ${operation.feeds}`),
+    ];
+    const outline: Path[] = [
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
+        [[low[0], low[1]], [low[0] + width, low[1]], [low[0] + width, low[1] + height], [low[0], low[1] + height], [low[0], low[1]]],
+    ];
+    const job: Job = {
+        id,
+        name,
+        source: "stl",
+        spot: Math.min(...operations.map((operation) => profile.tools.find((tool) => tool.id === operation.tool)!.width)),
+        offset: { x: ox, y: oy },
+        groups,
+        outline,
+        copper: [],
+        stats: modelStats(groups),
+    };
+    return { job, notes };
+}
+
 // --- gcode ----------------------------------------------------------------------------
 
 /** A job as gcode for a cartesian profile, the way the backend's post writes it. */
@@ -964,8 +1509,59 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
         }
         lines.push(`G1 ${words.join(" ")}`);
     };
+    // A move in three dimensions at its feed along the move, held where an
+    // axis' share of it would go over that axis' rate.
+    const capped3: Set<string> = new Set();
+    const cut3 = (point: Point, over: number, rate: number, label: string): void => {
+        const words: string[] = [];
+        const moved: [CamAxis, number][] = [];
+        for (const [axis, value] of [[x, point[0] + x.offset], [y, point[1] + y.offset], [depth!, depth!.offset + over]] as [CamAxis, number][]) {
+            const before = at[axis.letter];
+            const w = word(axis, value);
+            if (w !== null) {
+                words.push(w);
+                moved.push([axis, before === undefined ? 0 : value - before]);
+            }
+        }
+        if (words.length === 0) {
+            return;
+        }
+        const length = Math.hypot(...moved.map(([, delta]) => delta));
+        let held = rate;
+        for (const [axis, delta] of moved) {
+            if (axis.rate !== null && length > 0 && Math.abs(delta) > 0) {
+                held = Math.min(held, (axis.rate * length) / Math.abs(delta));
+            }
+        }
+        if (held < rate - 1e-9 && !capped3.has(label)) {
+            capped3.add(label);
+            warn(`${label}: ${rate} mm/min is over an axis' rate on some moves; those are written slower`);
+        }
+        if (feed === null || Math.abs(feed - held) > 1e-9) {
+            words.push(`F${num(held)}`);
+            feed = held;
+        }
+        lines.push(`G1 ${words.join(" ")}`);
+        report.cuts++;
+        report.length_mm += length;
+        report.seconds += (length / held) * 60;
+    };
+    const spindle = (speed: number): void => {
+        if (output && output[0] === "spindle" && output[1] === speed) {
+            return;
+        }
+        if (output && output[0] !== "spindle") {
+            off();
+        }
+        lines.push(`${post.spindle_on} S${speed}`);
+        output = ["spindle", speed];
+        if (post.spinup > 0) {
+            lines.push(`G4 P${post.spinup}`);
+            report.seconds += post.spinup;
+        }
+    };
 
-    const enabled = job.groups.filter((group) => group.enabled && group.paths.length > 0);
+    const enabled = job.groups.filter((group) => group.enabled && (group.paths.length > 0 || (group.moves?.length ?? 0) > 0));
     lines.push(`(${job.name}: ${enabled.length} operations through ${profile.name})`);
     lines.push(`(board X/Y on ${profile.axes.map((axis) => `${axis.letter}=${axis.role}`).join(" ")})`);
     lines.push(...post.header);
@@ -977,9 +1573,46 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
         go(parks.map((axis) => word(axis, axis.park!, true)));
     }
     for (const group of enabled) {
-        lines.push(`(${group.label}: ${group.paths.length} paths)`);
+        const moves = group.moves ?? [];
+        lines.push(`(${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths)`);
         const kind: Tool = group.tool ?? profile.tools[0]!.kind;
-        if (kind === "spindle") {
+        if (moves.length > 0) {
+            // A model's paths: each from the safe height down to its first
+            // point, its moves as they are, and up again.
+            if (!depth) {
+                throw new Error(`${group.label}: a model's paths need a depth axis in the profile`);
+            }
+            if (group.tool !== "spindle") {
+                throw new Error(`${group.label}: a model's paths are cut with a spindle`);
+            }
+            if (!(group.power > 0)) {
+                throw new Error(`${group.label}: a spindle needs a speed above 0`);
+            }
+            spindle(group.power);
+            for (const path of moves) {
+                const first = path[0];
+                if (!first) {
+                    continue;
+                }
+                go([word(depth, safeZ())]);
+                go([word(x, first[0] + x.offset), word(y, first[1] + y.offset)]);
+                if (first[3] === 0) {
+                    go([word(depth, depth.offset + first[2])]);
+                } else {
+                    plunge(first[2], group.plunge ?? DEFAULT_PLUNGE);
+                }
+                for (const [mx, my, mz, how] of path.slice(1)) {
+                    if (how === 0) {
+                        go([word(x, mx + x.offset), word(y, my + y.offset), word(depth, depth.offset + mz)]);
+                    } else if (how === 2) {
+                        cut3([mx, my], mz, group.plunge ?? DEFAULT_PLUNGE, `${group.label} plunge`);
+                    } else {
+                        cut3([mx, my], mz, group.speed, group.label);
+                    }
+                }
+                go([word(depth, safeZ())]);
+            }
+        } else if (kind === "spindle") {
             if (!depth) {
                 throw new Error(`${group.label}: a spindle operation needs a depth axis in the profile`);
             }

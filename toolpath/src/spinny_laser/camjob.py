@@ -414,7 +414,7 @@ def _model_job(profile: cam.Profile, design: Design, name: str | None, tolerance
                 min_power=0.0,
                 speed=cutting["feed"],
                 passes=1,
-                depth=max(0.0, deepest),
+                depth=max(deepest, 0.01),
                 plunge=cutting["plunge"],
                 paths=[],
                 enabled=operation.enabled,

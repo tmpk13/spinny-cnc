@@ -523,3 +523,60 @@ def test_a_cartesian_spindle_probes_then_mills_at_depth_under_the_board_on_the_v
 def on_edge(mark) -> bool:
     """A mark along a side of the square, not in a corner's plunge."""
     return max(abs(mark["x"]), abs(mark["y"])) > 4.99 and min(abs(mark["x"]), abs(mark["y"])) < 4.5
+
+
+def test_a_model_is_cut_out_on_the_virtual_mill(mill_firmware, tmp_path):
+    """An STL through the 3D profile, run on the virtual cartesian spindle:
+    the rough and the walls go down to the part's bottom, never under it,
+    and never into its pocket's floor."""
+    import json
+
+    import models
+    from spinny_laser import carve
+    from spinny_laser.cam import load
+    from spinny_web.cam import build_job
+    from spinny_web.kinematics import CartesianStreamer, Spindle
+
+    if carve.find() is None:
+        pytest.skip("the 3D kernel is not built: mise run build-carve")
+    port, trace = mill_firmware
+    folder = tmp_path / "upload"
+    folder.mkdir()
+    # 12 x 8 x 2 mm with a 4 x 4 pocket 1 deep at x 4..8, y 2..6.
+    triangles = models.voxel_triangles((24, 16, 4), 0.5, lambda i, j, k: not (8 <= i < 16 and 4 <= j < 12 and k >= 2))
+    models.write_stl(folder / "pocket.stl", triangles)
+    profile = load(Path(__file__).resolve().parents[3] / "cam" / "mill-3d.toml")
+    streamer = CartesianStreamer(angle=0.0, spindle=Spindle(clearance=1.0, spinup=0.1))
+    job, _ = build_job(profile, folder, "pocket", streamer)
+    job.id = "pocket"
+    link = Link(f"socket://127.0.0.1:{port}")
+    link.open()
+    try:
+        runner = Runner()
+        runner.start(job, link, streamer, None)
+        deadline = time.monotonic() + 300.0
+        while runner.progress.state == "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert runner.progress.state == DONE, runner.snapshot()
+        status = link.status_now(1.0)
+        assert status.laser == 0, "the spindle stopped at the end"
+        assert status.h == pytest.approx(1.0, abs=1e-3), "the tool ends up at the travel height"
+    finally:
+        link.close()
+    deadline = time.monotonic() + 10.0
+    marks = []
+    while time.monotonic() < deadline:
+        try:
+            marks = [m for m in json.loads(trace.read_text())["marks"] if m["duty"] > 0]
+        except (OSError, ValueError):
+            marks = []
+        if marks:
+            break
+        time.sleep(0.1)
+    assert marks, "the spindle never turned"
+    # The block's top at H 0; the part's at -0.5, its bottom at -2.5, and
+    # its pocket's floor at -1.5, at x 7..11, y 5..9 with the 3 mm margin.
+    assert min(m["h"] for m in marks) == pytest.approx(-2.5, abs=0.005)
+    over_pocket = [m for m in marks if 8.6 < m["x"] < 9.4 and 6.6 < m["y"] < 7.4 and m["h"] < 0.0]
+    assert over_pocket, "the pocket was cut"
+    assert min(m["h"] for m in over_pocket) == pytest.approx(-1.5, abs=0.005)

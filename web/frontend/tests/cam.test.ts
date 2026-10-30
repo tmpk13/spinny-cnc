@@ -27,7 +27,7 @@ describe("the mock's CAM profiles", () => {
         expect(profile.operations[0]?.cutting["passes"]).toBe(1);
         expect(summaryOf(profile)).toEqual({
             id: "mill-3axis", name: "3 axis mill", description: "X/Y/Z mill with a spindle, gcode out for a grbl-style controller",
-            machine: null, kinematics: "cartesian", tools: ["spindle"], axes: "XYZ", operations: 3,
+            machine: null, kinematics: "cartesian", tools: ["spindle"], axes: "XYZ", operations: 3, material: null, model: false,
         });
     });
 
@@ -89,7 +89,7 @@ describe("the mock backend's CAM routes", () => {
     test("lists, reads, saves, patches and removes profiles", async () => {
         const backend = new MockBackend({ timers: false });
         const listed = await backend.camProfiles();
-        expect(listed.profiles.map((profile) => profile.id)).toEqual(["cartesian-laser", "mill-3axis", "polar-laser"]);
+        expect(listed.profiles.map((profile) => profile.id)).toEqual(["cartesian-laser", "mill-3axis", "mill-3d", "polar-laser"]);
         expect(listed.problems).toEqual([]);
         const read = await backend.camProfile("mill-3axis");
         expect(read.text).toBe(millText);
@@ -169,7 +169,7 @@ describe("the CAM view", () => {
         await settle();
         await settle();
         const pick = field(root, "CAM profile") as HTMLSelectElement;
-        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "mill-3axis", "polar-laser"]);
+        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "mill-3axis", "mill-3d", "polar-laser"]);
         pick.value = "mill-3axis";
         pick.dispatchEvent(new Event("change"));
         await settle();

@@ -2021,7 +2021,7 @@ class Backend:
     def cam_import(self, profile_id: str, files: list[tuple[str, bytes]], name: str | None) -> dict:
         """The uploaded files through a CAM profile into a stored job: a board
         (a KiCad file, or a copper gerber with its outline and drill file
-        beside it), an SVG, an X/Y gcode file or a job."""
+        beside it), an SVG, an X/Y gcode file, a job, or an STL model."""
         import tempfile
 
         profile = self.cam.get(profile_id)

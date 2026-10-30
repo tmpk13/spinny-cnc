@@ -61,6 +61,9 @@ def test_a_material_sets_rpm_and_feed_held_to_the_spindle_and_the_axes():
     assert rough.cutting["stepover"] == pytest.approx(0.3)
     assert rough.cutting["leave_floor"] == 0.0
     assert rough.cutting["ramp"] == 2
+    # web/frontend/tests/carve.test.ts holds the page's twin to these.
+    assert (rough.cutting["rpm"], rough.cutting["feed"], rough.cutting["plunge"]) == (12000, 288, 86)
+    assert (profile.operations[2].cutting["feed"], profile.operations[2].cutting["stepover"]) == (192, 0.1)
 
 
 def test_a_feed_over_the_axes_brings_the_rpm_down_to_keep_the_chip():

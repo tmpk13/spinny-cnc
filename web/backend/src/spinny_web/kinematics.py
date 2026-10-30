@@ -42,6 +42,8 @@ DECIMALS = 3
 ANGLE_DECIMALS = 4
 # The focus axis word: a tenth of a micron is under a step at any usual scale.
 FOCUS_DECIMALS = 4
+# How the tool gets to a model's move, the fourth number of each.
+MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE = 0, 1, 2
 DEFAULT_TOLERANCE = 0.005
 
 
@@ -577,6 +579,8 @@ class Streamer:
             # one left the head: a closed loop starts where it ended, an
             # open path is gone back to.
             passes = max(1, int(group.passes))
+            if group.moves:
+                raise ValueError(f"{group.label}: a model's moves are cut with a spindle ($spindle=1)")
             if group.joints:
                 joint = yield from self._joint_group_pieces(group, index, joint, feed, power, floor)
                 continue
@@ -740,6 +744,9 @@ class Streamer:
                 yield Piece(line=f"spindle S{num(speed)}", kind="spindle", joint=joint, group=index)
                 if spinup_ms > 0:
                     yield Piece(line=f"dwell T{spinup_ms}", kind="dwell", joint=joint, seconds=spinup_ms / 1000.0, group=index)
+            if group.moves:
+                joint, h = yield from self._carve_pieces(group, index, joint, h, travel, surface, compensation)
+                continue
             passes = max(1, int(group.passes))
             for k in range(1, passes + 1):
                 depth = float(group.depth) * k / passes
@@ -835,6 +842,111 @@ class Streamer:
                         yield self._lift(travel, h, index, joint)
                         h = travel
         yield Piece(line="spindle off", kind="spindle", joint=joint, group=last_group)
+
+    def _carve_pieces(self, group, index: int, joint: Joint, h: float | None, travel: float, surface, compensation):
+        """A model's moves: each path from the travel height down to its
+        first point, its moves as they are with the surface under them
+        added to their height, and up again. A move's feed is along it in
+        three dimensions, and `F` is the board speed, so a move that also
+        rises or falls is given the share of the feed that lies on the
+        board; one that only goes up or down takes the feed as it is.
+        Returns the joint and the height it leaves the tool at."""
+        if not self.cartesian:
+            raise ValueError(f"{group.label}: a model's moves need the cartesian machine ($cartesian=1)")
+        feed = float(group.speed)
+        plunge = float(group.plunge)
+        for path in group.moves:
+            if not path:
+                continue
+            x, y, z, kind = path[0]
+            first = self.joint_at((float(x), float(y)))
+            if h is None or abs(h - travel) > 1e-9:
+                yield self._lift(travel, h, index, joint)
+                h = travel
+            if not self._same(joint, first):
+                yield Piece(line=f"go {self.words(first)}", kind="go", joint=first, seconds=self._rapid_seconds(joint, first), group=index)
+                joint = first
+            down = surface((float(x), float(y))) + float(z)
+            if kind == MOVE_RAPID:
+                yield Piece(
+                    line=f"go H{coord(down, FOCUS_DECIMALS)}",
+                    kind="go",
+                    joint=joint,
+                    seconds=abs(h - down) / self.rates.h_rate * 60.0,
+                    group=index,
+                    h=down,
+                )
+            else:
+                yield Piece(
+                    line=f"cut H{coord(down, FOCUS_DECIMALS)} F{num(plunge)}",
+                    kind="plunge",
+                    joint=joint,
+                    seconds=abs(h - down) / plunge * 60.0,
+                    group=index,
+                    h=down,
+                )
+            h = down
+            at = (float(x), float(y), float(z))
+            for x, y, z, kind in path[1:]:
+                x, y, z = float(x), float(y), float(z)
+                if kind == MOVE_RAPID:
+                    target = self.joint_at((x, y))
+                    high = surface((x, y)) + z
+                    seconds = max(self._rapid_seconds(joint, target), abs(high - h) / self.rates.h_rate * 60.0)
+                    yield Piece(line=f"go {self.words(target, h=high)}", kind="go", joint=target, seconds=seconds, group=index, h=high)
+                    joint, h, at = target, high, (x, y, z)
+                    continue
+                rate = plunge if kind == MOVE_PLUNGE else feed
+                run = math.hypot(x - at[0], y - at[1])
+                # With a map the move is split so the height follows the
+                # surface along it.
+                parts = 1 if compensation is None or run <= 0.0 else max(1, math.ceil(run / compensation.step - 1e-9))
+                for n in range(1, parts + 1):
+                    t = n / parts
+                    point = (at[0] + t * (x - at[0]), at[1] + t * (y - at[1]))
+                    end = self.joint_at(point)
+                    high = surface(point) + at[2] + t * (z - at[2])
+                    piece = run / parts
+                    rise = high - h
+                    if piece < 1e-9:
+                        yield Piece(
+                            line=f"cut H{coord(high, FOCUS_DECIMALS)} F{num(rate)}",
+                            kind="plunge",
+                            joint=joint,
+                            seconds=abs(rise) / rate * 60.0,
+                            group=index,
+                            h=high,
+                        )
+                        h = high
+                        continue
+                    board_feed = rate * piece / math.hypot(piece, rise)
+                    seconds, limited = self._carve_cost(joint, end, rise, board_feed)
+                    yield Piece(
+                        line=self.cut_line(end, board_feed, None, None, high),
+                        kind="cut",
+                        joint=end,
+                        seconds=seconds,
+                        length=piece,
+                        limited=limited,
+                        group=index,
+                        start=joint,
+                        feed=board_feed,
+                        h=high,
+                    )
+                    joint, h = end, high
+                at = (x, y, z)
+            yield self._lift(travel, h, index, joint)
+            h = travel
+        return joint, h
+
+    def _carve_cost(self, a: Joint, b: Joint, rise: float, board_feed: float) -> tuple[float, bool]:
+        """Seconds for a move across the board and up or down, and whether
+        an axis' rate rather than its feed sets them."""
+        seconds, limited = self._cut_cost(a, b, board_feed)
+        held = abs(rise) / self.rates.h_rate * 60.0
+        if held > seconds * (1.0 + 1e-9):
+            return held, True
+        return seconds, limited
 
     # --- dispensing -------------------------------------------------------
 
@@ -1036,7 +1148,7 @@ class Streamer:
                     radii.append(max(abs(r) for r, _ in joints))
                     lows.append(joint_min_radius(joints))
                 continue
-            for path in group.paths:
+            for path in group.board_paths():
                 points = [tuple(p) for p in path]
                 if not points:
                     continue

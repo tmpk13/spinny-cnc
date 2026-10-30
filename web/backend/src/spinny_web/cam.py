@@ -94,6 +94,9 @@ def pick_design(folder: Path, layer: str) -> tuple[Path, list[str]]:
     files = sorted(p for p in folder.iterdir() if p.is_file())
     if not files:
         raise JobImportError("the upload holds no file")
+    meshes = [p for p in files if p.suffix.lower() in camjob.MODEL_SUFFIXES]
+    if meshes:
+        return meshes[0], [f"{p.name} is not read: one model a job" for p in files if p is not meshes[0]]
     boards = [p for p in files if p.suffix.lower() == ".kicad_pcb"]
     if boards:
         return boards[0], [f"{p.name} is not read: the board file has every layer" for p in files if p is not boards[0]]
@@ -109,6 +112,8 @@ def pick_design(folder: Path, layer: str) -> tuple[Path, list[str]]:
 def read_design(path: Path, profile: Profile, tolerance: float) -> camjob.Design:
     suffix = path.suffix.lower()
     place = profile.placement
+    if suffix in camjob.MODEL_SUFFIXES:
+        return camjob.read_model(path)
     if suffix in camjob.BOARD_SUFFIXES:
         return camjob.read_board(path, place.layer)
     if suffix in SVG_SUFFIXES:
@@ -135,7 +140,9 @@ def read_design(path: Path, profile: Profile, tolerance: float) -> camjob.Design
 
 
 def build_job(profile: Profile, folder: Path, name: str | None, streamer: Streamer) -> tuple[Job, list[str]]:
-    """The uploaded files in `folder` through the profile, priced by the streamer."""
+    """The uploaded files in `folder` through the profile, priced by the
+    streamer. A 3D model is planned by the kernel and is read from the
+    folder before it goes."""
     path, notes = pick_design(folder, profile.placement.layer)
     try:
         design = read_design(path, profile, streamer.tolerance)
@@ -161,6 +168,7 @@ def build_job(profile: Profile, folder: Path, name: str | None, streamer: Stream
                 plunge=group.plunge,
                 tool=group.tool,
                 paths=[[tuple(p) for p in path_] for path_ in group.paths],
+                moves=[[tuple(m) for m in path_] for path_ in group.moves],
             )
             for group in built.groups
         ],
@@ -200,6 +208,7 @@ def built_of(job: Job, profile: Profile) -> camjob.BuiltJob:
                 paths=[[tuple(p) for p in path_] for path_ in group.paths],
                 enabled=group.enabled,
                 height=height,
+                moves=[[(float(x), float(y), float(z), int(kind)) for x, y, z, kind in path_] for path_ in group.moves],
             )
         )
     return camjob.BuiltJob(

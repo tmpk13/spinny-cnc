@@ -30,7 +30,7 @@ import {
 } from "./camera.ts";
 import { cssVar } from "./dom.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
-import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Path, Point } from "./types.ts";
+import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Move, Path, Point } from "./types.ts";
 
 /** Every point of a probe grid that is probed, row by row from the lowest Y; a mask leaves points out. */
 export function gridPoints(grid: Grid): Point[] {
@@ -150,9 +150,42 @@ export function jobReach(job: Job | null, limit: number): number {
         take(job.copper);
         for (const group of job.groups) {
             take(group.paths);
+            for (const path of group.moves ?? []) {
+                for (const [x, y] of path) {
+                    reach = Math.max(reach, Math.hypot(x, y));
+                }
+            }
         }
     }
     return reach > 0 ? reach : 10;
+}
+
+/** A model's moves as the lines the tool cuts along, in three dimensions: every run of feeds and plunges from the point before it; rapids are left out. */
+export function cutRuns(moves: Move[][]): Vec3[][] {
+    const runs: Vec3[][] = [];
+    for (const path of moves) {
+        let run: Vec3[] = [];
+        let last: Vec3 | null = null;
+        for (const [x, y, z, kind] of path) {
+            const point: Vec3 = [x, y, z];
+            if (kind === 0) {
+                if (run.length > 1) {
+                    runs.push(run);
+                }
+                run = [];
+            } else {
+                if (run.length === 0 && last !== null) {
+                    run.push(last);
+                }
+                run.push(point);
+            }
+            last = point;
+        }
+        if (run.length > 1) {
+            runs.push(run);
+        }
+    }
+    return runs;
 }
 
 /** How many rings to skip between labels so they stay readable. */
@@ -830,6 +863,20 @@ export class Preview {
                 ctx.strokeStyle = color;
                 ctx.fillStyle = color;
                 ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
+                if (group.moves && group.moves.length > 0) {
+                    // A model's toolpaths are too dense to draw a tool
+                    // wide: thin lines, at their depth under the board.
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    let drawn = false;
+                    for (const run of cutRuns(group.moves)) {
+                        drawn = this.tracePolyline(ctx, frame, run, false) || drawn;
+                    }
+                    if (drawn) {
+                        ctx.stroke();
+                    }
+                    return;
+                }
                 ctx.lineWidth = Math.max(spot * scale, 1.2);
                 this.strokePaths(ctx, frame, group.paths.filter((path) => path.length !== 1));
                 // A path of one point is a dot: a drill, or a dot of paste
@@ -843,7 +890,10 @@ export class Preview {
             ctx.globalAlpha = 1;
             if (job.outline.length > 0) {
                 ctx.strokeStyle = colors.outline;
-                ctx.lineWidth = Math.max(spot * scale / 2, 1);
+                // A model's outline and block are where it lies, not a cut:
+                // a thin line, so the toolpaths under it show.
+                const model = job.groups.some((group) => (group.moves?.length ?? 0) > 0);
+                ctx.lineWidth = model ? 1 : Math.max(spot * scale / 2, 1);
                 this.strokePaths(ctx, frame, job.outline);
             }
         }

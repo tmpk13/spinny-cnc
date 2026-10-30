@@ -22,7 +22,7 @@ import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
 import { showPage } from "./tabs.ts";
 
-export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gm1,.drl,.kicad_pcb,.gcode,.nc";
+export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gm1,.drl,.kicad_pcb,.gcode,.nc,.stl";
 
 export interface NumberSpec {
     key: string;
@@ -41,6 +41,32 @@ export const SPINDLE_FIELDS: NumberSpec[] = [
     { key: "stepover", label: "Stepover", step: 0.05, min: 0 },
 ];
 
+/** The cutting settings of a model's operation: rough, waterline or parallel. */
+export const MODEL_FIELDS: NumberSpec[] = [
+    { key: "step_down", label: "Step down mm", step: 0.1, min: 0 },
+    { key: "stepover", label: "Stepover", step: 0.05, min: 0 },
+    { key: "leave", label: "Leave mm", step: 0.05, min: 0 },
+    { key: "leave_floor", label: "Leave floor mm", step: 0.05, min: 0 },
+    { key: "ramp", label: "Ramp deg", step: 1, min: 0 },
+    { key: "below", label: "Below mm", step: 0.1 },
+    { key: "feed", label: "Feed mm/min", step: 10, min: 0 },
+    { key: "plunge", label: "Plunge mm/min", step: 5, min: 0 },
+    { key: "rpm", label: "Spindle S", step: 100, min: 0 },
+];
+
+/** The model's sources; their cutting settings are MODEL_FIELDS. */
+export const MODEL_SOURCES = ["rough", "waterline", "parallel"];
+
+/** How a model may be stood up: [X, Y, Z] degrees turned before it is cut. */
+export const TURNS: { label: string; turn: [number, number, number] }[] = [
+    { label: "as drawn", turn: [0, 0, 0] },
+    { label: "upside down", turn: [180, 0, 0] },
+    { label: "front down", turn: [90, 0, 0] },
+    { label: "back down", turn: [-90, 0, 0] },
+    { label: "left side down", turn: [0, 90, 0] },
+    { label: "right side down", turn: [0, -90, 0] },
+];
+
 /** The cutting settings of a laser operation. */
 export const LASER_FIELDS: NumberSpec[] = [
     { key: "power", label: "Power S", step: 10, min: 0 },
@@ -55,6 +81,10 @@ export interface SourceSpec {
     label: string;
     choices?: string[];
     text?: boolean;
+    /** A switch: true or false. */
+    flag?: boolean;
+    /** Any number, not a count: degrees. */
+    number?: boolean;
 }
 
 /** What an operation of each source says about its geometry. */
@@ -70,20 +100,45 @@ export function sourceFields(source: string, toolKind: Tool): SourceSpec[] {
             return toolKind === "laser" ? [{ key: "marks", label: "Marks", choices: ["circle", "cross", "dot"] }] : [];
         case "paths":
             return [{ key: "match", label: "Match label", text: true }];
+        case "rough":
+        case "waterline":
+            return [
+                { key: "direction", label: "Direction", choices: ["climb", "conventional"] },
+                { key: "flats", label: "Levels at flats", flag: true },
+            ];
+        case "parallel":
+            return [{ key: "angle", label: "Lines deg", number: true }];
         default:
             return [];
     }
 }
 
-/** A tool's settings on one line. */
+/** What a model's operation does with its settings, in words. */
+export function modelPassText(source: string, cutting: Record<string, number>, diameter: number): string {
+    const step = cutting["step_down"] ?? 0;
+    if (source === "parallel") {
+        return `lines ${Number(((cutting["stepover"] ?? 0.1) * diameter).toFixed(3))} mm apart`;
+    }
+    const levels = step > 0 ? `a level every ${step} mm` : "levels at the flats and the bottom";
+    const leave = cutting["leave"] ?? 0;
+    return leave > 0 ? `${levels}, ${leave} mm left` : levels;
+}
+
+/** A tool's settings on one line, a mill's end first. */
 export function describeTool(tool: CamTool): string {
     const names: Record<string, string> = {
         rpm: "S", feed: "feed", plunge: "plunge", step_down: "step down", stepover: "stepover", depth: "depth",
         power: "S", min_power: "floor", speed: "speed", passes: "passes", height: "height",
     };
-    return Object.entries(tool.settings)
-        .map(([key, value]) => `${names[key] ?? key} ${value}`)
-        .join(", ");
+    const end: string[] = [];
+    if (tool.kind === "spindle" && tool.shape) {
+        end.push(tool.shape === "bull" ? `bull nose r${tool.corner ?? 0}` : tool.shape === "vee" ? `${tool.angle ?? ""} degree V` : tool.shape);
+        end.push(`${tool.flutes ?? 2} flutes`);
+        if (tool.length !== undefined) {
+            end.push(`reaches ${tool.length} mm`);
+        }
+    }
+    return [...end, ...Object.entries(tool.settings).map(([key, value]) => `${names[key] ?? key} ${value}`)].join(", ");
 }
 
 /** The lines a gcode report reads as. */
@@ -139,12 +194,14 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     const axesBox = el("div", { class: "groups-scroll" });
     const toolsBox = el("div", { class: "groups-scroll" });
     const opsBox = el("div", { class: "groups-scroll" });
+    const stockBox = el("div", { class: "cam-stock" });
+    const stockSection = el("div", { class: "cam-section hidden" }, el("h3", {}, "Stock"), stockBox);
 
     // --- a job from a design ---
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Design files" });
     const nameField = el("input", { type: "text", class: "field", placeholder: "job name (the file's)", "aria-label": "Job name", autocomplete: "off" });
     const drop = el("div", { class: "drop" },
-        el("p", {}, "Drop a design here (a board with its outline and drill file, svg, gcode, json) or"),
+        el("p", {}, "Drop a design here (a board with its outline and drill file, svg, gcode, json, or an STL model) or"),
         el("label", { class: "btn btn-quiet" }, "pick files", fileInput),
     );
     const notes = el("ul", { class: "cam-notes muted hidden" });
@@ -162,6 +219,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         problems,
         el("div", { class: "cam-section" }, el("h3", {}, "Axes"), axesBox),
         el("div", { class: "cam-section" }, el("h3", {}, "Tools"), toolsBox),
+        stockSection,
         el("div", { class: "cam-section" }, el("h3", {}, "Operations"), opsBox),
         el("div", { class: "cam-section" },
             el("h3", {}, "Make a job"),
@@ -279,6 +337,8 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
             replace(axesBox);
             replace(toolsBox);
             replace(opsBox);
+            replace(stockBox);
+            stockSection.classList.add("hidden");
             return;
         }
         const parts = [profile.description, profile.kinematics, profile.machine ? `runs on the ${profile.machine} machine file` : "gcode only"];
@@ -286,6 +346,65 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         replace(axesBox, axesTable(profile));
         replace(toolsBox, toolsTable(profile));
         replace(opsBox, operationsTable(profile));
+        const model = profile.model === true || (profile.materials?.length ?? 0) > 0;
+        stockSection.classList.toggle("hidden", !model);
+        if (model) {
+            replace(stockBox, ...stockFields(profile));
+        } else {
+            replace(stockBox);
+        }
+    }
+
+    /** The block a model is cut from and how the model stands in it, each value patched into the file on its own. */
+    function stockFields(profile: CamProfile): HTMLElement[] {
+        const stock = profile.stock ?? { material: null, margin: 2, top: 0, size: null };
+        const materials = profile.materials ?? [];
+        const material = el("select", { class: "field", "aria-label": "Stock material" },
+            el("option", { value: "" }, "none: the tools' own feeds"),
+            ...materials.map((candidate) => el("option", { value: candidate.id }, candidate.name)),
+        );
+        material.value = stock.material ?? "";
+        material.addEventListener("change", () => void patch(["stock", "material"], material.value === "" ? null : material.value));
+        const margin = numberField({ value: stock.margin, step: 0.5, min: 0 });
+        margin.setAttribute("aria-label", "Stock margin mm");
+        margin.addEventListener("change", () => void patch(["stock", "margin"], parseNumber(margin.value)));
+        const top = numberField({ value: stock.top, step: 0.1, min: 0 });
+        top.setAttribute("aria-label", "Stock over the top mm");
+        top.addEventListener("change", () => void patch(["stock", "top"], parseNumber(top.value)));
+        const turn = el("select", { class: "field", "aria-label": "Model turned" },
+            ...TURNS.map((choice, index) => el("option", { value: String(index) }, choice.label)),
+        );
+        const now = profile.model_setup?.turn ?? [0, 0, 0];
+        const known = TURNS.findIndex((choice) => choice.turn.every((value, k) => value === now[k]));
+        if (known < 0) {
+            turn.append(el("option", { value: "file" }, `as the file says: ${now.join(", ")}`));
+        }
+        turn.value = known < 0 ? "file" : String(known);
+        turn.addEventListener("change", () => {
+            const choice = TURNS[Number(turn.value)];
+            if (choice) {
+                void patch(["model", "turn"], choice.turn);
+            }
+        });
+        if (stock.size) {
+            for (const field of [margin, top]) {
+                field.disabled = true;
+                field.title = "the file gives the block's size";
+            }
+        }
+        const chosen = materials.find((candidate) => candidate.id === stock.material);
+        const note = el("p", { class: "muted hint" }, chosen?.note ? `${chosen.name}: ${chosen.note}` : "");
+        const size = stock.size ? el("p", { class: "muted hint" }, `block ${stock.size.join(" x ")} mm, the model in its middle on its bottom`) : null;
+        return [
+            el("div", { class: "button-row" },
+                labeled("Material", material, "labeled inline"),
+                labeled("Margin mm", margin, "labeled inline"),
+                labeled("Over the top mm", top, "labeled inline"),
+                labeled("Model", turn, "labeled inline"),
+            ),
+            ...(size ? [size] : []),
+            note,
+        ];
     }
 
     function axesTable(profile: CamProfile): HTMLElement {
@@ -309,7 +428,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         const rows = profile.tools.map((tool) => el("tr", {},
             el("td", {}, el("span", { class: "cam-op-name" }, tool.name), el("span", { class: "muted" }, ` ${tool.id}`)),
             el("td", {}, tool.kind === "spindle" ? "mill" : "laser"),
-            el("td", { class: "num" }, String(tool.width)),
+            el("td", { class: "num" }, String(Number(tool.width.toFixed(3)))),
             el("td", {}, describeTool(tool)),
         ));
         return el("table", { class: "cam-table tools" }, el("thead", {}, head), el("tbody", {}, ...rows));
@@ -333,7 +452,8 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         toolPick.value = operation.tool;
         toolPick.addEventListener("change", () => void patch(["operations", index, "tool"], toolPick.value));
         const fields = el("div", { class: "cam-fields" });
-        for (const spec of kind === "spindle" ? SPINDLE_FIELDS : LASER_FIELDS) {
+        const model = MODEL_SOURCES.includes(operation.source);
+        for (const spec of kind === "spindle" ? (model ? MODEL_FIELDS : SPINDLE_FIELDS) : LASER_FIELDS) {
             const own = operation.settings[spec.key];
             const value = typeof own === "number" ? own : operation.cutting[spec.key] ?? null;
             const input = numberField({ value, step: spec.step, min: spec.min });
@@ -357,6 +477,19 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
                 select.value = typeof own === "string" ? own : spec.choices[0]!;
                 select.addEventListener("change", () => void patch(["operations", index, spec.key], select.value));
                 fields.append(labeled(spec.label, select));
+            } else if (spec.flag) {
+                const box = el("input", { type: "checkbox", "aria-label": `${operation.name} ${spec.label}` });
+                box.checked = typeof own === "boolean" ? own : true;
+                box.addEventListener("change", () => void patch(["operations", index, spec.key], box.checked));
+                fields.append(labeled(spec.label, box));
+            } else if (spec.number) {
+                const input = numberField({ value: typeof own === "number" ? own : 0, step: 1 });
+                input.setAttribute("aria-label", `${operation.name} ${spec.label}`);
+                input.addEventListener("change", () => {
+                    const typed = parseNumber(input.value);
+                    void patch(["operations", index, spec.key], input.value.trim() === "" ? null : typed);
+                });
+                fields.append(labeled(spec.label, input));
             } else if (spec.text) {
                 const input = el("input", { type: "text", class: "field", "aria-label": `${operation.name} ${spec.label}`, autocomplete: "off" });
                 input.value = typeof own === "string" ? own : "";
@@ -373,9 +506,12 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
             }
         }
         const passes = operation.cutting["passes"] ?? 1;
-        const passText = kind === "spindle"
-            ? `${passes} ${passes === 1 ? "pass" : "passes"} to ${operation.cutting["depth"] ?? 0} mm`
-            : `${passes} ${passes === 1 ? "pass" : "passes"}`;
+        const diameter = tool ? (tool.angle !== undefined && tool.shank !== undefined ? tool.shank : tool.width) : 0;
+        const passText = model
+            ? modelPassText(operation.source, operation.cutting, diameter)
+            : kind === "spindle"
+                ? `${passes} ${passes === 1 ? "pass" : "passes"} to ${operation.cutting["depth"] ?? 0} mm`
+                : `${passes} ${passes === 1 ? "pass" : "passes"}`;
         return el("tbody", { class: operation.enabled ? "" : "disabled" },
             el("tr", {},
                 el("td", {}, enabled),
@@ -384,6 +520,8 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
                 el("td", {}, fields),
                 el("td", { class: "cam-passes muted" }, passText),
             ),
+            // Where a material put the speed and the feed, under the row.
+            ...(operation.feeds ? [el("tr", { class: "cam-feeds" }, el("td", {}), el("td", { colspan: "4", class: "muted" }, operation.feeds))] : []),
         );
     }
 
@@ -498,7 +636,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
                 renderJobs(ctx.store.get());
                 replace(notes, ...answer.notes.map((note) => el("li", {}, note)));
                 notes.classList.toggle("hidden", answer.notes.length === 0);
-                ctx.toast("info", `made ${answer.job.name}: ${answer.job.groups.filter((g) => g.enabled && g.paths.length > 0).length} operations`);
+                ctx.toast("info", `made ${answer.job.name}: ${answer.job.groups.filter((g) => g.enabled && (g.paths.length > 0 || (g.moves?.length ?? 0) > 0)).length} operations`);
             }
         } finally {
             making = false;

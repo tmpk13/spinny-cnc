@@ -635,7 +635,7 @@ def job_extent(job) -> tuple[float, float, float, float] | None:
         if group.joints:
             boxes.append(joint_moves_box(group.joints))
         else:
-            points = [(float(x), float(y)) for path in group.paths for x, y in path]
+            points = [(float(x), float(y)) for path in group.board_paths() for x, y in path]
             if points:
                 xs = [p[0] for p in points]
                 ys = [p[1] for p in points]
@@ -679,7 +679,7 @@ def job_cuts(job) -> Iterator[tuple[tuple[float, float], tuple[float, float]]]:
     for group in job.groups:
         if not group.enabled:
             continue
-        for path in group.paths:
+        for path in group.board_paths():
             points = [(float(x), float(y)) for x, y in path]
             if not points:
                 continue
@@ -765,7 +765,7 @@ def check_covers(heightmap: HeightMap, job) -> None:
     for group in job.groups:
         if not group.enabled:
             continue
-        polylines = [[(float(x), float(y)) for x, y in path] for path in group.paths]
+        polylines = [[(float(x), float(y)) for x, y in path] for path in group.board_paths()]
         polylines.extend(joint_moves_points(poly) for poly in group.joints)
         for points in polylines:
             if not points:

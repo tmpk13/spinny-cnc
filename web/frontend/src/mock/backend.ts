@@ -39,7 +39,7 @@ import {
     DEFAULT_THICKNESS,
     type PlannedMove,
 } from "./jobs.ts";
-import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
+import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
@@ -3371,10 +3371,12 @@ export class MockBackend implements Api, EventFeed {
         if (!design) {
             throw new ApiError(400, "the upload holds no file");
         }
-        const text = await design.text();
         let built: ReturnType<typeof buildCamJob>;
         try {
-            built = buildCamJob(this.newId(), profile, name?.trim() || design.name.replace(/\.[^.]+$/, ""), design.name, text, this.limits());
+            const jobName = name?.trim() || design.name.replace(/\.[^.]+$/, "");
+            built = /\.stl$/i.test(design.name)
+                ? buildModelJob(this.newId(), profile, jobName, design.name, new Uint8Array(await design.arrayBuffer()))
+                : buildCamJob(this.newId(), profile, jobName, design.name, await design.text(), this.limits());
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }

@@ -69,6 +69,9 @@ DEFAULT_THICKNESS = 0.12
 MIN_THICKNESS, MAX_THICKNESS = 0.01, 5.0
 # The tools a group may be made for.
 LASER, SPINDLE, DISPENSER = "laser", "spindle", "dispenser"
+# How the tool gets to a model's move: the fourth number of each.
+MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE = kinematics.MOVE_RAPID, kinematics.MOVE_FEED, kinematics.MOVE_PLUNGE
+MOVE_KINDS = (MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE)
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -120,10 +123,23 @@ class Group(Finite):
     # from both directions. With these present, `paths` is only what the
     # preview draws.
     joints: list[list[tuple[float, float]]] = Field(default_factory=list)
+    # A 3D model's toolpaths from a CAM profile: every path's moves as x,
+    # y, z over the stock's top and how the tool gets there (0 a rapid, 1
+    # a feed at `speed` along the move, 2 a plunge at `plunge`). The first
+    # move of a path is where the tool comes down to from the travel
+    # height. With these, `paths` is empty and `depth` and `passes` say
+    # nothing about the cut.
+    moves: list[list[tuple[float, float, float, int]]] = Field(default_factory=list)
 
     @property
     def has_cuts(self) -> bool:
-        return bool(self.joints) or bool(self.paths)
+        return bool(self.joints) or bool(self.paths) or bool(self.moves)
+
+    def board_paths(self) -> list[list[tuple[float, float]]]:
+        """The group's paths on the board: a model's moves seen from above."""
+        if self.moves:
+            return [[(float(m[0]), float(m[1])) for m in path] for path in self.moves]
+        return self.paths
 
 
 class Offset(Finite):
@@ -211,6 +227,7 @@ class Job(Finite):
                     "tool": group.tool,
                     "paths": len(group.paths),
                     "joints": len(group.joints),
+                    "moves": len(group.moves),
                     "areas": len(group.areas),
                 }
                 for group in self.groups
@@ -228,6 +245,7 @@ class Job(Finite):
             raise ValueError("a joint-space group is fixed to the axis and cannot be moved")
         for group in self.groups:
             group.paths = [_shifted(path, dx, dy) for path in group.paths]
+            group.moves = [[(x + dx, y + dy, z, kind) for x, y, z, kind in path] for path in group.moves]
         self.outline = [_shifted(path, dx, dy) for path in self.outline]
         self.copper = [_shifted(path, dx, dy) for path in self.copper]
         self.pads = [(x + dx, y + dy, area) for x, y, area in self.pads]
@@ -253,6 +271,7 @@ class Job(Finite):
 
         for group in self.groups:
             group.paths = [turned(path) for path in group.paths]
+            group.moves = [[(*alignment.turn((float(x), float(y)), degrees), z, kind) for x, y, z, kind in path] for path in group.moves]
         self.outline = [turned(path) for path in self.outline]
         self.copper = [turned(path) for path in self.copper]
         self.pads = [(*alignment.turn((x, y), degrees), area) for x, y, area in self.pads]
@@ -273,9 +292,34 @@ class Job(Finite):
         except ValueError:
             # The machine as it is set up cannot run this job (a joint-space
             # group on a cartesian or milling machine), which the run will
-            # say; the stats are then the polar laser's.
+            # say; the stats are then the polar laser's, or for a model's
+            # moves, their length at their feeds.
+            if any(group.moves for group in self.groups):
+                self.stats = moves_stats(self)
+                return
             stats = Streamer(tolerance=streamer.tolerance, rates=streamer.rates).estimate(self)
         self.stats = JobStats(**stats.to_dict())
+
+
+def moves_stats(job: Job) -> JobStats:
+    """A model's job priced without a machine: every move at its feed,
+    rapids at none."""
+    length = 0.0
+    seconds = 0.0
+    moves = 0
+    for group in job.groups:
+        if not group.enabled:
+            continue
+        for path in group.moves:
+            moves += len(path)
+            for (x0, y0, z0, _), (x1, y1, z1, kind) in zip(path, path[1:]):
+                run = math.dist((x0, y0, z0), (x1, y1, z1))
+                if kind == MOVE_RAPID:
+                    continue
+                length += math.hypot(x1 - x0, y1 - y0)
+                rate = group.plunge if kind == MOVE_PLUNGE else group.speed
+                seconds += run / rate * 60.0 if rate > 0 else 0.0
+    return JobStats(length_mm=length, seconds=seconds, moves=moves)
 
 
 class GroupPatch(Finite):
@@ -497,6 +541,14 @@ def from_json(text: str, name: str) -> Job:
             for point in poly:
                 if any(abs(v) > MAX_VALUE for v in point):
                     raise JobImportError(f"group {group.label!r}: a coordinate is past {MAX_VALUE:g}")
+        if group.moves and (group.paths or group.joints):
+            raise JobImportError(f"group {group.label!r}: a model's moves come alone, without paths or joints")
+        for path in group.moves:
+            for x, y, z, kind in path:
+                if kind not in MOVE_KINDS:
+                    raise JobImportError(f"group {group.label!r}: a move's kind is 0 (rapid), 1 (feed) or 2 (plunge)")
+                if any(abs(v) > MAX_VALUE for v in (x, y)) or abs(z) > MAX_DEPTH * 20:
+                    raise JobImportError(f"group {group.label!r}: a move is out of reach")
     drawn = [group for group in job.groups if group.joints and not group.paths]
     for group, paths in zip(drawn, kinematics.joint_previews([group.joints for group in drawn])):
         group.paths = paths

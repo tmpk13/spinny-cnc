@@ -369,7 +369,19 @@ export interface Group {
      * `paths` is only what is drawn.
      */
     joints?: [number, number][][];
+    /**
+     * A 3D model's toolpaths from a CAM profile: every path's moves. The
+     * first move of a path is where the tool comes down to from the travel
+     * height; `paths` is then empty, and `depth` is the deepest it goes.
+     */
+    moves?: Move[][];
 }
+
+/** How the tool gets to a model's move: 0 a rapid, 1 a feed at the group's speed, 2 a plunge at its plunge rate. */
+export type MoveKind = 0 | 1 | 2;
+
+/** x, y and z over the stock's top in mm, and how the tool gets there. */
+export type Move = [number, number, number, MoveKind];
 
 export interface Stats {
     length_mm: number;
@@ -1079,6 +1091,8 @@ export interface CamAxis {
     park: number | null;
 }
 
+export type CamShape = "flat" | "ball" | "bull" | "vee";
+
 export interface CamTool {
     id: string;
     kind: Tool;
@@ -1087,9 +1101,52 @@ export interface CamTool {
     width: number;
     /** The cutting settings the file gives the tool, by key. */
     settings: Record<string, number>;
+    /** A V bit: its included angle, degrees, its tip's width and its shank, mm. */
+    angle?: number;
+    tip?: number;
+    shank?: number;
+    /** A mill's end, as a model is cut with it. */
+    shape?: CamShape;
+    /** A bull nose's corner radius, mm. */
+    corner?: number;
+    flutes?: number;
+    /** How deep under the stock's top it reaches, mm. */
+    length?: number;
 }
 
-export type CamSource = "isolation" | "clearing" | "outline" | "drills" | "deposit" | "paths";
+/** What a 3D model goes through: cleared level by level, its walls followed, its surfaces combed. */
+export type CamModelSource = "rough" | "waterline" | "parallel";
+
+export type CamSource = "isolation" | "clearing" | "outline" | "drills" | "deposit" | "paths" | CamModelSource;
+
+/** What a mill cuts, and how hard it can be pushed. */
+export interface CamMaterial {
+    id: string;
+    name: string;
+    /** The cutting edge's speed, m/min. */
+    speed: number;
+    /** [diameter mm, mm per tooth], by diameter. */
+    chip_load: [number, number][];
+    /** Of the tool's diameter: a rough's step down and stepover. */
+    depth: number;
+    stepover: number;
+    /** The steepest entry, degrees. */
+    ramp: number;
+    /** The plunge rate, of the feed. */
+    plunge: number;
+    /** mm a rough leaves for the finish. */
+    leave: number;
+    note: string;
+}
+
+/** The block a model is cut from. */
+export interface CamStock {
+    /** A material's id; null for none. */
+    material: string | null;
+    margin: number;
+    top: number;
+    size: [number, number, number] | null;
+}
 
 export type CamSettingValue = number | string | boolean;
 
@@ -1102,6 +1159,8 @@ export interface CamOperation {
     settings: Record<string, CamSettingValue>;
     /** What it cuts with: the tool's settings under its own, and the pass count. */
     cutting: Record<string, number>;
+    /** Where the speed and feed came from when a material worked them out; empty when the file gave them. */
+    feeds?: string;
 }
 
 export interface CamPost {
@@ -1137,6 +1196,10 @@ export interface CamSummary {
     axes: string;
     /** Enabled operations. */
     operations: number;
+    /** The stock's material by name, when the profile has one. */
+    material?: string | null;
+    /** Whether the profile cuts a 3D model: it has a rough, waterline or parallel operation. */
+    model?: boolean;
 }
 
 export interface CamProfile {
@@ -1150,6 +1213,14 @@ export interface CamProfile {
     operations: CamOperation[];
     post: CamPost;
     placement: CamPlacement;
+    material?: string | null;
+    model?: boolean;
+    materials?: CamMaterial[];
+    stock?: CamStock;
+    /** How a model is stood up: turned about X, then Y, then Z by degrees, and scaled. */
+    model_setup?: { turn: [number, number, number]; scale: number };
+    /** The spindle's speed range a material's rpm is held to. */
+    spindle?: { min: number; max: number };
 }
 
 export interface CamProfilesResponse {
@@ -1168,7 +1239,7 @@ export interface CamProfileResponse {
 export type CamPath = (string | number)[];
 
 /** A value to write; null takes the key out. */
-export type CamValue = number | string | boolean | string[] | null;
+export type CamValue = number | string | boolean | string[] | number[] | null;
 
 export interface CamJobResponse {
     job: Job;
