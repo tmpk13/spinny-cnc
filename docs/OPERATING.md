@@ -221,8 +221,11 @@ deploy with `mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
 picture; `<name>@640x480@15` picks another mode than 1280x720 at 30 fps;
 a second `--camera`, the up camera, gets the next port), keep
 `mise run relay-pi -- user@host` running, and set the camera's device to
-`http://127.0.0.1:2325/stream` (the second one 2326). The mode is the one
-deployed: the size and fps in the settings do not change it. While the
+`http://127.0.0.1:2325/snapshot` (the second one 2326). The size is the
+one deployed; the fps in the settings is how often a picture is asked
+for: 10 leaves a Pi Zero's WiFi room for the controller's lines, and
+`<name>@640x480` a quarter of the bytes per picture. (`/stream` instead
+pushes every frame and falls seconds behind on a slow link.) While the
 camera is unplugged the picture is ustreamer's NO SIGNAL card.
 `mise run pi-logs -- user@host` shows the camera units' journals.
 

@@ -148,7 +148,7 @@ extrude_rate = 60               # dispensing: plunger speed while a dot is pushe
 dwell_ms = 200                  # dispensing: wait after the push, before the retract, ms, [0, 60000]
 
 [camera]                        # a camera on the head, read by the backend through pcb-vision; nothing of it reaches the firmware
-device = "/dev/video0"          # a V4L2 device; http://host:port/stream of an MJPEG stream (a bridge Pi's camera); socket://host:port of a pcbv serve elsewhere; or a picture or a directory to replay
+device = "/dev/video0"          # a V4L2 device; http://host:port/snapshot (one JPEG a request, at most fps a second: a bridge Pi's camera) or /stream (MJPEG); socket://host:port of a pcbv serve elsewhere; or a picture or a directory to replay
 size = "1280x720"               # capture size, WIDTHxHEIGHT
 fps = 30
 pcbv = "pcbv"                   # the pcbv program: a name on PATH or a path; left out, ../pcb-vision/target is looked in

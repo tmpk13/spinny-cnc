@@ -19,7 +19,7 @@
 #
 # The cameras deploy-pi streams on the Pi (ustreamer on its loopback ports
 # 2325, 2326) are forwarded the same way, so the camera device here is
-# http://127.0.0.1:2325/stream. SPINNY_CAMERA_PORTS names other ports, or
+# http://127.0.0.1:2325/snapshot. SPINNY_CAMERA_PORTS names other ports, or
 # none when empty (a port already taken here stops the relay at the start).
 set -euo pipefail
 
@@ -37,7 +37,7 @@ remote=$(cat <<EOF
 set -e
 for p in $camera_ports; do
     if ss -Hltn "sport = :\$p" | grep -q .; then
-        echo "a camera streams on port \$p on the Pi: http://127.0.0.1:\$p/stream here" >&2
+        echo "a camera streams on port \$p on the Pi: http://127.0.0.1:\$p/snapshot here" >&2
     fi
 done
 command -v socat >/dev/null || { echo "socat is missing on the Pi: sudo apt install socat" >&2; exit 1; }

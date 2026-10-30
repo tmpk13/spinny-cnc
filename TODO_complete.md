@@ -481,8 +481,9 @@
   ustreamer on the Pi's loopback (2325, 2326, ...), the camera's MJPEG
   passed through; `relay-pi` forwards those ports with the controller's,
   `pi-logs` shows their journals, and the camera device here is
-  `http://127.0.0.1:2325/stream`, read by `pcbv` here (pcb-vision reads
-  MJPEG over HTTP since 2de286c). `--web` cross builds `pcbv` here for the
+  `http://127.0.0.1:2325/snapshot`, read by `pcbv` here one picture at a
+  time at most the settings' fps (pcb-vision 2de286c, 64cc6b0; the pushed
+  `/stream` queued seconds of frames over the Zero's WiFi). `--web` cross builds `pcbv` here for the
   Pi. The backend now names why a `pcbv` it started could not open its
   camera; over a `socket://` it reopens the camera with its own size and
   fps and no longer sends `quit`, which ended the remote service.

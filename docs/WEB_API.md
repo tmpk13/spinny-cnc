@@ -458,8 +458,9 @@ well.
 A camera on the head (`[camera]` in the machine file,
 [MACHINES.md](MACHINES.md)) is read through `pcbv serve` from the sibling
 pcb-vision repository, which the backend runs as a program on the device
-named (a V4L2 device, or an MJPEG stream at an `http://` URL such as a
-bridge Pi's camera forwarded by relay-pi), or reaches over TCP at a
+named (a V4L2 device, or an MJPEG stream or JPEG snapshots at an
+`http://` URL such as a bridge Pi's camera forwarded by relay-pi), or
+reaches over TCP at a
 `socket://host:port` device (a `pcbv serve --listen` elsewhere, which it
 reopens with the settings' size and fps and leaves running when it
 stops). The page shows its picture, and the

@@ -6,9 +6,10 @@ StartLimitIntervalSec=0
 
 [Service]
 User=@USER@
-# The camera's own MJPEG passed through (HW encoder), on loopback only;
-# --slowdown drops to 1 fps while no client watches.
-ExecStart=@USTREAMER@ --device @CAMERA@ --format @FORMAT@ --encoder HW --resolution @SIZE@ --desired-fps @FPS@ --host 127.0.0.1 --port @PORT@ --slowdown
+# The camera's own MJPEG passed through (HW encoder), on loopback only. No
+# --slowdown: /snapshot requests are not stream clients, and with it the
+# camera would be read at 1 fps, every snapshot up to a second old.
+ExecStart=@USTREAMER@ --device @CAMERA@ --format @FORMAT@ --encoder HW --resolution @SIZE@ --desired-fps @FPS@ --host 127.0.0.1 --port @PORT@
 Restart=always
 RestartSec=5
 

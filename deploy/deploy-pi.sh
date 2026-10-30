@@ -32,7 +32,10 @@
 # ustreamer (from apt) on the Pi's loopback, passing the camera's own
 # MJPEG through undecoded, the first on port 2325, the next on 2326 and so
 # on. relay-pi forwards those ports too, and the camera device here is
-# http://127.0.0.1:2325/stream: pcbv runs here and reads it. Every deploy
+# http://127.0.0.1:2325/snapshot: pcbv runs here and asks for one picture
+# at a time, at most the camera settings' fps a second, so a slow WiFi
+# link lowers the frame rate rather than queueing seconds of frames as
+# the pushed /stream does. Every deploy
 # replaces the camera units with the ones named, so leaving --camera out
 # removes them. With --web the backend on the Pi runs pcbv itself on the
 # Pi's cameras; pcbv is cross built here for it (aarch64-linux-gnu-gcc and
@@ -252,7 +255,7 @@ else
     echo "then connect the page here to socket://127.0.0.1:2324"
     for i in "${!ports[@]}"; do
         echo "camera ${cameras[$i]}: $(systemctl is-active "spinny-camera-${ports[$i]}.service" || true)," \
-            "http://127.0.0.1:${ports[$i]}/stream here while relay-pi runs"
+            "http://127.0.0.1:${ports[$i]}/snapshot here while relay-pi runs"
     done
 fi
 # The names to give --camera, or the camera device under --web.

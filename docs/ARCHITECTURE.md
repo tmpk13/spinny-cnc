@@ -57,7 +57,7 @@ flowchart LR
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
         BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot]
         PV --> VID[/dev/videoN on the head]
-        PV -->|MJPEG over HTTP, forwarded by relay-pi| UST[ustreamer on a bridge Pi: spinny-camera unit]
+        PV -->|JPEG snapshots over HTTP, forwarded by relay-pi| UST[ustreamer on a bridge Pi: spinny-camera unit]
         UST --> VIDPI[/dev/v4l/by-id camera on the Pi]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
@@ -118,10 +118,14 @@ record are the Pi's own.
 unit running ustreamer (from apt) on the Pi's loopback, ports 2325, 2326
 and on, passing the camera's own MJPEG through without decoding it.
 `relay-pi` forwards those with the controller's port, the camera settings
-here name `http://127.0.0.1:2325/stream`, and the backend starts `pcbv`
+here name `http://127.0.0.1:2325/snapshot`, and the backend starts `pcbv`
 here on that URL as on a device: the decoding and the localizer run where
-the cycles are, and a Pi Zero 2 W only copies bytes. The stream's size and
-rate are the unit's; the settings' size and fps do not reach it.
+the cycles are, and a Pi Zero 2 W only copies bytes. `pcbv` asks for one
+picture at a time, at most the settings' fps a second: the pushed
+`/stream` at 1280x720 and 30 fps outran the Zero's WiFi (about 10 Mbit/s),
+queued seconds of frames in the tunnel, and delayed the controller's
+lines sharing it. The size is the unit's; the settings' size does not
+reach it.
 Loopback because neither ustreamer nor `pcbv` has a login of its own: the
 ssh session is the only way in. On a Pi running the whole thing the
 backend starts `pcbv` there on the Pi's own devices; deploy-pi cross
