@@ -99,9 +99,16 @@ the tool's true shape, and a toolpath that would cut into it is refused.
 Rough and waterline treat the tool as a cylinder its full width from the
 tip up: exact on vertical walls, stepped on slopes, which a parallel pass
 with a ball finishes. Floors come out at their height when `leave_floor` is
-0 (the shipped rough); the walls take the waterline. The last level at the
-model's bottom cuts the part free: put tape or a spoilboard under it, or
-`below = -0.3` to keep a 0.3 mm skin that holds it, cut by hand after.
+0 (the shipped rough); the walls take the waterline.
+
+A level at the model's bottom cuts the part free, so that level belongs to
+the last operation. The shipped profile's rough stops at `below = -0.3`,
+a 0.3 mm skin that holds the part through the rough and the surfaces, and
+its waterline goes last with `below = 0`, cutting down through the skin
+round every wall. A through hole wider than two tools keeps a disc of skin
+in its middle, which comes loose then. Put the block on a spoilboard or
+tape, or give the waterline a negative `below` too and cut the skin by
+hand after.
 
 ### Feeds and speeds
 

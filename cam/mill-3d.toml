@@ -211,6 +211,11 @@ scale = 1               # 25.4 for a model drawn in inches
 #   angle       parallel only: degrees from X of the lines
 # Rough and waterline treat the tool as a cylinder its full width from the
 # tip up: exact on vertical walls, stepped on slopes, which parallel takes.
+#
+# The part comes free at the last level that reaches its bottom, so that
+# level belongs to the last operation: the rough stops a skin over the
+# bottom, the surfaces are combed while the skin still holds the part, and
+# the walls, last, cut down through the skin round it.
 
 [[operations]]
 name = "rough"
@@ -218,14 +223,7 @@ source = "rough"
 tool = "em3"
 leave = 0.2             # on the walls, for the waterline
 leave_floor = 0         # floors come out at their height here
-below = 0               # the last level at the model's bottom: the part comes free
-
-[[operations]]
-name = "walls"
-source = "waterline"
-tool = "em3"
-step_down = 3           # a light radial cut, so a deep step is fine
-leave = 0
+below = -0.3            # stops 0.3 over the model's bottom: the skin holds the part
 
 [[operations]]
 name = "surfaces"
@@ -234,6 +232,14 @@ tool = "ball2"
 enabled = false         # switch on for curved or sloped surfaces
 stepover = 0.1          # of the diameter: 0.2 mm, scallops about 0.005 mm high
 angle = 0
+
+[[operations]]
+name = "walls"
+source = "waterline"
+tool = "em3"
+step_down = 3           # a light radial cut, so a deep step is fine
+leave = 0
+below = 0               # down to the model's bottom, through the skin: the part comes free last
 
 # --- how the gcode is written ------------------------------------------------------
 

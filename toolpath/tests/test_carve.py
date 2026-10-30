@@ -39,7 +39,9 @@ def test_the_shipped_3d_profile_reads_with_its_materials():
     assert profile.material is not None and profile.material.id == "aluminum"
     assert {m.id for m in profile.materials} >= {"aluminum", "pom", "acrylic"}
     assert profile.summary()["model"] is True
-    assert [op.source for op in profile.operations] == ["rough", "waterline", "parallel"]
+    assert [op.source for op in profile.operations] == ["rough", "parallel", "waterline"]
+    # The rough leaves a skin; the walls, last, cut the part free.
+    assert profile.operations[0].cutting["below"] == -0.3 and profile.operations[2].cutting["below"] == 0.0
     ball = profile.tool("ball2")
     assert (ball.shape, ball.flutes, ball.diameter) == ("ball", 2, 2.0)
     vee = profile.tool("vee60")
@@ -63,7 +65,7 @@ def test_a_material_sets_rpm_and_feed_held_to_the_spindle_and_the_axes():
     assert rough.cutting["ramp"] == 2
     # web/frontend/tests/carve.test.ts holds the page's twin to these.
     assert (rough.cutting["rpm"], rough.cutting["feed"], rough.cutting["plunge"]) == (12000, 288, 86)
-    assert (profile.operations[2].cutting["feed"], profile.operations[2].cutting["stepover"]) == (192, 0.1)
+    assert (profile.operations[1].cutting["feed"], profile.operations[1].cutting["stepover"]) == (192, 0.1)
 
 
 def test_a_feed_over_the_axes_brings_the_rpm_down_to_keep_the_chip():
@@ -146,8 +148,8 @@ def test_a_plate_becomes_a_rough_and_its_walls(plate: Path):
     profile = cam.load(PROFILE)
     built = camjob.build(profile, camjob.read_model(plate))
     labels = [group.label for group in built.groups]
-    assert labels == ["rough: 3 mm end mill", "walls: 3 mm end mill", "surfaces: 2 mm ball end mill"]
-    rough, walls, surfaces = built.groups
+    assert labels == ["rough: 3 mm end mill", "surfaces: 2 mm ball end mill", "walls: 3 mm end mill"]
+    rough, surfaces, walls = built.groups
     assert rough.enabled and walls.enabled and not surfaces.enabled
     for group in built.groups:
         assert group.moves and not group.paths
@@ -155,16 +157,18 @@ def test_a_plate_becomes_a_rough_and_its_walls(plate: Path):
         for path in group.moves:
             assert path[0][3] == carve.RAPID
             assert all(kind in (carve.RAPID, carve.FEED, carve.PLUNGE) for *_, kind in path)
-    # The block: 3 mm round a 30 x 20 plate, its top 0.5 over the plate's.
-    assert rough.depth == pytest.approx(6.5)
+    # The block: 3 mm round a 30 x 20 plate, its top 0.5 over the plate's;
+    # the rough stops 0.3 over the plate's bottom, the walls reach it.
+    assert rough.depth == pytest.approx(6.2)
+    assert walls.depth == pytest.approx(6.5)
     assert rough.power == 12000 and rough.speed == walls.speed
     assert any("30 x 20 x 6 mm" in note for note in built.notes)
     assert any("switched off, so planned on the whole block" in note for note in built.notes)
     assert built.outline[-1][0] == (0.0, 0.0) and built.outline[-1][2] == (36.0, 26.0)
-    # The deepest moves are at the plate's bottom, the shallowest cut at the
-    # top's facing.
+    # The deepest feeds: the rough's at the skin, the walls' at the bottom.
     zs = [m[2] for path in rough.moves for m in path if m[3] == carve.FEED]
-    assert min(zs) == pytest.approx(-6.5)
+    assert min(zs) == pytest.approx(-6.2)
+    assert min(m[2] for path in walls.moves for m in path) == pytest.approx(-6.5)
 
 
 @needs_kernel

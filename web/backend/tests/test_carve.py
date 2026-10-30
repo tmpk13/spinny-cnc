@@ -55,10 +55,11 @@ def test_an_stl_through_the_3d_profile_is_a_job_of_moves(client, tmp_path):
     job = answer["job"]
     assert job["source"] == "stl" and job["name"] == "plate"
     labels = [group["label"] for group in job["groups"]]
-    assert labels == ["rough: 3 mm end mill", "walls: 3 mm end mill", "surfaces: 2 mm ball end mill"]
+    assert labels == ["rough: 3 mm end mill", "surfaces: 2 mm ball end mill", "walls: 3 mm end mill"]
     rough = job["groups"][0]
     assert rough["tool"] == "spindle" and rough["paths"] == [] and rough["moves"]
-    assert rough["power"] == 12000 and rough["depth"] == pytest.approx(6.5)
+    assert rough["power"] == 12000 and rough["depth"] == pytest.approx(6.2)
+    assert job["groups"][2]["depth"] == pytest.approx(6.5)
     assert all(path[0][3] == MOVE_RAPID for path in rough["moves"])
     assert {m[3] for path in rough["moves"] for m in path} <= {MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE}
     # Priced by the moves' feeds: no machine here runs a model's moves.

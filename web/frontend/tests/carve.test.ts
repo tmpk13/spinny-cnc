@@ -48,9 +48,10 @@ describe("the mock's 3D profile", () => {
         expect(profile.spindle).toEqual({ min: 3000, max: 12000 });
         const rough = profile.operations[0]!;
         // The numbers toolpath/tests/test_carve.py has the backend's reader give.
-        expect(rough.cutting).toMatchObject({ rpm: 12000, feed: 288, plunge: 86, step_down: 0.6, stepover: 0.3, leave: 0.2, leave_floor: 0, ramp: 2, below: 0 });
+        expect(rough.cutting).toMatchObject({ rpm: 12000, feed: 288, plunge: 86, step_down: 0.6, stepover: 0.3, leave: 0.2, leave_floor: 0, ramp: 2, below: -0.3 });
         expect(rough.feeds).toContain("the rpm held to the spindle's 12000");
-        expect(profile.operations[2]!.cutting).toMatchObject({ stepover: 0.1, leave: 0, rpm: 12000, feed: 192 });
+        expect(profile.operations[1]!.cutting).toMatchObject({ stepover: 0.1, leave: 0, rpm: 12000, feed: 192 });
+        expect(profile.operations.map((operation) => operation.cutting["below"])).toEqual([-0.3, 0, 0]);
         expect(profile.tools.find((tool) => tool.id === "vee60")).toMatchObject({ shape: "vee", angle: 60, shank: 3.175, flutes: 2 });
         expect(summaryOf(profile)).toMatchObject({ model: true, material: "6061 aluminum", operations: 2 });
     });
@@ -101,12 +102,13 @@ describe("a model in the mock", () => {
         const profile = parseProfile(modelText, "mill-3d");
         const { job, notes } = buildModelJob("j1", profile, "box", "box.stl", boxStl(30, 20, 6));
         expect(job.source).toBe("stl");
-        expect(job.groups.map((group) => group.label)).toEqual(["rough: 3 mm end mill", "walls: 3 mm end mill", "surfaces: 2 mm ball end mill"]);
+        expect(job.groups.map((group) => group.label)).toEqual(["rough: 3 mm end mill", "surfaces: 2 mm ball end mill", "walls: 3 mm end mill"]);
         const rough = job.groups[0]!;
         expect(rough.paths).toEqual([]);
-        expect(rough.depth).toBeCloseTo(6.5, 9);
+        expect(rough.depth).toBeCloseTo(6.2, 9);
+        expect(job.groups[2]!.depth).toBeCloseTo(6.5, 9);
         expect(rough.moves!.every((path) => path[0]![3] === 0)).toBe(true);
-        expect(Math.min(...rough.moves!.flat().map((move) => move[2]))).toBeCloseTo(-6.5, 9);
+        expect(Math.min(...rough.moves!.flat().map((move) => move[2]))).toBeCloseTo(-6.2, 9);
         expect(job.outline[1]).toEqual([[0, 0], [36, 0], [36, 26], [0, 26], [0, 0]]);
         expect(notes[0]).toBe("box: 30 x 20 x 6 mm, 12 triangles, in a 36 x 26 x 6.5 mm block with its top at Z 0");
         expect(job.stats.seconds).toBeGreaterThan(0);
