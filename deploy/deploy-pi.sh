@@ -96,6 +96,18 @@ fi
 uv python install 3.12
 (cd "$dir/spinny-laser-pcb" && uv sync --no-dev --python 3.12)
 
+# The CAM's 3D kernel is built for the Pi on the Pi; without Rust there the
+# backend runs, and only an STL job says the kernel is missing.
+if [[ $mode == web ]]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+    if command -v cargo >/dev/null; then
+        (cd "$dir/spinny-laser-pcb/carve" && cargo build -q) \
+            || echo "the 3D kernel did not build: STL jobs will not run on the Pi" >&2
+    else
+        echo "no cargo on the Pi: STL jobs need the 3D kernel, built with cargo in carve/" >&2
+    fi
+fi
+
 fill() {
     sed -e "s|@USER@|$USER|" -e "s|@DIR@|$dir|" -e "s|@UV@|$(command -v uv)|" -e "s|@ALLOWED@|$1|" "/tmp/$2.service" \
         | sudo tee "/etc/systemd/system/$2.service" >/dev/null
