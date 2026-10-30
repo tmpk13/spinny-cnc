@@ -286,9 +286,13 @@ $save
   LED is fed from the fan rail through FAN3 does that, with its transistor
   wired so that a dark LED reads stop: from the controller's logic supply
   to a speed input held down by a pull-down, or from an active-low enable
-  input to ground. A plain pull-up at FAN3's switched pin suits only an
+  input to ground. A pull-up at FAN3's switched pin suits only an
   active-low enable, which FAN3 pulls low to run; on an active-high PWM or
-  enable input it commands full speed whenever FAN3 is off.
+  enable input it commands full speed whenever FAN3 is off. It also needs
+  a small diode in series, anode at the input and cathode at FAN3: FAN3's
+  indicator LED and its 10K tie the switched pin to the fan rail, so while
+  FAN3 is off the pin rises toward 12 V or 24 V and would carry a plain
+  pull-up with it.
   `$laser_invert` stays 0 for a spindle: a wiring that needs it to read
   stop runs the spindle at full speed at power-on, after a watchdog reset
   and in BOOTSEL. Check the controller's input with a meter before the
@@ -325,7 +329,11 @@ $save
   TTL line of its own needs a pull-down there too.
 - The FAN3 output switches the board's fan rail, which is 12 V or 24 V
   depending on how the board is powered. Check what reaches the laser
-  before connecting it to anything expecting 5 V logic.
+  before connecting it to anything expecting 5 V logic. The switched pin
+  (pin 2; pin 1 is the rail) is not a bare open drain: the indicator LED
+  and a 10K pull it toward the rail while FAN3 is off, so a 5 V logic
+  input, such as a CO2 supply's active-low `L`, takes it through a diode,
+  anode at the input.
 - The EN lines are pulled low by the pads at reset, so all four drivers
   are energized at their own default current until the firmware disables
   them a few milliseconds later.

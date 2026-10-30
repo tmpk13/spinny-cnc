@@ -100,13 +100,15 @@ flowchart LR
    - The K40's ribbon (X motor, both endstops, 5 V) needs a breakout; the
      Y motor has its own plug. K40 conversions usually start near 157.5
      steps/mm at 16 microsteps, to be measured.
-   - The supply's `L` (fire, active low) goes to FAN3's switched pin, never
-     its fan rail pin, with the grounds common. FAN3 is a low side MOSFET
-     that GP20's pull-down holds off until the firmware runs, so the beam
-     stays dark through reset, flashing and BOOTSEL with `$laser_invert` 0;
-     a GPIO wired straight to `L` would fire it in all three. The panel's
-     knob on `IN` stays as the current ceiling, and PWM on `L` sets the
-     power under it.
+   - The supply's `L` (fire, active low) goes to FAN3's switched pin (pin
+     2, never pin 1, the fan rail) through a small diode, anode at `L` and
+     cathode at FAN3, with the grounds common. FAN3's indicator LED and its
+     10K pull that pin toward 24 V while FAN3 is off, and the diode keeps
+     that off `L`. FAN3 is a low side MOSFET held off by its gate pull-down
+     until the firmware runs, so the beam stays dark through reset,
+     flashing and BOOTSEL with `$laser_invert` 0; a GPIO wired straight to
+     `L` would fire it in all three. The panel's knob on `IN` stays as the
+     current ceiling, and PWM on `L` sets the power under it.
    - The K40's optical endstops can go straight on the STOP headers, which
      carry 5 V on pin 3 and buffer the signal (74LVC2G34, inputs up to
      5.5 V). The cross slide's default endstop, GP22 on the PROBE header,
