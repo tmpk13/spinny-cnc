@@ -152,7 +152,55 @@ struct Node {
     children: Vec<usize>,
 }
 
-pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>) {
+/// A gap in the model the tool cannot get into at some level: its box's
+/// middle, its width and length, and the highest level it was seen at.
+#[derive(Clone, Copy, Debug)]
+pub struct Gap {
+    pub at: P2,
+    pub size: P2,
+    pub z: f64,
+}
+
+/// The gaps of a level the tool's center cannot reach: the places inside
+/// the model's outline, notches narrower than the tool closed over, that
+/// are free of the model at the level and that no position of the tool
+/// touches. Holes and slots narrower than the tool; a corner's fillet is
+/// part of a gap the tool does reach, and is not one.
+fn unreachable_gaps(part: &Part, shadow: &Paths64, free: &Paths64, keep: f64, z: f64) -> Vec<Gap> {
+    let tolerance = part.tolerance;
+    let closed = region::inflate(&region::inflate(&part.silhouette, keep, tolerance), -keep, tolerance);
+    let gaps = region::difference(&closed, shadow);
+    if gaps.is_empty() {
+        return Vec::new();
+    }
+    let swept = region::inflate(free, keep, tolerance);
+    let mut out = Vec::new();
+    for piece in region::pieces(&gaps) {
+        if piece.area() < 16.0 * tolerance * tolerance {
+            continue;
+        }
+        let paths = piece.paths();
+        // A sliver along the tool's reach is the stock it leaves, not a gap.
+        if region::inflate(&paths, -2.0 * tolerance, tolerance).is_empty() {
+            continue;
+        }
+        if !region::intersect(&paths, &swept).is_empty() {
+            continue;
+        }
+        let points = region::polyline(&piece.outer);
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for p in &points {
+            for k in 0..2 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        out.push(Gap { at: [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0], size: [hi[0] - lo[0], hi[1] - lo[1]], z });
+    }
+    out
+}
+
+pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>, Vec<Gap>) {
     let tolerance = part.tolerance;
     // Past the block's edge only as far as the outer loop still takes a
     // stepover off it.
@@ -160,12 +208,13 @@ pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>) {
     let levels = part.levels(s.step_down, s.floor, s.flats, s.leave_floor);
     let shadows = part.slicer.shadows(&levels);
     let keep = s.radius + s.leave;
-    let per_level: Vec<Vec<Node>> = levels
+    let per_level: Vec<(Vec<Node>, Vec<Gap>)> = levels
         .par_iter()
         .enumerate()
-        .map(|(level, _)| {
+        .map(|(level, &z)| {
             let free = region::difference(&area, &region::inflate(&shadows[level], keep, tolerance));
-            region::pieces(&free)
+            let gaps = unreachable_gaps(part, &shadows[level], &free, keep, z);
+            let nodes = region::pieces(&free)
                 .into_iter()
                 .filter(|piece| piece.area() > tolerance * tolerance)
                 .map(|piece| {
@@ -183,13 +232,23 @@ pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>) {
                     rings.reverse();
                     Node { level, piece, rings, children: Vec::new() }
                 })
-                .collect()
+                .collect();
+            (nodes, gaps)
         })
         .collect();
+    // A gap is named once, at the highest level it shows at.
+    let mut gaps: Vec<Gap> = Vec::new();
+    for (_, found) in &per_level {
+        for gap in found {
+            if !gaps.iter().any(|g| region::dist(g.at, gap.at) < keep) {
+                gaps.push(*gap);
+            }
+        }
+    }
     // Each piece hangs under the piece of the level above that holds it.
     let mut nodes: Vec<Node> = Vec::new();
     let mut first_of_level = Vec::with_capacity(levels.len());
-    for list in per_level {
+    for (list, _) in per_level {
         first_of_level.push(nodes.len());
         nodes.extend(list);
     }
@@ -252,7 +311,7 @@ pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>) {
         let children = node.children.clone();
         stack.push(children);
     }
-    (cuts, region::pieces(&area))
+    (cuts, region::pieces(&area), gaps)
 }
 
 pub fn waterline(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>) {

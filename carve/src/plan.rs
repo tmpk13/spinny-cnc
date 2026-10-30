@@ -322,6 +322,20 @@ pub fn plan_with_stock(mesh: &mut Mesh, request: &Request) -> Result<(Response, 
     Ok((response, stock))
 }
 
+/// What the tool could not get into, a few by name.
+fn gap_notes(gaps: &[ops::Gap], tool: &Tool, notes: &mut Vec<String>) {
+    const NAMED: usize = 6;
+    for gap in gaps.iter().take(NAMED) {
+        notes.push(format!(
+            "a {:.1} x {:.1} mm gap at X {:.1} Y {:.1}, from Z {:.2} down, is narrower than the {} mm tool and is left: drill it, or add a smaller tool",
+            gap.size[0], gap.size[1], gap.at[0], gap.at[1], gap.z, tool.diameter
+        ));
+    }
+    if gaps.len() > NAMED {
+        notes.push(format!("and {} more gaps the tool cannot get into", gaps.len() - NAMED));
+    }
+}
+
 fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, request: &Request) -> Result<OperationOut, String> {
     let cutter = cutter_of(&op.tool)?;
     let tolerance = request.tolerance;
@@ -367,7 +381,13 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
                 flats: op.flats,
             };
             let levels = part.levels(settings.step_down, floor, settings.flats, leave_floor);
-            let (cuts, area) = if op.strategy == "rough" { ops::rough(part, &settings) } else { ops::waterline(part, &settings) };
+            let (cuts, area) = if op.strategy == "rough" {
+                let (cuts, area, gaps) = ops::rough(part, &settings);
+                gap_notes(&gaps, &op.tool, &mut notes);
+                (cuts, area)
+            } else {
+                ops::waterline(part, &settings)
+            };
             let check = Cutter::new(Shape::Flat, (radius + op.leave - 2.0 * tolerance).max(radius * 0.5));
             let link = if op.strategy == "rough" { 2.0 * op.stepover } else { 2.0 * radius };
             (cuts, area, levels, check, link)
@@ -387,7 +407,10 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
     for cut in &cuts {
         linker.add(cut);
     }
-    let paths = linker.finish();
+    let (paths, skipped) = linker.finish();
+    if skipped > 0 && !cuts.is_empty() {
+        notes.push(format!("{skipped} of its {} cuts left out: nothing was left there for them", cuts.len()));
+    }
     let gouge = link::gouge(&paths, &surface, &cutter.shrunk(tolerance), (radius / 4.0).clamp(0.02, 0.1));
     if gouge > 2.0 * tolerance {
         notes.push(format!("the moves come {gouge:.3} mm into the model: a fault in the toolpaths, do not run them"));

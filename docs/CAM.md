@@ -87,6 +87,14 @@ What the operations cut:
 | `waterline` | a loop along every wall at each level, the tool's radius plus `leave` from it, climb milling unless `direction` says otherwise; with `step_down = 0` only at the flat faces and the bottom, a full depth pass on light stock |
 | `parallel` | lines `stepover` of the diameter apart at `angle` degrees from X, the tool dropped onto the mesh along them (flat, ball, bull nose or V bit), back and forth, over the model's outline and `band` past it: the finish for slopes and curves |
 
+A cut that would take nothing, because an operation before it already
+took that material, is left out (the notes count them). So a second rough
+with a smaller tool after the first only goes into the corners, holes and
+slots the first could not reach: rest machining, by adding an operation.
+The rough names every gap in the model narrower than its tool (a hole, a
+slot, a notch in the outline) with its place and size; drill it, or add
+that smaller tool.
+
 The tool comes down into a cut on a ramp no steeper than `ramp` degrees:
 round a loop, a whole number of turns, or back and forth along the start of
 a line; a sliver of material, or `ramp = 90`, is plunged. Between cuts it

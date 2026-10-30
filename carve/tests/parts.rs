@@ -277,3 +277,39 @@ fn a_fine_mesh_plans_in_good_time() {
     assert!(seconds < 60.0, "{seconds} s for {} triangles", response.model.triangles);
     eprintln!("{} triangles planned in {seconds:.1} s", response.model.triangles);
 }
+
+#[test]
+fn a_hole_too_small_for_the_rough_is_named_and_a_smaller_tool_takes_only_what_is_left() {
+    // 20 x 12 x 3 mm with a 2 x 2 mm hole through at x 9..11, y 5..7.
+    let part = voxels([40, 24, 6], 0.5, |i, j, _| !((18..22).contains(&i) && (10..14).contains(&j)));
+    let (response, stock, _) = run(
+        &part,
+        json!([
+            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 1, "stepover": 1.2, "leave": 0 },
+            { "name": "rest", "strategy": "rough", "tool": { "shape": "flat", "diameter": 1 },
+              "step_down": 1, "stepover": 0.4, "leave": 0 },
+        ]),
+    );
+    check_moves(&response);
+    let rough = &response.operations[0];
+    let named: Vec<&String> = rough.notes.iter().filter(|n| n.contains("narrower than the 3 mm tool")).collect();
+    assert_eq!(named.len(), 1, "{:?}", rough.notes);
+    // The block sits 4 mm round the part: the hole's middle is at 14, 10.
+    assert!(named[0].contains("2.0 x 2.0 mm gap at X 14.0 Y 10.0"), "{}", named[0]);
+    // The smaller tool cuts the hole and the corners the first one left,
+    // and nothing it already cleared.
+    let rest = &response.operations[1];
+    assert!(rest.notes.iter().any(|n| n.contains("cuts left out")), "{:?}", rest.notes);
+    assert!(rest.length < rough.length / 4.0, "{} against {}", rest.length, rough.length);
+    let in_hole = rest.paths.iter().flatten().any(|m| m[3] == FEED && (m[0] - 14.0).abs() < 0.6 && (m[1] - 10.0).abs() < 0.6 && m[2] < -3.0);
+    assert!(in_hole, "the 1 mm tool goes down the hole");
+    let mut cleared = 0;
+    for (p, h) in stock.cells() {
+        if (p[0] - 14.0).abs() < 0.4 && (p[1] - 10.0).abs() < 0.4 {
+            assert!(h <= -3.5 + 1e-6, "{p:?}: the hole still holds stock at {h}");
+            cleared += 1;
+        }
+    }
+    assert!(cleared > 100);
+}

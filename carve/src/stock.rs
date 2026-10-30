@@ -86,6 +86,27 @@ impl Stock {
         best
     }
 
+    /// Whether any material within `radius` of the segment a-b stands
+    /// higher than z: whether a cut along it at z would take anything.
+    /// Unlike `highest` the reach is not widened by a cell: a tool run
+    /// along a finished wall would see the wall in every loop.
+    pub fn above(&self, a: P2, b: P2, radius: f64, z: f64) -> bool {
+        let reach = radius;
+        let lo = [a[0].min(b[0]), a[1].min(b[1])];
+        let hi = [a[0].max(b[0]), a[1].max(b[1])];
+        let Some((x0, x1, y0, y1)) = self.span(lo, hi, reach) else {
+            return false;
+        };
+        for iy in y0..=y1 {
+            for ix in x0..=x1 {
+                if (self.height[iy * self.nx + ix] as f64) > z && segment_distance(self.center(ix, iy), a, b) <= reach {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// The tool moved from a to b at feed.
     pub fn cut(&mut self, cutter: &Cutter, a: V3, b: V3) {
         let run = (b[0] - a[0]).hypot(b[1] - a[1]);

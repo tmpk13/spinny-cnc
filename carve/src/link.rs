@@ -62,15 +62,38 @@ pub struct Linker<'a> {
     paths: Vec<Vec<Move>>,
     path: Vec<Move>,
     at: Option<V3>,
+    /// Cuts left out because there was nothing left for them to take.
+    pub skipped: usize,
 }
 
 impl<'a> Linker<'a> {
     pub fn new(cutter: Cutter, check: Cutter, surface: &'a Surface, stock: &'a mut Stock, area: &'a [Piece], settings: Settings) -> Self {
-        Linker { cutter, check, surface, stock, area, settings, paths: Vec::new(), path: Vec::new(), at: None }
+        Linker { cutter, check, surface, stock, area, settings, paths: Vec::new(), path: Vec::new(), at: None, skipped: 0 }
     }
 
+    /// Whether any of the cut's moves has material over it: the stock
+    /// map never shows less than there is, so a cut it calls empty is.
+    /// Material only in the last two tolerances of the tool's reach, the
+    /// wall a finished loop ran against, does not count.
+    fn takes_material(&self, cut: &Cut) -> bool {
+        let r = (self.cutter.radius - 2.0 * self.settings.tolerance).max(self.cutter.radius / 2.0);
+        let lift = self.settings.tolerance;
+        if cut.points.len() == 1 {
+            let p = cut.points[0];
+            return self.stock.above([p[0], p[1]], [p[0], p[1]], r, p[2] + lift);
+        }
+        cut.points.windows(2).any(|w| self.stock.above([w[0][0], w[0][1]], [w[1][0], w[1][1]], r, w[0][2].min(w[1][2]) + lift))
+    }
+
+    /// The cut linked on from where the tool is; a cut that would take
+    /// nothing, as the stock map has it, is left out (and counted), so a
+    /// second, smaller tool only goes where the first could not.
     pub fn add(&mut self, cut: &Cut) {
         if cut.points.is_empty() {
+            return;
+        }
+        if !self.takes_material(cut) {
+            self.skipped += 1;
             return;
         }
         let q = cut.points[0];
@@ -96,9 +119,10 @@ impl<'a> Linker<'a> {
         self.enter(cut, self.settings.travel);
     }
 
-    pub fn finish(mut self) -> Vec<Vec<Move>> {
+    /// The paths, and how many cuts were left out as taking nothing.
+    pub fn finish(mut self) -> (Vec<Vec<Move>>, usize) {
         self.end_path();
-        self.paths
+        (self.paths, self.skipped)
     }
 
     fn end_path(&mut self) {
