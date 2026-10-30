@@ -474,3 +474,5 @@
   speeds held to the spindle and the axes), the block, the model's
   orientation and the spindle's range; the CAM tab takes an STL and shows
   the moves at their depth; the mill runs them, and the post writes them.
+  Gaps narrower than the roughing tool are named, and cuts that would take
+  nothing are left out, so a second smaller rough does rest machining.
