@@ -3,10 +3,12 @@
     spinny-cam cam/mill-3axis.toml board.kicad_pcb
     spinny-cam cam/mill-3axis.toml board-F_Cu.gbr -o var/out/board.nc
     spinny-cam cam/cartesian-laser.toml sweep.gcode --name coupon
+    spinny-cam cam/mill-3d.toml bracket.stl
 
 The board (a KiCad file, or a copper gerber with its Edge.Cuts and drill
-file beside it) or an X/Y gcode file goes through every enabled operation
-of the profile, and the program is written with a markdown report beside it.
+file beside it), an X/Y gcode file or an STL model goes through every
+enabled operation of the profile, and the program is written with a
+markdown report beside it.
 """
 
 from __future__ import annotations
@@ -24,12 +26,12 @@ OUT_DIR = Path(__file__).resolve().parents[3] / "var" / "out"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="spinny-cam",
-        description="A board or an X/Y gcode design through a CAM profile, gcode for its controller out.",
+        description="A board, an X/Y gcode design or an STL model through a CAM profile, gcode for its controller out.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("profile", type=Path, help="a CAM profile, cam/*.toml")
-    parser.add_argument("design", type=Path, help="a .kicad_pcb, a copper gerber, or an X/Y .gcode/.nc file")
+    parser.add_argument("design", type=Path, help="a .kicad_pcb, a copper gerber, an X/Y .gcode/.nc file, or an .stl model")
     parser.add_argument("-o", "--output", type=Path, help="the gcode file to write (default: var/out/<design>.nc)")
     parser.add_argument("--name", help="the job's name in the file (default: the design's)")
     parser.add_argument("--tolerance", type=float, default=0.005, help="chord tolerance of rings and arcs, mm")
@@ -45,7 +47,9 @@ def read_design(path: Path, profile: cam.Profile) -> camjob.Design:
         design = camjob.read_gcode(path.read_text(encoding="utf-8", errors="replace"), path.stem)
         design.paths = camjob.place_paths(design.paths, profile.placement.anchor, profile.placement.offset)
         return design
-    raise camjob.DesignError(f"{path.name}: not a board or an X/Y gcode file")
+    if suffix in camjob.MODEL_SUFFIXES:
+        return camjob.read_model(path)
+    raise camjob.DesignError(f"{path.name}: not a board, an X/Y gcode file or an STL model")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -58,8 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     except (cam.CamError, camjob.DesignError, post.PostError, OSError) as exc:
         print(f"spinny-cam: {exc}", file=sys.stderr)
         return 1
-    lines = [f"{built.name} through {profile.name}: {len([g for g in built.groups if g.enabled and g.paths])} operations"]
-    lines.extend(f"  {g.label}: {len(g.paths)} paths, {'off' if not g.enabled else g.tool}" for g in built.groups)
+    lines = [f"{built.name} through {profile.name}: {len([g for g in built.groups if g.enabled and g.has_cuts])} operations"]
+    lines.extend(f"  {g.label}: {len(g.moves or g.paths)} paths, {'off' if not g.enabled else g.tool}" for g in built.groups)
     lines.extend(f"  note: {note}" for note in built.notes)
     lines.extend(f"  {line}" for line in program.report.summary_lines())
     print("\n".join(lines))

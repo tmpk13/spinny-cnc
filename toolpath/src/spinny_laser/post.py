@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from . import cam, gcode
+from . import cam, carve, gcode
 from .camjob import BuiltGroup, BuiltJob
 
 Point = tuple[float, float]
@@ -111,10 +111,18 @@ class _Cartesian:
 
     def reach(self, axis: cam.Axis, value: float) -> None:
         self.report.reach(axis.letter, value)
-        if axis.min is not None and value < axis.min - 1e-9:
-            self.warn(f"{axis.letter} reaches {value:.3f}, under its min {axis.min:g}")
-        if axis.max is not None and value > axis.max + 1e-9:
-            self.warn(f"{axis.letter} reaches {value:.3f}, over its max {axis.max:g}")
+
+    def check_travel(self) -> None:
+        """One warning for each end of an axis the program goes past, at
+        the farthest it goes."""
+        for axis in self.profile.axes:
+            span = self.report.extents.get(axis.letter)
+            if span is None:
+                continue
+            if axis.min is not None and span[0] < axis.min - 1e-9:
+                self.warn(f"{axis.letter} reaches {span[0]:.3f}, under its min {axis.min:g}")
+            if axis.max is not None and span[1] > axis.max + 1e-9:
+                self.warn(f"{axis.letter} reaches {span[1]:.3f}, over its max {axis.max:g}")
 
     def warn(self, text: str) -> None:
         if text not in self.report.warnings:
@@ -207,6 +215,42 @@ class _Cartesian:
         self.report.length_mm += length
         self.report.seconds += length / feed * 60.0
 
+    def cut3(self, point: Point, over_surface: float, feed: float, what: str) -> None:
+        """A G1 in three dimensions at `feed` along the move, held so that
+        no axis goes faster than its rate."""
+        assert self.x is not None and self.y is not None and self.depth is not None
+        mx, my = self.machine_xy(point)
+        mz = self.machine_z(over_surface)
+        words: list[str] = []
+        moved: dict[cam.Axis, float] = {}
+        for axis, value in ((self.x, mx), (self.y, my), (self.depth, mz)):
+            before = self.at[axis.letter]
+            if before is None or abs(before - value) > 1e-9:
+                words.append(f"{axis.letter}{self.num(value)}")
+                moved[axis] = value - (before if before is not None else value)
+                self.at[axis.letter] = value
+                self.reach(axis, value)
+        if not words:
+            return
+        length = math.sqrt(sum(d * d for d in moved.values()))
+        # Each axis covers its share of the move: the feed is held where
+        # the share of the slowest makes it go over its rate.
+        capped = feed
+        for axis, delta in moved.items():
+            if axis.rate is not None and length > 0 and abs(delta) > 0:
+                capped = min(capped, axis.rate * length / abs(delta))
+        if capped < feed - 1e-9 and what not in self.capped:
+            self.capped.add(what)
+            self.warn(f"{what}: {feed:g} mm/min is over an axis' rate on some moves; those are written slower")
+        feed = capped
+        if self.feed is None or abs(self.feed - feed) > 1e-9:
+            words.append(f"F{self.num(feed)}")
+            self.feed = feed
+        self.emit("G1 " + " ".join(words))
+        self.report.cuts += 1
+        self.report.length_mm += length
+        self.report.seconds += length / feed * 60.0
+
     def plunge(self, over_surface: float, rate: float, what: str) -> None:
         assert self.depth is not None
         value = self.machine_z(over_surface)
@@ -255,7 +299,7 @@ class _Cartesian:
 
     def write(self) -> Program:
         job, profile = self.job, self.profile
-        self.comment(f"{job.name}: {len([g for g in job.groups if g.enabled and g.paths])} operations through {profile.name}")
+        self.comment(f"{job.name}: {len([g for g in job.groups if g.enabled and g.has_cuts])} operations through {profile.name}")
         self.comment("board X/Y on " + " ".join(f"{axis.letter}={axis.role}" for axis in profile.axes))
         for line in self.post.header:
             self.emit(line)
@@ -265,10 +309,12 @@ class _Cartesian:
         if setup:
             self.go(setup=setup)
         for group in job.groups:
-            if not group.enabled or not group.paths:
+            if not group.enabled or not group.has_cuts:
                 continue
-            self.comment(f"{group.label}: {len(group.paths)} paths")
-            if group.tool == cam.SPINDLE:
+            self.comment(f"{group.label}: {len(group.moves or group.paths)} paths")
+            if group.moves:
+                self.carve(group)
+            elif group.tool == cam.SPINDLE:
                 self.mill(group)
             else:
                 self.burn(group)
@@ -283,6 +329,7 @@ class _Cartesian:
                 self.go(setup={self.depth: self.depth.home})
         for line in self.post.footer:
             self.emit(line)
+        self.check_travel()
         self.report.lines = len(self.lines)
         return Program("\n".join(self.lines) + "\n", self.report)
 
@@ -309,6 +356,35 @@ class _Cartesian:
                 for target in points[1:]:
                     self.cut(target, group.speed, None, group.label)
                 self.go(z=self.safe())
+
+    def carve(self, group: BuiltGroup) -> None:
+        """A model's paths: each from the safe height down to its first
+        point, then its moves as they are, and up again."""
+        if self.depth is None:
+            raise PostError(f"{group.label}: a model's paths need a depth axis in the profile")
+        if group.tool != cam.SPINDLE:
+            raise PostError(f"{group.label}: a model's paths are cut with a spindle")
+        if not group.power > 0:
+            raise PostError(f"{group.label}: a spindle needs a speed above 0")
+        self.spindle(group.power)
+        for path in group.moves:
+            if not path:
+                continue
+            x, y, z, kind = path[0]
+            self.go(z=self.safe())
+            self.go(point=(x, y))
+            if kind == carve.RAPID:
+                self.go(z=z)
+            else:
+                self.plunge(z, group.plunge, f"{group.label} plunge")
+            for x, y, z, kind in path[1:]:
+                if kind == carve.RAPID:
+                    self.go(point=(x, y), z=z)
+                elif kind == carve.PLUNGE:
+                    self.cut3((x, y), z, group.plunge, f"{group.label} plunge")
+                else:
+                    self.cut3((x, y), z, group.speed, group.label)
+            self.go(z=self.safe())
 
     def burn(self, group: BuiltGroup) -> None:
         if group.min_power > 0:

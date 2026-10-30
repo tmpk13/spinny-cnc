@@ -15,15 +15,24 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import board, cam
+from . import board, cam, carve
 from . import clear as copper_clearing
 from . import deposit as copper_deposition
 
 Point = tuple[float, float]
 Polyline = list[Point]
+# x, y, z over the stock's top, and how the tool gets there (carve.RAPID,
+# FEED or PLUNGE).
+Move = tuple[float, float, float, int]
 
 GERBER_SUFFIXES = board.GERBER_SUFFIXES
 BOARD_SUFFIXES = GERBER_SUFFIXES + (".kicad_pcb",)
+MODEL_SUFFIXES = (".stl",)
+# Over the material for the moves between cuts, mm.
+CLEARANCE = 1.0
+# A model's chord tolerance is never finer than this: arcs any finer only
+# add lines, the cutter does not follow them.
+MODEL_TOLERANCE = 0.01
 # A hole this much wider than the bit is milled round; narrower, the bit is
 # put down at its center.
 HOLE_SLACK = 0.02
@@ -65,6 +74,8 @@ class Design:
     paths: list[PathSet] = field(default_factory=list)
     # The raw gerber image, for a deposit's centerlines; None for other designs.
     image: object | None = None
+    # A 3D model's mesh file, which the kernel reads itself; None otherwise.
+    model: Path | None = None
 
     @property
     def board(self) -> bool:
@@ -85,9 +96,19 @@ class BuiltGroup:
     enabled: bool = True
     # A laser's height over the surface, for a controller with a depth axis.
     height: float | None = None
+    # A model's toolpaths, every path's moves in three dimensions: z over
+    # the stock's top, rapids, feeds at `speed` and plunges at `plunge`.
+    # The first move of a path is where the tool comes down to from the
+    # travel height. With these, `paths` is empty and `depth` and
+    # `passes` say nothing about the cut.
+    moves: list[list[Move]] = field(default_factory=list)
+
+    @property
+    def has_cuts(self) -> bool:
+        return bool(self.paths) or bool(self.moves)
 
     def document(self) -> dict:
-        return {
+        out = {
             "label": self.label,
             "tool": self.tool,
             "power": self.power,
@@ -99,6 +120,9 @@ class BuiltGroup:
             "enabled": self.enabled,
             "paths": [[list(p) for p in path] for path in self.paths],
         }
+        if self.moves:
+            out["moves"] = [[list(m) for m in path] for path in self.moves]
+        return out
 
 
 @dataclass
@@ -194,6 +218,8 @@ def build(
     """
     from laser_sweep import isolate
 
+    if design.model is not None:
+        return _model_job(profile, design, name, tolerance)
     notes: list[str] = []
     place = profile.placement
     spot = _isolation_width(profile)
@@ -226,6 +252,9 @@ def build(
         board = None
     for operation in profile.operations:
         tool = profile.tool(operation.tool)
+        if operation.source in cam.MODEL_SOURCES:
+            notes.append(f"{operation.name}: {design.name} is not a 3D model, so there is nothing to {operation.source}")
+            continue
         made = _operation_groups(operation, tool, design, board, profile, notes)
         groups.extend(made)
     if not any(group.paths for group in groups):
@@ -250,6 +279,173 @@ class _Board:
     centers: list
     tolerance: float
     pace: float
+
+
+# --- a 3D model -------------------------------------------------------------
+
+
+def read_model(path: Path) -> Design:
+    """A mesh file as a design; the kernel reads the mesh itself."""
+    if path.suffix.lower() not in MODEL_SUFFIXES:
+        raise DesignError(f"{path.name}: a 3D model is an STL file")
+    if not path.is_file():
+        raise DesignError(f"{path.name}: no such file")
+    return Design(name=path.stem, source="stl", model=path)
+
+
+def model_request(profile: cam.Profile, design: Design, operations: list[cam.Operation], tolerance: float) -> dict:
+    """The kernel's request for some of a profile's model operations."""
+    depth = profile.axis(cam.DEPTH)
+    assert depth is not None and depth.safe is not None
+    stock = profile.stock
+    return {
+        "model": str(design.model),
+        "turn": list(profile.model.turn),
+        "scale": profile.model.scale,
+        "stock": {
+            "margin": stock.margin,
+            "top": stock.top,
+            "size": list(stock.size) if stock.size else None,
+            "anchor": profile.placement.anchor,
+            "offset": list(profile.placement.offset),
+        },
+        "tolerance": max(tolerance, MODEL_TOLERANCE),
+        "travel": depth.safe,
+        "clearance": min(CLEARANCE, depth.safe / 2.0),
+        "operations": [_kernel_operation(operation, profile.tool(operation.tool)) for operation in operations],
+    }
+
+
+def _kernel_operation(operation: cam.Operation, tool: cam.Tool) -> dict:
+    cutting = operation.cutting
+    diameter = tool.diameter
+    out = {
+        "name": operation.name,
+        "strategy": operation.source,
+        "tool": {
+            "shape": tool.shape,
+            "diameter": diameter,
+            "corner": tool.corner,
+            "angle": tool.angle or 0.0,
+            "tip": tool.tip,
+        },
+        "step_down": cutting.get("step_down", 0.0),
+        "stepover": cutting["stepover"] * diameter,
+        "leave": cutting["leave"],
+        "leave_floor": cutting["leave_floor"],
+        "ramp": cutting["ramp"],
+        "direction": operation.settings.get("direction", cam.CLIMB),
+        "below": cutting["below"],
+        "flats": operation.settings.get("flats", True),
+        "angle": float(operation.settings.get("angle", 0.0)),
+    }
+    if "band" in cutting:
+        out["band"] = cutting["band"]
+    return out
+
+
+def _model_job(profile: cam.Profile, design: Design, name: str | None, tolerance: float) -> BuiltJob:
+    """A model through the profile's rough, waterline and parallel
+    operations, by the kernel.
+
+    The enabled operations are planned together, in order, each over the
+    stock the ones before it left, which is what lets a finish move
+    between its cuts just over the material. One switched off is planned
+    alone on the whole block, so turning it on later is safe, if slower.
+    """
+    notes: list[str] = []
+    depth = profile.axis(cam.DEPTH)
+    if profile.kinematics != cam.CARTESIAN or depth is None or depth.safe is None:
+        raise DesignError(f"{profile.name}: a 3D model is cut on an X/Y machine with a depth axis")
+    operations = [operation for operation in profile.operations if operation.source in cam.MODEL_SOURCES]
+    for operation in profile.operations:
+        if operation.source not in cam.MODEL_SOURCES:
+            notes.append(f"{operation.name}: {design.name} is a 3D model, so there is no {operation.source} in it")
+    if not operations:
+        raise DesignError(f"{profile.name} has no rough, waterline or parallel operation for a 3D model")
+    for operation in operations:
+        tool = profile.tool(operation.tool)
+        if tool.shape == cam.VEE and tool.shank is None:
+            raise DesignError(f"{operation.name}: the V bit {tool.id} needs its diameter to cut a model")
+    answers: dict[str, dict] = {}
+    first: dict | None = None
+    try:
+        together = [operation for operation in operations if operation.enabled]
+        if together:
+            first = carve.run(model_request(profile, design, together, tolerance))
+            for out in first["operations"]:
+                answers[out["name"]] = out
+        for operation in operations:
+            if operation.enabled:
+                continue
+            alone = carve.run(model_request(profile, design, [operation], tolerance))
+            first = first or alone
+            answers[operation.name] = alone["operations"][0]
+            notes.append(f"{operation.name}: switched off, so planned on the whole block as if nothing had been cut before it")
+    except carve.CarveError as exc:
+        raise DesignError(f"{design.name}: {exc}") from exc
+    assert first is not None
+    notes.extend(first.get("notes", []))
+    material = profile.material
+    if material is not None and material.note:
+        notes.append(f"{material.name}: {material.note}")
+    tolerance_used = max(tolerance, MODEL_TOLERANCE)
+    groups: list[BuiltGroup] = []
+    for operation in operations:
+        out = answers[operation.name]
+        tool = profile.tool(operation.tool)
+        if operation.feeds:
+            notes.append(f"{operation.name}: {operation.feeds}")
+        notes.extend(f"{operation.name}: {note}" for note in out.get("notes", []))
+        if out.get("gouge", 0.0) > 2.0 * tolerance_used:
+            raise DesignError(
+                f"{operation.name}: the toolpaths come {out['gouge']:.3f} mm into the model, a fault in the kernel; no job was made"
+            )
+        moves = [[(float(m[0]), float(m[1]), float(m[2]), int(m[3])) for m in path] for path in out["paths"]]
+        deepest = -min((m[2] for path in moves for m in path), default=0.0)
+        if tool.length is not None and deepest > tool.length + 1e-9:
+            notes.append(f"{operation.name}: goes {deepest:.2f} mm under the stock's top, deeper than {tool.name} reaches ({tool.length:g} mm)")
+        cutting = operation.cutting
+        groups.append(
+            BuiltGroup(
+                label=f"{operation.name}: {tool.name}",
+                tool=cam.SPINDLE,
+                power=cutting["rpm"],
+                min_power=0.0,
+                speed=cutting["feed"],
+                passes=1,
+                depth=max(0.0, deepest),
+                plunge=cutting["plunge"],
+                paths=[],
+                enabled=operation.enabled,
+                moves=moves,
+            )
+        )
+    if not any(group.moves for group in groups):
+        raise DesignError(f"nothing in {design.name} for the operations of {profile.name}")
+    if len([g for g in groups if g.enabled]) > 1:
+        notes.append("the operations were planned in order, each over what the one before left: run them in that order, none of them skipped")
+    low = first["stock"]["min"]
+    high = first["stock"]["max"]
+    outline = [[tuple(p) for p in loop] for loop in first.get("silhouette", [])]
+    outline.append([(low[0], low[1]), (high[0], low[1]), (high[0], high[1]), (low[0], high[1]), (low[0], low[1])])
+    model = first["model"]
+    notes.insert(
+        0,
+        f"{design.name}: {model['size'][0]:g} x {model['size'][1]:g} x {model['size'][2]:g} mm, {model['triangles']} triangles, "
+        f"in a {high[0] - low[0]:g} x {high[1] - low[1]:g} x {-low[2]:g} mm block with its top at Z 0",
+    )
+    widths = [profile.tool(operation.tool).width for operation in operations]
+    return BuiltJob(
+        name=name or design.name,
+        source=design.source,
+        spot=min(widths),
+        offset=profile.placement.offset,
+        groups=groups,
+        outline=outline,
+        copper=[],
+        notes=notes,
+    )
 
 
 def _isolation_width(profile: cam.Profile) -> float:

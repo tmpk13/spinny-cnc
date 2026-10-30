@@ -69,13 +69,22 @@ run = "cd firmware && cargo build -q -p spinny-virtual"
 description = "Firmware crates"
 run = "cd firmware && cargo test -q"
 
+[tasks.build-carve]
+description = "Build the 3D kernel the CAM runs for STL models: carve/target/debug/spinny-carve"
+run = "cd carve && cargo build -q"
+
+[tasks.test-carve]
+description = "3D kernel: slicing, drop cutter, the strategies on made up parts"
+run = "cd carve && cargo test -q"
+
 [tasks.test-toolpath]
 description = "Toolpath library and command line tools"
+depends = ["build-carve"]
 run = "uv run pytest -q toolpath/tests"
 
 [tasks.test-backend]
 description = "Web backend, with the end to end runs on the virtual firmware"
-depends = ["build-virtual"]
+depends = ["build-virtual", "build-carve"]
 run = "SPINNY_VIRTUAL=firmware/target/debug/spinny-virtual uv run pytest -q web/backend/tests"
 
 [tasks.test-frontend]
@@ -88,7 +97,7 @@ run = "cd sim && cargo test -q"
 
 [tasks.test]
 description = "Every suite"
-depends = ["test-firmware", "test-toolpath", "test-backend", "test-frontend", "test-sim"]
+depends = ["test-firmware", "test-carve", "test-toolpath", "test-backend", "test-frontend", "test-sim"]
 
 [tasks.uf2]
 description = "Build the board firmware as a uf2: firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"

@@ -48,8 +48,9 @@ step_down = 0.5
 def test_the_shipped_profiles_load_and_say_what_they_are():
     found, problems = load_all(SHIPPED)
     assert problems == []
-    assert [p.id for p in found] == ["cartesian-laser", "mill-3axis", "polar-laser"]
+    assert [p.id for p in found] == ["cartesian-laser", "mill-3axis", "mill-3d", "polar-laser"]
     by_id = {p.id: p for p in found}
+    assert by_id["mill-3d"].machine == "cartesian-mill" and by_id["mill-3d"].summary()["model"] is True
     mill = by_id["mill-3axis"]
     assert mill.kinematics == "cartesian" and mill.machine is None
     assert [a.letter for a in mill.axes] == ["X", "Y", "Z"] and mill.axis("depth").safe == 5.0
@@ -325,7 +326,7 @@ def test_the_command_line_tool_writes_the_program_and_a_report(tmp_path, capsys)
     assert "- Lines:" in (tmp_path / "board.md").read_text()
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(BOARD_COPPER), "--dry-run"]) == 0
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(tmp_path / "nothing.svg")]) == 1
-    assert "not a board or an X/Y gcode file" in capsys.readouterr().err
+    assert "not a board, an X/Y gcode file or an STL model" in capsys.readouterr().err
 
 
 def test_a_v_bit_cuts_as_wide_as_the_depth_makes_it():

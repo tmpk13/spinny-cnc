@@ -1,0 +1,253 @@
+# Parts cut from a block (aluminum, POM, acrylic...) after a 3D model, on
+# the cartesian mill: X and Y carry the part, Z is the depth. Drop an STL
+# on the CAM tab, or run `spinny-cam cam/mill-3d.toml part.stl`.
+#
+# Before running: clamp the block outside the stock margin (the tool clears
+# a band round the part, never the whole block), touch the tool off on the
+# block's top so Z 0 is its top, and zero X and Y at its lower left corner.
+#
+# Every table here is read whole and refused whole: a wrong key or value is
+# named with its table. A key left out takes the default written beside it.
+
+name = "3D mill"
+description = "A part out of a block after an STL model: rough, walls, and surfaces on the cartesian mill"
+machine = "cartesian-mill"      # the machines/ file whose firmware runs these jobs through the backend
+
+# --- axes: as the mill's machine file has them --------------------------------
+
+[[axes]]
+letter = "X"
+kind = "linear"
+role = "x"
+min = -10               # mm; the mill's rail. The block's edge is at 0 and a
+max = 60                # rough's outer loop runs up to a stepover short of a radius past it
+rate = 1200             # mm/min, the fastest feed; a material's feed is held to the slower of X and Y
+rapid = 1200            # mm/min for G0, for the time estimate
+offset = 0              # machine coordinate of the block's X 0
+home = 0                # where the program ends
+
+[[axes]]
+letter = "Y"
+kind = "linear"
+role = "y"
+min = -10               # the cross slide
+max = 40
+rate = 1200
+rapid = 1200
+offset = 0
+home = 0
+
+[[axes]]
+letter = "Z"
+kind = "linear"
+role = "depth"
+min = -30
+max = 20
+rate = 600              # plunges are held to it
+rapid = 600
+offset = 0              # machine Z of the block's top, 0 after touching off
+safe = 5                # mm over the block's top for moves between paths
+home = 10
+
+# --- the spindle's speed range: a material's rpm is held inside it --------------
+
+[spindle]
+min = 3000              # rpm
+max = 12000
+
+# --- tools ---------------------------------------------------------------------
+# kind = "mill". shape: flat (default), ball, bull (with corner, the radius
+# of its rounded corners) or vee (with angle, the included angle, and tip).
+# flutes set the feed a material asks for (default 2); length is how deep
+# under the block's top the tool reaches, and a job going deeper says so.
+# rpm and feed may be given here; left out, the stock's material works them
+# out from the tool's diameter and flutes.
+
+[[tools]]
+id = "em3"
+kind = "mill"
+name = "3 mm end mill"
+shape = "flat"
+diameter = 3.0
+flutes = 2              # one or two flutes clear aluminum and plastics best
+length = 12
+
+[[tools]]
+id = "ball2"
+kind = "mill"
+name = "2 mm ball end mill"
+shape = "ball"
+diameter = 2.0
+flutes = 2
+length = 8
+
+[[tools]]
+id = "vee60"
+kind = "mill"
+name = "60 degree V bit"
+shape = "vee"
+angle = 60              # included angle of the point, degrees
+tip = 0.1               # width of its tip, mm
+diameter = 3.175        # the shank, which bounds the cut
+flutes = 2
+
+# --- materials: what the block is, and how hard a tool is pushed in it ---------
+# speed: the cutting edge's speed, m/min; rpm = speed * 1000 / (pi * diameter),
+#   held to [spindle]. chip_load: mm a tooth takes, by tool diameter
+#   ([[diameter, mm], ...], read straight between); feed = rpm * flutes * chip.
+#   A feed over X's or Y's rate is held there and the rpm brought down with
+#   it, so the chip stays: a tool that spins fast and moves slowly rubs,
+#   which melts plastics and welds aluminum to the edge.
+# depth and stepover: a rough's step down and stepover, of the tool's
+#   diameter. ramp: the steepest entry, degrees. plunge: the plunge rate, of
+#   the feed. leave: mm a rough leaves for the finish. note: shown with the job.
+# The numbers are a careful start for a light machine: run an air cut, then
+# a first cut in scrap, and raise the chip load before the speed.
+
+[[materials]]
+id = "aluminum"
+name = "6061 aluminum"
+speed = 150
+chip_load = [[1, 0.004], [3, 0.012], [6, 0.025]]
+depth = 0.2
+stepover = 0.3
+ramp = 2
+plunge = 0.3
+leave = 0.2
+note = "air blast or a mist of lubricant on the cut, climb milling, and a bit made for aluminum (one or two polished flutes); listen for chatter and lower the step down first"
+
+[[materials]]
+id = "pom"
+name = "POM (acetal, Delrin)"
+speed = 200
+chip_load = [[1, 0.02], [3, 0.05], [6, 0.08]]
+depth = 0.5
+stepover = 0.4
+ramp = 5
+plunge = 0.5
+leave = 0.2
+note = "keep the chips thick or it melts: never let the bit dwell; a single flute O-flute bit cuts cleanest"
+
+[[materials]]
+id = "acrylic"
+name = "Cast acrylic (PMMA)"
+speed = 200
+chip_load = [[1, 0.015], [3, 0.04], [6, 0.06]]
+depth = 0.4
+stepover = 0.4
+ramp = 5
+plunge = 0.4
+leave = 0.2
+note = "cast sheet cuts clean, extruded melts sooner; an air blast keeps chips out of the cut"
+
+[[materials]]
+id = "hdpe"
+name = "HDPE"
+speed = 250
+chip_load = [[1, 0.03], [3, 0.07], [6, 0.12]]
+depth = 0.6
+stepover = 0.5
+ramp = 5
+plunge = 0.5
+leave = 0.25
+note = "soft and stringy: sharp bits, thick chips, and the part held well, since it flexes"
+
+[[materials]]
+id = "wood"
+name = "Hardwood, plywood, MDF"
+speed = 300
+chip_load = [[1, 0.02], [3, 0.06], [6, 0.1]]
+depth = 0.6
+stepover = 0.45
+ramp = 5
+plunge = 0.5
+leave = 0.3
+note = "dust extraction for MDF; climb milling leaves the cleaner edge"
+
+[[materials]]
+id = "brass"
+name = "Brass (free cutting)"
+speed = 120
+chip_load = [[1, 0.004], [3, 0.012], [6, 0.025]]
+depth = 0.2
+stepover = 0.3
+ramp = 2
+plunge = 0.3
+leave = 0.15
+note = "cuts dry; a sharp uncoated bit, and a slower feed if it chatters"
+
+# --- the block ------------------------------------------------------------------
+
+[stock]
+material = "aluminum"   # a [[materials]] id: the rpm and feed of every tool that does not say its own
+margin = 3              # mm of block round the model in X and Y
+top = 0.5               # mm of block over the model's top, faced off first
+# size = [50, 40, 6.35] # the block's size instead: the model in its middle, on its bottom
+
+# --- the model ------------------------------------------------------------------
+
+[model]
+turn = [0, 0, 0]        # degrees about X, then Y, then Z: [180, 0, 0] stands it upside down
+scale = 1               # 25.4 for a model drawn in inches
+
+# --- operations: in cutting order ------------------------------------------------
+# source: rough (level by level from the block's top, the area round the
+# model cleared with loops from the inside out, entered on a ramp), waterline
+# (one loop along every wall at each level), parallel (lines across the
+# model, the tool dropped onto its surface). Any cutting setting of the tool
+# may be given here and wins for the operation:
+#   step_down   mm between levels; 0 cuts only at the flat faces and the bottom
+#   stepover    of the tool's diameter, between loops or lines
+#   leave       mm left on the walls; leave_floor on the floors (default: leave)
+#   ramp        degrees, the steepest entry; 90 plunges
+#   band        mm past touching the model that a rough's loops go round it
+#               (default half the tool); the tool never goes past the block's edge
+#   below       mm under the model's bottom the last level reaches: 0.1 cuts
+#               into what holds the block, -0.3 leaves a 0.3 mm skin that keeps
+#               the part in place (cut it free by hand)
+#   direction   climb (default) or conventional, for rough and waterline
+#   flats       true (default): a level at every flat face, so floors and
+#               shoulders come out at their height
+#   angle       parallel only: degrees from X of the lines
+# Rough and waterline treat the tool as a cylinder its full width from the
+# tip up: exact on vertical walls, stepped on slopes, which parallel takes.
+
+[[operations]]
+name = "rough"
+source = "rough"
+tool = "em3"
+leave = 0.2             # on the walls, for the waterline
+leave_floor = 0         # floors come out at their height here
+below = 0               # the last level at the model's bottom: the part comes free
+
+[[operations]]
+name = "walls"
+source = "waterline"
+tool = "em3"
+step_down = 3           # a light radial cut, so a deep step is fine
+leave = 0
+
+[[operations]]
+name = "surfaces"
+source = "parallel"
+tool = "ball2"
+enabled = false         # switch on for curved or sloped surfaces
+stepover = 0.1          # of the diameter: 0.2 mm, scallops about 0.005 mm high
+angle = 0
+
+# --- how the gcode is written ------------------------------------------------------
+
+[post]
+header = ["G21", "G90", "G94", "G17"]
+footer = ["M5", "M2"]
+spindle_on = "M3"
+laser_on = "M4"
+spinup = 3              # s after the spindle starts or changes speed
+decimals = 3
+return_home = true
+
+# --- where the block lands ----------------------------------------------------------
+
+[placement]
+anchor = "corner"       # corner: the block's lower left at X 0 Y 0; center: its middle; keep: the model's own X and Y
+offset = [0, 0]         # mm, added after the anchor

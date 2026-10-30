@@ -17,6 +17,7 @@ build/
 firmware/target/
 firmware/rp2040/target/
 sim/target/
+carve/target/
 *.uf2
 
 # Frontend

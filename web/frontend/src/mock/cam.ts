@@ -878,11 +878,20 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
     const reach = (axis: CamAxis, value: number): void => {
         const span = report.extents[axis.letter] ?? [value, value];
         report.extents[axis.letter] = [Math.min(span[0], value), Math.max(span[1], value)];
-        if (axis.min !== null && value < axis.min - 1e-9) {
-            warn(`${axis.letter} reaches ${value.toFixed(3)}, under its min ${axis.min}`);
-        }
-        if (axis.max !== null && value > axis.max + 1e-9) {
-            warn(`${axis.letter} reaches ${value.toFixed(3)}, over its max ${axis.max}`);
+    };
+    // One warning for each end of an axis the program goes past, at the farthest it goes.
+    const checkTravel = (): void => {
+        for (const axis of profile.axes) {
+            const span = report.extents[axis.letter];
+            if (!span) {
+                continue;
+            }
+            if (axis.min !== null && span[0] < axis.min - 1e-9) {
+                warn(`${axis.letter} reaches ${span[0].toFixed(3)}, under its min ${axis.min}`);
+            }
+            if (axis.max !== null && span[1] > axis.max + 1e-9) {
+                warn(`${axis.letter} reaches ${span[1].toFixed(3)}, over its max ${axis.max}`);
+            }
         }
     };
     // A park or a home is written even where the axis already is, as the
@@ -1046,6 +1055,7 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
         }
     }
     lines.push(...post.footer);
+    checkTravel();
     report.lines = lines.length;
     report.length_mm = Math.round(report.length_mm * 1000) / 1000;
     report.seconds = Math.round(report.seconds * 10) / 10;
