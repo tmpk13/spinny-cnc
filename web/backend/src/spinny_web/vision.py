@@ -155,6 +155,16 @@ class VisionClient:
             self._reader.start()
         try:
             hello = self.request("hello", timeout=REQUEST_SECONDS)
+        except VisionError as exc:
+            self.close()
+            if device.startswith("socket://"):
+                # A port forwarded over ssh takes the connection here and
+                # closes it when nothing listens at the far end.
+                raise VisionError(
+                    f"no pcbv answers at {device} ({exc}): a port forwarded from a Pi has no camera unit serving it there"
+                ) from exc
+            raise
+        try:
             if device.startswith("socket://"):
                 # A pcbv serving elsewhere opened its camera with the size
                 # and rate on its own command line; the ones asked for here

@@ -153,6 +153,26 @@ def test_a_served_pcbv_without_a_camera_is_refused():
         served.close()
 
 
+def test_a_forwarded_port_with_nothing_behind_it_is_named():
+    # What an ssh forward does with no listener at the far end: take the
+    # connection, then close it.
+    listener = socket.create_server(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+
+    def accept_and_close() -> None:
+        conn, _ = listener.accept()
+        conn.close()
+
+    threading.Thread(target=accept_and_close, daemon=True).start()
+    try:
+        client = VisionClient()
+        with pytest.raises(VisionError, match=f"no pcbv answers at socket://127.0.0.1:{port}.*no camera unit"):
+            client.start(f"socket://127.0.0.1:{port}", "640x480", 15, "pcbv")
+        assert not client.running
+    finally:
+        listener.close()
+
+
 def test_pcbv_is_found_or_named(tmp_path):
     with pytest.raises(VisionError, match="not on PATH"):
         find_pcbv("no-such-program-anywhere")
