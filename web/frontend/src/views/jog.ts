@@ -87,7 +87,8 @@ export function travelText(travel: number | null | undefined): string {
     return `gotos, probing and camera moves rise to H ${travel} before going across; a higher head stays where it is`;
 }
 
-export function mountJog(root: HTMLElement, ctx: Ctx): void {
+/** `page` is the page whose panel this is: its keys jog only while that page shows. */
+export function mountJog(root: HTMLElement, ctx: Ctx, page = "machine"): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
     // a step typed in, which is the step while it is there.
     const picks = new Map<BarId, number>();
@@ -447,8 +448,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         // Jog keys belong to a field that has the focus, and jog only from
-        // the machine's page: on the other pages nothing should move.
-        if (inputHasFocus() || activePage() !== "machine") {
+        // the page this panel is on: on the others nothing should move.
+        if (inputHasFocus() || activePage() !== page) {
             return;
         }
         event.preventDefault();

@@ -167,7 +167,8 @@ operations a design goes through, and how the gcode is written.
 | `GET /api/jobs` | `{"jobs": [summary]}`: the job without coordinates, each group's `paths` and `joints` being counts |
 | `GET /api/jobs/{id}` | the job |
 | `PATCH /api/jobs/{id}` | `{"name": "coupon", "groups": [{"index": 0, "label": "outline", "power": 500, "min_power": 100, "speed": 400, "passes": 2, "enabled": true, "depth": 1.6, "plunge": 30, "thickness": 0.15}], "offset": {"x": 0, "y": 14}}`; every field optional, a speed or plunge under 0.001 mm/min is refused like one of 0, a depth must be above 0 and at most 50 mm, a thickness 0.01 to 5 mm |
-| `DELETE /api/jobs/{id}` | |
+| `POST /api/jobs/{id}/width` | `{"width": 0.4}`, the bit's or the beam's width in mm (above 0, at most 1000): the job made again for it and answered. A board upload (gerber or KiCad, whose file is kept beside the job as `{id}.kicad_pcb` or `{id}.upload.gbr` with the options in the job's `recipe`) is imported again and put where the job is now through its `design` map, so the copper lands on the copper already cut; a Mill page job is built again from its operation, turned and moved as the job has been. The groups keep their settings, matched by label with the numbers taken out, in order. A drawing (SVG, gcode, a centering burn) takes the width with its paths as they are. 400 for a job whose paths follow its width with nothing kept to make them again (a CAM job, a board saved and loaded as JSON, an STL model): import it again; 409 while the job runs |
+| `DELETE /api/jobs/{id}` | also removes the file kept for it |
 | `DELETE /api/jobs` | every job but the one running: `{"deleted": [ids], "kept": [id]}` |
 | `POST /api/jobs/{id}/run` | starts streaming; optional body `{"compensate": "off" \| "auto" \| "focus" \| "power"}` follows the height map (see below), `off` when left out (on a spindle machine `off` cuts from H 0 as the copper's height, and is 400 when a probe in this frame found the copper more than 1 mm from there); 409 while probing; 400 for a joint-space group on a cartesian or spindle machine, for a spindle without the focus axis (`$h_axis=0`), which is its depth axis, for an enabled milling group with cuts at a spindle speed (`power`) of 0 or less, for an enabled group whose `tool` is not the machine's (`laser`, `spindle` or `dispenser`), and on a dispenser machine for an enabled group of paths rather than dots (a dispenser lays dots: import the board with `mode` `dispense`) and for a machine without the focus axis, which is the needle's height |
 | `POST /api/jobs/{id}/resume` | picks the job up at a line: `{"line": 27213, "rewind": true, "compensate": "focus"}`. `line` is the count of lines done, as the progress reports it (`acked`); the lines before it count as done, and the head is brought from where it stands to where that line begins (a spindle: up to the travel height, over the point, the spindle started at the speed the job had there and given its spin-up, then down to the depth the cut starts at; a laser: a dark move to the cut's start, at the focus height when the map is followed), then the job goes on. `rewind` (default true) starts over at the first line of the path that line belongs to, so a count one line off cannot leave a gap. `compensate` left out takes the way the recorded run followed the board. The plan is made from where the recorded run began when the record is this job's, so its lines are the ones counted; otherwise from where the head is, which on a cartesian machine changes at most the first rapid. On the polar machine a `set A` first gives the table the plan's count of turns. Answers the progress, with `resumed_from`; the same refusals as a run, plus 400 for a line past the job |
@@ -177,6 +178,48 @@ operations a design goes through, and how the gcode is written.
 | `GET /api/log?lines=200&file=spinny` | `{"lines": [...]}`, the tail of one of the backend's logs: `spinny` (the default, `var/spinny.log`) holds the link's opening and closing with what it last sent and heard, every run's and probing's start and end with its counts, settings written, messages shown on the page and the machine's own messages (its boot reason and `diag` answer among them); `wire` (`var/wire.log`) holds every line sent and received with the time to the millisecond, the link's own status polls marked `tx-poll`/`rx-poll`; 400 for any other name |
 | `POST /api/run/hold`, `/api/run/resume`, `/api/run/stop` | while a run is still being prepared (its checks and estimate), `hold` and `stop` cancel its start, and the pending `POST /api/jobs/{id}/run` answers 409 with the reason; `POST /api/laser/off` and a reset do the same, and a reset in that window is also seen by the preparation itself |
 | `GET /api/run` | progress, or `null` before any job has run |
+
+A job carries `recipe` (null, or `{"file", "options"}` for a board upload,
+`{"mill": operation}` for a Mill page job), and its summary `remake`,
+whether `POST /api/jobs/{id}/width` makes it again, and `holes`, the count
+of its drill holes.
+
+## Mill page
+
+One simple operation at a time, cut on a spindle: every group is made for
+`spindle`, goes down in passes of `step_down` to `depth` under the surface,
+and a path of one point is a drill.
+
+| Method and path | Body |
+| --- | --- |
+| `POST /api/mill/plan` | an operation (below); answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while the operation is typed; 400 with the reason for one that cannot be cut |
+| `POST /api/mill` | the same, the job stored with `source` `mill` and the operation as its `recipe` |
+
+The operation: `{"kind": "drill" \| "holes" \| "line" \| "face" \| "pocket"
+\| "profile", "name": null, "tool": 1, "depth": 0.5, "step_down": 0.5,
+"stepover": 0.4, "speed": 300, "plunge": 60, "spindle": 10000, "climb":
+true}` plus what the kind takes, every field optional but `kind`:
+
+| `kind` | Fields | Groups |
+| --- | --- | --- |
+| `drill` | `points` `[[x, y], ...]` | one: a one-point path a point, in the order given |
+| `holes` | `job` (a stored job's id), `sizes` (diameters to take, all when null), `bore` (default true) | one a hole size, smallest first, each a short tour on from the last: drilled, or bored out in rings with the bit when wider than the bit by over 0.05 mm and `bore` is on; 404 for no such job |
+| `line` | `points`, `closed` | one path through the points, back to the first when closed |
+| `face` | `x0`, `y0`, `x1`, `y1` | rows along X back and forth at most `stepover` bits apart; the bit's center runs over the whole rectangle |
+| `pocket` | `shape` `rect` with the corners, or `circle` with `cx`, `cy`, `diameter` | one path out from the middle, loops or rings at most `stepover` bits apart, the last on the walls; a rectangle's stepover is at most 0.85, past which its loops leave the corners between them |
+| `profile` | the shape, and `side` `outside` (corners rounded by the bit so the part keeps them), `inside` or `on` | one closed path; no tabs |
+
+`climb` runs counterclockwise inside a pocket or a hole and clockwise
+around a part, with the spindle turning clockwise; false is conventional.
+
+## Markers
+
+Named positions on the board, kept in the backend's config for every page.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/markers` | `{"markers": [{"name": "corner", "x": 1.5, "y": -2}]}` |
+| `PUT /api/markers` | the whole list, in place of the one kept: names 1 to 40 characters once each (trimmed), at most 200, coordinates within 1e6 mm; answers the list as kept, 400 with the reason |
 
 Every refusal is `{"detail": "<text>"}`; a body or field that does not
 parse is 422 with `detail` as a list; a link fault (port gone, no answer)
@@ -663,3 +706,4 @@ it does not watch then.
 | `align` | the alignment state (`GET /api/align`), whenever a mark is added, removed or applied |
 | `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
 | `pnp_device` | the G-code device state (`GET /api/pnp/device`), whenever it changes: connected, a line answered by a command, every part of a program, a reference or a feeder count |
+| `markers` | `{"markers": [...]}` whenever the list is put |

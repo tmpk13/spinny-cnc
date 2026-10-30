@@ -14,7 +14,7 @@ lines a job up with the board.
 | --- | --- | --- |
 | `firmware/` | the controller: portable core, SKR Pico port, virtual firmware on TCP | Rust |
 | `web/backend/` | serial link, job import, streaming, probing (a grid or the pads), dispensing, the cameras, alignment, a board's parts, API, serves the page | Python, FastAPI |
-| `web/frontend/` | the page: setup steps, position, jog, jobs, height map, camera, alignment, 3D preview, the CAM tab, the PNP tab (parts, board, up camera, nozzle, or a G-code device) and the Config tab (machine files, pins, firmware settings) | TypeScript, Bun |
+| `web/frontend/` | the page: setup steps, position, jog, markers, jobs, height map, camera, alignment, 3D preview, the Mill tab (simple cuts and a board's holes), the CAM tab, the PNP tab (parts, board, up camera, nozzle, or a G-code device) and the Config tab (machine files, pins, firmware settings) | TypeScript, Bun |
 | `toolpath/` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering coupons, pads and holes, the alignment fit, machine configs, gcode tools | Python |
 | `machines/` | machine configurations in TOML, one file per axis setup | |
 | `cam/` | CAM profiles in TOML: a machine's axes, its tools with every cutting setting, materials, the operations, the gcode post | |

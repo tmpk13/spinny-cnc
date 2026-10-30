@@ -4,7 +4,9 @@ The Python library behind the web backend and the command line tools:
 polar kinematics (`polar`), copper clearing (`clear`) and deposition
 (`deposit`), the centering coupons (`center`, `fine`), the pads and holes
 of a board layer (`pads`), the turn and shift that line a job up with the
-board (`align`), the machine configuration files (`machines`), the CAM
+board (`align`), the Mill page's simple operations (`mill`: drilling,
+a line, facing, pockets and profiles), the machine configuration files
+(`machines`), the CAM
 profiles (`cam`, `camjob`, `post`: a design through a profile's
 operations, gcode for the profile's controller; `carve` runs the 3D
 kernel in `carve/` for an STL model), and the gcode emitter for a
@@ -143,6 +145,11 @@ classDiagram
     }
     class preview {
         render(copper, groups, ...) svg
+    }
+    class mill {
+        drill / line / face  points and rows
+        pocket_rect / pocket_circle  out from the middle to the walls
+        profile_rect / profile_circle  outside, inside or on, climb or conventional
     }
     class report {
         render(job, ...) markdown

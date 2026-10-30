@@ -42,6 +42,7 @@ import {
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
+import { buildMill, carrySettings, moveJob, remakeMill } from "./mill.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, parseDevice, placeLines, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
@@ -146,6 +147,9 @@ import type {
     TouchRequest,
     UploadOptions,
     WsEvent,
+    Marker,
+    MillOperation,
+    MillResponse,
 } from "../types.ts";
 import type { EventFeed } from "../ws.ts";
 
@@ -1813,6 +1817,9 @@ export class MockBackend implements Api, EventFeed {
     private alignFitLast: AlignFit | null = null;
 
     private jobStore = new Map<string, Job>();
+    /** The text a board job was imported from and its options, by job, to import it again for another width. */
+    private uploads = new Map<string, { name: string; text: string; options: UploadOptions }>();
+    private markerList: Marker[] = [];
     /** The CAM profiles, by id, as their files read; the shipped ones to start with. */
     private camTexts = new Map<string, string>(SHIPPED_PROFILES.map((profile) => [profile.id, profile.text]));
     private machineTexts = new Map<string, string>(MOCK_MACHINE_TEXTS.map((machine) => [machine.id, machine.text]));
@@ -3406,10 +3413,121 @@ export class MockBackend implements Api, EventFeed {
         }
         this.jobStore.set(built.job.id, built.job);
         this.order.push(built.job.id);
+        if (built.job.design) {
+            this.uploads.set(built.job.id, { name: file.name, text, options: { ...options } });
+            built.job.recipe = { file: file.name, options: { ...options } };
+        }
         if (built.note) {
             this.message("info", built.note);
         }
         return built.job;
+    }
+
+    async setJobWidth(id: string, width: number): Promise<Job> {
+        const job = this.requireJob(id);
+        if (this.session && this.session.job.id === id) {
+            throw new ApiError(409, "the job is running");
+        }
+        if (!(Number.isFinite(width) && width > 0 && width <= 1000)) {
+            throw new ApiError(400, "the width must be above 0 and at most 1000 mm");
+        }
+        const made = job.recipe != null || job.source === "kicad" || job.source === "gerber" || job.source === "stl"
+            || job.copper.length > 0 || job.groups.some((g) => g.tool)
+            ? this.remade(job, width)
+            : { ...structuredClone(job), spot: width };
+        made.stats = computeStats(made.groups, this.limits());
+        this.jobStore.set(id, made);
+        return made;
+    }
+
+    /** The job made again from its recipe for another width, or the refusal. */
+    private remade(job: Job, width: number): Job {
+        try {
+            if (job.recipe?.mill) {
+                return remakeMill(job, width, this.limits());
+            }
+            const upload = this.uploads.get(job.id);
+            if (job.recipe?.file && upload) {
+                const made = buildJob(job.id, upload.name, upload.text, { ...upload.options, spot: width }, this.limits()).job;
+                if (job.design && made.design) {
+                    moveJob(made, job.design.rotation - made.design.rotation, 0, 0);
+                    moveJob(made, 0, job.design.shift[0] - made.design.shift[0], job.design.shift[1] - made.design.shift[1]);
+                    made.design = { ...job.design };
+                }
+                carrySettings(job.groups, made.groups);
+                made.name = job.name;
+                made.offset = { ...job.offset };
+                made.rotation = job.rotation ?? 0;
+                made.recipe = { file: upload.name, options: { ...upload.options, spot: width } };
+                return made;
+            }
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        if (job.recipe?.file) {
+            throw new ApiError(400, `the file ${job.name} was imported from is no longer kept: import it again with the new width`);
+        }
+        throw new ApiError(400, `${job.name}'s paths were made for ${formatG(job.spot)} mm and nothing is kept to make them again: import it again with the new width`);
+    }
+
+    async planMill(op: MillOperation): Promise<MillResponse> {
+        return this.millResponse(op, "");
+    }
+
+    async makeMill(op: MillOperation): Promise<MillResponse> {
+        const made = this.millResponse(op, this.newId());
+        this.jobStore.set(made.job.id, made.job);
+        this.order.push(made.job.id);
+        return made;
+    }
+
+    private millResponse(op: MillOperation, id: string): MillResponse {
+        let holes: Job["holes"] | null = null;
+        let named = op;
+        if (op.kind === "holes") {
+            const source = this.jobStore.get(op.job ?? "");
+            if (!source) {
+                throw new ApiError(404, `no job '${op.job ?? ""}' to take holes from`);
+            }
+            holes = source.holes ?? [];
+            if (!op.name) {
+                named = { ...op, name: `${source.name} holes` };
+            }
+        }
+        try {
+            return buildMill(id, named, holes, this.limits());
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    async markers(): Promise<Marker[]> {
+        return this.markerList.map((marker) => ({ ...marker }));
+    }
+
+    async setMarkers(markers: Marker[]): Promise<Marker[]> {
+        const names = new Set<string>();
+        const kept: Marker[] = [];
+        if (markers.length > 200) {
+            throw new ApiError(400, "at most 200 markers");
+        }
+        for (const marker of markers) {
+            const name = marker.name.trim();
+            if (name === "" || name.length > 40) {
+                throw new ApiError(400, "a marker's name is 1 to 40 characters");
+            }
+            if (names.has(name)) {
+                throw new ApiError(400, `two markers are named '${name}'`);
+            }
+            if (![marker.x, marker.y].every((v) => Number.isFinite(v) && Math.abs(v) <= MAX_VALUE)) {
+                throw new ApiError(400, `marker '${name}' must be within ${MAX_VALUE_TEXT} mm`);
+            }
+            names.add(name);
+            kept.push({ name, x: marker.x, y: marker.y });
+        }
+        this.markerList = kept;
+        this.emit({ type: "markers", data: { markers: kept.map((marker) => ({ ...marker })) } });
+        return this.markers();
     }
 
     async centerJob(request: CenterRequest): Promise<CenterResponse> {
@@ -3442,6 +3560,8 @@ export class MockBackend implements Api, EventFeed {
                 spot: job.spot,
                 offset: job.offset,
                 rotation: job.rotation ?? 0,
+                remake: job.recipe != null,
+                holes: job.holes?.length ?? 0,
                 groups: job.groups.map((group) => ({
                     label: group.label,
                     power: group.power,

@@ -1,4 +1,5 @@
-// The page's tabs: the machine's page (the dashboard), the CAM page, the
+// The page's tabs: the machine's page (the dashboard), the Mill page
+// (simple cuts made by hand, a board's holes drilled), the CAM page, the
 // PNP page (parts, the board and the up camera) and the Config page (the
 // machine files and the firmware settings). The pick
 // is set on #app for the stylesheet and remembered per browser. A tab
@@ -7,10 +8,11 @@
 import { el } from "../dom.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "machine" | "cam" | "pnp" | "config";
+export type PageId = "machine" | "mill" | "cam" | "pnp" | "config";
 
 export const PAGES: { id: PageId; label: string }[] = [
     { id: "machine", label: "Machine" },
+    { id: "mill", label: "Mill" },
     { id: "cam", label: "CAM" },
     { id: "pnp", label: "PNP" },
     { id: "config", label: "Config" },
@@ -43,7 +45,7 @@ function isPage(value: string | null | undefined): value is PageId {
     return PAGES.some((page) => page.id === value);
 }
 
-/** The page named in the address (`?page=cam`, `?page=pnp`, `?page=config`), else the one last shown in this browser, else the machine's. */
+/** The page named in the address (`?page=mill`, `?page=cam`, `?page=pnp`, `?page=config`), else the one last shown in this browser, else the machine's. */
 export function readPage(): PageId {
     try {
         const asked = new URLSearchParams(globalThis.location?.search ?? "").get("page");

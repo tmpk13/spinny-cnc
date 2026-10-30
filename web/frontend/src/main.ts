@@ -17,6 +17,8 @@ import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobs } from "./views/jobs.ts";
 import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
+import { mountMarkers } from "./views/markers.ts";
+import { mountMill } from "./views/mill.ts";
 import { mountPnp } from "./views/pnp.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountSettings } from "./views/settings.ts";
@@ -111,6 +113,12 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
                 store.set({ device });
             }
         },
+        async refreshMarkers() {
+            const markers = await ctx.call(api.markers());
+            if (markers) {
+                store.set({ markers });
+            }
+        },
         async selectJob(id) {
             const ticket = ++selection;
             if (id === null) {
@@ -191,6 +199,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "pnp_device":
             store.set({ device: event.data });
             break;
+        case "markers":
+            store.set({ markers: event.data.markers });
+            break;
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.
@@ -203,7 +214,7 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshDevice()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshDevice(), ctx.refreshMarkers()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -253,12 +264,21 @@ function main(): void {
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);
     mountLaser(panel("laser"), ctx);
+    mountMarkers(panel("markers"), ctx);
     mountJobs(panel("jobs"), ctx);
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountVision(panel("camera"), ctx);
     mountAlign(panel("align"), ctx);
     mountConsole(panel("console"), ctx);
+    // The Mill page: the position, the jog and the spindle again beside
+    // its operations, the markers, and a preview of the operation planned.
+    mountDro(panel("mill-dro"), ctx);
+    mountJog(panel("mill-jog"), ctx, "mill");
+    mountLaser(panel("mill-spindle"), ctx);
+    mountMarkers(panel("mill-markers"), ctx);
+    mountPreviewPanel(panel("mill-preview"), ctx, (state) => state.millPlan ?? state.job);
+    mountMill({ operation: panel("mill-operation"), run: panel("mill-run") }, ctx);
     // The CAM page has a preview of its own, since the panels of the
     // machine's page are not shown beside it.
     mountCam(panel("cam"), ctx, panel("cam-file"));

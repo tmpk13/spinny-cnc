@@ -8,12 +8,15 @@ file's origin there, and the offset shifts the result afterwards.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import math
+import re
 import secrets
 import tempfile
 import threading
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -168,6 +171,16 @@ class Design(Finite):
         return self.to_job((point[0], -point[1]))
 
 
+class Recipe(Finite):
+    """How a job was made, kept so that it can be made again for another
+    bit or spot: a board upload's file name (the file is kept beside the
+    job) and the options it was imported with, or a Mill page operation."""
+
+    file: str | None = None
+    options: dict | None = None
+    mill: dict | None = None
+
+
 class JobStats(Finite):
     length_mm: float = 0.0
     seconds: float = 0.0
@@ -199,6 +212,9 @@ class Job(Finite):
     pads: list[tuple[float, float, float]] = Field(default_factory=list)
     holes: list[tuple[float, float, float]] = Field(default_factory=list)
     design: Design | None = None
+    # How the job was made, for making it again for another bit; None for
+    # a job whose paths do not follow the bit, or that cannot be made again.
+    recipe: Recipe | None = None
     stats: JobStats = Field(default_factory=JobStats)
 
     def summary(self) -> dict:
@@ -213,6 +229,7 @@ class Job(Finite):
             "pads": len(self.pads),
             "holes": len(self.holes),
             "design": self.design.model_dump() if self.design is not None else None,
+            "remake": self.recipe is not None,
             "groups": [
                 {
                     "label": group.label,
@@ -428,6 +445,109 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
 
 def _shifted(path, dx: float, dy: float) -> list[tuple[float, float]]:
     return [(x + dx, y + dy) for x, y in path]
+
+
+# --- another width ----------------------------------------------------------
+
+# A job's width is the bit's diameter or the beam's spot, mm.
+MAX_WIDTH = 1000.0
+# Sources whose paths are made for the width: offsets of the copper, or a
+# model's moves.
+WIDTH_MADE = ("kicad", "gerber", "stl")
+# The group settings a job made again keeps.
+SETTINGS = ("power", "min_power", "speed", "passes", "enabled", "depth", "plunge", "thickness")
+
+
+def check_width(width: float) -> None:
+    if not (math.isfinite(width) and 0.0 < width <= MAX_WIDTH):
+        raise ValueError(f"the width must be above 0 and at most {MAX_WIDTH:g} mm")
+
+
+def width_refusal(job: Job) -> str | None:
+    """Why the job cannot be given another width; None when it can, made
+    again from its recipe or, when its paths do not follow the width (a
+    drawing's lines, a gcode file's moves), with the number alone."""
+    if job.recipe is not None:
+        return None
+    # A board's paths are offsets of its copper, whatever it is called
+    # after a save and a load.
+    if job.source in WIDTH_MADE or job.copper or any(group.tool for group in job.groups):
+        return f"{job.name}'s paths were made for {job.spot:g} mm and nothing is kept to make them again: import it again with the new width"
+    return None
+
+
+def label_stem(label: str) -> str:
+    """A group's label with its numbers taken out, which the same group
+    made again for another width keeps."""
+    return re.sub(r"[-+]?\d+(?:\.\d+)?", "#", label)
+
+
+def carry_settings(old: list[Group], new: list[Group]) -> None:
+    """Each old group's settings onto the group made again in its place:
+    the first new group whose label is the old one's but for its numbers
+    takes the first such old group's, the second the second's."""
+    by_stem: dict[str, list[Group]] = defaultdict(list)
+    for group in old:
+        by_stem[label_stem(group.label)].append(group)
+    seen: dict[str, int] = defaultdict(int)
+    for group in new:
+        stem = label_stem(group.label)
+        index = seen[stem]
+        seen[stem] += 1
+        if index < len(by_stem[stem]):
+            source = by_stem[stem][index]
+            for name in SETTINGS:
+                setattr(group, name, getattr(source, name))
+
+
+def with_width(job: Job, width: float, streamer: Streamer) -> Job:
+    """The job with another width and its paths as they are, for a job
+    whose paths do not follow it: the drawn width and the margins of
+    probing take it."""
+    updated = job.model_copy(deep=True)
+    updated.spot = width
+    updated.refresh_stats(streamer)
+    return updated
+
+
+def recipe_options(options: ImportOptions) -> dict:
+    return dataclasses.asdict(options)
+
+
+def remake_upload(job: Job, kept: Path, width: float, streamer: Streamer) -> Job:
+    """A board job imported again from its kept file for another width and
+    put where the job is now: the design's frame turned and moved as the
+    job's has been, so the copper lands on the copper already cut, and its
+    groups' settings kept."""
+    recipe = job.recipe
+    if recipe is None or not recipe.file or recipe.options is None:
+        raise ValueError(f"{job.name} keeps no file to import again")
+    fields = {key: value for key, value in recipe.options.items() if key in {f.name for f in dataclasses.fields(ImportOptions)}}
+    if "offset" in fields:
+        fields["offset"] = (float(fields["offset"][0]), float(fields["offset"][1]))
+    options = ImportOptions(**fields)
+    options.spot = width
+    with tempfile.TemporaryDirectory(prefix="spinny-remake-") as folder:
+        # Under its own name, alone: a gerber's layer is read from its name,
+        # and its outline would be looked for beside it.
+        path = Path(folder) / Path(recipe.file).name
+        try:
+            path.write_bytes(kept.read_bytes())
+        except OSError as exc:
+            raise JobImportError(f"cannot read the kept file of {job.name}: {exc}") from exc
+        made = import_file(path, job.name, options, streamer)
+    if job.design is not None and made.design is not None:
+        made.turn(job.design.rotation - made.design.rotation)
+        made.shift(job.design.shift[0] - made.design.shift[0], job.design.shift[1] - made.design.shift[1])
+        made.design = job.design.model_copy()
+    carry_settings(job.groups, made.groups)
+    made.id = job.id
+    made.name = job.name
+    made.offset = job.offset.model_copy()
+    made.rotation = job.rotation
+    made.recipe = Recipe(file=recipe.file, options=recipe_options(options))
+    made.refresh_stats(streamer)
+    return made
 
 
 # --- importers --------------------------------------------------------------
@@ -982,7 +1102,9 @@ class JobStore:
             if job is None:
                 return False
             if self.directory is not None:
-                for path in (self.directory / f"{job_id}.json", self.directory / f"{job_id}.kicad_pcb"):
+                kept = [self.directory / f"{job_id}.json", self.directory / f"{job_id}.kicad_pcb"]
+                kept.extend(self.directory.glob(f"{job_id}.upload*"))
+                for path in kept:
                     try:
                         path.unlink()
                     except OSError:
@@ -1002,6 +1124,34 @@ class JobStore:
         except OSError:
             return False
         return True
+
+    def keep_upload(self, job_id: str, name: str, data: bytes) -> bool:
+        """Keeps the file a board job was imported from beside it, so it can
+        be imported again for another width; a KiCad board is the one kept
+        for the camera. False when there is nowhere to keep it."""
+        suffix = Path(name).suffix.lower()
+        if suffix == ".kicad_pcb":
+            return self.keep_board(job_id, data)
+        if self.directory is None:
+            return False
+        try:
+            target = self.directory / f"{job_id}.upload{suffix}"
+            temp = target.with_name(target.name + ".tmp")
+            temp.write_bytes(data)
+            temp.replace(target)
+        except OSError:
+            return False
+        return True
+
+    def upload_path(self, job_id: str, name: str) -> Path | None:
+        """The file kept for a job imported from `name`, when there is one."""
+        suffix = Path(name).suffix.lower()
+        if suffix == ".kicad_pcb":
+            return self.board_path(job_id)
+        if self.directory is None:
+            return None
+        path = self.directory / f"{job_id}.upload{suffix}"
+        return path if path.is_file() else None
 
     def board_path(self, job_id: str) -> Path | None:
         """The board file kept for a job, when there is one."""

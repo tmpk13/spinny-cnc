@@ -182,6 +182,18 @@ loses power sends no close. The page reads the settings again when the
 machine, or the profile in its state frames, changes, and after a setting
 typed at the console.
 
+The *Mill* page (`src/views/mill.ts`) is the machine used as a manual
+mill: the readout, the jog panel (its keys work while the page shows), the
+spindle and the markers again, beside one operation at a time (drill
+points, a board job's holes, a line, a face, a pocket or a profile) whose
+corners, centers and points are typed, taken from the head (*Here*) or
+from a marker. It is planned as it is typed (`POST /api/mill/plan`) and
+drawn on the page's own preview, then made into the selected job, which
+the run panel beside it runs. The *Markers* panel (`src/views/markers.ts`)
+keeps named board positions for every page. The job details' width row
+makes a job again for another bit or spot. *Grid* in a preview's head
+draws X/Y lines in place of the rings, on every preview at once.
+
 ## Architecture
 
 ```mermaid
@@ -202,7 +214,7 @@ classDiagram
         AppState
     }
     class views {
-        statusbar tabs steps dro jog laser jobs center heightmap previewpanel vision align pnp console settings cam config editor toasts
+        statusbar tabs steps dro jog laser markers mill jobs center heightmap previewpanel vision align pnp console settings cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals
@@ -214,7 +226,7 @@ classDiagram
         parseToml(text) tables, arrays of tables, dotted names, inline tables, scalars, arrays
     }
     class preview {
-        Preview  3D scene on the 2D canvas: rings, rail, limits, job, probe heights, head
+        Preview  3D scene on the 2D canvas: rings or a grid, rail, limits, markers, job, probe heights, head
         dragMode(locked, pointer) orbit or pan
     }
     class camera {
@@ -253,6 +265,10 @@ classDiagram
         setValue(text, path, value) text
         buildCamJob / camGcode
     }
+    class mock_mill {
+        buildMill(id, op, holes, limits) the backend's Mill page job, checked against its fixture
+        remakeMill / moveJob / carrySettings  a job made again for another width
+    }
     class mock_machines {
         parseMachine(text, id) MachineDocument  the backend's checks and words, camera included
         DEFAULT_SETTINGS
@@ -261,6 +277,7 @@ classDiagram
     mock_backend --> align
     mock_backend --> mock_vision
     mock_backend --> mock_padmap
+    mock_backend --> mock_mill
     main --> api
     main --> ws
     main --> state

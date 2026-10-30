@@ -88,6 +88,63 @@ the spin-up (the Config tab's settings panel).
 FAN3 is a low side switch on the fan rail, not a logic output: see the
 spindle note in `firmware/rp2040/README.md` before connecting one.
 
+### The Mill page
+
+The *Mill* tab is the machine used like a manual mill: the position, the
+jog panel (its keys jog while the tab shows), the spindle, the markers
+and a preview beside one simple operation at a time.
+
+1. Zero the depth on the surface (touch off, *Set H=0 here* or the jog
+   panel's zero), as for any milled job.
+2. Pick the operation: *Drill* points, *Holes* of a board job, *Line*
+   through points, *Face* a rectangle, or a *Pocket* or *Profile* of a
+   rectangle or a circle.
+3. Give its corners, center or points: typed, *Here* for where the head is,
+   or a marker from the list beside each pair. Points are one `x, y` a
+   line; *Add here*, *add marker* and *All markers* append to them.
+4. Set the bit, the depth, the step down (the passes are as many as it
+   takes), the stepover of a face or pocket, the feeds and the spindle
+   speed, and climb or conventional. The operation is planned as it is
+   typed and drawn on the preview with the bit's width, its notes and any
+   problem below the fields.
+5. *Make job* stores it, selected; *Run* in the panel beside it (or the
+   Jobs panel) cuts it.
+
+*Holes* takes a job imported with its drill file: one group a hole size,
+smallest first, each checked size taken. A hole wider than the bit is
+bored out in rings when *bore* is on, else drilled with the bit; turn off
+the groups a different bit is for, and run the job once per bit. A
+profile has no tabs: hold the part down, or leave a skin under the depth.
+A rectangular pocket refuses a stepover over 0.85, where its loops would
+leave the corners between them standing.
+
+### Markers
+
+The *Markers* panel (machine page and Mill tab) keeps named positions:
+*Mark here* saves where the head is, under the name typed or the next M
+number, *Add* a typed x and y; a name used again moves that marker. *Go*
+rises to the travel height and goes there, *Here* moves the marker to the
+head. Every preview draws them, and the backend keeps them in its config
+for every page and browser.
+
+### Another bit for a job
+
+The job details have the width the job is cut for (*Tool mm* on a mill,
+*Spot mm* on a laser). *Re-cut* makes a board job again from its kept
+file for the new width and puts it where the job is now, alignment and
+moves included, so a second bit's isolation lands on the copper the
+first cut; a Mill page job is built again with the new bit. The groups
+keep their settings. A drawing's paths stay as they are and *Set* only
+changes the number. A board imported before its file was kept, a CAM job
+or a job loaded from JSON cannot be cut again: import it again.
+
+### The preview's grid
+
+*Grid* in a preview's head draws a square grid of X and Y with its lines
+labeled along both axes instead of the rings about the axis. Until it is
+pressed a cartesian machine gets the grid and the polar one the rings; the
+choice holds on every page and is remembered in the browser.
+
 ### Dispensing solder paste
 
 A paste dispenser is a syringe whose plunger a stepper pushes, on the

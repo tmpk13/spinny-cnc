@@ -487,3 +487,25 @@
   Pi. The backend now names why a `pcbv` it started could not open its
   camera; over a `socket://` it reopens the camera with its own size and
   fps and no longer sends `quit`, which ended the remote service.
+- Mill tab (2026-10-30): the machine used as a manual mill, the readout,
+  jog, spindle and markers beside one operation at a time: drill points,
+  a board job's drill holes (a group a size, wider ones bored out in
+  rings), a line through points, a face, or a pocket or profile of a
+  rectangle or circle, with climb or conventional and passes by step
+  down. Corners, centers and points typed, taken from the head or from a
+  marker; planned as typed and drawn on the tab's preview, then made
+  into the selected job and run from the tab. Geometry in
+  `spinny_laser.mill`, jobs in `spinny_web.mill` (`/api/mill`,
+  `/api/mill/plan`), the mock's twin checked against a generated fixture
+  (`mise run mill-fixture`).
+- Markers (2026-10-30): named board positions marked at the head or
+  typed, with Go and Here, drawn on every preview, kept in the backend's
+  config (`/api/markers`, a `markers` event), offered to the Mill tab.
+- Another bit for a job (2026-10-30): the job details' width row; a board
+  upload keeps its file and options and is imported again for the new
+  width, put back on the same copper through its design map (alignment
+  and moves kept); a Mill tab job is built again; group settings carried
+  by label; drawings take the number alone (`POST /api/jobs/{id}/width`).
+- Preview grid (2026-10-30): *Grid* draws X/Y lines labeled along both
+  axes instead of the rings, on every preview at once; a cartesian
+  machine gets it until a choice is made.

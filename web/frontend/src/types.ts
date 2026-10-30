@@ -50,6 +50,17 @@ export interface Board {
     y: number;
 }
 
+/** A saved position on the board: its name and where it is, board mm. */
+export interface Marker {
+    name: string;
+    x: number;
+    y: number;
+}
+
+export interface MarkersResponse {
+    markers: Marker[];
+}
+
 export interface Queue {
     planner: number;
     lines: number;
@@ -420,10 +431,72 @@ export interface Job {
     holes?: HolePoint[];
     /** How the design's gerber frame maps to the job's: job = turn(rotation) * gerber + shift; null for a job without one. */
     design?: DesignMap | null;
+    /** How the job was made, for making it again for another width; null when its paths do not follow the width, or nothing is kept. */
+    recipe?: Recipe | null;
     groups: Group[];
     outline: Path[];
     copper: Path[];
     stats: Stats;
+}
+
+/** How a job was made: a board upload's file and options, or a Mill page operation. */
+export interface Recipe {
+    file?: string | null;
+    options?: Record<string, unknown> | null;
+    mill?: MillOperation | null;
+}
+
+/** What the Mill page cuts: points drilled, a board job's holes, a line through points, a face, a pocket or a profile. */
+export type MillKind = "drill" | "holes" | "line" | "face" | "pocket" | "profile";
+
+/** The shape a pocket or a profile is of. */
+export type MillShape = "rect" | "circle";
+
+/** Where a profile cuts: around the outside of the shape, inside it, or with the bit's center on its line. */
+export type MillSide = "outside" | "inside" | "on";
+
+/** One Mill page operation; which of the shape's fields count follows the kind and the shape. */
+export interface MillOperation {
+    kind: MillKind;
+    /** The job's name; left out, one is made from the operation. */
+    name?: string | null;
+    /** The bit's diameter, mm. */
+    tool: number;
+    /** How deep under the surface the cut ends, and how far each pass goes down, mm. */
+    depth: number;
+    step_down: number;
+    /** A face's rows or a pocket's loops apart, as a share of the bit. */
+    stepover: number;
+    /** Feed along the cut and down into it, mm/min, and the spindle's S. */
+    speed: number;
+    plunge: number;
+    spindle: number;
+    /** Climb milling, with the spindle turning clockwise; else conventional. */
+    climb: boolean;
+    /** A drill's or a line's points, board mm; a line may close. */
+    points: Point[];
+    closed: boolean;
+    shape: MillShape;
+    /** A rectangle by two corners. */
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    /** A circle by its center and diameter. */
+    cx: number;
+    cy: number;
+    diameter: number;
+    side: MillSide;
+    /** Holes: the job they are taken from, the diameters to take (all when null), and whether one wider than the bit is bored out. */
+    job?: string | null;
+    sizes?: number[] | null;
+    bore: boolean;
+}
+
+/** An operation's job and what to know about it. */
+export interface MillResponse {
+    job: Job;
+    notes: string[];
 }
 
 /** A pad: its centroid and its area in mm^2. */
@@ -465,6 +538,10 @@ export interface JobSummary {
     spot: number;
     offset: Board;
     rotation?: number;
+    /** The job can be made again for another width from what it was made of. */
+    remake?: boolean;
+    /** How many drill holes the job has. */
+    holes?: number;
     groups: GroupSummary[];
     stats: Stats;
 }
@@ -731,7 +808,8 @@ export type WsEvent =
     | { type: "camera"; data: CameraState }
     | { type: "align"; data: AlignState }
     | { type: "pnp"; data: PnpState }
-    | { type: "pnp_device"; data: DeviceState };
+    | { type: "pnp_device"; data: DeviceState }
+    | { type: "markers"; data: MarkersResponse };
 
 // --- Pick and place -----------------------------------------------------------
 

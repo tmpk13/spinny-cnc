@@ -11,6 +11,7 @@ import type {
     HeightMapState,
     Job,
     JobSummary,
+    Marker,
     MessageLevel,
     PnpState,
     Port,
@@ -103,6 +104,10 @@ export interface AppState {
     pnpTarget: "machine" | "device";
     /** The G-code device; null until read. */
     device: DeviceState | null;
+    /** The saved positions on the board, as the backend keeps them. */
+    markers: Marker[];
+    /** The Mill page's operation as a job not made yet, drawn on its preview; null with nothing to show. */
+    millPlan: Job | null;
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;
     /** Edits typed and not applied yet, counted by the panel that holds them (`pendingPages` puts them on a tab). */
@@ -138,6 +143,8 @@ export function initialState(mock: boolean): AppState {
         pnpPart: null,
         pnpTarget: "machine",
         device: null,
+        markers: [],
+        millPlan: null,
         mapChoice: "off",
         pending: {},
         console: [],

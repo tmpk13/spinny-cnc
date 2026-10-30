@@ -60,6 +60,7 @@ export class ApiError extends Error {
     }
 }
 
+import type { Marker, MarkersResponse, MillOperation, MillResponse } from "./types.ts";
 import type {
     CameraPose,
     ComponentsResponse,
@@ -76,6 +77,14 @@ import type {
 } from "./types.ts";
 
 export interface Api {
+    /** A Mill page operation as a job, not stored, to be seen before it is made. */
+    planMill(op: MillOperation): Promise<MillResponse>;
+    /** A Mill page operation made into a stored job. */
+    makeMill(op: MillOperation): Promise<MillResponse>;
+    /** The markers, kept by the backend for every page. */
+    markers(): Promise<Marker[]>;
+    /** Puts the whole list of markers in place of the one kept; answers it as kept. */
+    setMarkers(markers: Marker[]): Promise<Marker[]>;
     ports(): Promise<Port[]>;
     connect(url: string): Promise<Snapshot>;
     disconnect(): Promise<Snapshot>;
@@ -132,6 +141,8 @@ export interface Api {
     jobs(): Promise<JobSummary[]>;
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
+    /** The job made again for a bit or a spot `width` mm across; a drawing takes the width with its paths as they are. */
+    setJobWidth(id: string, width: number): Promise<Job>;
     deleteJob(id: string): Promise<void>;
     /** Removes every job but the one running; answers their ids. */
     deleteAllJobs(): Promise<string[]>;
@@ -485,8 +496,30 @@ export class HttpApi implements Api {
         await this.request("PATCH", `/api/jobs/${encodeURIComponent(id)}`, patch);
     }
 
+    setJobWidth(id: string, width: number): Promise<Job> {
+        return this.request<Job>("POST", `/api/jobs/${encodeURIComponent(id)}/width`, { width });
+    }
+
     async deleteJob(id: string): Promise<void> {
         await this.request("DELETE", `/api/jobs/${encodeURIComponent(id)}`);
+    }
+
+    planMill(op: MillOperation): Promise<MillResponse> {
+        return this.request<MillResponse>("POST", "/api/mill/plan", op);
+    }
+
+    makeMill(op: MillOperation): Promise<MillResponse> {
+        return this.request<MillResponse>("POST", "/api/mill", op);
+    }
+
+    async markers(): Promise<Marker[]> {
+        const response = await this.request<MarkersResponse>("GET", "/api/markers");
+        return response.markers ?? [];
+    }
+
+    async setMarkers(markers: Marker[]): Promise<Marker[]> {
+        const response = await this.request<MarkersResponse>("PUT", "/api/markers", { markers });
+        return response.markers ?? [];
     }
 
     async deleteAllJobs(): Promise<string[]> {

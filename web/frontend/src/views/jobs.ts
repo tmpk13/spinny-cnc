@@ -111,6 +111,23 @@ export function dispenseRefusal(job: Job | null, dispensing: boolean): string {
     return bad ? `${bad.label}: a dispenser lays dots: import the board with mode dispense` : "";
 }
 
+/**
+ * What a new width does to a job, as the backend decides it: the job is
+ * made again from its recipe (a kept board file, a Mill page operation),
+ * its paths are kept and only the number changes (a drawing's lines), or
+ * it cannot take one, since its paths follow the old width and nothing is
+ * kept to make them again.
+ */
+export function widthMode(job: Job): "remake" | "width" | "refused" {
+    if (job.recipe) {
+        return "remake";
+    }
+    if (["kicad", "gerber", "stl"].includes(job.source) || job.copper.length > 0 || job.groups.some((group) => group.tool)) {
+        return "refused";
+    }
+    return "width";
+}
+
 /** The labels a milling machine gives the job's numbers, and a laser's. */
 export function jobLabels(milling: boolean): { power: string; speed: string; spot: string } {
     return milling
@@ -404,6 +421,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     // browser fires no change for a field that is gone.
     let groupRows: GroupRow[] = [];
     let offsetFields: { x: HTMLInputElement; y: HTMLInputElement; rotation: HTMLElement } | null = null;
+    let widthField: HTMLInputElement | null = null;
     let statsEl: HTMLElement | null = null;
     // Why a dispenser would refuse the job, beside the run button.
     const runNote = el("span", { class: "muted run-note hidden" });
@@ -549,6 +567,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 groupsTable(job, milling),
                 statsEl,
                 offsetRow(job),
+                widthRow(job, milling),
                 runRow,
                 compensateNote,
                 progressBox,
@@ -583,6 +602,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             setUnlessFocused(offsetFields.x, String(job.offset.x), focused);
             setUnlessFocused(offsetFields.y, String(job.offset.y), focused);
             offsetFields.rotation.textContent = rotationText(job);
+        }
+        if (widthField) {
+            setUnlessFocused(widthField, String(job.spot), focused);
         }
         const fresh = statsBlock(job);
         statsEl?.replaceWith(fresh);
@@ -775,6 +797,60 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     /** The turn alignment gave the job; read only, as the alignment panel is what changes it. */
     function rotationText(job: Job): string {
         return `turned ${formatFixed(job.rotation ?? 0, 4)} deg`;
+    }
+
+    /** The bit's or the beam's width the job is cut for, and the button that makes it again for another. */
+    function widthRow(job: Job, milling: boolean): HTMLElement {
+        const mode = widthMode(job);
+        const field = numberField({ value: job.spot, min: 0.001, step: 0.01, width: "5.5rem" });
+        field.setAttribute("aria-label", milling ? "Tool width" : "Spot width");
+        widthField = field;
+        const apply = button(mode === "remake" ? "Re-cut" : "Set", () => applyWidth(), "btn btn-quiet");
+        const note = el("span", { class: "muted job-width-note" },
+            mode === "remake" ? "paths made again where the job is now"
+                : mode === "width" ? "the paths stay as they are"
+                    : "made for this width: import again for another");
+        if (mode === "refused") {
+            field.disabled = true;
+            setLocked(apply, true);
+            apply.title = "nothing is kept to make the paths again: import the file again with the new width";
+        } else {
+            apply.title = mode === "remake"
+                ? "make the job's paths again for this width from what it was made of, its groups' settings kept"
+                : "the drawn width and the margins of probing take it; the paths are the drawing's lines";
+        }
+        field.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                void applyWidth();
+            }
+        });
+        const applyWidth = async (): Promise<void> => {
+            const width = parseNumber(field.value);
+            if (width === null || !(width > 0)) {
+                ctx.toast("error", "the width is a number of mm above 0");
+                return;
+            }
+            // The row outlives a re-cut: the job as it is now decides.
+            const current = ctx.store.get().job;
+            if (!current || current.id !== job.id || width === current.spot) {
+                return;
+            }
+            if (mode === "remake" && !(await askConfirm(`Make ${job.name} again for ${width} mm? Its paths are made anew where the job is now; the groups keep their settings.`, "Re-cut"))) {
+                return;
+            }
+            const made = await ctx.call(ctx.api.setJobWidth(job.id, width));
+            if (made) {
+                await ctx.reloadJob(job.id);
+                await ctx.refreshJobs();
+                ctx.toast("info", `${job.name}: ${width} mm`);
+            }
+        };
+        return el("div", { class: "goto-row" },
+            el("span", { class: "choice-label" }, jobLabels(milling).spot),
+            field,
+            apply,
+            note,
+        );
     }
 
     function offsetRow(job: Job): HTMLElement {

@@ -69,10 +69,18 @@ from .jobs import (
     JobImportError,
     JobPatch,
     JobStore,
+    Recipe,
     apply_patch,
     check_thickness,
+    check_width,
     import_file,
+    recipe_options,
+    remake_upload,
+    width_refusal,
+    with_width,
 )
+from . import markers as marker_list
+from . import mill
 from .machines import MachineStore
 from .kinematics import (
     DEFAULT_TOLERANCE,
@@ -240,6 +248,10 @@ NO_FRONTEND = """<!doctype html>
 
 
 # --- request bodies -----------------------------------------------------------
+
+
+class WidthBody(BaseModel):
+    width: float
 
 
 class ConnectBody(BaseModel):
@@ -2012,10 +2024,13 @@ class Backend:
             raise JobImportError(f"cannot store the upload {name!r}: {exc}") from exc
         job = self.store.add(job)
         if job.design is not None:
-            kept = path.suffix.lower() == ".kicad_pcb" and self.store.keep_board(job.id, data)
-            if job.design.board != kept:
-                job.design.board = kept
-                self.store.save(job)
+            # A board's paths follow the spot: its file is kept to import it
+            # again for another, and a KiCad file for the camera besides.
+            kept = self.store.keep_upload(job.id, name, data)
+            job.design.board = kept and path.suffix.lower() == ".kicad_pcb"
+            if kept:
+                job.recipe = Recipe(file=name, options=recipe_options(options))
+            self.store.save(job)
         return job
 
     def cam_import(self, profile_id: str, files: list[tuple[str, bytes]], name: str | None) -> dict:
@@ -2178,6 +2193,62 @@ class Backend:
                 )
             finally:
                 self.runner.release()
+
+    def set_job_width(self, job_id: str, width: float) -> Job:
+        """The job made again for a bit or spot `width` mm across: a board
+        imported again from its kept file, a Mill page operation built
+        again, or a drawing given the width with its paths as they are."""
+        job = self.store.get(job_id)
+        if job is None:
+            raise NotFound(f"no job {job_id!r}")
+        if self.runner.active and self.runner.progress.job == job_id:
+            raise RunnerError("the job is running")
+        check_width(width)
+        refusal = width_refusal(job)
+        if refusal is not None:
+            raise ValueError(refusal)
+        recipe = job.recipe
+        if recipe is not None and recipe.mill is not None:
+            made = mill.remake(job, width, self.streamer())
+        elif recipe is not None and recipe.file:
+            kept = self.store.upload_path(job.id, recipe.file)
+            if kept is None:
+                raise ValueError(f"the file {job.name} was imported from is no longer kept: import it again with the new width")
+            made = remake_upload(job, kept, width, self.streamer())
+        else:
+            made = with_width(job, width, self.streamer())
+        self.store.save(made)
+        return made
+
+    def mill_operation(self, op: mill.MillOperation, keep: bool) -> dict:
+        """The Mill page's operation as a job and its notes; stored when
+        `keep`, else only shown."""
+        holes = None
+        if op.kind == mill.HOLES:
+            source = self.store.get(op.job or "")
+            if source is None:
+                raise NotFound(f"no job {op.job!r} to take holes from")
+            holes = source.holes
+            if not op.name:
+                op = op.model_copy(update={"name": f"{source.name} holes"})
+        job, notes = mill.build(op, holes, self.streamer())
+        if keep:
+            job = self.store.add(job)
+        return {"job": job.model_dump(), "notes": notes}
+
+    def markers(self) -> list[marker_list.Marker]:
+        return marker_list.from_config(self.config.get("markers"))
+
+    def markers_state(self) -> dict:
+        return {"markers": [marker.model_dump() for marker in self.markers()]}
+
+    def set_markers(self, markers: list[marker_list.Marker]) -> dict:
+        kept = marker_list.checked(markers)
+        self.config["markers"] = [marker.model_dump() for marker in kept]
+        self._save_config()
+        state = self.markers_state()
+        self.broadcast.publish_threadsafe({"type": "markers", **state})
+        return state
 
     def delete_all_jobs(self) -> dict:
         """Removes every job but the one running."""
@@ -3790,6 +3861,27 @@ def create_app(
     @app.patch("/api/jobs/{job_id}")
     def patch_job(job_id: str, patch: JobPatch):
         return guarded(lambda: backend.patch_job(job_id, patch)).model_dump()
+
+    @app.post("/api/jobs/{job_id}/width")
+    async def set_job_width(job_id: str, body: WidthBody):
+        made = await run_in_threadpool(guarded, lambda: backend.set_job_width(job_id, body.width))
+        return made.model_dump()
+
+    @app.post("/api/mill/plan")
+    async def plan_mill(op: mill.MillOperation):
+        return await run_in_threadpool(guarded, lambda: backend.mill_operation(op, keep=False))
+
+    @app.post("/api/mill")
+    async def make_mill(op: mill.MillOperation):
+        return await run_in_threadpool(guarded, lambda: backend.mill_operation(op, keep=True))
+
+    @app.get("/api/markers")
+    def get_markers():
+        return backend.markers_state()
+
+    @app.put("/api/markers")
+    def put_markers(body: marker_list.MarkerList):
+        return guarded(lambda: backend.set_markers(body.markers))
 
     @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str):

@@ -78,6 +78,8 @@
     --pv-g2: #859900;
     --pv-g3: #6c71c4;
     --pv-probe: #d33682;
+    /* Saved positions on the board. */
+    --pv-marker: #2aa198;
     /* Height map: below the mean, at it, above it. */
     --hm-low: #268bd2;
     --hm-mid: #f3edda;
@@ -185,7 +187,8 @@ input[type="checkbox"] {
     min-height: 100vh;
 }
 
-/* Two pages under one status bar; the tabs set which is up on #app. */
+/* Pages under one status bar; the tabs set which is up on #app. */
+#app[data-page="mill"] > #page-machine,
 #app[data-page="cam"] > #page-machine,
 #app[data-page="pnp"] > #page-machine,
 #app[data-page="config"] > #page-machine {
@@ -193,6 +196,10 @@ input[type="checkbox"] {
 }
 
 #app:not([data-page="pnp"]) > #page-pnp {
+    display: none;
+}
+
+#app:not([data-page="mill"]) > #page-mill {
     display: none;
 }
 
@@ -206,6 +213,7 @@ input[type="checkbox"] {
 
 .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.25rem;
     padding: 0 var(--gap);
     background: var(--panel);
@@ -2085,6 +2093,118 @@ table.cam-table input[type="checkbox"] {
 .job-rotation {
     font-size: 0.82rem;
     align-self: center;
+}
+
+.job-width-note {
+    font-size: 0.82rem;
+    align-self: center;
+}
+
+/* Markers: the row that adds one, and the list with a button row each. */
+.marker-add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.marker-add .labeled {
+    flex: 1 1 5rem;
+}
+
+.marker-add .field {
+    width: 100%;
+}
+
+.marker-list {
+    list-style: none;
+    margin: 0 0 0.5rem;
+    padding: 0;
+}
+
+.marker-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    padding: 0.3rem 0;
+    border-bottom: thin solid var(--border);
+}
+
+.marker-list li:last-child {
+    border-bottom: 0;
+}
+
+.marker-list .marker-name {
+    font-weight: 600;
+    color: var(--pv-marker);
+    min-width: 3rem;
+}
+
+.marker-list .button-row {
+    margin: 0 0 0 auto;
+}
+
+.marker-pick {
+    flex: 0 1 8rem;
+    width: auto;
+}
+
+/* The Mill page: the operation's sections, its points, its notes. */
+.choice-row.choice-wrap {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.choice-row.choice-wrap .btn-choice,
+.choice-row.choice-wrap .btn-choice:first-of-type,
+.choice-row.choice-wrap .btn-choice:last-of-type {
+    flex: 1 1 5rem;
+    margin-left: 0;
+    border-radius: var(--radius);
+}
+
+.mill-section {
+    margin-bottom: 0.5rem;
+}
+
+.mill-point .choice-label {
+    min-width: 3.5rem;
+}
+
+.mill-points {
+    width: 100%;
+    min-height: 5rem;
+    font-family: var(--mono);
+    resize: vertical;
+}
+
+.mill-notes {
+    margin: 0.25rem 0 0.5rem;
+    padding-left: 1.2rem;
+    font-size: 0.85rem;
+}
+
+.mill-problem {
+    margin: 0.25rem 0;
+    color: var(--danger);
+    font-weight: 500;
+}
+
+.mill-run-job {
+    font-size: 0.9rem;
+}
+
+.hole-sizes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+    margin: 0.4rem 0;
+}
+
+.hole-size {
+    font-variant-numeric: tabular-nums;
 }
 
 /* Setup steps: a row of numbered circles joined by a line, filled in as

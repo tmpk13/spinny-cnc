@@ -105,9 +105,21 @@ classDiagram
         Spindle clearance, spinup, full (speed control off)
     }
     class jobs {
-        Job, Group, JobStats
+        Job, Group, JobStats, Recipe
         import_file(path, options)
-        JobStore
+        remake_upload(job, kept, width) / with_width / carry_settings
+        JobStore  keep_upload, upload_path
+    }
+    class mill {
+        MillOperation
+        build(op, holes) Job, notes  the Mill page's operations
+        remake(job, tool) the job again for another bit
+    }
+    class markers {
+        Marker, checked(markers)  kept in config.json
+    }
+    class spinny_laser_mill {
+        drill, line, face, pocket_rect, pocket_circle, profile_rect, profile_circle
     }
     class center {
         CenterRequest
@@ -210,6 +222,10 @@ classDiagram
     app --> runner
     app --> kinematics
     app --> center
+    app --> mill
+    app --> markers
+    mill --> jobs
+    mill --> spinny_laser_mill
     app --> heightmap
     app --> prober
     app --> spinny_laser_machines

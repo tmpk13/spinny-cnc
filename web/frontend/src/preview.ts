@@ -1,5 +1,6 @@
 // 3D canvas preview of the machine's working area, in board mm around the
-// rotation axis: the rings and the rail, the soft limits, copper, outline,
+// rotation axis: the rings (or a square grid) and the rail, the soft
+// limits, the markers, copper, outline,
 // the job's paths, the probe grid with its heights stretched to be seen,
 // and the head over the board with its beam and a short trail. An orbit
 // camera: drag orbits (or pans when the rotation is locked), shift or a
@@ -30,7 +31,7 @@ import {
 } from "./camera.ts";
 import { cssVar } from "./dom.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
-import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Move, Path, Point } from "./types.ts";
+import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Marker, Move, Path, Point } from "./types.ts";
 
 /** Every point of a probe grid that is probed, row by row from the lowest Y; a mask leaves points out. */
 export function gridPoints(grid: Grid): Point[] {
@@ -73,6 +74,8 @@ const TRAIL_LENGTH = 240;
 export const LOCK_KEY = "spinny.preview.lock";
 /** Where the choice to draw the height map is remembered between visits. */
 export const HEIGHTS_KEY = "spinny.previewHeights";
+/** Where the choice of a square grid over the rings is remembered between visits. */
+export const GRID_KEY = "spinny.preview.grid";
 /** The head marker and the rail float this share of the reach over the board. */
 const HEAD_HEIGHT = 0.15;
 const MIN_EXAGGERATION = 1;
@@ -197,6 +200,34 @@ export function labelEvery(stepMm: number, scale: number): number {
     return apart * 2 >= LABEL_GAP_PX ? 2 : 4;
 }
 
+/**
+ * The lines of a square grid `step` apart over the board out to `extent`
+ * either side of the axis, in X and Y, each a segment across the whole
+ * grid; the axis lines themselves are left to the axis cross.
+ */
+export function gridLines(step: number, extent: number): [Point, Point][] {
+    if (!(step > 0) || !(extent > 0)) {
+        return [];
+    }
+    const count = Math.floor(extent / step + 1e-9);
+    const edge = count * step;
+    const lines: [Point, Point][] = [];
+    for (let k = -count; k <= count; k++) {
+        if (k === 0) {
+            continue;
+        }
+        const at = k * step;
+        lines.push([[at, -edge], [at, edge]]);
+        lines.push([[-edge, at], [edge, at]]);
+    }
+    return lines;
+}
+
+/** A grid line's position as its label: a whole number, or as few decimals as it has. */
+export function formatTick(value: number): string {
+    return String(Math.round(value * 1000) / 1000);
+}
+
 /** Ring spacing in a 1-2-5 series that puts a handful of rings inside `reach`. */
 export function ringStep(reach: number): number {
     const candidates = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
@@ -259,6 +290,19 @@ function readFlag(key: string, fallback: boolean): boolean {
     }
 }
 
+/** A choice remembered under `key`; null when none was made in this browser. */
+function readChoice(key: string): boolean | null {
+    try {
+        if (typeof localStorage === "undefined") {
+            return null;
+        }
+        const stored = localStorage.getItem(key);
+        return stored === null ? null : stored === "1";
+    } catch {
+        return null;
+    }
+}
+
 function writeFlag(key: string, on: boolean): void {
     try {
         if (typeof localStorage !== "undefined") {
@@ -282,6 +326,7 @@ interface Colors {
     text: string;
     groups: string[];
     probe: string;
+    marker: string;
     low: string;
     high: string;
 }
@@ -305,6 +350,7 @@ function readColors(node: Element): Colors {
             cssVar(node, "--pv-g3", "#806000"),
         ],
         probe: cssVar(node, "--pv-probe", "#7a3fb0"),
+        marker: cssVar(node, "--pv-marker", "#2aa198"),
         low: cssVar(node, "--hm-low", "#268bd2"),
         high: cssVar(node, "--hm-high", "#dc322f"),
     };
@@ -313,7 +359,7 @@ function readColors(node: Element): Colors {
 function sameColors(a: Colors, b: Colors): boolean {
     return a.bg === b.bg && a.grid === b.grid && a.axis === b.axis && a.rail === b.rail && a.rmax === b.rmax
         && a.copper === b.copper && a.outline === b.outline && a.head === b.head && a.trail === b.trail
-        && a.text === b.text && a.probe === b.probe && a.low === b.low && a.high === b.high
+        && a.text === b.text && a.probe === b.probe && a.marker === b.marker && a.low === b.low && a.high === b.high
         && a.groups.length === b.groups.length && a.groups.every((color, index) => color === b.groups[index]);
 }
 
@@ -323,6 +369,9 @@ interface SceneKey {
     probeMap: HeightMap | null;
     probeDraft: Grid | null;
     heights: boolean;
+    /** A square grid under the work rather than rings about the axis. */
+    grid: boolean;
+    markers: Marker[];
     camera: Camera;
     width: number;
     height: number;
@@ -334,7 +383,7 @@ interface SceneKey {
 }
 
 function sameSceneKey(a: SceneKey, b: SceneKey): boolean {
-    return a.job === b.job && a.probeMap === b.probeMap && sameGrid(a.probeDraft, b.probeDraft) && a.heights === b.heights
+    return a.job === b.job && a.probeMap === b.probeMap && sameGrid(a.probeDraft, b.probeDraft) && a.heights === b.heights && a.grid === b.grid && a.markers === b.markers
         && sameCamera(a.camera, b.camera) && a.width === b.width && a.height === b.height && a.dpr === b.dpr
         && a.colors === b.colors && a.angle === b.angle
         && a.limits.kinematics === b.limits.kinematics && a.limits.r_max === b.limits.r_max && a.limits.z_max === b.limits.z_max;
@@ -378,7 +427,10 @@ export class Preview {
     private trail: Point[] = [];
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
+    private markers: Marker[] = [];
     private heights = readFlag(HEIGHTS_KEY, true);
+    /** The grid picked in this browser; null follows the machine, a grid on a cartesian one. */
+    private gridChoice = readChoice(GRID_KEY);
     private pending = false;
     private observer: ResizeObserver | null = null;
     private pointers = new Map<number, Pointer>();
@@ -417,6 +469,14 @@ export class Preview {
         }
     }
 
+    /** The saved positions to mark on the board, each with its name. */
+    setMarkers(markers: Marker[]): void {
+        if (markers !== this.markers) {
+            this.markers = markers;
+            this.requestDraw();
+        }
+    }
+
     /** Whether the height map's mesh and probe points are drawn; the choice is kept between visits. */
     get showHeights(): boolean {
         return this.heights;
@@ -433,6 +493,29 @@ export class Preview {
     toggleHeights(): boolean {
         this.setShowHeights(!this.heights);
         return this.heights;
+    }
+
+    /**
+     * Whether a square grid is drawn under the work instead of the rings:
+     * the choice made in this browser, kept between visits, else the
+     * machine's kind, a grid for a cartesian machine.
+     */
+    get showGrid(): boolean {
+        return this.gridChoice ?? this.limits.kinematics === "cartesian";
+    }
+
+    setShowGrid(on: boolean): void {
+        const before = this.showGrid;
+        this.gridChoice = on;
+        writeFlag(GRID_KEY, on);
+        if (on !== before) {
+            this.requestDraw();
+        }
+    }
+
+    toggleGrid(): boolean {
+        this.setShowGrid(!this.showGrid);
+        return this.showGrid;
     }
 
     /** The radius limit drawn, mm; 0 is none. */
@@ -695,28 +778,44 @@ export class Preview {
             }
         }
 
-        // Labels in screen space: the rings along the rail, every one while
-        // they are far enough apart to read, every second or fourth beyond.
+        // Labels in screen space: the rings along the rail, or the grid's
+        // lines along both axes, every one while they are far enough apart
+        // to read, every second or fourth beyond.
         const step = ringStep(reach);
+        const grid = this.showGrid;
         ctx.fillStyle = colors.text;
         ctx.font = "0.75rem system-ui, sans-serif";
         ctx.textBaseline = "top";
         ctx.textAlign = "left";
         const every = labelEvery(step, scale);
+        const label = (text: string, x: number, y: number): void => {
+            const p = at(x, y, 0);
+            if (p && p.x > 0 && p.x < width && p.y > 0 && p.y < height) {
+                ctx.fillText(text, p.x + 3, p.y + 3);
+            }
+        };
         let index = 0;
         for (let ring = step; ring <= reach * 1.5; ring += step) {
             index += 1;
             if (index % every !== 0) {
                 continue;
             }
-            const p = at(ring, 0, 0);
-            if (p && p.x > 0 && p.x < width && p.y > 0 && p.y < height) {
-                ctx.fillText(`${ring} mm`, p.x + 3, p.y + 3);
+            if (grid) {
+                for (const value of [ring, -ring]) {
+                    label(formatTick(value), value, 0);
+                    label(formatTick(value), 0, value);
+                }
+            } else {
+                label(`${ring} mm`, ring, 0);
             }
         }
+        this.drawMarkerLabels(ctx, at, colors, width, height);
         ctx.textAlign = "right";
         ctx.textBaseline = "bottom";
         const notes = [`elev ${Math.round(camera.pitch)} deg`];
+        if (grid) {
+            notes.unshift(`grid ${step} mm`);
+        }
         if (this.locked) {
             notes.unshift("rotation locked");
         }
@@ -752,6 +851,8 @@ export class Preview {
             probeMap: this.probeMap,
             probeDraft: this.probeDraft,
             heights: this.heights,
+            grid: this.showGrid,
+            markers: this.markers,
             camera: this.camera,
             width: this.width,
             height: this.height,
@@ -814,13 +915,19 @@ export class Preview {
         ctx.restore();
     }
 
-    /** The board: the background and the rings about the axis. */
+    /** The board: the background, and the rings about the axis or a square grid. */
     private drawBoard(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number): void {
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, this.width, this.height);
         const step = ringStep(reach);
         ctx.strokeStyle = colors.grid;
         ctx.lineWidth = 1;
+        if (this.showGrid) {
+            for (const [a, b] of gridLines(step, reach * 1.5)) {
+                this.polyline(ctx, frame, [[a[0], a[1], 0], [b[0], b[1], 0]]);
+            }
+            return;
+        }
         for (let ring = step; ring <= reach * 1.5; ring += step) {
             this.polyline(ctx, frame, circlePoints(ring, 96), true);
         }
@@ -890,15 +997,28 @@ export class Preview {
             ctx.globalAlpha = 1;
             if (job.outline.length > 0) {
                 ctx.strokeStyle = colors.outline;
-                // A model's outline and block are where it lies, not a cut:
-                // a thin line, so the toolpaths under it show.
-                const model = job.groups.some((group) => (group.moves?.length ?? 0) > 0);
-                ctx.lineWidth = model ? 1 : Math.max(spot * scale / 2, 1);
+                // A model's outline and block, and the shape a Mill page
+                // operation cuts, are where it lies, not a cut: a thin line,
+                // so the toolpaths under it show.
+                const thin = job.source === "mill" || job.groups.some((group) => (group.moves?.length ?? 0) > 0);
+                ctx.lineWidth = thin ? 1 : Math.max(spot * scale / 2, 1);
                 this.strokePaths(ctx, frame, job.outline);
             }
         }
 
         const exaggeration = this.heights ? this.drawProbe(ctx, frame, colors, reach) : null;
+
+        // The markers: a diagonal cross and a ring, eight px whatever the
+        // zoom, so they read apart from the axis cross.
+        const size = 8 / scale;
+        ctx.strokeStyle = colors.marker;
+        ctx.lineWidth = 1.5;
+        for (const marker of this.markers) {
+            const { x, y } = marker;
+            this.polyline(ctx, frame, [[x - size, y - size, 0], [x + size, y + size, 0]]);
+            this.polyline(ctx, frame, [[x - size, y + size, 0], [x + size, y - size, 0]]);
+            this.polyline(ctx, frame, circlePoints(size * 0.7, 16).map(([cx, cy]) => [x + cx, y + cy, 0] as Vec3), true);
+        }
 
         // Axis cross, ten px wide whatever the zoom.
         const cross = 10 / scale;
@@ -907,6 +1027,30 @@ export class Preview {
         this.polyline(ctx, frame, [[-cross, 0, 0], [cross, 0, 0]]);
         this.polyline(ctx, frame, [[0, -cross, 0], [0, cross, 0]]);
         return exaggeration;
+    }
+
+    /** The markers' names beside them, in screen space so they stay upright. */
+    private drawMarkerLabels(
+        ctx: CanvasRenderingContext2D,
+        at: (x: number, y: number, z?: number) => { x: number; y: number } | null,
+        colors: Colors,
+        width: number,
+        height: number,
+    ): void {
+        if (this.markers.length === 0) {
+            return;
+        }
+        ctx.save();
+        ctx.fillStyle = colors.marker;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        for (const marker of this.markers) {
+            const p = at(marker.x, marker.y, 0);
+            if (p && p.x > 0 && p.x < width && p.y > 0 && p.y < height) {
+                ctx.fillText(marker.name, p.x + 7, p.y - 5);
+            }
+        }
+        ctx.restore();
     }
 
     /**
