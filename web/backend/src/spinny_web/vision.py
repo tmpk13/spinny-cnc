@@ -154,7 +154,16 @@ class VisionClient:
             self._reader = threading.Thread(target=self._read_replies, args=(stream,), name="pcbv-reader", daemon=True)
             self._reader.start()
         try:
-            return self.request("hello", timeout=REQUEST_SECONDS)
+            hello = self.request("hello", timeout=REQUEST_SECONDS)
+            if device.startswith("socket://"):
+                # A pcbv serving elsewhere opened its camera with the size
+                # and rate on its own command line; the ones asked for here
+                # replace them.
+                if not hello.get("camera"):
+                    raise VisionError(f"pcbv at {device} has no camera open")
+                width, height = (int(v) for v in size.split("x"))
+                self.request("camera", timeout=REQUEST_SECONDS, path=hello["camera"], width=width, height=height, fps=int(fps))
+            return hello
         except VisionError:
             self.close()
             raise
@@ -166,8 +175,10 @@ class VisionClient:
             self.device = None
         if stream is None:
             return
+        # A pcbv this started is told to end; one serving over TCP would end
+        # for every later client too, so it is only left.
         try:
-            if stream.alive:
+            if stream.alive and stream.process is not None:
                 stream.write(json.dumps({"id": 0, "cmd": "quit"}).encode() + b"\n")
         except (OSError, ValueError):
             pass

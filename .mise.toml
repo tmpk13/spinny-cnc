@@ -14,7 +14,7 @@ description = "The page from the dev server with live reload; point it at a back
 run = "cd web/frontend && bun run dev"
 
 [tasks.relay-pi]
-description = "Forward the controller on a Raspberry Pi to socket://127.0.0.1:2324 here over ssh: mise run relay-pi -- pi@spinny.local"
+description = "Forward the controller on a Raspberry Pi to socket://127.0.0.1:2324 here over ssh, and its cameras to 2325 and 2326: mise run relay-pi -- pi@spinny.local"
 run = "relay/relay-pi.sh"
 
 [tasks.bridge]
@@ -34,7 +34,7 @@ description = "The backend's journal and the tails of spinny.log and wire.log on
 run = "relay/pi-logs.sh"
 
 [tasks.deploy-pi]
-description = "Install the backend and the built page on a Raspberry Pi as a service that drives the controller on its own: mise run deploy-pi -- pi@spinny.local"
+description = "Install the bridge on a Raspberry Pi as a service, with --camera DEV for each camera served there, or with --web the backend and the page: mise run deploy-pi -- --camera /dev/v4l/by-id/... pi@spinny.local"
 run = "deploy/deploy-pi.sh"
 
 [tasks.cam]

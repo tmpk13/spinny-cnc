@@ -16,15 +16,30 @@
 # not: a board that stops taking bytes leaves its child blocked in a write,
 # and the next connection is accepted but never served until this relay
 # is started again.
+#
+# The cameras deploy-pi serves on the Pi (pcbv on its loopback ports 2325,
+# 2326) are forwarded the same way, so the camera panel connects to
+# socket://127.0.0.1:2325 here. SPINNY_CAMERA_PORTS names other ports, or
+# none when empty (a port already taken here stops the relay at the start).
 set -euo pipefail
 
 host=${1:?usage: relay-pi.sh user@host [port]}
 port=${2:-2324}
 # A device path on the Pi; empty picks the controller by its USB name.
 device=${SPINNY_DEVICE:-}
+camera_ports=${SPINNY_CAMERA_PORTS-2325 2326}
+forwards=(-L "127.0.0.1:$port:127.0.0.1:$port")
+for camera_port in $camera_ports; do
+    forwards+=(-L "127.0.0.1:$camera_port:127.0.0.1:$camera_port")
+done
 
 remote=$(cat <<EOF
 set -e
+for p in $camera_ports; do
+    if ss -Hltn "sport = :\$p" | grep -q .; then
+        echo "a camera serves on port \$p on the Pi: socket://127.0.0.1:\$p here" >&2
+    fi
+done
 command -v socat >/dev/null || { echo "socat is missing on the Pi: sudo apt install socat" >&2; exit 1; }
 if ss -Hltn "sport = :$port" | grep -q .; then
     echo "a bridge already listens on port $port on the Pi; forwarding to it" >&2
@@ -44,4 +59,4 @@ EOF
 
 # -t gives the remote socat a terminal, so Ctrl-C and a dropped session
 # stop it instead of leaving it holding the port and the device.
-exec ssh -t -o ExitOnForwardFailure=yes -L "127.0.0.1:$port:127.0.0.1:$port" "$host" "$remote"
+exec ssh -t -o ExitOnForwardFailure=yes "${forwards[@]}" "$host" "$remote"

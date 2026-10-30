@@ -3,9 +3,12 @@ that measures the camera's offset from a mark."""
 
 from __future__ import annotations
 
+import json
 import math
+import socket
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 
@@ -79,6 +82,75 @@ def test_the_vision_client_speaks_the_protocol(pcbv):
     assert not client.running
     with pytest.raises(VisionError, match="not running"):
         client.pose()
+
+
+class FakeServedPcbv:
+    """A stand-in for `pcbv serve --listen` on another machine: one client
+    at a time, every request kept, and the service over at a `quit`."""
+
+    def __init__(self, camera: str | None) -> None:
+        self.camera = camera
+        self.requests: list[dict] = []
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self.listener.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                conn, _ = self.listener.accept()
+            except OSError:
+                return
+            with conn, conn.makefile("rwb") as stream:
+                for raw in stream:
+                    request = json.loads(raw)
+                    self.requests.append(request)
+                    rid, cmd = request["id"], request["cmd"]
+                    if cmd == "hello":
+                        reply = {"id": rid, "version": "0.1.0", "camera": self.camera, "board": None}
+                    elif cmd == "camera":
+                        self.camera = request["path"]
+                        reply = {"id": rid, "ok": True}
+                    elif cmd == "quit":
+                        stream.write(json.dumps({"id": rid, "ok": True}).encode() + b"\n")
+                        stream.flush()
+                        self.listener.close()
+                        return
+                    else:
+                        reply = {"id": rid, "error": "unknown command " + cmd}
+                    stream.write(json.dumps(reply).encode() + b"\n")
+                    stream.flush()
+
+    def close(self) -> None:
+        self.listener.close()
+
+
+def test_a_served_pcbv_takes_the_size_asked_for_here_and_outlives_its_clients():
+    served = FakeServedPcbv("/dev/v4l/by-id/usb-cam-video-index0")
+    try:
+        for _ in range(2):
+            client = VisionClient()
+            hello = client.start(f"socket://127.0.0.1:{served.port}", "640x480", 15, "no-pcbv-needed")
+            assert hello["camera"] == "/dev/v4l/by-id/usb-cam-video-index0" and client.running
+            client.close()
+            assert not client.running
+        opens = [r for r in served.requests if r["cmd"] == "camera"]
+        assert len(opens) == 2
+        assert opens[0] == {"id": 1, "cmd": "camera", "path": "/dev/v4l/by-id/usb-cam-video-index0", "width": 640, "height": 480, "fps": 15}
+        assert not any(r["cmd"] == "quit" for r in served.requests)
+    finally:
+        served.close()
+
+
+def test_a_served_pcbv_without_a_camera_is_refused():
+    served = FakeServedPcbv(None)
+    try:
+        client = VisionClient()
+        with pytest.raises(VisionError, match="has no camera open"):
+            client.start(f"socket://127.0.0.1:{served.port}", "640x480", 15, "pcbv")
+        assert not client.running
+    finally:
+        served.close()
 
 
 def test_pcbv_is_found_or_named(tmp_path):
