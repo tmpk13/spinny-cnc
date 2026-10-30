@@ -17,56 +17,40 @@ use crate::region::{self, P2};
 
 pub struct Slicer<'a> {
     mesh: &'a Mesh,
-    /// Triangles by height band, each listed in every band it spans.
-    bands: Vec<Vec<u32>>,
-    low: f64,
-    band: f64,
+    /// Every triangle's lowest and highest z. A level looks at them all: a
+    /// few comparisons a triangle, where an index by height band would
+    /// list a tall wall's triangles in every band it spans.
+    span: Vec<(f64, f64)>,
     /// Triangles that look down, with their lowest and highest z.
     down: Vec<(u32, f64, f64)>,
 }
 
 impl<'a> Slicer<'a> {
     pub fn new(mesh: &'a Mesh) -> Self {
-        let (min, max) = mesh.bounds();
-        let count = (mesh.triangles.len() / 8).clamp(1, 4096);
-        let band = ((max[2] - min[2]) / count as f64).max(1e-6);
-        let mut bands = vec![Vec::new(); count];
+        let mut span = Vec::with_capacity(mesh.triangles.len());
         let mut down = Vec::new();
         for i in 0..mesh.triangles.len() {
             let [a, b, c] = mesh.triangle(i);
             let lo = a[2].min(b[2]).min(c[2]);
             let hi = a[2].max(b[2]).max(c[2]);
-            let first = (((lo - min[2]) / band) as usize).min(count - 1);
-            let last = (((hi - min[2]) / band) as usize).min(count - 1);
-            for slot in bands.iter_mut().take(last + 1).skip(first) {
-                slot.push(i as u32);
-            }
+            span.push((lo, hi));
             let n = crate::mesh::cross(crate::mesh::sub(b, a), crate::mesh::sub(c, a));
             if n[2] < -1e-12 * crate::mesh::norm(n).max(1e-300) {
                 down.push((i as u32, lo, hi));
             }
         }
-        Slicer { mesh, bands, low: min[2], band, down }
-    }
-
-    fn candidates(&self, z: f64) -> &[u32] {
-        if self.bands.is_empty() {
-            return &[];
-        }
-        let slot = ((z - self.low) / self.band).floor();
-        if slot < 0.0 {
-            return &[];
-        }
-        let slot = (slot as usize).min(self.bands.len() - 1);
-        &self.bands[slot]
+        Slicer { mesh, span, down }
     }
 
     /// The solid's cross section just above z, as an area: what is
     /// strictly higher than z. A face lying at z is not in it.
     pub fn section(&self, z: f64) -> Paths64 {
         let mut segments: Vec<([u32; 2], [u32; 2], P2, P2)> = Vec::new();
-        for &i in self.candidates(z) {
-            let t = self.mesh.triangles[i as usize];
+        for (i, &(lo, hi)) in self.span.iter().enumerate() {
+            if hi <= z || lo > z {
+                continue;
+            }
+            let t = self.mesh.triangles[i];
             let above = t.map(|v| self.mesh.vertices[v as usize][2] > z);
             let count = above.iter().filter(|&&a| a).count();
             if count == 0 || count == 3 {

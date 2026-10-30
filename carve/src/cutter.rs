@@ -121,6 +121,8 @@ impl Cutter {
 struct Tri {
     v: [V3; 3],
     top: f64,
+    /// Its box in the plane: x min, x max, y min, y max.
+    bounds: [f64; 4],
     /// z = a x + b y + c, for a face that is not vertical.
     plane: Option<[f64; 3]>,
 }
@@ -136,7 +138,19 @@ impl Tri {
         } else {
             None
         };
-        Tri { v, top: v[0][2].max(v[1][2]).max(v[2][2]), plane }
+        let bounds = [
+            v[0][0].min(v[1][0]).min(v[2][0]),
+            v[0][0].max(v[1][0]).max(v[2][0]),
+            v[0][1].min(v[1][1]).min(v[2][1]),
+            v[0][1].max(v[1][1]).max(v[2][1]),
+        ];
+        Tri { v, top: v[0][2].max(v[1][2]).max(v[2][2]), bounds, plane }
+    }
+
+    /// Whether the tool's footprint at p can reach the triangle's box.
+    fn near(&self, p: P2, r: f64) -> bool {
+        let [x0, x1, y0, y1] = self.bounds;
+        p[0] >= x0 - r && p[0] <= x1 + r && p[1] >= y0 - r && p[1] <= y1 + r
     }
 
     fn contains(&self, p: P2) -> bool {
@@ -312,7 +326,9 @@ impl Surface {
             if t.top <= best {
                 break;
             }
-            best = best.max(t.drop(cutter, p));
+            if t.near(p, cutter.radius) {
+                best = best.max(t.drop(cutter, p));
+            }
         }
         best
     }

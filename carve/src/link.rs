@@ -242,12 +242,14 @@ impl<'a> Linker<'a> {
 /// Pass the tool narrowed by the tolerance, or a side that only touches a
 /// wall reads as a cut the wall's height deep.
 pub fn gouge(paths: &[Vec<Move>], surface: &Surface, cutter: &Cutter, step: f64) -> f64 {
-    let mut worst: f64 = 0.0;
-    for path in paths {
-        for w in path.windows(2) {
-            let (a, b) = (w[0], w[1]);
+    use rayon::prelude::*;
+    let moves: Vec<(Move, Move)> = paths.iter().flat_map(|path| path.windows(2).map(|w| (w[0], w[1]))).collect();
+    moves
+        .par_iter()
+        .map(|&(a, b)| {
             let run = (b[0] - a[0]).hypot(b[1] - a[1]);
             let n = (run / step).ceil().max(1.0) as usize;
+            let mut worst: f64 = 0.0;
             for k in 0..=n {
                 let t = k as f64 / n as f64;
                 let xy = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
@@ -257,7 +259,7 @@ pub fn gouge(paths: &[Vec<Move>], surface: &Surface, cutter: &Cutter, step: f64)
                     worst = worst.max(floor - z);
                 }
             }
-        }
-    }
-    worst
+            worst
+        })
+        .reduce(|| 0.0, f64::max)
 }
