@@ -43,10 +43,14 @@ socket. The four enable pins are driven together, so an empty E socket
 sees its enable line with the others, which does no harm; its driver is
 only configured over UART with `$h_axis=1`.
 
-The probe input is 3.3 V logic with no 5 V tolerance. A plain switch or
-a pin that touches grounded copper goes between the Z-STOP signal and
-GND. A powered probe must have an open drain (or open collector) output,
-or a level shifter: one that drives 5 V into GP25 damages the RP2040.
+A plain switch or a pin that touches grounded copper goes between the
+Z-STOP signal and GND. The four STOP headers (X, Y, Z, E) carry 5 V on
+pin 3 for a powered sensor and reach the RP2040 through a 74LVC2G34
+buffer powered at 3.3 V, whose inputs take up to 5.5 V (SKR Pico V1.0
+schematic), so a 5 V output is safe on them. No other header is behind
+that buffer: the PROBE header reaches GP22 directly through the P21
+jumper. Treat any other header as 3.3 V only, so a probe moved to one
+needs an open drain (or open collector) output, or a level shifter.
 Check the header's pinout on the board before wiring it, and check the
 level with `?` (`P:1` while touching) before the first `probe`.
 
@@ -299,9 +303,13 @@ $save
   focal point once it has touched (a fixed pin rather than a retracting
   one) drags across the board during the cut: retract or remove it before
   running a job.
-- An endstop is a switch between its header's signal and GND, 3.3 V logic
-  like the probe: the input is pulled up and reads closed when pulled low,
-  or the other way round with its bit of `$stop_invert`. Switches at both
+- An endstop is a switch between its header's signal and GND, or a
+  powered sensor such as an optical endstop fed from the header's 5 V pin.
+  The four STOP headers take a 5 V output. The cross slide's default pin,
+  GP22 on the PROBE header, takes 3.3 V only, so a powered sensor for the
+  cross slide goes on a free STOP header with `$z_stop_pin`. The input is
+  pulled up and reads closed when pulled low, or the other way round with
+  its bit of `$stop_invert`. Switches at both
   ends of an axis go to the one header, normally closed in series or
   normally open in parallel. Before the first `home`, close each switch by
   hand and watch `?`: a `home` seeks a switch it reads open, and a switch

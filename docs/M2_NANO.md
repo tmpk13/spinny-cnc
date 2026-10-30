@@ -107,9 +107,11 @@ flowchart LR
      a GPIO wired straight to `L` would fire it in all three. The panel's
      knob on `IN` stays as the current ceiling, and PWM on `L` sets the
      power under it.
-   - RP2040 inputs are 3.3 V. The K40's optical endstops run on the
-     ribbon's 5 V, so measure their output before connecting them, and use
-     a divider or microswitches if it goes above 3.3 V.
+   - The K40's optical endstops can go straight on the STOP headers, which
+     carry 5 V on pin 3 and buffer the signal (74LVC2G34, inputs up to
+     5.5 V). The cross slide's default endstop, GP22 on the PROBE header,
+     has no buffer, so Y goes on Y-STOP by swapping pins with the unused
+     table: `$z_stop_pin=3`, `$a_stop_pin=22`.
    - The supply's 24 V ran the M2's two motors and will likely run the
      Pico's at a similar current; a separate 24 V supply with the grounds
      common removes the doubt.
