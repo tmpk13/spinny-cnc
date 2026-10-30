@@ -127,6 +127,8 @@ class VisionClient:
     def start(self, device: str, size: str, fps: int, pcbv: str, work_width: int = 1024) -> dict:
         """Starts pcbv on the device, or connects to one serving at a
         `socket://host:port` device; answers its `hello`."""
+        said: list[str] = []
+        stderr: threading.Thread | None = None
         with self._lock:
             if self._stream is not None:
                 raise VisionError("the camera is already running")
@@ -146,7 +148,8 @@ class VisionClient:
                 except OSError as exc:
                     raise VisionError(f"cannot start {program}: {exc}") from exc
                 assert process.stdin is not None and process.stdout is not None and process.stderr is not None
-                threading.Thread(target=self._log_stderr, args=(process.stderr,), name="pcbv-stderr", daemon=True).start()
+                stderr = threading.Thread(target=self._log_stderr, args=(process.stderr, said), name="pcbv-stderr", daemon=True)
+                stderr.start()
                 stream = _Stream(process.stdout, process.stdin, process, None)
             self._stream = stream
             self.device = device
@@ -163,6 +166,12 @@ class VisionClient:
                 raise VisionError(
                     f"no pcbv answers at {device} ({exc}): a port forwarded from a Pi has no camera unit serving it there"
                 ) from exc
+            # A pcbv that could not open its camera says why on stderr
+            # and ends; the reason belongs in the error, not only the log.
+            if stderr is not None:
+                stderr.join(timeout=1.0)
+                if said:
+                    raise VisionError(f"{exc}: {said[-1]}") from exc
             raise
         try:
             if device.startswith("socket://"):
@@ -275,11 +284,13 @@ class VisionClient:
             self._replies.put(exc)
 
     @staticmethod
-    def _log_stderr(pipe) -> None:
+    def _log_stderr(pipe, said: list[str]) -> None:
         try:
             for raw in iter(pipe.readline, b""):
                 text = raw.decode("utf-8", errors="replace").rstrip()
                 if text:
                     log.info("pcbv: %s", text)
+                    said.append(text)
+                    del said[:-3]
         except (OSError, ValueError):
             pass

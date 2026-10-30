@@ -17,9 +17,9 @@
 # and the next connection is accepted but never served until this relay
 # is started again.
 #
-# The cameras deploy-pi serves on the Pi (pcbv on its loopback ports 2325,
-# 2326) are forwarded the same way, so the camera panel connects to
-# socket://127.0.0.1:2325 here. SPINNY_CAMERA_PORTS names other ports, or
+# The cameras deploy-pi streams on the Pi (ustreamer on its loopback ports
+# 2325, 2326) are forwarded the same way, so the camera device here is
+# http://127.0.0.1:2325/stream. SPINNY_CAMERA_PORTS names other ports, or
 # none when empty (a port already taken here stops the relay at the start).
 set -euo pipefail
 
@@ -37,7 +37,7 @@ remote=$(cat <<EOF
 set -e
 for p in $camera_ports; do
     if ss -Hltn "sport = :\$p" | grep -q .; then
-        echo "a camera serves on port \$p on the Pi: socket://127.0.0.1:\$p here" >&2
+        echo "a camera streams on port \$p on the Pi: http://127.0.0.1:\$p/stream here" >&2
     fi
 done
 command -v socat >/dev/null || { echo "socat is missing on the Pi: sudo apt install socat" >&2; exit 1; }

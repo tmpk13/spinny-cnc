@@ -215,12 +215,15 @@ the tool:
    keep them with it. A camera that is moved on the head, or a tool that
    is changed, wants the routine run again.
 
-A camera plugged into a Pi that is a bridge is served there: deploy with
-`mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host` (the
-deploy lists the names it finds; a second `--camera`, the up camera, gets
-the next port), keep `mise run relay-pi -- user@host` running, and set
-the camera's device to `socket://127.0.0.1:2325` (the second one 2326).
-The size and fps in the settings apply as for a camera here.
+A camera plugged into a Pi that is a bridge is streamed from there:
+deploy with `mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
+(the deploy lists the names it finds, the `video-index0` one is the
+picture; `<name>@640x480@15` picks another mode than 1280x720 at 30 fps;
+a second `--camera`, the up camera, gets the next port), keep
+`mise run relay-pi -- user@host` running, and set the camera's device to
+`http://127.0.0.1:2325/stream` (the second one 2326). The mode is the one
+deployed: the size and fps in the settings do not change it. While the
+camera is unplugged the picture is ustreamer's NO SIGNAL card.
 `mise run pi-logs -- user@host` shows the camera units' journals.
 
 ### Pick and place

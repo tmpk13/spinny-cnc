@@ -1,0 +1,16 @@
+[Unit]
+Description=Spinny camera on port @PORT@ (ustreamer)
+# Keep trying however often it fails: a camera that is unplugged is
+# waited for, not given up on.
+StartLimitIntervalSec=0
+
+[Service]
+User=@USER@
+# The camera's own MJPEG passed through (HW encoder), on loopback only;
+# --slowdown drops to 1 fps while no client watches.
+ExecStart=@USTREAMER@ --device @CAMERA@ --format @FORMAT@ --encoder HW --resolution @SIZE@ --desired-fps @FPS@ --host 127.0.0.1 --port @PORT@ --slowdown
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

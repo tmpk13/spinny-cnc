@@ -34,7 +34,7 @@ description = "The backend's journal and the tails of spinny.log and wire.log on
 run = "relay/pi-logs.sh"
 
 [tasks.deploy-pi]
-description = "Install the bridge on a Raspberry Pi as a service, with --camera DEV for each camera served there, or with --web the backend and the page: mise run deploy-pi -- --camera /dev/v4l/by-id/... pi@spinny.local"
+description = "Install the bridge on a Raspberry Pi as a service, with --camera DEV[@WxH[@FPS]] for each camera streamed there, or with --web the backend and the page: mise run deploy-pi -- --camera /dev/v4l/by-id/... pi@spinny.local"
 run = "deploy/deploy-pi.sh"
 
 [tasks.cam]

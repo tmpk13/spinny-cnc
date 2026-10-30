@@ -173,6 +173,20 @@ def test_a_forwarded_port_with_nothing_behind_it_is_named():
         listener.close()
 
 
+def test_a_pcbv_that_cannot_open_its_camera_says_why(tmp_path):
+    script = tmp_path / "failing-pcbv"
+    script.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "sys.stderr.write('Error: http://127.0.0.1:2325/stream closed without answering\\n')\nsys.exit(1)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    client = VisionClient()
+    with pytest.raises(VisionError, match="closed its output: Error: http://127.0.0.1:2325/stream closed without answering"):
+        client.start("http://127.0.0.1:2325/stream", "1280x720", 30, str(script))
+    assert not client.running
+
+
 def test_pcbv_is_found_or_named(tmp_path):
     with pytest.raises(VisionError, match="not on PATH"):
         find_pcbv("no-such-program-anywhere")

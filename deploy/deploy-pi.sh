@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install on a Raspberry Pi the controller is plugged into, as a service.
 #
-#   deploy/deploy-pi.sh [--no-build] [--web] [--camera DEV ...] user@host [extra allowed host ...]
+#   deploy/deploy-pi.sh [--no-build] [--web] [--camera DEV[@WxH[@FPS]] ...] user@host [extra allowed host ...]
 #
 # Without --web the Pi is a bridge: `spinny-bridge` serves the controller's
 # port on the Pi's loopback (socket://127.0.0.1:2324), one client at a
@@ -26,19 +26,22 @@
 # the same port: installing one stops and disables the other, and the
 # session relay (relay/relay-pi.sh) forwards to the bridge when it finds it.
 #
-# Cameras plugged into the Pi are read by pcbv from the sibling pcb-vision,
-# copied along and built on the Pi with cargo (and libclang, for its V4L2
-# bindings). With --web the backend there starts pcbv itself. As a bridge,
-# each --camera (a device on the Pi, best a /dev/v4l/by-id name, which
-# survives replugging) gets a unit serving `pcbv serve` on the Pi's
-# loopback, the first on port 2325, the next on 2326 and so on; relay-pi
-# forwards those ports too, and the camera panel here connects to
-# socket://127.0.0.1:2325. Every deploy replaces the camera units with the
-# ones named, so leaving --camera out removes them.
+# Cameras plugged into a bridge Pi are only streamed there: each --camera
+# (a device on the Pi, best a /dev/v4l/by-id name, which survives
+# replugging; 1280x720 at 30 fps unless given) gets a unit running
+# ustreamer (from apt) on the Pi's loopback, passing the camera's own
+# MJPEG through undecoded, the first on port 2325, the next on 2326 and so
+# on. relay-pi forwards those ports too, and the camera device here is
+# http://127.0.0.1:2325/stream: pcbv runs here and reads it. Every deploy
+# replaces the camera units with the ones named, so leaving --camera out
+# removes them. With --web the backend on the Pi runs pcbv itself on the
+# Pi's cameras; pcbv is cross built here for it (aarch64-linux-gnu-gcc and
+# the aarch64-unknown-linux-gnu Rust target), as a small Pi cannot build
+# it, and installed as /usr/local/bin/pcbv.
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 [--no-build] [--web] [--camera DEV ...] user@host [extra allowed host ...]" >&2
+    echo "usage: $0 [--no-build] [--web] [--camera DEV[@WxH[@FPS]] ...] user@host [extra allowed host ...]" >&2
     exit 2
 }
 
@@ -50,7 +53,17 @@ while [[ $# -gt 0 ]]; do
         --no-build) build=0; shift ;;
         --web) mode=web; shift ;;
         --bridge) mode=bridge; shift ;;
-        --camera) [[ $# -ge 2 ]] || usage; cameras+=("$2"); shift 2 ;;
+        --camera)
+            [[ $# -ge 2 ]] || usage
+            IFS=@ read -r device size fps <<<"$2"
+            size=${size:-1280x720}
+            fps=${fps:-30}
+            if [[ -z $device || ! $size =~ ^[0-9]+x[0-9]+$ || ! $fps =~ ^[0-9]+$ ]]; then
+                echo "--camera takes DEV, DEV@WIDTHxHEIGHT or DEV@WIDTHxHEIGHT@FPS, not $2" >&2
+                exit 2
+            fi
+            cameras+=("$device@$size@$fps")
+            shift 2 ;;
         --) shift; break ;;
         -*) usage ;;
         *) break ;;
@@ -68,16 +81,8 @@ fi
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 sibling=$(cd "$here/../kicad-to-gcode" && pwd)
-# pcb-vision is wanted only where a camera may be read on the Pi.
-vision=0
-if [[ $mode == web || ${#cameras[@]} -gt 0 ]]; then
-    if [[ -d "$here/../pcb-vision" ]]; then
-        vision=1
-    elif [[ ${#cameras[@]} -gt 0 ]]; then
-        echo "no pcb-vision next to this repository: the cameras need its pcbv" >&2
-        exit 1
-    fi
-fi
+staging=$(mktemp -d)
+trap 'rm -rf "$staging"' EXIT
 
 if [[ $mode == web ]]; then
     if [[ $build == 1 ]]; then
@@ -87,9 +92,28 @@ if [[ $mode == web ]]; then
         echo "no built page in web/frontend/dist; run without --no-build" >&2
         exit 1
     fi
+    # pcbv for the Pi, in the dev profile (its dependencies fully
+    # optimized), stripped of its debug info to a size worth copying.
+    vision="$here/../pcb-vision"
+    cross="$vision/target/aarch64-unknown-linux-gnu/debug/pcbv"
+    if [[ ! -d $vision ]]; then
+        echo "no pcb-vision next to this repository: the Pi's cameras will not run" >&2
+    elif [[ $build == 1 ]]; then
+        if command -v aarch64-linux-gnu-gcc >/dev/null \
+            && rustup target list --installed 2>/dev/null | grep -qx aarch64-unknown-linux-gnu; then
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+                cargo build -q -p pcbv --target aarch64-unknown-linux-gnu --manifest-path "$vision/Cargo.toml" \
+                || echo "pcbv did not build for the Pi: its cameras will not run" >&2
+        else
+            echo "pcbv for the Pi needs aarch64-linux-gnu-gcc and rustup target add aarch64-unknown-linux-gnu here" >&2
+        fi
+    fi
+    if [[ -x $cross ]]; then
+        aarch64-linux-gnu-strip -o "$staging/pcbv" "$cross"
+    fi
 fi
 
-ssh "$target" mkdir -p "$remote_dir/spinny-laser-pcb" "$remote_dir/kicad-to-gcode" "$remote_dir/pcb-vision"
+ssh "$target" mkdir -p "$remote_dir/spinny-laser-pcb" "$remote_dir/kicad-to-gcode"
 
 # Virtual environments and build output are for this machine's architecture;
 # the runtime files (jobs, the height map, the resume record) are the Pi's
@@ -104,26 +128,19 @@ rsync -az --delete \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
     --exclude 'out/' --exclude '*.egg-info/' \
     "$sibling/" "$target:$remote_dir/kicad-to-gcode/"
-# Its reference pictures and test boards are not needed to build pcbv.
-if [[ $vision == 1 ]]; then
-    rsync -az --delete \
-        --exclude '.git/' --exclude 'target/' --exclude 'ref/' \
-        --exclude 'fixtures/' --exclude '.claude/' \
-        "$here/../pcb-vision/" "$target:$remote_dir/pcb-vision/"
-fi
 
 # The units are templates; the remote side fills in its own user, paths and
 # host names, so a hostname or address the Pi answers to is always allowed.
-scp -q "$here/deploy/spinny-web.service" "$here/deploy/spinny-bridge.service" \
-    "$here/deploy/spinny-pcbv.service" "$target:/tmp/"
+cp "$here/deploy/spinny-web.service" "$here/deploy/spinny-bridge.service" \
+    "$here/deploy/spinny-camera.service" "$staging/"
+scp -q "$staging"/* "$target:/tmp/"
 
-ssh "$target" bash -s -- "$remote_dir" "$mode" "$vision" "${#cameras[@]}" "${cameras[@]}" "${extra_hosts[@]}" <<'REMOTE'
+ssh "$target" bash -s -- "$remote_dir" "$mode" "${#cameras[@]}" "${cameras[@]}" "${extra_hosts[@]}" <<'REMOTE'
 set -euo pipefail
 dir=$(cd "$1" && pwd)
 mode=$2
-vision=$3
-cameras=("${@:5:$4}")
-shift $((4 + $4))
+cameras=("${@:4:$3}")
+shift $((3 + $3))
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 if ! command -v uv >/dev/null; then
@@ -132,20 +149,16 @@ fi
 uv python install 3.12
 (cd "$dir/spinny-laser-pcb" && uv sync --no-dev --python 3.12)
 
-# pcbv is built for the Pi on the Pi, in the dev profile (its dependencies
-# fully optimized), where the backend's lookup finds it. The first build
-# takes a while on a Pi; later ones only rebuild what changed.
-pcbv="$dir/pcb-vision/target/debug/pcbv"
-if [[ $vision == 1 ]]; then
-    if ! command -v cargo >/dev/null; then
-        echo "no cargo on the Pi: the cameras need pcbv, built with cargo in pcb-vision/" >&2
-    elif ! compgen -G '/usr/lib/llvm-*/lib/libclang*.so*' >/dev/null \
-        && ! compgen -G '/usr/lib/*/libclang*.so*' >/dev/null; then
-        echo "no libclang on the Pi, which pcbv's V4L2 bindings are generated with: sudo apt install libclang-dev" >&2
+# pcbv built here links against this machine's glibc, so a Pi with an
+# older one cannot run it: tried before it replaces the one installed.
+if [[ -f /tmp/pcbv ]]; then
+    chmod +x /tmp/pcbv
+    if /tmp/pcbv --help >/dev/null 2>&1; then
+        sudo install -m 755 /tmp/pcbv /usr/local/bin/pcbv
     else
-        (cd "$dir/pcb-vision" && cargo build -q -p pcbv) \
-            || echo "pcbv did not build: the cameras will not run on the Pi" >&2
+        echo "pcbv built for the Pi does not run there ($(/tmp/pcbv --help 2>&1 | head -n 1)): its cameras will not run" >&2
     fi
+    rm -f /tmp/pcbv
 fi
 
 # The CAM's 3D kernel is built for the Pi on the Pi; without Rust there the
@@ -179,23 +192,42 @@ fi
 
 # The camera units are the ones named this time, or none: a unit left from
 # before would hold its camera, which the backend under --web wants too.
-for unit in /etc/systemd/system/spinny-pcbv-*.service; do
+# spinny-pcbv-* are an earlier kind, pcbv itself served on the Pi.
+for unit in /etc/systemd/system/spinny-camera-*.service /etc/systemd/system/spinny-pcbv-*.service; do
     [[ -e $unit ]] || continue
     sudo systemctl disable --now "$(basename "$unit")" 2>/dev/null || true
     sudo rm -f "$unit"
 done
+# A value for the right side of a sed s|||: & and | and \ taken literally.
+literal() {
+    local v=${1//\\/\\\\}
+    v=${v//&/\\&}
+    printf '%s' "${v//|/\\|}"
+}
 ports=()
-if [[ ${#cameras[@]} -gt 0 && ! -x $pcbv ]]; then
-    echo "no pcbv built on the Pi: the camera units are not installed" >&2
-elif [[ ${#cameras[@]} -gt 0 ]]; then
+if [[ ${#cameras[@]} -gt 0 ]]; then
+    if ! command -v ustreamer >/dev/null; then
+        export DEBIAN_FRONTEND=noninteractive
+        sudo -E apt-get install -y -qq ustreamer >/dev/null \
+            || { sudo apt-get update -qq && sudo -E apt-get install -y -qq ustreamer >/dev/null; }
+    fi
+    ustreamer=$(command -v ustreamer)
+    # Older ustreamer names the camera's MJPEG JPEG; newer has MJPEG too.
+    format=JPEG
+    if "$ustreamer" --help 2>&1 | grep -q MJPEG; then
+        format=MJPEG
+    fi
     for i in "${!cameras[@]}"; do
         port=$((2325 + i))
-        sed -e "s|@USER@|$USER|" -e "s|@DIR@|$dir|" -e "s|@PORT@|$port|" -e "s|@CAMERA@|${cameras[$i]}|" \
-            /tmp/spinny-pcbv.service | sudo tee "/etc/systemd/system/spinny-pcbv-$port.service" >/dev/null
+        IFS=@ read -r device size fps <<<"${cameras[$i]}"
+        sed -e "s|@USER@|$USER|" -e "s|@USTREAMER@|$ustreamer|" -e "s|@PORT@|$port|" \
+            -e "s|@CAMERA@|$(literal "$device")|" -e "s|@FORMAT@|$format|" \
+            -e "s|@SIZE@|$size|" -e "s|@FPS@|$fps|" \
+            /tmp/spinny-camera.service | sudo tee "/etc/systemd/system/spinny-camera-$port.service" >/dev/null
         ports+=("$port")
     done
 fi
-rm -f /tmp/spinny-web.service /tmp/spinny-bridge.service /tmp/spinny-pcbv.service
+rm -f /tmp/spinny-web.service /tmp/spinny-bridge.service /tmp/spinny-camera.service
 
 # The board shows up as a serial device owned by dialout, a camera as one
 # owned by video.
@@ -207,8 +239,8 @@ sudo systemctl disable --now "$remove.service" 2>/dev/null || true
 sudo systemctl enable "$install.service"
 sudo systemctl restart "$install.service"
 for port in "${ports[@]}"; do
-    sudo systemctl enable "spinny-pcbv-$port.service"
-    sudo systemctl restart "spinny-pcbv-$port.service"
+    sudo systemctl enable "spinny-camera-$port.service"
+    sudo systemctl restart "spinny-camera-$port.service"
 done
 sleep 3
 systemctl is-active "$install.service"
@@ -219,8 +251,8 @@ else
     echo "  mise run relay-pi -- $USER@$(hostname).local"
     echo "then connect the page here to socket://127.0.0.1:2324"
     for i in "${!ports[@]}"; do
-        echo "camera ${cameras[$i]}: $(systemctl is-active "spinny-pcbv-${ports[$i]}.service" || true)," \
-            "socket://127.0.0.1:${ports[$i]} here while relay-pi runs"
+        echo "camera ${cameras[$i]}: $(systemctl is-active "spinny-camera-${ports[$i]}.service" || true)," \
+            "http://127.0.0.1:${ports[$i]}/stream here while relay-pi runs"
     done
 fi
 # The names to give --camera, or the camera device under --web.

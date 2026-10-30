@@ -54,9 +54,11 @@ flowchart LR
         DF[pnp/*.toml: port, G-code dialect, heights, feeders] --> OPNP
         OPNP --> GD[gcode_device: a line at a time, each answered ok]
         GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl]
-        BE <-->|JSON lines over stdio, or TCP to a spinny-pcbv unit on the Pi| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
+        BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
         BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot]
         PV --> VID[/dev/videoN on the head]
+        PV -->|MJPEG over HTTP, forwarded by relay-pi| UST[ustreamer on a bridge Pi: spinny-camera unit]
+        UST --> VIDPI[/dev/v4l/by-id camera on the Pi]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
         CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
@@ -111,19 +113,23 @@ is given up, is taken up again by itself. The Pi needs no bun, and
 `firmware/` and `sim/` stay behind. Jobs, the height map and the resume
 record are the Pi's own.
 
-**Cameras on the Pi.** Either way the sibling pcb-vision goes along and
-`pcbv` is built on the Pi (dev profile, where the backend's lookup finds
-it; Rust and libclang wanted there, a warning without them). On a Pi
-running the whole thing the backend starts `pcbv` itself, as it does here.
-With the Pi as a bridge, each `--camera DEV` given to deploy-pi gets a
-`spinny-pcbv-<port>` unit running `pcbv serve --listen` on the Pi's
-loopback, ports 2325, 2326 and on; `relay-pi` forwards those with the
-controller's port, and the camera settings here name
-`socket://127.0.0.1:2325`. Loopback because `pcbv` has no login of its
-own: the ssh session is the only way in. Over a socket the backend
-reopens the remote camera with the size and rate of its own settings,
-and it leaves the service running when it stops (a `quit` would end it
-for every later client).
+**Cameras on the Pi.** With the Pi as a bridge it only streams them: each
+`--camera DEV[@WxH[@FPS]]` given to deploy-pi gets a `spinny-camera-<port>`
+unit running ustreamer (from apt) on the Pi's loopback, ports 2325, 2326
+and on, passing the camera's own MJPEG through without decoding it.
+`relay-pi` forwards those with the controller's port, the camera settings
+here name `http://127.0.0.1:2325/stream`, and the backend starts `pcbv`
+here on that URL as on a device: the decoding and the localizer run where
+the cycles are, and a Pi Zero 2 W only copies bytes. The stream's size and
+rate are the unit's; the settings' size and fps do not reach it.
+Loopback because neither ustreamer nor `pcbv` has a login of its own: the
+ssh session is the only way in. On a Pi running the whole thing the
+backend starts `pcbv` there on the Pi's own devices; deploy-pi cross
+builds it here for aarch64 (a Pi Zero cannot build it), strips it and
+installs it as `/usr/local/bin/pcbv`, after checking that it runs against
+the Pi's glibc. A `pcbv serve --listen` elsewhere is still reached at a
+`socket://` device; the backend then reopens its camera with the settings'
+size and fps and leaves it running when it stops.
 
 Either way, `mise run usb-log -- user@host` (or with no host, here)
 follows the kernel's USB and serial lines, which settle whether the board

@@ -476,10 +476,13 @@
   the moves at their depth; the mill runs them, and the post writes them.
   Gaps narrower than the roughing tool are named, and cuts that would take
   nothing are left out, so a second smaller rough does rest machining.
-- Cameras on a bridge Pi (2026-10-29): `deploy-pi --camera DEV` (repeatable)
-  copies pcb-vision, builds `pcbv` on the Pi and installs a
-  `spinny-pcbv-<port>` unit per camera serving `pcbv serve` on the Pi's
-  loopback (2325, 2326, ...); `relay-pi` forwards those ports with the
-  controller's, and `pi-logs` shows their journals. Over a socket the
-  backend reopens the camera with its own size and fps, and no longer
-  sends `quit`, which ended the remote service for every later client.
+- Cameras on a bridge Pi (2026-10-29): `deploy-pi --camera DEV[@WxH[@FPS]]`
+  (repeatable) installs a `spinny-camera-<port>` unit per camera running
+  ustreamer on the Pi's loopback (2325, 2326, ...), the camera's MJPEG
+  passed through; `relay-pi` forwards those ports with the controller's,
+  `pi-logs` shows their journals, and the camera device here is
+  `http://127.0.0.1:2325/stream`, read by `pcbv` here (pcb-vision reads
+  MJPEG over HTTP since 2de286c). `--web` cross builds `pcbv` here for the
+  Pi. The backend now names why a `pcbv` it started could not open its
+  camera; over a `socket://` it reopens the camera with its own size and
+  fps and no longer sends `quit`, which ended the remote service.
