@@ -464,3 +464,13 @@
   reference parts read off it; a placement program is planned, shown,
   downloaded, or sent a line at a time with each `ok` awaited, and
   stopped with the profile's quickstop; feeders count what was picked.
+- Parts from 3D models (2026-10-29): `cam/mill-3d.toml` cuts a part out of
+  a block of aluminum, POM, acrylic, HDPE, wood or brass after an STL
+  model. A Rust kernel (`carve/`, `spinny-carve`) slices the model and
+  makes rough (level by level, cleared from the inside out, entered on
+  ramps), waterline and parallel (drop cutter: flat, ball, bull nose, V)
+  toolpaths, keeps every move between cuts just over a stock map, and
+  checks every move against the model. Profiles gain materials (feeds and
+  speeds held to the spindle and the axes), the block, the model's
+  orientation and the spindle's range; the CAM tab takes an STL and shows
+  the moves at their depth; the mill runs them, and the post writes them.

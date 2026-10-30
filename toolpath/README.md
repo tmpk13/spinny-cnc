@@ -6,8 +6,9 @@ polar kinematics (`polar`), copper clearing (`clear`) and deposition
 of a board layer (`pads`), the turn and shift that line a job up with the
 board (`align`), the machine configuration files (`machines`), the CAM
 profiles (`cam`, `camjob`, `post`: a design through a profile's
-operations, gcode for the profile's controller), and the gcode emitter
-for a grblHAL controller (`gcode`, `machine`, `report`, `preview`).
+operations, gcode for the profile's controller; `carve` runs the 3D
+kernel in `carve/` for an STL model), and the gcode emitter for a
+grblHAL controller (`gcode`, `machine`, `report`, `preview`).
 
 | Command | Job |
 | --- | --- |
@@ -16,7 +17,7 @@ for a grblHAL controller (`gcode`, `machine`, `report`, `preview`).
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
 | `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
 | `spinny-sim` | play a job back on a model of the machine |
-| `spinny-cam` | a board or an X/Y gcode design through a CAM profile in `cam/`, gcode for that profile's controller |
+| `spinny-cam` | a board, an X/Y gcode design or an STL model through a CAM profile in `cam/`, gcode for that profile's controller |
 
 Usage, the grblHAL setup and what the files contain are in
 [docs/GCODE.md](../docs/GCODE.md); reading the coupons is in
@@ -90,19 +91,26 @@ classDiagram
     }
     machines --> controls
     class cam {
-        Profile  axes, tools, operations, post, placement
+        Profile  axes, tools, operations, post, placement, materials, stock, model, spindle
         load / load_all(directory) / parse(text, id)
-        resolve(tool, settings) cutting
+        _Feeds  a material's rpm and feed, held to the spindle and the axes
+        resolve(tool, settings, defaults, source) cutting
         set_value(text, path, value) text, comments kept
     }
     class camjob {
         read_board(path, layer) Design
         read_gcode(text) / place_paths(sets, anchor, offset)
-        build(profile, design) BuiltJob  groups per operation, notes
+        read_model(path) Design  an STL
+        build(profile, design) BuiltJob  groups per operation, notes; a model's groups carry moves
+        model_request(profile, design, operations) the kernel's request
+    }
+    class carve {
+        find() the spinny-carve program
+        run(request) answer  one JSON document each way
     }
     class post {
         post(built, profile) Program  text, Report
-        _Cartesian  safe height, parks, spindle or laser, passes, homes
+        _Cartesian  safe height, parks, spindle or laser, passes, a model's moves in X Y Z, homes
         _polar  through gcode.generate
     }
     class camcli {
@@ -156,6 +164,7 @@ classDiagram
     camcli --> camjob
     camcli --> post
     camjob --> cam
+    camjob --> carve : a model's toolpaths
     camjob --> clear : clearing strokes
     camjob --> deposit : edges, fill, thin
     camjob --> laser_sweep : copper, loops, outline, drills

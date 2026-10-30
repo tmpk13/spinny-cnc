@@ -4,22 +4,25 @@ A CAM profile is a TOML file in `cam/`: the machine's axes (which letters
 carry the board plane or the polar pair, which one is the depth, which are
 parked before the cuts), the tools on it (a laser, or a spindle with its
 bits) with their cutting settings, the operations a design goes through
-(isolation, copper clearing, the outline, the drills, a deposit, or a
-design's own paths) with every setting of the cut, and how the gcode is
-written. The files are meant to be edited by hand or by a language model:
+(isolation, copper clearing, the outline, the drills, a deposit, a
+design's own paths, or a 3D model's rough, waterline and parallel passes)
+with every setting of the cut, the materials a block may be, and how the
+gcode is written. The files are meant to be edited by hand or by a language model:
 every key is commented in the shipped files, a file is read whole and
 refused whole with the table and the key named, and the page edits one
 value at a time without touching the rest of the text.
 
 | Where | How |
 | --- | --- |
-| Web page | the *CAM* tab: pick a profile, read its axes, tools and operations, change a cutting setting in the table or the whole file in the editor, drop a design to make a job, *Export gcode* to download the program for the profile's controller |
+| Web page | the *CAM* tab: pick a profile, read its axes, tools and operations, change a cutting setting in the table or the whole file in the editor, pick the block's material, drop a design or an STL model to make a job, *Export gcode* to download the program for the profile's controller |
 | Backend | `GET /api/cam`, `GET/PUT/PATCH/DELETE /api/cam/{id}`, `POST /api/cam/{id}/jobs`, `POST /api/cam/{id}/gcode` ([WEB_API.md](WEB_API.md)); `spinny-web --cam DIR` reads another directory |
-| Command line | `uv run spinny-cam cam/mill-3axis.toml board.kicad_pcb` writes `var/out/board.nc` and a report beside it; `mise run cam -- PROFILE DESIGN` |
-| Code | `spinny_laser.cam` (the schema and the text patch), `spinny_laser.camjob` (a design through the operations), `spinny_laser.post` (the gcode); the page's mock reads the same files with `web/frontend/src/mock/toml.ts` |
+| Command line | `uv run spinny-cam cam/mill-3axis.toml board.kicad_pcb` writes `var/out/board.nc` and a report beside it; `uv run spinny-cam cam/mill-3d.toml part.stl` for a model; `mise run cam -- PROFILE DESIGN` |
+| Code | `spinny_laser.cam` (the schema and the text patch), `spinny_laser.camjob` (a design through the operations), `spinny_laser.post` (the gcode), `spinny_laser.carve` (runs the 3D kernel in `carve/`); the page's mock reads the same files with `web/frontend/src/mock/toml.ts` |
 
 The shipped files: `mill-3axis` (a standard X/Y/Z mill with a spindle,
-gcode for a grbl-style controller), `cartesian-laser` (a laser on an X/Y
+gcode for a grbl-style controller), `mill-3d` (parts out of a block after
+an STL model on the `cartesian-mill` machine file, with aluminum, POM,
+acrylic, HDPE, wood and brass), `cartesian-laser` (a laser on an X/Y
 machine, grbl laser mode) and `polar-laser` (this machine: its jobs run
 through the backend on the `polar-laser` machine file, and its gcode is
 joint-space X and A for a controller that takes the two as linear axes).
@@ -49,6 +52,74 @@ the page and press *New*, which saves the text shown under that id.
    the safe height to its start, a plunge at the plunge rate, the cuts at
    depth and a rise, pass by pass down to the depth. It ends with the
    spindle off, the tool up, the X/Y home, the Z home, and the footer.
+
+## A part from a 3D model
+
+1. Export the part as an STL from the CAD program, in mm (a model drawn in
+   inches takes `[model] scale = 25.4`). The face to be cut looks up:
+   *Model* on the CAM tab (or `[model] turn`) stands it otherwise. A part
+   needing both faces is two jobs, the second with the part turned over.
+2. Pick `mill-3d`, and in the *Stock* row the block's material, how much
+   bigger than the model it is round the sides (*Margin*) and over the top
+   (*Over the top*), or give `[stock] size`. The material works out every
+   tool's rpm and feed (below); a tool or an operation that gives its own
+   keeps them.
+3. Drop the STL. The notes give the model's size and the block's, the
+   feeds each operation took, the material's note, and what to look at: an
+   undercut (faces looking down above the bottom, which a tool from above
+   cannot reach), an open mesh, a cut deeper than a tool's `length`. The
+   preview draws the paths at their depth under the block's top.
+4. Clamp the block outside the band the rough clears round the part (half a
+   tool past the finish, or `band`), zero X and Y at the block's lower left
+   (`anchor = "corner"`) and touch the tool off on the block's top: Z 0 is
+   the block's top. For an air cut first, touch off a few mm above it.
+5. Run it on the mill from the *Machine* tab, or *Export gcode* for another
+   controller. The operations were planned in order, each over what the one
+   before left, so run them in that order and skip none; one switched off
+   in the profile is planned alone on the whole block, which is safe to
+   turn on later.
+
+What the operations cut:
+
+| Source | Cuts |
+| --- | --- |
+| `rough` | level by level from the block's top, every `step_down` and at every flat face (lifted by `leave_floor`), down to the model's bottom less `below`: the area the tool may be in at that height, `leave` and its radius away from everything of the model above the level, cleared with loops `stepover` apart from the inside out; inside the block and a `band` round the model, never the whole block. Each piece of a level is followed down through the pieces under it before the next. |
+| `waterline` | a loop along every wall at each level, the tool's radius plus `leave` from it, climb milling unless `direction` says otherwise; with `step_down = 0` only at the flat faces and the bottom, a full depth pass on light stock |
+| `parallel` | lines `stepover` of the diameter apart at `angle` degrees from X, the tool dropped onto the mesh along them (flat, ball, bull nose or V bit), back and forth, over the model's outline and `band` past it: the finish for slopes and curves |
+
+The tool comes down into a cut on a ramp no steeper than `ramp` degrees:
+round a loop, a whole number of turns, or back and forth along the start of
+a line; a sliver of material, or `ramp = 90`, is plunged. Between cuts it
+rises only to just over the material left (1 mm over a stock height map
+the kernel cuts down as it writes the moves), and only within the area the
+operation cuts; anything farther, or a path's end, goes by the travel
+height. Before a job is made, every move is checked against the model with
+the tool's true shape, and a toolpath that would cut into it is refused.
+
+Rough and waterline treat the tool as a cylinder its full width from the
+tip up: exact on vertical walls, stepped on slopes, which a parallel pass
+with a ball finishes. Floors come out at their height when `leave_floor` is
+0 (the shipped rough); the walls take the waterline. The last level at the
+model's bottom cuts the part free: put tape or a spoilboard under it, or
+`below = -0.3` to keep a 0.3 mm skin that holds it, cut by hand after.
+
+### Feeds and speeds
+
+A material gives the cutting edge's `speed` (m/min) and the chip a tooth
+takes by tool diameter (`chip_load`). For each mill:
+
+- rpm = speed * 1000 / (pi * diameter), held to `[spindle]` min and max;
+- feed = rpm * flutes * chip load at the diameter;
+- a feed over the slower of the X and Y `rate` is held there and the rpm
+  brought down with it, so the chip stays the same: a tool that spins fast
+  and moves slowly rubs, which melts plastics and welds aluminum to the
+  edge;
+- plunge = feed * the material's `plunge`, held to the depth axis' rate.
+
+A rough also takes the material's step down and stepover (of the
+diameter), its ramp and its `leave`. The shipped numbers are a careful
+start for a light machine: run an air cut, then cut scrap, and raise the
+chip load before the speed.
 
 ## Schema
 
@@ -85,12 +156,16 @@ id = "vbit"                     # needed: letters, digits, - and _
 kind = "mill"                   # needed: mill (a spindle) | laser
 name = "30 degree V bit"
 diameter = 0.2                  # a mill, needed: the width of the cut, mm (`spot` for a laser)
+shape = "flat"                  # a mill: flat | ball | bull | vee; vee when angle is given
+# corner = 0.5                  # a bull nose: the radius of its rounded corners, mm
+flutes = 2                      # a mill: for the feed a material works out; default 2
+# length = 12                   # a mill: how deep under the block's top it reaches, mm
 # angle = 30                    # a mill V bit instead: the included angle of its point, degrees; the
 # tip = 0.1                     # width of its tip, mm. The cut is then tip + 2 * depth * tan(angle / 2),
                                 # as wide as each operation's depth makes it, and `diameter`, if given,
                                 # is the shank that bounds it
-rpm = 12000                     # a mill, needed: S
-feed = 300                      # a mill, needed: mm/min along the cut
+rpm = 12000                     # a mill, needed unless the stock has a material: S
+feed = 300                      # a mill, needed unless the stock has a material: mm/min along the cut
 plunge = 60                     # a mill: mm/min into the cut; default 60
 step_down = 0                   # a mill: mm per pass, 0 is the whole depth at once; default 0
 stepover = 0.4                  # a mill: of the diameter, between clearing strokes; default 0.5
@@ -102,6 +177,7 @@ depth = 0.1                     # a mill: default depth for its operations; defa
 [[operations]]                  # in cutting order
 name = "isolation"              # needed, one of a kind
 source = "isolation"            # needed: isolation | clearing | outline | drills | deposit | paths
+                                #   | rough | waterline | parallel (a 3D model's, with a mill)
 tool = "vbit"                   # needed: a [[tools]] id
 enabled = true                  # false keeps the group in the job, switched off
 depth = 0.1                     # any cutting setting of the tool's kind, given here, wins here
@@ -111,6 +187,13 @@ pattern = "lines"               # clearing: radial | rings | lines
 fill = "contour"                # deposit: contour | radial | rings | lines
 marks = "circle"                # drills with a laser: circle | cross | dot
 match = "red"                   # paths: a part of the imported paths' label (an SVG stroke, a gcode S and F); "" takes all
+leave = 0.2                     # a model's: mm left on the walls; leave_floor on the floors (default leave)
+ramp = 3                        # a model's: degrees, the steepest entry; 90 plunges
+band = 1.5                      # a model's: mm past touching the model the tool goes round it
+below = 0                       # a model's: mm under the model's bottom the last level reaches, < 0 a skin
+direction = "climb"             # rough and waterline: climb | conventional
+flats = true                    # rough and waterline: a level at every flat face
+angle = 0                       # parallel: degrees from X of the lines
 
 [post]
 header = ["G21", "G90", "G94", "G17"]
@@ -121,9 +204,35 @@ spinup = 2                      # s after the spindle starts or changes speed, 0
 decimals = 3                    # 1 to 6
 return_home = true              # G0 to each axis' home at the end
 
+[[materials]]                   # what a block may be, for a model's operations
+id = "aluminum"                 # needed
+name = "6061 aluminum"
+speed = 150                     # needed: the cutting edge's speed, m/min
+chip_load = [[1, 0.004], [3, 0.012], [6, 0.025]]  # needed: [diameter mm, mm a tooth], read straight between
+depth = 0.2                     # a rough's step down, of the diameter; default 0.5
+stepover = 0.3                  # a rough's stepover, of the diameter; default 0.4
+ramp = 2                        # degrees; default 3
+plunge = 0.3                    # the plunge rate, of the feed; default 0.3
+leave = 0.2                     # mm a rough leaves; default 0.2
+note = "..."                    # shown with every job made from it
+
+[stock]
+material = "aluminum"           # a [[materials]] id: the rpm and feed of every mill that gives none
+margin = 3                      # mm of block round the model in X and Y; default 2
+top = 0.5                       # mm of block over the model's top; default 0
+# size = [50, 40, 6.35]         # the block instead: the model in its middle, on its bottom
+
+[model]
+turn = [0, 0, 0]                # degrees about X, then Y, then Z, before anything else
+scale = 1                       # 25.4 for a model drawn in inches
+
+[spindle]
+min = 0                         # rpm; a material's rpm is held inside min and max
+max = 24000
+
 [placement]
 anchor = "center"               # center | corner | keep: the middle on the origin, the lower
-                                # left on it, or the design as drawn
+                                # left on it, or the design as drawn (a model's block)
 offset = [0, 0]                 # mm, added after the anchor
 layer = "F.Cu"                  # the layer a KiCad board is read from: a copper layer, or
                                 # F.Paste with a deposit operation for a solder paste stencil
@@ -182,3 +291,19 @@ operations table does its edits this way; the editor beside it saves the
 whole text, which is checked before it is written and left as it was when
 it does not read. A profile's id is its file name, lower case letters,
 digits, `-` and `_`.
+
+## The 3D kernel
+
+A model's toolpaths come from `spinny-carve`, the Rust program in `carve/`
+(`mise run build-carve`; `mise run test-carve` runs its tests on made up
+parts). The CAM runs it once per job with one JSON request on its input:
+the STL's path, `turn`, `scale`, the `stock` (margin, top, size, anchor,
+offset), the `tolerance`, the `travel` height and the `clearance`, and the
+operations (strategy, tool shape and size, step down, stepover in mm,
+leave, ramp, direction, band, below, flats, angle). It answers the model's
+size, flat faces, undercut area and open edges, the block, the model's
+outline, and for each operation its levels, its paths of `[x, y, z,
+kind]` moves, their length and how deep any comes into the model, or
+`{"error": "..."}`. It is looked for as `SPINNY_CARVE` names it, then in
+`carve/target` (the build changed last), then on PATH; a backend on a
+Raspberry Pi needs it built there too.

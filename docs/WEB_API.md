@@ -150,12 +150,12 @@ operations a design goes through, and how the gcode is written.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/cam` | `{"profiles": [{"id": "mill-3axis", "name", "description", "machine": null, "kinematics": "cartesian", "tools": ["spindle"], "axes": "XYZ", "operations": 3}, ...], "problems": []}`; `machine` is the machine file the profile's jobs run on, or null; `tools` the kinds the enabled operations use; `operations` how many are enabled; `problems` names each file that could not be read |
-| `GET /api/cam/{id}` | `{"document": {...}, "text": "..."}`: the profile read (`axes`, `tools`, `operations` each with `settings`, its own keys, and `cutting`, what it cuts with, `post`, `placement`) and the file as written; 404 for no such file, 400 for one that cannot be read, with the table and the key named |
+| `GET /api/cam` | `{"profiles": [{"id": "mill-3axis", "name", "description", "machine": null, "kinematics": "cartesian", "tools": ["spindle"], "axes": "XYZ", "operations": 3, "material": null, "model": false}, ...], "problems": []}`; `machine` is the machine file the profile's jobs run on, or null; `tools` the kinds the enabled operations use; `operations` how many are enabled; `material` the stock's material by name; `model` whether it cuts a 3D model (has a rough, waterline or parallel operation); `problems` names each file that could not be read |
+| `GET /api/cam/{id}` | `{"document": {...}, "text": "..."}`: the profile read (`axes`, `tools`, `operations` each with `settings`, its own keys, `cutting`, what it cuts with, and `feeds`, the line saying how a material set its rpm and feed, `post`, `placement`, and for a model `materials`, `stock`, `model_setup` and `spindle`) and the file as written; 404 for no such file, 400 for one that cannot be read, with the table and the key named |
 | `PUT /api/cam/{id}` | `{"text": "..."}`: writes the text as the profile once it reads as one, creating the file when it is new; answers as `GET`; 400 names what is wrong and leaves the file as it was; the id is lower case letters, digits, `-` and `_` |
 | `PATCH /api/cam/{id}` | `{"path": ["operations", 2, "depth"], "value": 1.6}`: changes one value in the file and keeps the rest, comments included; `path` is a top level key, a table and a key, or an array table's name, index and key; `null` takes the key out; a key not there is added at its table's end; answers as `GET`; 400 for a table that is not there or a value the profile refuses |
 | `DELETE /api/cam/{id}` | removes the file; `{"deleted": id}`, 404 when it is not there |
-| `POST /api/cam/{id}/jobs` | multipart: `files` (one or more) plus optional `name`; a `.kicad_pcb`, or a copper gerber with its `Edge.Cuts` gerber and `.drl` drill file beside it in the same upload, an `.svg`, a `.gcode`/`.nc` or a job `.json`, through every operation of the profile into a stored job; answers `{"job": job, "notes": [what was left out: no drill file, holes narrower than the bit, an operation the design has nothing for]}`; 400 for a design the profile makes nothing of, 404 for no such profile, 413 over 64 MB |
+| `POST /api/cam/{id}/jobs` | multipart: `files` (one or more) plus optional `name`; a `.kicad_pcb`, or a copper gerber with its `Edge.Cuts` gerber and `.drl` drill file beside it in the same upload, an `.svg`, a `.gcode`/`.nc`, a job `.json`, or an `.stl` model, through every operation of the profile into a stored job; a model goes through the profile's rough, waterline and parallel operations by the 3D kernel, each group carrying `moves`; answers `{"job": job, "notes": [what was left out: no drill file, holes narrower than the bit, an operation the design has nothing for; for a model its size and block, the feeds a material set, the material's note]}`; 400 for a design the profile makes nothing of, a model whose toolpaths would cut into it, or no kernel built, 404 for no such profile, 413 over 64 MB |
 | `POST /api/cam/{id}/gcode` | `{"job": "a1b2"}`: the stored job as gcode for the profile's controller: `{"text": "...", "filename": "board.nc", "report": {"lines", "cuts", "length_mm", "seconds", "extents": {"X": [min, max], ...}, "warnings": [...]}}`; the extents are machine coordinates; a reach past an axis' travel and a feed over an axis' rate are warnings; 400 for a spindle group with no depth axis in the profile, a joint-space group, or a spindle group on a polar profile; 404 for no such profile or job |
 
 ## Jobs
@@ -242,7 +242,9 @@ Job:
     {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "passes": 1, "enabled": true,
      "depth": 0.1, "plunge": 60, "thickness": 0.12, "tool": null, "paths": [[[x, y], ...], ...], "areas": []},
     {"label": "rail line through the axis", "power": 400, "min_power": 0, "speed": 200, "passes": 1, "enabled": true,
-     "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]}
+     "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]},
+    {"label": "rough: 3 mm end mill", "power": 12000, "speed": 288, "plunge": 86, "depth": 6.5, "tool": "spindle",
+     "paths": [], "moves": [[[x, y, z, kind], ...], ...]}
   ],
   "outline": [[[x, y], ...]], "copper": [[[x, y], ...]],
   "stats": {"length_mm": 0, "seconds": 0, "max_radius": 0, "min_radius": 0,
@@ -270,7 +272,16 @@ as one `cut` with no kinematics in between, and a negative radius meaning
 the far side of the axis. Such a group is written about the axis, so a
 job holding one cannot be given an offset; its `paths` are only what the
 preview draws, and the importer fills them in from the joints when they
-are left out. Progress:
+are left out. A 3D model's group carries `moves` instead, and no `paths`:
+each path's moves as x, y, z (mm over the stock's top, which is H 0) and
+how the tool gets there, 0 a rapid, 1 a feed at `speed` along the move,
+2 a plunge at `plunge`. The first move of a path is where the tool comes
+down to from the travel height. Only a cartesian spindle machine runs
+them: it rises to the travel height between paths, adds the height map
+under every move when the run follows one, and sends `F` as the board's
+share of the feed along a move that also rises or falls. `depth` is the
+deepest the moves go, and `passes` is 1; a machine that cannot run the
+moves prices them by their feeds. Progress:
 
 ```json
 {"job": "a1b2", "state": "running", "sent": 120, "acked": 118, "total": 900,

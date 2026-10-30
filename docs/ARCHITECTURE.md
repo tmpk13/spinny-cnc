@@ -30,7 +30,8 @@ line at a time.
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, pads and holes of a layer, the alignment fit, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
-| `cam` | CAM profiles in TOML: axes, tools with their cutting settings, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
+| `cam` | CAM profiles in TOML: axes, tools with their cutting settings, materials, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
+| `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |
 | `pnp` | device profiles in TOML for a pick and place machine driven with OpenPnP's G-code: port, dialect, heights, feeders | `docs/WEB_API.md`, the PNP tab |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
 | `../pcb-vision` | `pcbv`: the camera's capture and the localizer that finds a KiCad board in its picture, served to the backend over JSON lines | `mise run build-pcbv`; its own `mise run test` |
@@ -58,8 +59,9 @@ flowchart LR
         PV --> VID[/dev/videoN on the head]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
-        CF[cam/*.toml: axes, tools, operations, post] --> CAM
+        CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
         CF --> CLI[spinny-cam]
+        CAM <-->|one JSON request and answer over stdin and stdout| CARVE[carve spinny-carve: an STL sliced, cleared, followed and combed; links over a stock map; a gouge check]
     end
     MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE
