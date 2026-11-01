@@ -1,80 +1,25 @@
 # spinny-laser
 
-A laser PCB machine with a rail over a rotary table. The head rides a
-linear axis, the radius `R`, whose rail passes over the rotation axis of a
-harmonic drive table, the angle `A`, that the board turns on. The machine
-runs its own firmware on a BTT SKR Pico and is driven from a browser. An
-optional focus axis `H` carries a touch probe, and the cross slide `Z` can
-make it an X/Y machine, with a spindle on the laser output for milling or
-a solder paste dispenser's plunger on the table's driver. A camera on the
-head, read through the sibling [pcb-vision](../pcb-vision) repository,
-lines a job up with the board.
+A laser PCB machine with a rail over a rotary table: the head rides the
+radius `R` on a rail that passes over the rotation axis of a harmonic
+drive table, the angle `A`, that the board turns on. It runs its own
+firmware on a BTT SKR Pico and is driven from a browser; an optional focus
+axis `H` carries a touch probe, and the cross slide `Z` makes it an X/Y
+machine with a spindle on the laser output or a solder paste dispenser's
+plunger on the table's driver, while a camera on the head, read through
+the sibling [pcb-vision](../pcb-vision) repository, lines a job up with
+the board.
 
-| Directory | What | Stack |
-| --- | --- | --- |
-| `firmware/` | the controller: portable core, SKR Pico port, virtual firmware on TCP | Rust |
-| `web/backend/` | serial link, job import, streaming, probing (a grid or the pads), dispensing, the cameras, alignment, a board's parts, API, serves the page | Python, FastAPI |
-| `web/frontend/` | the page: setup steps, position, jog, markers, jobs, height map, camera, alignment, 3D preview, the Mill tab (simple cuts and a board's holes), the CAM tab, the PNP tab (parts, board, up camera, nozzle, or a G-code device) and the Config tab (machine files, pins, firmware settings) | TypeScript, Bun |
-| `toolpath/` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering coupons, pads and holes, the alignment fit, machine configs, gcode tools | Python |
-| `machines/` | machine configurations in TOML, one file per axis setup | |
-| `cam/` | CAM profiles in TOML: a machine's axes, its tools with every cutting setting, materials, the operations, the gcode post | |
-| `carve/` | `spinny-carve`, the 3D kernel the CAM runs for an STL model: rough, waterline and parallel toolpaths | Rust |
-| `pnp/` | device profiles in TOML for a pick and place machine that takes OpenPnP's G-code: port, dialect, heights, feeders | |
-| `sim/` | plays gcode jobs back on a model of the machine | Rust |
-| `docs/` | protocol, web API, architecture, machine configs, operating, calibration, gcode toolchain | |
-| `var/` | runtime files: jobs, config, height map, tool output (not tracked) | |
+- `mise run web`: build the page and serve it with the backend at `http://localhost:8000`
+- `mise run dev`: the page from Bun's dev server with live reload
+- `mise run virtual`: the virtual firmware at `socket://127.0.0.1:2323`, as the polar laser
+- `mise run flash`: build the board firmware and copy it to an SKR Pico in BOOTSEL mode
+- `mise run relay-pi -- pi@host`: forward a Pi's bridge to `socket://127.0.0.1:2324` here over ssh
+- `mise run cam -- cam/mill-3axis.toml board.kicad_pcb`: a design through a CAM profile, gcode in `var/out/`
+- `mise run test`: every suite
 
-## Quick start
-
-Tools: [mise](https://mise.jdx.dev) (installs Python and uv), Bun, and a
-Rust toolchain with the `thumbv6m-none-eabi` target for the board. The
-toolpath library pulls in `laser-sweep` from `../kicad-to-gcode`.
-
-| Task | Does |
-| --- | --- |
-| `mise run web` | build the page and serve it with the backend at `http://localhost:8000` |
-| `mise run virtual` | the virtual firmware at `socket://127.0.0.1:2323`, as the polar laser |
-| `mise run virtual-mill` | the same as the cartesian spindle machine over a tilted board |
-| `mise run flash` | build the board firmware and copy it to an SKR Pico in BOOTSEL mode |
-| `mise run dev` | the page from Bun's dev server with live reload |
-| `mise run deploy-pi -- pi@host` | install the bridge on a Raspberry Pi as a service: the controller's port served to the backend here, and with `--camera DEV` each camera on the Pi streamed by ustreamer for `pcbv` here; `-- --web pi@host` installs the backend and the page instead, so the Pi runs the whole thing |
-| `mise run relay-pi -- pi@host` | forward the Pi's bridge to `socket://127.0.0.1:2324` here over ssh (socat for the session when no bridge is installed) |
-| `mise run bridge` | serve a controller plugged in here over TCP for a backend elsewhere, what deploy-pi installs on the Pi |
-| `mise run cam -- cam/mill-3axis.toml board.kicad_pcb` | a design through a CAM profile, gcode for its controller in `var/out/` |
-| `mise run build-carve` | build the 3D kernel, which the CAM needs for an STL model |
-| `mise run build-pcbv` | build `pcbv` in the sibling pcb-vision repository, which the backend runs for the camera |
-| `mise run test` | every suite; `test-firmware`, `test-toolpath`, `test-backend`, `test-frontend`, `test-sim` run one |
-
-Connect the page to the board, to the virtual firmware's socket, or to a
-Pi's bridge forwarded by `relay-pi` (`socket://127.0.0.1:2324`), and
-pick the machine on the Config tab: a file in `machines/` describes
-the axes, their scales and limits, the kinematics (polar or cartesian) and
-the tool (laser or spindle), and loading it writes every firmware setting.
-The *CAM* tab takes a design through a profile in `cam/` (axes, tools,
-operations with every cutting setting, in TOML meant to be edited by hand
-or by a language model) into a job for this machine, or into gcode for a
-standard three axis mill or laser. With `mill-3d` it cuts a part out of a
-block of aluminum, POM, acrylic or wood after an STL model, its feeds and
-speeds worked out from the material.
-
-## Documentation
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the parts, how they talk, where the files go
-- [docs/OPERATING.md](docs/OPERATING.md): first moves, probing and the height map, cartesian and spindle, dispensing, the camera, lining a job up
-- [docs/MACHINES.md](docs/MACHINES.md): the machine configuration files
-- [docs/CAM.md](docs/CAM.md): the CAM profiles, the CAM tab, a part from a 3D model, and gcode for a standard mill or laser controller
-- [docs/CALIBRATION.md](docs/CALIBRATION.md): finding the rotation axis with the centering coupons
-- [docs/PROTOCOL.md](docs/PROTOCOL.md): the firmware's line protocol
-- [docs/WEB_API.md](docs/WEB_API.md): the backend's API and events
-- [docs/GCODE.md](docs/GCODE.md): the gcode toolchain and simulator for a grblHAL controller
-- Per part: [firmware/README.md](firmware/README.md), [firmware/rp2040/README.md](firmware/rp2040/README.md) (pins, bring-up, safety), [web/backend/README.md](web/backend/README.md), [web/frontend/README.md](web/frontend/README.md), [toolpath/README.md](toolpath/README.md)
-
-## Development
-
-The Python packages share one `uv` workspace at the root: `uv sync` once,
-then `uv run spinny-web`, `uv run spinny-iso ...` and `uv run pytest` from
-anywhere in the repository. The backend's end to end tests run only when
-`SPINNY_VIRTUAL` names a built virtual firmware, which `mise run
-test-backend` builds and passes. The firmware crates are one Cargo
-workspace in `firmware/` with the board port excluded, since it pins its
-target; the simulator is its own crate in `sim/`.
+`mise tasks` lists the rest. Components: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Reference: [operating](docs/OPERATING.md), [machine files](docs/MACHINES.md),
+[CAM](docs/CAM.md), [calibration](docs/CALIBRATION.md),
+[protocol](docs/PROTOCOL.md), [web API](docs/WEB_API.md),
+[gcode toolchain](docs/GCODE.md), [M2 Nano assessment](docs/M2_NANO.md).
