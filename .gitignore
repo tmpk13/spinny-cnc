@@ -1,5 +1,6 @@
 # Local notes
 NOTES.md
+notes/
 
 # Runtime data of the backend and the command line tools
 var/
