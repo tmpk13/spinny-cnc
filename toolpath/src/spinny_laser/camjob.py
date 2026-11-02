@@ -18,6 +18,7 @@ from pathlib import Path
 from . import board, cam, carve
 from . import clear as copper_clearing
 from . import deposit as copper_deposition
+from .order import inner_first
 
 Point = tuple[float, float]
 Polyline = list[Point]
@@ -533,7 +534,8 @@ def _operation_groups(
         if not taken:
             notes.append(f"{prefix}: no paths" + (f" labeled {wanted!r}" if wanted else "") + f" in {design.name}")
             return []
-        return [_group(operation, tool, f"{prefix}: {found.label}", [list(p) for p in found.paths]) for found in taken]
+        # What lies inside a shape is cut before the shape that frees it.
+        return [_group(operation, tool, f"{prefix}: {found.label}", inner_first([list(p) for p in found.paths])) for found in taken]
     if board is None:
         notes.append(f"{prefix}: {design.name} is not a board, so there is no {source} in it")
         return []
@@ -568,7 +570,7 @@ def _operation_groups(
         if not board.outline:
             notes.append(f"{prefix}: {design.name} has no outline")
             return []
-        return [_group(operation, tool, f"{prefix}: board outline", [list(p) for p in board.outline])]
+        return [_group(operation, tool, f"{prefix}: board outline", inner_first([list(p) for p in board.outline]))]
     if source == cam.DRILLS:
         if not board.holes:
             notes.append(f"{prefix}: {design.name} has no drill file")

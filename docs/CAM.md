@@ -267,10 +267,10 @@ without `safe`, or a spindle depth that takes more than 100 passes.
 | --- | --- | --- |
 | `isolation` | one group per loop around every copper feature, the first half a tool width out | nothing, noted |
 | `clearing` | the copper left between the loops inside the outline, as strokes of the pattern a stepover apart (a laser: a spot apart) | nothing, noted |
-| `outline` | the Edge.Cuts profile | nothing, noted |
+| `outline` | the Edge.Cuts profile, a cutout inside the board before the edge round it | nothing, noted |
 | `drills` | a mill: a hole the bit's size is a path of one point, the bit put down at its center and lifted; a wider hole is milled round at `(hole - bit) / 2`; a slot along its middle, or as an inset loop; a laser marks each hole (`marks`) | nothing, noted |
 | `deposit` | the copper itself: edge loops in from its edge, the fill, the traces narrower than the tool along their middle | nothing, noted |
-| `paths` | nothing, noted | the design's paths whose label holds `match`: an SVG's strokes, a gcode file's runs at one S and F, a job's groups |
+| `paths` | nothing, noted | the design's paths whose label holds `match`: an SVG's strokes, a gcode file's runs at one S and F, a job's groups; within a group, whatever lies inside a closed shape is cut before the shape |
 
 Every group carries the tool's kind (`tool` in the job): the web backend
 refuses to run a group made for the other tool than the machine has, so a

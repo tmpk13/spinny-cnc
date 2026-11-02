@@ -226,7 +226,11 @@ parse is 422 with `detail` as a list; a link fault (port gone, no answer)
 is 502.
 
 Accepted uploads: `.svg` (paths, lines, polylines, polygons, rects,
-circles; curves flattened; mm from the viewBox), `.gcode`/`.nc` (absolute
+circles; curves flattened; mm from the viewBox; one group per stroke
+color, and within a group whatever lies inside a closed shape is cut
+before the shape, so a part's holes and marks go before the outline that
+frees it, the deepest first, the drawing's order kept otherwise; a board's
+outline group cuts its cutouts before its edge the same way), `.gcode`/`.nc` (absolute
 X/Y `G0`/`G1` with `S` and `F`), `.json` (a job), a gerber of one layer
 (`.gbr`, or the Protel extensions kicad-cli gives its layers, `.gtl`,
 `.gbl`, `.gts`, `.gbs`, `.gtp`, `.gbp`, `.gto`, `.gbo`, `.gm1`; isolation

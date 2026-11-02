@@ -33,6 +33,7 @@ import type {
     Tool,
 } from "../types.ts";
 import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
 export const SHIPPED_PROFILES: { id: string; text: string }[] = [
@@ -1139,7 +1140,7 @@ export function buildCamJob(id: string, profile: CamProfile, name: string, fileN
             if (taken.length === 0) {
                 notes.push(`${prefix}: no paths${wanted ? ` labeled '${wanted}'` : ""} in ${fileName}`);
             }
-            groups.push(...taken.map((set) => groupOf(operation, tool, `${prefix}: ${set.label}`, set.paths)));
+            groups.push(...taken.map((set) => groupOf(operation, tool, `${prefix}: ${set.label}`, innerFirst(set.paths))));
             continue;
         }
         if (!geometry.board) {
@@ -1155,7 +1156,7 @@ export function buildCamJob(id: string, profile: CamProfile, name: string, fileN
                 break;
             }
             case "outline":
-                groups.push(groupOf(operation, tool, `${prefix}: board outline`, geometry.outline));
+                groups.push(groupOf(operation, tool, `${prefix}: board outline`, innerFirst(geometry.outline)));
                 break;
             case "drills":
                 if (tool.kind === "laser") {

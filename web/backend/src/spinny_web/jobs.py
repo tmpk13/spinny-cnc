@@ -25,6 +25,7 @@ from spinny_laser import align as alignment
 from spinny_laser import board
 from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
+from spinny_laser import order as cut_order
 from spinny_laser import pads as board_pads
 
 from . import kinematics
@@ -890,6 +891,9 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
             label = "no stroke" if color == "no stroke" else f"stroke {color}"
             groups[color] = Group(label=label, power=options.power, speed=options.speed)
         groups[color].paths.append(points)
+    # A part's holes and marks before its outline, while the sheet holds it.
+    for group in groups.values():
+        group.paths = cut_order.inner_first(group.paths)
     return Job(
         name=name,
         source="svg",
@@ -1026,7 +1030,8 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                 # outline is there to cut the board free with a power of its
                 # own once the copper is down, and is off until then.
                 enabled=options.mode != MODE_DEPOSIT,
-                paths=[[tuple(p) for p in path] for path in outline],
+                # A cutout inside the board before the edge that frees it.
+                paths=cut_order.inner_first([[tuple(p) for p in path] for path in outline]),
             )
         )
     return Job(

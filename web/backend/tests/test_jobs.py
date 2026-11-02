@@ -395,6 +395,19 @@ def test_import_file_dispatches_by_suffix(tmp_path):
         import_file(tmp_path / "d.svg", "d", ImportOptions(anchor="corner"), Streamer())
 
 
+def test_an_svg_part_s_holes_are_cut_before_its_outline():
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="40mm" viewBox="0 0 60 40">
+        <rect x="0" y="0" width="40" height="40" stroke="#000" fill="none"/>
+        <circle cx="10" cy="10" r="3" stroke="#000" fill="none"/>
+        <rect x="45" y="0" width="10" height="10" stroke="#000" fill="none"/>
+        <circle cx="30" cy="30" r="3" stroke="#000" fill="none"/>
+    </svg>"""
+    job = from_svg(svg, "plate", ImportOptions(anchor="keep"))
+    sizes = [round(max(x for x, _ in path) - min(x for x, _ in path)) for path in job.groups[0].paths]
+    # Both holes first, then the plate and the square beside it as drawn.
+    assert sizes == [6, 6, 40, 10]
+
+
 def test_patch_turns_the_job_about_its_middle_or_the_origin():
     streamer = Streamer()
     job = Job(

@@ -2,6 +2,7 @@
 // coupon for the formats only the real backend can read, placement and stats.
 
 import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
+import { innerFirst } from "./order.ts";
 import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
@@ -1430,6 +1431,8 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         switch (extension) {
             case "svg":
                 geometry = parseSvg(text);
+                // A part's holes and marks before its outline, while the sheet holds it.
+                geometry = { ...geometry, groups: geometry.groups.map((group) => ({ ...group, paths: innerFirst(group.paths) })) };
                 source = "svg";
                 break;
             case "gcode":
