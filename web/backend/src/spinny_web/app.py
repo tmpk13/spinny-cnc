@@ -28,6 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
 from spinny_laser.align import turn
@@ -1863,6 +1864,16 @@ class Backend:
             except (LinkError, CommandError, HTTPException):
                 current = None
         return {"machines": [machine.summary() for machine in found], "current": current, "problems": problems}
+
+    def machine_from_board(self, machine_id: str, text: str) -> dict:
+        """The text with every key whose value differs from the connected
+        board's written to the board's (spinny_laser.machine_keys), not
+        saved: what it reads as, the keys written and the settings it still
+        does not give the board's value for."""
+        self.machine_store.path(machine_id)
+        current = self.read_settings(force=True)
+        read = machine_keys.from_board(text, current["values"], current["host"], f"{machine_id}.toml")
+        return {**self.machine_store.check(machine_id, read.text), "text": read.text, "changes": read.changes, "left": read.left}
 
     def machine(self, machine_id: str) -> machine_files.Machine:
         for machine in self.machine_list()[0]:
@@ -3757,6 +3768,10 @@ def create_app(
     @app.post("/api/machines/{machine_id}/check")
     def machine_check(machine_id: str, body: MachineTextBody):
         return guarded(lambda: backend.machine_store.check(machine_id, body.text))
+
+    @app.post("/api/machines/{machine_id}/from-board")
+    def machine_from_board(machine_id: str, body: MachineTextBody):
+        return guarded(lambda: backend.machine_from_board(machine_id, body.text))
 
     @app.delete("/api/machines/{machine_id}")
     def machine_delete(machine_id: str):

@@ -4,6 +4,7 @@
 import { fitRigid, turnPoint } from "../align.ts";
 import { ApiError, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
+import { fromBoard, type FromBoard } from "../machinekeys.ts";
 import {
     AXIS_EPSILON,
     DEG,
@@ -111,6 +112,7 @@ import type {
     Joint,
     Machine,
     MachineCheck,
+    MachineFromBoard,
     MachineDocument,
     MachineProblem,
     MachineResponse,
@@ -3093,6 +3095,21 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
         }
         return this.machineRead(id, text);
+    }
+
+    /** The text with the board's values written into it, not saved, as the backend reads it. */
+    async machineFromBoard(id: string, text: string): Promise<MachineFromBoard> {
+        if (!MACHINE_ID_PATTERN.test(id)) {
+            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
+        }
+        this.requireConnected();
+        let read: FromBoard;
+        try {
+            read = fromBoard(text, { ...this.machine.settings }, { ...this.hostSettings() }, (given) => parseMachine(given, id), `${id}.toml`);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        return { ...this.machineRead(id, read.text), text: read.text, changes: read.changes, left: read.left };
     }
 
     /** Kept once it reads as a machine, as the backend writes the file. */

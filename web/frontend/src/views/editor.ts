@@ -29,6 +29,8 @@ export interface CodeEditor {
     syntaxProblem(): string | null;
     /** Runs after every edit with the syntax problem of the moment. */
     onInput(listener: (problem: string | null) => void): void;
+    /** Selects a line, counted from 0, and scrolls it into the middle of the field. */
+    revealLine(line: number): void;
     /**
      * Tells the editor its page was hidden (false) or is back (true). Back,
      * the field is scrolled to where it was, the layer put in step, and the
@@ -242,6 +244,20 @@ export function codeEditor(label: string): CodeEditor {
         },
         onInput(listener) {
             listeners.push(listener);
+        },
+        revealLine(line) {
+            const lines = textarea.value.split("\n");
+            const index = Math.max(0, Math.min(line, lines.length - 1));
+            const start = lines.slice(0, index).reduce((sum, text) => sum + text.length + 1, 0);
+            textarea.focus({ preventScroll: true });
+            textarea.setSelectionRange(start, start + (lines[index]?.length ?? 0));
+            // The field's own line height, so the line lands mid field; a
+            // "normal" one is taken as 1.2 of its font.
+            const style = getComputedStyle(textarea);
+            const height = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 16) * 1.2;
+            textarea.scrollTop = Math.max(0, index * height - textarea.clientHeight / 2);
+            remember();
+            sync();
         },
         setShown,
         dispose() {

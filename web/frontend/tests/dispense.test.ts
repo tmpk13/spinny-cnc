@@ -8,8 +8,8 @@ import type { Controls, Profile } from "../src/types.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
 import { dispenseRefusal, isDots, mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
-import { mountSettings } from "../src/views/settings.ts";
-import { click, connected, machine, settle, setup } from "./harness.ts";
+import { settingRows } from "../src/views/settingslist.ts";
+import { connected, machine, settle, setup } from "./harness.ts";
 
 const DISPENSER: Profile = { kinematics: "cartesian", tool: "dispenser", h_axis: true, r_max: 0, z_max: 0 };
 const KINDS = fixture as unknown as Record<string, Controls>;
@@ -234,25 +234,8 @@ describe("a dispenser machine", () => {
         const upload = calls.filter((c) => c.name === "uploadJob").at(-1)?.args[1] as { mode?: string; thickness?: number; clear?: string };
         expect(upload).toMatchObject({ mode: "dispense", thickness: 0.3 });
         expect(upload.clear).toBeUndefined();
-        // The settings panel: the dispensing row shows and Apply sends the gap.
-        const settingsRoot = document.createElement("section");
-        document.body.appendChild(settingsRoot);
-        mountSettings(settingsRoot, ctx);
-        await ctx.refreshSettings();
-        const gapLabel = Array.from(settingsRoot.querySelectorAll(".labeled")).find((label) => label.textContent?.startsWith("Gap"))!;
-        expect(gapLabel.closest(".button-row")?.classList.contains("hidden")).toBe(false);
-        const gap = gapLabel.querySelector("input") as HTMLInputElement;
-        expect(gap.value).toBe("0.1");
-        gap.value = "0.25";
-        click(settingsRoot, "Apply");
-        await settle();
-        await settle();
-        const update = calls.filter((c) => c.name === "updateSettings").at(-1)?.args[0] as { host: Record<string, number> };
-        expect(update.host["gap"]).toBe(0.25);
-        expect((await api.settings()).host.gap).toBe(0.25);
-        gap.value = "0";
-        click(settingsRoot, "Apply");
-        await settle();
-        expect(store.get().toasts.some((toast) => toast.text === "the gap must be above 0 and at most 10 mm")).toBe(true);
+        // The settings list: the dispensing values are the file's [host] keys.
+        const hosts = settingRows(null, "", store.get().settings, { tool: "dispenser", h_axis: true }).filter((row) => row.entry.kind === "host").map((row) => row.name);
+        expect(hosts).toEqual(["tolerance", "travel", "clearance", "gap", "retract", "output", "extrude_rate", "dwell_ms"]);
     });
 });

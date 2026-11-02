@@ -346,6 +346,15 @@ export interface MachineCheck {
     problems: string[];
 }
 
+/** A text with the connected board's values read into it, not saved. */
+export interface MachineFromBoard extends MachineCheck {
+    text: string;
+    /** One line per key written: `[rail] max_rate = 900 (was 560)`. */
+    changes: string[];
+    /** Settings the text still does not give the board's value for. */
+    left: string[];
+}
+
 export interface SettingsUpdate {
     values?: Record<string, number>;
     /** The host values to change; one left out keeps its value, and a null travel turns it off. */

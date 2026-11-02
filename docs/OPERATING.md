@@ -24,7 +24,8 @@ per unit at low speed before the first job. Every axis is a bar in the
 jog panel, with its step choices and a field for any other step; *Cancel*
 in the panel's head, or Escape, stops a move. The *Config* tab holds the
 machine files, where the pins are set too (the laser output, the probe
-and an optional tool output), and the live firmware settings.
+and an optional tool output), and beside them the list of every key a
+file can set with the board's value next to the file's.
 
 ### Probing and the height map
 
@@ -185,11 +186,11 @@ and a press on any step goes to the panel that does it.
 
 ### Edits not applied
 
-A value typed into the Firmware settings panel is marked (the row shows
-what the controller has beside it) until *Apply* sends it, and the
-panel's chip counts them: *2 not applied*, then *applied, not saved to
-flash* until *Save to flash*, then *all applied*. The camera settings,
-the machine file and the CAM profile editors count their edits the same
+The machine file is the one place a machine's settings are written: an
+edit in its editor counts until *Save* (or *Write to board*, which saves
+first), and the board line says when the board runs settings no file has
+or has values not saved to its flash, with *Save to flash* for those. The
+camera settings and the CAM profile editors count their edits the same
 way, and every tab shows the count of edits not applied on its page;
 leaving the page with any asks first.
 

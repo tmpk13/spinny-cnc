@@ -21,7 +21,6 @@ import { mountMarkers } from "./views/markers.ts";
 import { mountMill } from "./views/mill.ts";
 import { mountPnp } from "./views/pnp.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
-import { mountSettings } from "./views/settings.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps } from "./views/steps.ts";
 import { mountTabs } from "./views/tabs.ts";
@@ -285,9 +284,9 @@ function main(): void {
     mountPreviewPanel(panel("cam-preview"), ctx);
     // The PNP page: the parts, the board, the up camera and the nozzle.
     mountPnp({ steps: panel("pnp-steps"), parts: panel("pnp-parts"), board: panel("pnp-board"), camera: panel("pnp-camera"), nozzle: panel("pnp-nozzle"), device: panel("pnp-device") }, ctx);
-    // The Config page: the machine files beside the live firmware settings.
-    mountConfig(panel("machine-file"), ctx);
-    mountSettings(panel("settings"), ctx);
+    // The Config page: the machine files beside the list of every key a
+    // file can set, the file's value next to the board's.
+    mountConfig(panel("machine-file"), ctx, panel("settings"));
     mountToasts(panel("toasts"), ctx);
 
     // Leaving with edits not applied asks first; the browser words it.

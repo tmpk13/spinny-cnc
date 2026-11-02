@@ -11,7 +11,7 @@ files start the virtual firmware, and give the gcode tools their defaults.
 
 | Where | How |
 | --- | --- |
-| Web page | The *Config* tab: pick a file, edit it in the TOML editor (read as it is typed, and whole by *Check*), *Save* it and press *Load to board*; *Save to flash* keeps it over a restart. The panel names the file the live settings are, or says they are no file's, and the live firmware settings sit beside it. |
+| Web page | The *Config* tab: pick a file, edit it in the TOML editor (read as it is typed, and whole by *Check*), *Save* it and press *Write to board*, which writes every setting and saves it to the board's flash in one step (saving an edited text first). *Read from board* writes the board's values into the text where they differ, for a look before *Save*. A line says what the board runs and whether its flash has it; *Save to flash* shows only when something written past the file (the console, a page control) left flash behind. Beside the editor, *Settings* lists every key a file can set with the file's value next to the board's, the differences marked, a fuzzy search over key, firmware setting and help; a click goes to the key in the editor, adding it with the file's value when the file leaves it out. |
 | Backend | `GET /api/machines`, `GET`, `PUT` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
 | Virtual firmware | `spinny-virtual --machine machines/cartesian-mill.toml`; `--settings` after it overrides single values |
 | Gcode tools | `spinny-iso --machine machines/polar-laser.toml ...`: the axis rates, the power scale and the chord tolerance stand in for the defaults; a flag given still wins |

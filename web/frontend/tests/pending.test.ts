@@ -1,20 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { pendingTotal, setPending } from "../src/state.ts";
-import { mountSettings, applyState } from "../src/views/settings.ts";
-import { mountTabs, pendingOn } from "../src/views/tabs.ts";
+import { mountConfig } from "../src/views/config.ts";
+import { pendingOn } from "../src/views/tabs.ts";
 import { mountVision } from "../src/views/vision.ts";
 import { click, connected, settle, setup } from "./harness.ts";
 
 describe("what the panels hold unapplied", () => {
-    test("the state says typed and not sent, sent and not saved, or all applied", () => {
-        expect(applyState(2, ["r_rate"])).toMatchObject({ kind: "pending", text: "2 not applied" });
-        const unsaved = applyState(0, ["a_rate", "r_rate"]);
-        expect(unsaved).toMatchObject({ kind: "unsaved", text: "applied, not saved to flash" });
-        expect(unsaved.detail).toContain("a_rate, r_rate");
-        expect(applyState(0, [])).toMatchObject({ kind: "applied", text: "all applied" });
-    });
-
     test("the counts are kept per panel and summed per page", () => {
         const { store } = setup();
         setPending(store, "settings", 2);
@@ -29,44 +21,54 @@ describe("what the panels hold unapplied", () => {
     });
 });
 
-describe("the firmware settings panel", () => {
-    test("marks a value typed in, counts it on the tab, and follows it through apply and save", async () => {
+describe("the settings list", () => {
+    test("lists every key with the file's value beside the board's, searches them, and takes the editor to one", async () => {
+        localStorage.removeItem("spinny.machine");
         const { store, ctx, root, api } = setup();
-        const tabs = document.createElement("nav");
-        document.body.append(tabs);
-        mountTabs(tabs, store);
+        const listRoot = document.createElement("section");
+        document.body.append(listRoot);
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountSettings(root, ctx);
+        mountConfig(root, ctx, listRoot);
         await ctx.refreshSettings();
-        const chip = root.querySelector(".settings-actions .apply-state") as HTMLElement;
-        expect(chip.textContent).toBe("all applied");
-        const rate = root.querySelector('input[aria-label="r_rate"]') as HTMLInputElement;
-        rate.value = "777";
-        rate.dispatchEvent(new Event("input"));
-        expect(chip.textContent).toBe("1 not applied");
-        expect(chip.getAttribute("data-apply")).toBe("pending");
-        expect(rate.closest("tr")?.classList.contains("edited")).toBe(true);
-        expect(rate.closest("tr")?.querySelector(".was")?.textContent).toMatch(/^was /);
-        const config = tabs.querySelector('[data-page="config"]') as HTMLElement;
-        expect(config.getAttribute("data-pending")).toBe("1");
-        expect(config.textContent).toBe("Config");
-        // A host value counts as well, and is marked on its field.
-        const tolerance = root.querySelector(".settings-actions input") as HTMLInputElement;
-        tolerance.value = "0.01";
-        tolerance.dispatchEvent(new Event("input"));
-        expect(chip.textContent).toBe("2 not applied");
-        expect(tolerance.closest(".labeled")?.classList.contains("edited")).toBe(true);
-        click(root, "Apply");
         await settle();
         await settle();
-        expect(chip.textContent).toBe("applied, not saved to flash");
-        expect(chip.title).toContain("r_rate");
-        expect(config.hasAttribute("data-pending")).toBe(false);
-        click(root, "Save to flash");
-        await settle();
-        await settle();
-        expect(chip.textContent).toBe("all applied");
+        const rows = (): HTMLTableRowElement[] => Array.from(listRoot.querySelectorAll("table.settings-list tbody tr"));
+        const keyOf = (row: HTMLTableRowElement): string => row.querySelector(".settings-key")?.textContent ?? "";
+        expect(rows().length).toBeGreaterThan(80);
+        // The board runs the file it boots as: nothing differs.
+        expect(listRoot.querySelector(".settings-count")?.textContent).toMatch(/, 0 differ$/);
+        // A value written at the console differs from the file's.
+        await api.updateSettings({ values: { r_rate: 777 } });
+        await ctx.refreshSettings();
+        const rate = rows().find((row) => keyOf(row) === "[rail] max_rate")!;
+        expect(rate.classList.contains("differs")).toBe(true);
+        expect(rate.cells[3]!.textContent).toBe("777");
+        const only = listRoot.querySelector('input[aria-label="Only where the file and the board differ"]') as HTMLInputElement;
+        only.checked = true;
+        only.dispatchEvent(new Event("change"));
+        expect(rows().map(keyOf)).toEqual(["[rail] max_rate"]);
+        only.checked = false;
+        only.dispatchEvent(new Event("change"));
+        // A search by the firmware's name, letters apart, finds the key.
+        const search = listRoot.querySelector("input[type=search]") as HTMLInputElement;
+        search.value = "tmchold";
+        search.dispatchEvent(new Event("input"));
+        expect(keyOf(rows()[0]!)).toBe("[drivers] hold_pct");
+        // Clicked, a key the file names is selected; one it leaves out is added.
+        const text = root.querySelector("textarea") as HTMLTextAreaElement;
+        search.value = "rail accel";
+        search.dispatchEvent(new Event("input"));
+        rows()[0]!.click();
+        expect(text.value.slice(text.selectionStart, text.selectionEnd)).toMatch(/^accel = /);
+        search.value = "drivers stepus";
+        search.dispatchEvent(new Event("input"));
+        const before = text.value;
+        rows()[0]!.click();
+        expect(before.includes("step_us")).toBe(false);
+        expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe("step_us = 2");
+        expect(store.get().pending["machine-file"]).toBe(1);
+        localStorage.removeItem("spinny.machine");
     });
 });
 

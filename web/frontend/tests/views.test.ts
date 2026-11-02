@@ -12,7 +12,6 @@ import { mountJobs, progressText } from "../src/views/jobs.ts";
 import { anyOf, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
-import { changedValues, mountSettings } from "../src/views/settings.ts";
 import { changedBootSettings, mountConfig } from "../src/views/config.ts";
 import { mountPreviewPanel } from "../src/views/previewpanel.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
@@ -226,23 +225,6 @@ describe("settings follow the machine", () => {
         store.set({ snapshot: { ...connected(), profile: { kinematics: "cartesian", tool: "spindle", h_axis: true, r_max: 50, z_max: 30 } } });
         expect(preview.getLimits()).toEqual({ kinematics: "cartesian", r_max: 50, z_max: 30 });
         preview.dispose();
-    });
-});
-
-describe("settings fold", () => {
-    test("the settings panel opens by default and remembers being folded", () => {
-        localStorage.removeItem("spinny.settings.open");
-        const first = setup();
-        mountSettings(first.root, first.ctx);
-        const fold = first.root.querySelector("details.panel-fold") as HTMLDetailsElement;
-        expect(fold.open).toBe(true);
-        expect(fold.querySelector("summary h2")?.textContent).toBe("Firmware settings");
-        fold.open = false;
-        fold.dispatchEvent(new Event("toggle"));
-        const second = setup();
-        mountSettings(second.root, second.ctx);
-        expect((second.root.querySelector("details.panel-fold") as HTMLDetailsElement).open).toBe(false);
-        localStorage.removeItem("spinny.settings.open");
     });
 });
 
@@ -870,20 +852,6 @@ describe("laser and settings", () => {
         expect(calls.filter((c) => c.name === "laser").length).toBe(1);
     });
 
-    test("a chord tolerance of zero is refused with a message, not dropped", async () => {
-        const { store, ctx, root, api, calls } = setup();
-        mountSettings(root, ctx);
-        const settings = await api.settings();
-        store.set({ settings });
-        const inputs = Array.from(root.querySelectorAll("input")) as HTMLInputElement[];
-        const tolerance = inputs.find((i) => i.value === String(settings.host.tolerance))!;
-        tolerance.value = "0";
-        click(root, "Apply");
-        await settle();
-        expect(calls.some((c) => c.name === "updateSettings")).toBe(false);
-        expect(store.get().toasts.some((t) => t.level === "error" && t.text.includes("tolerance"))).toBe(true);
-    });
-
     test("a beam duration is checked as the whole milliseconds that will be sent", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
@@ -907,22 +875,10 @@ describe("laser and settings", () => {
         await settle();
     });
 
-    test("changed values and the settings table", async () => {
-        const { store, ctx, root, api } = setup();
-        mountSettings(root, ctx);
-        const settings = await api.settings();
-        store.set({ settings });
-        expect(root.querySelectorAll("table.settings tbody tr").length).toBe(settings.schema.length);
-        expect(changedValues(settings, { r_rate: 560, a_rate: 500 })).toEqual({ a_rate: 500 });
-        const input = root.querySelector('input[aria-label="r_rate"]') as HTMLInputElement;
-        input.value = "900";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        expect(input.closest("tr")?.classList.contains("edited")).toBe(true);
-    });
 });
 
 describe("machine files", () => {
-    test("the config panel lists the files, names the loaded one, checks and saves a text, and loads one on confirm", async () => {
+    test("the config panel lists the files, names the loaded one, checks and saves a text, and writes one on confirm", async () => {
         localStorage.removeItem("spinny.machine");
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
@@ -931,7 +887,8 @@ describe("machine files", () => {
         await settle();
         const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
         expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]);
-        const load = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Load to board")!;
+        const load = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Write to board")!;
+        const flash = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Save to flash")!;
         const text = root.querySelector("textarea") as HTMLTextAreaElement;
         const status = (): string => root.querySelector(".config-status")?.textContent ?? "";
         // The mock boots as the polar laser with its focus axis: that file is picked first.
@@ -939,13 +896,14 @@ describe("machine files", () => {
         expect(text.value).toContain("[focus]");
         store.set({ settings: await api.settings() });
         await settle();
-        expect(root.textContent).toContain("loaded on the board");
-        expect(load.disabled).toBe(true);
-        // Another file: what it reads as, and Load has something to do.
+        expect(root.querySelector(".config-board")?.textContent).toBe("the board runs this file, as saved to its flash");
+        expect(flash.classList.contains("hidden")).toBe(true);
+        // Another file: what it reads as, and the board runs the other one.
         pick.value = "cartesian-mill";
         pick.dispatchEvent(new Event("change"));
         await settle();
         expect(load.disabled).toBe(false);
+        expect(root.querySelector(".config-board")?.textContent).toBe("the board runs polar-laser-focus, as saved to its flash");
         expect(text.value).toContain('kinematics = "cartesian"');
         expect(root.querySelector(".config-note")?.textContent).toContain("Cartesian mill: cartesian, spindle, focus axis");
         const original = text.value;
@@ -976,7 +934,8 @@ describe("machine files", () => {
         text.dispatchEvent(new Event("input", { bubbles: true }));
         click(root, "Revert");
         expect(text.value).toContain('name = "My mill"');
-        // Load to board asks first, then writes every setting of the file.
+        // Write to board asks first, then writes every setting of the file
+        // and saves it to flash in the same step.
         load.click();
         await settle();
         dialogButton("Cancel").click();
@@ -984,20 +943,42 @@ describe("machine files", () => {
         expect(calls.some((c) => c.name === "applyMachine")).toBe(false);
         load.click();
         await settle();
-        dialogButton("Load").click();
+        dialogButton("Write").click();
         await settle();
-        expect(calls.filter((c) => c.name === "applyMachine").map((c) => c.args)).toEqual([["cartesian-mill", false]]);
+        await settle();
+        expect(calls.filter((c) => c.name === "applyMachine").map((c) => c.args)).toEqual([["cartesian-mill", true]]);
         const settings = store.get().settings!;
         expect(settings.machine).toBe("cartesian-mill");
         expect(settings.values["cartesian"]).toBe(1);
-        expect(root.textContent).toContain("loaded on the board");
-        expect(load.disabled).toBe(true);
-        // A setting changed by hand: the settings are no file's any more.
+        expect(root.querySelector(".config-board")?.textContent).toBe("the board runs this file, as saved to its flash");
+        // A setting changed by hand: the settings are no file's any more,
+        // and flash is behind the board until saved.
         await api.updateSettings({ values: { a_rate: 123 } });
         await ctx.refreshSettings();
         await settle();
-        expect(root.textContent).toContain("no file's; the jog panel draws this file's controls");
-        expect(load.disabled).toBe(false);
+        const board = root.querySelector(".config-board")?.textContent ?? "";
+        expect(board).toContain("runs settings no file has; 1 written since the last save to flash (a_rate)");
+        expect(board).toContain("the jog panel draws this file's controls");
+        expect(flash.classList.contains("hidden")).toBe(false);
+        // Read from board writes the board's value into the text, not saved.
+        click(root, "Read from board");
+        await settle();
+        await settle();
+        expect(text.value).toMatch(/\nmax_rate = 123\b/);
+        expect(status()).toBe("1 values read from the board, not saved: Save keeps them");
+        expect(root.querySelector(".config-notes")?.textContent).toContain("[table] max_rate = 123 (was");
+        expect((await api.machineFile("cartesian-mill")).text).not.toMatch(/\nmax_rate = 123\b/);
+        // Written with the edit: the text is saved first, then written.
+        load.click();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("The edits in the text are saved to the file first.");
+        dialogButton("Write").click();
+        for (let i = 0; i < 4; i += 1) {
+            await settle();
+        }
+        expect((await api.machineFile("cartesian-mill")).text).toMatch(/\nmax_rate = 123\b/);
+        expect(root.querySelector(".config-board")?.textContent).toBe("the board runs this file, as saved to its flash");
+        expect(flash.classList.contains("hidden")).toBe(true);
         // Reload reads the settings again too: a file edited by hand may have changed the controls.
         const settingsReads = calls.filter((c) => c.name === "settings").length;
         click(root, "Reload");
@@ -1007,7 +988,7 @@ describe("machine files", () => {
         store.set({ snapshot: { ...connected(), connected: false, machine: null } });
         await settle();
         expect(load.disabled).toBe(true);
-        expect(root.textContent).toContain("connect to load one");
+        expect(root.textContent).toContain("connect to write the file to the board or read the board into it");
         localStorage.removeItem("spinny.machine");
     });
 
@@ -1042,48 +1023,6 @@ describe("machine files", () => {
         expect(changedBootSettings(undefined, { laser_pin: 20 })).toEqual([]);
         const before = { laser_pin: 20, probe_pin: 25, tool_out: 0, tool_pin: 17, tool_invert: 0, r_rate: 1 };
         expect(changedBootSettings(before, { ...before, laser_pin: 23, tool_out: 1, tool_invert: 1, r_rate: 2 })).toEqual(["laser_pin", "tool_out"]);
-    });
-});
-
-describe("settings table under the operator's hands", () => {
-    test("an edit not yet applied outlives a refresh, and goes once the machine has the value", async () => {
-        const { store, ctx, root, api } = setup();
-        await api.connect("/dev/ttyACM0");
-        store.set({ snapshot: connected() });
-        mountSettings(root, ctx);
-        const settings = await api.settings();
-        store.set({ settings });
-        const field = (name: string): HTMLInputElement => root.querySelector(`input[aria-label="${name}"]`) as HTMLInputElement;
-        const edited = (name: string): boolean => field(name).closest("tr")!.classList.contains("edited");
-        field("r_rate").value = "900";
-        field("r_rate").dispatchEvent(new Event("input", { bubbles: true }));
-        const tolerance = root.querySelector("input[step='0.001']") as HTMLInputElement;
-        tolerance.value = "0.01";
-        // Another panel writes a setting and reads them all again.
-        store.set({ settings: { ...settings, values: { ...settings.values, probe_ms: 40 } } });
-        expect(field("r_rate").value).toBe("900");
-        expect(edited("r_rate")).toBe(true);
-        expect(field("probe_ms").value).toBe("40");
-        expect(tolerance.value).toBe("0.01");
-        // The field being typed in keeps its text and its focus.
-        field("a_rate").focus();
-        field("a_rate").value = "7";
-        store.set({ settings: { ...settings } });
-        expect(field("a_rate").value).toBe("7");
-        expect(document.activeElement).toBe(field("a_rate"));
-        field("a_rate").blur();
-        // Applied: the machine has 900 now, so it is no edit any more.
-        store.set({ settings: { ...settings, values: { ...settings.values, r_rate: 900 } } });
-        expect(field("r_rate").value).toBe("900");
-        expect(edited("r_rate")).toBe(false);
-        field("r_rate").value = "950";
-        field("r_rate").dispatchEvent(new Event("input", { bubbles: true }));
-        // Another machine: what was typed for the last one is dropped.
-        store.set({ snapshot: { ...connected(), url: "/dev/ttyACM1" } });
-        store.set({ settings: { ...settings } });
-        expect(field("r_rate").value).toBe(String(settings.values["r_rate"]));
-        expect(edited("r_rate")).toBe(false);
-        expect(tolerance.value).toBe(String(settings.host.tolerance));
     });
 });
 

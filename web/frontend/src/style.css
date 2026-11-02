@@ -276,6 +276,57 @@ input[type="checkbox"] {
     box-shadow: 0 0 0 0.12rem color-mix(in oklab, var(--hold) 35%, transparent);
 }
 
+/* A key whose value in the file is not the board's. */
+table.settings tr.differs td {
+    background: color-mix(in oklab, var(--hold) 12%, var(--panel));
+}
+
+table.settings tr.differs td:first-child {
+    color: var(--hold);
+    font-weight: 600;
+    box-shadow: inset 0.2rem 0 0 var(--hold);
+}
+
+table.settings-list tbody tr {
+    cursor: pointer;
+}
+
+table.settings-list td {
+    vertical-align: top;
+}
+
+.settings-key {
+    display: block;
+    white-space: nowrap;
+}
+
+.settings-help {
+    display: block;
+    font-size: 0.78rem;
+}
+
+.settings-search {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+
+.settings-count {
+    font-size: 0.85rem;
+}
+
+.config-board {
+    display: block;
+    margin: 0 0 0.6rem;
+    font-size: 0.85rem;
+}
+
+.config-notes {
+    margin: 0 0 0.75rem;
+    padding-left: 1.2rem;
+    font-size: 0.85rem;
+    font-family: var(--mono, monospace);
+}
+
 table.settings .was {
     margin-left: 0.4em;
     font-size: 0.8em;

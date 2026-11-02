@@ -119,6 +119,10 @@ run = "scp firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
 description = "Write the default controls fixture the toolpath and page tests check their copies of the defaults against"
 run = "uv run python -m spinny_laser.controls > toolpath/tests/data/default-controls.json"
 
+[tasks.keys-fixture]
+description = "Write the machine keys fixture the page's copy of the keys, and its reading a board into a file, are checked against"
+run = "uv run python -m spinny_laser.machine_keys > toolpath/tests/data/machine-keys.json"
+
 [tasks.mill-fixture]
 description = "Write the Mill page samples fixture the page's in-page twin of the operations is checked against"
 run = "uv run python -m spinny_web.mill > web/backend/tests/data/mill-samples.json"

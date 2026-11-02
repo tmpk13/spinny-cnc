@@ -1,7 +1,7 @@
 // The page's tabs: the machine's page (the dashboard), the Mill page
 // (simple cuts made by hand, a board's holes drilled), the CAM page, the
 // PNP page (parts, the board and the up camera) and the Config page (the
-// machine files and the firmware settings). The pick
+// machine files and the list of their keys). The pick
 // is set on #app for the stylesheet and remembered per browser. A tab
 // whose page holds edits not applied yet carries their count.
 

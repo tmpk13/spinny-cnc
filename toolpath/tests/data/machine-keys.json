@@ -1,0 +1,785 @@
+{
+    "keys": [
+        {
+            "setting": "cartesian",
+            "section": null,
+            "key": "kinematics",
+            "kind": "kinematics",
+            "bit": 0
+        },
+        {
+            "setting": "spindle",
+            "section": null,
+            "key": "tool",
+            "kind": "tool",
+            "bit": 0
+        },
+        {
+            "setting": "r_steps",
+            "section": "rail",
+            "key": "full_steps_per_mm",
+            "kind": "scale",
+            "bit": 0
+        },
+        {
+            "setting": "r_rate",
+            "section": "rail",
+            "key": "max_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "r_accel",
+            "section": "rail",
+            "key": "accel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "r_jerk",
+            "section": "rail",
+            "key": "jerk",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "jog_r",
+            "section": "rail",
+            "key": "jog_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "r_max",
+            "section": "rail",
+            "key": "limit",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "dir_invert",
+            "section": "rail",
+            "key": "invert",
+            "kind": "bit",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_r_ma",
+            "section": "rail",
+            "key": "current_ma",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_r_micro",
+            "section": "rail",
+            "key": "microsteps",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "sockets",
+            "section": "rail",
+            "key": "socket",
+            "kind": "socket",
+            "bit": 0
+        },
+        {
+            "setting": "r_stop",
+            "section": "rail",
+            "key": "endstop",
+            "kind": "word",
+            "bit": 0
+        },
+        {
+            "setting": "r_stop_pin",
+            "section": "rail",
+            "key": "endstop_pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "stop_invert",
+            "section": "rail",
+            "key": "endstop_invert",
+            "kind": "bit",
+            "bit": 0
+        },
+        {
+            "setting": "limits",
+            "section": "rail",
+            "key": "endstop_halt",
+            "kind": "bit",
+            "bit": 0
+        },
+        {
+            "setting": "r_home_pull",
+            "section": "rail",
+            "key": "home_pull",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "r_home_pos",
+            "section": "rail",
+            "key": "home_pos",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "r_home_travel",
+            "section": "rail",
+            "key": "home_travel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "a_steps",
+            "section": "table",
+            "key": "full_steps_per_deg",
+            "kind": "scale",
+            "bit": 0
+        },
+        {
+            "setting": "a_rate",
+            "section": "table",
+            "key": "max_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "a_accel",
+            "section": "table",
+            "key": "accel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "a_jerk",
+            "section": "table",
+            "key": "jerk",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "jog_a",
+            "section": "table",
+            "key": "jog_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "dir_invert",
+            "section": "table",
+            "key": "invert",
+            "kind": "bit",
+            "bit": 1
+        },
+        {
+            "setting": "tmc_a_ma",
+            "section": "table",
+            "key": "current_ma",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_a_micro",
+            "section": "table",
+            "key": "microsteps",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "sockets",
+            "section": "table",
+            "key": "socket",
+            "kind": "socket",
+            "bit": 1
+        },
+        {
+            "setting": "a_stop",
+            "section": "table",
+            "key": "endstop",
+            "kind": "word",
+            "bit": 0
+        },
+        {
+            "setting": "a_stop_pin",
+            "section": "table",
+            "key": "endstop_pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "stop_invert",
+            "section": "table",
+            "key": "endstop_invert",
+            "kind": "bit",
+            "bit": 1
+        },
+        {
+            "setting": "limits",
+            "section": "table",
+            "key": "endstop_halt",
+            "kind": "bit",
+            "bit": 1
+        },
+        {
+            "setting": "a_home_pull",
+            "section": "table",
+            "key": "home_pull",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "a_home_pos",
+            "section": "table",
+            "key": "home_pos",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "a_home_travel",
+            "section": "table",
+            "key": "home_travel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "z_steps",
+            "section": "slide",
+            "key": "full_steps_per_mm",
+            "kind": "scale",
+            "bit": 0
+        },
+        {
+            "setting": "z_rate",
+            "section": "slide",
+            "key": "max_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "z_accel",
+            "section": "slide",
+            "key": "accel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "z_jerk",
+            "section": "slide",
+            "key": "jerk",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "jog_z",
+            "section": "slide",
+            "key": "jog_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "z_max",
+            "section": "slide",
+            "key": "limit",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "dir_invert",
+            "section": "slide",
+            "key": "invert",
+            "kind": "bit",
+            "bit": 2
+        },
+        {
+            "setting": "tmc_z_ma",
+            "section": "slide",
+            "key": "current_ma",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_z_micro",
+            "section": "slide",
+            "key": "microsteps",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "sockets",
+            "section": "slide",
+            "key": "socket",
+            "kind": "socket",
+            "bit": 2
+        },
+        {
+            "setting": "z_stop",
+            "section": "slide",
+            "key": "endstop",
+            "kind": "word",
+            "bit": 0
+        },
+        {
+            "setting": "z_stop_pin",
+            "section": "slide",
+            "key": "endstop_pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "stop_invert",
+            "section": "slide",
+            "key": "endstop_invert",
+            "kind": "bit",
+            "bit": 2
+        },
+        {
+            "setting": "limits",
+            "section": "slide",
+            "key": "endstop_halt",
+            "kind": "bit",
+            "bit": 2
+        },
+        {
+            "setting": "z_home_pull",
+            "section": "slide",
+            "key": "home_pull",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "z_home_pos",
+            "section": "slide",
+            "key": "home_pos",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "z_home_travel",
+            "section": "slide",
+            "key": "home_travel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "h_axis",
+            "section": "focus",
+            "key": "fitted",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "h_steps",
+            "section": "focus",
+            "key": "full_steps_per_mm",
+            "kind": "scale",
+            "bit": 0
+        },
+        {
+            "setting": "h_rate",
+            "section": "focus",
+            "key": "max_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "h_accel",
+            "section": "focus",
+            "key": "accel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "h_jerk",
+            "section": "focus",
+            "key": "jerk",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "jog_h",
+            "section": "focus",
+            "key": "jog_rate",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "dir_invert",
+            "section": "focus",
+            "key": "invert",
+            "kind": "bit",
+            "bit": 3
+        },
+        {
+            "setting": "tmc_h_ma",
+            "section": "focus",
+            "key": "current_ma",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_h_micro",
+            "section": "focus",
+            "key": "microsteps",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "sockets",
+            "section": "focus",
+            "key": "socket",
+            "kind": "socket",
+            "bit": 3
+        },
+        {
+            "setting": "h_stop",
+            "section": "focus",
+            "key": "endstop",
+            "kind": "word",
+            "bit": 0
+        },
+        {
+            "setting": "h_stop_pin",
+            "section": "focus",
+            "key": "endstop_pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "stop_invert",
+            "section": "focus",
+            "key": "endstop_invert",
+            "kind": "bit",
+            "bit": 3
+        },
+        {
+            "setting": "limits",
+            "section": "focus",
+            "key": "endstop_halt",
+            "kind": "bit",
+            "bit": 3
+        },
+        {
+            "setting": "h_home_pull",
+            "section": "focus",
+            "key": "home_pull",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "h_home_pos",
+            "section": "focus",
+            "key": "home_pos",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "h_home_travel",
+            "section": "focus",
+            "key": "home_travel",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "probe_invert",
+            "section": "probe",
+            "key": "invert",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "probe_ms",
+            "section": "probe",
+            "key": "brake_ms",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "probe_pin",
+            "section": "probe",
+            "key": "pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "laser_hz",
+            "section": "output",
+            "key": "pwm_hz",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "s_max",
+            "section": "output",
+            "key": "s_max",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "s_min",
+            "section": "output",
+            "key": "s_min",
+            "kind": "number",
+            "bit": 0
+        },
+        {
+            "setting": "laser_invert",
+            "section": "output",
+            "key": "invert",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "laser_ms",
+            "section": "output",
+            "key": "test_ms",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "laser_pin",
+            "section": "output",
+            "key": "pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tool_out",
+            "section": "enable",
+            "key": "fitted",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "tool_pin",
+            "section": "enable",
+            "key": "pin",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tool_invert",
+            "section": "enable",
+            "key": "invert",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "en_invert",
+            "section": "drivers",
+            "key": "enable_invert",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "idle_ms",
+            "section": "drivers",
+            "key": "idle_ms",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "step_us",
+            "section": "drivers",
+            "key": "step_us",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_hold_pct",
+            "section": "drivers",
+            "key": "hold_pct",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "tmc_stealth",
+            "section": "drivers",
+            "key": "stealth",
+            "kind": "flag",
+            "bit": 0
+        },
+        {
+            "setting": "host.tolerance",
+            "section": "host",
+            "key": "tolerance",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.travel",
+            "section": "host",
+            "key": "travel",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.clearance",
+            "section": "host",
+            "key": "clearance",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.spinup",
+            "section": "host",
+            "key": "spinup",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.speed_control",
+            "section": "host",
+            "key": "speed_control",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.gap",
+            "section": "host",
+            "key": "gap",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.retract",
+            "section": "host",
+            "key": "retract",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.output",
+            "section": "host",
+            "key": "output",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.extrude_rate",
+            "section": "host",
+            "key": "extrude_rate",
+            "kind": "host",
+            "bit": 0
+        },
+        {
+            "setting": "host.dwell_ms",
+            "section": "host",
+            "key": "dwell_ms",
+            "kind": "host",
+            "bit": 0
+        }
+    ],
+    "case": {
+        "into": "name = \"Into\"\nkinematics = \"polar\"\n\n[rail]\nfull_steps_per_mm = 40      # 200 steps per turn, 5 mm per turn\nmax_rate = 560              # mm/min\nmicrosteps = 256\nsocket = \"X\"\n\n[table]\nsteps_per_deg = 14222.222\ninvert = false\n\n[host]\ntolerance = 0.005\nclearance = 2               # mm\n\n[controls]\npad = true\n",
+        "board": {
+            "r_steps": 1600.0,
+            "a_steps": 888.888,
+            "r_rate": 1200.0,
+            "a_rate": 400.0,
+            "r_accel": 50.0,
+            "a_accel": 50.0,
+            "r_jerk": 3.0,
+            "a_jerk": 2.0,
+            "r_max": 0.0,
+            "z_steps": 10240.0,
+            "z_rate": 560.0,
+            "z_accel": 50.0,
+            "jog_z": 120.0,
+            "jog_r": 300.0,
+            "jog_a": 200.0,
+            "dir_invert": 2,
+            "en_invert": 0,
+            "idle_ms": 0,
+            "step_us": 2,
+            "laser_hz": 5000,
+            "s_max": 1000.0,
+            "s_min": 0.0,
+            "laser_invert": 0,
+            "laser_ms": 5000,
+            "tmc_r_ma": 800,
+            "tmc_a_ma": 800,
+            "tmc_hold_pct": 30,
+            "tmc_r_micro": 32,
+            "tmc_a_micro": 256,
+            "tmc_z_ma": 800,
+            "tmc_z_micro": 256,
+            "tmc_stealth": 1,
+            "h_axis": 1,
+            "h_steps": 1280.0,
+            "h_rate": 600.0,
+            "h_accel": 50.0,
+            "h_jerk": 1.0,
+            "jog_h": 120.0,
+            "probe_invert": 0,
+            "tmc_h_ma": 600,
+            "tmc_h_micro": 32,
+            "probe_ms": 0,
+            "z_jerk": 3.0,
+            "z_max": 0.0,
+            "cartesian": 1,
+            "spindle": 1,
+            "sockets": 2134,
+            "laser_pin": 20,
+            "probe_pin": 26,
+            "tool_out": 0,
+            "tool_pin": 17,
+            "tool_invert": 0,
+            "r_stop": 1,
+            "r_stop_pin": 4,
+            "r_home_pull": 1.0,
+            "r_home_pos": 0.0,
+            "r_home_travel": 200.0,
+            "a_stop": 0,
+            "a_stop_pin": 3,
+            "a_home_pull": 1.0,
+            "a_home_pos": 0.0,
+            "a_home_travel": 400.0,
+            "h_stop": 0,
+            "h_stop_pin": 16,
+            "h_home_pull": 1.0,
+            "h_home_pos": 0.0,
+            "h_home_travel": 50.0,
+            "z_stop": 0,
+            "z_stop_pin": 22,
+            "z_home_pull": 1.0,
+            "z_home_pos": 0.0,
+            "z_home_travel": 200.0,
+            "stop_invert": 0,
+            "limits": 1,
+            "dispenser": 0
+        },
+        "host": {
+            "tolerance": 0.01,
+            "clearance": 3.5,
+            "travel": null,
+            "spinup": 2.0
+        },
+        "text": "name = \"Into\"\nkinematics = \"cartesian\"\ntool = \"spindle\"\n\n[rail]\nfull_steps_per_mm = 50      # 200 steps per turn, 5 mm per turn\nmax_rate = 1200             # mm/min\nmicrosteps = 32\nsocket = \"Y\"\nendstop = \"min\"\nendstop_halt = true\n\n[table]\nsteps_per_deg = 888.888\ninvert = true\nsocket = \"X\"\n\n[host]\ntolerance = 0.01\nclearance = 3.5             # mm\n\n[focus]\nfitted = true\nfull_steps_per_mm = 40\nmicrosteps = 32\n\n[probe]\nbrake_ms = 0\npin = 26\n\n[drivers]\nhold_pct = 30\n\n[controls]\npad = true\n",
+        "changes": [
+            "kinematics = \"cartesian\" (was \"polar\")",
+            "tool = \"spindle\" (was \"laser\")",
+            "[rail] full_steps_per_mm = 50 (was 40)",
+            "[rail] max_rate = 1200 (was 560)",
+            "[rail] microsteps = 32 (was 256)",
+            "[rail] socket = \"Y\" (was \"X\")",
+            "[rail] endstop = \"min\" (was \"none\")",
+            "[rail] endstop_halt = true (was false)",
+            "[table] steps_per_deg = 888.888 (was 14222.222)",
+            "[table] invert = true (was false)",
+            "[table] socket = \"X\" (was \"Y\")",
+            "[focus] fitted = true (was false)",
+            "[focus] full_steps_per_mm = 40 (was 25)",
+            "[focus] microsteps = 32 (was 256)",
+            "[probe] brake_ms = 0 (was 20)",
+            "[probe] pin = 26 (was 25)",
+            "[drivers] hold_pct = 30 (was 50)",
+            "[host] tolerance = 0.01 (was 0.005)",
+            "[host] clearance = 3.5 (was 2)"
+        ],
+        "left": []
+    }
+}

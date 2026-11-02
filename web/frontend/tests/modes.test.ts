@@ -11,7 +11,7 @@ import { mountDro } from "../src/views/dro.ts";
 import { jobLabels, mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
 import { mountLaser } from "../src/views/laser.ts";
-import { mountSettings } from "../src/views/settings.ts";
+import { settingRows } from "../src/views/settingslist.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
 
 function machine(overrides: Partial<Machine> = {}): Machine {
@@ -185,24 +185,12 @@ describe("spindle", () => {
         expect(back).toEqual(["S", "Min S", "mm/min", "Passes", "On"]);
     });
 
-    test("the settings panel keeps the milling clearance and spin-up", async () => {
-        const { store, ctx, root, calls, api } = setup();
-        await api.connect("/dev/ttyACM0");
-        mountSettings(root, ctx);
-        store.set({ snapshot: snapshot({ tool: "spindle" }) });
-        await ctx.refreshSettings();
-        // The dispensing row has a travel field of its own, hidden on a spindle machine.
-        const fields = Array.from(root.querySelectorAll(".labeled")).filter((label) => label.textContent?.startsWith("Travel clearance") && !label.closest(".button-row")?.classList.contains("hidden"));
-        expect(fields.length).toBe(1);
-        const clearance = fields[0]!.querySelector("input") as HTMLInputElement;
-        expect(clearance.value).toBe("2");
-        clearance.value = "3.5";
-        click(root, "Apply");
-        await settle();
-        await settle();
-        const update = calls.find((c) => c.name === "updateSettings")?.args[0] as { host: Record<string, number> };
-        expect(update.host["clearance"]).toBe(3.5);
-        expect((await api.settings()).host.clearance).toBe(3.5);
+    test("the settings list shows the milling clearance and spin-up on a spindle machine only", () => {
+        const profile = (tool: "laser" | "spindle"): { tool: string; h_axis: boolean } => ({ tool, h_axis: false });
+        const hostKeys = (tool: "laser" | "spindle"): string[] =>
+            settingRows(null, "", null, profile(tool)).filter((row) => row.entry.kind === "host").map((row) => row.name);
+        expect(hostKeys("spindle")).toEqual(["tolerance", "clearance", "spinup", "speed_control"]);
+        expect(hostKeys("laser")).toEqual(["tolerance"]);
     });
 });
 

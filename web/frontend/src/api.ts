@@ -70,6 +70,7 @@ import type {
     DeviceState,
     DevicesResponse,
     MachineCheck,
+    MachineFromBoard,
     MachineResponse,
     PnpGotoRequest,
     PnpSettings,
@@ -122,6 +123,8 @@ export interface Api {
     saveMachineFile(id: string, text: string): Promise<MachineResponse>;
     /** What a text would read as, and what is wrong with it, without writing it. */
     checkMachineFile(id: string, text: string): Promise<MachineCheck>;
+    /** The text with the connected board's values written into it, not saved. */
+    machineFromBoard(id: string, text: string): Promise<MachineFromBoard>;
     deleteMachineFile(id: string): Promise<void>;
     camProfiles(): Promise<CamProfilesResponse>;
     camProfile(id: string): Promise<CamProfileResponse>;
@@ -427,6 +430,10 @@ export class HttpApi implements Api {
 
     checkMachineFile(id: string, text: string): Promise<MachineCheck> {
         return this.request<MachineCheck>("POST", `/api/machines/${encodeURIComponent(id)}/check`, { text });
+    }
+
+    machineFromBoard(id: string, text: string): Promise<MachineFromBoard> {
+        return this.request<MachineFromBoard>("POST", `/api/machines/${encodeURIComponent(id)}/from-board`, { text });
     }
 
     async deleteMachineFile(id: string): Promise<void> {
