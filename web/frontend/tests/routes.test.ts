@@ -165,3 +165,16 @@ describe("HttpApi camera, alignment and pad routes", () => {
         expect(calls.at(-1)?.body).toEqual({ file: "b.kicad_pcb", mode: "dispense", thickness: "0.15" });
     });
 });
+
+describe("HttpApi stencil routes", () => {
+    test("an upload carries the margin, and a stencil is cut again with its own route", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.uploadJob(new File(["x"], "b.kicad_pcb"), { mode: "stencil", margin: 0.05 });
+        await api.setJobMargin("a 1", 0.1);
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["POST", "/api/jobs", { file: "b.kicad_pcb", mode: "stencil", margin: "0.05" }],
+            ["POST", "/api/jobs/a%201/margin", { margin: 0.1 }],
+        ]);
+    });
+});

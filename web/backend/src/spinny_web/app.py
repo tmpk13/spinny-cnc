@@ -64,6 +64,8 @@ from .jobs import (
     DEFAULT_THICKNESS,
     DISPENSER,
     MODE_DISPENSE,
+    MODE_STENCIL,
+    PASTE_LAYER,
     Group,
     ImportOptions,
     Job,
@@ -255,6 +257,10 @@ NO_FRONTEND = """<!doctype html>
 
 class WidthBody(BaseModel):
     width: float
+
+
+class MarginBody(BaseModel):
+    margin: float
 
 
 class ConnectBody(BaseModel):
@@ -2267,6 +2273,24 @@ class Backend:
         self.store.save(made)
         return made
 
+    def set_job_margin(self, job_id: str, margin: float) -> Job:
+        """A stencil made again from its kept file with every opening shrunk
+        by `margin` mm, where the job is now."""
+        job = self.store.get(job_id)
+        if job is None:
+            raise NotFound(f"no job {job_id!r}")
+        if self.runner.active and self.runner.progress.job == job_id:
+            raise RunnerError("the job is running")
+        recipe = job.recipe
+        if recipe is None or not recipe.file or (recipe.options or {}).get("mode") != MODE_STENCIL:
+            raise ValueError(f"{job.name} is not a stencil: a margin is for a board imported with mode stencil")
+        kept = self.store.upload_path(job.id, recipe.file)
+        if kept is None:
+            raise ValueError(f"the file {job.name} was imported from is no longer kept: import it again with the new margin")
+        made = remake_upload(job, kept, job.spot, self.streamer(), margin=margin)
+        self.store.save(made)
+        return made
+
     def mill_operation(self, op: mill.MillOperation, keep: bool) -> dict:
         """The Mill page's operation as a job and its notes; stored when
         `keep`, else only shown."""
@@ -3850,6 +3874,7 @@ def create_app(
         fill: str | None = Form(None),
         thickness: float | None = Form(None),
         mirror: str | None = Form(None),
+        margin: float | None = Form(None),
     ):
         options = ImportOptions(tolerance=backend.tolerance)
         # Left out or auto, a layer on the back is flipped in X.
@@ -3857,11 +3882,13 @@ def create_app(
             options.mirror = mirror.strip().lower()
         if layer:
             options.layer = layer.strip()
-        elif mode and mode.strip().lower() == MODE_DISPENSE:
-            # Paste goes where the paste layer says.
-            options.layer = "F.Paste"
+        elif mode and mode.strip().lower() in (MODE_DISPENSE, MODE_STENCIL):
+            # Paste goes where the paste layer says, and so do its openings.
+            options.layer = PASTE_LAYER
         if thickness is not None:
             options.thickness = thickness
+        if margin is not None:
+            options.margin = margin
         if power is not None:
             options.power = power
         if speed is not None:
@@ -3924,6 +3951,11 @@ def create_app(
     @app.post("/api/jobs/{job_id}/width")
     async def set_job_width(job_id: str, body: WidthBody):
         made = await run_in_threadpool(guarded, lambda: backend.set_job_width(job_id, body.width))
+        return made.model_dump()
+
+    @app.post("/api/jobs/{job_id}/margin")
+    async def set_job_margin(job_id: str, body: MarginBody):
+        made = await run_in_threadpool(guarded, lambda: backend.set_job_margin(job_id, body.margin))
         return made.model_dump()
 
     @app.post("/api/mill/plan")

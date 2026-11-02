@@ -315,6 +315,45 @@ describe("building jobs", () => {
         expect(deposited.note).toContain("deposition need the real backend");
     });
 
+    test("a stencil cuts the demo paste round the inside of each opening the margin leaves", () => {
+        const cut = (margin: number, spot = 0.1) => buildJob("0003", "board.kicad_pcb", "", { mode: "stencil", margin, spot }, limits);
+        const exact = cut(0);
+        expect(exact.job.layer).toBe("F.Paste");
+        expect(exact.note).toContain("showing a demo stencil");
+        const [openings, outline] = exact.job.groups;
+        expect(openings!.label).toBe("paste openings, 0.000 mm margin");
+        expect(openings!.paths.length).toBe(6);
+        expect([openings!.enabled, outline!.label, outline!.enabled]).toEqual([true, "board outline pass 1", false]);
+        // A fine pad 0.25 x 1 mm: the loop half a spot inside its edge.
+        const fine = openings!.paths.at(-1)!;
+        const xs = fine.map(([x]) => x);
+        const ys = fine.map(([, y]) => y);
+        expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(0.15);
+        expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(0.9);
+        // 0.1 mm off each side leaves the fine pads too narrow for the beam,
+        // 0.13 closes them, and 0.5 closes every pad.
+        expect(cut(0.1).job.groups.map((group) => [group.label, group.paths.length])).toEqual([
+            ["paste openings, 0.100 mm margin", 2],
+            ["paste openings narrower than the spot, along their middle", 4],
+            ["board outline pass 1", 1],
+        ]);
+        const along = cut(0.1).job.groups[1]!.paths[0]!;
+        expect(Math.abs(along[1]![1] - along[0]![1])).toBeCloseTo(0.7);
+        const closed = cut(0.13).job.groups[1]!;
+        expect([closed.label, closed.enabled, closed.paths.length]).toEqual(["paste openings the margin closes, along their middle", false, 4]);
+        expect(() => cut(0.5)).toThrow("a margin of 0.5 mm closes every opening of board.kicad_pcb");
+    });
+
+    test("stencil options are refused where they mean nothing, as the backend refuses them", () => {
+        const board = (options: Parameters<typeof buildJob>[3]) => () => buildJob("0004", "board.kicad_pcb", "", options, limits);
+        expect(board({ mode: "stencil", clear: "radial" })).toThrow("a stencil cuts round every opening: it takes neither clear nor fill");
+        expect(board({ mode: "stencil", fill: "contour" })).toThrow("it takes neither clear nor fill");
+        expect(board({ margin: 0.05 })).toThrow("margin is how much a stencil shrinks its openings; this import is not a stencil");
+        expect(board({ mode: "stencil", margin: -0.01 })).toThrow("margin must be 0 to 10 mm");
+        expect(board({ mode: "stencil", margin: 11 })).toThrow("margin must be 0 to 10 mm");
+        expect(board({ mode: "stencil", layer: "B.Paste" })().job.layer).toBe("B.Paste");
+    });
+
     test("a back layer is flipped in X unless the upload says otherwise, as the backend flips it", () => {
         const front = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", {}, limits).job;
         const back = buildJob("0002", "board-B_Cu.gbr", "G04 nothing*", {}, limits).job;

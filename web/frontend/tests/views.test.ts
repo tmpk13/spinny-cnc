@@ -783,6 +783,87 @@ describe("jobs", () => {
         expect(uploads.map((options) => options.layer)).toEqual(["F.Cu", "F.Paste", undefined]);
     });
 
+    test("a stencil sends its margin in place of clear and fill, and takes the paste for a copper layer", async () => {
+        const { ctx, root, calls } = setup();
+        mountJobs(root, ctx);
+        const mode = root.querySelector('select[aria-label="Board mode"]') as HTMLSelectElement;
+        const layer = root.querySelector('input[aria-label="Board layer"]') as HTMLInputElement;
+        const margin = root.querySelector('input[aria-label="Stencil margin"]') as HTMLInputElement;
+        const shown = (field: HTMLElement): boolean => !field.closest("label")!.classList.contains("hidden");
+        const clear = root.querySelector('select[aria-label="Clear copper"]') as HTMLSelectElement;
+        const fill = root.querySelector('select[aria-label="Fill copper"]') as HTMLSelectElement;
+        expect(shown(margin)).toBe(false);
+        clear.value = "rings";
+        mode.value = "stencil";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        expect([shown(clear), shown(fill), shown(margin)]).toEqual([false, false, true]);
+        expect(layer.value).toBe("F.Paste");
+        margin.value = "0.05";
+        const event = new Event("drop", { cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: { files: [new File(["(kicad_pcb)"], "board.kicad_pcb")] } });
+        root.querySelector(".drop")!.dispatchEvent(event);
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        const [options] = calls.filter((c) => c.name === "uploadJob").map((c) => c.args[1] as Record<string, unknown>);
+        expect(options).toMatchObject({ mode: "stencil", margin: 0.05, layer: "F.Paste" });
+        expect([options!["clear"], options!["fill"]]).toEqual([undefined, undefined]);
+        // A layer typed for the stencil is the user's to keep.
+        mode.value = "isolate";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        layer.value = "B.Cu";
+        mode.value = "stencil";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        expect(layer.value).toBe("B.Paste");
+        layer.value = "User.1";
+        mode.value = "deposit";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        mode.value = "stencil";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+        expect(layer.value).toBe("User.1");
+    });
+
+    test("a stencil's margin row cuts it again for another margin, where it lies", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        mountJobs(root, ctx);
+        const job = await api.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), { mode: "stencil", margin: 0 });
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        const field = root.querySelector('input[aria-label="Margin of this stencil"]') as HTMLInputElement;
+        expect(field.value).toBe("0");
+        const labels = (): string[] => (store.get().job?.groups ?? []).map((group) => group.label);
+        expect(labels()[0]).toBe("paste openings, 0.000 mm margin");
+        await api.patchJob(job.id, { offset: { x: job.offset.x + 2, y: job.offset.y } });
+        await ctx.reloadJob(job.id);
+        const recut = async (margin: string): Promise<void> => {
+            const row = root.querySelector('input[aria-label="Margin of this stencil"]') as HTMLInputElement;
+            row.value = margin;
+            row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+            for (let i = 0; i < 5; i++) {
+                await settle();
+            }
+        };
+        // As many groups as before, but the table says the new margin.
+        await recut("0.05");
+        expect(root.querySelector("table.groups")!.textContent).toContain("paste openings, 0.050 mm margin");
+        // The fine pads, 0.25 mm wide, leave a 0.1 mm spot no room once
+        // 0.1 mm comes off each side.
+        await recut("0.1");
+        expect(calls.filter((c) => c.name === "setJobMargin").map((c) => c.args)).toEqual([[job.id, 0.05], [job.id, 0.1]]);
+        expect(labels()).toEqual([
+            "paste openings, 0.100 mm margin",
+            "paste openings narrower than the spot, along their middle",
+            "board outline pass 1",
+        ]);
+        expect(store.get().job?.offset.x).toBeCloseTo(job.offset.x + 2);
+        expect((root.querySelector('input[aria-label="Margin of this stencil"]') as HTMLInputElement).value).toBe("0.1");
+        // A job that is no stencil has no margin to change.
+        const plain = await api.uploadJob(new File(["(kicad_pcb)"], "plain.kicad_pcb"), {});
+        await ctx.refreshJobs();
+        await ctx.selectJob(plain.id);
+        expect(root.querySelector('input[aria-label="Margin of this stencil"]')).toBeNull();
+    });
+
     test("list and groups of the selected job", async () => {
         const { store, ctx, root, api } = setup();
         mountJobs(root, ctx);

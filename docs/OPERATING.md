@@ -9,10 +9,15 @@ From the first connection to a probed, compensated run. The wiring and the bring
 The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
 A board upload isolates its copper by default; with Board set to deposit,
 for a process that lays copper down, it burns the copper itself and
-nothing past its edge. The Layer field picks the layer a KiCad board is
-read from: a copper layer, or F.Paste, which with deposit burns the paste
-openings out of a film laid where the board would be, a solder paste
-stencil. A gerber is its own layer.
+nothing past its edge. With Board set to stencil it cuts a solder paste
+stencil out of a film laid where the board would be: once round the
+inside of every paste opening, shrunk first by Margin mm on every side,
+so each piece drops out and leaves its hole; picking stencil turns a
+Layer of F.Cu into F.Paste. The preview draws every pad with its cut
+inside it, the margin being the band between them, and the job's margin
+row cuts the stencil again for another margin where it lies. The Layer
+field picks the layer a KiCad board is read from: a copper layer, or
+F.Paste. A gerber is its own layer.
 Open `http://localhost:8000`, connect to the board (or to
 `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run

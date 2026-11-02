@@ -150,6 +150,8 @@ export interface Api {
     patchJob(id: string, patch: JobPatch): Promise<void>;
     /** The job made again for a bit or a spot `width` mm across; a drawing takes the width with its paths as they are. */
     setJobWidth(id: string, width: number): Promise<Job>;
+    /** A stencil made again with every opening shrunk by `margin` mm. */
+    setJobMargin(id: string, margin: number): Promise<Job>;
     deleteJob(id: string): Promise<void>;
     /** Removes every job but the one running; answers their ids. */
     deleteAllJobs(): Promise<string[]>;
@@ -513,6 +515,10 @@ export class HttpApi implements Api {
 
     setJobWidth(id: string, width: number): Promise<Job> {
         return this.request<Job>("POST", `/api/jobs/${encodeURIComponent(id)}/width`, { width });
+    }
+
+    setJobMargin(id: string, margin: number): Promise<Job> {
+        return this.request<Job>("POST", `/api/jobs/${encodeURIComponent(id)}/margin`, { margin });
     }
 
     async deleteJob(id: string): Promise<void> {

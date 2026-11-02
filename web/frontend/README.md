@@ -191,7 +191,9 @@ from a marker. It is planned as it is typed (`POST /api/mill/plan`) and
 drawn on the page's own preview, then made into the selected job, which
 the run panel beside it runs. The *Markers* panel (`src/views/markers.ts`)
 keeps named board positions for every page. The job details' width row
-makes a job again for another bit or spot. *Grid* in a preview's head
+makes a job again for another bit or spot, and a stencil's margin row
+for another margin, so the preview shows what a margin leaves before
+anything is cut. *Grid* in a preview's head
 draws X/Y lines in place of the rings, on every preview at once.
 
 ## Architecture

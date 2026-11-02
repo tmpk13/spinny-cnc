@@ -2,7 +2,8 @@
 
 The Python library behind the web backend and the command line tools:
 polar kinematics (`polar`), copper clearing (`clear`) and deposition
-(`deposit`), the centering coupons (`center`, `fine`), the pads and holes
+(`deposit`), solder paste stencils (`stencil`), the centering coupons
+(`center`, `fine`), the pads and holes
 of a board layer (`pads`), the turn and shift that line a job up with the
 board (`align`), the Mill page's simple operations (`mill`: drilling,
 a line, facing, pockets and profiles), the machine configuration files
@@ -59,6 +60,11 @@ classDiagram
         spokes(area, pitch, pace) shaped to the area, ordered by travel
         rings / rows(area, pitch)
         clip_open(lines, area)
+    }
+    class stencil {
+        stencil(paste, spot, margin, pace) Stencil
+        Stencil  loops, narrow, closed
+        middle(piece, radius) the stroke along an opening too narrow for a loop
     }
     class deposit {
         deposit(copper, spot, fill, passes, centers, pace) Deposition
@@ -194,6 +200,8 @@ classDiagram
     jog --> polar
     clear --> laser_sweep : offsets
     deposit --> clear : fills, travel order
+    stencil --> deposit : hairline opening
+    stencil --> clear : travel order
     deposit --> laser_sweep : offsets, loops
     deposit ..> web_backend : board import, deposit mode
     center --> machine

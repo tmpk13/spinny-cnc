@@ -420,8 +420,8 @@ export type Anchor = "center" | "keep";
 /** How a board import clears the copper the isolation leaves: spokes from the axis, rings about it, or rows along X. */
 export type ClearPattern = "radial" | "rings" | "lines";
 
-/** What a board import makes: cuts around the copper, taking it away; the copper itself, for a process that lays it down; or a paste dot on every pad. */
-export type BoardMode = "isolate" | "deposit" | "dispense";
+/** What a board import makes: cuts around the copper, taking it away; the copper itself, for a process that lays it down; a cut round the inside of every paste opening, for a stencil; or a paste dot on every pad. */
+export type BoardMode = "isolate" | "deposit" | "stencil" | "dispense";
 
 /** How a deposit fills the copper inside its edge loops: loops on in to the middle, or one of the clearing fills. */
 export type DepositFill = "contour" | ClearPattern;
@@ -605,10 +605,12 @@ export interface UploadOptions {
     anchor?: Anchor;
     offset_x?: number;
     offset_y?: number;
-    /** The layer a KiCad board is read from, a KiCad layer name; left out, F.Cu. F.Paste with a deposit is a stencil. */
+    /** The layer a KiCad board is read from, a KiCad layer name; left out, F.Cu, or F.Paste for a stencil or a dispense. */
     layer?: string;
     /** Gerber and KiCad boards only; left out, the board is isolated. */
     mode?: BoardMode;
+    /** A stencil only: mm every opening is shrunk by on every side, 0 to 10; left out, none. */
+    margin?: number;
     /** A dispense only: mm of paste over every pad, 0.01 to 5; left out, 0.12. */
     thickness?: number;
     /** Isolation only; left out, no copper is cleared. */

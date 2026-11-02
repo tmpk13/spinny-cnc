@@ -16,6 +16,24 @@ export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gts,.gbs,.gtp,.gbp,.gto,.gbo,.
 /** The layers of a KiCad board a job is usually cut from, offered under the layer field; any other name may be typed. */
 export const BOARD_LAYERS = ["F.Cu", "B.Cu", "F.Paste", "B.Paste", "F.Mask", "B.Mask", "F.SilkS", "B.SilkS"];
 export const DEFAULT_LAYER = "F.Cu";
+/** The paste layer on a copper layer's side, which a stencil is cut from. */
+const PASTE_OF: Record<string, string> = { "F.Cu": "F.Paste", "B.Cu": "B.Paste" };
+/** The most a stencil's openings are shrunk by on every side, mm, as the backend bounds it. */
+export const MAX_MARGIN = 10;
+
+/**
+ * The margin a stencil job was cut with, mm: how much every opening was
+ * shrunk by on every side. Null for a job that is not a stencil made from
+ * a kept file, which has no margin to change.
+ */
+export function stencilMargin(job: Job): number | null {
+    const options = job.recipe?.file ? job.recipe.options : null;
+    if (!options || options["mode"] !== "stencil") {
+        return null;
+    }
+    const margin = options["margin"];
+    return typeof margin === "number" && Number.isFinite(margin) ? margin : 0;
+}
 
 export function progressText(progress: Progress | null): { bar: number; counts: string; time: string; state: string; reason: string } {
     if (!progress) {
@@ -86,6 +104,11 @@ interface GroupRow {
     /** A dispenser's group only: the paste over every pad, mm. */
     thickness: HTMLInputElement | null;
     enabled: HTMLInputElement;
+}
+
+/** What the groups table shows of a job's groups besides their fields: each label and how many paths it has. */
+export function groupsShown(job: Job): string {
+    return JSON.stringify(job.groups.map((group) => [group.label, group.paths.length, group.joints?.length ?? 0, group.moves?.length ?? 0]));
 }
 
 /** What a group mills to when a job does not say: through the copper, gently. */
@@ -168,7 +191,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         value: DEFAULT_LAYER,
         spellcheck: "false",
         "aria-label": "Board layer",
-        title: "The layer of a KiCad board the job is cut from: a copper layer to isolate or deposit, or F.Paste with deposit to burn a solder paste stencil out of a film. A gerber is its own layer",
+        title: "The layer of a KiCad board the job is cut from: a copper layer to isolate or deposit, or F.Paste for a solder paste stencil cut out of a film. A gerber is its own layer",
     }) as HTMLInputElement;
     const clearField = el("select", {
         class: "field",
@@ -195,12 +218,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const modeField = el("select", {
         class: "field",
         "aria-label": "Board mode",
-        title: "Isolate burns around the copper to take it away; deposit burns the copper itself and nothing else, for a process that lays copper down (gerber and KiCad only). A deposit leaves the board outline off",
+        title: "Isolate burns around the copper to take it away; deposit burns the copper itself and nothing else, for a process that lays copper down; stencil cuts round the inside of every paste opening, so the piece drops out of the film and leaves the hole (gerber and KiCad only). A deposit or a stencil leaves the board outline off",
     },
         el("option", { value: "isolate" }, "isolate"),
         el("option", { value: "deposit" }, "deposit"),
+        el("option", { value: "stencil" }, "stencil"),
         el("option", { value: "dispense" }, "dispense"),
     );
+    // A stencil shrinks every opening by this much on every side.
+    const marginField = numberField({ value: 0, min: 0, max: MAX_MARGIN, step: 0.01 });
+    marginField.setAttribute("aria-label", "Stencil margin");
     // A dispense lays a dot of paste on every pad: the mm of paste over one.
     const thicknessField = numberField({ value: DEFAULT_THICKNESS, min: 0.01, max: 5, step: 0.01 });
     thicknessField.setAttribute("aria-label", "Paste thickness");
@@ -225,6 +252,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const fillLabel = labeled("Fill copper", fillField);
     const thicknessLabel = labeled("Paste mm", thicknessField);
     thicknessLabel.title = "A dispense: mm of solder paste over every pad; a dot's volume is the pad's area times this";
+    const marginLabel = labeled("Margin mm", marginField);
+    marginLabel.title = "A stencil: mm every paste opening is shrunk by on every side, for less paste than the whole pad; the beam runs half a spot inside that, so the hole is the opening shrunk. The job's margin row cuts it again for another";
     const options = el("div", { class: "field-grid" },
         powerLabel,
         speedLabel,
@@ -238,19 +267,29 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         labeled("Board", modeField),
         clearLabel,
         fillLabel,
+        marginLabel,
         thicknessLabel,
     );
     // A deposit has no copper around its own to clear, and isolation
     // nothing inside the copper to fill: only the one that applies shows;
-    // a dispense takes neither, only the paste thickness.
+    // a stencil takes neither, only its margin, and a dispense only the
+    // paste thickness.
     const showMode = (): void => {
-        const deposit = modeField.value === "deposit";
-        const dispense = modeField.value === "dispense";
-        clearLabel.classList.toggle("hidden", deposit || dispense);
-        fillLabel.classList.toggle("hidden", !deposit);
-        thicknessLabel.classList.toggle("hidden", !dispense);
+        const mode = modeField.value;
+        clearLabel.classList.toggle("hidden", mode !== "isolate");
+        fillLabel.classList.toggle("hidden", mode !== "deposit");
+        marginLabel.classList.toggle("hidden", mode !== "stencil");
+        thicknessLabel.classList.toggle("hidden", mode !== "dispense");
     };
-    modeField.addEventListener("change", showMode);
+    modeField.addEventListener("change", () => {
+        // A stencil is cut from the paste: a copper layer left in the field
+        // turns into the paste layer on its side.
+        const paste = PASTE_OF[layerField.value.trim()];
+        if (modeField.value === "stencil" && paste) {
+            layerField.value = paste;
+        }
+        showMode();
+    });
     showMode();
     const list = el("ul", { class: "job-list" });
     const details = el("div", { class: "job-details" });
@@ -330,6 +369,12 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         if (modeField.value === "deposit") {
             out.mode = modeField.value as BoardMode;
             out.fill = fillField.value as DepositFill;
+        } else if (modeField.value === "stencil") {
+            out.mode = modeField.value as BoardMode;
+            const margin = parseNumber(marginField.value);
+            if (margin !== null) {
+                out.margin = margin;
+            }
         } else if (modeField.value === "dispense") {
             out.mode = modeField.value as BoardMode;
             const thickness = parseNumber(thicknessField.value);
@@ -429,6 +474,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
 
     let detailsFor: string | null = null;
     let detailsJob: Job | null = null;
+    // The table's rows carry each group's label and count of paths, so it
+    // is built again when a re-cut changes either, as another width or
+    // margin does with the groups as many as before.
+    let detailsGroups = "";
     // The table's columns are the tool's, so it is built again when the
     // machine's tool changes under it.
     let detailsMilling = false;
@@ -439,6 +488,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     let groupRows: GroupRow[] = [];
     let offsetFields: { x: HTMLInputElement; y: HTMLInputElement; rotation: HTMLElement } | null = null;
     let widthField: HTMLInputElement | null = null;
+    let jobMarginField: HTMLInputElement | null = null;
     let statsEl: HTMLElement | null = null;
     // Why a dispenser would refuse the job, beside the run button.
     const runNote = el("span", { class: "muted run-note hidden" });
@@ -574,9 +624,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const milling = isMilling(state.snapshot);
-        if (detailsFor !== job.id || detailsJob === null || groupRows.length !== job.groups.length || detailsMilling !== milling) {
+        const groups = groupsShown(job);
+        if (detailsFor !== job.id || detailsJob === null || detailsGroups !== groups || detailsMilling !== milling) {
             detailsFor = job.id;
             detailsJob = job;
+            detailsGroups = groups;
             detailsMilling = milling;
             statsEl = statsBlock(job);
             replace(details,
@@ -585,6 +637,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 statsEl,
                 offsetRow(job),
                 widthRow(job, milling),
+                marginRow(job),
                 runRow,
                 compensateNote,
                 progressBox,
@@ -622,6 +675,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         }
         if (widthField) {
             setUnlessFocused(widthField, String(job.spot), focused);
+        }
+        const margin = stencilMargin(job);
+        if (jobMarginField && margin !== null) {
+            setUnlessFocused(jobMarginField, String(margin), focused);
         }
         const fresh = statsBlock(job);
         statsEl?.replaceWith(fresh);
@@ -867,6 +924,53 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             field,
             apply,
             note,
+        );
+    }
+
+    /**
+     * A stencil's margin and the button that cuts it again for another,
+     * where the job is now, so the preview shows what a margin leaves
+     * before anything is cut. Null for a job that is not a stencil.
+     */
+    function marginRow(job: Job): HTMLElement | null {
+        const margin = stencilMargin(job);
+        if (margin === null) {
+            jobMarginField = null;
+            return null;
+        }
+        const field = numberField({ value: margin, min: 0, max: MAX_MARGIN, step: 0.01, width: "5.5rem" });
+        field.setAttribute("aria-label", "Margin of this stencil");
+        jobMarginField = field;
+        const apply = button("Re-cut", () => applyMargin(), "btn btn-quiet");
+        apply.title = "cut the stencil again with every opening shrunk by this much on every side, where the job is now; its groups keep their settings";
+        field.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                apply.click();
+            }
+        });
+        const applyMargin = async (): Promise<void> => {
+            const value = parseNumber(field.value);
+            if (value === null || !(value >= 0 && value <= MAX_MARGIN)) {
+                ctx.toast("error", `the margin is a number of mm from 0 to ${MAX_MARGIN}`);
+                return;
+            }
+            // The row outlives a re-cut: the job as it is now decides.
+            const current = ctx.store.get().job;
+            if (!current || current.id !== job.id || value === stencilMargin(current)) {
+                return;
+            }
+            const made = await ctx.call(ctx.api.setJobMargin(job.id, value));
+            if (made) {
+                await ctx.reloadJob(job.id);
+                await ctx.refreshJobs();
+                ctx.toast("info", `${job.name}: ${value} mm margin`);
+            }
+        };
+        return el("div", { class: "goto-row" },
+            el("span", { class: "choice-label" }, "Margin mm"),
+            field,
+            apply,
+            el("span", { class: "muted job-width-note" }, "openings shrunk this much on every side"),
         );
     }
 

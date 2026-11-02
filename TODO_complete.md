@@ -540,3 +540,9 @@
   machine's laser (`cutter` laser): spot, power and passes in place of
   depth, step down, plunge and spindle; a point is marked with a ring the
   spot across, a hole cut along its inside edge or cleared in rings.
+- Stencil mode (2026-11-02): Board stencil cuts once round the inside of
+  every paste opening, shrunk first by Margin mm, so the pieces drop out;
+  openings too narrow for the spot are cut along their middle, those the
+  margin closes come as a switched-off group; the job's margin row cuts
+  it again and the preview shows pads, margin and cuts
+  (`spinny_laser.stencil`, `POST /api/jobs/{id}/margin`).

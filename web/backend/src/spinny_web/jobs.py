@@ -27,6 +27,7 @@ from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
 from spinny_laser import order as cut_order
 from spinny_laser import pads as board_pads
+from spinny_laser import stencil as paste_stencil
 
 from . import kinematics
 from .kinematics import Streamer
@@ -63,10 +64,17 @@ MAX_GROUP_PASSES = 100
 CLEAR_OFF = "off"
 CLEAR_CHOICES = (CLEAR_OFF, *copper_clearing.PATTERNS)
 # What a board import burns: around the copper, taking it away, or the
-# copper itself, for a process that lays it down; or, with a dispenser, a
-# dot of paste on every pad of the layer.
-MODE_ISOLATE, MODE_DEPOSIT, MODE_DISPENSE = "isolate", "deposit", "dispense"
-MODES = (MODE_ISOLATE, MODE_DEPOSIT, MODE_DISPENSE)
+# copper itself, for a process that lays it down; or round the inside of
+# every opening of the paste, cut out of a film for a solder paste stencil;
+# or, with a dispenser, a dot of paste on every pad of the layer.
+MODE_ISOLATE, MODE_DEPOSIT, MODE_STENCIL, MODE_DISPENSE = "isolate", "deposit", "stencil", "dispense"
+MODES = (MODE_ISOLATE, MODE_DEPOSIT, MODE_STENCIL, MODE_DISPENSE)
+# The layer a stencil or a dispense is read from when the upload names none.
+PASTE_LAYER = "F.Paste"
+# A stencil's openings are shrunk by at most this much on every side, mm:
+# far past any paste reduction, and short of a number typed in the wrong
+# unit.
+MAX_MARGIN = 10.0
 # How a board layer may be flipped, as the isolation's config names it.
 MIRRORS = ("none", "x", "y")
 # Dispensing: the paste over a pad, mm, whose product with the pad's area
@@ -576,11 +584,12 @@ def recipe_options(options: ImportOptions) -> dict:
     return dataclasses.asdict(options)
 
 
-def remake_upload(job: Job, kept: Path, width: float, streamer: Streamer) -> Job:
-    """A board job imported again from its kept file for another width and
-    put where the job is now: the design's frame turned and moved as the
-    job's has been, so the copper lands on the copper already cut, and its
-    groups' settings kept."""
+def remake_upload(job: Job, kept: Path, width: float, streamer: Streamer, margin: float | None = None) -> Job:
+    """A board job imported again from its kept file for another width, and
+    a stencil for another `margin` when one is given, and put where the job
+    is now: the design's frame turned and moved as the job's has been, so
+    the copper lands on the copper already cut, and its groups' settings
+    kept."""
     recipe = job.recipe
     if recipe is None or not recipe.file or recipe.options is None:
         raise ValueError(f"{job.name} keeps no file to import again")
@@ -589,6 +598,8 @@ def remake_upload(job: Job, kept: Path, width: float, streamer: Streamer) -> Job
         fields["offset"] = (float(fields["offset"][0]), float(fields["offset"][1]))
     options = ImportOptions(**fields)
     options.spot = width
+    if margin is not None:
+        options.margin = margin
     with tempfile.TemporaryDirectory(prefix="spinny-remake-") as folder:
         # Under its own name, alone: a gerber's layer is read from its name,
         # and its outline would be looked for beside it.
@@ -625,16 +636,19 @@ class ImportOptions:
     tolerance: float = kinematics.DEFAULT_TOLERANCE
     passes: int = 1
     # The layer a KiCad board is read from: a copper layer, or F.Paste,
-    # which with a deposit is a solder paste stencil. A gerber is its own
+    # whose openings a stencil cuts out of a film. A gerber is its own
     # layer.
     layer: str = board.DEFAULT_LAYER
-    # Only a board has copper to isolate, clear or deposit; other files
-    # ignore all three.
+    # Only a board has copper to isolate, clear or deposit, or paste to cut
+    # a stencil for; other files ignore all of these.
     mode: str = MODE_ISOLATE
     clear: str = CLEAR_OFF
     # How a deposit fills the copper inside its edge loops; left out, with
     # loops on in to the middle.
     fill: str | None = None
+    # A stencil only: mm every opening is shrunk by on every side before it
+    # is cut, for less paste than the pad's whole area; left out, none.
+    margin: float | None = None
     # Dispensing: the paste over every pad, mm.
     thickness: float = DEFAULT_THICKNESS
     # How a board layer is flipped: none, x (X negated, the board turned
@@ -652,6 +666,15 @@ class ImportOptions:
             raise JobImportError(f"clear must be one of {', '.join(CLEAR_CHOICES)}")
         if self.fill is not None and self.fill not in copper_deposition.FILLS:
             raise JobImportError(f"fill must be one of {', '.join(copper_deposition.FILLS)}")
+        if self.mode == MODE_STENCIL and (self.clear != CLEAR_OFF or self.fill is not None):
+            raise JobImportError("a stencil cuts round every opening: it takes neither clear nor fill")
+        if self.mode == MODE_STENCIL and self.passes != 1:
+            raise JobImportError("passes counts isolation or edge loops; a stencil cuts round every opening once: set its group's passes to cut again")
+        if self.margin is not None:
+            if self.mode != MODE_STENCIL:
+                raise JobImportError("margin is how much a stencil shrinks its openings; this import is not a stencil")
+            if not (math.isfinite(self.margin) and 0.0 <= self.margin <= MAX_MARGIN):
+                raise JobImportError(f"margin must be 0 to {MAX_MARGIN:g} mm")
         if self.mode != MODE_ISOLATE and self.clear != CLEAR_OFF:
             raise JobImportError("clear is for isolation; a deposit takes fill instead")
         if self.mode != MODE_DEPOSIT and self.fill is not None:
@@ -905,11 +928,13 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
 
 def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE) -> Job:
     """Isolation loops for a gerber or a KiCad board, with the outline when found,
-    or with `mode` deposit the copper itself burnt and the outline switched off.
+    or with `mode` deposit the copper itself burnt, or with `mode` stencil
+    every opening cut round its inside edge, the outline switched off for
+    both.
 
     A KiCad board is read on `options.layer`: a copper layer, or the paste
-    layer, whose deposit is a solder paste stencil. A gerber is the layer
-    it is, and the groups are named for what the layer draws.
+    layer, which a stencil is cut for. A gerber is the layer it is, and the
+    groups are named for what the layer draws.
 
     `pace` is the machine's rail rate in mm/min over its table rate in
     deg/min, which a radial clearing or fill orders its spokes by."""
@@ -987,6 +1012,18 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                 pace=pace,
             )
             groups = deposit_groups(deposition, options, word)
+        elif options.mode == MODE_STENCIL:
+            # The beam keeps inside the paste, but along the middle of an
+            # opening narrower than itself it reaches half a spot past it.
+            reach = options.spot / 2.0
+            shift = isolate.placement(copper, config, reach, [(outline, reach)])
+            placed = isolate.transform(copper, config, shift)
+            outline = [list(p) for p in isolate.transform(outline, config, shift)]
+            margin = options.margin or 0.0
+            cut = paste_stencil.stencil(placed, options.spot, margin, pace=pace)
+            if not cut.paths:
+                raise JobImportError(f"a margin of {margin:g} mm closes every opening of {copper_path.name}")
+            groups = stencil_groups(cut, options, word)
         else:
             plan = isolate.build(copper, config, outline=outline)
             placed, outline = plan.copper, plan.outline
@@ -1028,8 +1065,9 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                 speed=options.speed,
                 # A deposit burns copper wherever the beam goes, so the
                 # outline is there to cut the board free with a power of its
-                # own once the copper is down, and is off until then.
-                enabled=options.mode != MODE_DEPOSIT,
+                # own once the copper is down, and is off until then; a
+                # stencil's film needs no board's shape unless asked.
+                enabled=options.mode not in (MODE_DEPOSIT, MODE_STENCIL),
                 # A cutout inside the board before the edge that frees it.
                 paths=cut_order.inner_first([[tuple(p) for p in path] for path in outline]),
             )
@@ -1125,6 +1163,44 @@ def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOpti
                 power=options.power,
                 speed=options.speed,
                 paths=[[tuple(p) for p in path] for path in deposition.thin],
+            )
+        )
+    return groups
+
+
+def stencil_groups(cut: paste_stencil.Stencil, options: ImportOptions, word: str = "paste") -> list[Group]:
+    """A group of loops round the openings, then the openings narrower than
+    the spot and, switched off, those the margin closes; `word` is what the
+    layer draws, for the labels."""
+    groups: list[Group] = []
+    if cut.loops:
+        groups.append(
+            Group(
+                label=f"{word} openings, {options.margin or 0.0:.3f} mm margin",
+                power=options.power,
+                speed=options.speed,
+                paths=[[tuple(p) for p in loop] for loop in cut.loops],
+            )
+        )
+    if cut.narrow:
+        groups.append(
+            Group(
+                label=f"{word} openings narrower than the spot, along their middle",
+                power=options.power,
+                speed=options.speed,
+                paths=[[tuple(p) for p in path] for path in cut.narrow],
+            )
+        )
+    if cut.closed:
+        # Not part of the stencil the margin asked for: there to be
+        # switched on, for paste on those pads after all.
+        groups.append(
+            Group(
+                label=f"{word} openings the margin closes, along their middle",
+                power=options.power,
+                speed=options.speed,
+                enabled=False,
+                paths=[[tuple(p) for p in path] for path in cut.closed],
             )
         )
     return groups

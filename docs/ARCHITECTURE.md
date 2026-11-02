@@ -28,7 +28,7 @@ line at a time.
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
 | `web/backend` | serial link, job import (and again for another bit), the Mill page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
-| `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
+| `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, materials, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |

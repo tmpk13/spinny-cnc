@@ -49,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--layer",
         default=board.DEFAULT_LAYER,
-        help="the layer of a board file to isolate: a copper layer, or F.Paste for a stencil",
+        help="the layer of a board file to isolate: a copper layer, or any layer KiCad plots, such as F.Paste",
     )
 
     cut = parser.add_argument_group("isolation")

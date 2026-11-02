@@ -91,9 +91,9 @@ export function checkPasses(passes: number, what = "passes"): void {
     }
 }
 
-/** A read drawing: groups of board paths, each with the power and speed the file gave them, if any. */
+/** A read drawing: groups of board paths, each with the power and speed the file gave them, if any, and whether it comes switched on. */
 export interface ParsedGeometry {
-    groups: { label: string; paths: Path[]; power?: number; speed?: number }[];
+    groups: { label: string; paths: Path[]; power?: number; speed?: number; enabled?: boolean }[];
 }
 
 function multiply(m: Matrix, n: Matrix): Matrix {
@@ -786,7 +786,7 @@ function circlePath(cx: number, cy: number, r: number, steps = 24): Path {
 
 /** What the demo coupon stands for besides its cuts: its pads with their areas and its holes with their diameters. */
 export interface CouponGeometry {
-    groups: { label: string; paths: Path[] }[];
+    groups: { label: string; paths: Path[]; enabled?: boolean }[];
     copper: Path[];
     outline: Path[];
     pads: PadPoint[];
@@ -813,6 +813,81 @@ export function demoCoupon(): CouponGeometry {
         outline: [rectPath(-18, -12, 18, 12)],
         pads: pads.map(([x, y]) => [x, y, 9] as PadPoint),
         holes: pads.map(([x, y]) => [x, y, 0.8] as HolePoint),
+    };
+}
+
+/** A stencil's openings are shrunk by at most this much on every side, mm, as the backend bounds the margin. */
+export const MAX_MARGIN = 10;
+/** Room for the beam narrower than this is none, mm, as the backend leaves a hairline. */
+const HAIRLINE = 0.006;
+/** The shortest stroke along an opening's middle, as a share of the spot. */
+const SHORTEST = 0.25;
+
+type Rect = [number, number, number, number];
+
+/** The demo stencil's paste: a pair of 1 x 1.3 mm pads and a row of four 0.25 x 1 mm on a 0.5 mm pitch, as x0, y0, x1, y1. */
+const DEMO_PASTE: Rect[] = [
+    [-2.4, -0.65, -1.4, 0.65],
+    [-0.5, -0.65, 0.5, 0.65],
+    ...[2, 2.5, 3, 3.5].map((x): Rect => [x - 0.125, -0.5, x + 0.125, 0.5]),
+];
+
+/**
+ * A few paste pads cut as a stencil, the way the backend cuts a paste
+ * layer: a loop half a spot inside every pad shrunk by the margin, a
+ * stroke along the middle of one left too narrow for the beam, and,
+ * switched off, one along each pad the margin closes. The pads are
+ * rectangles along the axes, where the offsets are exact.
+ */
+export function demoStencil(spot: number, margin: number, word: string, name: string): CouponGeometry {
+    const radius = spot / 2;
+    // Along a rectangle's longer middle, half a spot short of each end but
+    // no shorter than SHORTEST of the spot, and never past the rectangle.
+    const middle = ([x0, y0, x1, y1]: Rect): Path => {
+        const cx = (x0 + x1) / 2;
+        const cy = (y0 + y1) / 2;
+        const along = x1 - x0 >= y1 - y0;
+        const half = (along ? x1 - x0 : y1 - y0) / 2;
+        const reach = Math.min(half, Math.max(half - radius, SHORTEST * radius));
+        return along ? [[cx - reach, cy], [cx + reach, cy]] : [[cx, cy - reach], [cx, cy + reach]];
+    };
+    const loops: Path[] = [];
+    const narrow: Path[] = [];
+    const closed: Path[] = [];
+    for (const pad of DEMO_PASTE) {
+        const shrunk: Rect = [pad[0] + margin, pad[1] + margin, pad[2] - margin, pad[3] - margin];
+        if (!(shrunk[2] > shrunk[0] && shrunk[3] > shrunk[1])) {
+            closed.push(middle(pad));
+            continue;
+        }
+        const core: Rect = [shrunk[0] + radius, shrunk[1] + radius, shrunk[2] - radius, shrunk[3] - radius];
+        if (core[2] - core[0] > HAIRLINE && core[3] - core[1] > HAIRLINE) {
+            loops.push(rectPath(...core));
+        } else {
+            narrow.push(middle(shrunk));
+        }
+    }
+    if (loops.length === 0 && narrow.length === 0) {
+        throw new Error(`a margin of ${formatG(margin)} mm closes every opening of ${name}`);
+    }
+    const outline = [rectPath(-3.5, -2, 4.5, 2)];
+    const groups: CouponGeometry["groups"] = [];
+    if (loops.length > 0) {
+        groups.push({ label: `${word} openings, ${margin.toFixed(3)} mm margin`, paths: loops });
+    }
+    if (narrow.length > 0) {
+        groups.push({ label: `${word} openings narrower than the spot, along their middle`, paths: narrow });
+    }
+    if (closed.length > 0) {
+        groups.push({ label: `${word} openings the margin closes, along their middle`, paths: closed, enabled: false });
+    }
+    groups.push({ label: "board outline pass 1", paths: outline, enabled: false });
+    return {
+        groups,
+        copper: DEMO_PASTE.map((pad) => rectPath(...pad)),
+        outline,
+        pads: DEMO_PASTE.map(([x0, y0, x1, y1]) => [(x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * (y1 - y0)] as PadPoint),
+        holes: [],
     };
 }
 
@@ -1304,7 +1379,7 @@ function layerWord(layer: string | null): string {
     return words[kind] ?? layer;
 }
 /** What a board import makes, and what a deposit may fill with, as the backend names them. */
-const MODES: string[] = ["isolate", "deposit", "dispense"];
+const MODES: string[] = ["isolate", "deposit", "stencil", "dispense"];
 /** How a board layer may be flipped, as the backend names them. */
 const MIRRORS: string[] = ["none", "x", "y"];
 
@@ -1357,8 +1432,9 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     if (mode === "dispense") {
         checkThickness(thickness);
     }
-    // A dispense is solder paste on a board already made: its layer is the paste's unless said otherwise.
-    const layer = options.layer ?? (mode === "dispense" ? "F.Paste" : "F.Cu");
+    // A dispense is solder paste on a board already made, and a stencil is
+    // cut for the paste: their layer is the paste's unless said otherwise.
+    const layer = options.layer ?? (mode === "dispense" || mode === "stencil" ? "F.Paste" : "F.Cu");
     if (layer.length > MAX_LAYER_LENGTH || !LAYER_NAME.test(layer)) {
         throw new Error(`layer must be a KiCad layer name such as F.Cu or F.Paste, not ${JSON.stringify(layer)}`);
     }
@@ -1368,6 +1444,18 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     }
     if (options.fill !== undefined && !FILL_CHOICES.includes(options.fill)) {
         throw new Error(`fill must be one of ${FILL_CHOICES.join(", ")}`);
+    }
+    if (mode === "stencil" && (clear !== "off" || options.fill !== undefined)) {
+        throw new Error("a stencil cuts round every opening: it takes neither clear nor fill");
+    }
+    const margin = options.margin;
+    if (margin !== undefined) {
+        if (mode !== "stencil") {
+            throw new Error("margin is how much a stencil shrinks its openings; this import is not a stencil");
+        }
+        if (!(Number.isFinite(margin) && margin >= 0 && margin <= MAX_MARGIN)) {
+            throw new Error(`margin must be 0 to ${MAX_MARGIN} mm`);
+        }
     }
     if (mode === "deposit" && clear !== "off") {
         throw new Error("clear is for isolation; a deposit takes fill instead");
@@ -1419,6 +1507,9 @@ export function buildJob(id: string, name: string, text: string, options: Upload
                 holes: coupon.holes,
             };
             note = `mock backend: ${word} pads need the real backend, showing a demo coupon's`;
+        } else if (mode === "stencil") {
+            geometry = demoStencil(spot, margin ?? 0, word, name);
+            note = `mock backend: ${word} geometry needs the real backend, showing a demo stencil`;
         } else {
             geometry = coupon;
             note = mode === "deposit"
@@ -1456,7 +1547,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         min_power: 0,
         speed: geometry.groups[index]?.speed ?? speed,
         passes: 1,
-        enabled: true,
+        enabled: geometry.groups[index]?.enabled ?? true,
         paths: group.paths,
     }));
     if (mode === "dispense") {

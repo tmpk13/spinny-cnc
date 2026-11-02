@@ -3460,25 +3460,36 @@ export class MockBackend implements Api, EventFeed {
         return made;
     }
 
+    async setJobMargin(id: string, margin: number): Promise<Job> {
+        const job = this.requireJob(id);
+        if (this.session && this.session.job.id === id) {
+            throw new ApiError(409, "the job is running");
+        }
+        if (!job.recipe?.file || job.recipe.options?.["mode"] !== "stencil") {
+            throw new ApiError(400, `${job.name} is not a stencil: a margin is for a board imported with mode stencil`);
+        }
+        let made: Job | null;
+        try {
+            made = this.remadeUpload(job, { margin });
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        if (!made) {
+            throw new ApiError(400, `the file ${job.name} was imported from is no longer kept: import it again with the new margin`);
+        }
+        made.stats = computeStats(made.groups, this.limits());
+        this.jobStore.set(id, made);
+        return made;
+    }
+
     /** The job made again from its recipe for another width, or the refusal. */
     private remade(job: Job, width: number): Job {
         try {
             if (job.recipe?.mill) {
                 return remakeMill(job, width, this.limits());
             }
-            const upload = this.uploads.get(job.id);
-            if (job.recipe?.file && upload) {
-                const made = buildJob(job.id, upload.name, upload.text, { ...upload.options, spot: width }, this.limits()).job;
-                if (job.design && made.design) {
-                    moveJob(made, job.design.rotation - made.design.rotation, 0, 0);
-                    moveJob(made, 0, job.design.shift[0] - made.design.shift[0], job.design.shift[1] - made.design.shift[1]);
-                    made.design = { ...job.design };
-                }
-                carrySettings(job.groups, made.groups);
-                made.name = job.name;
-                made.offset = { ...job.offset };
-                made.rotation = job.rotation ?? 0;
-                made.recipe = { file: upload.name, options: { ...upload.options, spot: width } };
+            const made = this.remadeUpload(job, { spot: width });
+            if (made) {
                 return made;
             }
         } catch (error) {
@@ -3488,6 +3499,31 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `the file ${job.name} was imported from is no longer kept: import it again with the new width`);
         }
         throw new ApiError(400, `${job.name}'s paths were made for ${formatG(job.spot)} mm and nothing is kept to make them again: import it again with the new width`);
+    }
+
+    /**
+     * A board upload made again from its kept file with the options it was
+     * last made with and `changes`, put where the job is now with its
+     * groups' settings kept; null when nothing is kept to make it from.
+     */
+    private remadeUpload(job: Job, changes: Partial<UploadOptions>): Job | null {
+        const upload = this.uploads.get(job.id);
+        if (!job.recipe?.file || !upload) {
+            return null;
+        }
+        const options: UploadOptions = { ...upload.options, ...(job.recipe.options as UploadOptions | null | undefined), ...changes };
+        const made = buildJob(job.id, upload.name, upload.text, options, this.limits()).job;
+        if (job.design && made.design) {
+            moveJob(made, job.design.rotation - made.design.rotation, 0, 0);
+            moveJob(made, 0, job.design.shift[0] - made.design.shift[0], job.design.shift[1] - made.design.shift[1]);
+            made.design = { ...job.design };
+        }
+        carrySettings(job.groups, made.groups);
+        made.name = job.name;
+        made.offset = { ...job.offset };
+        made.rotation = job.rotation ?? 0;
+        made.recipe = { file: upload.name, options: { ...options } };
+        return made;
     }
 
     async planMill(op: MillOperation): Promise<MillResponse> {

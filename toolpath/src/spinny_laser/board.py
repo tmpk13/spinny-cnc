@@ -1,14 +1,13 @@
 """Which layer of a board a job is read from, and the gerber that holds it.
 
 A job is cut from one layer of a board: a copper layer to isolate or to
-deposit, or the paste layer, which with a deposit is a solder paste
-stencil, the openings burnt out of a film. kicad-cli names the gerber it
-plots for a layer after the layer, F.Paste as board-F_Paste, and gives it
-the layer's Protel extension: .gtl for the front copper, .gtp for the front
-paste, .gto for the front silk, .gm1 for the outline, .gbr for a layer
-without one. A layer name it does not know, or a layer the board does not
-have, is skipped with exit code 0 and nothing plotted; an enabled layer with
-nothing on it is plotted empty.
+deposit, or the paste layer, whose openings a stencil cuts out of a film.
+kicad-cli names the gerber it plots for a layer after the layer, F.Paste
+as board-F_Paste, and gives it the layer's Protel extension: .gtl for the
+front copper, .gtp for the front paste, .gto for the front silk, .gm1 for
+the outline, .gbr for a layer without one. A layer name it does not know,
+or a layer the board does not have, is skipped with exit code 0 and
+nothing plotted; an enabled layer with nothing on it is plotted empty.
 """
 
 from __future__ import annotations
