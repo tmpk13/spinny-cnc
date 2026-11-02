@@ -97,3 +97,25 @@ where the board sits matters:
 The table has to turn fastest for cuts close to the axis. A path that passes
 inside `--min-radius` (0.5 mm) is warned about; shift the board so nothing
 does. The preview marks the axis, that radius, and the rail.
+
+## Material and depth tests
+
+*Calibration test* in the Jobs panel makes the test for the machine as a
+job, every patch a group of its own, so the groups table names what each
+was cut with and one can be switched off or cut again alone.
+
+- A laser gets the material test: a grid of squares, power rising to the
+  right and speed rising upward from the lower left corner. Filled with
+  lines a spot apart it is an engraving test; outlined (Fill off) it is a
+  cut-through test. The square that marks as wanted, or the first one cut
+  through, names the power and speed for that material. On a machine with
+  no focus axis, such as the K40, it is the focus and power test as well:
+  one speed (`speed steps` 1) and a ladder of powers shows where the beam
+  starts to mark, which moves with the focus.
+- A mill gets the depth test: a row of slots, each a step deeper, at one
+  feed and spindle speed. Touch the tool off on the copper first. The
+  shallowest slot that parts the copper is the isolation depth, and a slot
+  measured against its number shows how far the depth axis really moves.
+
+A focus ladder for a laser with a focus axis (lines cut at stepped
+heights) needs a per-group focus height, which jobs do not have yet.

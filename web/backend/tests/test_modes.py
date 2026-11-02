@@ -585,3 +585,27 @@ def test_a_typed_spindle_off_during_a_milling_run_stops_the_run(client, fake):
     assert client.get("/api/run").json()["state"] == "stopped"
     assert "spindle off ; now" not in fake.received_lines and "spindle off" not in fake.received_lines
     assert 0x18 in fake.realtime_bytes and fake.spindle == 0
+
+
+def test_a_laser_makes_a_material_test_and_a_mill_a_depth_test(client, fake):
+    connect(client)
+    made = client.post("/api/calibrate", json={"kind": "material", "powers": [100, 400, 4], "speeds": [300, 900, 3], "x": 5, "y": -10})
+    assert made.status_code == 200, made.text
+    result = made.json()
+    job = result["job"]
+    assert job["source"] == "calibrate" and len(job["groups"]) == 12
+    assert job["groups"][0]["label"] == "test S100 F300" and job["groups"][-1]["power"] == 400
+    assert any(job["id"] == listed["id"] for listed in client.get("/api/jobs").json()["jobs"])
+    assert "4 powers S100 to S400" in result["summary"][0]
+    refused = client.post("/api/calibrate", json={"kind": "depth"})
+    assert refused.status_code == 400 and "a laser takes the material test" in refused.text
+    assert client.post("/api/calibrate", json={"kind": "material", "powers": [100, 400, 20]}).status_code == 400
+    # On a spindle machine the depth test, its slots a step deeper each.
+    for line in ("$spindle=1", "$h_axis=1"):
+        assert client.post("/api/command", json={"line": line}).json()["lines"] == ["ok"]
+    assert client.get("/api/state").json()["profile"]["tool"] == "spindle"
+    slots = client.post("/api/calibrate", json={"kind": "depth", "depths": [0.1, 0.3, 3], "spindle": 8000, "feed": 90})
+    assert slots.status_code == 200, slots.text
+    groups = slots.json()["job"]["groups"]
+    assert [(g["depth"], g["power"], g["speed"]) for g in groups] == [(0.1, 8000, 90), (0.2, 8000, 90), (0.3, 8000, 90)]
+    assert client.post("/api/calibrate", json={"kind": "material"}).status_code == 400

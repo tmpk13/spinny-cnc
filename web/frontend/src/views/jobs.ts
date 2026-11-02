@@ -6,6 +6,7 @@ import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, par
 import { isDispensing, isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
+import { calibrationTest } from "./calibrate.ts";
 import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
 import type { Ctx } from "./context.ts";
@@ -257,7 +258,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const deleteAllButton = button("Delete all", () => removeAll(), "btn btn-quiet btn-small");
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, saveButton, deleteAllButton)),
-        drop, options, centerTest(ctx), list, details,
+        drop, options, centerTest(ctx), calibrationTest(ctx), list, details,
     );
 
     /** The selected job as the file it is kept in, to put back with an upload. */

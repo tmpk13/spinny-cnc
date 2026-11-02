@@ -44,6 +44,7 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, par
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { buildMill, carrySettings, cutMiddle, moveJob, remakeMill } from "./mill.ts";
+import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, parseDevice, placeLines, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
@@ -86,6 +87,8 @@ import type {
     CamProfileResponse,
     CamProfilesResponse,
     CamValue,
+    CalibrateRequest,
+    CalibrateResponse,
     CenterRequest,
     CenterResponse,
     Compensate,
@@ -3555,6 +3558,18 @@ export class MockBackend implements Api, EventFeed {
         let built: CenterResponse;
         try {
             built = centerJob(this.newId(), request, this.limits(), sMax > 0 ? sMax : null);
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        this.jobStore.set(built.job.id, built.job);
+        this.order.push(built.job.id);
+        return built;
+    }
+
+    async calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse> {
+        let built: CalibrateResponse;
+        try {
+            built = calibrateJob(this.newId(), request, this.machine.milling(), this.limits());
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }

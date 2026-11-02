@@ -34,7 +34,7 @@ from spinny_laser import pads as board_pads
 from spinny_laser.align import turn
 from spinny_laser.cam import CamError
 
-from . import __version__, center
+from . import __version__, calibration, center
 from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
@@ -2115,6 +2115,11 @@ class Backend:
         result.job = self.store.add(result.job)
         return result.model_dump()
 
+    def calibrate_job(self, request: calibration.CalibrateRequest) -> dict:
+        result = calibration.build(request, self.streamer(), self.milling)
+        result.job = self.store.add(result.job)
+        return result.model_dump()
+
     def patch_job(self, job_id: str, patch: JobPatch) -> Job:
         job = self.store.get(job_id)
         if job is None:
@@ -3892,6 +3897,10 @@ def create_app(
     @app.post("/api/center")
     async def center_job(body: center.CenterRequest):
         return await run_in_threadpool(guarded, lambda: backend.center_job(body))
+
+    @app.post("/api/calibrate")
+    async def calibrate_job(body: calibration.CalibrateRequest):
+        return await run_in_threadpool(guarded, lambda: backend.calibrate_job(body))
 
     @app.get("/api/jobs")
     def list_jobs():

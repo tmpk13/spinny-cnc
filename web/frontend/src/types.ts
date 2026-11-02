@@ -638,6 +638,30 @@ export interface CenterResponse {
     notes: string[];
 }
 
+/** A calibration test; a ladder is [first, last, steps], both ends included, and what is left out takes the backend's default. */
+export interface CalibrateRequest {
+    /** A laser's grid of squares at a power and a speed each, or a mill's row of slots a step deeper each. */
+    kind?: "material" | "depth";
+    powers?: [number, number, number];
+    speeds?: [number, number, number];
+    size?: number;
+    gap?: number;
+    /** Filled squares a spot apart (an engraving test), or outlines (a cut). */
+    fill?: boolean;
+    spot?: number;
+    depths?: [number, number, number];
+    length?: number;
+    feed?: number;
+    plunge?: number;
+    /** The spindle's S for every slot. */
+    spindle?: number;
+    /** The lower left corner, board mm. */
+    x?: number;
+    y?: number;
+}
+
+export type CalibrateResponse = CenterResponse;
+
 export type RunState = "running" | "hold" | "done" | "stopped" | "error";
 
 export interface Progress {

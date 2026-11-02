@@ -12,6 +12,8 @@ import type {
     CamProfileResponse,
     CamProfilesResponse,
     CamValue,
+    CalibrateRequest,
+    CalibrateResponse,
     CenterRequest,
     CenterResponse,
     CommandResponse,
@@ -141,6 +143,8 @@ export interface Api {
     uploadJob(file: File, options: UploadOptions): Promise<Job>;
     /** Builds and stores the centering test burn. */
     centerJob(request: CenterRequest): Promise<CenterResponse>;
+    /** A calibration test made into a job: the material test on a laser, the depth test on a mill. */
+    calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse>;
     jobs(): Promise<JobSummary[]>;
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
@@ -488,6 +492,10 @@ export class HttpApi implements Api {
 
     centerJob(request: CenterRequest): Promise<CenterResponse> {
         return this.request<CenterResponse>("POST", "/api/center", request);
+    }
+
+    calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse> {
+        return this.request<CalibrateResponse>("POST", "/api/calibrate", request);
     }
 
     async jobs(): Promise<JobSummary[]> {
