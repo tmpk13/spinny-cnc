@@ -466,7 +466,14 @@ every few seconds. What to read, in order:
    the watchdog (the main loop stalled), a panic with its location, a hard
    fault with its `pc`, or a forced reset after flashing. The board says
    it at every open of its port, so the same line at a later connect is
-   logged as news; a fault is an error the first time only.
+   logged as news; a fault is an error the first time only. After a link
+   that failed on its own, the next connect compares the board's uptime
+   (`diag up`) with the failure: a board that started since and booted
+   from power on is named *lost power*, with how long it was off (its
+   supply went away or was switched off: check the supply, its terminals
+   and what else it feeds, not the firmware); one reset through its RUN
+   pin names the reset button or noise on that line; one up through the
+   failure says the USB link dropped, not the board.
 2. The console's *Wire* (or `var/wire.log`): every line each way with the
    time to the millisecond, the polls marked. The last `rx` line is the
    last thing the machine said; what follows is what was sent into the

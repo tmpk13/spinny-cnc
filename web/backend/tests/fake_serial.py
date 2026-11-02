@@ -96,6 +96,7 @@ class FakeSerial:
         version: str = "0.1.0",
         hold_ramp: float = 0.0,
         boot: str | None = None,
+        up: float | None = None,
     ) -> None:
         self.credits = credits
         self.blocks = blocks
@@ -110,6 +111,9 @@ class FakeSerial:
         # What the board says after its banner about why it started, as
         # `[MSG:boot <boot>]`; None for a firmware that says nothing.
         self.boot = boot
+        # When the board started (monotonic s), for `diag up <s> s`; None
+        # for the fake's own line, which names no uptime.
+        self.up = up
         self.timeout = 0.05
         self.is_open = True
         self.received_lines: list[str] = []
@@ -409,6 +413,8 @@ class FakeSerial:
             if rest:
                 return ["error:2 bad word"]
             # The board prints its counters after the answer, as `$tmc` does.
+            if self.up is not None:
+                return ["ok", f"[MSG:diag up {int(time.monotonic() - self.up)} s in idle, pass max 1 us, gap max 1 us, 3 lines, 0 too long]"]
             return ["ok", "[MSG:diag fake firmware: no board, no reset record]"]
         if keyword.startswith("$"):
             return self._setting(text.strip())

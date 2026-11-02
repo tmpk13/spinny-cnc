@@ -889,6 +889,45 @@ def boot_is_fault(body: str) -> bool:
     return body.startswith("boot ") and body[5:].startswith(("watchdog", "panic", "hard fault"))
 
 
+def boot_after_loss(body: str, lost_at: float, reason: str) -> str | None:
+    """What a `boot ...` message would say of a link that failed at
+    `lost_at` (epoch s) for `reason`, if the board started again after it,
+    when its reset was not the firmware's fault: a power-on means its supply
+    went away, the reset pin that its RUN line was pulled low. None for any
+    other message. The board repeats the boot of its life at every open of
+    its port, so only its uptime (`loss_verdict`) says it started again."""
+    at = time.strftime("%H:%M:%S", time.localtime(lost_at))
+    if body == "boot power on":
+        return (
+            f"the board lost power: the link failed at {at} ({reason}) and the board started again from power on,"
+            " so its supply went away or was switched off; a firmware fault boots as watchdog, panic or hard fault"
+        )
+    if body.startswith("boot reset pin"):
+        return (
+            f"the board was reset through its RUN pin: the link failed at {at} ({reason});"
+            " the reset button, or noise on the RUN line from a laser firing or a motor starting"
+        )
+    return None
+
+
+def loss_verdict(note: str, diag: str, lost_at: float, now: float) -> tuple[str, str] | None:
+    """The level and text for a link that failed at `lost_at`, from the
+    `boot_after_loss` note and the `diag up <s> s ...` line of the next
+    connect: the note with how long the board was off when it started
+    after the failure, or that it stayed up through it (the link dropped,
+    not the board). None for a line that is not the uptime."""
+    match = re.match(r"diag up (\d+) s\b", diag)
+    if match is None:
+        return None
+    up = int(match.group(1))
+    started = now - up
+    # Whole seconds on the board, and the failure seen a little after it.
+    if started >= lost_at - 2.0:
+        return ("error", f"{note}; it was off about {max(0.0, started - lost_at):.0f} s")
+    at = time.strftime("%H:%M:%S", time.localtime(lost_at))
+    return ("info", f"the board stayed up through the link failure at {at} (up {up} s): the USB link dropped, not the board")
+
+
 def _show_byte(data: bytes) -> str:
     names = {
         REALTIME_STATUS: "?",

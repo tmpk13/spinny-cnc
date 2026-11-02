@@ -434,6 +434,52 @@ def test_disconnect_is_news_and_a_lost_port_is_an_error(tmp_path):
         backend.broadcast.unsubscribe(queue)
 
 
+def test_a_board_that_comes_back_from_power_on_after_a_lost_port_is_named_a_power_loss(tmp_path):
+    fakes: list[FakeSerial] = []
+    # Each port's board: why it booted and when it started.
+    boards: list[tuple[str, float]] = []
+
+    def factory(url: str) -> Link:
+        boot, up = boards[-1]
+        fake = FakeSerial(move_time=0.002, boot=boot, up=up)
+        fakes.append(fake)
+        return Link(url, open_port=fake_opener(fake))
+
+    def messages(queue) -> list[dict]:
+        return [e for e in list(queue._queue) if e["type"] == "message"]
+
+    backend = Backend(root=tmp_path, link_factory=factory, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        queue = backend.broadcast.subscribe()
+        boards.append(("power on", time.monotonic() - 100.0))
+        connect(client)
+        fakes[-1].vanish()
+        assert wait_for(lambda: not client.get("/api/state").json()["connected"], 3.0)
+        # Back from power on, started after the failure: its supply went.
+        drain(queue)
+        boards.append(("power on", time.monotonic()))
+        connect(client)
+        assert wait_for(lambda: any("lost power" in e["text"] for e in messages(queue)), 2.0)
+        note = next(e for e in messages(queue) if "lost power" in e["text"])
+        assert note["level"] == "error" and "it was off about 0 s" in note["text"]
+        fakes[-1].vanish()
+        assert wait_for(lambda: not client.get("/api/state").json()["connected"], 3.0)
+        # A board up long before the failure: the link dropped, not it.
+        drain(queue)
+        boards.append(("power on", time.monotonic() - 100.0))
+        connect(client)
+        assert wait_for(lambda: any("stayed up" in e["text"] for e in messages(queue)), 2.0)
+        assert not any("lost power" in e["text"] for e in messages(queue))
+        # A close the operator asked for names nothing at the next connect.
+        client.post("/api/disconnect")
+        drain(queue)
+        boards.append(("power on", time.monotonic()))
+        connect(client)
+        assert wait_for(lambda: any(e["text"].startswith("diag up") for e in messages(queue)), 2.0)
+        assert not any("lost power" in e["text"] or "stayed up" in e["text"] for e in messages(queue))
+        backend.broadcast.unsubscribe(queue)
+
+
 def test_hold_and_reset_from_the_console_go_through_the_run(client, fake):
     connect(client)
     fake.ok_delay = 0.3

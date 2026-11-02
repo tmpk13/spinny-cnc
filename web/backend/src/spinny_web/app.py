@@ -105,6 +105,8 @@ from .link import (
     REALTIME_JOG_CANCEL,
     REALTIME_RESUME,
     REALTIME_STATUS,
+    boot_after_loss,
+    loss_verdict,
 )
 from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as log_tail, wire_line, wire_note
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
@@ -669,6 +671,12 @@ class Backend:
         self._unsaved: set[str] = set()
         # The last `boot ...` line reported, so the same one is not a fault twice.
         self._boot_reported: str | None = None
+        # When the link last failed on its own and why (epoch s, reason), so
+        # the board's next `boot` and `diag up` lines can say whether it lost
+        # power in between; None after a close the operator asked for. The
+        # note the boot line would make waits for the uptime in `_loss_note`.
+        self._lost: tuple[float, str] | None = None
+        self._loss_note: str | None = None
         # The focus axis frame, counted up whenever it may have changed, and
         # the frame the stored map's heights were probed in (None for a map
         # from before). Focus here ties heights from another frame to this
@@ -1162,6 +1170,7 @@ class Backend:
             # reset, an alarm, why it booted, its diagnostics.
             (log.error if event.data.get("level") == "error" else log.info)("machine: %s", text)
             wire_note(f"message: {text}")
+            self._name_loss(text)
             if text == "reset":
                 self._soft_resets += 1
             self.broadcast.publish_threadsafe({"type": "message", **event.data})
@@ -1180,9 +1189,31 @@ class Backend:
             reason = event.data.get("reason", "")
             self.position_store.flush()
             wire_note(f"link closed: {reason}")
+            self._lost = None if reason == "disconnected" else (time.time(), reason)
+            self._loss_note = None
             # A close the user asked for is news, not a fault.
             self.publish_message("info" if reason == "disconnected" else "error", f"link closed: {reason}")
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
+
+    def _name_loss(self, text: str) -> None:
+        """After a link that failed on its own, the board's `boot` line says
+        what took it down when that was not the firmware (its supply, or its
+        reset pin), and the `diag up` line after it whether it started again
+        since the failure at all, and how long it was off: a dip that reset
+        it at once, or a supply gone a while."""
+        if self._lost is None:
+            return
+        lost_at, reason = self._lost
+        if text.startswith("boot "):
+            self._loss_note = boot_after_loss(text, lost_at, reason)
+            if self._loss_note is None:
+                self._lost = None
+        elif self._loss_note is not None and text.startswith("diag up "):
+            verdict = loss_verdict(self._loss_note, text, lost_at, time.time())
+            if verdict is not None:
+                self.publish_message(*verdict)
+            self._lost = None
+            self._loss_note = None
 
     def _check_restart(self) -> None:
         """Takes the focus offset back when the machine has started over
