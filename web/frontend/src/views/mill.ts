@@ -2,14 +2,14 @@
 // Pick what to cut (points drilled, a board job's holes, a line through
 // points, a face, or a pocket or a profile of a rectangle or a circle),
 // give its corners or center by typing them, from where the head is or
-// from a marker, and the bit, the depth and the feeds. The operation is
-// planned as it is typed and drawn on the page's preview, then made into a
-// job, which the run panel beside it runs. The fields are remembered in
-// this browser.
+// from a marker, and the bit, the depth and the feeds, or on a laser the
+// spot, the power and the passes. The operation is planned as it is typed
+// and drawn on the page's preview, then made into a job, which the run
+// panel beside it runs. The fields are remembered in this browser.
 
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
-import { isMilling } from "../profile.ts";
+import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Compensate, HolePoint, Job, MillKind, MillOperation, MillShape, MillSide, Point } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
@@ -111,8 +111,19 @@ function storeOperation(op: Partial<MillOperation>): void {
     }
 }
 
+/** What cuts on this page: the connected machine's tool, else the one last used here, else the spindle. */
+export function cutterOf(state: AppState, stored: Partial<MillOperation>): "spindle" | "laser" {
+    if (state.snapshot.connected) {
+        return profileOf(state.snapshot).tool === "laser" ? "laser" : "spindle";
+    }
+    return stored.cutter === "laser" ? "laser" : "spindle";
+}
+
 const DEFAULTS = {
     tool: 1,
+    spot: 0.1,
+    power: 500,
+    passes: 1,
     depth: 0.5,
     step_down: 0.5,
     stepover: 0.4,
@@ -134,7 +145,15 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
 
     const field = (value: number | undefined, fallback: number, options: { min?: number; step?: number } = {}): HTMLInputElement =>
         numberField({ value: typeof value === "number" && Number.isFinite(value) ? value : fallback, ...options });
-    const tool = field(stored.tool, DEFAULTS.tool, { min: 0.01, step: 0.1 });
+    // The bit and the spot are remembered apart: a page used with both
+    // machines keeps each one's own.
+    const storedBit = (stored as { bit?: number }).bit ?? (stored.cutter !== "laser" ? stored.tool : undefined);
+    const storedSpot = (stored as { spot?: number }).spot ?? (stored.cutter === "laser" ? stored.tool : undefined);
+    const tool = field(storedBit, DEFAULTS.tool, { min: 0.01, step: 0.1 });
+    const spot = field(storedSpot, DEFAULTS.spot, { min: 0.01, step: 0.01 });
+    const power = field(stored.power, DEFAULTS.power, { min: 0, step: 10 });
+    const passes = field(stored.passes, DEFAULTS.passes, { min: 1, step: 1 });
+    let cutter = cutterOf(ctx.store.get(), stored);
     const depth = field(stored.depth, DEFAULTS.depth, { min: 0.01, step: 0.1 });
     const stepDown = field(stored.step_down, DEFAULTS.step_down, { min: 0.01, step: 0.1 });
     const stepover = field(stored.stepover, DEFAULTS.stepover, { min: 0.05, step: 0.05 });
@@ -155,6 +174,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     closed.checked = stored.closed === true;
     const bore = el("input", { type: "checkbox", "aria-label": "Bore wide holes" }) as HTMLInputElement;
     bore.checked = stored.bore !== false;
+    const boreText = el("span", {});
     const holesSelect = el("select", { class: "field", "aria-label": "Job with holes" }) as HTMLSelectElement;
     const sizesBox = el("div", { class: "hole-sizes" });
 
@@ -166,6 +186,9 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         speed: labeled("Feed mm/min", speed),
         plunge: labeled("Plunge mm/min", plunge),
         spindle: labeled("Spindle S", spindle),
+        spot: labeled("Spot mm", spot),
+        power: labeled("Power S", power),
+        passes: labeled("Passes", passes),
     };
     for (const label of Object.values(labels)) {
         label.querySelector("input")?.setAttribute("aria-label", label.querySelector(".labeled-text")?.textContent ?? "");
@@ -173,6 +196,10 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     labels["stepover"]!.title = "how far apart a face's rows or a pocket's loops are, as a share of the bit";
     labels["depth"]!.title = "how deep under the surface the cut ends";
     labels["stepDown"]!.title = "how far each pass goes down: the passes are as many as it takes to the depth";
+    labels["spot"]!.title = "the beam's width on the work, mm: paths are offset by half of it";
+    labels["passes"]!.title = "how many times each path is burnt";
+    // On a laser the speed is the beam's along the cut, not a feed.
+    const speedText = labels["speed"]!.querySelector(".labeled-text");
 
     /** A row of two fields with a button that fills them from the head and a pick of the markers. */
     const pointRow = (title: string, fx: HTMLInputElement, fy: HTMLInputElement): HTMLElement => {
@@ -248,7 +275,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const holesBox = el("div", { class: "mill-section" },
         labeled("Holes of", holesSelect),
         sizesBox,
-        el("label", { class: "muted" }, bore, " bore a hole wider than the bit out with it, in rings"),
+        el("label", { class: "muted" }, bore, boreText),
     );
     const cutGrid = el("div", { class: "field-grid" }, ...Object.values(labels));
     const notes = el("ul", { class: "mill-notes muted" });
@@ -256,6 +283,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const makeButton = button("Make job", () => make(), "btn btn-primary");
     makeButton.title = "store the operation as a job, selected, ready to run";
     const machineNote = el("p", { class: "muted hint hidden" });
+    const hint = el("p", { class: "muted hint" });
 
     roots.operation.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Operation"), el("div", { class: "button-row" }, makeButton)),
@@ -272,10 +300,10 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         problem,
         notes,
         machineNote,
-        el("p", { class: "muted hint" }, "positions are board mm; the depth is under the surface where the tool was zeroed"),
+        hint,
     );
 
-    for (const input of [tool, depth, stepDown, stepover, speed, plunge, spindle, x0, y0, x1, y1, cx, cy, diameter, name, points]) {
+    for (const input of [tool, spot, power, passes, depth, stepDown, stepover, speed, plunge, spindle, x0, y0, x1, y1, cx, cy, diameter, name, points]) {
         input.addEventListener("input", () => changed());
     }
     for (const input of [closed, bore]) {
@@ -292,8 +320,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     /** The operation the fields describe, or what is wrong with them. */
     function read(): MillOperation | string {
         const number = (input: HTMLInputElement, what: string): number | string => parseNumber(input.value) ?? `${what} needs a number`;
+        const laser = cutter === "laser";
         const values = {
-            tool: number(tool, "the bit"),
+            tool: laser ? number(spot, "the spot") : number(tool, "the bit"),
+            power: number(power, "the power"),
+            passes: number(passes, "the passes"),
             depth: number(depth, "the depth"),
             step_down: number(stepDown, "the step down"),
             stepover: number(stepover, "the stepover"),
@@ -309,7 +340,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             diameter: number(diameter, "the diameter"),
         };
         const needs = millNeeds(kind, shape);
-        const used = ["tool", "depth", "step_down", "speed", "plunge", "spindle"];
+        const used = laser ? ["tool", "speed", "power", "passes"] : ["tool", "depth", "step_down", "speed", "plunge", "spindle"];
         if (needs.stepover) {
             used.push("stepover");
         }
@@ -326,6 +357,9 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             }
         }
         const numbers = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, typeof value === "number" ? value : 0])) as Record<keyof typeof values, number>;
+        if (laser && !Number.isInteger(numbers.passes)) {
+            return "the passes are a whole number";
+        }
         let list: Point[] = [];
         if (needs.points) {
             const parsed = parsePoints(points.value);
@@ -343,6 +377,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         }
         return {
             kind,
+            cutter,
             name: name.value.trim() || null,
             ...numbers,
             climb,
@@ -358,9 +393,26 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
 
     function show(): void {
         const needs = millNeeds(kind, shape);
+        const laser = cutter === "laser";
         shapes.classList.toggle("hidden", !needs.shape);
         sides.classList.toggle("hidden", !needs.side);
-        directions.classList.toggle("hidden", !needs.direction);
+        // A beam cuts the same either way round.
+        directions.classList.toggle("hidden", !needs.direction || laser);
+        for (const key of ["tool", "depth", "stepDown", "plunge", "spindle"]) {
+            labels[key]!.classList.toggle("hidden", laser);
+        }
+        for (const key of ["spot", "power", "passes"]) {
+            labels[key]!.classList.toggle("hidden", !laser);
+        }
+        if (speedText) {
+            speedText.textContent = laser ? "Speed mm/min" : "Feed mm/min";
+        }
+        boreText.textContent = laser
+            ? " clear a hole wider than the spot in rings, rather than cut along its edge"
+            : " bore a hole wider than the bit out with it, in rings";
+        hint.textContent = laser
+            ? "positions are board mm; a point is marked with a ring the spot across, and each pass burns the whole path again"
+            : "positions are board mm; the depth is under the surface where the tool was zeroed";
         rectBox.classList.toggle("hidden", !needs.rect);
         circleBox.classList.toggle("hidden", !needs.circle);
         pointsBox.classList.toggle("hidden", !needs.points);
@@ -377,7 +429,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         show();
         const op = read();
         if (typeof op !== "string") {
-            storeOperation({ ...op, job: null, sizes: null });
+            storeOperation({ ...op, job: null, sizes: null, bit: parseNumber(tool.value) ?? undefined, spot: parseNumber(spot.value) ?? undefined } as Partial<MillOperation>);
         }
         if (timer !== null) {
             clearTimeout(timer);
@@ -488,9 +540,15 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     }
 
     function renderMachine(state: AppState): void {
-        const laser = state.snapshot.connected && !isMilling(state.snapshot);
-        machineNote.textContent = laser ? "the machine is set up for a laser ($spindle=0): a job made here runs only on a spindle" : "";
-        machineNote.classList.toggle("hidden", !laser);
+        const dispenser = state.snapshot.connected && profileOf(state.snapshot).tool === "dispenser";
+        machineNote.textContent = dispenser ? "the machine is a dispenser, which lays dots: a job made here cuts with a spindle or a laser" : "";
+        machineNote.classList.toggle("hidden", !dispenser);
+        // The operation follows the machine: planned again for its cutter.
+        const now = cutterOf(state, stored);
+        if (now !== cutter) {
+            cutter = now;
+            changed();
+        }
     }
 
     ctx.store.subscribe((state) => renderJobs(state), ["jobs"]);
@@ -532,7 +590,7 @@ function mountMillRun(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton),
         mapNote,
         progressBox,
-        el("p", { class: "muted hint" }, "runs the selected job, here or from the Jobs panel; zero the depth on the surface first"),
+        el("p", { class: "muted hint" }, "runs the selected job, here or from the Jobs panel; zero the depth on the surface first on a mill, focus the beam on a laser"),
     );
 
     async function run(): Promise<void> {

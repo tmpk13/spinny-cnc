@@ -1,11 +1,12 @@
 // The Mill page's operations for the in-page mock backend, the backend's
 // twin: the same paths, groups, labels and refusals for the same numbers,
-// so the page can be tried without a machine. Also the turn and shift of a
-// whole job and the group settings a job made again keeps.
+// with a spindle or a laser, so the page can be tried without a machine.
+// Also the turn and shift of a whole job and the group settings a job made
+// again keeps.
 
 import { turnPoint } from "../align.ts";
 import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point } from "../types.ts";
-import { checkDepth, checkPower, checkSpeed, computeStats, formatG, MAX_GROUP_PASSES, MAX_VALUE, MAX_VALUE_TEXT, type RateLimits } from "./jobs.ts";
+import { checkDepth, checkPower, checkSpeed, computeStats, DEFAULT_DEPTH, DEFAULT_PLUNGE, formatG, MAX_GROUP_PASSES, MAX_VALUE, MAX_VALUE_TEXT, type RateLimits } from "./jobs.ts";
 
 export const DEFAULT_TOLERANCE = 0.005;
 export const MIN_STEPOVER = 0.05;
@@ -19,6 +20,7 @@ const MAX_POINTS = 5000;
 export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOperation {
     return {
         kind,
+        cutter: "spindle",
         name: null,
         tool: 1,
         depth: 0.5,
@@ -27,6 +29,8 @@ export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOpe
         speed: 300,
         plunge: 60,
         spindle: 10000,
+        power: 500,
+        passes: 1,
         climb: true,
         points: [],
         closed: false,
@@ -258,23 +262,42 @@ export function profileCircle(cx: number, cy: number, diameter: number, tool: nu
     return line(circle(cx, cy, radius, (side === "inside") === climb, tolerance));
 }
 
-/** How many passes go down to the operation's depth. */
+function isLaser(op: MillOperation): boolean {
+    return op.cutter === "laser";
+}
+
+/** A laser's passes as given; a spindle's as many as go down to the operation's depth. */
 export function passesOf(op: MillOperation): number {
+    if (isLaser(op)) {
+        return op.passes ?? 1;
+    }
     return Math.max(1, Math.ceil(op.depth / op.step_down - 1e-9));
 }
 
 function checkOperation(op: MillOperation): void {
-    checkTool(op.tool);
-    checkDepth(op.depth);
-    if (!(Number.isFinite(op.step_down) && op.step_down > 0)) {
-        throw new Error("the step down must be above 0 mm");
+    if (isLaser(op)) {
+        if (!(Number.isFinite(op.tool) && op.tool > 0 && op.tool <= 100)) {
+            throw new Error("the spot must be above 0 and at most 100 mm across");
+        }
+        const passes = op.passes ?? 1;
+        if (!(Number.isInteger(passes) && passes >= 1 && passes <= MAX_GROUP_PASSES)) {
+            throw new Error(`the passes must be 1 to ${MAX_GROUP_PASSES}`);
+        }
+        checkSpeed(op.speed, "the speed");
+        checkPower(op.power ?? 500, "the power");
+    } else {
+        checkTool(op.tool);
+        checkDepth(op.depth);
+        if (!(Number.isFinite(op.step_down) && op.step_down > 0)) {
+            throw new Error("the step down must be above 0 mm");
+        }
+        if (passesOf(op) > MAX_GROUP_PASSES) {
+            throw new Error(`${formatG(op.depth)} mm in steps of ${formatG(op.step_down)} is over ${MAX_GROUP_PASSES} passes`);
+        }
+        checkSpeed(op.speed, "the feed");
+        checkSpeed(op.plunge, "the plunge");
+        checkPower(op.spindle, "the spindle speed");
     }
-    if (passesOf(op) > MAX_GROUP_PASSES) {
-        throw new Error(`${formatG(op.depth)} mm in steps of ${formatG(op.step_down)} is over ${MAX_GROUP_PASSES} passes`);
-    }
-    checkSpeed(op.speed, "the feed");
-    checkSpeed(op.plunge, "the plunge");
-    checkPower(op.spindle, "the spindle speed");
     const values = [op.x0, op.y0, op.x1, op.y1, op.cx, op.cy, op.diameter, ...op.points.flat()];
     if (!values.every((v) => Math.abs(v) <= MAX_VALUE)) {
         throw new Error(`coordinates must be within ${MAX_VALUE_TEXT} mm`);
@@ -285,7 +308,18 @@ function checkOperation(op: MillOperation): void {
 }
 
 function group(op: MillOperation, label: string, paths: Path[]): Group {
+    if (isLaser(op)) {
+        return { label, power: op.power ?? 500, min_power: 0, speed: op.speed, passes: passesOf(op), enabled: true, depth: DEFAULT_DEPTH, plunge: DEFAULT_PLUNGE, tool: "laser", paths };
+    }
     return { label, power: op.spindle, min_power: 0, speed: op.speed, passes: passesOf(op), enabled: true, depth: op.depth, plunge: op.plunge, tool: "spindle", paths };
+}
+
+/** A drill at every point, or for a beam, which drills nothing standing still, a ring the spot across about it. */
+function pointPaths(op: MillOperation, points: Point[]): Path[] {
+    if (isLaser(op)) {
+        return points.map(([x, y]) => circle(x, y, op.tool / 2, true, Math.min(DEFAULT_TOLERANCE, op.tool / 8)));
+    }
+    return drill(points);
 }
 
 function rectOutline(op: MillOperation): Path[] {
@@ -344,18 +378,24 @@ function holeGroups(op: MillOperation, holes: HolePoint[]): { groups: Group[]; n
         const found = bySize.get(size)!;
         const points = tour(found, here).map((index) => found[index]!);
         here = points[points.length - 1]!;
-        if (op.bore && size > op.tool + BORE_SLACK) {
+        const laser = isLaser(op);
+        const wide = size > op.tool + BORE_SLACK;
+        if (op.bore && wide) {
             const paths = points.map(([x, y]) => pocketCircle(x, y, size, op.tool, Math.min(op.stepover, 1), op.climb)[0]!);
-            groups.push(group(op, `bore ${size.toFixed(2)} mm holes (${points.length})`, paths));
+            groups.push(group(op, `${laser ? "clear" : "bore"} ${size.toFixed(2)} mm holes (${points.length})`, paths));
+        } else if (laser && wide) {
+            // The beam along the hole's edge, inside it: the plug drops out.
+            const paths = points.map(([x, y]) => profileCircle(x, y, size, op.tool, "inside", op.climb)[0]!);
+            groups.push(group(op, `cut ${size.toFixed(2)} mm holes (${points.length})`, paths));
         } else {
             if (size < op.tool - BORE_SLACK) {
                 small += points.length;
             }
-            groups.push(group(op, `drill ${size.toFixed(2)} mm holes (${points.length})`, drill(points)));
+            groups.push(group(op, `${laser ? "mark" : "drill"} ${size.toFixed(2)} mm holes (${points.length})`, pointPaths(op, points)));
         }
     }
     if (small > 0) {
-        notes.push(`${small} holes are smaller than the ${formatG(op.tool)} mm bit and come out its size`);
+        notes.push(`${small} holes are smaller than the ${formatG(op.tool)} mm ${isLaser(op) ? "spot" : "bit"} and come out its size`);
     }
     return { groups, notes };
 }
@@ -370,9 +410,13 @@ export function buildMill(id: string, op: MillOperation, holes: HolePoint[] | nu
     let name: string;
     const mm = formatG;
     if (op.kind === "drill") {
-        groups = [group(op, `drill ${op.points.length} points`, drill(op.points))];
+        if (op.points.length === 0) {
+            throw new Error("a drill needs at least one point");
+        }
+        const verb = isLaser(op) ? "mark" : "drill";
+        groups = [group(op, `${verb} ${op.points.length} points`, pointPaths(op, op.points))];
         outline = op.points.map(([x, y]) => circleOutline(x, y, op.tool));
-        name = `drill ${op.points.length} points`;
+        name = `${verb} ${op.points.length} points`;
     } else if (op.kind === "holes") {
         if (!holes || holes.length === 0) {
             throw new Error("the job has no drill holes: import its board with the drill file");
@@ -415,7 +459,11 @@ export function buildMill(id: string, op: MillOperation, holes: HolePoint[] | nu
         }
     }
     const passes = passesOf(op);
-    notes.push(`${passes} pass${passes !== 1 ? "es" : ""} of ${mm(op.depth / passes)} mm down to ${mm(op.depth)} mm`);
+    if (isLaser(op)) {
+        notes.push(`${passes} pass${passes !== 1 ? "es" : ""} at S${mm(op.power ?? 500)} and ${mm(op.speed)} mm/min, a ${mm(op.tool)} mm spot`);
+    } else {
+        notes.push(`${passes} pass${passes !== 1 ? "es" : ""} of ${mm(op.depth / passes)} mm down to ${mm(op.depth)} mm`);
+    }
     const job: Job = {
         id,
         name: (op.name ?? "").trim() || name,

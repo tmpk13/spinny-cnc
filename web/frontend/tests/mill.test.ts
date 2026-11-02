@@ -39,7 +39,8 @@ describe("the mock's operations", () => {
                 const expected = sample.groups[index]!;
                 expect(group.passes).toBe(expected.passes);
                 expect(group.depth).toBe(expected.depth);
-                expect(group.tool).toBe("spindle");
+                expect(group.tool).toBe(expected.tool as "spindle" | "laser");
+                expect(group.power).toBe(expected.power);
                 expect(close(group.paths, expected.paths as number[][][])).toBe(true);
             });
         });
@@ -117,6 +118,34 @@ describe("Mill page", () => {
         expect(store.get().millPlan).toBeNull();
         // Remembered for the next visit.
         expect(JSON.parse(localStorage.getItem(MILL_KEY) ?? "{}").kind).toBe("pocket");
+    });
+
+    test("cuts with the machine's laser: spot, power and passes, a point marked with a ring", async () => {
+        const { root, store, calls } = mountPage();
+        const profile = { kinematics: "cartesian" as const, tool: "laser" as const, h_axis: false, r_max: 300, z_max: 200 };
+        store.set({ snapshot: { ...connected(), profile } });
+        click(root, "Drill");
+        type(input(root, "Points"), "1, 2");
+        const shown = (label: string): boolean => !input(root, label).closest(".labeled")!.classList.contains("hidden");
+        expect([shown("Spot mm"), shown("Power S"), shown("Passes")]).toEqual([true, true, true]);
+        expect([shown("Bit mm"), shown("Depth mm"), shown("Spindle S")]).toEqual([false, false, false]);
+        type(input(root, "Power S"), "300");
+        type(input(root, "Passes"), "2");
+        await wait(PLAN_DELAY_MS + 30);
+        const plan = store.get().millPlan!;
+        expect(plan.groups[0]!.label).toBe("mark 1 points");
+        expect([plan.groups[0]!.tool, plan.groups[0]!.power, plan.groups[0]!.passes]).toEqual(["laser", 300, 2]);
+        expect(plan.groups[0]!.paths[0]!.length).toBeGreaterThan(8);
+        const sent = calls.filter((call) => call.name === "planMill").at(-1)!.args[0] as { cutter: string; tool: number };
+        expect(sent).toMatchObject({ cutter: "laser", tool: 0.1 });
+        expect(root.textContent).toContain("each pass burns the whole path again");
+        // A spindle machine: the bit's fields again, planned for it.
+        store.set({ snapshot: { ...connected(), profile: { ...profile, tool: "spindle" } } });
+        await wait(PLAN_DELAY_MS + 30);
+        expect(store.get().millPlan!.groups[0]!.label).toBe("drill 1 points");
+        expect(shown("Bit mm")).toBe(true);
+        // Each machine keeps its own width.
+        expect(JSON.parse(localStorage.getItem(MILL_KEY) ?? "{}")).toMatchObject({ cutter: "spindle", bit: 1, spot: 0.1 });
     });
 
     test("says what is wrong instead of planning", async () => {

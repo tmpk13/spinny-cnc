@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from spinny_web import mill
 from spinny_web.app import Backend, create_app
 from spinny_web.jobs import Group, Job, JobImportError, carry_settings, label_stem
+from spinny_web.kinematics import Streamer
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -80,6 +81,37 @@ def test_holes_are_grouped_by_size_and_bored_when_wider_than_the_bit():
     assert any("smaller than" in note for note in notes)
     only, _ = mill.build(mill.MillOperation(kind="holes", tool=1.0, job="x", sizes=[3.0], bore=False), holes)
     assert [group.label for group in only.groups] == ["drill 3.00 mm holes (1)"]
+
+
+def test_a_laser_burns_the_paths_in_passes_marking_points_with_a_ring():
+    job, notes = mill.build(mill.MillOperation(kind="drill", cutter="laser", points=[(1, 2)], tool=0.2, power=300, passes=2, depth=5, step_down=0.01))
+    (group,) = job.groups
+    assert (group.tool, group.power, group.passes, job.spot, job.name) == ("laser", 300, 2, 0.2, "mark 1 points")
+    # A ring the spot across about the point, closed: the beam drills nothing standing still.
+    ring = group.paths[0]
+    assert ring[0] == ring[-1] and len(ring) > 8
+    assert all(math.dist(p, (1, 2)) == pytest.approx(0.1) for p in ring)
+    assert notes == ["2 passes at S300 and 300 mm/min, a 0.2 mm spot"]
+    pocket, _ = mill.build(mill.MillOperation(**{**POCKET, "cutter": "laser", "tool": 0.5, "power": 800}))
+    assert pocket.groups[0].tool == "laser" and pocket.groups[0].passes == 1
+    assert bbox(pocket.groups[0].paths) == (0.25, 0.25, 19.75, 9.75)
+    # The streamer of a laser machine cuts every ring, none skipped as a point.
+    lines = [piece.line for piece in Streamer().job_pieces(job, (0.0, 0.0))]
+    assert sum(line.startswith("cut ") for line in lines) >= 2 * (len(ring) - 1)
+    with pytest.raises(JobImportError, match="passes"):
+        mill.build(mill.MillOperation(kind="drill", cutter="laser", points=[(1, 2)], passes=0))
+    with pytest.raises(JobImportError, match="spot"):
+        mill.build(mill.MillOperation(kind="drill", cutter="laser", points=[(1, 2)], tool=0))
+
+
+def test_a_laser_cuts_a_hole_along_its_edge_or_clears_it_and_marks_one_under_the_spot():
+    holes = [(0, 0, 3.0), (5, 0, 0.12)]
+    cut, _ = mill.build(mill.MillOperation(kind="holes", cutter="laser", tool=0.2, job="x", bore=False), holes)
+    assert [group.label for group in cut.groups] == ["mark 0.12 mm holes (1)", "cut 3.00 mm holes (1)"]
+    edge = cut.groups[1].paths[0]
+    assert all(math.dist(p, (0, 0)) == pytest.approx(1.4) for p in edge)
+    cleared, _ = mill.build(mill.MillOperation(kind="holes", cutter="laser", tool=0.2, job="x", bore=True), holes)
+    assert cleared.groups[1].label == "clear 3.00 mm holes (1)"
 
 
 def test_an_operation_that_cannot_be_cut_says_why():

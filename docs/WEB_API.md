@@ -214,6 +214,16 @@ true}` plus what the kind takes, every field optional but `kind`:
 `climb` runs counterclockwise inside a pocket or a hole and clockwise
 around a part, with the spindle turning clockwise; false is conventional.
 
+`"cutter": "laser"` (default `spindle`) burns the same paths with a beam
+`tool` mm across: `power` (S, default 500) and `passes` (1 to 100, each
+the whole path again, default 1) take the place of `depth`, `step_down`,
+`plunge` and `spindle`, which are ignored, and the groups are `laser`
+groups at that power. A beam drills nothing standing still, so a `drill`
+point is marked with a ring the spot across (`mark N points`), a hole no
+wider than the spot likewise (`mark ... holes`), and a wider hole is cut
+along its inside edge (`cut ... holes`) or with `bore` cleared in rings
+(`clear ... holes`).
+
 ## Markers
 
 Named positions on the board, kept in the backend's config for every page.

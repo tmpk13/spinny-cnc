@@ -1,11 +1,14 @@
 """The Mill page's operations: one simple cut described by its numbers and
-made into a job of milled groups, and made again for another bit.
+made into a job, and made again for another bit or spot.
 
 An operation is drilling points, drilling (or boring) a board job's holes,
 a line through points, facing a rectangle, or a pocket or a profile of a
-rectangle or a circle. The job it makes is cut on a spindle: every group
-says so, and goes down in steps of `step_down` to `depth` under the
-surface, the way every milled group does.
+rectangle or a circle. With `cutter` spindle every group is milled and goes
+down in steps of `step_down` to `depth` under the surface, the way every
+milled group does. With `cutter` laser the same paths are burnt with a beam
+`tool` mm across at `power`, each pass the whole path again: a point, which
+a beam cannot drill, is marked with a ring the spot across, and a board
+hole is cut along its inside edge (or cleared in rings with `bore`).
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from spinny_laser import mill as ops
 from spinny_laser import pads as board_pads
 
 from .jobs import (
+    LASER,
     MAX_GROUP_PASSES,
     MAX_VALUE,
     SPINDLE,
@@ -49,9 +53,11 @@ class MillOperation(Finite):
     count follows `kind` (and `shape`); the rest are ignored."""
 
     kind: Literal["drill", "holes", "line", "face", "pocket", "profile"]
+    # What cuts: a spindle's bit, or a laser's beam.
+    cutter: Literal["spindle", "laser"] = SPINDLE
     # The job's name; left out, one is made from the operation.
     name: str | None = None
-    # The bit: its diameter, mm.
+    # The bit's diameter, or the beam's spot, mm.
     tool: float = 1.0
     # How deep under the surface the cut ends, and how far each pass goes
     # down, mm: the passes are as many as it takes.
@@ -64,6 +70,9 @@ class MillOperation(Finite):
     speed: float = 300.0
     plunge: float = 60.0
     spindle: float = 10000.0
+    # A laser: its power and how many times each path is burnt.
+    power: float = 500.0
+    passes: int = 1
     # Climb milling (with the spindle turning clockwise), else conventional.
     climb: bool = True
     # A drill or a line: its points, board mm; a line may close.
@@ -89,20 +98,35 @@ class MillOperation(Finite):
     sizes: list[float] | None = None
     bore: bool = True
 
-    def passes(self) -> int:
+    @property
+    def laser(self) -> bool:
+        return self.cutter == LASER
+
+    def pass_count(self) -> int:
+        """A laser's passes as given; a spindle's as many as it takes to the depth."""
+        if self.laser:
+            return self.passes
         return max(1, math.ceil(self.depth / self.step_down - 1e-9))
 
     def check(self) -> None:
         try:
-            ops.check_tool(self.tool)
-            check_depth(self.depth)
-            if not (math.isfinite(self.step_down) and 0.0 < self.step_down):
-                raise ValueError("the step down must be above 0 mm")
-            if self.passes() > MAX_GROUP_PASSES:
-                raise ValueError(f"{self.depth:g} mm in steps of {self.step_down:g} is over {MAX_GROUP_PASSES} passes")
-            check_speed(self.speed, "the feed")
-            check_speed(self.plunge, "the plunge")
-            check_power(self.spindle, "the spindle speed")
+            if self.laser:
+                if not (math.isfinite(self.tool) and 0.0 < self.tool <= 100.0):
+                    raise ValueError("the spot must be above 0 and at most 100 mm across")
+                if not 1 <= self.passes <= MAX_GROUP_PASSES:
+                    raise ValueError(f"the passes must be 1 to {MAX_GROUP_PASSES}")
+                check_speed(self.speed, "the speed")
+                check_power(self.power, "the power")
+            else:
+                ops.check_tool(self.tool)
+                check_depth(self.depth)
+                if not (math.isfinite(self.step_down) and 0.0 < self.step_down):
+                    raise ValueError("the step down must be above 0 mm")
+                if self.pass_count() > MAX_GROUP_PASSES:
+                    raise ValueError(f"{self.depth:g} mm in steps of {self.step_down:g} is over {MAX_GROUP_PASSES} passes")
+                check_speed(self.speed, "the feed")
+                check_speed(self.plunge, "the plunge")
+                check_power(self.spindle, "the spindle speed")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
         values = [self.x0, self.y0, self.x1, self.y1, self.cx, self.cy, self.diameter]
@@ -114,16 +138,26 @@ class MillOperation(Finite):
 
 
 def _group(op: MillOperation, label: str, paths: list[list[tuple[float, float]]]) -> Group:
+    if op.laser:
+        return Group(label=label, power=op.power, speed=op.speed, passes=op.passes, tool=LASER, paths=paths)
     return Group(
         label=label,
         power=op.spindle,
         speed=op.speed,
-        passes=op.passes(),
+        passes=op.pass_count(),
         depth=op.depth,
         plunge=op.plunge,
         tool=SPINDLE,
         paths=paths,
     )
+
+
+def _points(op: MillOperation, points: list[tuple[float, float]]) -> list[list[tuple[float, float]]]:
+    """A drill at every point, or for a beam, which drills nothing standing
+    still, a ring the spot across about it."""
+    if op.laser:
+        return [ops.circle(x, y, op.tool / 2.0, tolerance=min(ops.DEFAULT_TOLERANCE, op.tool / 8.0)) for x, y in points]
+    return ops.drill(points)
 
 
 def _mm(value: float) -> str:
@@ -161,15 +195,20 @@ def hole_groups(op: MillOperation, holes: list[tuple[float, float, float]]) -> t
         points = [points[i] for i in order]
         here = points[-1]
         count = len(points)
-        if op.bore and size > op.tool + BORE_SLACK:
+        wide = size > op.tool + BORE_SLACK
+        if op.bore and wide:
             paths = [ops.pocket_circle(x, y, size, op.tool, min(op.stepover, 1.0), op.climb)[0] for x, y in points]
-            groups.append(_group(op, f"bore {size:.2f} mm holes ({count})", paths))
+            groups.append(_group(op, f"{'clear' if op.laser else 'bore'} {size:.2f} mm holes ({count})", paths))
+        elif op.laser and wide:
+            # The beam along the hole's edge, inside it: the plug drops out.
+            paths = [ops.profile_circle(x, y, size, op.tool, ops.INSIDE, op.climb)[0] for x, y in points]
+            groups.append(_group(op, f"cut {size:.2f} mm holes ({count})", paths))
         else:
             if size < op.tool - BORE_SLACK:
                 small += count
-            groups.append(_group(op, f"drill {size:.2f} mm holes ({count})", ops.drill(points)))
+            groups.append(_group(op, f"{'mark' if op.laser else 'drill'} {size:.2f} mm holes ({count})", _points(op, points)))
     if small:
-        notes.append(f"{small} holes are smaller than the {_mm(op.tool)} mm bit and come out its size")
+        notes.append(f"{small} holes are smaller than the {_mm(op.tool)} mm {'spot' if op.laser else 'bit'} and come out its size")
     return groups, notes
 
 
@@ -182,9 +221,11 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
     kept_holes: list[tuple[float, float, float]] = []
     try:
         if op.kind == DRILL:
-            groups = [_group(op, f"drill {len(op.points)} points", ops.drill(op.points))]
+            if not op.points:
+                raise ops.MillError("a drill needs at least one point")
+            groups = [_group(op, f"{'mark' if op.laser else 'drill'} {len(op.points)} points", _points(op, op.points))]
             outline = [_circle_outline(x, y, op.tool) for x, y in op.points]
-            name = f"drill {len(op.points)} points"
+            name = f"{'mark' if op.laser else 'drill'} {len(op.points)} points"
         elif op.kind == HOLES:
             if not holes:
                 raise JobImportError("the job has no drill holes: import its board with the drill file")
@@ -227,8 +268,11 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
             raise JobImportError(f"no operation {op.kind!r}")
     except ops.MillError as exc:
         raise JobImportError(str(exc)) from exc
-    passes = op.passes()
-    notes.append(f"{passes} pass{'es' if passes != 1 else ''} of {_mm(op.depth / passes)} mm down to {_mm(op.depth)} mm")
+    passes = op.pass_count()
+    if op.laser:
+        notes.append(f"{passes} pass{'es' if passes != 1 else ''} at S{_mm(op.power)} and {_mm(op.speed)} mm/min, a {_mm(op.tool)} mm spot")
+    else:
+        notes.append(f"{passes} pass{'es' if passes != 1 else ''} of {_mm(op.depth / passes)} mm down to {_mm(op.depth)} mm")
     job = Job(
         name=(op.name or "").strip() or name,
         source="mill",
@@ -280,6 +324,11 @@ SAMPLES: list[dict] = [
     {"kind": "profile", "shape": "circle", "cx": 2, "cy": 2, "diameter": 6, "tool": 1, "side": "outside", "climb": False},
     {"kind": "holes", "job": "board", "tool": 0.8, "stepover": 0.5, "holes": [[0, 0, 0.8], [5, 1, 0.8], [2, 4, 3.0], [9, 9, 0.6], [1, 1, 0.8]]},
     {"kind": "holes", "job": "board", "tool": 0.8, "bore": False, "sizes": [3.0, 0.6], "holes": [[0, 0, 0.8], [2, 4, 3.0], [9, 9, 0.6]]},
+    {"kind": "drill", "cutter": "laser", "points": [[1, 2], [-3, 4.5]], "tool": 0.1, "power": 300, "passes": 2},
+    {"kind": "pocket", "cutter": "laser", "x0": 0, "y0": 0, "x1": 3, "y1": 2, "tool": 0.2, "stepover": 0.8, "power": 800, "speed": 600},
+    {"kind": "profile", "cutter": "laser", "shape": "circle", "cx": 1, "cy": 1, "diameter": 5, "tool": 0.1, "side": "outside", "passes": 3},
+    {"kind": "holes", "cutter": "laser", "job": "board", "tool": 0.1, "bore": False, "holes": [[0, 0, 0.8], [2, 4, 3.0], [9, 9, 0.12]]},
+    {"kind": "holes", "cutter": "laser", "job": "board", "tool": 0.1, "stepover": 0.9, "holes": [[0, 0, 0.8], [9, 9, 0.12]]},
 ]
 
 
@@ -306,7 +355,14 @@ def sample_jobs() -> list[dict]:
                 "notes": notes,
                 "spot": job.spot,
                 "groups": [
-                    {"label": group.label, "passes": group.passes, "depth": group.depth, "paths": rounded(group.paths)}
+                    {
+                        "label": group.label,
+                        "passes": group.passes,
+                        "depth": group.depth,
+                        "tool": group.tool,
+                        "power": group.power,
+                        "paths": rounded(group.paths),
+                    }
                     for group in job.groups
                 ],
                 "outline": len(job.outline),

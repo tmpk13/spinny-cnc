@@ -469,9 +469,11 @@ export type MillSide = "outside" | "inside" | "on";
 /** One Mill page operation; which of the shape's fields count follows the kind and the shape. */
 export interface MillOperation {
     kind: MillKind;
+    /** What cuts: a spindle's bit, or a laser's beam; left out, the spindle. */
+    cutter?: "spindle" | "laser";
     /** The job's name; left out, one is made from the operation. */
     name?: string | null;
-    /** The bit's diameter, mm. */
+    /** The bit's diameter, or the beam's spot, mm. */
     tool: number;
     /** How deep under the surface the cut ends, and how far each pass goes down, mm. */
     depth: number;
@@ -482,6 +484,9 @@ export interface MillOperation {
     speed: number;
     plunge: number;
     spindle: number;
+    /** A laser: its power, and how many times each path is burnt. */
+    power?: number;
+    passes?: number;
     /** Climb milling, with the spindle turning clockwise; else conventional. */
     climb: boolean;
     /** A drill's or a line's points, board mm; a line may close. */

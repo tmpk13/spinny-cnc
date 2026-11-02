@@ -536,3 +536,7 @@
 - Calibration tests (2026-11-02): a laser's material test (power x speed
   grid, also the power/focus test with no focus axis) and a mill's depth
   test, every patch a group (`POST /api/calibrate`).
+- Mill tab on a laser (2026-11-02): the operations burn with the
+  machine's laser (`cutter` laser): spot, power and passes in place of
+  depth, step down, plunge and spindle; a point is marked with a ring the
+  spot across, a hole cut along its inside edge or cleared in rings.

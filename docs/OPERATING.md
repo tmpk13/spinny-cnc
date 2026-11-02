@@ -93,7 +93,12 @@ spindle note in `firmware/rp2040/README.md` before connecting one.
 
 The *Mill* tab is the machine used like a manual mill: the position, the
 jog panel (its keys jog while the tab shows), the spindle, the markers
-and a preview beside one simple operation at a time.
+and a preview beside one simple operation at a time. On a laser machine
+the same operations are burnt instead: the fields are the spot, the power
+and the passes (each the whole path again), a point is marked with a ring
+the spot across, and a board hole is cut along its inside edge so the
+plug drops out, or with *clear* on burnt away in rings. Focus the beam
+instead of zeroing a depth.
 
 1. Zero the depth on the surface (touch off, *Set H=0 here* or the jog
    panel's zero), as for any milled job.
