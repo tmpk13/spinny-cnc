@@ -30,6 +30,7 @@ pad_steps = [0.1, 1, 10]
 pad_step = 1
 feed = true
 center = { r = 0 }
+centering = true
 
 [[controls.axes]]
 axis = "r"

@@ -1,7 +1,9 @@
 // The centering test burn: the options of `spinny-center`, made into a job.
 
+import { controlsOf } from "../controls.ts";
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
+import type { AppState } from "../state.ts";
 import type { CenterRequest } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
@@ -139,7 +141,7 @@ export function centerTest(ctx: Ctx): HTMLElement {
         ctx.toast("info", `made ${result.job.name}`);
     }
 
-    return el("details", { class: "center-test" },
+    const panel = el("details", { class: "center-test" },
         el("summary", {}, "Centering test"),
         el("p", { class: "muted" },
             "Radial lines and a ring that show where the rotation axis really is; the fine pattern"
@@ -163,4 +165,12 @@ export function centerTest(ctx: Ctx): HTMLElement {
         button("Make test job", () => make(), "btn"),
         output,
     );
+    // Only a machine whose file asks for it (a polar one, by default) has
+    // a rotation axis for the rail to cross.
+    const follow = (state: AppState): void => {
+        panel.classList.toggle("hidden", !controlsOf(state).centering);
+    };
+    ctx.store.subscribe(follow, ["snapshot", "settings"]);
+    follow(ctx.store.get());
+    return panel;
 }

@@ -75,6 +75,9 @@ export function defaultControls(profile: Profile): Controls {
         // The rotation axis: R 0 on the polar machine, where the slide is
         // parked over it; on a cartesian machine the slide is Y, so Z 0 too.
         center: cartesian ? { r: 0, z: 0 } : { r: 0 },
+        // The centering test finds where the rail crosses the rotation
+        // axis, which only a polar machine has.
+        centering: !cartesian,
         axes,
     };
 }
@@ -100,7 +103,7 @@ function dispenserControls(focus: boolean): Controls {
             "Raises and lowers the needle; up is positive, H 0 is the board's surface",
         ));
     }
-    return { pad: true, pad_steps: [0.1, 1, 10], pad_step: 1, feed: true, center: { r: 0, z: 0 }, axes };
+    return { pad: true, pad_steps: [0.1, 1, 10], pad_step: 1, feed: true, center: { r: 0, z: 0 }, centering: false, axes };
 }
 
 function axis(

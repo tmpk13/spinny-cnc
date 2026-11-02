@@ -1163,6 +1163,7 @@ describe("controls from the machine file", () => {
         pad_step: 1,
         feed: false,
         center: null,
+        centering: false,
         axes: [
             { axis: "r", letter: "X", label: "Rail", steps: [0.5, 5], step: 5, buttons: ["Left", "Right"], feed: false, goto: true, zero: true, zero_hint: "", keys: ["PageDown", "PageUp"], note: "" },
             { axis: "h", letter: "Z", label: "Depth", steps: [0.1, 1], step: 1, buttons: ["Down", "Up"], feed: false, goto: false, zero: false, zero_hint: "", keys: [], note: "Up is positive" },

@@ -1,6 +1,6 @@
 # Finding the axis and placing the board
 
-How a burnt coupon shows where the rotation axis really is, how the fine pattern amplifies what is left, and where to put the board. The same patterns are built as jobs from *Centering test* in the web page's Jobs panel.
+How a burnt coupon shows where the rotation axis really is, how the fine pattern amplifies what is left, and where to put the board. The same patterns are built as jobs from *Centering test* in the web page's Jobs panel, shown when the machine file's `[controls] centering` is on (a polar machine's default).
 
 ## Finding the axis
 

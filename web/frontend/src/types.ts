@@ -295,6 +295,8 @@ export interface Controls {
     feed: boolean;
     /** Where Center sends the joints; null: no button. */
     center: Partial<Record<JointAxis, number>> | null;
+    /** The Centering test panel, which finds where the rail crosses a polar machine's rotation axis. */
+    centering: boolean;
     axes: AxisControl[];
 }
 

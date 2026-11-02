@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { HttpApi } from "../src/api.ts";
+import { defaultControls } from "../src/controls.ts";
 import { createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
@@ -101,5 +102,24 @@ describe("center panel", () => {
         expect(job?.groups[0]!.paths.length).toBe(6);
         expect(panel.querySelector(".center-test-summary")?.textContent).toContain("6 lines");
         root.remove();
+    });
+
+    test("shows only on a machine whose controls ask for it, a polar one by default", () => {
+        const store = new Store<AppState>(initialState(true));
+        const ctx = createContext(new MockBackend({ timers: false }), store);
+        const root = document.createElement("section");
+        mountJobs(root, ctx);
+        const panel = root.querySelector(".center-test")!;
+        expect(panel.classList.contains("hidden")).toBe(false);
+        const snapshot = store.get().snapshot;
+        store.set({ snapshot: { ...snapshot, profile: { kinematics: "cartesian", tool: "laser", h_axis: false, r_max: 0, z_max: 0 } } });
+        expect(panel.classList.contains("hidden")).toBe(true);
+        // A cartesian file may still ask for it, and a polar one leave it out.
+        const polar = { kinematics: "polar", tool: "laser", h_axis: false, r_max: 0, z_max: 0 } as const;
+        store.set({ snapshot: { ...snapshot, profile: polar } });
+        expect(panel.classList.contains("hidden")).toBe(false);
+        const settings = { values: {}, schema: [], host: { tolerance: 0.005 }, controls: { ...defaultControls(polar), centering: false } };
+        store.set({ settings: settings as unknown as AppState["settings"] });
+        expect(panel.classList.contains("hidden")).toBe(true);
     });
 });

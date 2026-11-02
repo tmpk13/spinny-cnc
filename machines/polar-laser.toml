@@ -123,6 +123,7 @@ pad_steps = [0.1, 1, 10]    # mm; an axis without steps of its own uses the pad'
 pad_step = 1                # the step picked at the start
 feed = true                 # a feed field, mm/min, for the pad and the axes that take it; blank is the firmware's jog rate
 center = { r = 0 }          # where Center sends the joints: the rail over the rotation axis; left out, no button
+centering = true            # the Centering test panel: burn and read where the rail crosses the rotation axis
 
 [[controls.axes]]
 axis = "r"                  # the firmware's joint: r, a, z or h

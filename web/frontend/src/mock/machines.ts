@@ -670,8 +670,9 @@ function parseControls(reader: Reader, top: TomlTable, kinematics: Kinematics, t
         const kept = Object.fromEntries(Object.entries(defaults.center ?? {}).filter(([joint]) => listed.includes(joint as JointAxis)));
         center = Object.keys(kept).length > 0 ? kept : null;
     }
-    reader.done(table, section, ["pad", "pad_steps", "pad_step", "feed", "center", "axes"]);
-    return { pad, pad_steps: padSteps, pad_step: padStep, feed: reader.flag(table, "feed", defaults.feed, section), center, axes };
+    const centering = reader.flag(table, "centering", defaults.centering, section);
+    reader.done(table, section, ["pad", "pad_steps", "pad_step", "feed", "center", "centering", "axes"]);
+    return { pad, pad_steps: padSteps, pad_step: padStep, feed: reader.flag(table, "feed", defaults.feed, section), center, centering, axes };
 }
 
 function axisControl(reader: Reader, entry: TomlTable, byJoint: Map<JointAxis, AxisControl>, focus: boolean, pad: boolean, padSteps: number[]): AxisControl {

@@ -108,6 +108,9 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
         # The rotation axis: R 0 on the polar machine, where the slide is
         # parked over it; on a cartesian machine the slide is Y, so Z 0 too.
         "center": {"r": 0.0, "z": 0.0} if cartesian else {"r": 0.0},
+        # The centering test finds where the rail crosses the rotation
+        # axis, which only a polar machine has.
+        "centering": not cartesian,
         "axes": axes,
     }
 
@@ -138,6 +141,7 @@ def _dispenser_controls(focus: bool) -> dict:
         "pad_step": 1.0,
         "feed": True,
         "center": {"r": 0.0, "z": 0.0},
+        "centering": False,
         "axes": axes,
     }
 
@@ -196,6 +200,7 @@ def parse_controls(reader, top: dict, kinematics: str, tool: str, focus: bool) -
         "pad_steps": pad_steps,
         "pad_step": pad_step,
         "feed": reader.flag(table, "feed", defaults["feed"], section),
+        "centering": reader.flag(table, "centering", defaults["centering"], section),
     }
 
     by_joint = {axis["axis"]: axis for axis in defaults["axes"]}
@@ -229,7 +234,7 @@ def parse_controls(reader, top: dict, kinematics: str, tool: str, focus: bool) -
     else:
         kept = {joint: value for joint, value in defaults["center"].items() if joint in listed}
         controls["center"] = kept or None
-    reader.done(table, section, {"pad", "pad_steps", "pad_step", "feed", "center", "axes"})
+    reader.done(table, section, {"pad", "pad_steps", "pad_step", "feed", "center", "centering", "axes"})
     return controls
 
 
