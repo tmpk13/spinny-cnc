@@ -9,7 +9,7 @@ kinematics = "polar"
 tool = "laser"
 
 [rail]                      # R: the radius, mm
-steps_per_mm = 10240        # 200 steps, 256 microsteps, 5 mm per turn
+full_steps_per_mm = 40      # the motor's full steps per mm, microsteps not counted: 200 steps per turn, 5 mm per turn
 max_rate = 560              # mm/min; the step generator runs out before the motor does
 accel = 50                  # mm/s^2
 jerk = 3                    # mm/s allowed at a corner
@@ -17,7 +17,7 @@ jog_rate = 300              # mm/min for a jog without F
 limit = 0                   # soft limit either side of the axis, mm; 0 is none
 invert = false
 current_ma = 800
-microsteps = 256
+microsteps = 256            # the firmware steps full_steps_per_mm times this, so changing it keeps the distances
 socket = "X"                # driver socket: X, Y, Z or E, each used once
 endstop = "none"            # none, min, max, both: where the rail's switches are
 endstop_pin = 4             # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot
@@ -28,7 +28,7 @@ home_pos = 0                # mm the switch reads as
 home_travel = 200           # mm between the ends; a home seeks a tenth further
 
 [table]                     # A: the table, degrees
-steps_per_deg = 14222.222   # 200 steps, 256 microsteps, 100:1
+full_steps_per_deg = 55.5555546875 # 200 steps per turn, 100:1, over 360 degrees: 14222.222 at 256 microsteps
 max_rate = 400              # deg/min
 accel = 50                  # deg/s^2
 jerk = 2                    # deg/s allowed at a corner
@@ -46,7 +46,7 @@ home_pos = 0                # deg the switch reads as
 home_travel = 400           # deg between the ends; a home seeks a tenth further
 
 [slide]                     # Z: the cross slide, mm; a setup axis here
-steps_per_mm = 10240
+full_steps_per_mm = 40
 max_rate = 560
 accel = 50
 jerk = 3
@@ -66,7 +66,7 @@ home_travel = 200           # mm between the ends; a home seeks a tenth further
 
 [focus]                     # H: the focus axis, mm; not fitted here
 fitted = false
-steps_per_mm = 6400         # 200 steps, 256 microsteps, 8 mm per turn
+full_steps_per_mm = 25      # 200 steps per turn, 8 mm per turn
 max_rate = 600
 accel = 50
 jerk = 1

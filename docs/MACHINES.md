@@ -36,6 +36,16 @@ default. Numbers are checked against the firmware's own bounds, unknown
 keys are refused with the file and key named, and a file is applied all
 or nothing.
 
+An axis's scale is best given as `full_steps_per_mm` (`full_steps_per_deg`
+for the table): the motor's full steps per unit, 200 over the mm per turn
+for a 1.8 degree motor on a screw or a belt. The firmware steps that times
+`microsteps`, so a change of microsteps keeps every distance. The older
+`steps_per_mm` (`steps_per_deg`) is the firmware's number itself,
+microsteps counted, and stays as it was: a file with it moves as before,
+and has to be changed with its `microsteps`. A section may give one or the
+other, not both; one that gives `microsteps` and neither scales the
+default with them.
+
 ```toml
 name = "Polar laser"            # shown on the page; default: the file name
 description = "..."             # shown beside the pick
@@ -43,7 +53,8 @@ kinematics = "polar"            # polar | cartesian        -> $cartesian
 tool = "laser"                  # laser | spindle | dispenser -> $spindle, $dispenser (a dispenser needs cartesian)
 
 [rail]                          # R, mm: the radius, or X when cartesian
-steps_per_mm = 10240            # -> r_steps
+full_steps_per_mm = 40          # the motor's full steps per mm, microsteps not counted -> r_steps = this * microsteps
+# steps_per_mm = 10240          # or the firmware's number itself, microsteps counted -> r_steps; not both
 max_rate = 560                  # mm/min                   -> r_rate
 accel = 50                      # mm/s^2                   -> r_accel
 jerk = 3                        # mm/s at a corner         -> r_jerk
@@ -62,7 +73,7 @@ home_pos = 0                    # mm the switch reads as (the negative one of tw
 home_travel = 200               # mm between the ends; a home seeks a tenth further -> r_home_travel
 
 [table]                         # A, degrees
-steps_per_deg = 14222.222       # -> a_steps
+full_steps_per_deg = 55.5555546875  # -> a_steps = this * microsteps; or steps_per_deg = 14222.222
 max_rate = 400                  # deg/min                  -> a_rate
 accel = 50                      # -> a_accel
 jerk = 2                        # -> a_jerk
@@ -74,7 +85,7 @@ microsteps = 256                # -> tmc_a_micro
                                 # home_pull, home_pos, home_travel (400 deg) as under [rail]: a_stop ...
 
 [dispenser]                     # in place of [table], with tool = "dispenser": the same driver turns the plunger, A in mm
-steps_per_mm = 1600             # -> a_steps (200 steps, 16 microsteps, a 2 mm lead)
+full_steps_per_mm = 100         # -> a_steps = this * microsteps (200 steps on a 2 mm lead)
 max_rate = 300                  # mm/min: the retract, and the Extrude and Retract buttons' ceiling -> a_rate
 accel = 50                      # -> a_accel
 jerk = 1                        # -> a_jerk
@@ -85,7 +96,7 @@ microsteps = 16                 # -> tmc_a_micro
 socket = "E"                    # -> sockets; endstop keys as under [rail]: a_stop ...
 
 [slide]                         # Z, mm: a setup axis when polar, Y when cartesian
-steps_per_mm = 10240            # -> z_steps
+full_steps_per_mm = 40          # -> z_steps = this * microsteps; or steps_per_mm
 max_rate = 560                  # -> z_rate
 accel = 50                      # -> z_accel
 jerk = 3                        # -> z_jerk
@@ -99,7 +110,7 @@ microsteps = 256                # -> tmc_z_micro
 
 [focus]                         # H, mm: optional, on the E socket unless socket says otherwise
 fitted = false                  # -> h_axis
-steps_per_mm = 6400             # -> h_steps
+full_steps_per_mm = 25          # -> h_steps = this * microsteps; or steps_per_mm
 max_rate = 600                  # -> h_rate
 accel = 50                      # -> h_accel
 jerk = 1                        # -> h_jerk
@@ -247,8 +258,8 @@ stepper drives. The machine is the X/Y machine with the focus axis as the
 needle's height, and the plunger takes the table's place: `tool =
 "dispenser"` sets `$dispenser=1` (and needs `kinematics = "cartesian"`),
 and `[dispenser]` describes the plunger on the table's settings in
-millimeters: `steps_per_mm` for the screw behind it (200 steps and 16
-microsteps on a 2 mm lead is 1600), `max_rate` for the retract and the
+millimeters: `full_steps_per_mm` for the screw behind it (200 steps on
+a 2 mm lead is 100, 1600 at 16 microsteps), `max_rate` for the retract and the
 ceiling of a plunger jog, `jog_rate` for the page's *Extrude* and
 *Retract* buttons. `[table]` and `[dispenser]` do not go in one file. The
 page's readout and jog panel show the plunger as `E` in mm (the defaults;

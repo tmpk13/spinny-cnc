@@ -8,7 +8,7 @@ kinematics = "cartesian"
 tool = "laser"
 
 [slide]
-steps_per_mm = 10240
+full_steps_per_mm = 40
 max_rate = 560
 accel = 50
 jerk = 3

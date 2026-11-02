@@ -47,6 +47,23 @@ def test_endstops_and_homing_are_read_per_axis():
     assert parse('[rail]\nendstop = "min"\nendstop_pin = 25\n', "shared").settings["r_stop_pin"] == 25
 
 
+def test_full_steps_keep_the_distance_whatever_the_microsteps():
+    for micro in (16, 32, 256):
+        found = parse(f"[rail]\nfull_steps_per_mm = 50\nmicrosteps = {micro}\n[table]\nfull_steps_per_deg = 55.5555547\n", "rig")
+        assert found.settings["r_steps"] == pytest.approx(50 * micro)
+        assert found.settings["tmc_r_micro"] == micro
+    # Without microsteps of its own the axis is at the firmware's 256.
+    assert found.settings["a_steps"] == pytest.approx(14222.222, abs=5e-4)
+    # steps_per_mm is the firmware's number, microsteps counted, as before.
+    assert parse("[rail]\nsteps_per_mm = 800\nmicrosteps = 16\n", "rig").settings["r_steps"] == 800
+    # Microsteps alone scale the default with them: the same distance.
+    alone = parse("[rail]\nmicrosteps = 16\n[focus]\nmicrosteps = 32\n", "rig").settings
+    assert alone["r_steps"] == pytest.approx(FIRMWARE_DEFAULTS["r_steps"] / 256 * 16)
+    assert alone["h_steps"] == pytest.approx(FIRMWARE_DEFAULTS["h_steps"] / 256 * 32)
+    dispenser = parse('kinematics = "cartesian"\ntool = "dispenser"\n[dispenser]\nfull_steps_per_mm = 100\nmicrosteps = 16\n', "rig")
+    assert dispenser.settings["a_steps"] == pytest.approx(1600)
+
+
 def test_an_empty_file_is_the_firmware_at_its_defaults():
     found = parse("", "bare")
     assert found.settings == FIRMWARE_DEFAULTS
@@ -219,6 +236,9 @@ def test_every_key_lands_on_its_setting():
         ("[table]\nlimit = 5\n", "[table] limit is not a key here"),
         ("[table]\nfitted = true\n", "[table] fitted is not a key here"),
         ("[rail]\nmicrosteps = 3\n", "[rail] microsteps must be one of 1, 2, 4"),
+        ("[rail]\nsteps_per_mm = 800\nfull_steps_per_mm = 50\n", "[rail] full_steps_per_mm and steps_per_mm cannot both be given"),
+        ("[rail]\nfull_steps_per_mm = 0\n", "[rail] full_steps_per_mm must be above 0"),
+        ("[table]\nfull_steps_per_mm = 5\n", "[table] full_steps_per_mm is not a key here"),
         ("[rail]\ncurrent_ma = 2500\n", "[rail] current_ma must be 0 to 2000"),
         ("[rail]\ncurrent_ma = 1.5\n", "[rail] current_ma must be a whole number"),
         ("[probe]\nbrake_ms = 200\n", "[probe] brake_ms must be 0 to 160"),

@@ -35,7 +35,7 @@ tool = "laser"
 [rail]
 socket = "X"
 microsteps = 16
-steps_per_mm = 157.48       # 200 steps, 16 microsteps, 20.32 mm of belt per turn: the usual K40 start; measure over a long move
+full_steps_per_mm = 9.8425  # 200 steps per turn, 20.32 mm of belt per turn: the usual K40 start; measure over a long move
 max_rate = 6000
 accel = 500
 jerk = 5
@@ -58,7 +58,7 @@ current_ma = 0
 [slide]
 socket = "Y"
 microsteps = 16
-steps_per_mm = 157.48
+full_steps_per_mm = 9.8425
 max_rate = 6000
 accel = 500
 jerk = 5

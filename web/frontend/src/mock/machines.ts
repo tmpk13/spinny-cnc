@@ -328,8 +328,23 @@ export function parseMachine(text: string, id: string): MachineDocument {
         if (axis === "h") {
             settings["h_axis"] = reader.flag(table, "fitted", settings["h_axis"] === 1, section) ? 1 : 0;
         }
-        if (scaleKey in table) {
+        // The firmware's scale counts microsteps; full steps do not, so a
+        // file that gives them keeps its distances whatever microsteps it
+        // picks. Given neither, picked microsteps scale the default.
+        if ("microsteps" in table) {
+            settings[`tmc_${axis}_micro`] = reader.oneOf(table, "microsteps", section, MICROSTEPS);
+        }
+        const micro = settings[`tmc_${axis}_micro`]!;
+        const fullKey = `full_${scaleKey}`;
+        if (scaleKey in table && fullKey in table) {
+            throw reader.fail(section, fullKey, `and ${scaleKey} cannot both be given: ${scaleKey} counts microsteps, ${fullKey} does not`);
+        }
+        if (fullKey in table) {
+            settings[`${axis}_steps`] = reader.positive(table, fullKey, section) * micro;
+        } else if (scaleKey in table) {
             settings[`${axis}_steps`] = reader.positive(table, scaleKey, section);
+        } else if ("microsteps" in table) {
+            settings[`${axis}_steps`] = (DEFAULT_SETTINGS[`${axis}_steps`]! / DEFAULT_SETTINGS[`tmc_${axis}_micro`]!) * micro;
         }
         for (const [key, setting] of [["max_rate", `${axis}_rate`], ["accel", `${axis}_accel`], ["jerk", `${axis}_jerk`], ["jog_rate", `jog_${axis}`]] as [string, string][]) {
             if (key in table) {
@@ -344,9 +359,6 @@ export function parseMachine(text: string, id: string): MachineDocument {
         }
         if ("current_ma" in table) {
             settings[`tmc_${axis}_ma`] = reader.integer(table, "current_ma", section, 0, 2000);
-        }
-        if ("microsteps" in table) {
-            settings[`tmc_${axis}_micro`] = reader.oneOf(table, "microsteps", section, MICROSTEPS);
         }
         if ("endstop" in table) {
             const ends = reader.text(table, "endstop", "", section);
@@ -373,7 +385,7 @@ export function parseMachine(text: string, id: string): MachineDocument {
             settings[`${axis}_home_pos`] = reader.number(table, "home_pos", section);
         }
         const known = [
-            scaleKey, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
+            scaleKey, fullKey, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
             "endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel",
         ];
         if (axis === "r" || axis === "z") {

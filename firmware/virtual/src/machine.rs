@@ -5,6 +5,7 @@
 //! goes through `Settings::set`, so the firmware's own bounds hold.
 
 use spinny_core::settings::Settings;
+use spinny_core::{A, H, R, Z};
 use toml::{Table, Value};
 
 /// Section, the axis letter in the setting names, the key its scale goes
@@ -74,8 +75,20 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
             if section == "table" && dispenser { ("dispenser", "steps_per_mm") } else { (section, scale_key) };
         known_top.push(section);
         let table = table_of(&top, section)?;
-        let mut known =
-            vec![scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket"];
+        // The motor's full steps per unit, microsteps not counted.
+        let full_key = if scale_key == "steps_per_deg" { "full_steps_per_deg" } else { "full_steps_per_mm" };
+        let mut known = vec![
+            scale_key,
+            full_key,
+            "max_rate",
+            "accel",
+            "jerk",
+            "jog_rate",
+            "invert",
+            "current_ma",
+            "microsteps",
+            "socket",
+        ];
         match table.get("socket") {
             None => {}
             Some(Value::String(letter)) => {
@@ -98,8 +111,38 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
                 writes.push((format!("{axis}_max"), limit));
             }
         }
-        if let Some(steps) = number(&table, scale_key, section)? {
+        // The firmware's scale counts microsteps; full steps do not, so a
+        // file that gives them keeps its distances whatever microsteps it
+        // picks. Given neither, picked microsteps scale the default.
+        let joint = match axis {
+            "r" => R,
+            "a" => A,
+            "z" => Z,
+            _ => H,
+        };
+        let defaults = Settings::default();
+        let micro_given = integer(&table, "microsteps", section)?;
+        let micro = match &micro_given {
+            Some(text) => text.parse::<f64>().map_err(|_| format!("[{section}] microsteps must be a whole number"))?,
+            None => f64::from(defaults.tmc_micro[joint]),
+        };
+        let steps = number(&table, scale_key, section)?;
+        let full = value(&table, full_key, section)?;
+        if steps.is_some() && full.is_some() {
+            return Err(format!(
+                "[{section}] {full_key} and {scale_key} cannot both be given: {scale_key} counts microsteps, {full_key} does not"
+            ));
+        }
+        if let Some(full) = full {
+            if full <= 0.0 {
+                return Err(format!("[{section}] {full_key} must be above 0"));
+            }
+            writes.push((format!("{axis}_steps"), number_text(full * micro)));
+        } else if let Some(steps) = steps {
             writes.push((format!("{axis}_steps"), steps));
+        } else if micro_given.is_some() {
+            let scaled = f64::from(defaults.steps[joint]) / f64::from(defaults.tmc_micro[joint]) * micro;
+            writes.push((format!("{axis}_steps"), number_text(scaled)));
         }
         for (key, setting) in [
             ("max_rate", format!("{axis}_rate")),
@@ -117,7 +160,7 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
         if let Some(value) = integer(&table, "current_ma", section)? {
             writes.push((format!("tmc_{axis}_ma"), value));
         }
-        if let Some(value) = integer(&table, "microsteps", section)? {
+        if let Some(value) = micro_given {
             writes.push((format!("tmc_{axis}_micro"), value));
         }
         known.extend(["endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel"]);
@@ -298,6 +341,16 @@ fn number(table: &Table, key: &str, section: &str) -> Result<Option<String>, Str
     }
 }
 
+/// A number as a value to compute with.
+fn value(table: &Table, key: &str, section: &str) -> Result<Option<f64>, String> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(Value::Integer(value)) => Ok(Some(*value as f64)),
+        Some(Value::Float(value)) if value.is_finite() => Ok(Some(*value)),
+        Some(_) => Err(format!("[{section}] {key} must be a number")),
+    }
+}
+
 fn integer(table: &Table, key: &str, section: &str) -> Result<Option<String>, String> {
     match table.get(key) {
         None => Ok(None),
@@ -317,7 +370,6 @@ pub fn number_text(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spinny_core::{A, H, R, Z};
 
     fn shipped(name: &str) -> String {
         let path = format!("{}/../../machines/{name}.toml", env!("CARGO_MANIFEST_DIR"));
@@ -502,6 +554,29 @@ mod tests {
         // A refused value further down leaves the earlier ones unapplied.
         assert!(apply(&mut settings, "[rail]\nmax_rate = 900\n[probe]\nbrake_ms = 999\n").is_err());
         assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn full_steps_keep_the_distance_whatever_the_microsteps() {
+        for micro in [16u32, 32, 256] {
+            let settings = applied(&format!(
+                "[rail]\nfull_steps_per_mm = 50\nmicrosteps = {micro}\n[table]\nfull_steps_per_deg = 55.5555547\n"
+            ));
+            assert_eq!(settings.steps[R], 50.0 * micro as f32);
+            assert_eq!(settings.tmc_micro[R], micro);
+            assert!((settings.steps[A] - 14222.222).abs() < 5e-3, "{}", settings.steps[A]);
+        }
+        // steps_per_mm is the firmware's number, microsteps counted.
+        assert_eq!(applied("[rail]\nsteps_per_mm = 800\nmicrosteps = 16\n").steps[R], 800.0);
+        // Microsteps alone scale the default with them.
+        let alone = applied("[rail]\nmicrosteps = 16\n[focus]\nmicrosteps = 32\n");
+        let defaults = Settings::default();
+        assert_eq!(alone.steps[R], defaults.steps[R] / 256.0 * 16.0);
+        assert_eq!(alone.steps[H], defaults.steps[H] / 256.0 * 32.0);
+        let refused = |text: &str| apply(&mut Settings::default(), text).unwrap_err();
+        assert!(refused("[rail]\nsteps_per_mm = 800\nfull_steps_per_mm = 50\n").contains("cannot both be given"));
+        assert!(refused("[rail]\nfull_steps_per_mm = 0\n").contains("must be above 0"));
+        assert!(refused("[table]\nfull_steps_per_mm = 5\n").contains("full_steps_per_mm"));
     }
 
     #[test]

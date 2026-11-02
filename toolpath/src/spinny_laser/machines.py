@@ -11,11 +11,13 @@ out stays at the firmware's own default.
 The sections and keys, with the firmware setting each one sets:
 
     name, description, kinematics (polar | cartesian), tool (laser | spindle | dispenser)
-    [rail]    R, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (r_max), invert, current_ma, microsteps
-    [table]   A, deg: steps_per_deg, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
-    [dispenser] A, mm, in place of [table] with tool = dispenser: steps_per_mm and the table's other keys
-    [slide]   Z, mm: steps_per_mm, max_rate, accel, jerk, jog_rate, limit (z_max), invert, current_ma, microsteps
-    [focus]   H, mm: fitted (h_axis), steps_per_mm, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
+    [rail]    R, mm: full_steps_per_mm or steps_per_mm, max_rate, accel, jerk, jog_rate, limit (r_max), invert, current_ma, microsteps
+    [table]   A, deg: full_steps_per_deg or steps_per_deg, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
+    [dispenser] A, mm, in place of [table] with tool = dispenser: full_steps_per_mm or steps_per_mm and the table's other keys
+    [slide]   Z, mm: full_steps_per_mm or steps_per_mm, max_rate, accel, jerk, jog_rate, limit (z_max), invert, current_ma, microsteps
+    [focus]   H, mm: fitted (h_axis), full_steps_per_mm or steps_per_mm, max_rate, accel, jerk, jog_rate, invert, current_ma, microsteps
+              full_steps_per_mm (per_deg) is the motor's full steps per unit, 200 / mm per turn for a 1.8 degree
+              motor, and <axis>_steps is it times microsteps; steps_per_mm is <axis>_steps itself
               each axis also takes socket, the driver socket it is wired to (X, Y, Z or E, each once: sockets),
               and its endstops: endstop (none, min, max, both: <axis>_stop), endstop_pin (<axis>_stop_pin),
               endstop_invert (stop_invert bit), endstop_halt (limits bit), home_pull, home_pos, home_travel
@@ -257,8 +259,22 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             sockets[bit] = reader.text_choice(table, "socket", section, SOCKETS)
         if axis == "h":
             settings["h_axis"] = int(reader.flag(table, "fitted", bool(settings["h_axis"]), section))
-        if scale_key in table:
+        # The scale as the firmware takes it counts microsteps; the full
+        # steps of the motor do not, so a file that gives them keeps its
+        # distances whatever microsteps it picks. Given neither, a file that
+        # picks microsteps scales the default with them.
+        if "microsteps" in table:
+            settings[f"tmc_{axis}_micro"] = reader.one_of(table, "microsteps", section, MICROSTEPS)
+        micro = settings[f"tmc_{axis}_micro"]
+        full_key = f"full_{scale_key}"
+        if scale_key in table and full_key in table:
+            raise reader.fail(section, full_key, f"and {scale_key} cannot both be given: {scale_key} counts microsteps, {full_key} does not")
+        if full_key in table:
+            settings[f"{axis}_steps"] = reader.positive(table, full_key, section) * micro
+        elif scale_key in table:
             settings[f"{axis}_steps"] = reader.positive(table, scale_key, section)
+        elif "microsteps" in table:
+            settings[f"{axis}_steps"] = FIRMWARE_DEFAULTS[f"{axis}_steps"] / FIRMWARE_DEFAULTS[f"tmc_{axis}_micro"] * micro
         for key, setting in (("max_rate", f"{axis}_rate"), ("accel", f"{axis}_accel"), ("jerk", f"{axis}_jerk"), ("jog_rate", f"jog_{axis}")):
             if key in table:
                 settings[setting] = reader.positive(table, key, section)
@@ -268,8 +284,6 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             dir_invert |= 1 << bit
         if "current_ma" in table:
             settings[f"tmc_{axis}_ma"] = reader.integer(table, "current_ma", section, 0, 2000)
-        if "microsteps" in table:
-            settings[f"tmc_{axis}_micro"] = reader.one_of(table, "microsteps", section, MICROSTEPS)
         if "endstop" in table:
             settings[f"{axis}_stop"] = ENDSTOPS.index(reader.text_choice(table, "endstop", section, ENDSTOPS))
         if "endstop_pin" in table:
@@ -283,7 +297,7 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
                 settings[f"{axis}_{key}"] = reader.positive(table, key, section)
         if "home_pos" in table:
             settings[f"{axis}_home_pos"] = reader.number(table, "home_pos", section)
-        reader.done(table, section, {scale_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
+        reader.done(table, section, {scale_key, full_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
                                      "endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel"}
                     | ({"limit"} if axis in ("r", "z") else set()) | ({"fitted"} if axis == "h" else set()))
     settings["dir_invert"] = dir_invert

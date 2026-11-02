@@ -17,7 +17,7 @@ socket = "X"
 # holds, while the step generator's 100 kHz ceiling moves from 470 mm/min
 # to 3750. max_rate is a first step up; raise it while nothing stalls.
 microsteps = 32
-steps_per_mm = 1600         # 200 steps, 32 microsteps, 4 mm per turn
+full_steps_per_mm = 50      # 200 steps per turn, 4 mm per turn
 max_rate = 1200
 limit = 60
 
@@ -28,7 +28,7 @@ current_ma = 0
 [slide]
 socket = "Y"
 microsteps = 32
-steps_per_mm = 1600         # 200 steps, 32 microsteps, 4 mm per turn
+full_steps_per_mm = 50      # 200 steps per turn, 4 mm per turn
 max_rate = 1200
 accel = 50
 jerk = 3
@@ -39,7 +39,7 @@ limit = 40
 socket = "Z"
 fitted = true
 microsteps = 32
-steps_per_mm = 1280         # 200 steps, 32 microsteps, 5 mm per turn
+full_steps_per_mm = 40      # 200 steps per turn, 5 mm per turn
 max_rate = 600
 accel = 50
 jerk = 1

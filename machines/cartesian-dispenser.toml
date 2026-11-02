@@ -10,7 +10,7 @@ tool = "dispenser"
 
 [rail]
 socket = "X"
-steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn
+full_steps_per_mm = 50      # 200 steps per turn, 4 mm per turn
 limit = 60
 
 # The plunger on the table's driver, in millimeters: 200 steps and 16
@@ -18,7 +18,7 @@ limit = 60
 # ceiling of a plunger jog; jog_rate is the Extrude and Retract buttons'.
 [dispenser]
 socket = "E"
-steps_per_mm = 1600
+full_steps_per_mm = 100
 max_rate = 300
 accel = 50
 jerk = 1
@@ -28,7 +28,7 @@ microsteps = 16
 
 [slide]
 socket = "Y"
-steps_per_mm = 12800        # 200 steps, 256 microsteps, 4 mm per turn
+full_steps_per_mm = 50      # 200 steps per turn, 4 mm per turn
 max_rate = 560
 accel = 50
 jerk = 3
@@ -38,7 +38,7 @@ limit = 40
 [focus]
 socket = "Z"
 fitted = true
-steps_per_mm = 10240        # 200 steps, 256 microsteps, 5 mm per turn
+full_steps_per_mm = 40      # 200 steps per turn, 5 mm per turn
 max_rate = 600
 accel = 50
 jerk = 1

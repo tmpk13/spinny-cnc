@@ -63,6 +63,20 @@ describe("machine files with a dispenser and a camera", () => {
         expect(parseMachine('name = "x"', "x").settings["dispenser"]).toBe(0);
     });
 
+    test("full steps keep the distance whatever the microsteps, as the backend reads them", () => {
+        for (const micro of [16, 32, 256]) {
+            const found = parseMachine(`[rail]\nfull_steps_per_mm = 50\nmicrosteps = ${micro}\n[table]\nfull_steps_per_deg = 55.5555547`, "f");
+            expect(found.settings["r_steps"]).toBeCloseTo(50 * micro, 9);
+            expect(found.settings["a_steps"]).toBeCloseTo(14222.222, 3);
+        }
+        expect(parseMachine("[rail]\nsteps_per_mm = 800\nmicrosteps = 16", "f").settings["r_steps"]).toBe(800);
+        const alone = parseMachine("[rail]\nmicrosteps = 16\n[focus]\nmicrosteps = 32", "f").settings;
+        expect(alone["r_steps"]).toBeCloseTo(DEFAULT_SETTINGS["r_steps"]! / 256 * 16, 9);
+        expect(alone["h_steps"]).toBeCloseTo(DEFAULT_SETTINGS["h_steps"]! / 256 * 32, 9);
+        expect(() => parseMachine("[rail]\nsteps_per_mm = 800\nfull_steps_per_mm = 50", "f")).toThrow("f.toml: [rail] full_steps_per_mm and steps_per_mm cannot both be given");
+        expect(() => parseMachine("[table]\nfull_steps_per_mm = 5", "f")).toThrow("f.toml: [table] full_steps_per_mm is not a key here");
+    });
+
     test("refuses what the backend refuses, in its words", () => {
         const refused = (text: string, message: string): void => {
             expect(() => parseMachine(text, "f")).toThrow(message);

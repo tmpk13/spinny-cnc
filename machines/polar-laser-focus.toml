@@ -8,7 +8,7 @@ tool = "laser"
 
 [focus]
 fitted = true
-steps_per_mm = 6400
+full_steps_per_mm = 25
 max_rate = 600
 accel = 50
 jerk = 1
