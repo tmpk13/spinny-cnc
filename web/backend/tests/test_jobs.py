@@ -357,6 +357,39 @@ def test_import_file_dispatches_by_suffix(tmp_path):
         import_file(tmp_path / "d.svg", "d", ImportOptions(anchor="corner"), Streamer())
 
 
+def test_patch_turns_the_job_about_its_middle_or_the_origin():
+    streamer = Streamer()
+    job = Job(
+        name="bar",
+        offset={"x": 10.0, "y": 0.0},
+        groups=[Group(label="bar", power=500, speed=400, paths=[[(10.0, -2.0), (14.0, -2.0), (14.0, 2.0), (10.0, 2.0)]])],
+        pads=[(12.0, 0.0, 1.0)],
+    )
+    job.refresh_stats(streamer)
+    turned = apply_patch(job, JobPatch(turn=90.0), streamer)
+    # About the middle (12, 0): the box keeps its middle and swaps its sides.
+    xs, ys = zip(*turned.groups[0].paths[0])
+    assert (min(xs), max(xs), min(ys), max(ys)) == pytest.approx((10.0, 14.0, -2.0, 2.0))
+    assert turned.groups[0].paths[0][0] == pytest.approx((14.0, -2.0))
+    assert turned.pads[0][:2] == pytest.approx((12.0, 0.0))
+    assert turned.rotation == pytest.approx(90.0)
+    # The offset turns about the same middle: (10, 0) is 2 left of it.
+    assert (turned.offset.x, turned.offset.y) == pytest.approx((12.0, -2.0))
+    about_origin = apply_patch(job, JobPatch(turn=90.0, about="origin"), streamer)
+    assert about_origin.groups[0].paths[0][0] == pytest.approx((2.0, 10.0))
+    assert (about_origin.offset.x, about_origin.offset.y) == pytest.approx((0.0, 10.0))
+    # The offset applies first, then the turn about the moved middle.
+    both = apply_patch(job, JobPatch(offset={"x": 20.0, "y": 0.0}, turn=180.0), streamer)
+    xs, ys = zip(*both.groups[0].paths[0])
+    assert (min(xs), max(xs)) == pytest.approx((20.0, 24.0))
+    for bad in (JobPatch(turn=400.0), JobPatch(turn=10.0, about="corner")):
+        with pytest.raises(ValueError):
+            apply_patch(job, bad, streamer)
+    fixed = Job(name="axis", groups=[Group(label="ring", power=500, speed=400, joints=[[(5.0, 0.0), (5.0, 90.0)]])])
+    with pytest.raises(ValueError, match="cannot be turned"):
+        apply_patch(fixed, JobPatch(turn=90.0), streamer)
+
+
 def test_patch_shifts_and_reprices():
     streamer = Streamer()
     job = from_svg(SVG, "drawing", ImportOptions(anchor="center"))

@@ -472,6 +472,9 @@ export function moveJob(job: Job, degrees: number, dx: number, dy: number): void
     const paths = (list: Path[]): Path[] => list.map((path) => path.map(at));
     for (const g of job.groups) {
         g.paths = paths(g.paths);
+        if (g.moves) {
+            g.moves = g.moves.map((path) => path.map(([x, y, z, kind]) => [...at([x, y]), z, kind]));
+        }
     }
     job.outline = paths(job.outline);
     job.copper = paths(job.copper);
@@ -484,6 +487,38 @@ export function moveJob(job: Job, degrees: number, dx: number, dy: number): void
         const [sx, sy] = at(job.design.shift);
         job.design = { ...job.design, shift: [sx, sy], rotation: job.design.rotation + degrees };
     }
+}
+
+/** The middle of the box round everything the job cuts and its outline; the origin for a job with nothing on the board. */
+export function cutMiddle(job: Job): Point {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const take = (x: number, y: number): void => {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+    };
+    for (const g of job.groups) {
+        for (const path of g.paths) {
+            for (const [x, y] of path) {
+                take(x, y);
+            }
+        }
+        for (const path of g.moves ?? []) {
+            for (const [x, y] of path) {
+                take(x, y);
+            }
+        }
+    }
+    for (const path of job.outline) {
+        for (const [x, y] of path) {
+            take(x, y);
+        }
+    }
+    return minX > maxX ? [0, 0] : [(minX + maxX) / 2, (minY + maxY) / 2];
 }
 
 /** A Mill page job made again for a bit `tool` mm across, where it is now, its groups' settings kept. */

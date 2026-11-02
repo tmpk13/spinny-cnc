@@ -856,7 +856,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     function offsetRow(job: Job): HTMLElement {
         const x = numberField({ value: job.offset.x, width: "5.5rem" });
         const y = numberField({ value: job.offset.y, width: "5.5rem" });
-        const rotation = el("span", { class: "muted job-rotation", title: "Degrees the job has been turned counterclockwise about the origin by alignment" }, rotationText(job));
+        const rotation = el("span", { class: "muted job-rotation", title: "Degrees the job has been turned counterclockwise since import, by Turn and by alignment" }, rotationText(job));
         offsetFields = { x, y, rotation };
         const apply = async (): Promise<void> => {
             const ox = parseNumber(x.value);
@@ -869,10 +869,41 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             await ctx.reloadJob(job.id);
             await ctx.refreshJobs();
         };
+        // Turning, counterclockwise for a positive angle: about the middle
+        // of what the job cuts it stays where it is, about the origin (the
+        // axis on the polar machine) it swings round it.
+        const angle = numberField({ value: 90, min: -360, max: 360, step: 15, width: "4.5rem" });
+        angle.setAttribute("aria-label", "Turn degrees");
+        const about = el("select", { class: "field", "aria-label": "Turn about" },
+            el("option", { value: "center" }, "about its middle"),
+            el("option", { value: "origin" }, "about the origin"),
+        ) as HTMLSelectElement;
+        const turn = async (sign: number): Promise<void> => {
+            const degrees = parseNumber(angle.value);
+            if (degrees === null || degrees === 0 || Math.abs(degrees) > 360) {
+                ctx.toast("error", "turn needs an angle from -360 to 360 degrees, not 0");
+                return;
+            }
+            await ctx.call(ctx.api.patchJob(job.id, { turn: sign * degrees, about: about.value === "origin" ? "origin" : "center" }));
+            await ctx.reloadJob(job.id);
+            await ctx.refreshJobs();
+        };
+        const fixed = job.groups.some((group) => (group.joints?.length ?? 0) > 0);
+        const ccw = button("Turn left", () => turn(1), "btn btn-quiet");
+        ccw.title = "Turn the job counterclockwise by the angle";
+        const cw = button("Turn right", () => turn(-1), "btn btn-quiet");
+        cw.title = "Turn the job clockwise by the angle";
+        // A joint-space group is written about the axis: nothing to turn.
+        setLocked(ccw, fixed);
+        setLocked(cw, fixed);
+        angle.disabled = fixed;
+        about.disabled = fixed;
         return el("div", { class: "goto-row" },
             el("span", { class: "choice-label" }, "Offset"),
             x, y,
             button("Move", () => apply(), "btn btn-quiet"),
+            el("span", { class: "choice-label" }, "Turn"),
+            angle, about, ccw, cw,
             rotation,
         );
     }

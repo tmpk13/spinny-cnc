@@ -42,7 +42,7 @@ import {
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
-import { buildMill, carrySettings, moveJob, remakeMill } from "./mill.ts";
+import { buildMill, carrySettings, cutMiddle, moveJob, remakeMill } from "./mill.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, parseDevice, placeLines, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
@@ -3635,6 +3635,18 @@ export class MockBackend implements Api, EventFeed {
                     throw new Error(`offset must be within ${MAX_VALUE_TEXT} mm`);
                 }
             }
+            if (patch.turn !== undefined) {
+                const about = patch.about ?? "center";
+                if (about !== "center" && about !== "origin") {
+                    throw new Error("about must be one of center, origin");
+                }
+                if (!(patch.turn >= -360 && patch.turn <= 360)) {
+                    throw new Error("turn must be -360 to 360 degrees");
+                }
+                if (patch.turn !== 0 && job.groups.some((group) => group.joints && group.joints.length > 0)) {
+                    throw new Error("a joint-space group is fixed to the axis and cannot be turned");
+                }
+            }
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
@@ -3684,6 +3696,13 @@ export class MockBackend implements Api, EventFeed {
                 updated.design = { ...updated.design, shift: [updated.design.shift[0] + dx, updated.design.shift[1] + dy] };
             }
             updated.offset = { ...patch.offset };
+        }
+        if (patch.turn) {
+            // About the middle of what it cuts, the job stays where it is:
+            // turned about the origin, then moved back by what the middle moved.
+            const [cx, cy] = (patch.about ?? "center") === "center" ? cutMiddle(updated) : [0, 0];
+            const [tx, ty] = turnPoint([cx, cy], patch.turn);
+            moveJob(updated, patch.turn, cx - tx, cy - ty);
         }
         updated.stats = computeStats(updated.groups, this.limits());
         this.jobStore.set(id, updated);

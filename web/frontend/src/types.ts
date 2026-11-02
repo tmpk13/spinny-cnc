@@ -564,10 +564,17 @@ export interface GroupPatch {
     thickness?: number;
 }
 
+/** What a job is turned about: the middle of the box round what it cuts, or the origin. */
+export type TurnAbout = "center" | "origin";
+
 export interface JobPatch {
     name?: string;
     groups?: GroupPatch[];
     offset?: Board;
+    /** Degrees to turn the job counterclockwise, -360 to 360, after the offset. */
+    turn?: number;
+    /** What `turn` turns about; left out, the middle. */
+    about?: TurnAbout;
 }
 
 export interface UploadOptions {

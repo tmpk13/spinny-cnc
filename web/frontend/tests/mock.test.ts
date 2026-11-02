@@ -604,6 +604,37 @@ describe("mock backend", () => {
         expect(backend.machine.state).toBe("Idle");
     });
 
+    test("a job turns about the middle of what it cuts or about the origin, as the backend turns it", async () => {
+        const { backend } = backendWithLog();
+        // A 10 mm square drawn from the corner, centered at 0, 20 on upload.
+        const file = new File(['<svg xmlns="http://www.w3.org/2000/svg" width="10mm" viewBox="0 0 10 10"><path d="M0 0 L10 0 L10 10 L0 10 Z"/></svg>'], "square.svg");
+        const job = await backend.uploadJob(file, { power: 400, speed: 300, offset_y: 20 });
+        const before = await backend.job(job.id);
+        const box = (paths: [number, number][][]): number[] => {
+            const xs = paths.flat().map((p) => p[0]);
+            const ys = paths.flat().map((p) => p[1]);
+            return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)].map((v) => Math.round(v * 1e6) / 1e6);
+        };
+        await backend.patchJob(job.id, { turn: 90 });
+        const turned = await backend.job(job.id);
+        expect(box(turned.groups[0]!.paths)).toEqual(box(before.groups[0]!.paths));
+        expect(turned.rotation).toBeCloseTo(90, 9);
+        // The first corner went a quarter turn round the middle.
+        const [x0, y0] = before.groups[0]!.paths[0]![0]!;
+        const [x1, y1] = turned.groups[0]!.paths[0]![0]!;
+        expect(x1).toBeCloseTo(0 - (y0 - 20), 6);
+        expect(y1).toBeCloseTo(20 + x0, 6);
+        await backend.patchJob(job.id, { turn: -90, about: "origin" });
+        const swung = await backend.job(job.id);
+        // About the origin the middle at 0, 20 swings to 20, 0.
+        const [minX, maxX, minY, maxY] = box(swung.groups[0]!.paths);
+        expect((minX! + maxX!) / 2).toBeCloseTo(20, 6);
+        expect((minY! + maxY!) / 2).toBeCloseTo(0, 6);
+        expect(swung.offset.x).toBeCloseTo(20, 6);
+        await expect(backend.patchJob(job.id, { turn: 400 })).rejects.toMatchObject({ status: 400, message: "turn must be -360 to 360 degrees" });
+        await expect(backend.patchJob(job.id, { turn: 5, about: "corner" as "center" })).rejects.toMatchObject({ status: 400, message: "about must be one of center, origin" });
+    });
+
     test("a job patch is checked whole, refused while running, and leaves a refused job unchanged", async () => {
         const { backend } = backendWithLog();
         const list = await backend.jobs();

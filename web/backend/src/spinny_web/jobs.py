@@ -352,10 +352,18 @@ class GroupPatch(Finite):
     thickness: float | None = None
 
 
+# What a job is turned about: the middle of what it cuts, or the origin.
+TURN_ABOUT = ("center", "origin")
+
+
 class JobPatch(Finite):
     name: str | None = None
     groups: list[GroupPatch] | None = None
     offset: Offset | None = None
+    # Degrees to turn the job counterclockwise, after the offset, about the
+    # middle of the box round what it cuts or about the origin.
+    turn: float | None = None
+    about: str = "center"
 
 
 def check_power(power: float, what: str = "power") -> None:
@@ -414,6 +422,13 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
         dx, dy = patch.offset.x - job.offset.x, patch.offset.y - job.offset.y
         if (dx != 0.0 or dy != 0.0) and any(group.joints for group in job.groups):
             raise ValueError("a joint-space group is fixed to the axis and cannot be moved")
+    if patch.turn is not None:
+        if patch.about not in TURN_ABOUT:
+            raise ValueError(f"about must be one of {', '.join(TURN_ABOUT)}")
+        if not -360.0 <= patch.turn <= 360.0:
+            raise ValueError("turn must be -360 to 360 degrees")
+        if patch.turn != 0.0 and any(group.joints for group in job.groups):
+            raise ValueError("a joint-space group is fixed to the axis and cannot be turned")
     updated = job.model_copy(deep=True)
     if patch.name:
         updated.name = patch.name
@@ -439,8 +454,33 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             group.thickness = change.thickness
     if patch.offset is not None:
         updated.shift(patch.offset.x - updated.offset.x, patch.offset.y - updated.offset.y)
+    if patch.turn:
+        turn_job(updated, patch.turn, patch.about)
     updated.refresh_stats(streamer)
     return updated
+
+
+def cut_middle(job: Job) -> tuple[float, float]:
+    """The middle of the box round everything the job cuts and its outline;
+    the origin for a job with nothing on the board."""
+    points = [p for group in job.groups for path in group.paths for p in path]
+    points += [(p[0], p[1]) for group in job.groups for path in group.moves for p in path]
+    points += [p for path in job.outline for p in path]
+    if not points:
+        return (0.0, 0.0)
+    xs = [float(p[0]) for p in points]
+    ys = [float(p[1]) for p in points]
+    return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0)
+
+
+def turn_job(job: Job, degrees: float, about: str = "center") -> None:
+    """Turns the job counterclockwise about the middle of what it cuts, so
+    it stays where it is on the board, or about the origin."""
+    center = cut_middle(job) if about == "center" else (0.0, 0.0)
+    job.turn(degrees)
+    if center != (0.0, 0.0):
+        tx, ty = alignment.turn(center, degrees)
+        job.shift(center[0] - tx, center[1] - ty)
 
 
 def _shifted(path, dx: float, dy: float) -> list[tuple[float, float]]:
