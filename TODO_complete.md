@@ -509,3 +509,30 @@
 - Preview grid (2026-10-30): *Grid* draws X/Y lines labeled along both
   axes instead of the rings, on every preview at once; a cartesian
   machine gets it until a choice is made.
+- Board drops diagnosed (2026-11-02): the K40 evening's six drops left
+  the USB bus and came back as `boot power on` (one `reset pin` mid-cut),
+  a power loss, not the firmware; the next connect after a failed link
+  now names a power loss with the time off, a RUN pin reset, or a USB
+  link that dropped with the board up (`boot_after_loss`, `loss_verdict`).
+- Turn a job (2026-11-02): the offset row's angle and Turn left/right,
+  about the middle of what the job cuts or the origin (`turn`, `about` in
+  `PATCH /api/jobs/{id}`).
+- Bottom copper layer (2026-11-02): a back layer upload (B.Cu, B.Paste)
+  is flipped in X with its pads, holes and design map; the upload's
+  Mirror field (auto, none, flip X, flip Y).
+- Inner shapes first (2026-11-02): an SVG group's, a board outline's and
+  the CAM's paths and outline cut whatever lies inside a closed shape
+  before the shape (`spinny_laser.order`).
+- Centering test as a flag (2026-11-02): `[controls] centering`, on by
+  default for polar machines, hides the Jobs panel's test elsewhere.
+- Full steps (2026-11-02): `full_steps_per_mm` / `full_steps_per_deg`
+  count no microsteps, the firmware gets them times `microsteps`;
+  `steps_per_mm` keeps its meaning; microsteps alone scale the default.
+- Config tab (2026-11-02): *Write to board* writes and saves to flash in
+  one step, *Read from board* writes the board's values into the text,
+  the board line says what it runs; the firmware settings panel is a list
+  of every key a file can set, file beside board, fuzzy search
+  (`spinny_laser.machine_keys`, `POST /api/machines/{id}/from-board`).
+- Calibration tests (2026-11-02): a laser's material test (power x speed
+  grid, also the power/focus test with no focus axis) and a mill's depth
+  test, every patch a group (`POST /api/calibrate`).
