@@ -511,7 +511,12 @@ export interface DesignMap {
     rotation: number;
     /** The `.kicad_pcb` is kept beside the job, so the camera can look for it. */
     board: boolean;
+    /** How the layer was flipped before the turn, for a layer cut with the board turned over; missing on older jobs, none. */
+    mirror?: Mirror;
 }
+
+/** How a board layer is flipped: x negates X (the board turned over left to right), y negates Y. */
+export type Mirror = "none" | "x" | "y";
 
 /** A group as the job list shows it: the path count stands in for the paths. */
 export interface GroupSummary {
@@ -594,6 +599,8 @@ export interface UploadOptions {
     clear?: ClearPattern;
     /** A deposit only; left out, the loops go on in to the middle. */
     fill?: DepositFill;
+    /** Gerber and KiCad boards; left out, x for a layer on the back (B.Cu, B.Paste) and none for the front. */
+    mirror?: Mirror;
 }
 
 /** The options of the centering test burn; a missing reach or ring takes the pattern's default. */

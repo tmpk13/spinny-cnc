@@ -202,7 +202,7 @@ def job_components(job, path: Path) -> list[dict]:
                 "side": footprint.side,
                 "x": round(x, 4),
                 "y": round(y, 4),
-                "rotation": round((footprint.rotation + design.rotation) % 360.0, 3),
+                "rotation": round(design.angle_to_job(footprint.rotation) % 360.0, 3),
                 "pads": footprint.pads,
                 "smd": footprint.smd,
                 "dnp": footprint.dnp,

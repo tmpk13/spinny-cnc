@@ -75,7 +75,7 @@ describe("a dispense import", () => {
         expect(job.layer).toBe("F.Paste");
         expect(job.pads).toHaveLength(3);
         expect(job.holes).toHaveLength(3);
-        expect(job.design).toEqual({ shift: [0, 0], rotation: 0, board: true });
+        expect(job.design).toEqual({ shift: [0, 0], rotation: 0, board: true, mirror: "none" });
         expect(job.rotation).toBe(0);
         expect(job.outline).toHaveLength(1);
         // A tour: each dot is a move.

@@ -66,6 +66,8 @@ CLEAR_CHOICES = (CLEAR_OFF, *copper_clearing.PATTERNS)
 # dot of paste on every pad of the layer.
 MODE_ISOLATE, MODE_DEPOSIT, MODE_DISPENSE = "isolate", "deposit", "dispense"
 MODES = (MODE_ISOLATE, MODE_DEPOSIT, MODE_DISPENSE)
+# How a board layer may be flipped, as the isolation's config names it.
+MIRRORS = ("none", "x", "y")
 # Dispensing: the paste over a pad, mm, whose product with the pad's area
 # is the dot's volume. A stencil's foil is about this thick.
 DEFAULT_THICKNESS = 0.12
@@ -152,19 +154,36 @@ class Offset(Finite):
 
 class Design(Finite):
     """How the design's own frame maps to the job's: the gerber frame a
-    board was plotted in (the KiCad file's X, and its Y negated) turned
-    counterclockwise by `rotation` about the origin and moved by `shift`,
-    kept current through every move of the job. `board` says whether the
-    KiCad file is kept beside the job, so a camera can look for it."""
+    board was plotted in (the KiCad file's X, and its Y negated) flipped by
+    `mirror` for a layer cut with the board turned over (x negates X, y
+    negates Y), turned counterclockwise by `rotation` about the origin and
+    moved by `shift`, kept current through every move of the job. `board`
+    says whether the KiCad file is kept beside the job, so a camera can
+    look for it."""
 
     shift: tuple[float, float] = (0.0, 0.0)
     rotation: float = 0.0
     board: bool = False
+    mirror: str = "none"
 
     def to_job(self, point: tuple[float, float]) -> tuple[float, float]:
         """A gerber frame point in the job's frame."""
-        x, y = alignment.turn(point, self.rotation)
+        x, y = point
+        if self.mirror == "x":
+            x = -x
+        elif self.mirror == "y":
+            y = -y
+        x, y = alignment.turn((x, y), self.rotation)
         return (x + self.shift[0], y + self.shift[1])
+
+    def angle_to_job(self, degrees: float) -> float:
+        """A gerber frame direction, degrees counterclockwise from +X, in the
+        job's frame: flipped with the layer, then turned with it."""
+        if self.mirror == "x":
+            degrees = 180.0 - degrees
+        elif self.mirror == "y":
+            degrees = -degrees
+        return degrees + self.rotation
 
     def board_to_job(self, point: tuple[float, float]) -> tuple[float, float]:
         """A KiCad board frame point (mm, y down) in the job's frame."""
@@ -273,6 +292,7 @@ class Job(Finite):
                 shift=(self.design.shift[0] + dx, self.design.shift[1] + dy),
                 rotation=self.design.rotation,
                 board=self.design.board,
+                mirror=self.design.mirror,
             )
 
     def turn(self, degrees: float) -> None:
@@ -301,6 +321,7 @@ class Job(Finite):
                 shift=alignment.turn(self.design.shift, degrees),
                 rotation=self.design.rotation + degrees,
                 board=self.design.board,
+                mirror=self.design.mirror,
             )
 
     def refresh_stats(self, streamer: Streamer) -> None:
@@ -615,6 +636,11 @@ class ImportOptions:
     fill: str | None = None
     # Dispensing: the paste over every pad, mm.
     thickness: float = DEFAULT_THICKNESS
+    # How a board layer is flipped: none, x (X negated, the board turned
+    # over about its Y axis) or y; left out, x for a layer on the back
+    # (B.Cu, B.Paste) and none for the front, so the back's copper lands
+    # where it is with the board turned over left to right.
+    mirror: str | None = None
 
     def check(self) -> None:
         if self.anchor not in (ANCHOR_CENTER, ANCHOR_KEEP):
@@ -629,6 +655,8 @@ class ImportOptions:
             raise JobImportError("clear is for isolation; a deposit takes fill instead")
         if self.mode != MODE_DEPOSIT and self.fill is not None:
             raise JobImportError("fill is for a deposit; isolation takes clear instead")
+        if self.mirror is not None and self.mirror not in MIRRORS:
+            raise JobImportError(f"mirror must be one of {', '.join(MIRRORS)}")
         try:
             check_thickness(self.thickness)
         except ValueError as exc:
@@ -906,6 +934,8 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             source = "gerber"
             layer = board.layer_of(path)
         word = board.layer_word(layer)
+        mirror = options.mirror if options.mirror is not None else ("x" if board.is_bottom(layer) else "none")
+        flip = (-1.0 if mirror == "x" else 1.0, -1.0 if mirror == "y" else 1.0)
         try:
             outline_path: Path | None = board.find_layer(into, "Edge.Cuts")
         except board.LayerError:
@@ -914,7 +944,10 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         copper = geom.copper(image)
         if not copper:
             raise JobImportError(f"{copper_path.name} draws no {word}")
-        pads = board_pads.pads_of(image)
+        # The pads and holes flipped as the layer is; the placement then
+        # moves them as it moves the copper.
+        pads = [(x * flip[0], y * flip[1], area) for x, y, area in board_pads.pads_of(image)]
+        holes = [(x * flip[0], y * flip[1], d) for x, y, d in holes]
         outline: list = []
         if outline_path is not None:
             outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
@@ -923,6 +956,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             passes=options.passes,
             anchor=options.anchor,
             origin=options.offset,
+            mirror=mirror,
         )
         isolate.offsets_for(config)
         if options.mode == MODE_DISPENSE:
@@ -966,11 +1000,13 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                     pace=pace,
                 )
             groups = isolation_groups(plan, cleared, options, word)
-            # The plan moved the copper; the pads and holes follow it by
-            # the same amount, read back from the first point.
+            # The plan flipped and moved the copper; the pads and holes,
+            # flipped already, follow it by the same amount, read back from
+            # the first point.
             shift = (0.0, 0.0)
             if copper and plan.copper:
-                shift = (plan.copper[0][0][0] - copper[0][0][0], plan.copper[0][0][1] - copper[0][0][1])
+                x0, y0 = copper[0][0][0] * flip[0], copper[0][0][1] * flip[1]
+                shift = (plan.copper[0][0][0] - x0, plan.copper[0][0][1] - y0)
     except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
         raise JobImportError(str(exc)) from exc
     finally:
@@ -1004,7 +1040,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         copper=[[tuple(p) for p in contour] for contour in placed],
         pads=pads,
         holes=holes,
-        design=Design(shift=(float(dx), float(dy)), rotation=0.0, board=source == "kicad"),
+        design=Design(shift=(float(dx), float(dy)), rotation=0.0, board=source == "kicad", mirror=mirror),
     )
 
 

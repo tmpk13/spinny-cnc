@@ -937,6 +937,17 @@ def test_a_board_upload_names_its_layer(client):
     assert listed and listed[0]["layer"] == "F.Cu"
 
 
+def test_an_upload_takes_how_a_layer_is_flipped(client):
+    copper = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board-F_Cu.gbr"
+    files = {"file": ("board-B_Cu.gbr", copper.read_bytes(), "application/octet-stream")}
+    for asked, flip in ((None, "x"), ("auto", "x"), ("none", "none"), ("Y", "y")):
+        response = client.post("/api/jobs", files=files, data={} if asked is None else {"mirror": asked})
+        assert response.status_code == 200, response.text
+        assert response.json()["design"]["mirror"] == flip
+    response = client.post("/api/jobs", files=files, data={"mirror": "z"})
+    assert response.status_code == 400 and "mirror must be one of none, x, y" in response.text
+
+
 @pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
 def test_a_kicad_upload_can_cut_a_paste_stencil(client):
     board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board.kicad_pcb"

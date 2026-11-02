@@ -59,6 +59,12 @@ def layer_of(path: Path | str) -> str | None:
     return match.group(1).replace("_", ".") if match else None
 
 
+def is_bottom(layer: str | None) -> bool:
+    """Whether the layer is on the board's back, cut with the board turned
+    over: B.Cu, B.Paste, B.Mask, B.SilkS."""
+    return layer is not None and layer.startswith("B.")
+
+
 def layer_word(layer: str | None) -> str:
     """What the layer draws, as a label says it: copper, paste, mask, silk,
     or the layer's own name; a layer not known is taken for copper."""

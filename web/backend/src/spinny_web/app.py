@@ -3829,8 +3829,12 @@ def create_app(
         mode: str | None = Form(None),
         fill: str | None = Form(None),
         thickness: float | None = Form(None),
+        mirror: str | None = Form(None),
     ):
         options = ImportOptions(tolerance=backend.tolerance)
+        # Left out or auto, a layer on the back is flipped in X.
+        if mirror and mirror.strip().lower() != "auto":
+            options.mirror = mirror.strip().lower()
         if layer:
             options.layer = layer.strip()
         elif mode and mode.strip().lower() == MODE_DISPENSE:

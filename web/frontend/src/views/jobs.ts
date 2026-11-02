@@ -179,6 +179,18 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         el("option", { value: "rings" }, "rings"),
         el("option", { value: "lines" }, "lines"),
     );
+    // A layer on the back is cut with the board turned over: flipped in X
+    // unless said otherwise, so its copper lands where it is.
+    const mirrorField = el("select", {
+        class: "field",
+        "aria-label": "Mirror",
+        title: "How the layer is flipped (gerber and KiCad only). Auto flips a layer on the back (B.Cu, B.Paste) in X, for the board turned over left to right, and leaves the front as drawn",
+    },
+        el("option", { value: "auto" }, "auto"),
+        el("option", { value: "none" }, "none"),
+        el("option", { value: "x" }, "flip X"),
+        el("option", { value: "y" }, "flip Y"),
+    ) as HTMLSelectElement;
     const modeField = el("select", {
         class: "field",
         "aria-label": "Board mode",
@@ -221,6 +233,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         labeled("Offset y", offsetY),
         labeled("Layer", layerField),
         layerList,
+        labeled("Mirror", mirrorField),
         labeled("Board", modeField),
         clearLabel,
         fillLabel,
@@ -309,6 +322,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         const layer = layerField.value.trim();
         if (layer) {
             out.layer = layer;
+        }
+        if (mirrorField.value === "none" || mirrorField.value === "x" || mirrorField.value === "y") {
+            out.mirror = mirrorField.value;
         }
         if (modeField.value === "deposit") {
             out.mode = modeField.value as BoardMode;

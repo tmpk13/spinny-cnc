@@ -315,6 +315,22 @@ describe("building jobs", () => {
         expect(deposited.note).toContain("deposition need the real backend");
     });
 
+    test("a back layer is flipped in X unless the upload says otherwise, as the backend flips it", () => {
+        const front = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", {}, limits).job;
+        const back = buildJob("0002", "board-B_Cu.gbr", "G04 nothing*", {}, limits).job;
+        const asDrawn = buildJob("0002", "board-B_Cu.gbr", "G04 nothing*", { mirror: "none" }, limits).job;
+        const points = (paths: [number, number][][], sign = 1): string[] =>
+            paths.flat().map(([x, y]) => `${(Math.round(sign * x * 1000) / 1000) + 0},${Math.round(y * 1000) / 1000}`).sort();
+        expect(back.layer).toBe("B.Cu");
+        expect(front.design?.mirror).toBe("none");
+        expect(back.design?.mirror).toBe("x");
+        // Centered on the axis, so the board turned over is the front about x = 0.
+        expect(points(back.copper)).toEqual(points(front.copper, -1));
+        expect(points((back.pads ?? []).map(([x, y]) => [[x, y]]))).toEqual(points((front.pads ?? []).map(([x, y]) => [[x, y]]), -1));
+        expect(points(asDrawn.copper)).toEqual(points(front.copper));
+        expect(() => buildJob("0002", "board-B_Cu.gbr", "G04*", { mirror: "z" as "x" }, limits)).toThrow("mirror must be one of none, x, y");
+    });
+
     test("json is taken as a job", () => {
         const text = JSON.stringify({ name: "j", groups: [{ label: "g", paths: [[[0, 10], [1, 10]]] }] });
         const built = buildJob("0003", "j.json", text, {}, limits);

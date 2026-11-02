@@ -177,6 +177,44 @@ def test_kicad_board_import_exports_gerbers():
     assert job.outline
 
 
+@pytest.mark.parametrize("mode", ["isolate", "deposit", "dispense"])
+def test_a_back_layer_is_flipped_in_x_with_its_pads_and_design_map(tmp_path, mode):
+    outline = BOARD_COPPER.parent / "board-Edge_Cuts.gbr"
+    if not BOARD_COPPER.exists() or not outline.exists():
+        pytest.skip("needs the board's copper and outline gerbers")
+    # The front's copper under a back layer's name, with the same outline.
+    back = tmp_path / "board-B_Cu.gbr"
+    shutil.copy(BOARD_COPPER, back)
+    shutil.copy(outline, tmp_path / outline.name)
+    options = {"spot": 0.1, "offset": (0.0, 14.0), "mode": mode}
+    front = jobs.from_board(BOARD_COPPER, "front", ImportOptions(**options))
+    flipped = jobs.from_board(back, "back", ImportOptions(**options))
+    assert flipped.layer == "B.Cu" and front.design is not None and flipped.design is not None
+    assert (front.design.mirror, flipped.design.mirror) == ("none", "x")
+
+    def points(contours) -> list:
+        return sorted((round(x, 3) + 0.0, round(y, 3)) for contour in contours for x, y in contour)
+
+    def mirrored(contours) -> list:
+        return sorted((round(-x, 3) + 0.0, round(y, 3)) for contour in contours for x, y in contour)
+
+    # Centered on the offset, so the board turned over is the front about x = 0.
+    assert points(flipped.copper) == mirrored(front.copper)
+    assert points([[(x, y) for x, y, _ in flipped.pads]]) == mirrored([[(x, y) for x, y, _ in front.pads]])
+    if mode != "dispense":
+        assert points(flipped.outline) == mirrored(front.outline)
+    # The design map takes a gerber point to where the job has it.
+    gerber = (front.pads[0][0] - front.design.shift[0], front.pads[0][1] - front.design.shift[1])
+    x, y = flipped.design.to_job(gerber)
+    assert any(abs(x - px) < 1e-3 and abs(y - py) < 1e-3 for px, py, _ in flipped.pads)
+    assert flipped.design.angle_to_job(30.0) == pytest.approx(150.0)
+    # Asked for none, the back is cut as drawn.
+    plain = jobs.from_board(back, "plain", ImportOptions(**options, mirror="none"))
+    assert points(plain.copper) == points(front.copper)
+    with pytest.raises(JobImportError, match="mirror"):
+        ImportOptions(mirror="z").check()
+
+
 def words(line: str) -> dict[str, str]:
     return {word[0]: word[1:] for word in line.split()[1:]}
 

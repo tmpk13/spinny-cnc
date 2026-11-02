@@ -2,7 +2,7 @@
 // coupon for the formats only the real backend can read, placement and stats.
 
 import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
-import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
+import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
 type Matrix = [number, number, number, number, number, number];
@@ -1254,6 +1254,7 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
             rotation: rawDesign["rotation"] === undefined ? 0 : finiteNumber(rawDesign["rotation"], "design rotation"),
             // A job file carries no board file: the camera cannot look for it.
             board: false,
+            mirror: rawDesign["mirror"] === "x" || rawDesign["mirror"] === "y" ? rawDesign["mirror"] : "none",
         };
     }
     const job: Job = {
@@ -1303,6 +1304,31 @@ function layerWord(layer: string | null): string {
 }
 /** What a board import makes, and what a deposit may fill with, as the backend names them. */
 const MODES: string[] = ["isolate", "deposit", "dispense"];
+/** How a board layer may be flipped, as the backend names them. */
+const MIRRORS: string[] = ["none", "x", "y"];
+
+/** Whether a layer is on the board's back, cut with the board turned over. */
+export function isBottom(layer: string | null): boolean {
+    return layer !== null && layer.startsWith("B.");
+}
+
+/** A board's geometry flipped as its layer is, before it is placed. */
+function flipped<T extends { groups: { label: string; paths: Path[] }[]; copper?: Path[]; outline?: Path[]; pads?: PadPoint[]; holes?: HolePoint[] }>(geometry: T, mirror: Mirror): T {
+    if (mirror === "none") {
+        return geometry;
+    }
+    const fx = mirror === "x" ? -1 : 1;
+    const fy = mirror === "y" ? -1 : 1;
+    const paths = (list: Path[]): Path[] => list.map((path) => path.map(([x, y]) => [x * fx, y * fy] as Point));
+    return {
+        ...geometry,
+        groups: geometry.groups.map((group) => ({ ...group, paths: paths(group.paths) })),
+        copper: geometry.copper && paths(geometry.copper),
+        outline: geometry.outline && paths(geometry.outline),
+        pads: geometry.pads?.map(([x, y, area]) => [x * fx, y * fy, area] as PadPoint),
+        holes: geometry.holes?.map(([x, y, d]) => [x * fx, y * fy, d] as HolePoint),
+    };
+}
 const FILL_CHOICES: string[] = ["contour", "radial", "rings", "lines"];
 
 /** Turns an uploaded file into a job the way the backend would, as far as the browser can. */
@@ -1350,6 +1376,9 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     }
     if (mode === "dispense" && (clear !== "off" || options.fill !== undefined)) {
         throw new Error("a dispense lays a dot on every pad: it takes neither clear nor fill");
+    }
+    if (options.mirror !== undefined && !MIRRORS.includes(options.mirror)) {
+        throw new Error(`mirror must be one of ${MIRRORS.join(", ")}`);
     }
 
     if (extension === "json") {
@@ -1413,7 +1442,10 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         }
     }
 
-    const placed = placeJob(geometry, anchor, offset);
+    // A layer on the back is cut with the board turned over, flipped in X
+    // unless the upload says otherwise.
+    const mirror: Mirror = board ? options.mirror ?? (isBottom(jobLayer) ? "x" : "none") : "none";
+    const placed = placeJob(flipped(geometry, mirror), anchor, offset);
     // A gcode group keeps the power and feed the file ran it at.
     const groups: Group[] = placed.groups.map((group, index) => ({
         label: group.label,
@@ -1443,7 +1475,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         pads: board ? placed.pads : [],
         holes: board ? placed.holes : [],
         // The design's frame is the coupon's own here, so the map is the placement.
-        design: board ? { shift: placed.shift, rotation: 0, board: extension === "kicad_pcb" } : null,
+        design: board ? { shift: placed.shift, rotation: 0, board: extension === "kicad_pcb", mirror } : null,
         groups,
         outline: placed.outline,
         copper: placed.copper,
