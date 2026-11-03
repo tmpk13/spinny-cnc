@@ -38,6 +38,7 @@ from . import __version__, calibration, center
 from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
+from .cameras import detect as detect_cameras
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
 from .openpnp import Device, DeviceStore, board_fit, board_goto, place_lines, plan, read_position
@@ -1902,7 +1903,15 @@ class Backend:
             )
         result = self.write_settings(dict(machine.settings), dict(machine.host) or None)
         if machine.camera:
-            self.camera.update(dict(machine.camera))
+            # The board has the file's settings by now: a camera that cannot
+            # take the file's is a message, not a failed load.
+            try:
+                self.camera.update(dict(machine.camera))
+            except CameraError as exc:
+                self.publish_message("error", f"the camera settings of {machine_id!r} were not taken: {exc}")
+            except VisionError as exc:
+                # Kept, with the camera stopped: its restart on them failed.
+                self.publish_message("error", f"the camera did not start again on {self.camera.settings().device}: {exc}")
             self.publish_camera()
         if self.config.get("last_machine") != machine_id:
             # Remembered, so the page keeps this file's controls once a
@@ -2744,10 +2753,18 @@ class Backend:
         x, y = job.design.board_to_job((float(center[0]), float(center[1])))
         return [round(x, 4), round(y, 4)]
 
+    def cameras(self) -> dict:
+        """The cameras attached, for either camera's device to be picked from."""
+        held = tuple(client.device for client in (self.camera.client, self.pnp.client) if client.running and client.device)
+        return detect_cameras(self.camera.settings().pcbv, held)
+
     def camera_settings(self, body: CameraSettingsBody) -> dict:
         patch = {key: value for key, value in body.model_dump().items() if value is not None}
-        self.camera.update(patch)
-        self.publish_camera()
+        try:
+            self.camera.update(patch)
+        finally:
+            # A restart that failed has left the camera stopped.
+            self.publish_camera()
         return self.camera_state()
 
     def camera_start(self) -> dict:
@@ -2855,8 +2872,11 @@ class Backend:
 
     def pnp_settings(self, body: PnpSettingsBody) -> dict:
         patch = {key: value for key, value in body.model_dump(exclude={"clear"}).items() if value is not None}
-        self.pnp.update(patch, tuple(body.clear))
-        self.publish_pnp()
+        try:
+            self.pnp.update(patch, tuple(body.clear))
+        finally:
+            # A restart that failed has left the up camera stopped.
+            self.publish_pnp()
         return self.pnp.state()
 
     def pnp_start(self) -> dict:
@@ -4085,6 +4105,10 @@ def create_app(
         return guarded(lambda: backend.pads_plan(body))
 
     # --- camera ---
+
+    @app.get("/api/cameras")
+    def cameras():
+        return backend.cameras()
 
     @app.get("/api/camera")
     def camera_state():

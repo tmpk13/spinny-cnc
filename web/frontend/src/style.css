@@ -2089,6 +2089,23 @@ table.cam-table input[type="checkbox"] {
     flex: 1 1 12rem;
 }
 
+/* The cameras found attached: the list takes the row's room and cuts its
+   long device names short rather than widening the panel. */
+.camera-pick-label {
+    flex: 1 1 16rem;
+    min-width: 0;
+}
+
+.camera-pick-list {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.camera-found {
+    margin: 0 0 0.5rem;
+    font-size: 0.82rem;
+}
+
 .badge[data-camera="locked"] {
     background: var(--jog);
     color: var(--on-fill);

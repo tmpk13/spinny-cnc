@@ -2,6 +2,7 @@
 
 import type {
     AlignState,
+    CamerasResponse,
     CameraState,
     Compensate,
     ComponentsResponse,
@@ -92,6 +93,8 @@ export interface AppState {
     probeDraft: Grid | null;
     /** The camera on the head: its settings, picture, pose and find routine; null until read. */
     camera: CameraState | null;
+    /** The cameras attached, which either camera's device is picked from, and when they were listed (ms, the page's clock); null until listed. */
+    cameras: (CamerasResponse & { at: number }) | null;
     /** The alignment marks and their fit; null until read. */
     align: AlignState | null;
     /** The up camera of the PNP page; null until read. */
@@ -137,6 +140,7 @@ export function initialState(mock: boolean): AppState {
         heightMap: null,
         probeDraft: null,
         camera: null,
+        cameras: null,
         align: null,
         pnp: null,
         components: null,

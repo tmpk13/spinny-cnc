@@ -1082,6 +1082,36 @@ export interface CameraSettings {
     mm_per_px: number;
 }
 
+/** A size a camera captures at, with the best rate it gives there. */
+export interface CameraMode {
+    /** WIDTHxHEIGHT. */
+    size: string;
+    /** Frames a second; 0 when the camera does not say. */
+    fps: number;
+}
+
+/** A camera the backend found attached, for a camera's device to be picked from. */
+export interface DetectedCamera {
+    /** What the device setting is given: a stable /dev/v4l name, a stream's URL, or socket://host:port. */
+    device: string;
+    /** Every name that reaches the camera (its node, its links), so a device set by any of them is known as it. */
+    names: string[];
+    /** What the camera calls itself, or what it is. */
+    name: string;
+    /** `v4l2` a camera on the backend's computer, `stream` a stream on a forwarded port, `pcbv` a pcbv serving on one. */
+    kind: "v4l2" | "stream" | "pcbv";
+    /** Largest first; empty when the camera does not say. */
+    modes: CameraMode[];
+    /** A stream: whether its camera gives pictures; null when not known. */
+    online: boolean | null;
+}
+
+export interface CamerasResponse {
+    cameras: DetectedCamera[];
+    /** Why some cameras could not be looked for (pcbv not built, for one). */
+    problems: string[];
+}
+
 export interface CameraFrame {
     width: number;
     height: number;

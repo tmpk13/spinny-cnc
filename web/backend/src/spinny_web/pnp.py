@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
 
+from .camera import CAPTURE_KEYS
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError
 from .log import log
@@ -531,9 +532,10 @@ class UpCamera:
 
     def update(self, patch: dict, clear: tuple[str, ...] = ()) -> UpCameraSettings:
         """Keeps new settings, the whole set checked first; `clear` names the
-        ones (position, height) to take back to none."""
-        current = self.settings().model_dump()
-        merged = {**current, **{key: value for key, value in patch.items() if value is not None}}
+        ones (position, height) to take back to none. A running camera given
+        another device, size, rate or program starts again on them."""
+        before = self.settings()
+        merged = {**before.model_dump(), **{key: value for key, value in patch.items() if value is not None}}
         for key in clear:
             if key in ("position", "height"):
                 merged[key] = None
@@ -541,8 +543,15 @@ class UpCamera:
             merged["position"] = tuple(float(v) for v in merged["position"])
         settings = UpCameraSettings.model_validate(merged)
         settings.check()
+        restart = self.client.running and any(getattr(settings, key) != getattr(before, key) for key in CAPTURE_KEYS)
+        if restart and self.routine_active:
+            raise PnpError("the up camera routine is under way: abort it first")
         self.config["pnp"] = settings.model_dump()
         self._save()
+        if restart:
+            # A start that fails leaves the camera stopped and says why.
+            self.client.close()
+            self.start()
         return settings
 
     def place(self) -> CameraPlace:

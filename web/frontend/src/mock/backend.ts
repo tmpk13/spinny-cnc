@@ -51,6 +51,8 @@ import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, pa
 import {
     BOARD_MISPLACEMENT,
     CAMERA_TRUTH,
+    CAPTURE_KEYS,
+    MOCK_CAMERAS,
     POSE_AGE_MS,
     POSE_FPS,
     boardPose,
@@ -73,6 +75,7 @@ import type {
     AlignState,
     CameraPose,
     CameraRoutine,
+    CamerasResponse,
     CameraSettings,
     CameraState,
     MarkRequest,
@@ -5178,6 +5181,10 @@ export class MockBackend implements Api, EventFeed {
         };
     }
 
+    async cameras(): Promise<CamerasResponse> {
+        return { cameras: structuredClone(MOCK_CAMERAS), problems: [] };
+    }
+
     async camera(): Promise<CameraState> {
         return this.cameraStateOf();
     }
@@ -5215,6 +5222,12 @@ export class MockBackend implements Api, EventFeed {
         }
         if (patch.mm_per_px !== undefined) {
             next.mm_per_px = patch.mm_per_px;
+        }
+        // A running camera starts again on other capture settings, as the
+        // backend's does, but not under the find routine.
+        const restart = this.cameraRunning && CAPTURE_KEYS.some((key) => next[key] !== this.cameraConfig[key]);
+        if (restart && this.finding) {
+            throw new ApiError(409, "the camera is finding the mark: abort that first");
         }
         this.cameraConfig = next;
         this.emitCamera();
@@ -5827,6 +5840,10 @@ export class MockBackend implements Api, EventFeed {
             checkPnpSettings(next);
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        const restart = this.pnpRunning && CAPTURE_KEYS.some((key) => next[key] !== this.pnpConfig[key]);
+        if (restart && this.pnpSession) {
+            throw new ApiError(409, "the up camera routine is under way: abort it first");
         }
         this.pnpConfig = next;
         this.emitPnp();

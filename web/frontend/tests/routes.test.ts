@@ -27,6 +27,15 @@ function fakeFetch(): { calls: Call[]; fetchFn: (url: string, init?: RequestInit
     return { calls, fetchFn };
 }
 
+describe("HttpApi camera list route", () => {
+    test("the cameras attached are asked for with a GET", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.cameras();
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([["GET", "/api/cameras", null]]);
+    });
+});
+
 describe("HttpApi pick and place routes", () => {
     test("methods, paths and bodies follow the contract", async () => {
         const { calls, fetchFn } = fakeFetch();

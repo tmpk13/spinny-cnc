@@ -264,8 +264,21 @@ backend, build it there or point `pcbv` at a binary built for it). The
 Camera panel on the Machine page starts it, shows its picture with a
 crosshair at the center, and, with *Look for board* on a job imported
 from a KiCad file, where on the board the picture is and how well it is
-locked. The camera is useful once the machine knows where it looks from
-the tool:
+locked.
+
+The panel's *Camera* list holds the cameras attached: the ones on the
+backend's computer, under their stable `/dev/v4l/by-id` names, and the
+streams of a Pi forwarded here (below). They are listed when the panel
+comes into view; *Detect* lists them again after one is plugged in.
+Picking one fills *Device*, *Size* and *fps* (the size kept when the
+camera has it, else 1280x720 or the nearest below; the fps lowered only
+past what the camera gives), and *Start* sends what the fields show
+before starting. A device can still be typed into *Device* by hand.
+*Apply* on a running camera with another device, size or fps starts it
+again on them. The Up camera panel on the PNP page has the same list,
+and each list says which camera the other one is set to.
+
+The camera is useful once the machine knows where it looks from the tool:
 
 1. Put a piece of scrap, or a board edge, under the tool and press *Make
    mark* (a spindle machine: a short plunge at the depth and plunge rate
@@ -288,10 +301,12 @@ deploy with `mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
 (the deploy lists the names it finds, the `video-index0` one is the
 picture; `<name>@640x480@15` picks another mode than 1280x720 at 30 fps;
 a second `--camera`, the up camera, gets the next port), keep
-`mise run relay-pi -- user@host` running, and set the camera's device to
-`http://127.0.0.1:2325/snapshot` (the second one 2326). The size is the
-one deployed; the fps in the settings is how often a picture is asked
-for: 10 leaves a Pi Zero's WiFi room for the controller's lines, and
+`mise run relay-pi -- user@host` running, and pick `stream on port 2325`
+in the Camera list, which is `http://127.0.0.1:2325/snapshot` (the second
+one 2326; the backend looks at the ports relay-pi forwards, the ones in
+`SPINNY_CAMERA_PORTS` when that is set where the backend runs). The size
+is the one deployed; the fps in the settings is how often a picture is
+asked for: 10 leaves a Pi Zero's WiFi room for the controller's lines, and
 `<name>@640x480` a quarter of the bytes per picture. (`/stream` instead
 pushes every frame and falls seconds behind on a slow link.) While the
 camera is unplugged the picture is ustreamer's NO SIGNAL card.
@@ -303,7 +318,7 @@ The PNP tab is for placing parts with a nozzle on the head of an X/Y
 machine and a camera fixed to the machine, looking up at the nozzle. Its
 Setup panel leads through it:
 
-1. Start the up camera (its device, size and fps in the Up camera panel;
+1. Start the up camera (picked in the Up camera panel's list, or its device typed in;
    the spots say whether the finder looks for something dark or bright).
 2. Jog the nozzle over the camera until it shows in the picture and press
    *Center nozzle*: the head rises to the travel height, comes down to

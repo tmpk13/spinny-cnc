@@ -546,3 +546,10 @@
   margin closes come as a switched-off group; the job's margin row cuts
   it again and the preview shows pads, margin and cuts
   (`spinny_laser.stencil`, `POST /api/jobs/{id}/margin`).
+- Camera lists (2026-11-03): the Camera and Up camera panels list the
+  cameras attached (`GET /api/cameras`: pcbv's V4L2 cameras under their
+  by-id names, by-path for alike ones without serials; ustreamer streams
+  and pcbvs on the ports relay-pi forwards) when they come into view and on
+  Detect; a pick fills Device, Size and fps, a device can still be typed;
+  Start sends what the fields show, and Apply restarts a running camera on
+  another device, size or fps.

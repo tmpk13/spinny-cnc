@@ -4,6 +4,7 @@ import type {
     AlignFit,
     AlignMarkRequest,
     AlignState,
+    CamerasResponse,
     CameraSettings,
     CameraState,
     CamGcodeResponse,
@@ -193,8 +194,11 @@ export interface Api {
     /** The points probing the pads would visit, how many pads were under the area and about how long, without moving anything. */
     planPads(request: PadProbeRequest): Promise<PadProbePlan>;
 
+    /** The cameras attached, for the camera's or the up camera's device to be picked from. */
+    cameras(): Promise<CamerasResponse>;
     /** The camera state: its settings, whether it runs, the board it looks for, the mark, the newest pose and the find routine. */
     camera(): Promise<CameraState>;
+    /** Keeps settings; a running camera given another device, size, fps or program starts again on them. */
     cameraSettings(patch: Partial<CameraSettings>): Promise<CameraState>;
     cameraStart(): Promise<CameraState>;
     cameraStop(): Promise<CameraState>;
@@ -227,7 +231,7 @@ export interface Api {
 
     /** The up camera: its settings, whether it runs, the routine and the part last looked at. */
     pnp(): Promise<PnpState>;
-    /** Keeps settings; `clear` takes the position or the height back to none. */
+    /** Keeps settings; `clear` takes the position or the height back to none. A running up camera given another device, size, fps or program starts again on them. */
     pnpSettings(patch: Partial<PnpSettings> & { clear?: ("position" | "height")[] }): Promise<PnpState>;
     pnpStart(): Promise<PnpState>;
     pnpStop(): Promise<PnpState>;
@@ -647,6 +651,10 @@ export class HttpApi implements Api {
 
     planPads(request: PadProbeRequest): Promise<PadProbePlan> {
         return this.request<PadProbePlan>("POST", "/api/heightmap/pads/plan", request);
+    }
+
+    cameras(): Promise<CamerasResponse> {
+        return this.request<CamerasResponse>("GET", "/api/cameras");
     }
 
     camera(): Promise<CameraState> {

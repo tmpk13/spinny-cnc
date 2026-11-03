@@ -1,5 +1,6 @@
 // The PNP page: the parts of the selected board job in a list and on a
-// drawing of the board, the up camera's picture with its settings, and the
+// drawing of the board, the up camera's picture with its settings (its
+// device picked from the cameras found attached, or typed), and the
 // nozzle: where it sits over the up camera (measured by centering it),
 // where a part sits on it, and a goto that takes it over a part's place.
 // Its own setup steps lead through all of it.
@@ -9,6 +10,7 @@ import { formatFixed, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
+import { mountCameraPick } from "./camerapick.ts";
 import type { Ctx } from "./context.ts";
 import { DEVICE_SETUP, mountDevice } from "./device.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
@@ -217,7 +219,7 @@ export const PNP_SETUP: Setup = {
                 hint: "The up camera needs an X/Y machine: load one from the Config page ($cartesian=1).",
                 panel: "machine-file",
             },
-            { label: "Up camera on", done: pnp?.running === true, hint: "Press Start in the Up camera panel.", panel: "pnp-camera" },
+            { label: "Up camera on", done: pnp?.running === true, hint: "In the Up camera panel pick the camera (Detect lists the ones attached) or type its device, then press Start.", panel: "pnp-camera" },
             {
                 label: "Nozzle centered",
                 done: pnp?.position !== null && pnp?.position !== undefined && (pnp?.mm_per_px ?? 0) > 0,
@@ -348,7 +350,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     // --- the up camera ---
     const picture = el("img", { class: "vision-picture", alt: "The up camera's picture, with a crosshair at its center" }) as HTMLImageElement;
     const pictureBox = el("div", { class: "vision-picture-box hidden" }, picture);
-    const startButton = button("Start", () => act(ctx.api.pnpStart()), "btn btn-primary");
+    const startButton = button("Start", () => startCamera(), "btn btn-primary");
+    startButton.title = "start the up camera on the settings shown, sending any not applied first";
     const stopButton = button("Stop", () => act(ctx.api.pnpStop()), "btn");
     let overlayOn = true;
     const overlayButton = button("Overlay", () => {
@@ -364,6 +367,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     fps.setAttribute("aria-label", "Up camera fps");
     const nozzleSpot = polaritySelect("Nozzle spot");
     const partSpot = polaritySelect("Part spot");
+    const cameraPick = mountCameraPick(ctx, {
+        device,
+        size,
+        fps,
+        otherLabel: "head camera",
+        otherDevice: (state) => state.camera?.device ?? null,
+        visible: () => visible(),
+    });
     const cameraApply = button("Apply", () => applySettings(), "btn");
     const cameraChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
     roots.camera.append(
@@ -371,6 +382,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         el("fieldset", { class: "panel-body" },
             pictureBox,
             el("div", { class: "button-row" }, startButton, stopButton, overlayButton),
+            cameraPick.row,
+            cameraPick.note,
             el("div", { class: "field-grid" },
                 labeled("Device", device),
                 labeled("Size", size),
@@ -455,7 +468,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
     }
 
-    async function applySettings(): Promise<void> {
+    /** The camera fields typed in or picked and not applied. */
+    function cameraPatch(): Partial<PnpSettings> {
         const patch: Partial<PnpSettings> = {};
         if (cameraFields.changed(device) && device.value.trim() !== "") {
             patch.device = device.value.trim();
@@ -473,11 +487,29 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         if (cameraFields.changed(partSpot)) {
             patch.part_spot = partSpot.value as SpotPolarity;
         }
+        return patch;
+    }
+
+    async function applySettings(): Promise<void> {
+        const patch = cameraPatch();
         if (Object.keys(patch).length === 0) {
             ctx.toast("info", "nothing changed");
             return;
         }
         await act(ctx.api.pnpSettings(patch));
+    }
+
+    /** Starts the up camera on what the fields show: settings picked or typed and not applied go first. */
+    async function startCamera(): Promise<void> {
+        const patch = cameraPatch();
+        if (Object.keys(patch).length > 0) {
+            const state = await ctx.call(ctx.api.pnpSettings(patch));
+            if (!state) {
+                return;
+            }
+            ctx.store.set({ pnp: state });
+        }
+        await act(ctx.api.pnpStart());
     }
 
     async function applyMeasured(): Promise<void> {
@@ -667,6 +699,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             }
             mirrorShown = pnp.mirror;
         }
+        cameraPick.render();
         showPending();
         routineLine.textContent = pnpRoutineText(pnp);
         partLine.textContent = partOffsetText(pnp);
@@ -718,6 +751,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     globalThis.addEventListener?.("pagehide", () => {
         clearInterval(frameTimer);
         clearInterval(pollTimer);
+        cameraPick.stop();
     });
 
     ctx.store.subscribe((state) => {

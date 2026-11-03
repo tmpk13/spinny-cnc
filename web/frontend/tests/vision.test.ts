@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { jointOfBoard } from "../src/kinematics.ts";
 import { FIND_STEP_SECONDS, MockBackend } from "../src/mock/backend.ts";
-import { BOARD_MISPLACEMENT, CAMERA_TRUTH, boardVector, picturePoint } from "../src/mock/vision.ts";
+import { BOARD_MISPLACEMENT, CAMERA_TRUTH, MOCK_CAMERAS, boardVector, picturePoint } from "../src/mock/vision.ts";
 import type { WsEvent } from "../src/types.ts";
+import { cameraLabel } from "../src/views/camerapick.ts";
 import { cameraBadge, mountVision, poseText, routineText } from "../src/views/vision.ts";
 import { click, findButton, settle, setup } from "./harness.ts";
 
@@ -123,6 +124,9 @@ describe("the mock camera", () => {
         expect(running.routine).toMatchObject({ state: "running", step: "lifting", done: 0, total: 6 });
         await expect(backend.cameraStop()).rejects.toMatchObject({ status: 409 });
         await expect(backend.jog({ kind: "joint", dr: 1 })).rejects.toMatchObject({ status: 409, message: "the camera offset routine is running" });
+        // The routine has the camera: no other device or size under it, while other settings go through.
+        await expect(backend.cameraSettings({ device: "/dev/video2" })).rejects.toMatchObject({ status: 409, message: "the camera is finding the mark: abort that first" });
+        expect((await backend.cameraSettings({ finish: "bare" })).finish).toBe("bare");
         await finished(backend);
         const done = await backend.camera();
         expect(done.routine).toMatchObject({ state: "done", step: "done", done: 6, total: 6, error: null });
@@ -251,6 +255,60 @@ describe("the mock camera", () => {
             await settle();
             expect(root.querySelector(".vision-pose")?.textContent).toBe("camera stopped");
             expect(img.getAttribute("src")).toBeNull();
+        } finally {
+            panel.stop();
+        }
+    });
+});
+
+describe("the camera list", () => {
+    test("lists the cameras attached, fills the settings from a pick, and starts on what the fields show", async () => {
+        const { store, ctx, root, backend, calls } = setup();
+        await ctx.refreshCamera();
+        await ctx.refreshPnp();
+        const panel = mountVision(root, ctx);
+        try {
+            // Listed once the panel is in view.
+            await settle();
+            await settle();
+            expect(calls.filter((call) => call.name === "cameras").length).toBe(1);
+            const list = root.querySelector('select[aria-label="Detected cameras"]') as HTMLSelectElement;
+            expect(Array.from(list.options).map((option) => option.textContent)).toEqual(["pick a camera", ...MOCK_CAMERAS.map((camera) => cameraLabel(camera, null))]);
+            // The device set, /dev/video0, is the head camera by its node.
+            expect(list.value).toBe(MOCK_CAMERAS[0]!.device);
+            expect(root.querySelector(".camera-found")?.textContent).toBe("3 cameras found.");
+            // A pick fills the fields as if typed, not applied yet.
+            list.value = MOCK_CAMERAS[1]!.device;
+            list.dispatchEvent(new Event("change"));
+            const device = root.querySelector('input[aria-label="Camera device"]') as HTMLInputElement;
+            const size = root.querySelector('input[aria-label="Camera size"]') as HTMLInputElement;
+            const fps = root.querySelector('input[aria-label="Camera fps"]') as HTMLInputElement;
+            expect([device.value, size.value, fps.value]).toEqual([MOCK_CAMERAS[1]!.device, "1280x720", "30"]);
+            expect(store.get().pending["camera"]).toBe(1);
+            expect(size.title).toBe("Up Camera (mock) gives 1280x720 at 30 fps, 640x480 at 60 fps");
+            // Start sends them first, then starts.
+            click(root, "Start");
+            await settle();
+            await settle();
+            await settle();
+            expect(calls.map((call) => call.name).filter((name) => name === "cameraSettings" || name === "cameraStart")).toEqual(["cameraSettings", "cameraStart"]);
+            expect(calls.find((call) => call.name === "cameraSettings")?.args[0]).toEqual({ device: MOCK_CAMERAS[1]!.device });
+            expect(store.get().camera).toMatchObject({ running: true, device: MOCK_CAMERAS[1]!.device });
+            expect(store.get().pending["camera"]).toBeUndefined();
+            // The up camera set to the stream: the list says whose it is.
+            await backend.pnpSettings({ device: "http://localhost:2325/snapshot" });
+            await ctx.refreshPnp();
+            expect(list.options[list.options.length - 1]?.textContent).toBe(cameraLabel(MOCK_CAMERAS[2]!, "up camera"));
+            // A device typed in that is not attached is said to be so.
+            device.value = "/dev/video7";
+            device.dispatchEvent(new Event("input"));
+            expect(list.value).toBe("");
+            expect(root.querySelector(".camera-found")?.textContent).toBe("3 cameras found; the device set, /dev/video7, is not one of them.");
+            // Detect lists them again.
+            click(root, "Detect");
+            await settle();
+            await settle();
+            expect(calls.filter((call) => call.name === "cameras").length).toBe(2);
         } finally {
             panel.stop();
         }

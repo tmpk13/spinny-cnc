@@ -384,3 +384,106 @@ def test_a_find_without_the_mark_in_view_ends_as_an_error(client, fake):
     assert client.post("/api/camera/abort").status_code == 200
     state = wait_routine(client)
     assert state["routine"]["state"] == "stopped"
+
+
+def pid_of(client: VisionClient) -> int:
+    stream = client._stream
+    assert stream is not None and stream.process is not None
+    return stream.process.pid
+
+
+def test_a_running_camera_starts_again_on_new_capture_settings(pcbv):
+    camera = camera_module.Camera({}, lambda: None, lambda: None, lambda level, text: None)
+    camera.update({"pcbv": pcbv, "device": "/dev/video9"})
+    assert not camera.running
+    camera.start()
+    try:
+        camera.load_board("job1", "board.kicad_pcb")
+        first = pid_of(camera.client)
+        camera.update({"side": "back", "offset": [1.0, 2.0]})
+        assert pid_of(camera.client) == first
+        camera.update({"device": "/dev/video8", "size": "640x480"})
+        assert camera.running and pid_of(camera.client) != first
+        assert camera.client.request("hello")["camera"] == "/dev/video8"
+        # The board looked for is looked for again.
+        assert camera.board_job == "job1"
+        # Not while the routine has the camera; what the routine itself
+        # keeps still goes through.
+        gate = threading.Event()
+        camera._thread = threading.Thread(target=gate.wait, daemon=True)
+        camera._thread.start()
+        with pytest.raises(camera_module.CameraError, match="abort that first"):
+            camera.update({"device": "/dev/video7"})
+        assert camera.settings().device == "/dev/video8"
+        camera.update({"roll": 1.0})
+        gate.set()
+        camera._thread.join()
+        # A start that fails leaves the camera stopped and the settings kept.
+        with pytest.raises(VisionError, match="no-such-pcbv-program"):
+            camera.update({"pcbv": "no-such-pcbv-program"})
+        assert not camera.running and camera.board_job is None and camera.settings().pcbv == "no-such-pcbv-program"
+    finally:
+        camera.shutdown()
+
+
+def test_a_running_up_camera_starts_again_on_new_capture_settings(pcbv):
+    from spinny_web.pnp import PnpError, UpCamera
+
+    up = UpCamera({}, lambda: None, lambda: None, lambda level, text: None)
+    up.update({"pcbv": pcbv, "device": "/dev/video5"})
+    assert not up.running
+    up.start()
+    try:
+        first = pid_of(up.client)
+        up.update({"nozzle_spot": "bright", "mm_per_px": 0.01})
+        assert pid_of(up.client) == first
+        up.update({"device": "/dev/video6"})
+        assert up.running and pid_of(up.client) != first
+        assert up.client.request("hello")["camera"] == "/dev/video6"
+        gate = threading.Event()
+        up._thread = threading.Thread(target=gate.wait, daemon=True)
+        up._thread.start()
+        with pytest.raises(PnpError, match="abort it first"):
+            up.update({"fps": 10})
+        gate.set()
+        up._thread.join()
+    finally:
+        up.shutdown()
+
+
+def test_a_failed_restart_through_the_route_shows_the_camera_stopped(client, pcbv):
+    events: list[dict] = []
+    client.backend.broadcast.publish_threadsafe = events.append
+    assert client.put("/api/camera/settings", json={"pcbv": pcbv}).status_code == 200
+    assert client.post("/api/camera/start").json()["running"] is True
+    response = client.put("/api/camera/settings", json={"pcbv": "no-such-pcbv-program"})
+    assert response.status_code == 502 and "no-such-pcbv-program" in response.json()["detail"]
+    assert events[-1]["type"] == "camera" and events[-1]["running"] is False and events[-1]["pcbv"] == "no-such-pcbv-program"
+
+
+def test_a_machine_file_restarts_a_running_camera_on_its_device_and_a_failure_does_not_fail_the_load(tmp_path, pcbv):
+    machines = tmp_path / "machines"
+    machines.mkdir()
+    (machines / "seen.toml").write_text('name = "Seen"\n[camera]\ndevice = "/dev/video4"\n', encoding="utf-8")
+    (machines / "blind.toml").write_text('name = "Blind"\n[camera]\npcbv = "no-such-pcbv-program"\n', encoding="utf-8")
+    fake = FakeSerial(move_time=0.002)
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+        machines_dir=machines,
+    )
+    messages: list[tuple[str, str]] = []
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        backend.publish_message = lambda level, text: messages.append((level, text))
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        assert client.put("/api/camera/settings", json={"pcbv": pcbv}).status_code == 200
+        assert client.post("/api/camera/start").json()["running"] is True
+        assert client.post("/api/machines/seen/apply").status_code == 200
+        assert backend.camera.running and backend.camera.client.request("hello")["camera"] == "/dev/video4"
+        response = client.post("/api/machines/blind/apply")
+        assert response.status_code == 200, response.text
+        state = client.get("/api/camera").json()
+        assert state["running"] is False and state["pcbv"] == "no-such-pcbv-program"
+        assert messages[-1][0] == "error" and "did not start again on /dev/video4" in messages[-1][1]

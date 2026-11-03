@@ -6,7 +6,7 @@
 // center, x right and y down; a board vector lands at its turn by the roll.
 
 import { turned } from "../kinematics.ts";
-import type { Board, CameraPose, CameraSettings, Job, Path } from "../types.ts";
+import type { Board, CameraPose, CameraSettings, DetectedCamera, Job, Path } from "../types.ts";
 import { CAMERA_FINISHES, CAMERA_SIDES, CAMERA_SIZE } from "./machines.ts";
 
 /** How the camera really sits: the picture's center from the tool, its roll and its scale at the board. */
@@ -17,6 +17,50 @@ export interface CameraTruth {
 }
 
 export const CAMERA_TRUTH: CameraTruth = { offset: [3.5, -1.2], roll: 0.4, mmPerPx: 0.02 };
+
+/** The settings a camera captures with: a running camera given others starts again on them. */
+export const CAPTURE_KEYS = ["device", "size", "fps", "pcbv"] as const;
+
+/**
+ * The cameras the mock finds attached, as the backend lists them: two USB
+ * cameras, each a capture node and a metadata node as UVC cameras are (so
+ * the second one captures on video2), and a Pi's camera streamed to the
+ * relay's first port.
+ */
+export const MOCK_CAMERAS: DetectedCamera[] = [
+    {
+        device: "/dev/v4l/by-id/usb-Mock_Head_Camera_0001-video-index0",
+        names: [
+            "/dev/v4l/by-id/usb-Mock_Head_Camera_0001-video-index0",
+            "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0",
+            "/dev/video0",
+        ],
+        name: "Head Camera (mock)",
+        kind: "v4l2",
+        modes: [{ size: "1920x1080", fps: 15 }, { size: "1280x720", fps: 30 }, { size: "640x480", fps: 30 }],
+        online: null,
+    },
+    {
+        device: "/dev/v4l/by-id/usb-Mock_Up_Camera_0002-video-index0",
+        names: [
+            "/dev/v4l/by-id/usb-Mock_Up_Camera_0002-video-index0",
+            "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2:1.0-video-index0",
+            "/dev/video2",
+        ],
+        name: "Up Camera (mock)",
+        kind: "v4l2",
+        modes: [{ size: "1280x720", fps: 30 }, { size: "640x480", fps: 60 }],
+        online: null,
+    },
+    {
+        device: "http://127.0.0.1:2325/snapshot",
+        names: ["http://127.0.0.1:2325/snapshot", "http://localhost:2325/snapshot"],
+        name: "stream on port 2325",
+        kind: "stream",
+        modes: [{ size: "1280x720", fps: 30 }],
+        online: true,
+    },
+];
 
 /** Where the mock's board really lies against a loaded job's design: a little off, so alignment has something to find. */
 export const BOARD_MISPLACEMENT: Placement = { shift: [0.4, -0.3], rotation: 0.6 };

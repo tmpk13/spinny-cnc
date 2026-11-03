@@ -43,6 +43,8 @@ MAX_STEP = 20.0
 # How long a move may take beyond its own time before the routine gives up, s.
 MOVE_TIMEOUT = 30.0
 SETTLE_POLL = 0.05
+# The settings pcbv captures with: a running camera given others starts again.
+CAPTURE_KEYS = ("device", "size", "fps", "pcbv")
 
 
 class CameraError(Exception):
@@ -193,16 +195,34 @@ class Camera:
             return CameraSettings()
 
     def update(self, patch: dict) -> CameraSettings:
-        """Keeps new settings; the whole set is checked first."""
-        current = self.settings().model_dump()
-        merged = {**current, **{key: value for key, value in patch.items() if value is not None}}
+        """Keeps new settings; the whole set is checked first. A running
+        camera given another device, size, rate or program starts again on
+        them, looking for the board it looked for."""
+        before = self.settings()
+        merged = {**before.model_dump(), **{key: value for key, value in patch.items() if value is not None}}
         if "offset" in merged and isinstance(merged["offset"], (list, tuple)):
             merged["offset"] = tuple(float(v) for v in merged["offset"])
         settings = CameraSettings.model_validate(merged)
         settings.check()
+        restart = self.client.running and any(getattr(settings, key) != getattr(before, key) for key in CAPTURE_KEYS)
+        if restart and self.routine_active:
+            raise CameraError("the camera is finding the mark: abort that first")
         self.config["camera"] = settings.model_dump()
         self._save()
+        if restart:
+            self._restart()
         return settings
+
+    def _restart(self) -> None:
+        """Stops pcbv and starts it on the settings; a start that fails
+        leaves the camera stopped and says why."""
+        job, path = self.board_job, self._board_path
+        self.client.close()
+        self.board_job = None
+        self._board_path = None
+        self.start()
+        if job is not None and path is not None:
+            self.load_board(job, path)
 
     @property
     def mark(self) -> Point | None:

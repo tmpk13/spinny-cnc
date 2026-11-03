@@ -1,9 +1,10 @@
 // The Camera panel: the picture from the camera on the head, refreshed
 // while the panel shows and the camera runs, the pose pcbv reads off the
-// board, the camera's settings and its measured values, the board it
-// looks for, and the camera offset routine, which finds a mark made with
-// the tool in the picture and centers the picture on it. The file is
-// vision.ts: camera.ts is the 3D preview's camera.
+// board, the camera's settings (its device picked from the cameras found
+// attached, or typed) and its measured values, the board it looks for, and
+// the camera offset routine, which finds a mark made with the tool in the
+// picture and centers the picture on it. The file is vision.ts: camera.ts
+// is the 3D preview's camera.
 
 import { askConfirm } from "../confirm.ts";
 import { activePage, button, el, labeled, numberField, setLocked } from "../dom.ts";
@@ -11,6 +12,7 @@ import { formatFixed, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
+import { mountCameraPick } from "./camerapick.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often the picture is asked for while it shows, and the state polled. */
@@ -105,7 +107,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         refreshFrame(true);
     };
     const poseLine = el("p", { class: "muted vision-pose" }, poseText(null));
-    const start = button("Start", () => act(ctx.api.cameraStart()), "btn btn-primary");
+    const start = button("Start", () => startCamera(), "btn btn-primary");
+    start.title = "start the camera on the settings shown, sending any not applied first";
     const stop = button("Stop", () => act(ctx.api.cameraStop()), "btn");
 
     // The settings: what the camera is read with, and how it sits against
@@ -124,6 +127,14 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     roll.setAttribute("aria-label", "Camera roll");
     const scale = numberField({ min: 0, step: 0.001, width: "6rem" });
     scale.setAttribute("aria-label", "Camera mm per px");
+    const pick = mountCameraPick(ctx, {
+        device,
+        size,
+        fps,
+        otherLabel: "up camera",
+        otherDevice: (state) => state.pnp?.device ?? null,
+        visible: () => visible(),
+    });
     const applySettings = button("Apply", () => apply(), "btn");
     const applyMeasured = button("Apply", () => apply(), "btn");
     // How many settings fields are typed in and not applied, beside each Apply.
@@ -148,6 +159,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const body = el("fieldset", { class: "panel-body" },
         pictureBox,
         el("div", { class: "button-row" }, start, stop, overlay, poseLine),
+        pick.row,
+        pick.note,
         el("div", { class: "field-grid" },
             labeled("Device", device),
             labeled("Size", size),
@@ -237,8 +250,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         }
     }
 
-    async function apply(): Promise<void> {
-        const current = ctx.store.get().camera;
+    /** The settings fields that differ from the state: what the camera is read with. */
+    function settingsPatch(current: CameraState | null): Partial<CameraSettings> {
         const patch: Partial<CameraSettings> = {};
         const text = (field: HTMLInputElement, key: "device" | "size"): void => {
             const value = field.value.trim();
@@ -258,6 +271,25 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         if (finish.value !== current?.finish) {
             patch.finish = finish.value as CameraFinish;
         }
+        return patch;
+    }
+
+    /** Starts the camera on what the fields show: settings picked or typed and not applied go first. */
+    async function startCamera(): Promise<void> {
+        const patch = settingsPatch(ctx.store.get().camera);
+        if (Object.keys(patch).length > 0) {
+            const state = await ctx.call(ctx.api.cameraSettings(patch));
+            if (!state) {
+                return;
+            }
+            ctx.store.set({ camera: state });
+        }
+        await act(ctx.api.cameraStart());
+    }
+
+    async function apply(): Promise<void> {
+        const current = ctx.store.get().camera;
+        const patch = settingsPatch(current);
         const ox = parseNumber(offsetX.value);
         const oy = parseNumber(offsetY.value);
         if (ox !== null && oy !== null && (ox !== current?.offset[0] || oy !== current?.offset[1])) {
@@ -376,6 +408,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             follow(roll, String(camera.roll));
             follow(scale, String(camera.mm_per_px));
         }
+        pick.render();
         showPending();
         const job = state.job;
         const hasBoard = job?.design?.board === true;
@@ -402,6 +435,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         stop() {
             clearInterval(pollTimer);
             clearInterval(frameTimer);
+            pick.stop();
         },
     };
 }

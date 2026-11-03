@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MockBackend, PNP_STEP_SECONDS } from "../src/mock/backend.ts";
 import { UP_TRUTH, upPicturePoint } from "../src/mock/pnp.ts";
+import { MOCK_CAMERAS } from "../src/mock/vision.ts";
 import type { Component, PnpState } from "../src/types.ts";
 import {
     cameraOnBoard,
@@ -104,6 +105,8 @@ describe("pnp in the mock", () => {
         await expect(backend.pnpPart()).rejects.toMatchObject({ status: 400 });
         const started = await backend.pnpNozzle(1);
         expect(started.routine?.state).toBe("running");
+        // The routine has the camera: no other device, size or rate under it.
+        await expect(backend.pnpSettings({ fps: 10 })).rejects.toMatchObject({ status: 409, message: "the up camera routine is under way: abort it first" });
         // Nothing else moves the head meanwhile.
         await expect(backend.goto({ kind: "joint", r: 0 })).rejects.toMatchObject({ status: 409 });
         const done = await runRoutine(backend);
@@ -193,5 +196,46 @@ describe("the pnp page", () => {
         click(roots.parts, "Go to part");
         await settle();
         expect(backend.machine.queue.length + (backend.machine.state === "Jog" ? 1 : 0)).toBeGreaterThan(0);
+    });
+
+    test("the up camera is picked from the cameras found, started on what the fields show, and started again on another", async () => {
+        localStorage.removeItem("spinny.pnp.target");
+        const { store, ctx, calls } = setup();
+        const roots = {
+            steps: document.createElement("section"),
+            parts: document.createElement("section"),
+            board: document.createElement("section"),
+            camera: document.createElement("section"),
+            nozzle: document.createElement("section"),
+        };
+        mountPnp(roots, ctx);
+        await ctx.refreshPnp();
+        await ctx.refreshCamera();
+        const list = roots.camera.querySelector('select[aria-label="Detected cameras"]') as HTMLSelectElement;
+        expect(list.options[0]?.textContent).toBe("looking...");
+        click(roots.camera, "Detect");
+        await settle();
+        await settle();
+        // The up camera's /dev/video1 is a metadata node, no camera; the head camera's is said to be so.
+        expect(roots.camera.querySelector(".camera-found")?.textContent).toBe("3 cameras found; the device set, /dev/video1, is not one of them.");
+        expect(list.value).toBe("");
+        expect(list.options[1]?.textContent).toContain("set as the head camera");
+        list.value = MOCK_CAMERAS[1]!.device;
+        list.dispatchEvent(new Event("change"));
+        expect(store.get().pending["pnp"]).toBe(1);
+        click(roots.camera, "Start");
+        await settle();
+        await settle();
+        await settle();
+        expect(calls.map((call) => call.name).filter((name) => name === "pnpSettings" || name === "pnpStart")).toEqual(["pnpSettings", "pnpStart"]);
+        expect(store.get().pnp).toMatchObject({ running: true, device: MOCK_CAMERAS[1]!.device });
+        expect(store.get().pending["pnp"]).toBeUndefined();
+        // Another pick on a running camera: Apply starts it again there.
+        list.value = MOCK_CAMERAS[2]!.device;
+        list.dispatchEvent(new Event("change"));
+        click(roots.camera, "Apply");
+        await settle();
+        await settle();
+        expect(store.get().pnp).toMatchObject({ running: true, device: MOCK_CAMERAS[2]!.device });
     });
 });

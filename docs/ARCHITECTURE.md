@@ -26,7 +26,7 @@ line at a time.
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import (and again for another bit), the Mill page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
+| `web/backend` | serial link, job import (and again for another bit), the Mill page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
@@ -62,6 +62,9 @@ flowchart LR
         PV -->|JPEG snapshots over HTTP, forwarded by relay-pi| UST[ustreamer on a bridge Pi: spinny-camera unit]
         UST --> VIDPI[/dev/v4l/by-id camera on the Pi]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
+        BE --> FIND[cameras: the ones attached for the device lists, from pcbv cameras and from asking the forwarded ports for ustreamer state]
+        FIND -.-> VID
+        FIND -.-> UST
         MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
         CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
         CF --> CLI[spinny-cam]
@@ -120,7 +123,8 @@ record are the Pi's own.
 unit running ustreamer (from apt) on the Pi's loopback, ports 2325, 2326
 and on, passing the camera's own MJPEG through without decoding it.
 `relay-pi` forwards those with the controller's port, the camera settings
-here name `http://127.0.0.1:2325/snapshot`, and the backend starts `pcbv`
+here name `http://127.0.0.1:2325/snapshot` (the camera lists find it by
+asking the forwarded ports for ustreamer's `/state`), and the backend starts `pcbv`
 here on that URL as on a device: the decoding and the localizer run where
 the cycles are, and a Pi Zero 2 W only copies bytes. `pcbv` asks for one
 picture at a time, at most the settings' fps a second: the pushed
