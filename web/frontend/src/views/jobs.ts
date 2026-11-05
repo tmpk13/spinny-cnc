@@ -3,6 +3,7 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
+import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
 import { isDispensing, isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
@@ -218,13 +219,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const modeField = el("select", {
         class: "field",
         "aria-label": "Board mode",
-        title: "Isolate burns around the copper to take it away; deposit burns the copper itself and nothing else, for a process that lays copper down; stencil cuts round the inside of every paste opening, so the piece drops out of the film and leaves the hole (gerber and KiCad only). A deposit or a stencil leaves the board outline off",
+        title: "Isolate burns around the copper to take it away; deposit burns the copper itself and nothing else, for a process that lays copper down; stencil cuts round the inside of every paste opening, so the piece drops out of the film and leaves the hole; on the lines cuts every line of the layer where it is drawn, the beam's middle on it, and every filled shape round its edge, for Edge.Cuts, a silk screen or a drawing (gerber and KiCad only). A deposit, a stencil or the lines leave the board outline off",
     },
         el("option", { value: "isolate" }, "isolate"),
         el("option", { value: "deposit" }, "deposit"),
         el("option", { value: "stencil" }, "stencil"),
         el("option", { value: "dispense" }, "dispense"),
-    );
+        el("option", { value: "lines" }, "on the lines"),
+    ) as HTMLSelectElement;
     // A stencil shrinks every opening by this much on every side.
     const marginField = numberField({ value: 0, min: 0, max: MAX_MARGIN, step: 0.01 });
     marginField.setAttribute("aria-label", "Stencil margin");
@@ -244,6 +246,18 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const drop = el("div", { class: "drop" },
         el("p", {}, "Drop a file here (svg, json, gerber, kicad_pcb, gcode) or"),
         el("label", { class: "btn btn-quiet" }, "pick a file", fileInput),
+    );
+    // A KiCad board is cut from one of its layers: the board's own, read
+    // from the file, are offered before anything is sent.
+    const chooserTitle = el("p", { class: "layer-chooser-title" });
+    const chooserSelect = el("select", { class: "field", "aria-label": "Layer to import" }) as HTMLSelectElement;
+    const chooserImport = el("button", { type: "button", class: "btn btn-primary btn-small" }, "Import");
+    const chooserCancel = el("button", { type: "button", class: "btn btn-quiet btn-small" }, "Cancel");
+    const chooserNote = el("p", { class: "muted hint" });
+    const chooser = el("div", { class: "layer-chooser hidden", role: "dialog", "aria-label": "Layer to import" },
+        chooserTitle,
+        el("div", { class: "layer-chooser-row" }, chooserSelect, chooserImport, chooserCancel),
+        chooserNote,
     );
     const powerLabel = labeled("Power S", powerField);
     const speedLabel = labeled("Speed mm/min", speedField);
@@ -297,7 +311,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     const deleteAllButton = button("Delete all", () => removeAll(), "btn btn-quiet btn-small");
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, saveButton, deleteAllButton)),
-        drop, options, centerTest(ctx), calibrationTest(ctx), list, details,
+        drop, chooser, options, centerTest(ctx), calibrationTest(ctx), list, details,
     );
 
     /** The selected job as the file it is kept in, to put back with an upload. */
@@ -381,11 +395,91 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             if (thickness !== null) {
                 out.thickness = thickness;
             }
+        } else if (modeField.value === "lines") {
+            out.mode = modeField.value as BoardMode;
         } else if (clearField.value !== "off") {
             out.clear = clearField.value as ClearPattern;
         }
         return out;
     };
+
+    /**
+     * The layer of a KiCad board to cut, picked from the board's own layers
+     * with what is drawn on each; undefined when the file has no layer
+     * table to offer (the Layer field's goes), null when the import is
+     * called off. Picking a drawing (Edge.Cuts, a silk screen, a user
+     * layer) sets the Board choice to cut on its lines, and picking copper
+     * or paste after that sets it back.
+     */
+    async function chooseLayer(file: File): Promise<string | null | undefined> {
+        let layers: BoardLayer[];
+        try {
+            layers = boardLayers(await file.text());
+        } catch {
+            return undefined;
+        }
+        if (layers.length === 0) {
+            return undefined;
+        }
+        const has = (name: string): boolean => layers.some((layer) => layer.name === name);
+        const typed = layerField.value.trim();
+        const copper = layers.find((layer) => layer.name.endsWith(".Cu") && layer.items > 0);
+        replace(chooserSelect, ...layers.map((layer) => el("option", { value: layer.name }, layerChoiceText(layer))));
+        chooserSelect.value = has(typed) ? typed : copper?.name ?? layers[0]!.name;
+        chooserTitle.textContent = `${file.name}: the layer to cut`;
+        // The Board choice before the chooser turned it to the lines.
+        let before: string | null = null;
+        const follow = (): void => {
+            const name = chooserSelect.value;
+            const drawing = isDrawingLayer(name);
+            if (drawing && modeField.value !== "lines") {
+                before = modeField.value;
+                modeField.value = "lines";
+                showMode();
+            } else if (!drawing && before !== null && modeField.value === "lines") {
+                modeField.value = before;
+                before = null;
+                showMode();
+            }
+            const layer = layers.find((entry) => entry.name === name);
+            const empty = layer && layer.items === 0 ? "Nothing is drawn on it. " : "";
+            const how = modeField.selectedOptions[0]?.textContent ?? modeField.value;
+            chooserNote.textContent = `${empty}Board: ${how}, as set below.`;
+        };
+        follow();
+        chooser.classList.remove("hidden");
+        chooserSelect.focus();
+        return await new Promise<string | null>((resolve) => {
+            // A Board choice made by hand meanwhile is the operator's.
+            const manual = (): void => {
+                before = null;
+                follow();
+            };
+            const finish = (value: string | null): void => {
+                chooser.classList.add("hidden");
+                chooserSelect.removeEventListener("change", follow);
+                chooserSelect.removeEventListener("keydown", keys);
+                modeField.removeEventListener("change", manual);
+                chooserImport.onclick = null;
+                chooserCancel.onclick = null;
+                resolve(value);
+            };
+            const keys = (event: KeyboardEvent): void => {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    finish(chooserSelect.value);
+                } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    finish(null);
+                }
+            };
+            chooserSelect.addEventListener("change", follow);
+            chooserSelect.addEventListener("keydown", keys);
+            modeField.addEventListener("change", manual);
+            chooserImport.onclick = () => finish(chooserSelect.value);
+            chooserCancel.onclick = () => finish(null);
+        });
+    }
 
     // One upload batch at a time; a drop or pick while one runs is ignored.
     let uploading = false;
@@ -398,6 +492,15 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         fileInput.disabled = true;
         try {
             for (const file of Array.from(files)) {
+                if (file.name.toLowerCase().endsWith(".kicad_pcb")) {
+                    const layer = await chooseLayer(file);
+                    if (layer === null) {
+                        continue;
+                    }
+                    if (layer !== undefined) {
+                        layerField.value = layer;
+                    }
+                }
                 const job = await ctx.call(ctx.api.uploadJob(file, uploadOptions()));
                 await ctx.refreshJobs();
                 if (job && typeof job === "object" && "id" in job) {

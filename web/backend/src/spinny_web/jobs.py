@@ -25,6 +25,7 @@ from spinny_laser import align as alignment
 from spinny_laser import board
 from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
+from spinny_laser import lines as cut_lines
 from spinny_laser import order as cut_order
 from spinny_laser import pads as board_pads
 from spinny_laser import stencil as paste_stencil
@@ -66,9 +67,14 @@ CLEAR_CHOICES = (CLEAR_OFF, *copper_clearing.PATTERNS)
 # What a board import burns: around the copper, taking it away, or the
 # copper itself, for a process that lays it down; or round the inside of
 # every opening of the paste, cut out of a film for a solder paste stencil;
-# or, with a dispenser, a dot of paste on every pad of the layer.
-MODE_ISOLATE, MODE_DEPOSIT, MODE_STENCIL, MODE_DISPENSE = "isolate", "deposit", "stencil", "dispense"
-MODES = (MODE_ISOLATE, MODE_DEPOSIT, MODE_STENCIL, MODE_DISPENSE)
+# or, with a dispenser, a dot of paste on every pad of the layer; or on the
+# layer's lines themselves, every stroke along its middle and every filled
+# shape round its edge, for a drawing to cut or mark where it lies.
+MODE_ISOLATE, MODE_DEPOSIT, MODE_STENCIL, MODE_DISPENSE, MODE_LINES = "isolate", "deposit", "stencil", "dispense", "lines"
+MODES = (MODE_ISOLATE, MODE_DEPOSIT, MODE_STENCIL, MODE_DISPENSE, MODE_LINES)
+# The layer whose lines are the board's outline, which an import cuts as a
+# group of its own unless the layer cut is that one.
+OUTLINE_LAYER = "Edge.Cuts"
 # The layer a stencil or a dispense is read from when the upload names none.
 PASTE_LAYER = "F.Paste"
 # A stencil's openings are shrunk by at most this much on every side, mm:
@@ -670,6 +676,10 @@ class ImportOptions:
             raise JobImportError("a stencil cuts round every opening: it takes neither clear nor fill")
         if self.mode == MODE_STENCIL and self.passes != 1:
             raise JobImportError("passes counts isolation or edge loops; a stencil cuts round every opening once: set its group's passes to cut again")
+        if self.mode == MODE_LINES and (self.clear != CLEAR_OFF or self.fill is not None):
+            raise JobImportError("lines cuts on the layer's lines: it takes neither clear nor fill")
+        if self.mode == MODE_LINES and self.passes != 1:
+            raise JobImportError("passes counts isolation or edge loops; lines are cut once each: set the group's passes to cut again")
         if self.margin is not None:
             if self.mode != MODE_STENCIL:
                 raise JobImportError("margin is how much a stencil shrinks its openings; this import is not a stencil")
@@ -932,9 +942,10 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     every opening cut round its inside edge, the outline switched off for
     both.
 
-    A KiCad board is read on `options.layer`: a copper layer, or the paste
-    layer, which a stencil is cut for. A gerber is the layer it is, and the
-    groups are named for what the layer draws.
+    A KiCad board is read on `options.layer`: a copper layer, the paste
+    layer, which a stencil is cut for, or any layer whose lines `mode` lines
+    cuts on (Edge.Cuts, a silk screen, a user layer). A gerber is the layer
+    it is, and the groups are named for what the layer draws.
 
     `pace` is the machine's rail rate in mm/min over its table rate in
     deg/min, which a radial clearing or fill orders its spokes by."""
@@ -950,8 +961,10 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             temporary = tempfile.TemporaryDirectory(prefix="spinny-web-")
             into = Path(temporary.name)
             isocli.export_board(path, options.layer, outline=True, drill=True, into=into)
+            # kicad-cli names a gerber after the name a layer is shown by,
+            # F.SilkS as F_Silkscreen, which the board's table may set.
             try:
-                copper_path = board.find_layer(into, options.layer)
+                copper_path = board.find_plotted(into, options.layer, path)
             except board.LayerError:
                 raise JobImportError(f"{path.name} has no layer {options.layer}") from None
             source = "kicad"
@@ -971,7 +984,11 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             outline_path = None
         image = gerber.read(copper_path)
         copper = geom.copper(image)
-        if not copper:
+        # Lines drawn with no width leave no ink, and are lines all the same.
+        drawn = cut_lines.drawn_lines(image) if options.mode == MODE_LINES else []
+        if options.mode == MODE_LINES and not drawn:
+            raise JobImportError(f"{copper_path.name} draws no lines")
+        if not copper and options.mode != MODE_LINES:
             raise JobImportError(f"{copper_path.name} draws no {word}")
         # The pads and holes flipped as the layer is; the placement then
         # moves them as it moves the copper.
@@ -1024,6 +1041,15 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             if not cut.paths:
                 raise JobImportError(f"a margin of {margin:g} mm closes every opening of {copper_path.name}")
             groups = stencil_groups(cut, options, word)
+        elif options.mode == MODE_LINES:
+            # The beam's middle runs on the lines, so its edge reaches half
+            # a spot past them.
+            reach = options.spot / 2.0
+            shift = isolate.placement(drawn, config, reach, [(copper, 0.0), (outline, reach)])
+            placed = isolate.transform(copper, config, shift)
+            outline = [list(p) for p in isolate.transform(outline, config, shift)]
+            lines = cut_lines.ordered([list(p) for p in isolate.transform(drawn, config, shift)], pace=pace)
+            groups = lines_groups(lines, options, layer)
         else:
             plan = isolate.build(copper, config, outline=outline)
             placed, outline = plan.copper, plan.outline
@@ -1057,7 +1083,9 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     dx, dy = shift
     pads = [(round(x + dx, 4), round(y + dy, 4), area) for x, y, area in pads]
     holes = [(round(x + dx, 4), round(y + dy, 4), d) for x, y, d in holes]
-    if outline and options.mode != MODE_DISPENSE:
+    # The outline's own lines are the job when it is the layer cut on them.
+    outline_cut = not (options.mode == MODE_LINES and layer == OUTLINE_LAYER)
+    if outline and options.mode != MODE_DISPENSE and outline_cut:
         groups.append(
             Group(
                 label="board outline pass 1",
@@ -1066,8 +1094,9 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
                 # A deposit burns copper wherever the beam goes, so the
                 # outline is there to cut the board free with a power of its
                 # own once the copper is down, and is off until then; a
-                # stencil's film needs no board's shape unless asked.
-                enabled=options.mode not in (MODE_DEPOSIT, MODE_STENCIL),
+                # stencil's film needs no board's shape unless asked, and a
+                # drawing cut on its lines may be a mark on a board in place.
+                enabled=options.mode not in (MODE_DEPOSIT, MODE_STENCIL, MODE_LINES),
                 # A cutout inside the board before the edge that frees it.
                 paths=cut_order.inner_first([[tuple(p) for p in path] for path in outline]),
             )
@@ -1166,6 +1195,18 @@ def deposit_groups(deposition: copper_deposition.Deposition, options: ImportOpti
             )
         )
     return groups
+
+
+def lines_groups(lines: list, options: ImportOptions, layer: str | None) -> list[Group]:
+    """One group of the layer's lines, cut on them, named for the layer."""
+    return [
+        Group(
+            label=f"lines of {layer}" if layer else "lines of the layer",
+            power=options.power,
+            speed=options.speed,
+            paths=[[tuple(p) for p in line] for line in lines],
+        )
+    ]
 
 
 def stencil_groups(cut: paste_stencil.Stencil, options: ImportOptions, word: str = "paste") -> list[Group]:

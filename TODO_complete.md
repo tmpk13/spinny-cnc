@@ -557,3 +557,14 @@
   from the zoom (the finest 1-2-5 step 16 px apart, down to 0.01 mm), every
   fifth or second line heavier and labeled, drawn only over the part of the
   board in view; a ring is drawn over the arc in view so it stays round.
+- KiCad layer chooser (2026-11-05): a `.kicad_pcb` picked or dropped is not
+  sent at once; the board's own layers are offered, each with what is
+  drawn on it (`src/kicad.ts` reads the layer table and counts pads,
+  tracks, zones and drawings), and picking a drawing sets Board to on the
+  lines. F.SilkS, the courtyards, the adhesive and the Dwgs/Cmts/Eco user
+  layers are now found under the names kicad-cli gives their gerbers
+  (F_Silkscreen, User_Drawings, or the board's own), which failed before.
+- Cut on the lines (2026-11-05): Board on the lines (`mode=lines`) cuts a
+  layer where it is drawn, every stroke along its middle and every filled
+  shape round its edge, the pieces joined end to end, inner shapes first;
+  Edge.Cuts is then the job itself (`spinny_laser.lines`).

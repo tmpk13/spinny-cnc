@@ -1145,6 +1145,36 @@ input[type="number"].field {
     pointer-events: none;
 }
 
+/* A KiCad board's layers, offered before the board is sent. */
+.layer-chooser {
+    border: thin solid var(--accent);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.75rem;
+    background: color-mix(in oklab, var(--accent) 6%, var(--panel));
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.layer-chooser .layer-chooser-title {
+    margin: 0;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.layer-chooser-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.layer-chooser-row select {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+
 .drop p {
     margin: 0 0 0.6rem;
     color: var(--muted);

@@ -38,6 +38,46 @@ def test_a_gerber_names_its_layer_the_way_kicad_cli_does():
     assert board.layer_of("F_Cu-notes.gbr") is None
 
 
+def test_a_gerber_named_by_the_name_a_layer_is_shown_by_is_that_layer():
+    # kicad-cli names the gerber after the name shown, not the board file's.
+    assert board.layer_of("board-F_Silkscreen.gto") == "F.SilkS"
+    assert board.layer_of("board-B_Silkscreen.gbo") == "B.SilkS"
+    assert board.layer_of("board-User_Drawings.gbr") == "Dwgs.User"
+    assert board.layer_of("board-B_Courtyard.gbr") == "B.CrtYd"
+    assert board.layer_of("board-F_Adhesive.gbr") == "F.Adhes"
+
+
+def test_a_board_files_layer_table_gives_each_layer_the_name_it_is_shown_by():
+    table = board.layer_table(BOARD.read_text())
+    assert table["F.Cu"] == "F.Cu"
+    assert table["F.SilkS"] == "F.Silkscreen"
+    assert table["Dwgs.User"] == "User.Drawings"
+    assert table["Edge.Cuts"] == "Edge.Cuts"
+    assert len(table) == 24
+    # A layer the board names itself, and the bare names of older files.
+    own = board.layer_table('(kicad_pcb (layers (0 F.Cu signal) (39 "User.1" user "Logo") (37 F.SilkS user)) (setup (stackup (layer "F.SilkS"))))')
+    assert own == {"F.Cu": "F.Cu", "User.1": "Logo", "F.SilkS": "F.Silkscreen"}
+    assert board.layer_table("(kicad_pcb (version 20240108))") == {}
+    assert board.layer_names("User.1", own) == ["User.1", "Logo"]
+    assert board.layer_names("F.SilkS") == ["F.SilkS", "F.Silkscreen"]
+
+
+def test_a_layer_gerber_is_found_under_the_name_it_is_shown_by(tmp_path):
+    for name in ("board-F_Silkscreen.gto", "board-User_Drawings.gbr", "board-Logo.gbr", "board-F_Cu.gtl"):
+        (tmp_path / name).write_text("G04*")
+    assert board.find_layer(tmp_path, "F.SilkS").name == "board-F_Silkscreen.gto"
+    assert board.find_layer(tmp_path, "Dwgs.User").name == "board-User_Drawings.gbr"
+    assert board.find_layer(tmp_path, "User.1", {"User.1": "Logo"}).name == "board-Logo.gbr"
+    with pytest.raises(board.LayerError, match="no User.1 gerber"):
+        board.find_layer(tmp_path, "User.1")
+
+
+@needs_kicad
+def test_a_silk_screen_of_a_board_file_is_found_as_kicad_cli_plots_it():
+    design = camjob.read_board(BOARD, "F.SilkS")
+    assert design.layer == "F.SilkS" and design.copper
+
+
 def test_the_word_for_a_layer_is_what_it_draws():
     assert board.layer_word("F.Cu") == "copper"
     assert board.layer_word("In3.Cu") == "copper"

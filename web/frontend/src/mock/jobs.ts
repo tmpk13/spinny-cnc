@@ -1379,7 +1379,9 @@ function layerWord(layer: string | null): string {
     return words[kind] ?? layer;
 }
 /** What a board import makes, and what a deposit may fill with, as the backend names them. */
-const MODES: string[] = ["isolate", "deposit", "stencil", "dispense"];
+const MODES: string[] = ["isolate", "deposit", "stencil", "dispense", "lines"];
+/** The layer whose lines are the board's outline, as the backend names it. */
+const OUTLINE_LAYER = "Edge.Cuts";
 /** How a board layer may be flipped, as the backend names them. */
 const MIRRORS: string[] = ["none", "x", "y"];
 
@@ -1457,6 +1459,9 @@ export function buildJob(id: string, name: string, text: string, options: Upload
             throw new Error(`margin must be 0 to ${MAX_MARGIN} mm`);
         }
     }
+    if (mode === "lines" && (clear !== "off" || options.fill !== undefined)) {
+        throw new Error("lines cuts on the layer's lines: it takes neither clear nor fill");
+    }
     if (mode === "deposit" && clear !== "off") {
         throw new Error("clear is for isolation; a deposit takes fill instead");
     }
@@ -1510,6 +1515,21 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         } else if (mode === "stencil") {
             geometry = demoStencil(spot, margin ?? 0, word, name);
             note = `mock backend: ${word} geometry needs the real backend, showing a demo stencil`;
+        } else if (mode === "lines") {
+            // The lines as drawn: the coupon's outline for Edge.Cuts, which
+            // is then the whole job, else the edges of its copper, with the
+            // outline there to be switched on.
+            const label = jobLayer ? `lines of ${jobLayer}` : "lines of the layer";
+            geometry = {
+                groups: jobLayer === OUTLINE_LAYER
+                    ? [{ label, paths: coupon.outline }]
+                    : [{ label, paths: coupon.copper }, { label: "board outline pass 1", paths: coupon.outline, enabled: false }],
+                copper: coupon.copper,
+                outline: coupon.outline,
+                pads: coupon.pads,
+                holes: coupon.holes,
+            };
+            note = `mock backend: the lines of a layer need the real backend, showing a demo coupon's`;
         } else {
             geometry = coupon;
             note = mode === "deposit"

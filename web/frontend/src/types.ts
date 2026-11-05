@@ -421,7 +421,7 @@ export type Anchor = "center" | "keep";
 export type ClearPattern = "radial" | "rings" | "lines";
 
 /** What a board import makes: cuts around the copper, taking it away; the copper itself, for a process that lays it down; a cut round the inside of every paste opening, for a stencil; or a paste dot on every pad. */
-export type BoardMode = "isolate" | "deposit" | "stencil" | "dispense";
+export type BoardMode = "isolate" | "deposit" | "stencil" | "dispense" | "lines";
 
 /** How a deposit fills the copper inside its edge loops: loops on in to the middle, or one of the clearing fills. */
 export type DepositFill = "contour" | ClearPattern;

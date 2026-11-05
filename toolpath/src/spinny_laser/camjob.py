@@ -158,7 +158,7 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
             into = Path(temporary.name)
             isocli.export_board(path, layer, outline=True, drill=True, into=into)
             try:
-                copper_path = board.find_layer(into, layer)
+                copper_path = board.find_plotted(into, layer, path)
             except board.LayerError:
                 raise DesignError(f"{path.name} has no layer {layer}") from None
             source = "kicad"

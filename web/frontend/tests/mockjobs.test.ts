@@ -315,6 +315,17 @@ describe("building jobs", () => {
         expect(deposited.note).toContain("deposition need the real backend");
     });
 
+    test("a layer cut on its lines takes the demo coupon's, the outline itself for Edge.Cuts", () => {
+        const edge = buildJob("0004", "board.kicad_pcb", "", { mode: "lines", layer: "Edge.Cuts" }, limits);
+        expect(edge.job.groups.map((group) => group.label)).toEqual(["lines of Edge.Cuts"]);
+        expect(edge.job.groups[0]!.paths.length).toBe(demoCoupon().outline.length);
+        expect(edge.note).toContain("lines of a layer need the real backend");
+        const silk = buildJob("0004", "board.kicad_pcb", "", { mode: "lines", layer: "F.SilkS" }, limits);
+        expect(silk.job.groups.map((group) => [group.label, group.enabled])).toEqual([["lines of F.SilkS", true], ["board outline pass 1", false]]);
+        expect(() => buildJob("0004", "board.kicad_pcb", "", { mode: "lines", clear: "radial" }, limits)).toThrow("neither clear nor fill");
+        expect(() => buildJob("0004", "board.kicad_pcb", "", { mode: "lines", fill: "rings" }, limits)).toThrow("neither clear nor fill");
+    });
+
     test("a stencil cuts the demo paste round the inside of each opening the margin leaves", () => {
         const cut = (margin: number, spot = 0.1) => buildJob("0003", "board.kicad_pcb", "", { mode: "stencil", margin, spot }, limits);
         const exact = cut(0);

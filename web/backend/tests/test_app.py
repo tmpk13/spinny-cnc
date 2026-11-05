@@ -1039,3 +1039,21 @@ def test_the_last_position_the_machine_reported_is_kept_across_sessions(client, 
         config_path=tmp_path / "config.json",
     )
     assert later.snapshot()["position"]["r"] == 12.5
+
+
+@pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+def test_a_kicad_upload_can_be_cut_on_a_layers_lines(client):
+    board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board.kicad_pcb"
+    files = {"file": ("board.kicad_pcb", board.read_bytes(), "application/octet-stream")}
+    response = client.post("/api/jobs", files=files, data={"layer": "Edge.Cuts", "mode": "lines"})
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["layer"] == "Edge.Cuts"
+    assert [group["label"] for group in job["groups"]] == ["lines of Edge.Cuts"]
+    assert job["recipe"]["options"]["mode"] == "lines"
+    # Another width imports it again from the kept file.
+    response = client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.3})
+    assert response.status_code == 200, response.text
+    assert response.json()["groups"][0]["paths"] == job["groups"][0]["paths"]
+    response = client.post("/api/jobs", files=files, data={"layer": "Edge.Cuts", "mode": "lines", "clear": "radial"})
+    assert response.status_code == 400 and "neither clear nor fill" in response.text

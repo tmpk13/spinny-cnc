@@ -662,3 +662,60 @@ def test_a_layer_the_board_lacks_or_leaves_empty_is_refused():
         jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(layer="In1.Cu"))
     with pytest.raises(JobImportError, match="draws no paste"):
         jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(layer="B.Paste"))
+
+
+BOARD_EDGE = REPO / "toolpath" / "tests" / "data" / "board-Edge_Cuts.gbr"
+
+
+def test_a_layer_cut_on_its_lines_puts_the_beam_on_what_is_drawn(tmp_path):
+    from laser_sweep import gerber
+
+    job = jobs.from_board(BOARD_EDGE, "edge", ImportOptions(spot=0.2, mode="lines"))
+    assert job.layer == "Edge.Cuts"
+    # The outline's own lines are the job: no outline group besides.
+    assert [group.label for group in job.groups] == ["lines of Edge.Cuts"]
+    [loop] = job.groups[0].paths
+    assert loop[0] == loop[-1] and len(loop) > 4
+    # Every point drawn lands on the cut, moved as the design map says.
+    drawn = [point for figure in gerber.read(BOARD_EDGE).figures for point in figure.points]
+    cut = {(round(x, 6), round(y, 6)) for x, y in loop}
+    for point in drawn:
+        x, y = job.design.to_job(point)
+        assert (round(x, 6), round(y, 6)) in cut
+    # Centered with the beam's half width round the lines.
+    xs = [x for x, _ in loop]
+    assert min(xs) + max(xs) == pytest.approx(0.0, abs=1e-9)
+    # Another width moves nothing: the lines are where they are drawn.
+    copy = tmp_path / "board-Edge_Cuts.gbr"
+    copy.write_bytes(BOARD_EDGE.read_bytes())
+    wider = jobs.from_board(copy, "edge", ImportOptions(spot=0.4, mode="lines"))
+    assert wider.groups[0].paths == job.groups[0].paths
+
+
+def test_lines_take_no_clearing_fill_or_extra_loops():
+    for options, refusal in (
+        (ImportOptions(mode="lines", clear="radial"), "neither clear nor fill"),
+        (ImportOptions(mode="lines", fill="contour"), "neither clear nor fill"),
+        (ImportOptions(mode="lines", passes=3), "lines are cut once each"),
+    ):
+        with pytest.raises(JobImportError, match=refusal):
+            options.check()
+    ImportOptions(mode="lines").check()
+
+
+@pytest.mark.skipif(
+    not BOARD_SAMPLE.exists() or shutil.which("kicad-cli") is None,
+    reason="needs toolpath/tests/data/board.kicad_pcb and kicad-cli",
+)
+def test_a_silk_screen_is_cut_on_its_lines_with_the_outline_switched_off():
+    job = jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(spot=0.1, layer="F.SilkS", mode="lines"))
+    assert job.source == "kicad" and job.layer == "F.SilkS"
+    assert [group.label for group in job.groups] == ["lines of F.SilkS", "board outline pass 1"]
+    assert job.groups[0].paths and job.groups[0].enabled
+    assert not job.groups[1].enabled
+    # Isolation of the silk now finds the gerber kicad-cli names F_Silkscreen.
+    isolated = jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(spot=0.1, layer="F.SilkS"))
+    assert isolated.groups[0].label.startswith("isolation loop 1")
+    # A layer the board leaves empty draws no lines.
+    with pytest.raises(JobImportError, match="draws no lines"):
+        jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(layer="User.1", mode="lines"))

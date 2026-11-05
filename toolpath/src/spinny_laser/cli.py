@@ -152,7 +152,7 @@ def resolve_input(args, temporary: list) -> tuple[Path, Path | None, Path | None
         directory = Path(holder.name)
     isocli.export_board(source, args.layer, outline=outline_mode == AUTO, drill=drill_mode == AUTO, into=directory)
     try:
-        layer_path = board.find_layer(directory, args.layer)
+        layer_path = board.find_plotted(directory, args.layer, source)
     except board.LayerError:
         raise SourceError(f"{source.name} has no layer {args.layer}") from None
     outline = None if outline_mode in (AUTO, NONE) else Path(args.outline)

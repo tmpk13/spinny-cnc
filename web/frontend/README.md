@@ -133,7 +133,10 @@ panel's edits not applied yet are counted per panel in the store and on
 its page's tab.
 
 The Jobs panel has *Save job* (the selected job's JSON) and *Delete all*
-beside its title, and under a run that stopped short a *Resume from line*
+beside its title. A `.kicad_pcb` picked or dropped opens a layer chooser
+first (`src/kicad.ts` reads the board's layer table and counts what is
+drawn on each layer), and Board *on the lines* cuts a drawing where it
+lies. Under a run that stopped short a *Resume from line*
 row: the count of lines done, *from the start of its path*, *Plan* (what
 would go out first) and the button. The Jog panel's *Here is* row declares
 the joints without moving them, *Last known* filling in the position the

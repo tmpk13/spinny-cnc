@@ -26,13 +26,36 @@ GERBER_SUFFIXES = (".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gtp", ".gbp", ".gto
 _LAYER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)?$")
 MAX_LAYER_LENGTH = 32
 
+# The name KiCad shows a layer by where it is not the layer's own: a
+# board file names its layers F.SilkS or Dwgs.User, while kicad-cli names
+# the gerber it plots after the name shown, board-F_Silkscreen.gto and
+# board-User_Drawings.gbr. A board may give a layer a name of its own as
+# well, which its layer table carries.
+SHOWN_NAMES = {
+    "F.SilkS": "F.Silkscreen",
+    "B.SilkS": "B.Silkscreen",
+    "F.Adhes": "F.Adhesive",
+    "B.Adhes": "B.Adhesive",
+    "F.CrtYd": "F.Courtyard",
+    "B.CrtYd": "B.Courtyard",
+    "Dwgs.User": "User.Drawings",
+    "Cmts.User": "User.Comments",
+    "Eco1.User": "User.Eco1",
+    "Eco2.User": "User.Eco2",
+}
+_OWN_NAMES = {shown.replace(".", "_"): own for own, shown in SHOWN_NAMES.items()}
+
 # The layer a gerber's name ends with, the way kicad-cli names them.
 _NAMED = re.compile(
     r"(?:^|-)("
-    r"(?:F|B|In[0-9]+)_(?:Cu|Paste|Mask|SilkS|Adhes|Fab|CrtYd)"
-    r"|(?:Dwgs|Cmts|Eco[12])_User|Edge_Cuts|User_[0-9]+|Margin"
+    r"(?:F|B|In[0-9]+)_(?:Cu|Paste|Mask|SilkS|Adhes|Fab|CrtYd|Silkscreen|Adhesive|Courtyard)"
+    r"|(?:Dwgs|Cmts|Eco[12])_User|User_(?:Drawings|Comments|Eco[12])|Edge_Cuts|User_[0-9]+|Margin"
     r")$"
 )
+
+# One entry of a board file's layer table: (5 "F.SilkS" user "F.Silkscreen"),
+# or with the names bare as older files write them.
+_TABLE_ENTRY = re.compile(r'\(\s*-?[0-9]+\s+("[^"]*"|[^\s()"]+)\s+[A-Za-z_]+(?:\s+("[^"]*"|[^\s()"]+))?\s*\)')
 
 # What a layer draws, for the labels of the groups cut from it.
 _WORDS = {"Cu": "copper", "Paste": "paste", "Mask": "mask", "SilkS": "silk"}
@@ -53,9 +76,53 @@ def layer_suffix(layer: str) -> str:
 
 
 def layer_of(path: Path | str) -> str | None:
-    """The layer a gerber's name says it is, or None when the name does not say."""
+    """The layer a gerber's name says it is, by the name a board file gives
+    it (F.SilkS for board-F_Silkscreen.gto), or None when the name does not
+    say."""
     match = _NAMED.search(Path(path).stem)
-    return match.group(1).replace("_", ".") if match else None
+    if not match:
+        return None
+    named = match.group(1)
+    return _OWN_NAMES.get(named, named.replace("_", "."))
+
+
+def layer_table(text: str) -> dict[str, str]:
+    """The layers a KiCad board file's table lists, each by its name in the
+    file and the name shown for it: the board's own name for the layer when
+    it gives one, else KiCad's (F.Silkscreen for F.SilkS), else the layer's.
+    Empty when the text has no table."""
+    start = text.find("(layers")
+    if start < 0:
+        return {}
+    # The table is the first (layers ...) at the top of the file: its
+    # entries are lists, where a pad's layers are names.
+    depth = 0
+    end = start
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    table: dict[str, str] = {}
+    for match in _TABLE_ENTRY.finditer(text, start + 1, end):
+        name = match.group(1).strip('"')
+        shown = match.group(2).strip('"') if match.group(2) else ""
+        table[name] = shown or SHOWN_NAMES.get(name, name)
+    return table
+
+
+def layer_names(layer: str, table: dict[str, str] | None = None) -> list[str]:
+    """Every name a plotted gerber of the layer may be named after: the
+    layer's own, the name the board's table shows it by, KiCad's."""
+    names = [layer]
+    for other in ((table or {}).get(layer), SHOWN_NAMES.get(layer)):
+        if other and other not in names:
+            names.append(other)
+    return names
 
 
 def is_bottom(layer: str | None) -> bool:
@@ -72,18 +139,33 @@ def layer_word(layer: str | None) -> str:
     return _WORDS.get(layer.rsplit(".", 1)[-1], layer)
 
 
-def find_layer(directory: Path, layer: str) -> Path:
+def find_layer(directory: Path, layer: str, table: dict[str, str] | None = None) -> Path:
     """The gerber of the layer in a directory of plotted files, whatever its
-    extension; a job file or a drill file is never it."""
-    suffix = layer_suffix(layer)
+    extension, under the layer's own name or the name it is shown by (see
+    `layer_names`); a job file or a drill file is never it."""
     files = sorted(
         path
         for path in Path(directory).iterdir()
         if path.is_file() and path.suffix.lower() not in (".gbrjob", ".drl")
     )
-    named = [path for path in files if path.stem == suffix or path.stem.endswith(f"-{suffix}")]
-    loose = [path for path in files if suffix in path.stem]
-    found = named or loose
-    if not found:
-        raise LayerError(f"no {layer} gerber in {directory}")
-    return found[0]
+    for name in layer_names(layer, table):
+        suffix = layer_suffix(name)
+        named = [path for path in files if path.stem == suffix or path.stem.endswith(f"-{suffix}")]
+        if named:
+            return named[0]
+    for name in layer_names(layer, table):
+        suffix = layer_suffix(name)
+        loose = [path for path in files if suffix in path.stem]
+        if loose:
+            return loose[0]
+    raise LayerError(f"no {layer} gerber in {directory}")
+
+
+def find_plotted(directory: Path, layer: str, board_file: Path | str) -> Path:
+    """The gerber kicad-cli plotted into `directory` for the layer of
+    `board_file`, under whatever name the board shows the layer by."""
+    try:
+        table = layer_table(Path(board_file).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        table = {}
+    return find_layer(directory, layer, table)

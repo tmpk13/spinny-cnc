@@ -13,8 +13,6 @@
 - Groups of paths
 - Select by path
   - Live json viewer, user can edit json and see path that aligns. When user clicks on json block the segment is highlighted in preview.
-- On import from kicad file have layer selector.
-- Need to be able to cut exactly on lines/paths.
 
 - Need a logging mode. For calibration and debugging.
   - Logging mode for now is mostly for camera. Should support taking photos with and without overlays.

@@ -9,6 +9,7 @@ import type { Controls, Job, JobSummary, Machine, SettingsResponse, Snapshot, Ws
 import { mountConsole, writesSettings } from "../src/views/console.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs, progressText } from "../src/views/jobs.ts";
+import { findButton } from "./harness.ts";
 import { anyOf, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
@@ -781,6 +782,72 @@ describe("jobs", () => {
         await send();
         const uploads = calls.filter((c) => c.name === "uploadJob").map((c) => c.args[1] as { layer?: string });
         expect(uploads.map((options) => options.layer)).toEqual(["F.Cu", "F.Paste", undefined]);
+    });
+
+    test("a KiCad board's own layers are offered before it is sent, a drawing cut on its lines", async () => {
+        const { ctx, root, calls } = setup();
+        mountJobs(root, ctx);
+        const text = await Bun.file(new URL("../../../toolpath/tests/data/board.kicad_pcb", import.meta.url)).text();
+        const mode = root.querySelector('select[aria-label="Board mode"]') as HTMLSelectElement;
+        const layer = root.querySelector('input[aria-label="Board layer"]') as HTMLInputElement;
+        const chooser = root.querySelector(".layer-chooser") as HTMLElement;
+        const pick = chooser.querySelector("select") as HTMLSelectElement;
+        const drop = async (): Promise<void> => {
+            const event = new Event("drop", { cancelable: true });
+            Object.defineProperty(event, "dataTransfer", { value: { files: [new File([text], "board.kicad_pcb")] } });
+            root.querySelector(".drop")!.dispatchEvent(event);
+            for (let i = 0; i < 5; i++) {
+                await settle();
+            }
+        };
+        const uploads = (): Record<string, unknown>[] => calls.filter((c) => c.name === "uploadJob").map((c) => c.args[1] as Record<string, unknown>);
+        expect(chooser.classList.contains("hidden")).toBe(true);
+        await drop();
+        // Nothing is sent until a layer is picked; the board's own are offered.
+        expect(chooser.classList.contains("hidden")).toBe(false);
+        expect(uploads()).toEqual([]);
+        const offered = Array.from(pick.options).map((option) => option.textContent);
+        expect(offered).toContain("F.SilkS (F.Silkscreen): 10 items");
+        expect(offered).toContain("B.Paste: empty");
+        expect(pick.value).toBe("F.Cu");
+        // A drawing is cut on its lines; copper again puts the choice back.
+        pick.value = "Edge.Cuts";
+        pick.dispatchEvent(new Event("change"));
+        expect(mode.value).toBe("lines");
+        pick.value = "F.Cu";
+        pick.dispatchEvent(new Event("change"));
+        expect(mode.value).toBe("isolate");
+        pick.value = "Edge.Cuts";
+        pick.dispatchEvent(new Event("change"));
+        expect(chooser.textContent).toContain("Board: on the lines");
+        findButton(chooser, "Import").click();
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        expect(chooser.classList.contains("hidden")).toBe(true);
+        expect(uploads()).toEqual([expect.objectContaining({ layer: "Edge.Cuts", mode: "lines" })]);
+        expect(layer.value).toBe("Edge.Cuts");
+        expect(root.querySelector(".job-list")!.textContent).toContain("kicad Edge.Cuts");
+        // Called off, nothing goes; the layer last cut is offered first.
+        await drop();
+        expect(pick.value).toBe("Edge.Cuts");
+        findButton(chooser, "Cancel").click();
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        expect(uploads().length).toBe(1);
+        // A Board choice made by hand while the chooser is open stands.
+        await drop();
+        mode.value = "deposit";
+        mode.dispatchEvent(new Event("change"));
+        pick.value = "F.Cu";
+        pick.dispatchEvent(new Event("change"));
+        expect(mode.value).toBe("deposit");
+        pick.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        expect(uploads()[1]).toMatchObject({ layer: "F.Cu", mode: "deposit" });
     });
 
     test("a stencil sends its margin in place of clear and fill, and takes the paste for a copper layer", async () => {

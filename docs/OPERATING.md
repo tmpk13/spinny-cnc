@@ -15,9 +15,16 @@ inside of every paste opening, shrunk first by Margin mm on every side,
 so each piece drops out and leaves its hole; picking stencil turns a
 Layer of F.Cu into F.Paste. The preview draws every pad with its cut
 inside it, the margin being the band between them, and the job's margin
-row cuts the stencil again for another margin where it lies. The Layer
-field picks the layer a KiCad board is read from: a copper layer, or
-F.Paste. A gerber is its own layer.
+row cuts the stencil again for another margin where it lies. With Board
+set to on the lines it cuts the layer where it is drawn: every line along
+its middle and every filled shape round its edge, so Edge.Cuts cuts a part
+out on its outline, a silk screen or a user layer is burnt as drawn. The
+Layer field picks the layer a KiCad board is read from: a copper layer,
+F.Paste, or any layer to cut on its lines. A `.kicad_pcb` picked or
+dropped is not sent at once: its own layers are offered first, each with
+what is drawn on it, and picking a drawing (Edge.Cuts, a silk screen, a
+fab or user layer) sets Board to on the lines; Import sends it, Cancel or
+Escape leaves it. A gerber is its own layer.
 Open `http://localhost:8000`, connect to the board (or to
 `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
