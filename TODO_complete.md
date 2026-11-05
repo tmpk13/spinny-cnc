@@ -574,3 +574,12 @@
   height the run starts at, said with the group's first rapid, the head
   back after; the Calibration test's focus ladder is a row of lines a step
   over focus each (`POST /api/calibrate` kind `focus`).
+- Select by path and groups of paths (2026-11-05): a click on a path in the
+  preview picks it, shift or ctrl adds, Box select picks the paths inside a
+  dragged box, a group's name picks its paths; the Jobs panel moves the
+  picked paths into a new group (the first one's settings) or one the job
+  has, or deletes them; the job goes back whole (`PUT /api/jobs/{id}`).
+- Live job JSON (2026-11-05): the Job JSON panel under the preview shows the
+  job a path a line; the caret's path and point are drawn on the preview, a
+  picked path brings the caret to its line, an edit is drawn as it is typed
+  and kept with Apply.

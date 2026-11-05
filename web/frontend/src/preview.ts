@@ -14,6 +14,11 @@
 // camera, size, job and palette of the moment and copied under the head
 // on every frame; the layers are drawn again only when one of those
 // changes.
+//
+// A click (a press let go where it was) picks the path under the pointer,
+// shift or ctrl adds it or takes it back; with box selection on, a drag
+// picks every path wholly inside the box. Picked paths are drawn with a
+// halo under them, and the place the JSON panel's caret is in on top.
 
 import {
     type Camera,
@@ -31,7 +36,9 @@ import {
     zoomAt,
 } from "./camera.ts";
 import { cssVar } from "./dom.ts";
+import type { JobPlace } from "./jsontext.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
+import type { PathRef } from "./regroup.ts";
 import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Marker, Move, Path, Point } from "./types.ts";
 
 /** Every point of a probe grid that is probed, row by row from the lowest Y; a mask leaves points out. */
@@ -77,6 +84,10 @@ export const LOCK_KEY = "spinny.preview.lock";
 export const HEIGHTS_KEY = "spinny.previewHeights";
 /** Where the choice of a square grid over the rings is remembered between visits. */
 export const GRID_KEY = "spinny.preview.grid";
+/** A path this near the pointer, CSS px, is the one a click picks. */
+export const PICK_PX = 8;
+/** A press let go within this many px of where it went down is a click. */
+const CLICK_PX = 4;
 /** How strongly the finer lines of the grid and the rings are drawn beside the heavier ones. */
 const MINOR_ALPHA = 0.45;
 /** The head marker and the rail float this share of the reach over the board. */
@@ -540,6 +551,8 @@ interface Colors {
     marker: string;
     low: string;
     high: string;
+    select: string;
+    highlight: string;
 }
 
 function readColors(node: Element): Colors {
@@ -564,6 +577,8 @@ function readColors(node: Element): Colors {
         marker: cssVar(node, "--pv-marker", "#2aa198"),
         low: cssVar(node, "--hm-low", "#268bd2"),
         high: cssVar(node, "--hm-high", "#dc322f"),
+        select: cssVar(node, "--pv-select", "#d33682"),
+        highlight: cssVar(node, "--pv-highlight", "#6c71c4"),
     };
 }
 
@@ -571,6 +586,7 @@ function sameColors(a: Colors, b: Colors): boolean {
     return a.bg === b.bg && a.grid === b.grid && a.axis === b.axis && a.rail === b.rail && a.rmax === b.rmax
         && a.copper === b.copper && a.outline === b.outline && a.head === b.head && a.trail === b.trail
         && a.text === b.text && a.probe === b.probe && a.marker === b.marker && a.low === b.low && a.high === b.high
+        && a.select === b.select && a.highlight === b.highlight
         && a.groups.length === b.groups.length && a.groups.every((color, index) => color === b.groups[index]);
 }
 
@@ -583,6 +599,8 @@ interface SceneKey {
     /** A square grid under the work rather than rings about the axis. */
     grid: boolean;
     markers: Marker[];
+    selection: PathRef[];
+    highlight: JobPlace | null;
     camera: Camera;
     width: number;
     height: number;
@@ -595,6 +613,7 @@ interface SceneKey {
 
 function sameSceneKey(a: SceneKey, b: SceneKey): boolean {
     return a.job === b.job && a.probeMap === b.probeMap && sameGrid(a.probeDraft, b.probeDraft) && a.heights === b.heights && a.grid === b.grid && a.markers === b.markers
+        && a.selection === b.selection && a.highlight === b.highlight
         && sameCamera(a.camera, b.camera) && a.width === b.width && a.height === b.height && a.dpr === b.dpr
         && a.colors === b.colors && a.angle === b.angle
         && a.limits.kinematics === b.limits.kinematics && a.limits.r_max === b.limits.r_max && a.limits.z_max === b.limits.z_max;
@@ -618,6 +637,29 @@ interface Pointer {
     y: number;
     button: number;
     shiftKey: boolean;
+    /** Where it went down, and whether it has moved past a click since. */
+    downX: number;
+    downY: number;
+    moved: boolean;
+    /** It went down with a key that adds to the picked paths. */
+    additive: boolean;
+}
+
+/** The box a selection drag spans, canvas px. */
+interface SelectBox {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+}
+
+/** A canvas point's distance to the segment from `a` to `b`, px. */
+function segmentDistance(x: number, y: number, a: { x: number; y: number }, b: { x: number; y: number }): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = dx * dx + dy * dy;
+    const t = length > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / length)) : 0;
+    return Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t));
 }
 
 export class Preview {
@@ -639,6 +681,15 @@ export class Preview {
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
     private markers: Marker[] = [];
+    private selection: PathRef[] = [];
+    private highlight: JobPlace | null = null;
+    /** A drag picks the paths inside its box instead of orbiting or panning. */
+    private boxSelect = false;
+    private box: SelectBox | null = null;
+    /** Called with the path a click picked (null for none) and whether it adds to the picked ones. */
+    onPick: ((ref: PathRef | null, additive: boolean) => void) | null = null;
+    /** Called with the paths a selection box holds and whether they add to the picked ones. */
+    onBox: ((refs: PathRef[], additive: boolean) => void) | null = null;
     private heights = readFlag(HEIGHTS_KEY, true);
     /** The grid picked in this browser; null follows the machine, a grid on a cartesian one. */
     private gridChoice = readChoice(GRID_KEY);
@@ -678,6 +729,92 @@ export class Preview {
             this.probeDraft = draft;
             this.requestDraw();
         }
+    }
+
+    /** The paths picked, drawn with a halo; the same array again draws nothing new. */
+    setSelection(refs: PathRef[]): void {
+        if (refs !== this.selection) {
+            this.selection = refs;
+            this.requestDraw();
+        }
+    }
+
+    /** The place in the job the JSON panel's caret is in: its path drawn on top, and its point. */
+    setHighlight(place: JobPlace | null): void {
+        if (place !== this.highlight) {
+            this.highlight = place;
+            this.requestDraw();
+        }
+    }
+
+    /** With box selection on, a drag picks the paths inside its box; right drag still pans. */
+    get boxSelection(): boolean {
+        return this.boxSelect;
+    }
+
+    setBoxSelection(on: boolean): void {
+        this.boxSelect = on;
+        this.box = null;
+        this.requestDraw();
+    }
+
+    /**
+     * The path of the job under a canvas point: the one whose line (or dot)
+     * comes nearest, within `PICK_PX`; null when none is that near. A
+     * model's moves are no paths and are not picked.
+     */
+    pick(x: number, y: number): PathRef | null {
+        const job = this.job;
+        if (!job || this.width === 0) {
+            return null;
+        }
+        const frame = frameOf(this.camera);
+        let best: { ref: PathRef; distance: number } | null = null;
+        job.groups.forEach((group, g) => {
+            group.paths.forEach((path, p) => {
+                let nearest = Infinity;
+                let previous: { x: number; y: number } | null = null;
+                for (const [px, py] of path) {
+                    const point = project(frame, this.width, this.height, [px, py, 0]);
+                    if (!point) {
+                        previous = null;
+                        continue;
+                    }
+                    nearest = Math.min(nearest, previous ? segmentDistance(x, y, previous, point) : Math.hypot(x - point.x, y - point.y));
+                    previous = point;
+                }
+                if (nearest <= PICK_PX && (best === null || nearest < best.distance)) {
+                    best = { ref: [g, p], distance: nearest };
+                }
+            });
+        });
+        return best === null ? null : (best as { ref: PathRef }).ref;
+    }
+
+    /** Every path of the job wholly inside a box of canvas px. */
+    pathsIn(box: SelectBox): PathRef[] {
+        const job = this.job;
+        if (!job) {
+            return [];
+        }
+        const x0 = Math.min(box.x0, box.x1);
+        const x1 = Math.max(box.x0, box.x1);
+        const y0 = Math.min(box.y0, box.y1);
+        const y1 = Math.max(box.y0, box.y1);
+        const frame = frameOf(this.camera);
+        const refs: PathRef[] = [];
+        job.groups.forEach((group, g) => {
+            group.paths.forEach((path, p) => {
+                const inside = path.length > 0 && path.every(([px, py]) => {
+                    const point = project(frame, this.width, this.height, [px, py, 0]);
+                    return point !== null && point.x >= x0 && point.x <= x1 && point.y >= y0 && point.y <= y1;
+                });
+                if (inside) {
+                    refs.push([g, p]);
+                }
+            });
+        });
+        return refs;
     }
 
     /** The saved positions to mark on the board, each with its name. */
@@ -1076,7 +1213,20 @@ export class Preview {
         if (exaggeration !== null) {
             notes.unshift(`heights x${exaggeration >= 10 ? Math.round(exaggeration) : exaggeration.toFixed(1)}`);
         }
+        if (this.boxSelect) {
+            notes.unshift("box select");
+        }
         ctx.fillText(notes.join("   "), width - 6, height - 4);
+        // The selection box being dragged.
+        const band = this.box;
+        if (band) {
+            ctx.save();
+            ctx.strokeStyle = colors.select;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 3]);
+            ctx.strokeRect(Math.min(band.x0, band.x1), Math.min(band.y0, band.y1), Math.abs(band.x1 - band.x0), Math.abs(band.y1 - band.y0));
+            ctx.restore();
+        }
     }
 
     /** The farthest thing drawn, as `jobReach` has it, worked out once per job and limit rather than per frame. */
@@ -1107,6 +1257,8 @@ export class Preview {
             heights: this.heights,
             grid: this.showGrid,
             markers: this.markers,
+            selection: this.selection,
+            highlight: this.highlight,
             camera: this.camera,
             width: this.width,
             height: this.height,
@@ -1241,6 +1393,18 @@ export class Preview {
                 ctx.globalAlpha = 1;
             }
             const spot = job.spot > 0 ? job.spot : 0.1;
+            // The picked paths: a halo a few px wider than the line, under it.
+            if (this.selection.length > 0) {
+                ctx.strokeStyle = colors.select;
+                ctx.fillStyle = colors.select;
+                ctx.globalAlpha = 0.45;
+                ctx.lineWidth = Math.max(spot * scale, 1.2) + 7;
+                const picked = this.selection
+                    .map(([g, p]) => job.groups[g]?.paths[p])
+                    .filter((path): path is Path => path !== undefined);
+                this.strokePaths(ctx, frame, picked);
+                ctx.globalAlpha = 1;
+            }
             job.groups.forEach((group, index) => {
                 const color = colors.groups[index % colors.groups.length] ?? colors.axis;
                 ctx.strokeStyle = color;
@@ -1280,6 +1444,7 @@ export class Preview {
                 ctx.lineWidth = thin ? 1 : Math.max(spot * scale / 2, 1);
                 this.strokePaths(ctx, frame, job.outline);
             }
+            this.drawHighlight(ctx, frame, colors, job, spot, scale);
         }
 
         const exaggeration = this.heights ? this.drawProbe(ctx, frame, colors, reach) : null;
@@ -1303,6 +1468,44 @@ export class Preview {
         this.polyline(ctx, frame, [[-cross, 0, 0], [cross, 0, 0]]);
         this.polyline(ctx, frame, [[0, -cross, 0], [0, cross, 0]]);
         return exaggeration;
+    }
+
+    /**
+     * The place the JSON panel's caret is in: its path over everything in
+     * the highlight color, and with a point named, the segments either side
+     * of it thicker still and the point as a ring.
+     */
+    private drawHighlight(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, job: Job, spot: number, scale: number): void {
+        const place = this.highlight;
+        if (!place) {
+            return;
+        }
+        const list = place.list === "groups" ? job.groups[place.group ?? -1]?.paths : place.list === "outline" ? job.outline : job.copper;
+        const path = list?.[place.path];
+        if (!path || path.length === 0) {
+            return;
+        }
+        ctx.strokeStyle = colors.highlight;
+        ctx.fillStyle = colors.highlight;
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = Math.max(spot * scale, 1.2) + 3;
+        this.strokePaths(ctx, frame, [path]);
+        if (place.point !== null && path[place.point]) {
+            const i = place.point;
+            const around = path.slice(Math.max(0, i - 1), Math.min(path.length, i + 2));
+            ctx.lineWidth = Math.max(spot * scale, 1.2) + 7;
+            this.strokePaths(ctx, frame, [around]);
+            const [x, y] = path[i]!;
+            const p = project(frame, this.width, this.height, [x, y, 0]);
+            if (p) {
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 1;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+        ctx.globalAlpha = 1;
     }
 
     /** The markers' names beside them, in screen space so they stay upright. */
@@ -1544,7 +1747,11 @@ export class Preview {
         on("contextmenu", (event) => event.preventDefault());
         on("pointerdown", (event) => {
             const [x, y] = this.canvasPoint(event);
-            this.pointers.set(event.pointerId, { x, y, button: event.button, shiftKey: event.shiftKey });
+            this.pointers.set(event.pointerId, {
+                x, y, button: event.button, shiftKey: event.shiftKey,
+                downX: x, downY: y, moved: false,
+                additive: event.shiftKey || event.ctrlKey || event.metaKey,
+            });
             canvas.setPointerCapture?.(event.pointerId);
         });
         on("pointermove", (event) => {
@@ -1553,6 +1760,19 @@ export class Preview {
                 return;
             }
             const [x, y] = this.canvasPoint(event);
+            if (!pointer.moved && Math.hypot(x - pointer.downX, y - pointer.downY) > CLICK_PX) {
+                pointer.moved = true;
+            }
+            if (this.boxSelect && pointer.button === 0 && this.pointers.size === 1) {
+                // A drag with box selection on draws the box, nothing turns.
+                if (pointer.moved) {
+                    this.box = { x0: pointer.downX, y0: pointer.downY, x1: x, y1: y };
+                    this.requestDraw();
+                }
+                pointer.x = x;
+                pointer.y = y;
+                return;
+            }
             const others = Array.from(this.pointers.entries()).filter(([id]) => id !== event.pointerId);
             if (others.length > 0) {
                 // Two fingers: zoom by how their distance changed, about
@@ -1573,7 +1793,22 @@ export class Preview {
             pointer.y = y;
         });
         const end = (event: PointerEvent): void => {
+            const pointer = this.pointers.get(event.pointerId);
+            const alone = this.pointers.size === 1;
             this.pointers.delete(event.pointerId);
+            if (!pointer || event.type !== "pointerup" || !alone || pointer.button !== 0) {
+                this.box = null;
+                return;
+            }
+            if (this.box) {
+                const refs = this.pathsIn(this.box);
+                this.box = null;
+                this.requestDraw();
+                this.onBox?.(refs, pointer.additive);
+            } else if (!pointer.moved) {
+                const [x, y] = this.canvasPoint(event);
+                this.onPick?.(this.pick(x, y), pointer.additive);
+            }
         };
         on("pointerup", end);
         on("pointercancel", end);

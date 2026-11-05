@@ -719,3 +719,25 @@ def test_a_silk_screen_is_cut_on_its_lines_with_the_outline_switched_off():
     # A layer the board leaves empty draws no lines.
     with pytest.raises(JobImportError, match="draws no lines"):
         jobs.from_board(BOARD_SAMPLE, "board", ImportOptions(layer="User.1", mode="lines"))
+
+
+def test_a_job_is_replaced_by_its_edited_json_and_checked_as_an_upload_is():
+    old = from_svg(SVG, "drawing", ImportOptions())
+    data = old.model_dump()
+    data["groups"][0]["power"] = 250
+    data["groups"].append({"label": "moved", "speed": 900, "paths": [[[1, 1], [2, 2]]]})
+    data.pop("name")
+    made = jobs.replaced("ab12", data, old)
+    assert made.id == "ab12" and made.name == old.name and made.source == "svg"
+    assert made.groups[0].power == 250
+    assert made.groups[-1].label == "moved" and made.groups[-1].power == jobs.DEFAULT_POWER
+    for bad, refusal in (
+        ({**data, "groups": [{"label": "x", "speed": 0, "paths": []}]}, "speed must be above 0"),
+        ({**data, "spot": 0}, "spot must be above 0"),
+        ({**data, "groups": [{"label": "x", "focus": 99, "paths": []}]}, "focus must be within"),
+        ({**data, "groups": "nope"}, "not a job"),
+    ):
+        with pytest.raises(JobImportError, match=refusal):
+            jobs.replaced("ab12", bad, old)
+    with pytest.raises(JobImportError, match="must be a JSON object"):
+        jobs.replaced("ab12", [], old)

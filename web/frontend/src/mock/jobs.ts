@@ -1249,7 +1249,7 @@ function pathsOf(value: unknown, what: string): Path[] {
 }
 
 /** A saved job read back, checked the way the backend checks one. */
-function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits): Job {
+export function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits): Job {
     if (!isRecord(data) || !Array.isArray(data["groups"])) {
         throw new Error("job JSON has no groups");
     }

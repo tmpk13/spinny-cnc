@@ -25,6 +25,7 @@ export const PENDING_PAGES: Record<string, PageId> = {
     settings: "config",
     "machine-file": "config",
     camera: "machine",
+    "job-json": "machine",
     "cam-profile": "cam",
     pnp: "pnp",
     "pnp-device": "pnp",

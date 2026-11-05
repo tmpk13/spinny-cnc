@@ -80,6 +80,10 @@
     --pv-probe: #d33682;
     /* Saved positions on the board. */
     --pv-marker: #2aa198;
+    /* Paths picked in the preview (a halo under them), and the place the
+       JSON panel's caret is in. */
+    --pv-select: #d33682;
+    --pv-highlight: #073642;
     /* Height map: below the mean, at it, above it. */
     --hm-low: #268bd2;
     --hm-mid: #f3edda;
@@ -113,6 +117,7 @@
         --pv-rail: #657b83;
         --pv-outline: #93a1a1;
         --pv-text: #839496;
+        --pv-highlight: #eee8d5;
         --hm-mid: #0d3d49;
     }
 }
@@ -1423,6 +1428,51 @@ table.groups tbody.disabled tr.group-name th {
     color: var(--muted);
 }
 
+/* A group's name is a button that picks its paths, set as the name. */
+table.groups .group-pick {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+table.groups .group-pick:hover,
+table.groups .group-pick:focus-visible {
+    text-decoration: underline;
+}
+
+/* The paths picked in the preview and what to do with them. */
+.picked-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-block: 0.5rem;
+    padding: 0.5rem 0.6rem;
+    border: thin solid var(--pv-select);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--pv-select) 7%, var(--panel));
+}
+
+.picked-count {
+    font-weight: 600;
+}
+
+.picked-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.picked-controls select,
+.picked-controls input[type="text"] {
+    flex: 1 1 9rem;
+    min-width: 0;
+}
+
 table.groups input[type="checkbox"] {
     width: 1.5rem;
     height: 1.5rem;
@@ -2597,4 +2647,41 @@ a.btn {
 a.btn.disabled {
     pointer-events: none;
     opacity: 0.5;
+}
+
+/* The selected job as JSON text: a plain field, every path a line. */
+.json-panel > summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+}
+
+.json-input {
+    display: block;
+    width: 100%;
+    min-height: 16rem;
+    resize: vertical;
+    padding: 0.5rem 0.6rem;
+    background: var(--field);
+    color: var(--text);
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    white-space: pre;
+    overflow: auto;
+    tab-size: 4;
+}
+
+.json-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.125rem var(--ring);
+}
+
+.json-where {
+    color: var(--strong);
+    min-height: 1.2em;
+    margin-block: 0.3rem 0;
 }

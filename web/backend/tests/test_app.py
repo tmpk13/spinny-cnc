@@ -1057,3 +1057,21 @@ def test_a_kicad_upload_can_be_cut_on_a_layers_lines(client):
     assert response.json()["groups"][0]["paths"] == job["groups"][0]["paths"]
     response = client.post("/api/jobs", files=files, data={"layer": "Edge.Cuts", "mode": "lines", "clear": "radial"})
     assert response.status_code == 400 and "neither clear nor fill" in response.text
+
+
+def test_a_job_put_back_from_the_page_keeps_its_id_and_is_priced_again(client):
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="20mm" viewBox="0 0 20 20"><path d="M0 0 L10 0" stroke="#f00"/><path d="M0 5 L10 5" stroke="#f00"/></svg>'
+    job = client.post("/api/jobs", files={"file": ("two.svg", svg, "image/svg+xml")}).json()
+    data = dict(job)
+    group = dict(data["groups"][0])
+    data["groups"] = [{**group, "paths": group["paths"][:1]}, {**group, "label": "second", "power": 120, "paths": group["paths"][1:]}]
+    response = client.put(f"/api/jobs/{job['id']}", json=data)
+    assert response.status_code == 200, response.text
+    made = response.json()
+    assert made["id"] == job["id"]
+    assert [(g["label"], g["power"], len(g["paths"])) for g in made["groups"]] == [(group["label"], group["power"], 1), ("second", 120, 1)]
+    assert client.get(f"/api/jobs/{job['id']}").json()["groups"][1]["label"] == "second"
+    assert made["stats"]["moves"] > 0
+    assert client.put("/api/jobs/nope", json=data).status_code == 404
+    bad = client.put(f"/api/jobs/{job['id']}", json={**data, "spot": -1})
+    assert bad.status_code == 400 and "spot" in bad.text

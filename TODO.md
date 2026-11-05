@@ -8,10 +8,6 @@
     connect now says "lost power" with the time off, or that the USB link
     dropped with the board up.
 
-- Groups of paths
-- Select by path
-  - Live json viewer, user can edit json and see path that aligns. When user clicks on json block the segment is highlighted in preview.
-
 - Need a logging mode. For calibration and debugging.
   - Logging mode for now is mostly for camera. Should support taking photos with and without overlays.
   - Example:

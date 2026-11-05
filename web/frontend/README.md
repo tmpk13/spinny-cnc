@@ -136,7 +136,11 @@ The Jobs panel has *Save job* (the selected job's JSON) and *Delete all*
 beside its title. A `.kicad_pcb` picked or dropped opens a layer chooser
 first (`src/kicad.ts` reads the board's layer table and counts what is
 drawn on each layer), and Board *on the lines* cuts a drawing where it
-lies. Under a run that stopped short a *Resume from line*
+lies. Paths picked in the preview (`AppState.selection`) are moved between
+groups by `src/regroup.ts` and the job sent back whole with `PUT
+/api/jobs/{id}`; the *Job JSON* panel (`src/views/jobjson.ts`, text and
+caret places in `src/jsontext.ts`) draws its edit as `AppState.jobDraft`
+and the caret's place as `AppState.highlight`. Under a run that stopped short a *Resume from line*
 row: the count of lines done, *from the start of its path*, *Plan* (what
 would go out first) and the button. The Jog panel's *Here is* row declares
 the joints without moving them, *Last known* filling in the position the

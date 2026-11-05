@@ -5,6 +5,7 @@ import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts"
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
 import { isDispensing, isMilling, profileOf } from "../profile.ts";
+import { type PathRef, type Regrouped, boxedAfter, groupRefs, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
 import { calibrationTest } from "./calibrate.ts";
@@ -613,6 +614,106 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     let widthField: HTMLInputElement | null = null;
     let jobMarginField: HTMLInputElement | null = null;
     let statsEl: HTMLElement | null = null;
+    // The paths picked in the preview: how many, and moving them into a
+    // group of their own or one the job has, or taking them out of it.
+    const pickedCount = el("span", { class: "picked-count" });
+    const pickedTarget = el("select", { class: "field", "aria-label": "Move picked paths to" }) as HTMLSelectElement;
+    const pickedLabel = el("input", { type: "text", class: "field", "aria-label": "New group name", placeholder: "new group's name", spellcheck: "false" }) as HTMLInputElement;
+    const pickedMove = button("Move", () => movePicked(), "btn btn-small");
+    pickedMove.title = "move the picked paths into the group chosen; a new group takes the settings of the first group they come from";
+    const pickedDelete = button("Delete paths", () => deletePicked(), "btn btn-quiet btn-small");
+    const pickedClear = button("Clear", () => ctx.store.set({ selection: null }), "btn btn-quiet btn-small");
+    const pickedRow = el("div", { class: "picked-row hidden" },
+        pickedCount,
+        el("div", { class: "picked-controls" }, pickedTarget, pickedLabel, pickedMove, pickedDelete, pickedClear),
+    );
+    pickedTarget.addEventListener("change", () => renderPicked(ctx.store.get()));
+    ctx.store.subscribe((state) => renderPicked(state), ["selection", "job"]);
+
+    /** The picked paths of the selected job, those it still has. */
+    function picked(state: AppState): PathRef[] {
+        const job = state.job;
+        const selection = state.selection;
+        return job !== null && selection !== null && selection.job === job.id ? tidyRefs(job, selection.paths) : [];
+    }
+
+    function renderPicked(state: AppState): void {
+        const job = state.job;
+        const refs = picked(state);
+        pickedRow.classList.toggle("hidden", job === null || refs.length === 0);
+        if (job === null || refs.length === 0) {
+            return;
+        }
+        const groups = new Set(refs.map(([g]) => g)).size;
+        pickedCount.textContent = `${refs.length} ${refs.length === 1 ? "path" : "paths"} picked from ${groups} ${groups === 1 ? "group" : "groups"}`;
+        const chosen = pickedTarget.value;
+        const options = [
+            el("option", { value: "new" }, "into a new group"),
+            ...job.groups.map((group, g) => el("option", { value: String(g) }, `into ${group.label}`)),
+        ];
+        replace(pickedTarget, ...options);
+        pickedTarget.value = options.some((option) => option.value === chosen) ? chosen : "new";
+        pickedLabel.classList.toggle("hidden", pickedTarget.value !== "new");
+        const refusal = regroupRefusal(job, refs, pickedTarget.value === "new" ? "new" : Number(pickedTarget.value));
+        pickedMove.title = refusal || "move the picked paths into the group chosen; a new group takes the settings of the first group they come from";
+        setLocked(pickedMove, refusal !== "");
+    }
+
+    async function movePicked(): Promise<void> {
+        const state = ctx.store.get();
+        const job = state.job;
+        const refs = picked(state);
+        if (job === null || refs.length === 0) {
+            return;
+        }
+        let result: Regrouped;
+        try {
+            result = regroup(job, refs, pickedTarget.value === "new" ? "new" : Number(pickedTarget.value), pickedLabel.value);
+        } catch (error) {
+            ctx.toast("error", error instanceof Error ? error.message : String(error));
+            return;
+        }
+        const made = await ctx.call(ctx.api.replaceJob(job.id, result.job));
+        if (!made) {
+            return;
+        }
+        pickedLabel.value = "";
+        await ctx.reloadJob(job.id);
+        // The paths stay picked where they are now, to move on or set.
+        ctx.store.set({ selection: { job: job.id, paths: result.refs } });
+        await ctx.refreshJobs();
+        const into = made.groups[result.refs[0]![0]]?.label ?? "the group";
+        ctx.toast("info", `${result.refs.length} ${result.refs.length === 1 ? "path" : "paths"} moved into ${into}`);
+    }
+
+    async function deletePicked(): Promise<void> {
+        const state = ctx.store.get();
+        const job = state.job;
+        const refs = picked(state);
+        if (job === null || refs.length === 0) {
+            return;
+        }
+        let made: Job;
+        try {
+            made = removePaths(job, refs);
+        } catch (error) {
+            ctx.toast("error", error instanceof Error ? error.message : String(error));
+            return;
+        }
+        const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;
+        if (!(await askConfirm(`Take ${count} out of ${job.name}? A group left empty goes too.`, "Delete paths"))) {
+            return;
+        }
+        const kept = await ctx.call(ctx.api.replaceJob(job.id, made));
+        if (!kept) {
+            return;
+        }
+        ctx.store.set({ selection: null });
+        await ctx.reloadJob(job.id);
+        await ctx.refreshJobs();
+        ctx.toast("info", `${count} taken out of ${job.name}`);
+    }
+
     // Why a dispenser would refuse the job, beside the run button.
     const runNote = el("span", { class: "muted run-note hidden" });
     const progressBar = el("div", { class: "progress-fill" });
@@ -759,6 +860,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             replace(details,
                 el("h3", {}, job.name),
                 groupsTable(job, milling, focusColumn),
+                pickedRow,
                 statsEl,
                 offsetRow(job),
                 widthRow(job, milling),
@@ -964,10 +1066,19 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                         : [power, minPower, speed, passes, enabled];
             // The name has a line of its own above the fields, so they get
             // the whole width of a side panel.
+            // The name picks the group's paths in the preview, shift adds them.
+            const name = el("button", { type: "button", class: "group-pick", title: "pick this group's paths in the preview; shift adds them to those picked" },
+                el("span", { class: "swatch", "data-group": String(index % 4) }), group.label);
+            name.addEventListener("click", (event) => {
+                const refs = groupRefs(job, index);
+                const selection = ctx.store.get().selection;
+                const current = selection !== null && selection.job === job.id ? selection.paths : [];
+                ctx.store.set({ selection: { job: job.id, paths: boxedAfter(current, refs, event.shiftKey) } });
+            });
             const body = el("tbody", { class: group.enabled ? "" : "disabled" },
                 el("tr", { class: "group-name" },
                     el("th", { scope: "rowgroup", colspan: String(fields.length) },
-                        el("span", { class: "swatch", "data-group": String(index % 4) }), group.label,
+                        name,
                         el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : carved ? ` (${group.moves!.length}, 3D)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`))),
                 el("tr", { class: "group-fields" }, ...fields.map((field) => el("td", {}, field))),
             );

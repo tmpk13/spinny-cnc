@@ -80,6 +80,7 @@ from .jobs import (
     import_file,
     recipe_options,
     remake_upload,
+    replaced,
     width_refusal,
     with_width,
 )
@@ -2157,6 +2158,20 @@ class Backend:
         self.store.save(job)
         return job
 
+    def replace_job(self, job_id: str, data: dict) -> Job:
+        """The job under `job_id` made what `data` says, as the page's JSON
+        editor or its regrouping of paths sends it: checked as an upload
+        is, its id kept, priced again."""
+        job = self.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        if self.runner.active and self.runner.progress.job == job_id:
+            raise HTTPException(status_code=409, detail="the job is running")
+        made = replaced(job_id, data, job)
+        made.refresh_stats(self.streamer())
+        self.store.save(made)
+        return made
+
     def run_job(self, job_id: str, compensate: str = OFF) -> dict:
         # The check that nothing is being probed and the runner's claim are
         # one step: probing asked for at the same moment waits for this,
@@ -3986,6 +4001,11 @@ def create_app(
     @app.patch("/api/jobs/{job_id}")
     def patch_job(job_id: str, patch: JobPatch):
         return guarded(lambda: backend.patch_job(job_id, patch)).model_dump()
+
+    @app.put("/api/jobs/{job_id}")
+    async def put_job(job_id: str, body: dict):
+        made = await run_in_threadpool(guarded, lambda: backend.replace_job(job_id, body))
+        return made.model_dump()
 
     @app.post("/api/jobs/{job_id}/width")
     async def set_job_width(job_id: str, body: WidthBody):

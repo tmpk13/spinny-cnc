@@ -1,5 +1,8 @@
 // One store for the page. Views subscribe to the keys they draw from.
 
+import type { JobPlace } from "./jsontext.ts";
+import type { PathRef } from "./regroup.ts";
+
 import type {
     AlignState,
     CamerasResponse,
@@ -85,6 +88,12 @@ export interface AppState {
     jobs: JobSummary[];
     /** The selected job in full. */
     job: Job | null;
+    /** The paths picked in the preview, of the job named; null with none picked. */
+    selection: { job: string; paths: PathRef[] } | null;
+    /** The job as the JSON panel's text has it while it is edited, drawn in the stored one's place; null with no edit. */
+    jobDraft: Job | null;
+    /** The place in the job the JSON panel's caret is in, drawn on the preview; null for none. */
+    highlight: (JobPlace & { job: string }) | null;
     progress: Progress | null;
     settings: SettingsResponse | null;
     /** The height map, the probing under way and the probe settings; null until read. */
@@ -135,6 +144,9 @@ export function initialState(mock: boolean): AppState {
         ports: [],
         jobs: [],
         job: null,
+        selection: null,
+        jobDraft: null,
+        highlight: null,
         progress: null,
         settings: null,
         heightMap: null,

@@ -14,6 +14,7 @@ import { mountConsole } from "./views/console.ts";
 import type { Ctx } from "./views/context.ts";
 import { mountDro } from "./views/dro.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
+import { mountJobJson } from "./views/jobjson.ts";
 import { mountJobs } from "./views/jobs.ts";
 import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
@@ -267,6 +268,7 @@ function main(): void {
     mountJobs(panel("jobs"), ctx);
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
+    mountJobJson(panel("jobjson"), ctx);
     mountVision(panel("camera"), ctx);
     mountAlign(panel("align"), ctx);
     mountConsole(panel("console"), ctx);

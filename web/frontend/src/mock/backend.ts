@@ -24,6 +24,7 @@ import {
     MAX_VALUE,
     MAX_VALUE_TEXT,
     buildJob,
+    jobFromJson,
     centerJob,
     checkDepth,
     checkPasses,
@@ -3465,6 +3466,29 @@ export class MockBackend implements Api, EventFeed {
             this.message("info", built.note);
         }
         return built.job;
+    }
+
+    async replaceJob(id: string, data: Job): Promise<Job> {
+        const old = this.requireJob(id);
+        if (this.session && this.session.job.id === id) {
+            throw new ApiError(409, "the job is running");
+        }
+        let made: Job;
+        try {
+            made = jobFromJson(id, old.name, data, this.limits());
+        } catch (error) {
+            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+        // What a job file cannot say of itself stays the old job's.
+        const given = data as unknown as Record<string, unknown>;
+        made.source = typeof given["source"] === "string" ? given["source"] : old.source;
+        made.layer = given["layer"] === undefined ? old.layer ?? null : (given["layer"] as string | null);
+        made.recipe = given["recipe"] === undefined ? old.recipe ?? null : (given["recipe"] as Job["recipe"]);
+        if (made.design && old.design) {
+            made.design.board = old.design.board;
+        }
+        this.jobStore.set(id, made);
+        return structuredClone(made);
     }
 
     async setJobWidth(id: string, width: number): Promise<Job> {

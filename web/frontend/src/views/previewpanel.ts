@@ -1,10 +1,14 @@
 // Hosts the 3D preview and feeds it the selected job (or what the page
-// shows in its place), the live position, the soft limits, the markers and
-// the probe grid; the rotation lock, the height map toggle, the grid in
-// place of the rings and the reset to the overview sit in its head.
+// shows in its place: the JSON panel's edit while it is typed, the Mill
+// page's plan), the live position, the soft limits, the markers and the
+// probe grid; the rotation lock, the height map toggle, the grid in place
+// of the rings, box selection and the reset to the overview sit in its
+// head. A path clicked, or the paths a box holds, become the page's picked
+// paths, which the Jobs panel moves between groups.
 
 import { button, el } from "../dom.ts";
 import { Preview } from "../preview.ts";
+import { type PathRef, boxedAfter, pickedAfter } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Job } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -13,12 +17,22 @@ export const LOCK_LABEL = "Lock rotation";
 export const LOCKED_LABEL = "Rotation locked";
 export const HEIGHTS_LABEL = "Heights";
 export const GRID_LABEL = "Grid";
+export const BOX_LABEL = "Box select";
+
+/** The selected job, or its edit in the JSON panel while one is typed. */
+export function shownJob(state: AppState): Job | null {
+    const draft = state.jobDraft;
+    return draft !== null && state.job !== null && draft.id === state.job.id ? draft : state.job;
+}
+
+/** No paths picked: one array, so the preview sees nothing changed. */
+const NONE: PathRef[] = [];
 
 /** Every preview panel's grid: a grid picked on one page's preview is picked on all of them. */
 const gridPanels = new Set<(on: boolean) => void>();
 
 /** `show` picks the job drawn: the selected one unless the page says otherwise, as the Mill page shows its plan. */
-export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: AppState) => Job | null = (state) => state.job): Preview {
+export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: AppState) => Job | null = shownJob): Preview {
     const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board around the rotation axis" });
     const preview = new Preview(canvas);
     const lock = button(LOCK_LABEL, () => showLock(preview.toggleRotationLock()), "btn btn-quiet btn-small btn-toggle");
@@ -48,6 +62,33 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: App
         preview.setShowGrid(on);
         showGrid(on);
     });
+    const box = button(BOX_LABEL, () => {
+        preview.setBoxSelection(!preview.boxSelection);
+        box.setAttribute("aria-pressed", preview.boxSelection ? "true" : "false");
+    }, "btn btn-quiet btn-small btn-toggle");
+    box.title = "drag a box to pick every path inside it, with shift to add them; right drag still pans";
+    box.setAttribute("aria-pressed", "false");
+    // Picks are of the stored job: a Mill page plan, not stored, has none.
+    const pickable = (): Job | null => {
+        const job = show(ctx.store.get());
+        return job !== null && job.id !== "" ? job : null;
+    };
+    const current = (job: Job): PathRef[] => {
+        const selection = ctx.store.get().selection;
+        return selection !== null && selection.job === job.id ? selection.paths : [];
+    };
+    preview.onPick = (ref, additive) => {
+        const job = pickable();
+        if (job) {
+            ctx.store.set({ selection: { job: job.id, paths: pickedAfter(current(job), ref, additive) } });
+        }
+    };
+    preview.onBox = (refs, additive) => {
+        const job = pickable();
+        if (job) {
+            ctx.store.set({ selection: { job: job.id, paths: boxedAfter(current(job), refs, additive) } });
+        }
+    };
     root.append(
         el("div", { class: "panel-head" },
             el("h2", {}, "Preview"),
@@ -55,12 +96,13 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: App
                 lock,
                 heights,
                 grid,
+                box,
                 button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small"),
                 button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small"),
             ),
         ),
         el("div", { class: "preview-box" }, canvas),
-        el("p", { class: "muted hint" }, "drag orbits, or pans with the rotation locked; shift or right drag pans, wheel zooms, double click resets"),
+        el("p", { class: "muted hint" }, "drag orbits, or pans with the rotation locked; shift or right drag pans, wheel zooms, double click resets; a click picks a path, shift or ctrl adds one"),
     );
 
     // The view is fitted again for another job, and kept for a fresh copy of
@@ -74,7 +116,15 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: App
         shownJob = job?.id ?? null;
         shownPlan = plan;
         preview.setJob(job, keep);
-    }, ["job", "millPlan"]);
+    }, ["job", "millPlan", "jobDraft"]);
+    // The picked paths and the JSON panel's place, for the job shown.
+    ctx.store.subscribe((state) => {
+        const job = show(state);
+        const selection = state.selection;
+        preview.setSelection(job !== null && selection !== null && selection.job === job.id ? selection.paths : NONE);
+        const highlight = state.highlight;
+        preview.setHighlight(job !== null && highlight !== null && highlight.job === job.id ? highlight : null);
+    }, ["selection", "highlight", "job", "millPlan", "jobDraft"]);
     ctx.store.subscribe((state) => {
         preview.setMarkers(state.markers);
     }, ["markers"]);

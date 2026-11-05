@@ -758,6 +758,32 @@ def from_json(text: str, name: str) -> Job:
     if not job.name or job.name == "job":
         job.name = name
     job.source = "json"
+    return checked(job)
+
+
+def replaced(job_id: str, data: dict, old: Job) -> Job:
+    """The job `data` describes, in place of `old` under its id: a job's
+    JSON as the page's editor holds it, checked as an upload is. A field
+    left out keeps the default a new job has, but for the name and the
+    source, which stay the old job's."""
+    if not isinstance(data, dict):
+        raise JobImportError("not a job: the body must be a JSON object")
+    body = {key: value for key, value in data.items() if key not in ("id", "stats")}
+    body.setdefault("name", old.name)
+    body.setdefault("source", old.source)
+    try:
+        job = Job.model_validate(body)
+    except ValueError as exc:
+        raise JobImportError(f"not a job: {exc}") from exc
+    job.id = job_id
+    if not job.name:
+        job.name = old.name
+    return checked(job)
+
+
+def checked(job: Job) -> Job:
+    """The job with every group's numbers and paths checked as a run needs
+    them, and its joint-space groups drawn when they come without paths."""
     if not 0.0 < job.spot <= 1000.0:
         raise JobImportError("spot must be above 0 and at most 1000")
     for group in job.groups:

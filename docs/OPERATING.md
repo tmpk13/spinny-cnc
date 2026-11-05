@@ -25,6 +25,15 @@ dropped is not sent at once: its own layers are offered first, each with
 what is drawn on it, and picking a drawing (Edge.Cuts, a silk screen, a
 fab or user layer) sets Board to on the lines; Import sends it, Cancel or
 Escape leaves it. A gerber is its own layer.
+A click on a path in the preview picks it (shift or ctrl adds one or takes
+it back, *Box select* picks every path inside a dragged box, a click on a
+group's name in the Jobs panel all of its paths); the Jobs panel then moves
+the picked paths into a group of their own, which takes the first one's
+settings and can be given its own power, speed, passes or focus, or into a
+group the job has, or deletes them. The *Job JSON* panel under the preview
+shows the job with a path a line: the path and point under the caret are
+drawn on the preview, a picked path brings the caret to its line, an edit
+is drawn as it is typed and kept with *Apply*.
 Open `http://localhost:8000`, connect to the board (or to
 `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
