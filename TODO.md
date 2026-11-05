@@ -7,8 +7,6 @@
     the tube fired. Check the 24 V supply and its terminals. The next
     connect now says "lost power" with the time off, or that the USB link
     dropped with the board up.
-- Focus ladder for a laser with a focus axis: needs a per-group focus
-  height; the material test covers power (and focus with no focus axis).
 
 - Groups of paths
 - Select by path

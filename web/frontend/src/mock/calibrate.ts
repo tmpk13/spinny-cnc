@@ -1,14 +1,21 @@
 // The mock's twin of the calibration tests (spinny_laser.calibrate and
 // spinny_web.calibration): a laser's material test, a grid of squares at a
-// power and a speed each, and a mill's depth test, a row of slots a step
-// deeper each, every patch a group of its own.
+// power and a speed each, its focus ladder, a row of lines a step over
+// focus each, and a mill's depth test, a row of slots a step deeper each,
+// every patch a group of its own.
 
 import type { CalibrateRequest, CalibrateResponse, Group, Path, Point } from "../types.ts";
-import { DEFAULT_DEPTH, DEFAULT_PLUNGE, checkDepth, checkPower, checkSpeed, computeStats, formatG, type RateLimits } from "./jobs.ts";
+import { DEFAULT_DEPTH, DEFAULT_PLUNGE, checkDepth, checkFocus, checkPower, checkSpeed, computeStats, formatG, type RateLimits } from "./jobs.ts";
 
 /** The most patches along a side, and the largest patch or slot, mm. */
 export const MAX_STEPS = 12;
 export const MAX_SIZE = 100;
+/** A focus step as a label says it: +0.25 above focus, -0.5 below, 0 at it. */
+export function focusLabel(focus: number): string {
+    return focus === 0 ? "0" : `${focus > 0 ? "+" : ""}${formatG(focus)}`;
+}
+
+
 
 /** `count` values from `first` to `last`, both ends included, evenly apart. */
 export function ladder(first: number, last: number, count: number): number[] {
@@ -41,8 +48,12 @@ function hatch(x: number, y: number, size: number, pitch: number): Path {
     return points;
 }
 
-/** The test for the machine, as the backend builds it: the material test on a laser, the depth test on a mill. */
-export function calibrateJob(id: string, request: CalibrateRequest, milling: boolean, limits: RateLimits): CalibrateResponse {
+/**
+ * The test for the machine, as the backend builds it: the material test or
+ * the focus ladder on a laser, the depth test on a mill. `focusAxis` says
+ * whether the laser has one: the ladder moves it.
+ */
+export function calibrateJob(id: string, request: CalibrateRequest, milling: boolean, limits: RateLimits, focusAxis = true): CalibrateResponse {
     const kind = request.kind ?? "material";
     const x = request.x ?? 0;
     const y = request.y ?? 0;
@@ -94,6 +105,42 @@ export function calibrateJob(id: string, request: CalibrateRequest, milling: boo
             "With no focus axis this is also the focus and power test: one speed and a ladder of powers shows where the beam starts to mark.",
         ];
         name = "material test";
+    } else if (kind === "focus") {
+        if (milling) {
+            throw new Error("the focus ladder is a laser's: a mill takes the depth test");
+        }
+        if (!focusAxis) {
+            throw new Error("the focus ladder moves the focus axis, and this machine has none ($h_axis=0): the material test's power ladder is the focus test without one");
+        }
+        const [f0, f1, fn] = request.focuses ?? [-1, 1, 9];
+        const focuses = ladder(f0, f1, fn).sort((a, b) => a - b);
+        focuses.forEach((focus) => checkFocus(focus, "a focus step"));
+        const power = request.power ?? 500;
+        const speed = request.speed ?? 600;
+        checkPower(power);
+        checkSpeed(speed);
+        const length = request.length ?? 10;
+        const gap = request.gap ?? 2;
+        if (!(length > 0 && length <= MAX_SIZE)) {
+            throw new Error(`length must be above 0 and at most ${MAX_SIZE} mm`);
+        }
+        if (!(gap > 0 && gap <= MAX_SIZE)) {
+            throw new Error(`gap must be above 0 and at most ${MAX_SIZE} mm`);
+        }
+        groups = focuses.map((focus, i) => ({
+            ...group(`test focus ${focusLabel(focus)} mm`, power, speed, [[[x, y + i * gap], [x + length, y + i * gap]]], null),
+            focus,
+        }));
+        summary = [
+            `focus ladder: ${focuses.length} lines ${focusLabel(focuses[0]!)} to ${focusLabel(focuses.at(-1)!)} mm over focus,`
+            + ` lowest at Y${formatG(y)}, ${formatG(length)} mm long, ${formatG(gap)} mm apart`,
+            `power S${formatG(power)}, speed ${formatG(speed)} mm/min`,
+        ];
+        notes = [
+            "Bring the head to focus as near as you can first: each line is burnt that many mm above it (minus below), from the height the run starts at, or from the height map's focus height when the run follows the map, and the head goes back after.",
+            "The thinnest, sharpest line is at focus; set the focus there (Focus here in the Height map panel, or jog H by the line's number) and run the ladder again with smaller steps to close in.",
+        ];
+        name = "focus ladder";
     } else {
         if (!milling) {
             throw new Error("the depth test is a mill's ($spindle=1): a laser takes the material test");

@@ -1,6 +1,7 @@
 """Calibration tests as jobs: a laser's material test (a grid of squares at
-a power and a speed each) and a mill's depth test (a row of slots a step
-deeper each), built from spinny_laser.calibrate. Every patch is a group, so
+a power and a speed each), its focus ladder (a row of lines a step above
+or below focus each, on a focus axis) and a mill's depth test (a row of
+slots a step deeper each), built from spinny_laser.calibrate. Every patch is a group, so
 the groups table names what each was cut with and a patch can be switched
 off or cut again on its own.
 """
@@ -13,16 +14,16 @@ from pydantic import Field
 
 from spinny_laser import calibrate
 
-from .jobs import DEFAULT_DEPTH, DEFAULT_PLUNGE, Finite, Group, Job, Offset, check_depth, check_power, check_speed
+from .jobs import DEFAULT_DEPTH, DEFAULT_PLUNGE, Finite, Group, Job, Offset, check_depth, check_focus, check_power, check_speed
 from .kinematics import Streamer
 
-MATERIAL, DEPTH = "material", "depth"
+MATERIAL, DEPTH, FOCUS = "material", "depth", "focus"
 
 
 class CalibrateRequest(Finite):
     """A ladder is (first, last, steps), both ends included."""
 
-    kind: Literal["material", "depth"] = MATERIAL
+    kind: Literal["material", "depth", "focus"] = MATERIAL
     powers: tuple[float, float, int] = (100.0, 1000.0, 5)
     speeds: tuple[float, float, int] = (300.0, 1500.0, 5)
     size: float = Field(default=5.0, gt=0.0, le=calibrate.MAX_SIZE)
@@ -31,6 +32,11 @@ class CalibrateRequest(Finite):
     fill: bool = True
     spot: float = Field(default=0.1, gt=0.0, le=calibrate.MAX_SIZE)
     depths: tuple[float, float, int] = (0.05, 0.3, 6)
+    # The focus ladder: mm over focus from one line to the last, and the
+    # one power and speed every line is burnt at.
+    focuses: tuple[float, float, int] = (-1.0, 1.0, 9)
+    power: float = 500.0
+    speed: float = 600.0
     length: float = Field(default=10.0, gt=0.0, le=calibrate.MAX_SIZE)
     feed: float = 120.0
     plunge: float = 30.0
@@ -47,10 +53,11 @@ class CalibrateResult(Finite):
     notes: list[str]
 
 
-def build(request: CalibrateRequest, streamer: Streamer, milling: bool) -> CalibrateResult:
-    """The test for the machine: the material test on a laser, the depth
-    test on a mill; the other is refused, since it would cut nothing the
-    machine can read."""
+def build(request: CalibrateRequest, streamer: Streamer, milling: bool, focus_axis: bool | None = None) -> CalibrateResult:
+    """The test for the machine: the material test or the focus ladder on a
+    laser, the depth test on a mill; the other is refused, since it would
+    cut nothing the machine can read. `focus_axis` says whether the laser
+    has one, when the settings were read: the ladder moves it."""
     origin = (request.x, request.y)
     if request.kind == MATERIAL:
         if milling:
@@ -73,6 +80,28 @@ def build(request: CalibrateRequest, streamer: Streamer, milling: bool) -> Calib
             "With no focus axis this is also the focus and power test: one speed and a ladder of powers shows where the beam starts to mark.",
         ]
         name = "material test"
+    elif request.kind == FOCUS:
+        if milling:
+            raise ValueError("the focus ladder is a laser's: a mill takes the depth test")
+        if focus_axis is False:
+            raise ValueError("the focus ladder moves the focus axis, and this machine has none ($h_axis=0): the material test's power ladder is the focus test without one")
+        focuses = calibrate.ladder(*request.focuses)
+        for step in focuses:
+            check_focus(step, "a focus step")
+        check_power(request.power)
+        check_speed(request.speed)
+        patches = calibrate.focus_ladder(focuses, request.length, request.gap, request.power, request.speed, origin)
+        low, high = min(focuses), max(focuses)
+        summary = [
+            f"focus ladder: {len(focuses)} lines {calibrate.focus_label(low)} to {calibrate.focus_label(high)} mm over focus,"
+            f" lowest at Y{request.y:g}, {request.length:g} mm long, {request.gap:g} mm apart",
+            f"power S{request.power:g}, speed {request.speed:g} mm/min",
+        ]
+        notes = [
+            "Bring the head to focus as near as you can first: each line is burnt that many mm above it (minus below), from the height the run starts at, or from the height map's focus height when the run follows the map, and the head goes back after.",
+            "The thinnest, sharpest line is at focus; set the focus there (Focus here in the Height map panel, or jog H by the line's number) and run the ladder again with smaller steps to close in.",
+        ]
+        name = "focus ladder"
     else:
         if not milling:
             raise ValueError("the depth test is a mill's ($spindle=1): a laser takes the material test")
@@ -103,6 +132,7 @@ def build(request: CalibrateRequest, streamer: Streamer, milling: bool) -> Calib
             paths=patch.paths,
             depth=patch.depth if patch.depth is not None else DEFAULT_DEPTH,
             plunge=request.plunge if patch.depth is not None else DEFAULT_PLUNGE,
+            focus=patch.focus,
         )
         for patch in patches
     ]

@@ -271,6 +271,16 @@ def turned_toward(poly: list[Joint], angle: float) -> list[Joint]:
     return [(r, a + 360.0 * turns) for r, a in poly]
 
 
+def group_focus(job: "Job") -> dict[int, float]:
+    """Each enabled group's own focus, by its index, for the groups that
+    have one and something to cut."""
+    return {
+        index: float(group.focus)
+        for index, group in enumerate(job.groups)
+        if group.enabled and group.has_cuts and group.focus is not None
+    }
+
+
 def joint_min_radius(poly: list[Joint]) -> float:
     """Nearest a joint polyline comes to the axis; zero when a move crosses it."""
     for a, b in zip(poly, poly[1:]):
@@ -340,6 +350,11 @@ class Streamer:
         self.angle_decimals = angle_decimals
         self.spindle = spindle
         self.dispense = dispense
+        # The focus axis height a laser group's focus counts from when the
+        # run follows no height map: where the head stood as the run began,
+        # which the runner sets. A plan made without it (a price) counts
+        # from 0, which moves nothing in time.
+        self.focus_base: float | None = None
         # A segment within this of the axis is cut there and crosses it
         # with a dark turn. Half a word quantum is the least that makes
         # the words agree; the chord tolerance is the most the path may
@@ -455,17 +470,73 @@ class Streamer:
 
     def job_pieces(self, job: "Job", start: Joint, compensation: "Compensation | None" = None) -> Iterator[Piece]:
         """Every protocol line of the job, lazily, from the machine's joint,
-        compensated for the board's height when asked."""
+        compensated for the board's height when asked, each laser group at
+        its own focus when it has one."""
         if self.dispense is not None:
             return self._dispense_pieces(job, start, compensation)
         if self.spindle is not None:
             return self._spindle_pieces(job, start, compensation)
         pieces = self._job_pieces(job, start)
+        offsets = group_focus(job)
         if compensation is None:
-            return pieces
-        return self.compensate(pieces, compensation)
+            return self._focus_groups(pieces, offsets) if offsets else pieces
+        if offsets and compensation.mode != "focus":
+            label = job.groups[next(iter(offsets))].label
+            raise ValueError(
+                f"{label} asks for a focus height, and following the map by power holds the head still:"
+                " follow it with the focus axis, or clear the group's focus"
+            )
+        return self.compensate(pieces, compensation, offsets)
 
-    def compensate(self, pieces: Iterator[Piece], compensation: "Compensation") -> Iterator[Piece]:
+    def _focus_groups(self, pieces: Iterator[Piece], offsets: dict[int, float]) -> Iterator[Piece]:
+        """The pieces with each group at its own focus, counted from where
+        the run began (`focus_base`): the head moves dark to a group's
+        height with the rapid to its first path, or on its own before a
+        cut that starts where the head is, and goes back to the start's
+        height after the last group. The first group's height is said even
+        when it is the start's, so a run picked up anywhere finds the height
+        its line was planned at in the lines before it."""
+        base = self.focus_base if self.focus_base is not None else 0.0
+        current: float | None = None
+        last_group: int | None = None
+        last_joint: Joint | None = None
+        quantum = 0.5 * 10.0 ** -FOCUS_DECIMALS
+        for piece in pieces:
+            if piece.group is not None and piece.kind in ("go", "turn", "cut"):
+                want = base + offsets.get(piece.group, 0.0)
+                if current is None or abs(want - current) >= quantum:
+                    seconds = abs(want - (base if current is None else current)) / self.rates.h_rate * 60.0
+                    current = want
+                    if piece.kind in ("go", "turn"):
+                        piece = dataclasses.replace(
+                            piece,
+                            line=f"{piece.line} H{coord(want, FOCUS_DECIMALS)}",
+                            seconds=max(piece.seconds, seconds),
+                            h=want,
+                        )
+                    else:
+                        yield Piece(
+                            line=f"go H{coord(want, FOCUS_DECIMALS)}",
+                            kind="lift",
+                            joint=piece.start if piece.start is not None else piece.joint,
+                            seconds=seconds,
+                            group=piece.group,
+                            h=want,
+                        )
+                last_group = piece.group
+            last_joint = piece.joint
+            yield piece
+        if current is not None and abs(current - base) >= quantum and last_joint is not None:
+            yield Piece(
+                line=f"go H{coord(base, FOCUS_DECIMALS)}",
+                kind="lift",
+                joint=last_joint,
+                seconds=abs(current - base) / self.rates.h_rate * 60.0,
+                group=last_group,
+                h=base,
+            )
+
+    def compensate(self, pieces: Iterator[Piece], compensation: "Compensation", offsets: dict[int, float] | None = None) -> Iterator[Piece]:
         """The pieces rewritten for the board's height.
 
         A cut is split along its joint line into pieces no longer than the
@@ -475,9 +546,15 @@ class Streamer:
         instead of changing once per cut. With the focus axis every line
         carries the focus height at its end, rapids and turns included, so
         the head is at focus when a cut begins; with power the rapids are
-        left as they are.
+        left as they are. `offsets` raises each group's focus height by its
+        own focus.
         """
         focus = compensation.mode == "focus"
+        offsets = offsets or {}
+
+        def focus_at(piece: Piece, joint: Joint) -> float:
+            extra = offsets.get(piece.group, 0.0) if piece.group is not None else 0.0
+            return compensation.focus(self.board_of(joint)) + extra
         # Whether a line has set the focus height yet. A job whose first
         # line is a cut, the head already over its first point, would light
         # the beam with the head at whatever height it was left and bring
@@ -486,7 +563,7 @@ class Streamer:
         placed = not focus
         for piece in pieces:
             if not placed and piece.kind == "cut" and piece.start is not None:
-                h = compensation.focus(self.board_of(piece.start))
+                h = focus_at(piece, piece.start)
                 yield Piece(
                     line=f"go H{coord(h, FOCUS_DECIMALS)}",
                     kind="lift",
@@ -503,7 +580,7 @@ class Streamer:
                 for k in range(1, parts + 1):
                     joint = b if k == parts else _lerp_joint(a, b, k / parts)
                     if focus:
-                        h = compensation.focus(self.board_of(joint))
+                        h = focus_at(piece, joint)
                         power, floor = piece.power, piece.floor
                     else:
                         h = None
@@ -522,7 +599,7 @@ class Streamer:
                     )
                     previous = joint
             elif focus and piece.kind in ("go", "turn"):
-                h = compensation.focus(self.board_of(piece.joint))
+                h = focus_at(piece, piece.joint)
                 yield dataclasses.replace(piece, line=f"{piece.line} H{coord(h, FOCUS_DECIMALS)}", h=h)
             else:
                 yield piece
@@ -657,6 +734,7 @@ class Streamer:
         self.check_tools(job)
         self._check_speeds(job)
         self._check_dots(job)
+        self._check_focus(job)
 
     @property
     def tool(self) -> str:
@@ -682,6 +760,16 @@ class Streamer:
                     f"{group.label} was made for {_article(group.tool)} and this machine has {_article(mine)}:"
                     f" disable the group, or load the machine file the profile names"
                 )
+
+    def _check_focus(self, job: "Job") -> None:
+        """A focus height is a laser's: a spindle's focus axis is its depth,
+        a dispenser's the needle's height."""
+        if self.tool == "laser":
+            return
+        for index in group_focus(job):
+            group = job.groups[index]
+            verb = "mill" if self.tool == "spindle" else "dispense"
+            raise ValueError(f"{group.label}: a focus height is for a laser's beam; clear it to {verb} the group")
 
     def _check_dots(self, job: "Job") -> None:
         """A dispensing group is dots: one point a path, with the pad's

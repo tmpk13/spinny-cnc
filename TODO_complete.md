@@ -568,3 +568,9 @@
   layer where it is drawn, every stroke along its middle and every filled
   shape round its edge, the pieces joined end to end, inner shapes first;
   Edge.Cuts is then the job itself (`spinny_laser.lines`).
+- Focus per group and the focus ladder (2026-11-05): a laser group may carry
+  `focus`, mm over focus (the groups table's Focus column with a focus
+  axis): on the map's focus height when the run follows it, else on the
+  height the run starts at, said with the group's first rapid, the head
+  back after; the Calibration test's focus ladder is a row of lines a step
+  over focus each (`POST /api/calibrate` kind `focus`).

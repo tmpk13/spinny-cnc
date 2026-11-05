@@ -45,6 +45,9 @@ DEFAULT_PLUNGE = 60.0
 # The deepest a group may cut: well past any board, and short of any
 # spindle's reach.
 MAX_DEPTH = 50.0
+# Farthest a laser group may raise or lower the head from focus, mm: past
+# any lens's useful range, and short of a number typed in the wrong unit.
+MAX_FOCUS = 50.0
 # CSS pixels per millimeter at 96 dpi, which is what an SVG length without
 # a unit is; the parser's own rounded factor is used so a file in mm comes
 # back out in exact mm.
@@ -128,6 +131,12 @@ class Group(Finite):
     # Dispensing only: the paste over each pad, mm. A dot's volume is the
     # pad's area times this.
     thickness: float = DEFAULT_THICKNESS
+    # A laser with a focus axis only: mm the head is raised above focus for
+    # the group (negative lowers it), on the height map's focus height when
+    # the run follows the map, else on the height the run starts at; None
+    # leaves the head where the run puts it. A ladder of these is the focus
+    # test.
+    focus: float | None = None
     # What the group was made for, `laser`, `spindle` or `dispenser`, when
     # a CAM profile or a dispense import said; None runs on a laser or a
     # spindle. A run refuses a group made for another tool, since its
@@ -275,6 +284,7 @@ class Job(Finite):
                     "depth": group.depth,
                     "plunge": group.plunge,
                     "thickness": group.thickness,
+                    "focus": group.focus,
                     "tool": group.tool,
                     "paths": len(group.paths),
                     "joints": len(group.joints),
@@ -386,6 +396,8 @@ class GroupPatch(Finite):
     depth: float | None = None
     plunge: float | None = None
     thickness: float | None = None
+    # Given as null it takes the group's focus away; left out, it stays.
+    focus: float | None = None
 
 
 # What a job is turned about: the middle of what it cuts, or the origin.
@@ -425,6 +437,11 @@ def check_depth(depth: float) -> None:
         raise ValueError(f"depth must be above 0 and at most {MAX_DEPTH:g} mm")
 
 
+def check_focus(focus: float | None, what: str = "focus") -> None:
+    if focus is not None and not (math.isfinite(focus) and abs(focus) <= MAX_FOCUS):
+        raise ValueError(f"{what} must be within {MAX_FOCUS:g} mm of focus either way")
+
+
 def check_passes(passes: int, what: str = "passes") -> None:
     if not 1 <= passes <= MAX_GROUP_PASSES:
         raise ValueError(f"{what} must be between 1 and {MAX_GROUP_PASSES}")
@@ -454,6 +471,7 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             check_speed(change.plunge, "plunge")
         if change.thickness is not None:
             check_thickness(change.thickness)
+        check_focus(change.focus)
     if patch.offset is not None:
         dx, dy = patch.offset.x - job.offset.x, patch.offset.y - job.offset.y
         if (dx != 0.0 or dy != 0.0) and any(group.joints for group in job.groups):
@@ -488,6 +506,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             group.plunge = change.plunge
         if change.thickness is not None:
             group.thickness = change.thickness
+        if "focus" in change.model_fields_set:
+            group.focus = change.focus
     if patch.offset is not None:
         updated.shift(patch.offset.x - updated.offset.x, patch.offset.y - updated.offset.y)
     if patch.turn:
@@ -531,7 +551,7 @@ MAX_WIDTH = 1000.0
 # model's moves.
 WIDTH_MADE = ("kicad", "gerber", "stl")
 # The group settings a job made again keeps.
-SETTINGS = ("power", "min_power", "speed", "passes", "enabled", "depth", "plunge", "thickness")
+SETTINGS = ("power", "min_power", "speed", "passes", "enabled", "depth", "plunge", "thickness", "focus")
 
 
 def check_width(width: float) -> None:
@@ -753,6 +773,7 @@ def from_json(text: str, name: str) -> Job:
                 raise JobImportError(f"group {group.label!r}: depth must be above 0 and at most {MAX_DEPTH:g} mm")
             check_speed(group.plunge, f"group {group.label!r}: plunge")
             check_thickness(group.thickness)
+            check_focus(group.focus, f"group {group.label!r}: focus")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
         if group.areas and len(group.areas) != len(group.paths):

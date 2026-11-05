@@ -77,6 +77,16 @@ export const MIN_THICKNESS = 0.01;
 export const MAX_THICKNESS = 5;
 export const DEFAULT_THICKNESS = 0.12;
 
+/** Farthest a group may raise or lower the head from focus, mm, as the backend bounds it. */
+export const MAX_FOCUS = 50;
+
+/** A group's focus within bounds, as the backend checks it; none is no focus. */
+export function checkFocus(focus: number | null | undefined, what = "focus"): void {
+    if (focus !== null && focus !== undefined && !(Number.isFinite(focus) && Math.abs(focus) <= MAX_FOCUS)) {
+        throw new Error(`${what} must be within ${MAX_FOCUS} mm of focus either way`);
+    }
+}
+
 export function checkThickness(thickness: number, what = "thickness"): void {
     if (!(Number.isFinite(thickness) && thickness >= MIN_THICKNESS && thickness <= MAX_THICKNESS)) {
         throw new Error(`${what} must be ${MIN_THICKNESS} to ${MAX_THICKNESS} mm`);
@@ -1263,6 +1273,8 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
         checkDepth(depth, `${what}: depth`);
         checkSpeed(plunge, `${what}: plunge`);
         checkThickness(thickness, `${what}: thickness`);
+        const focus = raw["focus"] === undefined || raw["focus"] === null ? null : finiteNumber(raw["focus"], `${what}: focus`);
+        checkFocus(focus, `${what}: focus`);
         const tool = raw["tool"] ?? null;
         if (tool !== null && (typeof tool !== "string" || !TOOL_NAMES.includes(tool))) {
             throw new Error(`${what}: tool must be one of ${TOOL_NAMES.join(", ")}`);
@@ -1286,6 +1298,7 @@ function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits
             depth,
             plunge,
             thickness,
+            ...(focus !== null ? { focus } : {}),
             tool: tool as Tool | null,
             areas: areas as number[],
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,

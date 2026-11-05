@@ -37,6 +37,7 @@ import {
     pathMoves,
     placeJob,
     checkThickness,
+    checkFocus,
     DEFAULT_THICKNESS,
     type PlannedMove,
 } from "./jobs.ts";
@@ -1762,6 +1763,26 @@ export interface MockOptions {
 }
 
 /** Fake API and event feed: `api` and `feed` in one object. */
+/** Each enabled group's own focus by its index, for the groups that have one and something to cut. */
+export function groupFocus(job: Job): Map<number, number> {
+    const offsets = new Map<number, number>();
+    job.groups.forEach((group, index) => {
+        const cuts = group.paths.length > 0 || (group.joints?.length ?? 0) > 0;
+        if (group.enabled && cuts && group.focus !== undefined && group.focus !== null) {
+            offsets.set(index, group.focus);
+        }
+    });
+    return offsets;
+}
+
+/** Following the map by power holds the head still, which a group's own focus would move. */
+function refusePowerWithFocus(job: Job, mode: string): void {
+    const focused = groupFocus(job).keys().next();
+    if (mode === "power" && !focused.done) {
+        throw new Error(`${job.groups[focused.value]!.label} asks for a focus height, and following the map by power holds the head still: follow it with the focus axis, or clear the group's focus`);
+    }
+}
+
 export class MockBackend implements Api, EventFeed {
     readonly machine = new MockMachine(MOCK_MACHINE_SETTINGS);
     connected = false;
@@ -3608,7 +3629,7 @@ export class MockBackend implements Api, EventFeed {
     async calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse> {
         let built: CalibrateResponse;
         try {
-            built = calibrateJob(this.newId(), request, this.machine.milling(), this.limits());
+            built = calibrateJob(this.newId(), request, this.machine.milling(), this.limits(), this.machine.hasFocusAxis());
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
@@ -3643,6 +3664,7 @@ export class MockBackend implements Api, EventFeed {
                     depth: group.depth,
                     plunge: group.plunge,
                     thickness: group.thickness,
+                    focus: group.focus ?? null,
                     tool: group.tool ?? null,
                     paths: group.paths.length,
                     joints: group.joints?.length ?? 0,
@@ -3696,6 +3718,7 @@ export class MockBackend implements Api, EventFeed {
                 if (change.thickness !== undefined) {
                     checkThickness(change.thickness);
                 }
+                checkFocus(change.focus);
             }
             if (patch.offset) {
                 const moved = patch.offset.x !== job.offset.x || patch.offset.y !== job.offset.y;
@@ -3747,6 +3770,14 @@ export class MockBackend implements Api, EventFeed {
             }
             if (change.thickness !== undefined) {
                 group.thickness = change.thickness;
+            }
+            if (change.focus !== undefined) {
+                // Null takes the group's focus away.
+                if (change.focus === null) {
+                    delete group.focus;
+                } else {
+                    group.focus = change.focus;
+                }
             }
             if (change.enabled !== undefined) {
                 group.enabled = change.enabled;
@@ -3884,7 +3915,11 @@ export class MockBackend implements Api, EventFeed {
      * move also carries the focus height at its end, and a job whose first
      * move is a cut, the head already over its start, gets a dark move to
      * the focus height first so the beam does not light at another. With
-     * a spindle the job is milled instead.
+     * a spindle the job is milled instead. A laser group's own focus raises
+     * the map's focus height, or without a map the height the head stands
+     * at as the run begins: said on the group's first move (a lift of its
+     * own before a cut that starts where the head is), and the head goes
+     * back to that height after the last group.
      */
     movesFor(job: Job, focus: HeightMap | null = null): Move[] {
         const machine = this.machine;
@@ -3900,6 +3935,17 @@ export class MockBackend implements Api, EventFeed {
                 throw new Error(`${group.label}: made for a ${group.tool}, not this machine's ${tool}`);
             }
         }
+        const offsets = groupFocus(job);
+        const focused = offsets.keys().next();
+        if (!focused.done) {
+            const label = job.groups[focused.value]!.label;
+            if (tool !== "laser") {
+                throw new Error(`${label}: a focus height is for a laser's beam; clear it to ${tool === "spindle" ? "mill" : "dispense"} the group`);
+            }
+            if (!machine.hasFocusAxis()) {
+                throw new Error(`${label} asks for a focus height and the machine has no focus axis ($h_axis=1)`);
+            }
+        }
         if (machine.dispensing()) {
             return this.dispensingMoves(job, focus, surface);
         }
@@ -3910,10 +3956,15 @@ export class MockBackend implements Api, EventFeed {
         const moves: Move[] = [];
         let joint = machine.endpoint();
         let z = machine.endpointZ();
+        const base = machine.endpointH();
+        // The height the plan last said, when a group's focus has it say any.
+        let current: number | null = null;
+        let lastGroup = 0;
         job.groups.forEach((group, index) => {
             if (!group.enabled) {
                 return;
             }
+            const extra = offsets.get(index) ?? 0;
             for (const step of this.groupSteps(group, joint, z)) {
                 const move: Move =
                     step.kind === "go"
@@ -3923,13 +3974,27 @@ export class MockBackend implements Api, EventFeed {
                     move.z = step.z;
                 }
                 if (surface) {
-                    move.h = round4(surface(step.target, step.z));
+                    move.h = round4(surface(step.target, step.z) + extra);
+                } else if (offsets.size > 0) {
+                    const want = round4(base + extra);
+                    if (current === null || Math.abs(want - current) >= 0.00005) {
+                        if (move.kind === "go") {
+                            move.h = want;
+                        } else {
+                            moves.push({ kind: "go", target: joint, ...(cartesian ? { z } : {}), h: want, headOnly: true, feed: null, power: 0, group: index });
+                        }
+                        current = want;
+                    }
                 }
                 moves.push(move);
                 joint = step.target;
                 z = step.z;
+                lastGroup = index;
             }
         });
+        if (!surface && current !== null && Math.abs(current - base) >= 0.00005) {
+            moves.push({ kind: "go", target: joint, ...(cartesian ? { z } : {}), h: round4(base), headOnly: true, feed: null, power: 0, group: lastGroup });
+        }
         const first = moves[0];
         if (surface && first?.kind === "cut") {
             const start = machine.endpoint();
@@ -4167,6 +4232,7 @@ export class MockBackend implements Api, EventFeed {
         }
         let moves: Move[];
         try {
+            refusePowerWithFocus(job, followed?.mode ?? "off");
             moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null);
         } catch (error) {
             throw new ApiError(400, errorText(error));
@@ -4209,6 +4275,7 @@ export class MockBackend implements Api, EventFeed {
         const followed = this.compensation(compensate, job);
         let moves: Move[];
         try {
+            refusePowerWithFocus(job, followed?.mode ?? "off");
             moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null);
         } catch (error) {
             throw new ApiError(400, errorText(error));

@@ -94,6 +94,7 @@ from .kinematics import (
     Spindle,
     Streamer,
     check_feed,
+    group_focus,
     head_board,
     num,
 )
@@ -2131,7 +2132,18 @@ class Backend:
         return result.model_dump()
 
     def calibrate_job(self, request: calibration.CalibrateRequest) -> dict:
-        result = calibration.build(request, self.streamer(), self.milling)
+        # Whether the laser has a focus axis is known from its settings,
+        # read when a machine is connected, else as last read.
+        values: dict = {}
+        if self.link is not None and self.link.is_open:
+            try:
+                values = self.read_settings()["values"]
+            except (LinkError, HTTPException):
+                values = {}
+        elif self._settings_cache is not None:
+            values = self._settings_cache[1]
+        focus_axis = bool(values.get("h_axis")) if "h_axis" in values else None
+        result = calibration.build(request, self.streamer(), self.milling, focus_axis)
         result.job = self.store.add(result.job)
         return result.model_dump()
 
@@ -2223,6 +2235,13 @@ class Backend:
                         plan_start = (float(record["start"][0]), float(record["start"][1]))
                 if plan_start is None:
                     plan_start = streamer.start_of(status)
+                # A group's own focus counts from where the run picked up
+                # began, so its lines are the ones counted.
+                if group_focus(job):
+                    if theirs and record is not None and isinstance(record.get("start_h"), (int, float)):
+                        streamer.focus_base = float(record["start_h"])
+                    elif status.h is not None:
+                        streamer.focus_base = status.h
                 pieces = list(streamer.job_pieces(job, plan_start, compensation))
                 line = min(body.line, len(pieces))
                 skip = streamer.rewind(pieces, line) if body.rewind else line

@@ -1545,6 +1545,29 @@ describe("the mock backend answers as the backend does", () => {
         expect(moves[1]?.kind).toBe("cut");
     });
 
+    test("a laser group's own focus moves the head for the group, from where the run begins, and back", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { h_axis: 1 } });
+        backend.machine.jogTo(null, null, null, 2);
+        advance(backend, 30);
+        const made = await backend.calibrateJob({ kind: "focus", focuses: [-0.5, 0.5, 3], length: 4, gap: 1, x: 3, y: 0 });
+        expect(made.job.groups.map((group) => [group.label, group.focus])).toEqual([
+            ["test focus -0.5 mm", -0.5], ["test focus 0 mm", 0], ["test focus +0.5 mm", 0.5],
+        ]);
+        const moves = backend.movesFor(made.job);
+        expect(moves.filter((move) => move.h !== undefined).map((move) => move.h)).toEqual([1.5, 2, 2.5, 2]);
+        // A group that starts where the head is gets a lift of its own.
+        const joined = structuredClone(made.job);
+        joined.groups[1]!.paths = [[[7, 0], [3, 0]]];
+        const lift = backend.movesFor(joined).findIndex((move) => move.headOnly && move.h === 2);
+        expect(backend.movesFor(joined)[lift + 1]?.kind).toBe("cut");
+        // No focus axis, no focus; the ladder is refused too.
+        await backend.updateSettings({ values: { h_axis: 0 } });
+        expect(() => backend.movesFor(made.job)).toThrow("test focus -0.5 mm asks for a focus height and the machine has no focus axis");
+        await expect(backend.calibrateJob({ kind: "focus" })).rejects.toMatchObject({ status: 400 });
+    });
+
     test("probing refuses a grid past the soft limit before anything moves", async () => {
         const { backend } = backendWithLog();
         await backend.connect("/dev/ttyACM0");

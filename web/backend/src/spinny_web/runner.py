@@ -18,7 +18,7 @@ from typing import Callable
 
 from .heightmap import Compensation
 from .jobs import Job
-from .kinematics import Piece, Streamer, num
+from .kinematics import Piece, Streamer, group_focus, num
 from .link import (
     REALTIME_HOLD,
     REALTIME_RESUME,
@@ -232,6 +232,8 @@ class Runner:
                 progress = self.progress
                 self._plan = {
                     "start": [float(start[0]), float(start[1])],
+                    # The height a group's own focus counts from, when one has it.
+                    "start_h": streamer.focus_base,
                     "compensate": compensation.mode if compensation is not None else "off",
                     "cartesian": streamer.cartesian,
                     "angle": float(getattr(streamer, "angle", 0.0)),
@@ -284,6 +286,14 @@ class Runner:
         status = self._idle_status(link)
         if not any(group.enabled and group.has_cuts for group in job.groups):
             raise RunnerError("the job has nothing enabled to cut")
+        # A laser group's own focus counts from where the head stands as
+        # the run begins, unless the run picked up says where it began.
+        if streamer.tool == "laser" and group_focus(job):
+            if status.h is None:
+                label = job.groups[next(iter(group_focus(job)))].label
+                raise RunnerError(f"{label} asks for a focus height and the machine has no focus axis ($h_axis=1)")
+            if streamer.focus_base is None:
+                streamer.focus_base = status.h
         if abs(status.a) >= 360.0:
             # Every pass of an outline around the axis adds a turn to the
             # angle, and the firmware keeps angles in single precision:

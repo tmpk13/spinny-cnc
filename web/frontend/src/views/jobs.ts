@@ -104,7 +104,26 @@ interface GroupRow {
     plunge: HTMLInputElement;
     /** A dispenser's group only: the paste over every pad, mm. */
     thickness: HTMLInputElement | null;
+    /** A laser with a focus axis: mm over focus for the group, blank for none. */
+    focus: HTMLInputElement | null;
     enabled: HTMLInputElement;
+}
+
+/**
+ * Whether the groups table has a focus column: a laser with a focus axis,
+ * or a job whose groups have a focus already, so it can be seen and
+ * cleared on a machine without one.
+ */
+export function showsFocus(job: Job, milling: boolean, focusAxis: boolean): boolean {
+    if (milling || job.groups.some((group) => group.tool === "dispenser")) {
+        return false;
+    }
+    return focusAxis || job.groups.some((group) => group.focus !== undefined && group.focus !== null);
+}
+
+/** A group's focus as its field shows it: blank for none. */
+function focusText(focus: number | null | undefined): string {
+    return focus === undefined || focus === null ? "" : String(focus);
 }
 
 /** What the groups table shows of a job's groups besides their fields: each label and how many paths it has. */
@@ -582,8 +601,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     // margin does with the groups as many as before.
     let detailsGroups = "";
     // The table's columns are the tool's, so it is built again when the
-    // machine's tool changes under it.
+    // machine's tool changes under it, or the focus column comes or goes.
     let detailsMilling = false;
+    let detailsFocus = false;
     // The inputs of the groups table and the offset row, kept so that a
     // fresh copy of the same job updates them in place: rebuilding the
     // table would tear out the field the operator is typing in, and the
@@ -728,15 +748,17 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         }
         const milling = isMilling(state.snapshot);
         const groups = groupsShown(job);
-        if (detailsFor !== job.id || detailsJob === null || detailsGroups !== groups || detailsMilling !== milling) {
+        const focusColumn = showsFocus(job, milling, profileOf(state.snapshot).h_axis);
+        if (detailsFor !== job.id || detailsJob === null || detailsGroups !== groups || detailsMilling !== milling || detailsFocus !== focusColumn) {
             detailsFor = job.id;
             detailsJob = job;
             detailsGroups = groups;
             detailsMilling = milling;
+            detailsFocus = focusColumn;
             statsEl = statsBlock(job);
             replace(details,
                 el("h3", {}, job.name),
-                groupsTable(job, milling),
+                groupsTable(job, milling, focusColumn),
                 statsEl,
                 offsetRow(job),
                 widthRow(job, milling),
@@ -765,6 +787,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             setUnlessFocused(row.plunge, String(group.plunge ?? DEFAULT_PLUNGE), focused);
             if (row.thickness) {
                 setUnlessFocused(row.thickness, String(group.thickness ?? DEFAULT_THICKNESS), focused);
+            }
+            if (row.focus) {
+                setUnlessFocused(row.focus, focusText(group.focus), focused);
             }
             if (row.enabled !== focused) {
                 row.enabled.checked = group.enabled;
@@ -862,7 +887,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         return field;
     }
 
-    function groupsTable(job: Job, milling: boolean): HTMLElement {
+    function groupsTable(job: Job, milling: boolean, focusColumn: boolean): HTMLElement {
         groupRows = [];
         const rows = job.groups.map((group, index) => {
             const power = groupField(group.power, 0, milling ? "spindle speed" : "power");
@@ -887,6 +912,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
             if (thickness) {
                 thickness.step = "0.01";
             }
+            // Blank is no focus of its own: the head stays where the run puts it.
+            let focus: HTMLInputElement | null = null;
+            if (focusColumn && !dots && !carved) {
+                focus = numberField({ min: -50, max: 50, step: 0.1, placeholder: "-" });
+                focus.value = focusText(group.focus);
+                focus.setAttribute("aria-label", "focus");
+                focus.title = "mm the head is raised above focus for this group, negative lowers it; blank leaves it where the run puts it";
+            }
             const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
             enabled.checked = group.enabled;
             const patch = async (): Promise<void> => {
@@ -897,6 +930,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 const d = parseNumber(depth.value);
                 const u = parseNumber(plunge.value);
                 const t = thickness ? parseNumber(thickness.value) : null;
+                // A blank focus takes the group's own away; a typed one sets it.
+                const f = focus ? (focus.value.trim() === "" ? null : parseNumber(focus.value)) : undefined;
                 await ctx.call(ctx.api.patchJob(job.id, {
                     groups: [{
                         index,
@@ -907,19 +942,26 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                         ...(d !== null && milling && !dots && !carved ? { depth: d } : {}),
                         ...(u !== null && milling && !dots ? { plunge: u } : {}),
                         ...(t !== null ? { thickness: t } : {}),
+                        ...(f !== undefined && !(f === null && focus!.value.trim() !== "") ? { focus: f } : {}),
                         enabled: enabled.checked,
                     }],
                 }));
                 await ctx.reloadJob(job.id);
                 await ctx.refreshJobs();
             };
-            for (const field of [power, minPower, speed, passes, depth, plunge, enabled, ...(thickness ? [thickness] : [])]) {
+            for (const field of [power, minPower, speed, passes, depth, plunge, enabled, ...(thickness ? [thickness] : []), ...(focus ? [focus] : [])]) {
                 field.addEventListener("change", () => void patch());
             }
             // Milled, the floor means nothing and the depth and the plunge
             // take its place: a pass is a step down, not a burn again. A
             // group of paste dots has only its thickness and its passes.
-            const fields = thickness ? [thickness, passes, enabled] : milling ? [power, depth, speed, plunge, passes, enabled] : [power, minPower, speed, passes, enabled];
+            const fields = thickness
+                ? [thickness, passes, enabled]
+                : milling
+                    ? [power, depth, speed, plunge, passes, enabled]
+                    : focusColumn
+                        ? [power, minPower, speed, passes, focus ?? el("span", { class: "muted" }, "-"), enabled]
+                        : [power, minPower, speed, passes, enabled];
             // The name has a line of its own above the fields, so they get
             // the whole width of a side panel.
             const body = el("tbody", { class: group.enabled ? "" : "disabled" },
@@ -929,7 +971,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                         el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : carved ? ` (${group.moves!.length}, 3D)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`))),
                 el("tr", { class: "group-fields" }, ...fields.map((field) => el("td", {}, field))),
             );
-            groupRows.push({ body, power, minPower, speed, passes, depth, plunge, thickness, enabled });
+            groupRows.push({ body, power, minPower, speed, passes, depth, plunge, thickness, focus, enabled });
             return body;
         });
         const anyDots = job.groups.some((group) => group.tool === "dispenser");
@@ -953,6 +995,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 el("th", { title: "Least power where the head slows for a corner (dyn mode); 0 is none" }, "Min S"),
                 el("th", {}, "mm/min"),
                 el("th", { title: "Times the group runs over all of its paths" }, "Passes"),
+                ...(focusColumn ? [el("th", { title: "mm over focus for the group, on the height the run starts at or the height map's focus height; blank is none" }, "Focus")] : []),
                 el("th", {}, "On"),
             ];
         return el("div", { class: "groups-scroll" }, el("table", { class: "groups" }, el("thead", {}, el("tr", {}, ...head)), ...rows));

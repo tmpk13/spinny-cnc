@@ -1,7 +1,8 @@
 // The calibration tests, made into a job: a laser's material test (a grid
-// of squares at a power and a speed each) and a mill's depth test (a row
-// of slots a step deeper each). The one for the machine shows; a
-// dispenser has neither.
+// of squares at a power and a speed each), its focus ladder (a row of lines
+// a step over focus each, with a focus axis) and a mill's depth test (a row
+// of slots a step deeper each). The ones for the machine show; a dispenser
+// has none.
 
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
@@ -11,7 +12,20 @@ import type { CalibrateRequest } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** The raw text of each field; a blank one is left for the backend to default. */
-export type CalibrateFields = Record<string, string> & { kind: "material" | "depth"; fill: string };
+export type CalibrateFields = Record<string, string> & { kind: "material" | "depth" | "focus"; fill: string };
+
+/** The ladders of each test, as the request names them and the fields do. */
+const LADDERS: Record<CalibrateFields["kind"], [keyof CalibrateRequest, string][]> = {
+    material: [["powers", "power"], ["speeds", "speed"]],
+    depth: [["depths", "depth"]],
+    focus: [["focuses", "focus"]],
+};
+/** The single numbers of each test. */
+const SINGLES: Record<CalibrateFields["kind"], string[]> = {
+    material: ["size", "gap", "spot", "x", "y"],
+    depth: ["length", "gap", "feed", "plunge", "spindle", "x", "y"],
+    focus: ["power", "speed", "length", "gap", "x", "y"],
+};
 
 /** The request the fields describe, or a message saying which field is wrong; a ladder needs all three of its fields or none. */
 export function calibrateRequest(fields: CalibrateFields): CalibrateRequest | string {
@@ -24,8 +38,7 @@ export function calibrateRequest(fields: CalibrateFields): CalibrateRequest | st
         const value = parseNumber(text);
         return value === null ? `${name} is not a number` : value;
     };
-    const ladders: [keyof CalibrateRequest, string][] = fields.kind === "material" ? [["powers", "power"], ["speeds", "speed"]] : [["depths", "depth"]];
-    for (const [key, name] of ladders) {
+    for (const [key, name] of LADDERS[fields.kind]) {
         const parts = [read(`${name} from`), read(`${name} to`), read(`${name} steps`)];
         const wrong = parts.find((part) => typeof part === "string");
         if (wrong !== undefined) {
@@ -42,8 +55,7 @@ export function calibrateRequest(fields: CalibrateFields): CalibrateRequest | st
         }
         (out as Record<string, unknown>)[key] = parts as [number, number, number];
     }
-    const singles = fields.kind === "material" ? ["size", "gap", "spot", "x", "y"] : ["length", "gap", "feed", "plunge", "spindle", "x", "y"];
-    for (const name of singles) {
+    for (const name of SINGLES[fields.kind]) {
         const value = read(name);
         if (typeof value === "string") {
             return value;
@@ -80,34 +92,61 @@ export function calibrationTest(ctx: Ctx): HTMLElement {
         field("x", 0, 1), field("y", 0, 1),
     );
     depth.title = "A slot per depth, shallowest first, each its own group at that depth";
+    const focus = el("div", { class: "field-grid" },
+        field("focus from", -1, 0.1), field("focus to", 1, 0.1), field("focus steps", 9, 1),
+        field("power", 500, 10), field("speed", 600, 10), field("length", 10, 1), field("gap", 2, 0.5),
+        field("x", 0, 1), field("y", 0, 1),
+    );
+    focus.title = "A line per focus step, lowest first, each its own group burnt that many mm over focus (minus under) at one power and speed";
+    // A laser with a focus axis picks between the material test and the
+    // focus ladder; without one the material test is the focus test too.
+    const which = el("select", { class: "field", "aria-label": "Test" },
+        el("option", { value: "material" }, "material test"),
+        el("option", { value: "focus" }, "focus ladder"),
+    ) as HTMLSelectElement;
+    const whichLabel = labeled("Test", which);
     const intro = el("p", { class: "muted" });
     const output = el("div", { class: "center-test-output" });
     const panel = el("details", { class: "center-test calibrate-test" },
         el("summary", {}, "Calibration test"),
+        whichLabel,
         intro,
         material,
+        focus,
         depth,
         button("Make test job", () => make(), "btn"),
         output,
     );
 
-    let kind: "material" | "depth" = "material";
+    let kind: CalibrateFields["kind"] = "material";
     const follow = (state: AppState): void => {
-        const tool = profileOf(state.snapshot).tool;
-        kind = tool === "spindle" ? "depth" : "material";
+        const profile = profileOf(state.snapshot);
+        const tool = profile.tool;
+        const ladder = tool === "laser" && profile.h_axis;
+        whichLabel.classList.toggle("hidden", !ladder);
+        if (!ladder && which.value === "focus") {
+            which.value = "material";
+        }
+        kind = tool === "spindle" ? "depth" : which.value === "focus" ? "focus" : "material";
         panel.classList.toggle("hidden", tool === "dispenser");
         material.classList.toggle("hidden", kind !== "material");
+        focus.classList.toggle("hidden", kind !== "focus");
         depth.classList.toggle("hidden", kind !== "depth");
         intro.textContent = kind === "material"
-            ? "A grid of squares, each its own group at a power and a speed, to find the settings for a material. On a machine with no focus axis it is the focus and power test too: one speed and a ladder of powers."
-            : "A row of slots, each its own group a step deeper, to find the depth that parts the copper and check the depth axis's scale.";
+            ? ladder
+                ? "A grid of squares, each its own group at a power and a speed, to find the settings for a material."
+                : "A grid of squares, each its own group at a power and a speed, to find the settings for a material. On a machine with no focus axis it is the focus and power test too: one speed and a ladder of powers."
+            : kind === "focus"
+                ? "A row of lines, each its own group burnt a step over or under focus at one power and speed: the thinnest line is at focus. The steps count from the height the run starts at, or from the height map's focus height when the run follows it."
+                : "A row of slots, each its own group a step deeper, to find the depth that parts the copper and check the depth axis's scale.";
     };
+    which.addEventListener("change", () => follow(ctx.store.get()));
     ctx.store.subscribe(follow, ["snapshot"]);
     follow(ctx.store.get());
 
     async function make(): Promise<void> {
-        // The fields of the test shown: the two sets share some names.
-        const shown = kind === "material" ? material : depth;
+        // The fields of the test shown: the sets share some names.
+        const shown = kind === "material" ? material : kind === "focus" ? focus : depth;
         const fields: CalibrateFields = { kind, fill: fill.checked ? "1" : "0" };
         for (const input of shown.querySelectorAll("input[type=number]")) {
             const name = input.getAttribute("aria-label");

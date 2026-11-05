@@ -382,6 +382,8 @@ export interface Group {
     tool?: Tool | null;
     /** Dispensing: mm of paste over every pad of the group. */
     thickness?: number;
+    /** A laser with a focus axis: mm the head is raised above focus for the group, negative lowers it; missing or null leaves it where the run puts it. */
+    focus?: number | null;
     /** Dispensing: each dot's pad area in mm^2, in the order of `paths`; empty or missing on a group of cuts. */
     areas?: number[];
     paths: Path[];
@@ -545,6 +547,7 @@ export interface GroupSummary {
     depth?: number;
     plunge?: number;
     thickness?: number;
+    focus?: number | null;
     tool?: Tool | null;
     paths: number;
     joints?: number;
@@ -583,6 +586,8 @@ export interface GroupPatch {
     plunge?: number;
     /** Dispensing: mm of paste over a pad, 0.01 to 5. */
     thickness?: number;
+    /** A laser's mm over focus for the group, within 50 either way; null takes it away. */
+    focus?: number | null;
 }
 
 /** What a job is turned about: the middle of the box round what it cuts, or the origin. */
@@ -647,8 +652,8 @@ export interface CenterResponse {
 
 /** A calibration test; a ladder is [first, last, steps], both ends included, and what is left out takes the backend's default. */
 export interface CalibrateRequest {
-    /** A laser's grid of squares at a power and a speed each, or a mill's row of slots a step deeper each. */
-    kind?: "material" | "depth";
+    /** A laser's grid of squares at a power and a speed each, its row of lines a step over focus each (on a focus axis), or a mill's row of slots a step deeper each. */
+    kind?: "material" | "depth" | "focus";
     powers?: [number, number, number];
     speeds?: [number, number, number];
     size?: number;
@@ -662,6 +667,10 @@ export interface CalibrateRequest {
     plunge?: number;
     /** The spindle's S for every slot. */
     spindle?: number;
+    /** The focus ladder: mm over focus from the first line to the last, and the one power and speed of every line. */
+    focuses?: [number, number, number];
+    power?: number;
+    speed?: number;
     /** The lower left corner, board mm. */
     x?: number;
     y?: number;

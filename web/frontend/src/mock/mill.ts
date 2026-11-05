@@ -488,7 +488,7 @@ export function labelStem(label: string): string {
     return label.replace(/[-+]?\d+(?:\.\d+)?/g, "#");
 }
 
-const SETTINGS = ["power", "min_power", "speed", "passes", "enabled", "depth", "plunge", "thickness"] as const;
+const SETTINGS = ["power", "min_power", "speed", "passes", "enabled", "depth", "plunge", "thickness", "focus"] as const;
 
 /** Each old group's settings onto the new group made in its place, matched by label but for its numbers, in order. */
 export function carrySettings(old: Group[], made: Group[]): void {

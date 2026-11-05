@@ -5,7 +5,8 @@ import { MockBackend } from "../src/mock/backend.ts";
 import { ladder } from "../src/mock/calibrate.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
 import { calibrateRequest } from "../src/views/calibrate.ts";
-import { mountJobs } from "../src/views/jobs.ts";
+import { mountJobs, showsFocus } from "../src/views/jobs.ts";
+import { connected } from "./harness.ts";
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -20,6 +21,9 @@ describe("calibration test", () => {
             kind: "depth", depths: [0.1, 0.3, 3], feed: 90,
         });
         expect(calibrateRequest({ kind: "depth", fill: "1", feed: "fast" })).toBe("feed is not a number");
+        expect(calibrateRequest({ kind: "focus", fill: "1", "focus from": "-0.4", "focus to": "0.4", "focus steps": "5", power: "300", gap: "1" })).toEqual({
+            kind: "focus", focuses: [-0.4, 0.4, 5], power: 300, gap: 1,
+        });
         expect(ladder(100, 1000, 4)).toEqual([100, 400, 700, 1000]);
     });
 
@@ -45,6 +49,54 @@ describe("calibration test", () => {
         expect(job?.groups.at(-1)!.label).toBe("test S1000 F1500");
         expect(panel.querySelector(".center-test-summary")?.textContent).toContain("3 powers S100 to S1000");
         await expect(backend.calibrateJob({ kind: "depth" })).rejects.toMatchObject({ status: 400, message: "the depth test is a mill's ($spindle=1): a laser takes the material test" });
+        root.remove();
+    });
+
+    test("a laser with a focus axis makes a focus ladder, and each line's focus shows in the groups table", async () => {
+        const store = new Store<AppState>(initialState(true));
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { h_axis: 1 } });
+        const ctx = createContext(backend, store);
+        const root = document.createElement("section");
+        document.body.append(root);
+        mountJobs(root, ctx);
+        const panel = root.querySelector(".calibrate-test")!;
+        const which = panel.querySelector('select[aria-label="Test"]') as HTMLSelectElement;
+        const shown = (element: Element): boolean => !element.classList.contains("hidden");
+        // No focus axis, no ladder to pick.
+        store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "laser", h_axis: false, r_max: 0, z_max: 0 } } });
+        expect(shown(which.closest("label")!)).toBe(false);
+        store.set({ snapshot: connected() });
+        expect(shown(which.closest("label")!)).toBe(true);
+        which.value = "focus";
+        which.dispatchEvent(new Event("change"));
+        const steps = panel.querySelector('input[aria-label="focus steps"]') as HTMLInputElement;
+        expect(shown(steps.closest(".field-grid")!)).toBe(true);
+        steps.value = "3";
+        Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Make test job")!.click();
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        const job = store.get().job!;
+        expect(job.groups.map((group) => group.label)).toEqual(["test focus -1 mm", "test focus 0 mm", "test focus +1 mm"]);
+        expect(panel.querySelector(".center-test-summary")?.textContent).toContain("3 lines -1 to +1 mm over focus");
+        const heads = Array.from(root.querySelectorAll("table.groups thead th")).map((th) => th.textContent);
+        expect(heads).toContain("Focus");
+        const fields = Array.from(root.querySelectorAll('input[aria-label="focus"]')) as HTMLInputElement[];
+        expect(fields.map((field) => field.value)).toEqual(["-1", "0", "1"]);
+        // A blank field takes the group's focus away.
+        fields[0]!.value = "";
+        fields[0]!.dispatchEvent(new Event("change"));
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        expect((await backend.job(job.id)).groups[0]!.focus).toBeUndefined();
+        expect((await backend.job(job.id)).groups[1]!.focus).toBe(0);
+        // The column stays for a job with a focus set, on a machine without the axis.
+        expect(showsFocus(job, false, false)).toBe(true);
+        expect(showsFocus({ ...job, groups: job.groups.map((group) => ({ ...group, focus: null })) }, false, false)).toBe(false);
+        expect(showsFocus(job, true, true)).toBe(false);
         root.remove();
     });
 });

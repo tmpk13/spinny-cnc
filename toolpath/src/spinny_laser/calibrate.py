@@ -13,6 +13,11 @@ The depth test is a mill's row of slots, each a step deeper than the one
 before, cut at one feed and spindle speed: what is left shows where the
 tool reaches through the copper, and a measured slot against its number
 how far the depth axis really moves.
+
+The focus ladder is a laser's row of lines with a focus axis, each burnt
+with the head a step higher or lower than focus at one power and speed:
+the thinnest, sharpest line names the focus, and how fast the lines widen
+on either side how much a board's warp matters.
 """
 
 from __future__ import annotations
@@ -35,6 +40,8 @@ class Patch:
     paths: list[list[Point]] = field(default_factory=list)
     # A mill's depth for the patch, mm below the surface; None for a laser.
     depth: float | None = None
+    # A laser's height over focus for the patch, mm; None for none.
+    focus: float | None = None
 
 
 def ladder(first: float, last: float, count: int) -> list[float]:
@@ -110,5 +117,37 @@ def depth(depths: list[float], length: float, gap: float, speed: float, feed: fl
             speed=feed,
             paths=[[(origin[0], y), (origin[0] + length, y)]],
             depth=cut,
+        ))
+    return patches
+
+
+def focus_label(focus: float) -> str:
+    """A focus step as a label says it: +0.25 above focus, -0.5 below, 0 at it."""
+    return "0" if focus == 0 else f"{focus:+g}"
+
+
+def focus_ladder(
+    focuses: list[float],
+    length: float,
+    gap: float,
+    power: float,
+    speed: float,
+    origin: Point = (0.0, 0.0),
+) -> list[Patch]:
+    """The laser's row: a line `length` long along X per focus step, `gap`
+    apart in Y from `origin` up, lowest first, each at `power` and `speed`."""
+    if not 0.0 < length <= MAX_SIZE:
+        raise ValueError(f"length must be above 0 and at most {MAX_SIZE:g} mm")
+    if not 0.0 < gap <= MAX_SIZE:
+        raise ValueError(f"gap must be above 0 and at most {MAX_SIZE:g} mm")
+    patches = []
+    for i, step in enumerate(sorted(focuses)):
+        y = origin[1] + i * gap
+        patches.append(Patch(
+            label=f"test focus {focus_label(step)} mm",
+            power=power,
+            speed=speed,
+            paths=[[(origin[0], y), (origin[0] + length, y)]],
+            focus=step,
         ))
     return patches

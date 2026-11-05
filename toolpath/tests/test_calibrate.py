@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from spinny_laser import calibrate
 from spinny_laser.calibrate import depth, ladder, material
 
 
@@ -37,3 +38,14 @@ def test_the_depth_row_has_a_slot_per_depth():
     assert patches[1].paths == [[(1, 5), (11, 5)]]
     with pytest.raises(ValueError, match="above 0"):
         depth([0.0], length=10, gap=3, speed=8000, feed=120)
+
+
+def test_the_focus_ladder_has_a_line_per_step_lowest_first():
+    patches = calibrate.focus_ladder([0.5, -0.5, 0.0], 8.0, 1.5, 300.0, 900.0, (2.0, 3.0))
+    assert [patch.label for patch in patches] == ["test focus -0.5 mm", "test focus 0 mm", "test focus +0.5 mm"]
+    assert [patch.focus for patch in patches] == [-0.5, 0.0, 0.5]
+    assert patches[0].paths == [[(2.0, 3.0), (10.0, 3.0)]]
+    assert patches[2].paths == [[(2.0, 6.0), (10.0, 6.0)]]
+    assert all(patch.power == 300.0 and patch.speed == 900.0 and patch.depth is None for patch in patches)
+    with pytest.raises(ValueError, match="gap must be above 0"):
+        calibrate.focus_ladder([0.0], 8.0, 0.0, 300.0, 900.0)

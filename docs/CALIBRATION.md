@@ -117,5 +117,17 @@ was cut with and one can be switched off or cut again alone.
   shallowest slot that parts the copper is the isolation depth, and a slot
   measured against its number shows how far the depth axis really moves.
 
-A focus ladder for a laser with a focus axis (lines cut at stepped
-heights) needs a per-group focus height, which jobs do not have yet.
+- A laser with a focus axis gets the focus ladder as well (*Test*: focus
+  ladder): a row of lines, lowest first, each burnt with the head a step
+  above focus (minus below) at one power and speed. Bring the head to
+  focus by eye first: without a height map the steps count from the
+  height the run starts at, with one from its focus height, and the head
+  goes back after the last line. The thinnest, sharpest line is at focus;
+  move H by its number (or *Focus here* in the Height map panel) and run a
+  finer ladder round it. Each line is a group whose *Focus* is its step.
+
+Every laser group may carry a focus of its own (the groups table's *Focus*
+column, shown with a focus axis or when a group has one): blank leaves the
+head where the run puts it. A run following the map by power holds the
+head still and refuses a group with a focus; a spindle or a dispenser
+refuses one too.
