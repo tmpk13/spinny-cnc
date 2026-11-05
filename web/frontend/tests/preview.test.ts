@@ -30,7 +30,16 @@ import {
     labelEvery,
     limitReach,
     limitShape,
-    ringStep,
+    MAX_GRID_LINES,
+    MAX_GRID_STEP,
+    arcPoints,
+    coarserStep,
+    gridLayout,
+    gridLinesIn,
+    gridStep,
+    majorEvery,
+    ringsIn,
+    visibleBox,
 } from "../src/preview.ts";
 import type { HeightMap, Job } from "../src/types.ts";
 
@@ -51,9 +60,10 @@ const H = 300;
 const topDown: Camera = { target: [0, 0, 0], distance: 100, yaw: 0, pitch: 90 };
 const tilted: Camera = { target: [2, -3, 0], distance: 80, yaw: 30, pitch: 55 };
 
-/** A 2D context that takes every call and counts the strokes, fills and texts. */
-function fakeContext(): { ctx: CanvasRenderingContext2D; counts: Record<string, number> } {
+/** A 2D context that takes every call and counts the strokes, fills and texts, and keeps the texts. */
+function fakeContext(): { ctx: CanvasRenderingContext2D; counts: Record<string, number>; texts: string[] } {
     const counts: Record<string, number> = {};
+    const texts: string[] = [];
     const ctx = new Proxy({}, {
         get(_target, name) {
             if (typeof name !== "string") {
@@ -62,24 +72,27 @@ function fakeContext(): { ctx: CanvasRenderingContext2D; counts: Record<string, 
             if (name === "measureText") {
                 return () => ({ width: 10 });
             }
-            return (): void => {
+            return (...args: unknown[]): void => {
                 counts[name] = (counts[name] ?? 0) + 1;
+                if (name === "fillText") {
+                    texts.push(String(args[0]));
+                }
             };
         },
         set() {
             return true;
         },
     }) as unknown as CanvasRenderingContext2D;
-    return { ctx, counts };
+    return { ctx, counts, texts };
 }
 
-function sizedCanvas(width: number, height: number): { canvas: HTMLCanvasElement; counts: Record<string, number> } {
+function sizedCanvas(width: number, height: number): { canvas: HTMLCanvasElement; counts: Record<string, number>; texts: string[] } {
     const canvas = document.createElement("canvas");
     canvas.getBoundingClientRect = (() => ({ width, height, x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
-    const { ctx, counts } = fakeContext();
+    const { ctx, counts, texts } = fakeContext();
     canvas.getContext = (() => ctx) as unknown as typeof canvas.getContext;
     document.body.appendChild(canvas);
-    return { canvas, counts };
+    return { canvas, counts, texts };
 }
 
 describe("camera", () => {
@@ -510,11 +523,113 @@ describe("ring labels", () => {
         expect(jobReach(null, 0)).toBe(10);
     });
 
-    test("ring step keeps a handful of rings", () => {
-        expect(ringStep(4)).toBe(1);
-        expect(ringStep(25)).toBe(5);
-        expect(ringStep(80)).toBe(20);
-        expect(ringStep(5000)).toBe(1000);
+});
+
+describe("grid and rings follow the zoom", () => {
+    test("the step is the finest 1-2-5 step whose lines land far enough apart", () => {
+        // An overview of a 100 mm reach, about 2.7 px per mm: 10 mm lines.
+        expect(gridStep(2.7)).toBe(10);
+        // Zoomed in on a few millimeters: twentieths of a millimeter.
+        expect(gridStep(412)).toBe(0.05);
+        expect(gridStep(16)).toBe(1);
+        expect(gridStep(15.9)).toBe(2);
+        expect(gridStep(1)).toBe(20);
+        expect(gridStep(1e6)).toBe(0.01);
+        expect(gridStep(0)).toBe(MAX_GRID_STEP);
+        expect(coarserStep(1)).toBe(2);
+        expect(coarserStep(2)).toBe(5);
+        expect(coarserStep(5)).toBe(10);
+        expect(coarserStep(0.05)).toBe(0.1);
+        expect(coarserStep(0.2)).toBe(0.5);
+        expect(coarserStep(MAX_GRID_STEP)).toBe(MAX_GRID_STEP);
+        // The heavier lines fall on round numbers.
+        expect(majorEvery(1)).toBe(5);
+        expect(majorEvery(0.2)).toBe(5);
+        expect(majorEvery(0.05)).toBe(2);
+        expect(majorEvery(50)).toBe(2);
+    });
+
+    test("lines cross the box in view, the axis left out, the round ones heavier", () => {
+        const lines = gridLinesIn(0.5, { x0: 0.2, y0: -0.4, x1: 1.6, y1: 0.4 });
+        // X at 0.5, 1 and 1.5; Y at none but the axis, which is left out.
+        expect(lines.map((line) => line.from[0])).toEqual([0.5, 1, 1.5]);
+        expect(lines.map((line) => line.major)).toEqual([false, true, false]);
+        expect(lines[0]).toEqual({ from: [0.5, -0.4], to: [0.5, 0.4], major: false });
+        expect(gridLinesIn(0, { x0: 0, y0: 0, x1: 1, y1: 1 })).toEqual([]);
+    });
+
+    test("rings cross the box in view over the arc it spans", () => {
+        // A box round the axis: every ring out to its far corner, the whole turn.
+        const round = ringsIn(1, { x0: -2, y0: -2, x1: 2, y1: 2 });
+        expect(round.rings.map((ring) => ring.radius)).toEqual([1, 2]);
+        expect(round.to - round.from).toBeCloseTo(Math.PI * 2, 9);
+        // A box off to the right: only the rings through it, over its arc.
+        const side = ringsIn(1, { x0: 10, y0: -1, x1: 12, y1: 1 });
+        expect(side.rings.map((ring) => ring.radius)).toEqual([10, 11, 12]);
+        expect(side.from).toBeCloseTo(-Math.atan2(1, 10), 9);
+        expect(side.to).toBeCloseTo(Math.atan2(1, 10), 9);
+        expect(side.rings.map((ring) => ring.major)).toEqual([true, false, false]);
+        // Its chords stay within the tolerance of the circle.
+        const points = arcPoints(100, side.from, side.to, 0.001);
+        for (let i = 1; i < points.length; i++) {
+            const [ax, ay] = points[i - 1]!;
+            const [bx, by] = points[i]!;
+            expect(100 - Math.hypot((ax + bx) / 2, (ay + by) / 2)).toBeLessThanOrEqual(0.001 + 1e-12);
+        }
+        expect(Math.hypot(points[0]![0], points[0]![1])).toBeCloseTo(100, 9);
+    });
+
+    test("the part of the board in view is the box under the canvas", () => {
+        const box = visibleBox(topDown, W, H, 1000)!;
+        const scale = pxPerMm(topDown, H);
+        expect(box.x1 - box.x0).toBeCloseTo(W / scale, 6);
+        expect(box.y1 - box.y0).toBeCloseTo(H / scale, 6);
+        expect(box.x0 + box.x1).toBeCloseTo(0, 6);
+        // Never past the grid's extent, and nothing when the view is off it.
+        const clipped = visibleBox(topDown, W, H, 10)!;
+        expect(clipped).toEqual({ x0: -10, y0: -10, x1: 10, y1: 10 });
+        expect(visibleBox({ ...topDown, target: [500, 0, 0] }, W, H, 10)).toBeNull();
+        // Looking low over the board the view runs to the horizon: it is
+        // cut a few camera distances out.
+        const low: Camera = { target: [0, 0, 0], distance: 10, yaw: 0, pitch: MIN_PITCH };
+        const far = visibleBox(low, W, H, 1e6)!;
+        expect(far.y1).toBeLessThanOrEqual(10 * 6 + 1e-9);
+    });
+
+    test("a step that would draw too many lines coarsens", () => {
+        const box = { x0: -500, y0: -500, x1: 500, y1: 500 };
+        const layout = gridLayout(1000, box, false);
+        expect((1000 / layout.step) * 2).toBeLessThanOrEqual(MAX_GRID_LINES);
+        const rings = gridLayout(1000, box, true);
+        expect(ringsIn(rings.step, box).rings.length).toBeLessThanOrEqual(MAX_GRID_LINES);
+        expect(gridLayout(1000, null, false)).toEqual({ step: 0.02, box: null });
+    });
+
+    test("zooming in on the preview draws a finer grid", () => {
+        const { canvas, texts } = sizedCanvas(W, H);
+        const preview = new Preview(canvas);
+        preview.setLimits({ kinematics: "cartesian", r_max: 50, z_max: 20 });
+        preview.setJob(job);
+        preview.setCamera({ ...topDown, distance: 200 });
+        preview.draw();
+        const coarse = texts.find((text) => text.startsWith("grid "));
+        texts.length = 0;
+        preview.setCamera({ ...topDown, target: [3, 4, 0], distance: 4 });
+        preview.draw();
+        const fine = texts.find((text) => text.startsWith("grid "));
+        const step = (text: string | undefined): number => Number(text?.split(" ")[1]);
+        expect(step(fine)).toBeLessThan(step(coarse));
+        expect(step(fine)).toBeLessThanOrEqual(0.2);
+        // The labels of a view off the axes still show, along its edges.
+        expect(texts.some((text) => /^[0-9.]+$/.test(text))).toBe(true);
+        // The rings too.
+        preview.setShowGrid(false);
+        texts.length = 0;
+        preview.draw();
+        expect(texts.some((text) => text.startsWith("rings "))).toBe(true);
+        expect(texts.some((text) => text.endsWith(" mm") && !text.startsWith("rings"))).toBe(true);
+        preview.dispose();
+        canvas.remove();
     });
 });
 

@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import fixture from "../../backend/tests/data/mill-samples.json" with { type: "json" };
 import { parseEvent } from "../src/ws.ts";
 import { buildMill, defaultOperation, labelStem, passesOf } from "../src/mock/mill.ts";
-import { GRID_KEY, Preview, formatTick, gridLines } from "../src/preview.ts";
+import { GRID_KEY, Preview, formatTick, gridLinesIn } from "../src/preview.ts";
 import type { HolePoint, Job, MillOperation, Path } from "../src/types.ts";
 import { PAGES } from "../src/views/tabs.ts";
 import { headPosition, mountMarkers, nextMarkerName, withMarker } from "../src/views/markers.ts";
@@ -239,11 +239,11 @@ describe("markers", () => {
 
 describe("the preview's grid", () => {
     test("lines span the grid either side of the axis, the axis left out", () => {
-        const lines = gridLines(5, 12);
+        const lines = gridLinesIn(5, { x0: -12, y0: -12, x1: 12, y1: 12 });
         expect(lines.length).toBe(8);
-        expect(lines[0]).toEqual([[-10, -10], [-10, 10]]);
-        expect(lines.some(([a]) => a[0] === 0 && a[1] === -10)).toBe(false);
-        expect(gridLines(0, 10)).toEqual([]);
+        expect(lines[0]).toEqual({ from: [-10, -12], to: [-10, 12], major: true });
+        expect(lines.some((line) => line.from[0] === 0 && line.from[1] === -12)).toBe(false);
+        expect(gridLinesIn(0, { x0: -10, y0: -10, x1: 10, y1: 10 })).toEqual([]);
         expect(formatTick(-2.5)).toBe("-2.5");
         expect(formatTick(1.0000000002)).toBe("1");
     });

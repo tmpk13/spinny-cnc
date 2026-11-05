@@ -553,3 +553,7 @@
   Detect; a pick fills Device, Size and fps, a device can still be typed;
   Start sends what the fields show, and Apply restarts a running camera on
   another device, size or fps.
+- Grid on zoom (2026-11-05): the preview's grid and rings take their step
+  from the zoom (the finest 1-2-5 step 16 px apart, down to 0.01 mm), every
+  fifth or second line heavier and labeled, drawn only over the part of the
+  board in view; a ring is drawn over the arc in view so it stays round.

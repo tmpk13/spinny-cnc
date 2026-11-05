@@ -27,6 +27,7 @@ import {
     project,
     pxPerMm,
     sameCamera,
+    unproject,
     zoomAt,
 } from "./camera.ts";
 import { cssVar } from "./dom.ts";
@@ -76,6 +77,8 @@ export const LOCK_KEY = "spinny.preview.lock";
 export const HEIGHTS_KEY = "spinny.previewHeights";
 /** Where the choice of a square grid over the rings is remembered between visits. */
 export const GRID_KEY = "spinny.preview.grid";
+/** How strongly the finer lines of the grid and the rings are drawn beside the heavier ones. */
+const MINOR_ALPHA = 0.45;
 /** The head marker and the rail float this share of the reach over the board. */
 const HEAD_HEIGHT = 0.15;
 const MIN_EXAGGERATION = 1;
@@ -200,43 +203,251 @@ export function labelEvery(stepMm: number, scale: number): number {
     return apart * 2 >= LABEL_GAP_PX ? 2 : 4;
 }
 
+/** Least screen gap between the finest lines of the grid or the rings, CSS px; closer lines give way to a coarser step. */
+export const GRID_GAP_PX = 16;
+/** The finest step of the grid and the rings, mm: ten microns, past anything the machine places. */
+export const MIN_GRID_STEP = 0.01;
+/** The coarsest step, mm. */
+export const MAX_GRID_STEP = 1000;
+/** The most lines the grid draws (both ways together), or rings; past it the step coarsens. */
+export const MAX_GRID_LINES = 400;
+/** Where the view reaches the horizon the grid goes this many camera distances out from the target, no farther. */
+const GRID_FAR = 6;
+
+/** An axis-aligned box on the board, mm. */
+export interface Box {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+}
+
+/** A step of the 1-2-5 series rounded to what it is, so 0.1 * 2 reads 0.2. */
+function tidyStep(step: number): number {
+    return Number(step.toPrecision(12));
+}
+
+/** The leading digit of a 1-2-5 step: 1, 2 or 5. */
+function stepDigit(step: number): number {
+    return Math.round(step / 10 ** Math.floor(Math.log10(step) + 1e-9));
+}
+
+/** The step after `step` in the 1-2-5 series, at most the coarsest. */
+export function coarserStep(step: number): number {
+    const digit = stepDigit(step);
+    const next = tidyStep(digit === 1 ? step * 2 : digit === 2 ? step * 2.5 : step * 2);
+    return Math.min(MAX_GRID_STEP, next);
+}
+
 /**
- * The lines of a square grid `step` apart over the board out to `extent`
- * either side of the axis, in X and Y, each a segment across the whole
- * grid; the axis lines themselves are left to the axis cross.
+ * The step of the grid and the rings at `scale` CSS px per mm: the finest
+ * of a 1-2-5 series whose lines land at least `gap` px apart, so zooming
+ * in brings finer lines in and zooming out thins them.
  */
-export function gridLines(step: number, extent: number): [Point, Point][] {
-    if (!(step > 0) || !(extent > 0)) {
+export function gridStep(scale: number, gap = GRID_GAP_PX): number {
+    if (!(scale > 0) || !Number.isFinite(scale)) {
+        return MAX_GRID_STEP;
+    }
+    const least = Math.max(MIN_GRID_STEP, gap / scale);
+    let step = tidyStep(10 ** Math.floor(Math.log10(least)));
+    while (step < least * (1 - 1e-9) && step < MAX_GRID_STEP) {
+        step = coarserStep(step);
+    }
+    return Math.min(step, MAX_GRID_STEP);
+}
+
+/** How many steps apart the heavier lines are: every fifth of a 1 or 2 step, every second of a 5 step, so they fall on round numbers. */
+export function majorEvery(step: number): number {
+    return stepDigit(step) === 5 ? 2 : 5;
+}
+
+/** Whether the line or ring `k` steps out is a heavier one. */
+function isMajor(k: number, every: number): boolean {
+    return Math.abs(k) % every === 0;
+}
+
+/** A grid line, a segment across the box, and whether it is a heavier one. */
+export interface GridLine {
+    from: Point;
+    to: Point;
+    major: boolean;
+}
+
+/**
+ * The lines of a square grid `step` apart that cross `box`, in X and Y,
+ * each a segment across the box; every `majorEvery` line is a heavier
+ * one, counted from the axis. The axis lines themselves are left to the
+ * axis cross.
+ */
+export function gridLinesIn(step: number, box: Box): GridLine[] {
+    if (!(step > 0) || !(box.x1 > box.x0) || !(box.y1 > box.y0)) {
         return [];
     }
-    const count = Math.floor(extent / step + 1e-9);
-    const edge = count * step;
-    const lines: [Point, Point][] = [];
-    for (let k = -count; k <= count; k++) {
-        if (k === 0) {
-            continue;
+    const every = majorEvery(step);
+    const lines: GridLine[] = [];
+    for (let k = Math.ceil(box.x0 / step - 1e-9); k * step <= box.x1 + 1e-9; k++) {
+        if (k !== 0) {
+            lines.push({ from: [k * step, box.y0], to: [k * step, box.y1], major: isMajor(k, every) });
         }
-        const at = k * step;
-        lines.push([[at, -edge], [at, edge]]);
-        lines.push([[-edge, at], [edge, at]]);
+    }
+    for (let k = Math.ceil(box.y0 / step - 1e-9); k * step <= box.y1 + 1e-9; k++) {
+        if (k !== 0) {
+            lines.push({ from: [box.x0, k * step], to: [box.x1, k * step], major: isMajor(k, every) });
+        }
     }
     return lines;
+}
+
+/** The radius of each ring and whether it is a heavier one. */
+export interface Ring {
+    radius: number;
+    major: boolean;
+}
+
+/** How near the axis the box comes, 0 when it holds it, and how far its farthest corner is. */
+function ringSpan(box: Box): { near: number; far: number } {
+    const nearX = Math.min(Math.max(0, box.x0), box.x1);
+    const nearY = Math.min(Math.max(0, box.y0), box.y1);
+    const far = Math.max(
+        Math.hypot(box.x0, box.y0),
+        Math.hypot(box.x1, box.y0),
+        Math.hypot(box.x1, box.y1),
+        Math.hypot(box.x0, box.y1),
+    );
+    return { near: Math.hypot(nearX, nearY), far };
+}
+
+/** The count of steps out to the first ring at or past `near`; the axis itself is no ring. */
+function firstRing(near: number, step: number): number {
+    return Math.max(1, Math.ceil(near / step - 1e-9));
+}
+
+/**
+ * The part of the rings about the axis `step` apart that crosses `box`:
+ * the rings from the box's nearest point to its farthest, and the arc
+ * they are drawn over, `from` to `to` radians counterclockwise from +X; a
+ * box round the axis takes the whole turn.
+ */
+export function ringsIn(step: number, box: Box): { rings: Ring[]; from: number; to: number } {
+    const none = { rings: [], from: 0, to: 0 };
+    if (!(step > 0) || !(box.x1 > box.x0) || !(box.y1 > box.y0)) {
+        return none;
+    }
+    const { near, far } = ringSpan(box);
+    const every = majorEvery(step);
+    const rings: Ring[] = [];
+    for (let k = firstRing(near, step); k * step <= far + 1e-9; k++) {
+        rings.push({ radius: tidyStep(k * step), major: isMajor(k, every) });
+    }
+    if (near === 0) {
+        return { rings, from: 0, to: Math.PI * 2 };
+    }
+    // The axis lies outside the box, so its corners span less than half a
+    // turn about it: measured from the middle's direction, they bound it.
+    const corners: Point[] = [[box.x0, box.y0], [box.x1, box.y0], [box.x1, box.y1], [box.x0, box.y1]];
+    const middle = Math.atan2((box.y0 + box.y1) / 2, (box.x0 + box.x1) / 2);
+    const turns = corners.map(([x, y]) => {
+        let delta = Math.atan2(y, x) - middle;
+        while (delta > Math.PI) {
+            delta -= Math.PI * 2;
+        }
+        while (delta < -Math.PI) {
+            delta += Math.PI * 2;
+        }
+        return delta;
+    });
+    return { rings, from: middle + Math.min(...turns), to: middle + Math.max(...turns) };
+}
+
+/** Points along the arc of a ring from `from` to `to` radians, its chords within `tolerance` mm of the circle. */
+export function arcPoints(radius: number, from: number, to: number, tolerance: number): Vec3[] {
+    const sweep = to - from;
+    const whole = sweep >= Math.PI * 2 - 1e-9;
+    const ratio = Math.min(1, Math.max(0, tolerance / radius));
+    const chord = ratio >= 1 ? Math.PI / 4 : 2 * Math.acos(1 - ratio);
+    const count = Math.min(2048, Math.max(whole ? 48 : 4, Math.ceil(sweep / chord)));
+    return Array.from({ length: count + 1 }, (_, i) => {
+        const angle = from + (sweep * i) / count;
+        return [radius * Math.cos(angle), radius * Math.sin(angle), 0] as Vec3;
+    });
+}
+
+/**
+ * The part of the board the view shows, as the box round it, within
+ * `extent` mm of the axis either way: canvas points sampled along the
+ * edges and through the middle, each taken down to the board. Where the
+ * view reaches the horizon the box runs out `GRID_FAR` camera distances
+ * from the target. Null when the view shows none of the board.
+ */
+export function visibleBox(camera: Camera, width: number, height: number, extent: number): Box | null {
+    const frame = frameOf(camera);
+    const far = camera.distance * GRID_FAR;
+    const [tx, ty] = camera.target;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    let open = false;
+    const steps = 4;
+    for (let i = 0; i <= steps; i++) {
+        for (let j = 0; j <= steps; j++) {
+            const hit = unproject(frame, width, height, (width * i) / steps, (height * j) / steps, 0);
+            if (!hit || Math.hypot(hit[0] - tx, hit[1] - ty) > far) {
+                open = true;
+                continue;
+            }
+            x0 = Math.min(x0, hit[0]);
+            y0 = Math.min(y0, hit[1]);
+            x1 = Math.max(x1, hit[0]);
+            y1 = Math.max(y1, hit[1]);
+        }
+    }
+    if (open) {
+        x0 = Math.min(x0, tx - far);
+        y0 = Math.min(y0, ty - far);
+        x1 = Math.max(x1, tx + far);
+        y1 = Math.max(y1, ty + far);
+    }
+    const box = {
+        x0: Math.max(x0, -extent),
+        y0: Math.max(y0, -extent),
+        x1: Math.min(x1, extent),
+        y1: Math.min(y1, extent),
+    };
+    return box.x1 > box.x0 && box.y1 > box.y0 ? box : null;
+}
+
+/** How the grid or the rings are laid out for a view: the step, and the part of the board they are drawn over. */
+export interface GridLayout {
+    step: number;
+    box: Box | null;
+}
+
+/**
+ * The step for `scale` px per mm over the part of the board in view,
+ * coarsened until no more than `MAX_GRID_LINES` lines or rings cross it.
+ */
+export function gridLayout(scale: number, box: Box | null, rings: boolean): GridLayout {
+    let step = gridStep(scale);
+    if (box === null) {
+        return { step, box };
+    }
+    const span = ringSpan(box);
+    const count = (s: number): number => {
+        if (rings) {
+            return Math.floor(span.far / s + 1e-9) - firstRing(span.near, s) + 1;
+        }
+        return (box.x1 - box.x0) / s + (box.y1 - box.y0) / s;
+    };
+    while (step < MAX_GRID_STEP && count(step) > MAX_GRID_LINES) {
+        step = coarserStep(step);
+    }
+    return { step, box };
 }
 
 /** A grid line's position as its label: a whole number, or as few decimals as it has. */
 export function formatTick(value: number): string {
     return String(Math.round(value * 1000) / 1000);
-}
-
-/** Ring spacing in a 1-2-5 series that puts a handful of rings inside `reach`. */
-export function ringStep(reach: number): number {
-    const candidates = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
-    for (const step of candidates) {
-        if (reach / step <= 6) {
-            return step;
-        }
-    }
-    return 1000;
 }
 
 export type DragMode = "orbit" | "pan";
@@ -694,15 +905,19 @@ export class Preview {
         const extent = Math.max(reach * 1.5, 10);
         const headHeight = Math.max(1, reach * HEAD_HEIGHT);
         const at = (x: number, y: number, z = 0) => project(frame, width, height, [x, y, z]);
+        const grid = this.showGrid;
+        // The grid's or the rings' step follows the zoom, over the part of
+        // the board in view.
+        const layout = gridLayout(scale, visibleBox(camera, width, height, extent), !grid);
 
-        const scene = this.stillScene(colors, reach, scale, extent);
+        const scene = this.stillScene(colors, reach, scale, extent, layout);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         if (scene) {
             this.blit(ctx, scene.under);
         } else {
-            this.drawBoard(ctx, frame, colors, reach);
+            this.drawBoard(ctx, frame, colors, layout, scale);
         }
 
         // The rail, floating at the head's height: along +X from the axis
@@ -778,44 +993,83 @@ export class Preview {
             }
         }
 
-        // Labels in screen space: the rings along the rail, or the grid's
-        // lines along both axes, every one while they are far enough apart
-        // to read, every second or fourth beyond.
-        const step = ringStep(reach);
-        const grid = this.showGrid;
+        // Labels in screen space on the heavier lines or rings, every one
+        // while they are far enough apart to read, every second or fourth
+        // beyond: the rings along the rail, or toward the middle of the
+        // view when the rail is out of it; the grid's lines along both axes,
+        // or along the view's lower and left edges when an axis is out of it.
+        const { step, box } = layout;
         ctx.fillStyle = colors.text;
         ctx.font = "0.75rem system-ui, sans-serif";
         ctx.textBaseline = "top";
         ctx.textAlign = "left";
-        const every = labelEvery(step, scale);
         const label = (text: string, x: number, y: number): void => {
             const p = at(x, y, 0);
             if (p && p.x > 0 && p.x < width && p.y > 0 && p.y < height) {
                 ctx.fillText(text, p.x + 3, p.y + 3);
             }
         };
-        let index = 0;
-        for (let ring = step; ring <= reach * 1.5; ring += step) {
-            index += 1;
-            if (index % every !== 0) {
-                continue;
+        const major = step * majorEvery(step);
+        const every = labelEvery(major, scale);
+        // A grid line's label sits where it meets the axis across it; with
+        // that point off the canvas, where the line meets the canvas's
+        // lower edge (lines along Y) or its left edge (lines along X).
+        const lineLabel = (text: string, from: Point, to: Point, axis: Point, edge: "bottom" | "left"): void => {
+            const p = at(axis[0], axis[1], 0);
+            if (p && p.x > 0 && p.x < width && p.y > 0 && p.y < height) {
+                ctx.fillText(text, p.x + 3, p.y + 3);
+                return;
             }
+            const a = at(from[0], from[1], 0);
+            const b = at(to[0], to[1], 0);
+            if (!a || !b) {
+                return;
+            }
+            const [along, across, place] = edge === "bottom" ? [a.y, b.y, height - 34] : [a.x, b.x, 6];
+            if (Math.abs(across - along) < 1e-9) {
+                return;
+            }
+            const t = (place - along) / (across - along);
+            if (t < 0 || t > 1) {
+                return;
+            }
+            const x = edge === "bottom" ? a.x + (b.x - a.x) * t : place;
+            const y = edge === "bottom" ? place : a.y + (b.y - a.y) * t;
+            if (x > 0 && x < width && y > 0 && y < height) {
+                ctx.fillText(text, x + 3, y + 3);
+            }
+        };
+        if (box) {
             if (grid) {
-                for (const value of [ring, -ring]) {
-                    label(formatTick(value), value, 0);
-                    label(formatTick(value), 0, value);
+                for (let k = Math.ceil(box.x0 / major - 1e-9); k * major <= box.x1 + 1e-9; k++) {
+                    if (k !== 0 && k % every === 0) {
+                        const v = k * major;
+                        lineLabel(formatTick(v), [v, box.y0], [v, box.y1], [v, 0], "bottom");
+                    }
+                }
+                for (let k = Math.ceil(box.y0 / major - 1e-9); k * major <= box.y1 + 1e-9; k++) {
+                    if (k !== 0 && k % every === 0) {
+                        const v = k * major;
+                        lineLabel(formatTick(v), [box.x0, v], [box.x1, v], [0, v], "left");
+                    }
                 }
             } else {
-                label(`${ring} mm`, ring, 0);
+                const { rings, from, to } = ringsIn(step, box);
+                const rail = to - from >= Math.PI * 2 - 1e-9 || (from <= 0 && 0 <= to) || (from <= Math.PI * 2 && Math.PI * 2 <= to);
+                const angle = rail ? 0 : (from + to) / 2;
+                for (const ring of rings) {
+                    const k = Math.round(ring.radius / major);
+                    if (ring.major && k % every === 0) {
+                        label(`${formatTick(ring.radius)} mm`, ring.radius * Math.cos(angle), ring.radius * Math.sin(angle));
+                    }
+                }
             }
         }
         this.drawMarkerLabels(ctx, at, colors, width, height);
         ctx.textAlign = "right";
         ctx.textBaseline = "bottom";
         const notes = [`elev ${Math.round(camera.pitch)} deg`];
-        if (grid) {
-            notes.unshift(`grid ${step} mm`);
-        }
+        notes.unshift(`${grid ? "grid" : "rings"} ${formatTick(step)} mm`);
         if (this.locked) {
             notes.unshift("rotation locked");
         }
@@ -842,7 +1096,7 @@ export class Preview {
      * something in them changed; null where offscreen canvases cannot be
      * had, and the layers are then drawn straight onto the canvas.
      */
-    private stillScene(colors: Colors, reach: number, scale: number, extent: number): Scene | null {
+    private stillScene(colors: Colors, reach: number, scale: number, extent: number, layout: GridLayout): Scene | null {
         if (this.noLayers) {
             return null;
         }
@@ -876,7 +1130,7 @@ export class Preview {
         }
         const frame = frameOf(this.camera);
         this.beginLayer(under, underCtx);
-        this.drawBoard(underCtx, frame, colors, reach);
+        this.drawBoard(underCtx, frame, colors, layout, scale);
         this.beginLayer(over, overCtx);
         const exaggeration = this.drawWork(overCtx, frame, colors, reach, scale, extent);
         this.scene = { key, under, over, exaggeration };
@@ -915,22 +1169,44 @@ export class Preview {
         ctx.restore();
     }
 
-    /** The board: the background, and the rings about the axis or a square grid. */
-    private drawBoard(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number): void {
+    /**
+     * The board: the background, and the rings about the axis or a square
+     * grid over the part of it in view, the finer lines faint and every
+     * heavier one at full strength. A ring is drawn over the arc in view,
+     * its chords within a third of a pixel of the circle, so it stays round
+     * however far in the view is zoomed.
+     */
+    private drawBoard(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, layout: GridLayout, scale: number): void {
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, this.width, this.height);
-        const step = ringStep(reach);
-        ctx.strokeStyle = colors.grid;
-        ctx.lineWidth = 1;
-        if (this.showGrid) {
-            for (const [a, b] of gridLines(step, reach * 1.5)) {
-                this.polyline(ctx, frame, [[a[0], a[1], 0], [b[0], b[1], 0]]);
-            }
+        const { step, box } = layout;
+        if (box === null) {
             return;
         }
-        for (let ring = step; ring <= reach * 1.5; ring += step) {
-            this.polyline(ctx, frame, circlePoints(ring, 96), true);
+        ctx.strokeStyle = colors.grid;
+        ctx.lineWidth = 1;
+        const lines = this.showGrid ? gridLinesIn(step, box) : [];
+        const rings = this.showGrid ? null : ringsIn(step, box);
+        const tolerance = 0.3 / (scale > 0 ? scale : 1);
+        for (const major of [false, true]) {
+            ctx.globalAlpha = major ? 1 : MINOR_ALPHA;
+            ctx.beginPath();
+            let drawn = false;
+            for (const line of lines) {
+                if (line.major === major) {
+                    drawn = this.tracePolyline(ctx, frame, [[line.from[0], line.from[1], 0], [line.to[0], line.to[1], 0]], false) || drawn;
+                }
+            }
+            for (const ring of rings?.rings ?? []) {
+                if (ring.major === major) {
+                    drawn = this.tracePolyline(ctx, frame, arcPoints(ring.radius, rings!.from, rings!.to, tolerance), false) || drawn;
+                }
+            }
+            if (drawn) {
+                ctx.stroke();
+            }
         }
+        ctx.globalAlpha = 1;
     }
 
     /**
