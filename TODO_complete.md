@@ -583,3 +583,9 @@
   job a path a line; the caret's path and point are drawn on the preview, a
   picked path brings the caret to its line, an edit is drawn as it is typed
   and kept with Apply.
+- Camera logging mode (2026-11-05): with *log every look* on, every look the
+  camera routines take (the head camera finding its mark, the up camera
+  centering the nozzle and its part finder, a G-code device's run) keeps
+  the picture as it was and with what the finder found drawn on it (center,
+  circle searched, the spot's box), misses included; *Photo* keeps one now;
+  both camera panels show the newest (`/api/camlog`, `var/camlog/`).

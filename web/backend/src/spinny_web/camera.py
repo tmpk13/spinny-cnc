@@ -179,6 +179,10 @@ class Camera:
         # The job whose board pcbv looks for, and the path it was loaded from.
         self.board_job: str | None = None
         self._board_path: str | None = None
+        # Where every look the routine takes is kept while logging is on;
+        # the backend sets it.
+        self.camlog = None
+        self._looks = 0
         self.progress: RoutineProgress | None = None
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
@@ -348,6 +352,7 @@ class Camera:
             if self.routine_active:
                 raise CameraError("the camera is already finding the mark")
             self._abort.clear()
+            self._looks = 0
             self.progress = RoutineProgress()
             progress = self.progress
             self._thread = threading.Thread(target=self._find, args=(access, mark, step, progress), name="camera-find", daemon=True)
@@ -434,6 +439,11 @@ class Camera:
         if self._abort.is_set():
             raise CameraError("stopped")
         reply = self.client.spot()
+        if self.camlog is not None:
+            # Kept before a miss is refused: a look that found nothing is
+            # the one to see.
+            self._looks += 1
+            self.camlog.look(self.client, "head", "finding the mark", progress.step, spot=reply, note=f"look {self._looks}", pose=self.board_job is not None)
         if not reply.get("found"):
             raise CameraError("no mark in the picture: jog the camera over the mark by hand and find again")
         spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))

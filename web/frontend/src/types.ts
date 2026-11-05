@@ -874,7 +874,53 @@ export type WsEvent =
     | { type: "align"; data: AlignState }
     | { type: "pnp"; data: PnpState }
     | { type: "pnp_device"; data: DeviceState }
-    | { type: "markers"; data: MarkersResponse };
+    | { type: "markers"; data: MarkersResponse }
+    | { type: "camlog"; data: CamLogState };
+
+// --- The camera log ------------------------------------------------------------
+
+/** Which camera a log entry is from: the one on the head, or the up camera. */
+export type LoggedCamera = "head" | "up";
+
+/** A spot finder's answer, as pcbv gives it. */
+export interface SpotReply {
+    found: boolean;
+    x?: number;
+    y?: number;
+    dx?: number;
+    dy?: number;
+    area?: number;
+    major?: number;
+    minor?: number;
+    contrast?: number;
+}
+
+/** One picture a camera's routine looked at, or a photo taken by hand. */
+export interface CamLogEntry {
+    /** Sorts by time: the second taken and a count within it. */
+    id: string;
+    time: string;
+    camera: LoggedCamera;
+    /** What was looking: a routine's name, or `photo`. */
+    routine: string;
+    step: string;
+    note: string;
+    width: number;
+    height: number;
+    /** What the finder answered for this look; null for a photo without one. */
+    spot: SpotReply | null;
+    /** The files: the picture as it was, the same with the marks (an SVG holding it), and pcbv's picture with the board's pose when the camera had a board. */
+    files: { photo: string; overlay: string; pose?: string };
+}
+
+export interface CamLogState {
+    /** Whether the routines' looks are kept. */
+    enabled: boolean;
+    /** Entries kept, of the camera asked for when one was. */
+    count: number;
+    /** The newest first. */
+    entries: CamLogEntry[];
+}
 
 // --- Pick and place -----------------------------------------------------------
 

@@ -34,6 +34,11 @@ group the job has, or deletes them. The *Job JSON* panel under the preview
 shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*.
+Both camera panels have the camera log: *log every look* keeps every
+picture the cameras' routines look at (finding the mark, centering the
+nozzle, looking at a part, a G-code device's run), each as it was and with
+what the finder found drawn on it, so a routine that went wrong can be
+followed look by look; *Photo* keeps one now with what the finder sees.
 Open `http://localhost:8000`, connect to the board (or to
 `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run

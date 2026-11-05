@@ -615,6 +615,35 @@ found, its distance from the center in picture pixels and in mm, and
 The pose is read from pcbv when the state is asked for; the page polls
 `GET /api/camera` while its camera panel shows.
 
+## Camera log
+
+With logging on, every look a camera routine takes keeps the picture the
+finder looked at: the head camera finding its mark, the up camera centering
+the nozzle and looking at a part, and a G-code device's run looking at each
+part it picked. A look that found nothing is kept as well. A photo can be
+taken by hand at any time, logging on or not. Each entry keeps the picture
+as it was (JPEG), the same picture with what the finder found drawn over it
+(an SVG holding the JPEG: the picture's center, the circle searched, the
+spot found with the box of its axes and the line to it, or "nothing
+found"), and with a board loaded on the head camera pcbv's picture with the
+board's pose. They sit in `var/camlog/` with an index of one JSON line an
+entry; the oldest go past 300 entries.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/camlog?limit=100&camera=up` | `{"enabled": false, "count": n, "entries": [entry, ...]}`, the newest first, of one camera (`head` or `up`) when named; 400 for another name |
+| `PUT /api/camlog` | `{"enabled": true}`: logging on or off, kept across restarts; answers as `GET` |
+| `POST /api/camlog/photo` | `{"camera": "head", "find": true}`: a photo now, kept whatever the switch says; with `find` the camera's finder looks first (the head camera for a dark mark, the up camera for a part of its polarity) and what it found is drawn; answers the entry; 409 while the camera is not running |
+| `GET /api/camlog/{name}` | a kept picture by its file name (`<id>.jpg`, `<id>.svg`, `<id>-pose.jpg`); 404 for any other name |
+| `DELETE /api/camlog` | forgets every entry and its pictures: `{"deleted": n}` |
+
+An entry: `{"id": "20261105-101500-003", "time", "camera": "up", "routine":
+"centering the nozzle", "step": "scale", "note": "dark spot, look 2",
+"width": 1280, "height": 720, "frame", "age_ms", "spot": {"found": true, "x",
+"y", "dx", "dy", "area", "major", "minor", "contrast"} or null, "files":
+{"photo", "overlay", "pose"}}`. A `camlog` event carries the state after
+every change.
+
 ## Pick and place
 
 A second camera, fixed to the machine and looking up at what the head

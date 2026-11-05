@@ -2685,3 +2685,64 @@ a.btn.disabled {
     min-height: 1.2em;
     margin-block: 0.3rem 0;
 }
+
+/* The camera log in a camera's panel: the switch, the photo button and the
+   newest pictures, each a thumbnail with what its finder found. */
+.camlog-box {
+    border-top: thin solid var(--border);
+    padding-top: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.camlog-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.camlog-list {
+    list-style: none;
+    margin: 0.4rem 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    gap: 0.4rem;
+}
+
+.camlog-entry {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    padding: 0.3rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    min-width: 0;
+}
+
+.camlog-entry.missed {
+    border-color: var(--red);
+}
+
+.camlog-thumb img {
+    display: block;
+    width: 5.5rem;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 0.3rem;
+    background: var(--field);
+}
+
+.camlog-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font-size: 0.8rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.camlog-what {
+    font-weight: 600;
+}

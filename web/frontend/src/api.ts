@@ -2,6 +2,9 @@
 
 import type {
     AlignFit,
+    CamLogEntry,
+    CamLogState,
+    LoggedCamera,
     AlignMarkRequest,
     AlignState,
     CamerasResponse,
@@ -210,6 +213,16 @@ export interface Api {
      * pixels, with the spots and the pose drawn on it when `overlay`.
      */
     cameraFrameUrl(width: number, overlay: boolean): string;
+    /** The camera log: whether looks are kept, and the newest entries, of one camera when named. */
+    camLog(camera?: LoggedCamera): Promise<CamLogState>;
+    /** Logging the routines' looks on or off. */
+    setCamLog(enabled: boolean): Promise<CamLogState>;
+    /** A photo now with a camera, kept whether logging is on or not; with `find`, what its finder sees drawn on it. */
+    takePhoto(camera: LoggedCamera, find: boolean): Promise<CamLogEntry>;
+    /** Forgets every entry and its pictures; the count removed. */
+    clearCamLog(): Promise<number>;
+    /** A logged picture as an image source. */
+    camLogFileUrl(name: string): string;
     cameraPose(): Promise<CameraPose>;
     /** pcbv looks for the job's board in the pictures; null unloads it. */
     cameraBoard(jobId: string | null): Promise<CameraState>;
@@ -541,6 +554,27 @@ export class HttpApi implements Api {
 
     makeMill(op: MillOperation): Promise<MillResponse> {
         return this.request<MillResponse>("POST", "/api/mill", op);
+    }
+
+    camLog(camera?: LoggedCamera): Promise<CamLogState> {
+        return this.request<CamLogState>("GET", camera ? `/api/camlog?camera=${camera}` : "/api/camlog");
+    }
+
+    setCamLog(enabled: boolean): Promise<CamLogState> {
+        return this.request<CamLogState>("PUT", "/api/camlog", { enabled });
+    }
+
+    takePhoto(camera: LoggedCamera, find: boolean): Promise<CamLogEntry> {
+        return this.request<CamLogEntry>("POST", "/api/camlog/photo", { camera, find });
+    }
+
+    async clearCamLog(): Promise<number> {
+        const response = await this.request<{ deleted: number }>("DELETE", "/api/camlog");
+        return response.deleted ?? 0;
+    }
+
+    camLogFileUrl(name: string): string {
+        return `${this.base}/api/camlog/${encodeURIComponent(name)}`;
     }
 
     async markers(): Promise<Marker[]> {

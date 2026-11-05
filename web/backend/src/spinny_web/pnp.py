@@ -510,6 +510,10 @@ class UpCamera:
         self._publish = publish
         self._message = message
         self.client = VisionClient()
+        # Where every look a routine takes is kept while logging is on; the
+        # backend sets it.
+        self.camlog = None
+        self._looks = 0
         self.progress: RoutineProgress | None = None
         # Where the last part looked at sat against the nozzle's center, mm
         # in the machine's frame, and how big it looked.
@@ -661,6 +665,7 @@ class UpCamera:
             if self.routine_active:
                 raise PnpError("an up camera routine is already under way")
             self._abort.clear()
+            self._looks = 0
             self.target = mover.name
             self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name)
             progress = self.progress
@@ -752,6 +757,7 @@ class UpCamera:
         if mover.stopped():
             raise PnpError("stopped")
         reply = self.client.spot(polarity=settings.part_spot)
+        self._log_look("looking at the part" if progress is not None else "placing: looking at the part", "looking", reply, settings.part_spot)
         if not reply.get("found"):
             raise PnpError("no part in the picture: is one on the nozzle, and is the part spot the right polarity?")
         dx, dy = float(reply.get("dx", 0.0)), float(reply.get("dy", 0.0))
@@ -770,6 +776,14 @@ class UpCamera:
         self.part_offset = self.look_at_part(mover, place, progress)
         self._message("info", f"the part sits X {self.part_offset['dx']:+.3f} Y {self.part_offset['dy']:+.3f} mm from the nozzle's center")
 
+    def _log_look(self, routine: str, step: str, reply: dict, polarity: str) -> None:
+        """Keeps the picture of a look while logging is on, found or not:
+        a look that found nothing is the one to see."""
+        if self.camlog is None:
+            return
+        self._looks += 1
+        self.camlog.look(self.client, "up", routine, step, spot=reply, note=f"{polarity} spot, look {self._looks}")
+
     def _step(self, progress: RoutineProgress | None, step: str) -> None:
         if progress is None:
             return
@@ -780,6 +794,7 @@ class UpCamera:
         if mover.stopped():
             raise PnpError("stopped")
         reply = self.client.spot(polarity=polarity)
+        self._log_look("centering the nozzle" if progress.kind == "nozzle" else "looking at the part", progress.step, reply, polarity)
         if not reply.get("found"):
             raise PnpError(missing)
         spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))

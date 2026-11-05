@@ -109,6 +109,8 @@ export function parseEvent(raw: unknown): WsEvent | null {
             return { type, data: data as DataOf<"pnp_device"> };
         case "markers":
             return { type, data: data as DataOf<"markers"> };
+        case "camlog":
+            return { type, data: data as DataOf<"camlog"> };
         default:
             return null;
     }

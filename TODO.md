@@ -8,10 +8,6 @@
     connect now says "lost power" with the time off, or that the USB link
     dropped with the board up.
 
-- Need a logging mode. For calibration and debugging.
-  - Logging mode for now is mostly for camera. Should support taking photos with and without overlays.
-  - Example:
-    - PNP take photo of the part finder steps with the bounding boxes. For identification of where errors are coming from and where they are not.
 
 # Don't do yet
 - Make buttons grow on hover, without moving items around them.

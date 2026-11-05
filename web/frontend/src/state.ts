@@ -5,6 +5,7 @@ import type { PathRef } from "./regroup.ts";
 
 import type {
     AlignState,
+    CamLogState,
     CamerasResponse,
     CameraState,
     Compensate,
@@ -108,6 +109,8 @@ export interface AppState {
     align: AlignState | null;
     /** The up camera of the PNP page; null until read. */
     pnp: PnpState | null;
+    /** The camera log: whether looks are kept, and the newest pictures; null until read. */
+    camlog: CamLogState | null;
     /** The parts of the selected job's board; null until read. */
     components: ComponentsResponse | null;
     /** The part picked on the PNP page, by its reference. */
@@ -155,6 +158,7 @@ export function initialState(mock: boolean): AppState {
         cameras: null,
         align: null,
         pnp: null,
+        camlog: null,
         components: null,
         pnpPart: null,
         pnpTarget: "machine",

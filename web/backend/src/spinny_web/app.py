@@ -38,6 +38,7 @@ from . import __version__, calibration, center
 from .align import Alignment
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
+from .camlog import CAMERAS, CameraLog
 from .cameras import detect as detect_cameras
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
@@ -469,6 +470,16 @@ class CameraMarkBody(Finite):
     here: bool = False
 
 
+class CamLogBody(Finite):
+    enabled: bool
+
+
+class CamLogPhotoBody(Finite):
+    camera: str = "head"
+    # Look for the spot the camera's routine looks for, and draw it.
+    find: bool = True
+
+
 class CameraFindBody(Finite):
     step: float = 2.0
 
@@ -647,6 +658,15 @@ class Backend:
         # job up with the board.
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
+        # The pictures the cameras' routines looked at, kept while logging
+        # is on, and photos taken by hand.
+        self.camlog = CameraLog(
+            self.config_path.parent / "camlog",
+            enabled=bool(self.config.get("camlog", False)),
+            publish=lambda state: self.broadcast.publish_threadsafe({"type": "camlog", **state}),
+        )
+        self.camera.camlog = self.camlog
+        self.pnp.camlog = self.camlog
         self.pnp_device = GcodeDevice(self.publish_pnp_device)
         self.alignment = Alignment()
         self.rates = Rates()
@@ -2157,6 +2177,45 @@ class Backend:
         job = apply_patch(job, patch, self.streamer())
         self.store.save(job)
         return job
+
+    # --- the camera log -----------------------------------------------------------
+
+    def camlog_state(self, limit: int = 100, camera: str | None = None) -> dict:
+        if camera is not None and camera not in CAMERAS:
+            raise ValueError(f"camera must be one of {', '.join(CAMERAS)}")
+        return self.camlog.state(limit, camera)
+
+    def set_camlog(self, enabled: bool) -> dict:
+        """Logging on or off, kept across restarts."""
+        with self._config_lock:
+            self.config["camlog"] = bool(enabled)
+        self._save_config()
+        return self.camlog.set_enabled(enabled)
+
+    def camlog_photo(self, camera: str, find: bool = True) -> dict:
+        """A photo now with a camera, kept whether logging is on or not:
+        the picture, the same with the marks, and with `find` what the
+        camera's finder sees now (the head camera's mark, dark; the up
+        camera's part, of its polarity); a head camera with a board loaded
+        adds pcbv's picture with the pose."""
+        if camera == "head":
+            client, running, pose = self.camera.client, self.camera.client.running, self.camera.board_job is not None
+            polarity = "dark"
+        elif camera == "up":
+            client, running, pose = self.pnp.client, self.pnp.client.running, False
+            polarity = self.pnp.settings().part_spot
+        else:
+            raise ValueError(f"camera must be one of {', '.join(CAMERAS)}")
+        if not running:
+            raise CameraError(f"the {camera} camera is not running: start it first")
+        spot = client.spot(polarity=polarity) if find else None
+        entry = self.camlog.look(client, camera, "photo", "by hand", spot=spot, note=f"{polarity} spot" if find else "", pose=pose, force=True)
+        if entry is None:
+            raise CameraError("the picture could not be kept: see the backend's log")
+        return entry
+
+    def clear_camlog(self) -> dict:
+        return {"deleted": self.camlog.clear()}
 
     def replace_job(self, job_id: str, data: dict) -> Job:
         """The job under `job_id` made what `data` says, as the page's JSON
@@ -4182,6 +4241,32 @@ def create_app(
     @app.get("/api/camera/pose")
     def camera_pose():
         return guarded(backend.camera_pose)
+
+    # --- the camera log ---
+
+    @app.get("/api/camlog")
+    def camlog_state(limit: int = 100, camera: str | None = None):
+        return guarded(lambda: backend.camlog_state(limit, camera))
+
+    @app.put("/api/camlog")
+    def camlog_set(body: CamLogBody):
+        return guarded(lambda: backend.set_camlog(body.enabled))
+
+    @app.post("/api/camlog/photo")
+    async def camlog_photo(body: CamLogPhotoBody):
+        return await run_in_threadpool(guarded, lambda: backend.camlog_photo(body.camera, body.find))
+
+    @app.delete("/api/camlog")
+    def camlog_clear():
+        return guarded(backend.clear_camlog)
+
+    @app.get("/api/camlog/{name}")
+    def camlog_file(name: str):
+        path = backend.camlog.path_of(name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="no such picture")
+        media = "image/svg+xml" if name.endswith(".svg") else "image/jpeg"
+        return Response(content=path.read_bytes(), media_type=media, headers={"Cache-Control": "max-age=3600"})
 
     @app.post("/api/camera/board")
     def camera_board(body: CameraBoardBody):

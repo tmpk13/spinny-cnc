@@ -202,6 +202,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "markers":
             store.set({ markers: event.data.markers });
             break;
+        case "camlog":
+            store.set({ camlog: event.data });
+            break;
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.

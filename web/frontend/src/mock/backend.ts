@@ -47,7 +47,8 @@ import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEX
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { buildMill, carrySettings, cutMiddle, moveJob, remakeMill } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
-import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture } from "./pnp.ts";
+import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
+import { MockCameraLog } from "./camlog.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, parseDevice, placeLines, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
 import {
@@ -73,6 +74,10 @@ import type { LinkStatus } from "../state.ts";
 import type {
     AlignFit,
     AlignMark,
+    CamLogEntry,
+    CamLogState,
+    LoggedCamera,
+    SpotReply,
     AlignMarkRequest,
     AlignState,
     CameraPose,
@@ -1804,6 +1809,8 @@ export class MockBackend implements Api, EventFeed {
     /** The camera on the head as the backend keeps it: its settings, whether it runs, the board it looks for and the mark. */
     cameraConfig: CameraSettings = { ...CAMERA_DEFAULTS, offset: [...CAMERA_DEFAULTS.offset] };
     cameraRunning = false;
+    /** The photos taken by hand, and whether the routines' looks would be kept. */
+    private readonly cameraLog = new MockCameraLog();
     private cameraJob: string | null = null;
     private cameraMarkPoint: Board | null = null;
     /** Where the loaded board really lies: the job's design a little off, so alignment has something to find. */
@@ -5963,6 +5970,64 @@ export class MockBackend implements Api, EventFeed {
     /** The nozzle's place from the camera's, mm in the machine's frame: the head's joints against where the camera really is. */
     private nozzleFromCamera(): [number, number] {
         return [this.machine.joint.r - UP_TRUTH.where[0], this.machine.z - UP_TRUTH.where[1]];
+    }
+
+    async camLog(camera?: LoggedCamera): Promise<CamLogState> {
+        if (camera !== undefined && camera !== "head" && camera !== "up") {
+            throw new ApiError(400, "camera must be one of head, up");
+        }
+        return this.camLogState(camera);
+    }
+
+    private camLogState(camera?: LoggedCamera): CamLogState {
+        const entries = this.cameraLog.entries.filter((entry) => camera === undefined || entry.camera === camera);
+        return { enabled: this.cameraLog.enabled, count: entries.length, entries: [...entries].reverse().slice(0, 100).map((entry) => structuredClone(entry)) };
+    }
+
+    async setCamLog(enabled: boolean): Promise<CamLogState> {
+        this.cameraLog.enabled = enabled;
+        this.emit({ type: "camlog", data: this.camLogState() });
+        return this.camLogState();
+    }
+
+    async takePhoto(camera: LoggedCamera, find: boolean): Promise<CamLogEntry> {
+        if (camera !== "head" && camera !== "up") {
+            throw new ApiError(400, "camera must be one of head, up");
+        }
+        const running = camera === "head" ? this.cameraRunning : this.pnpRunning;
+        if (!running) {
+            throw new ApiError(409, `the ${camera} camera is not running: start it first`);
+        }
+        const [width, height] = parseSize(camera === "head" ? this.cameraConfig.size : this.pnpConfig.size);
+        const picture = camera === "head" ? this.cameraFrameUrl(width, false) : this.pnpFrameUrl(width, false);
+        let spot: SpotReply | null = null;
+        let note = "";
+        if (find) {
+            if (camera === "head") {
+                const mark = this.cameraMarkPoint ? this.spotNow(this.cameraMarkPoint) : null;
+                spot = mark ? { found: true, x: width / 2 + mark.dx, y: height / 2 + mark.dy, dx: mark.dx, dy: mark.dy, major: 12, minor: 12, contrast: 60 } : { found: false };
+                note = "dark spot";
+            } else {
+                const nozzle = this.nozzleFromCamera();
+                const p = upPicturePoint(nozzle, UP_TRUTH);
+                const inside = upInPicture(nozzle, UP_TRUTH, this.pnpConfig.size);
+                spot = inside ? { found: true, x: width / 2 + p.px, y: height / 2 + p.py, dx: p.px, dy: p.py, major: 40, minor: 40, contrast: 70 } : { found: false };
+                note = `${this.pnpConfig.part_spot} spot`;
+            }
+        }
+        const entry = this.cameraLog.keep({ camera, routine: "photo", step: "by hand", note, width, height, spot }, picture);
+        this.emit({ type: "camlog", data: this.camLogState() });
+        return structuredClone(entry);
+    }
+
+    async clearCamLog(): Promise<number> {
+        const count = this.cameraLog.clear();
+        this.emit({ type: "camlog", data: this.camLogState() });
+        return count;
+    }
+
+    camLogFileUrl(name: string): string {
+        return this.cameraLog.files.get(name) ?? "";
     }
 
     pnpFrameUrl(width: number, overlay: boolean): string {

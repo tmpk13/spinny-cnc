@@ -11,6 +11,7 @@ import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
+import { mountCameraLog } from "./camlog.ts";
 import type { Ctx } from "./context.ts";
 import { DEVICE_SETUP, mountDevice } from "./device.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
@@ -376,6 +377,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         visible: () => visible(),
     });
     const cameraApply = button("Apply", () => applySettings(), "btn");
+    // The pictures the nozzle and part routines looked at, and photos by hand.
+    const upLog = el("div", { class: "camlog-box" });
+    mountCameraLog(upLog, ctx, "up");
     const cameraChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
     roots.camera.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Up camera"), cameraBadge),
@@ -393,6 +397,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ),
             el("div", { class: "button-row" }, cameraApply, cameraChip),
             el("p", { class: "muted hint" }, "A camera fixed to the machine, looking up at what the head holds over it. The spots are what the finder takes for the nozzle (its bore) and for a part on it: dark or bright against what is around them."),
+            upLog,
         ),
     );
 

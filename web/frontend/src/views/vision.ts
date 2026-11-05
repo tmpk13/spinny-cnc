@@ -13,6 +13,7 @@ import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
+import { mountCameraLog } from "./camlog.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often the picture is asked for while it shows, and the state polled. */
@@ -156,6 +157,9 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const routineLine = el("p", { class: "muted vision-routine" });
     const markNote = el("span", { class: "muted" });
 
+    // The pictures the find routine looked at, and photos taken by hand.
+    const logBox = el("div", { class: "camlog-box" });
+    mountCameraLog(logBox, ctx, "head");
     const body = el("fieldset", { class: "panel-body" },
         pictureBox,
         el("div", { class: "button-row" }, start, stop, overlay, poseLine),
@@ -190,6 +194,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             abortButton,
         ),
         routineLine,
+        logBox,
         el("p", { class: "muted hint" },
             "Make mark drills a point with the tool where it stands (a spindle machine); Mark is here records the tool's point over a mark"
             + " made by hand or a hole. Find mark lifts the head, goes where the camera should see the mark, moves the step along X to"
