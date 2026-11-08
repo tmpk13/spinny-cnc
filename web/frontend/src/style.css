@@ -1599,7 +1599,14 @@ table.groups input.num {
 
 /* Preview */
 
+/* The box alone decides the preview's size: the canvas is laid over it
+   rather than in it. In the flow, a canvas is as tall as its own height
+   attribute, which the preview sets from the canvas's measured size, so
+   every resize made the box a border taller and fired the next one: on a
+   screen of one device pixel per CSS pixel the preview crept down the page
+   for seconds, cleared at every step. */
 .preview-box {
+    position: relative;
     width: 100%;
     aspect-ratio: 1;
     max-height: 10vh;
@@ -1616,12 +1623,15 @@ table.groups input.num {
     .preview-box {
         flex: 1 1 auto;
         aspect-ratio: auto;
+        height: 70vh;
         max-height: 70vh;
         min-height: clamp(15rem, 30vh, 25rem);
     }
 }
 
 canvas.preview {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
