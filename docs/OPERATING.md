@@ -432,6 +432,38 @@ Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the vacuum line
 disconnected and the nozzle well above the board.
 
+### What the tools can and cannot do
+
+A language model given `spinny-mcp` works through one set of tools. They make, change and read data, and nothing
+else: jobs, Plot jobs, markers, the pick and place device's references
+and plans, and CAM jobs are made and changed; the state, the machine
+files, the CAM profiles and the device profiles are read. No tool
+connects or disconnects the machine, jogs it or sends it anywhere, homes
+it, runs, holds, resumes or stops a job, lights the laser, starts the
+spindle, probes, starts a camera routine, moves the pick and place device
+or sends it a line, or writes the firmware's settings or a machine, CAM
+or device file. That is the tool list itself, not an instruction to the
+model: every tool is a call on the backend's HTTP API that names the
+routes it may use, a request to any other route is refused before it
+leaves, and the tests hold every route a tool calls against a list of
+routes that move nothing. A job a model made is cut only when you run
+it, so look at it in the preview first: a model can get a power, a size
+or a place wrong.
+
+### The tools in Claude Code or another MCP client
+
+`spinny-mcp` serves the tools to any MCP client over stdio, calling a
+running backend at `--url` (`http://127.0.0.1:8000` by default). To give
+them to Claude Code, from the repository:
+
+    claude mcp add spinny -- uv run --directory <repository> spinny-mcp
+
+and for a backend elsewhere, `-- uv run --directory <repository>
+spinny-mcp --url http://spinny.local:8000` (a backend started with
+`--allowed-host` must allow that name). Claude Code then has
+`mcp__spinny__make_job` and the rest, within the boundary above: it can
+make you a job, and you run it. `mise run mcp` starts the server by hand.
+
 ### Lining a job up with the board
 
 A job imported from a board is placed about the axis; the board on the

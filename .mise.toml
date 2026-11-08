@@ -41,6 +41,10 @@ run = "deploy/deploy-pi.sh"
 description = "A design through a CAM profile to gcode: mise run cam -- cam/mill-3axis.toml board.kicad_pcb"
 run = "uv run spinny-cam"
 
+[tasks.mcp]
+description = "The backend's tools for an MCP client such as Claude Code, over stdio, calling a running backend (--url, default http://127.0.0.1:8000); none of them moves the machine. Claude Code takes them as: claude mcp add spinny -- uv run --directory <repository> spinny-mcp"
+run = "uv run spinny-mcp"
+
 [tasks.build-pcbv]
 description = "Build pcbv in the sibling pcb-vision repository; the backend runs it for the camera (pcbv serve)"
 run = "cargo build -q --release --manifest-path ../pcb-vision/Cargo.toml -p pcbv"

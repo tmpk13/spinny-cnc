@@ -8,6 +8,7 @@ streams jobs, and serves the frontend. The firmware does no kinematics.
 uv sync                                     # once, at the repository root
 uv run spinny-web --host 0.0.0.0 --port 8000
 uv run spinny-bridge --device auto --port 2324   # the controller's port over TCP for a backend elsewhere
+uv run spinny-mcp --url http://127.0.0.1:8000    # the tools for an MCP client, over stdio
 uv run pytest web/backend/tests
 ```
 
@@ -18,7 +19,9 @@ http://localhost:3000` (repeatable) admits a page served from elsewhere,
 such as the frontend's dev server. `--allowed-host spinny.local`
 (repeatable) also pins the `Host` header, against a page that points its
 own name at this address. Anything without an `Origin` header, such as a
-script, is admitted; the backend is meant for a trusted network.
+script, is admitted; the backend is meant for a trusted network. The
+loopback names `127.0.0.1` and `localhost` are always allowed as the host,
+since the backend's own tools come in under them.
 
 The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `../frontend/dist` is served at `/` when it exists.
@@ -43,6 +46,8 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
 | `prober.py` | probes a grid with the touch probe on the focus axis, point by point, one line answered before the next |
 | `cam.py` | the CAM profiles in `cam/` (listed, read, saved whole, patched one value at a time), the uploaded files through a profile into a job (`spinny_laser.camjob`), a stored job as gcode for the profile's controller (`spinny_laser.post`) |
+| `tools.py` | the tools a language model gets, one registry for both front ends: each a name, a description, a JSON schema, the routes it calls and the call itself on the backend's HTTP API through httpx; arguments checked against the schema before anything is sent, every request outside the registry's routes answered 403 before it leaves (`RouteGuard`), answers cut to 20000 characters and a job counted rather than listed. None moves the machine: the tests hold the routes against a list of routes that do not |
+| `mcp_server.py` | `spinny-mcp`: the tools over MCP on stdio (the `mcp` SDK's low-level server), calling the backend at `--url` |
 | `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine files in `machines/` (listed, matched against the live settings, loaded whole, their controls sent with the settings; read, checked, saved and removed through `machines.py`), the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
 
 ## Events
@@ -181,6 +186,14 @@ classDiagram
         Alignment.mark_camera(job, design, machine, angle)
         Alignment.fit / apply(job) a turn and a shift
     }
+    class tools {
+        TOOLS  name, schema, routes, the call on the API
+        ToolBox.in_process(app) / over_http(url)
+        RouteGuard  only the tools' routes leave
+    }
+    class mcp_server {
+        build_server(toolbox)  spinny-mcp on stdio
+    }
     class prober {
         Prober.start(grid, settings, link, spindle_off, keep_focus, resume, touch, points, box)
         Prober.stop / cancel, also while starting
@@ -219,6 +232,8 @@ classDiagram
     }
     app --> link
     app --> jobs
+    mcp_server --> tools
+    tools ..> app : HTTP
     app --> runner
     app --> kinematics
     app --> center

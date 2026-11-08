@@ -26,7 +26,7 @@ line at a time.
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
+| `web/backend` | serial link, job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (`spinny-mcp` serves them to any MCP client), API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
@@ -52,6 +52,8 @@ flowchart LR
         BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
         BE --> TH[thumbs: a job drawn small as SVG for the job list]
         BE --> MK[markers: named board positions in config.json]
+        EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP[spinny-mcp: the tools a model gets, thin calls on the API, only routes that move nothing]
+        MCP -->|HTTP| BE
         BE --> PNP[pick and place: a board's parts from its KiCad file, the nozzle centered over the up camera, a part's offset on it]
         PNP --> OPNP[openpnp: a device profile, the board fitted from references, a placement program]
         DF[pnp/*.toml: port, G-code dialect, heights, feeders] --> OPNP

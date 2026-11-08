@@ -16,6 +16,7 @@ the board.
 - `mise run flash`: build the board firmware and copy it to an SKR Pico in BOOTSEL mode
 - `mise run relay-pi -- pi@host`: forward a Pi's bridge to `socket://127.0.0.1:2324` here over ssh
 - `mise run cam -- cam/mill-3axis.toml board.kicad_pcb`: a design through a CAM profile, gcode in `var/out/`
+- `mise run mcp`: the backend's tools for Claude Code or another MCP client, none of which moves the machine (`claude mcp add spinny -- uv run --directory <repository> spinny-mcp`)
 - `mise run test`: every suite
 
 `mise tasks` lists the rest. Components: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

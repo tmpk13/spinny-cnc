@@ -13,11 +13,15 @@ dependencies = [
     "pydantic",
     "spinny-laser",
     "laser-sweep",
+    "httpx",
+    "jsonschema",
+    "mcp",
 ]
 
 [project.scripts]
 spinny-web = "spinny_web.app:main"
 spinny-bridge = "spinny_web.bridge:main"
+spinny-mcp = "spinny_web.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]

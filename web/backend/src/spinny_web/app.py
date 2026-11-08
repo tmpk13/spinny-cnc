@@ -3843,7 +3843,12 @@ def create_app(
         # the host, and is turned away by it.
         from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+        # The loopback names are always taken: the backend's own tools come
+        # in under them (the MCP server on this machine), and a page served
+        # from elsewhere cannot send them as its host, which is all the
+        # check is for.
+        hosts = list(dict.fromkeys([*allowed_hosts, "127.0.0.1", "localhost"]))
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
     def guarded(call: Callable[[], Any]) -> Any:
         try:
