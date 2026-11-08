@@ -48,6 +48,7 @@ ALLOWED = {
     ("DELETE", "/api/jobs/{job_id}"),
     ("POST", "/api/mill/plan"),
     ("POST", "/api/mill"),
+    ("POST", "/api/jobs/combine"),
     ("POST", "/api/cam/{profile_id}/jobs"),
     ("POST", "/api/cam/{profile_id}/gcode"),
     ("PUT", "/api/pnp/device"),
@@ -145,6 +146,8 @@ SAMPLES = {
     "delete_job": {"job_id": "a1b2"},
     "plan_plot_job": {"kind": "drill", "points": [[0, 0]]},
     "make_plot_job": {"kind": "drill", "points": [[0, 0]]},
+    "set_plot_job_operations": {"operations": [{"kind": "pocket", "x1": 10, "y1": 6, "corner": 2}, {"kind": "drill", "points": [[12, 3]]}], "job": "a1b2"},
+    "combine_jobs": {"job_ids": ["a1b2", "c3d4"], "name": "set"},
     "save_marker": {"name": "corner", "x": 1, "y": 2},
     "delete_marker": {"name": "corner"},
     "make_cam_job": {"profile_id": "mill-3axis", "files": [{"name": "a.svg", "content": SVG}]},
@@ -311,6 +314,34 @@ def test_tools_make_change_and_delete_a_job_in_the_app_itself(app):
             assert json.loads(marker.text) == {"markers": [{"name": "corner", "x": 1.5, "y": -2.0}]}
             assert not (await box.call("delete_job", {"job_id": job["id"]})).error
             assert json.loads((await box.call("list_jobs", {})).text) == {"jobs": []}
+
+    asyncio.run(go())
+
+
+def test_tools_make_a_plot_job_of_operations_change_its_list_and_combine_jobs(app):
+    async def go():
+        async with ToolBox.in_process(app) as box:
+            pocket = {"kind": "pocket", "x0": 0, "y0": 0, "x1": 10, "y1": 6, "tool": 1, "corner": 2}
+            made = await box.call("set_plot_job_operations", {"operations": [pocket], "name": "plate"})
+            assert not made.error, made.text
+            job = json.loads(made.text)["job"]
+            assert job["name"] == "plate"
+            drill = {"kind": "drill", "points": [[12, 3]], "tool": 1}
+            changed = await box.call("set_plot_job_operations", {"operations": [pocket, drill], "job": job["id"]})
+            assert not changed.error, changed.text
+            again = json.loads(changed.text)["job"]
+            assert again["id"] == job["id"] and again["name"] == "plate", "the job keeps its id and its name"
+            full = json.loads((await box.call("get_job", {"job_id": job["id"], "full": True})).text)
+            assert [op["kind"] for op in full["recipe"]["ops"]] == ["pocket", "drill"]
+            assert full["groups"][0]["label"] == "pocket 10 x 6 mm, corners R2"
+            mixed = await box.call("set_plot_job_operations", {"operations": [pocket, {**drill, "tool": 2}]})
+            assert mixed.error and "a job cuts with one bit" in mixed.text
+            other = json.loads((await box.call("make_plot_job", {"kind": "drill", "points": [[0, 0]], "tool": 1})).text)["job"]
+            combined = await box.call("combine_jobs", {"job_ids": [job["id"], other["id"]]})
+            assert not combined.error, combined.text
+            whole = json.loads(combined.text)
+            assert whole["name"] == "plate + drill 1 points"
+            assert len(json.loads((await box.call("list_jobs", {})).text)["jobs"]) == 3
 
     asyncio.run(go())
 

@@ -471,8 +471,11 @@ trust.
 
 The Auto tab's model, and any MCP client given `spinny-mcp`, works
 through one set of tools. They make, change and read data, and nothing
-else: jobs, Plot jobs, markers, the pick and place device's references
-and plans, and CAM jobs are made and changed; the state, the machine
+else: jobs (combined jobs among them), Plot jobs (one operation, or a
+list of them, a Plot job's list replaced in place), markers, the pick and
+place device's references and plans, and CAM jobs are made and changed;
+`delete_job` takes a job out, which its description keeps to a job the
+operator asks to delete or one the model made by mistake; the state, the machine
 files, the CAM profiles and the device profiles are read. No tool
 connects or disconnects the machine, jogs it or sends it anywhere, homes
 it, runs, holds, resumes or stops a job, lights the laser, starts the

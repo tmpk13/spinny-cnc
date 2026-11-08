@@ -374,6 +374,19 @@ async def _make_plot_job(api: ToolApi, args: dict) -> Any:
     return _slim_made(await api.post("/api/mill", args))
 
 
+async def _set_plot_job_operations(api: ToolApi, args: dict) -> Any:
+    body = {"ops": args["operations"], "name": args.get("name"), "job": args.get("job")}
+    if body["name"] is None and body["job"] is not None:
+        # A job given keeps its own name unless a new one is asked for.
+        job = await api.get(f"/api/jobs/{body['job']}")
+        body["name"] = job.get("name") if isinstance(job, dict) else None
+    return _slim_made(await api.post("/api/mill", body))
+
+
+async def _combine_jobs(api: ToolApi, args: dict) -> Any:
+    return slim_job(await api.post("/api/jobs/combine", {"ids": args["job_ids"], "name": args.get("name")}))
+
+
 # --- markers ----------------------------------------------------------------------
 
 
@@ -523,6 +536,7 @@ PLOT_OPERATION = obj(
         "y0": number("rectangle: one corner, mm"),
         "x1": number("rectangle: the opposite corner, mm"),
         "y1": number("rectangle: the opposite corner, mm"),
+        "corner": number("pocket or profile of a rectangle: the radius its corners are rounded to, mm, at most half the shorter side; 0 or left out, square", minimum=0),
         "cx": number("circle: center, mm"),
         "cy": number("circle: center, mm"),
         "diameter": number("circle: diameter, mm", minimum=0),
@@ -532,6 +546,21 @@ PLOT_OPERATION = obj(
         "bore": flag("holes: bore a hole wider than the bit in rings, else drill it with the bit"),
     },
     ("kind",),
+)
+
+PLOT_OPERATIONS = obj(
+    {
+        "operations": {
+            "type": "array",
+            "items": PLOT_OPERATION,
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "the operations, cut in this order, all with one cutter and one bit or spot",
+        },
+        "name": text("the job's name; left out, one is made, or a job given keeps its own", maxLength=200),
+        "job": text("a Plot page job whose operations these replace in place (same id, where the job now is); left out, a new job", pattern=JOB_ID),
+    },
+    ("operations",),
 )
 
 UPLOAD_FILE = obj(
@@ -719,6 +748,33 @@ def _tools() -> tuple[Tool, ...]:
             PLOT_OPERATION,
             (Route(post, "/api/mill"),),
             _make_plot_job,
+            changes=(JOBS,),
+        ),
+        Tool(
+            "set_plot_job_operations",
+            "Make a Plot page job of several operations, cut in order (a pocket, the holes beside it and the"
+            " outline round both), or with job give a Plot page job a new list of operations in place of its"
+            " own: get_job with full shows its list under recipe.ops. Every operation cuts with the same"
+            " cutter and bit or spot. Nothing is cut until the operator runs it.",
+            PLOT_OPERATIONS,
+            (Route(get, "/api/jobs/{job_id}"), Route(post, "/api/mill")),
+            _set_plot_job_operations,
+            destructive=True,
+            changes=(JOBS,),
+        ),
+        Tool(
+            "combine_jobs",
+            "Make one new job of two or more jobs, cut in the order given, each group's name led by its job's;"
+            " the jobs stay. Jobs made for different tools do not combine.",
+            obj(
+                {
+                    "job_ids": {"type": "array", "items": JOB, "minItems": 2, "maxItems": 50, "description": "the jobs, in the order they are cut"},
+                    "name": text("the new job's name; left out, made from theirs", maxLength=200),
+                },
+                ("job_ids",),
+            ),
+            (Route(post, "/api/jobs/combine"),),
+            _combine_jobs,
             changes=(JOBS,),
         ),
         Tool(
