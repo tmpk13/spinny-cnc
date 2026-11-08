@@ -135,6 +135,22 @@ export function orbit(camera: Camera, dx: number, dy: number): Camera {
     };
 }
 
+/** A yaw taken to the nearest quarter turn, then `turns` quarters on, in 0..360. */
+function quarterYaw(yaw: number, turns: number): number {
+    const quarters = Math.round(yaw / 90) + turns;
+    return ((quarters * 90) % 360 + 360) % 360;
+}
+
+/** Straight down at the same target from the same distance, turned to the nearest quarter so the board's X and Y run along the canvas's edges. */
+export function lookDown(camera: Camera): Camera {
+    return { ...camera, pitch: MAX_PITCH, yaw: quarterYaw(camera.yaw, 0) };
+}
+
+/** The view turned by whole quarters about the target, from the nearest quarter: a positive turn turns the board clockwise on the canvas. */
+export function quarterTurn(camera: Camera, turns: number): Camera {
+    return { ...camera, yaw: quarterYaw(camera.yaw, turns) };
+}
+
 /**
  * Moves the target so the board point that was under `from` is under
  * `to`. A drag across the horizon, or one that would throw the target

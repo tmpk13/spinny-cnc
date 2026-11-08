@@ -26,11 +26,13 @@ import {
     type Vec3,
     circlePoints,
     frameOf,
+    lookDown,
     orbit,
     overview,
     pan,
     project,
     pxPerMm,
+    quarterTurn,
     sameCamera,
     unproject,
     zoomAt,
@@ -951,6 +953,18 @@ export class Preview {
         // A canvas measures 0 by 0 until it is laid out, so a fit before
         // that is against nothing and the next real size has to redo it.
         this.fitted = this.width > 1 && this.height > 1;
+        this.requestDraw();
+    }
+
+    /** Straight down at what the view is centered on, the board square to the canvas. */
+    lookDown(): void {
+        this.camera = lookDown(this.camera);
+        this.requestDraw();
+    }
+
+    /** The view turned a quarter at a time about what it is centered on: positive turns the board clockwise. */
+    turnView(turns: number): void {
+        this.camera = quarterTurn(this.camera, turns);
         this.requestDraw();
     }
 

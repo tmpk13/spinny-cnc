@@ -1,9 +1,9 @@
 // Hosts the 3D preview and feeds it the selected job (or what the page
-// shows in its place: the JSON panel's edit while it is typed, the Mill
+// shows in its place: the JSON panel's edit while it is typed, the Plot
 // page's plan), the live position, the soft limits, the markers and the
 // probe grid; the rotation lock, the height map toggle, the grid in place
-// of the rings, box selection and the reset to the overview sit in its
-// head. A path clicked, or the paths a box holds, become the page's picked
+// of the rings, box selection, a view straight down, quarter turns and the
+// reset to the overview sit in its head. A path clicked, or the paths a box holds, become the page's picked
 // paths, which the Jobs panel moves between groups.
 
 import { button, el } from "../dom.ts";
@@ -23,6 +23,13 @@ export const BOX_LABEL = "Box select";
 export function shownJob(state: AppState): Job | null {
     const draft = state.jobDraft;
     return draft !== null && state.job !== null && draft.id === state.job.id ? draft : state.job;
+}
+
+/** A button in the preview's head that sets the view, with what it does as its title. */
+function viewButton(label: string, title: string, onClick: () => void): HTMLButtonElement {
+    const made = button(label, onClick, "btn btn-quiet btn-small");
+    made.title = title;
+    return made;
 }
 
 /** No paths picked: one array, so the preview sees nothing changed. */
@@ -97,6 +104,9 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: App
                 heights,
                 grid,
                 box,
+                viewButton("Top view", "look straight down, the board square to the canvas", () => preview.lookDown()),
+                viewButton("CCW 90", "turn the board a quarter counterclockwise on the canvas", () => preview.turnView(-1)),
+                viewButton("CW 90", "turn the board a quarter clockwise on the canvas", () => preview.turnView(1)),
                 button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small"),
                 button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small"),
             ),

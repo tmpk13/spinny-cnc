@@ -10,11 +10,13 @@ import {
     circlePoints,
     fitDistance,
     frameOf,
+    lookDown,
     orbit,
     overview,
     pan,
     project,
     pxPerMm,
+    quarterTurn,
     unproject,
     zoomAt,
 } from "../src/camera.ts";
@@ -112,6 +114,35 @@ describe("camera", () => {
         expect(project(frame, W, H, [0, 0, 5])!.depth).toBeCloseTo(95, 9);
         // Ten millimeters measure the same on the canvas as the scale says.
         expect(right.x - axis.x).toBeCloseTo(10 * pxPerMm(topDown, H), 9);
+    });
+
+    test("a view straight down keeps its target and distance and squares the board to the canvas", () => {
+        const tilted: Camera = { target: [3, -4, 0], distance: 80, yaw: 37, pitch: 60 };
+        const down = lookDown(tilted);
+        expect(down.pitch).toBe(MAX_PITCH);
+        expect(down.yaw).toBe(0);
+        expect(down.target).toEqual([3, -4, 0]);
+        expect(down.distance).toBe(80);
+        // Board X runs right and Y up again, as in the plain top view.
+        const frame = frameOf(down);
+        const center = project(frame, W, H, [3, -4, 0])!;
+        expect(project(frame, W, H, [13, -4, 0])!.x).toBeGreaterThan(center.x);
+        expect(project(frame, W, H, [3, 6, 0])!.y).toBeLessThan(center.y);
+        expect(lookDown({ ...tilted, yaw: 140 }).yaw).toBe(180);
+    });
+
+    test("a quarter turn turns the board clockwise on the canvas from the nearest quarter", () => {
+        const camera: Camera = { target: [0, 0, 0], distance: 100, yaw: 0, pitch: 90 };
+        const turned = quarterTurn(camera, 1);
+        expect(turned.yaw).toBe(90);
+        // Board X, which ran right, now runs down the canvas: a clockwise turn.
+        const right = project(frameOf(turned), W, H, [10, 0, 0])!;
+        expect(right.x).toBeCloseTo(W / 2, 6);
+        expect(right.y).toBeGreaterThan(H / 2);
+        expect(quarterTurn(camera, -1).yaw).toBe(270);
+        expect(quarterTurn({ ...camera, yaw: 100 }, 1).yaw).toBe(180);
+        expect(quarterTurn({ ...camera, yaw: 300 }, 2).yaw).toBe(90);
+        expect(quarterTurn({ ...camera, pitch: 60 }, 1).pitch).toBe(60);
     });
 
     test("tilted, the far side of the board is higher on the canvas and farther away", () => {
