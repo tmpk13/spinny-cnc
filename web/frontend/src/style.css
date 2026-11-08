@@ -1674,6 +1674,27 @@ canvas.preview:active {
     cursor: grabbing;
 }
 
+/* The cut order slider under the preview: back a path, the slider, on a
+   path, and what it shows. */
+.scrub-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.5rem;
+    margin-top: 0.4rem;
+}
+
+.scrub-row .scrub {
+    flex: 1 1 10rem;
+    min-width: 6rem;
+    accent-color: var(--accent);
+}
+
+.scrub-note {
+    flex: 1 1 100%;
+    font-size: 0.8rem;
+}
+
 .hint {
     margin: 0.4rem 0 0;
     font-size: 0.78rem;

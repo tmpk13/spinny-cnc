@@ -41,6 +41,7 @@ import { cssVar } from "./dom.ts";
 import type { JobPlace } from "./jsontext.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
 import type { PathRef } from "./regroup.ts";
+import { SPEED_COLORS, isCapped, speedBucket, speedMap, type SpeedLimits, type SpeedMap } from "./speed.ts";
 import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Marker, Move, Path, Point } from "./types.ts";
 
 /** Every point of a probe grid that is probed, row by row from the lowest Y; a mask leaves points out. */
@@ -623,6 +624,10 @@ interface SceneKey {
     markers: Marker[];
     selection: PathRef[];
     highlight: JobPlace | null;
+    /** The speed view, the rates it was worked out for, and how many paths of the cut order are drawn as done (null: all). */
+    speed: boolean;
+    speedLimits: SpeedLimits | null;
+    scrub: number | null;
     camera: Camera;
     width: number;
     height: number;
@@ -636,6 +641,7 @@ interface SceneKey {
 function sameSceneKey(a: SceneKey, b: SceneKey): boolean {
     return a.job === b.job && a.probeMap === b.probeMap && sameGrid(a.probeDraft, b.probeDraft) && a.heights === b.heights && a.grid === b.grid && a.markers === b.markers
         && a.selection === b.selection && a.highlight === b.highlight
+        && a.speed === b.speed && a.speedLimits === b.speedLimits && a.scrub === b.scrub
         && sameCamera(a.camera, b.camera) && a.width === b.width && a.height === b.height && a.dpr === b.dpr
         && a.colors === b.colors && a.angle === b.angle
         && a.limits.kinematics === b.limits.kinematics && a.limits.r_max === b.limits.r_max && a.limits.z_max === b.limits.z_max;
@@ -704,6 +710,11 @@ export class Preview {
     private probeDraft: Grid | null = null;
     private markers: Marker[] = [];
     private dims: Dimension[] = [];
+    private speedOn = false;
+    private speedLimits: SpeedLimits | null = null;
+    private speedCache: { job: Job; limits: SpeedLimits; map: SpeedMap } | null = null;
+    private scrubAt: number | null = null;
+    private orderCache: { job: Job; order: PathRef[]; index: Map<string, number> } | null = null;
     private selection: PathRef[] = [];
     private highlight: JobPlace | null = null;
     /** A drag picks the paths inside its box instead of orbiting or panning. */
@@ -1239,6 +1250,7 @@ export class Preview {
         }
         this.drawMarkerLabels(ctx, at, colors, width, height);
         this.drawDimensions(ctx, at, colors);
+        this.drawSpeedLegend(ctx, colors);
         ctx.textAlign = "right";
         ctx.textBaseline = "bottom";
         const notes = [`elev ${Math.round(camera.pitch)} deg`];
@@ -1295,6 +1307,9 @@ export class Preview {
             markers: this.markers,
             selection: this.selection,
             highlight: this.highlight,
+            speed: this.speedOn,
+            speedLimits: this.speedLimits,
+            scrub: this.scrubAt,
             camera: this.camera,
             width: this.width,
             height: this.height,
@@ -1441,11 +1456,67 @@ export class Preview {
                 this.strokePaths(ctx, frame, picked);
                 ctx.globalAlpha = 1;
             }
+            const speeds = this.speedOn ? this.speeds() : null;
+            if (speeds !== null) {
+                this.drawSpeeds(ctx, frame, colors, job, speeds, Math.max(spot * scale, 1.2));
+            }
+            // With the cut order scrubbed, the paths cut so far are drawn,
+            // the last of them marked, and the rest faint.
+            const scrub = speeds === null ? this.scrubAt : null;
+            const order = scrub !== null ? this.orderOf().index : null;
+            const done = (g: number, p: number): boolean => order === null || (order.get(`${g}:${p}`) ?? Infinity) < scrub!;
+            if (scrub !== null && scrub > 0) {
+                const last = this.orderOf().order[scrub - 1];
+                const path = last && last[1] >= 0 ? job.groups[last[0]]?.paths[last[1]] : undefined;
+                if (path) {
+                    ctx.strokeStyle = colors.head;
+                    ctx.fillStyle = colors.head;
+                    ctx.globalAlpha = 0.5;
+                    ctx.lineWidth = Math.max(spot * scale, 1.2) + 8;
+                    if (path.length === 1) {
+                        this.fillDot(ctx, frame, path[0]!, Math.max(spot, 6 / scale), scale);
+                    } else {
+                        this.strokePaths(ctx, frame, [path]);
+                    }
+                    ctx.globalAlpha = 1;
+                }
+            }
             job.groups.forEach((group, index) => {
+                if (speeds !== null && !(group.moves && group.moves.length > 0) && group.paths.some((path) => path.length > 1)) {
+                    // Drawn by speed above; its dots still follow.
+                    group.paths.forEach((path, dot) => {
+                        if (path.length === 1) {
+                            ctx.fillStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
+                            ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
+                            this.fillDot(ctx, frame, path[0]!, dotRadius(group.areas?.[dot], spot), scale);
+                        }
+                    });
+                    return;
+                }
                 const color = colors.groups[index % colors.groups.length] ?? colors.axis;
                 ctx.strokeStyle = color;
                 ctx.fillStyle = color;
                 ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
+                if (order !== null) {
+                    const drawnAs = (p: number): boolean => group.enabled && done(index, p);
+                    const lines = group.paths.map((path, p) => [path, p] as const).filter(([path]) => path.length !== 1);
+                    ctx.lineWidth = Math.max(spot * scale, 1.2);
+                    if (group.moves && group.moves.length > 0) {
+                        ctx.globalAlpha = drawnAs(-1) ? 0.9 : 0.12;
+                    } else {
+                        ctx.globalAlpha = 0.12;
+                        this.strokePaths(ctx, frame, lines.filter(([, p]) => !drawnAs(p)).map(([path]) => path));
+                        ctx.globalAlpha = 0.9;
+                        this.strokePaths(ctx, frame, lines.filter(([, p]) => drawnAs(p)).map(([path]) => path));
+                        group.paths.forEach((path, dot) => {
+                            if (path.length === 1) {
+                                ctx.globalAlpha = drawnAs(dot) ? 0.9 : 0.12;
+                                this.fillDot(ctx, frame, path[0]!, dotRadius(group.areas?.[dot], spot), scale);
+                            }
+                        });
+                        return;
+                    }
+                }
                 if (group.moves && group.moves.length > 0) {
                     // A model's toolpaths are too dense to draw a tool
                     // wide: thin lines, at their depth under the board.
@@ -1542,6 +1613,166 @@ export class Preview {
             }
         }
         ctx.globalAlpha = 1;
+    }
+
+    /** The rates the speed view works the job's speeds out for; null leaves the view nothing to show. */
+    setSpeedLimits(limits: SpeedLimits | null): void {
+        const same = limits !== null && this.speedLimits !== null
+            && limits.kinematics === this.speedLimits.kinematics && limits.rRate === this.speedLimits.rRate
+            && limits.aRate === this.speedLimits.aRate && limits.zRate === this.speedLimits.zRate && limits.tolerance === this.speedLimits.tolerance
+            && limits.assumed === this.speedLimits.assumed;
+        if (!same) {
+            this.speedLimits = limits;
+            this.requestDraw();
+        }
+    }
+
+    /** With the speed view on, the job's cuts are drawn by the speed they run at, the capped ones marked. */
+    get speedView(): boolean {
+        return this.speedOn;
+    }
+
+    setSpeedView(on: boolean): void {
+        this.speedOn = on;
+        this.requestDraw();
+    }
+
+    /** The job's speeds for the rates set, worked out once a job and rates. */
+    speeds(): SpeedMap | null {
+        const job = this.job;
+        const limits = this.speedLimits;
+        if (job === null || limits === null) {
+            return null;
+        }
+        const kept = this.speedCache;
+        if (kept && kept.job === job && kept.limits === limits) {
+            return kept.map;
+        }
+        const map = speedMap(job, limits);
+        this.speedCache = { job, limits, map };
+        return map;
+    }
+
+    /** The job's paths in the order they are cut: the groups that are on, in order, a model's group as one. */
+    cutOrder(): PathRef[] {
+        return this.orderOf().order;
+    }
+
+    private orderOf(): { order: PathRef[]; index: Map<string, number> } {
+        const job = this.job;
+        if (job === null) {
+            return { order: [], index: new Map() };
+        }
+        const kept = this.orderCache;
+        if (kept && kept.job === job) {
+            return kept;
+        }
+        const order: PathRef[] = [];
+        job.groups.forEach((group, g) => {
+            if (!group.enabled) {
+                return;
+            }
+            if ((group.moves?.length ?? 0) > 0) {
+                order.push([g, -1]);
+                return;
+            }
+            group.paths.forEach((_, p) => order.push([g, p]));
+        });
+        const index = new Map(order.map((ref, at) => [`${ref[0]}:${ref[1]}`, at]));
+        this.orderCache = { job, order, index };
+        return this.orderCache;
+    }
+
+    /** How many paths of the cut order are drawn as done, the last of them marked, the rest faint; null draws the job whole. */
+    setScrub(at: number | null): void {
+        if (at === this.scrubAt) {
+            return;
+        }
+        this.scrubAt = at;
+        this.requestDraw();
+    }
+
+    get scrub(): number | null {
+        return this.scrubAt;
+    }
+
+    /** The speed view's cuts: every path faint in its group's color, then each move by its speed, a red halo under the capped ones. */
+    private drawSpeeds(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, job: Job, map: SpeedMap, width: number): void {
+        ctx.globalAlpha = 0.12;
+        job.groups.forEach((group, index) => {
+            ctx.strokeStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
+            ctx.lineWidth = width;
+            this.strokePaths(ctx, frame, group.paths.filter((path) => path.length > 1));
+        });
+        const trace = (segments: SpeedMap["segments"]): void => {
+            ctx.beginPath();
+            let drawn = false;
+            for (const segment of segments) {
+                drawn = this.tracePolyline(ctx, frame, [[segment.from[0], segment.from[1], 0], [segment.to[0], segment.to[1], 0]], false) || drawn;
+            }
+            if (drawn) {
+                ctx.stroke();
+            }
+        };
+        const capped = map.segments.filter(isCapped);
+        if (capped.length > 0) {
+            ctx.globalAlpha = 0.45;
+            ctx.strokeStyle = colors.rmax;
+            ctx.lineWidth = width + 6;
+            trace(capped);
+        }
+        const buckets: SpeedMap["segments"][] = SPEED_COLORS.map(() => []);
+        for (const segment of map.segments) {
+            buckets[speedBucket(segment.speed, map.slowest, map.fastest)]!.push(segment);
+        }
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = Math.max(width, 2);
+        buckets.forEach((segments, bucket) => {
+            if (segments.length > 0) {
+                ctx.strokeStyle = SPEED_COLORS[bucket]!;
+                trace(segments);
+            }
+        });
+    }
+
+    /** The speed view's key, top left: the colors from slowest to fastest with their speeds, and how much of the cut a rate holds back. */
+    private drawSpeedLegend(ctx: CanvasRenderingContext2D, colors: Colors): void {
+        if (!this.speedOn || this.job === null) {
+            return;
+        }
+        const map = this.speeds();
+        ctx.save();
+        ctx.font = "0.75rem system-ui, sans-serif";
+        ctx.textBaseline = "top";
+        ctx.textAlign = "left";
+        const x = 8;
+        const y = 8;
+        const lines: string[] = [];
+        if (map === null || map.segments.length === 0) {
+            lines.push(map === null ? "speed: no machine rates to work it out" : "speed: no cuts to show");
+        } else {
+            lines.push(`speed ${Math.round(map.slowest)} to ${Math.round(map.fastest)} mm/min`);
+            const share = map.length > 0 ? map.cappedLength / map.length : 0;
+            lines.push(share > 0 ? `capped (red) on ${(share * 100).toFixed(share < 0.1 ? 1 : 0)}% of the cut` : "nothing capped: every cut at its speed");
+            if (this.speedLimits?.assumed) {
+                lines.push("default rates: connect for the machine's");
+            }
+        }
+        const boxWidth = Math.max(...lines.map((line) => ctx.measureText(line).width), SPEED_COLORS.length * 22) + 12;
+        const barHeight = map !== null && map.segments.length > 0 ? 10 : 0;
+        ctx.fillStyle = colors.bg;
+        ctx.globalAlpha = 0.88;
+        ctx.fillRect(x - 4, y - 4, boxWidth, lines.length * 16 + barHeight + 10);
+        ctx.globalAlpha = 1;
+        if (barHeight > 0) {
+            SPEED_COLORS.forEach((color, index) => {
+                ctx.fillStyle = color;
+                ctx.fillRect(x + index * 22, y, 22, barHeight);
+            });
+        }
+        ctx.fillStyle = colors.text;
+        lines.forEach((line, index) => ctx.fillText(line, x, y + barHeight + 4 + index * 16));
+        ctx.restore();
     }
 
     /** The sizes of the operation being edited, as a sketch shows them; none clears them. */

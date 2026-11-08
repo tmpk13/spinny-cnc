@@ -46,7 +46,16 @@ shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*.
 The preview's *Top view* looks straight down, the board square to the
-canvas, and *CCW 90* and *CW 90* turn it a quarter. The run controls (Run,
+canvas, and *CCW 90* and *CW 90* turn it a quarter. *Speed* draws every
+cut by the speed it runs at, violet for the job's slowest through yellow
+for its fastest, with a red halo under each move a machine rate holds
+below its group's speed (on the polar machine the table near the axis),
+and a key with the range and the share of the cut held back; it works
+from the machine's rates once its settings are read, else from the
+defaults and says so. The slider under the preview steps through the
+job's paths in the order they are cut (*Back* and *On* a path at a time):
+the paths cut so far are drawn, the last of them marked, the rest faint;
+at its end the job is drawn whole. The run controls (Run,
 the height map choice, Hold, Resume, Stop, the progress and the pickup of
 a stopped run) are the Run panel at the foot of the right column, kept in
 view while the jobs and their groups scroll under it. Every number field

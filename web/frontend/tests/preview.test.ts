@@ -249,6 +249,39 @@ describe("camera", () => {
 });
 
 describe("Preview", () => {
+    test("draws the cut so far with the rest faint, and the cuts by their speed with a key", () => {
+        const { canvas, texts } = sizedCanvas(W, H);
+        const preview = new Preview(canvas);
+        const many: Job = {
+            ...job,
+            groups: [
+                { label: "a", power: 1, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [[[3, 4], [-6, 8]], [[1, 1]]] },
+                { label: "off", power: 1, min_power: 0, speed: 400, passes: 1, enabled: false, paths: [[[0, 9], [9, 9]]] },
+                { label: "b", power: 1, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [[[60, 0], [70, 0]]] },
+            ],
+        };
+        preview.setJob(many);
+        // The groups that are on, in order, a path at a time.
+        expect(preview.cutOrder()).toEqual([[0, 0], [0, 1], [2, 0]]);
+        preview.setScrub(2);
+        expect(preview.scrub).toBe(2);
+        preview.draw();
+        preview.setScrub(null);
+        // The speed view: nothing to say without rates, a key with them.
+        preview.setSpeedView(true);
+        preview.draw();
+        expect(texts.some((text) => text.includes("no machine rates"))).toBe(true);
+        preview.setSpeedLimits({ kinematics: "polar", rRate: 560, aRate: 400, zRate: 600, tolerance: 0.005 });
+        texts.length = 0;
+        preview.draw();
+        expect(texts.some((text) => /^speed \d+ to 400 mm\/min$/.test(text))).toBe(true);
+        expect(texts.some((text) => text.startsWith("capped (red) on"))).toBe(true);
+        expect(preview.speeds()!.segments.length).toBeGreaterThan(1);
+        // Worked out once for a job and its rates.
+        expect(preview.speeds()).toBe(preview.speeds());
+        preview.dispose();
+    });
+
     test("mounts on a canvas, takes a job and positions, and draws it all", () => {
         const { canvas, counts } = sizedCanvas(W, H);
         const preview = new Preview(canvas);
