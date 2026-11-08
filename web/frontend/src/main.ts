@@ -3,10 +3,11 @@
 
 import { HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
-import { appendConsole, initialState, pendingTotal, pushToast, Store, type AppState } from "./state.ts";
+import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
+import { mountAuto } from "./views/auto.ts";
 import { mountFocusBanner } from "./views/banner.ts";
 import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
@@ -119,6 +120,14 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
                 store.set({ markers });
             }
         },
+        async refreshAuto() {
+            const clears = autoClears();
+            const auto = await ctx.call(api.autoConversation());
+            // A reply asked for before a New chat is not put back after it.
+            if (auto && clears === autoClears()) {
+                mergeAuto(store, auto);
+            }
+        },
         async selectJob(id) {
             const ticket = ++selection;
             if (id === null) {
@@ -205,6 +214,29 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "camlog":
             store.set({ camlog: event.data });
             break;
+        case "auto": {
+            const before = store.get().auto;
+            if (event.data.cleared) {
+                noteAutoCleared();
+            }
+            const entries = event.data.cleared ? [] : withEntry(before?.entries ?? [], event.data.entry);
+            store.set({ auto: { entries, busy: event.data.busy } });
+            // A tool that made or changed a job: the Jobs and Plot tabs list them again.
+            const entry = event.data.entry;
+            if (entry && entry.role === "tool" && entry.done && (entry.changed ?? []).includes("jobs")) {
+                void ctx.refreshJobs();
+                const selected = store.get().job;
+                if (selected) {
+                    void ctx.reloadJob(selected.id);
+                }
+            }
+            // A turn has ended: the whole of it as the backend has it, in
+            // case the feed dropped one of its events on the way.
+            if (before?.busy && !event.data.busy && !event.data.cleared) {
+                void ctx.refreshAuto();
+            }
+            break;
+        }
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.
@@ -217,7 +249,7 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshDevice(), ctx.refreshMarkers()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshDevice(), ctx.refreshMarkers(), ctx.refreshAuto()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -289,6 +321,9 @@ function main(): void {
     mountPreviewPanel(panel("cam-preview"), ctx);
     // The PNP page: the parts, the board, the up camera and the nozzle.
     mountPnp({ steps: panel("pnp-steps"), parts: panel("pnp-parts"), board: panel("pnp-board"), camera: panel("pnp-camera"), nozzle: panel("pnp-nozzle"), device: panel("pnp-device") }, ctx);
+    // The Auto page: the conversation with a model that makes jobs and
+    // other data through the backend's tools, and which model it is.
+    mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);
     // The Config page: the machine files beside the list of every key a
     // file can set, the file's value next to the board's.
     mountConfig(panel("machine-file"), ctx, panel("settings"));

@@ -432,9 +432,45 @@ Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the vacuum line
 disconnected and the nozzle well above the board.
 
+### The Auto tab
+
+The *Auto* tab is a conversation with a language model that works
+through the backend's own tools. Ask for a job ("a 20 mm square with a
+5 mm hole in the middle, three passes at 300"), a Plot operation (drill
+these points, face this rectangle), markers, a placement plan, or about
+what is there ("which jobs are for the mill?"). The answer comes in as it
+is written; each tool call is a folded line with its name, its arguments
+and a short result, and unfolds to the whole. A job it makes or changes
+shows in the Jobs and Plot tabs at once. Enter sends, Shift+Enter starts
+a new line, *Stop* ends the turn under way (what it made so far stays),
+*New chat* forgets the conversation. A turn makes at most 25 tool calls,
+so a model that goes round in circles stops. What it can make, and what
+it cannot do, is the tools' own boundary, below.
+
+The row above the conversation picks who answers, kept for the next
+visit:
+
+- *Anthropic API*: the Messages API, with `ANTHROPIC_API_KEY` set where
+  the backend runs; `claude-opus-5-5` unless another model is typed.
+- *OpenAI-compatible*: any chat completions endpoint that takes tools, at
+  the base URL typed: OpenAI (`https://api.openai.com/v1`, with
+  `OPENAI_API_KEY`), OpenRouter, or a local ollama
+  (`http://localhost:11434/v1`, no key). Type the model's name as the
+  server knows it; a small local model may call the tools poorly.
+- *Claude Code*: the `claude` command, installed and logged in where the
+  backend runs, started for each turn with only these tools (served to it
+  by `spinny-mcp`) and its own file, shell and web tools taken away. It
+  keeps its own session from turn to turn.
+
+Keys stay in the backend's environment: set one and restart the backend.
+The page is told only whether each is set, never what it is. A key for
+the OpenAI-compatible provider goes to the base URL typed, so type one you
+trust.
+
 ### What the tools can and cannot do
 
-A language model given `spinny-mcp` works through one set of tools. They make, change and read data, and nothing
+The Auto tab's model, and any MCP client given `spinny-mcp`, works
+through one set of tools. They make, change and read data, and nothing
 else: jobs, Plot jobs, markers, the pick and place device's references
 and plans, and CAM jobs are made and changed; the state, the machine
 files, the CAM profiles and the device profiles are read. No tool

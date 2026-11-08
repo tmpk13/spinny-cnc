@@ -6,6 +6,9 @@ import type { PathRef } from "./regroup.ts";
 
 import type {
     AlignState,
+    AutoConversation,
+    AutoEntry,
+    AutoSettings,
     CamLogState,
     CamerasResponse,
     CameraState,
@@ -124,6 +127,10 @@ export interface AppState {
     device: DeviceState | null;
     /** The saved positions on the board, as the backend keeps them. */
     markers: Marker[];
+    /** The Auto tab's conversation and whether a turn is under way; null until read. */
+    auto: AutoConversation | null;
+    /** The Auto tab's provider settings; null until read. */
+    autoSettings: AutoSettings | null;
     /** The Plot page's operations as a job not made yet, drawn on its preview; null with nothing to show. */
     millPlan: Job | null;
     /** The sizes of the Plot page's operation in its fields, drawn over its preview as a sketch's. */
@@ -170,6 +177,8 @@ export function initialState(mock: boolean): AppState {
         pnpTarget: "machine",
         device: null,
         markers: [],
+        auto: null,
+        autoSettings: null,
         millPlan: null,
         millDims: [],
         mapChoice: "off",
@@ -227,4 +236,39 @@ export function dropToast(store: Store<AppState>, id: number): void {
     if (toasts.some((toast) => toast.id === id)) {
         store.set({ toasts: toasts.filter((toast) => toast.id !== id) });
     }
+}
+
+/** The conversation with one line put in: a new one at the end, a changed one in its place. */
+export function withEntry(entries: AutoEntry[], entry: AutoEntry | null): AutoEntry[] {
+    if (entry === null) {
+        return entries;
+    }
+    const at = entries.findIndex((other) => other.id === entry.id);
+    if (at >= 0) {
+        return entries.map((other, index) => (index === at ? entry : other));
+    }
+    // A new line comes after the others, unless the feed brought it late.
+    return [...entries, entry].sort((a, b) => a.id - b.id);
+}
+
+/**
+ * Puts a conversation the backend answered with into the store. Lines that
+ * came by the feed while the reply was on its way are newer than it, and
+ * stay.
+ */
+export function mergeAuto(store: Store<AppState>, reply: AutoConversation): void {
+    const last = reply.entries.reduce((most, entry) => Math.max(most, entry.id), 0);
+    const later = (store.get().auto?.entries ?? []).filter((entry) => entry.id > last);
+    store.set({ auto: later.length === 0 ? reply : { entries: [...reply.entries, ...later], busy: store.get().auto?.busy ?? reply.busy } });
+}
+
+let clears = 0;
+
+/** How many times the feed has said the conversation was cleared. */
+export function autoClears(): number {
+    return clears;
+}
+
+export function noteAutoCleared(): void {
+    clears += 1;
 }

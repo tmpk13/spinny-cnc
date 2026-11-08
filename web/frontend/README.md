@@ -204,6 +204,22 @@ for another margin, so the preview shows what a margin leaves before
 anything is cut. *Grid* in a preview's head
 draws X/Y lines in place of the rings, on every preview at once.
 
+The *Auto* page (`src/views/auto.ts`) is a conversation with a language
+model that makes jobs and other data through the backend's tools; the
+backend runs each turn and sends it as `auto` events, which the store
+keeps by entry id (`withEntry`, `mergeAuto` in `src/state.ts`), so an
+answer grows in place as it is written and a tool call's folded line (its
+name, arguments and a short result) changes from running to done without
+closing when it is unfolded. A tool that changed a job has the page list
+the jobs again. Enter sends, Shift+Enter starts a new line; Send is locked
+while a turn runs and Stop while none does. The row over the conversation
+picks the provider, its model and, for an OpenAI-compatible one, the base
+URL, and says whether the provider's key is set where the backend runs;
+the key itself never reaches the page. With `?mock=1` a scripted provider,
+`mock` (`src/mock/auto.ts`), lists the jobs with the backend's `list_jobs`
+tool on the mock's clock and says what it found, so the page can be tried
+without a model.
+
 ## Architecture
 
 ```mermaid
@@ -224,7 +240,7 @@ classDiagram
         AppState
     }
     class views {
-        statusbar tabs steps dro jog laser markers mill jobs center heightmap previewpanel vision align pnp console settings cam config editor toasts
+        statusbar tabs steps dro jog laser markers mill jobs center heightmap previewpanel vision align pnp auto console settings cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals
@@ -279,6 +295,9 @@ classDiagram
         buildMill(id, op, holes, limits) the backend's Plot page job, checked against its fixture
         remakeMill / moveJob / carrySettings  a job made again for another width
     }
+    class mock_auto {
+        MockAuto  the Auto routes and events, the scripted provider mock on the mock's clock
+    }
     class mock_machines {
         parseMachine(text, id) MachineDocument  the backend's checks and words, camera included
         DEFAULT_SETTINGS
@@ -288,6 +307,7 @@ classDiagram
     mock_backend --> mock_vision
     mock_backend --> mock_padmap
     mock_backend --> mock_mill
+    mock_backend --> mock_auto
     main --> api
     main --> ws
     main --> state

@@ -1,21 +1,23 @@
 // The page's tabs: the Jobs page (the dashboard: position, jogging, the
 // jobs and their preview), the Plot page (simple cuts made by hand, a
 // board's holes drilled), the CAM page, the PNP page (parts, the board and
-// the up camera) and the Config page (the machine files and the list of
-// their keys). The pick is set on #app for the stylesheet and remembered
+// the up camera), the Auto page (a conversation with a language model that
+// makes jobs and other data) and the Config page (the machine files and
+// the list of their keys). The pick is set on #app for the stylesheet and remembered
 // per browser. A tab whose page holds edits not applied yet carries their
 // count.
 
 import { el } from "../dom.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "jobs" | "plot" | "cam" | "pnp" | "config";
+export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config";
 
 export const PAGES: { id: PageId; label: string }[] = [
     { id: "jobs", label: "Jobs" },
     { id: "plot", label: "Plot" },
     { id: "cam", label: "CAM" },
     { id: "pnp", label: "PNP" },
+    { id: "auto", label: "Auto" },
     { id: "config", label: "Config" },
 ];
 
@@ -60,7 +62,7 @@ function pageNamed(value: string | null | undefined): PageId | null {
     return value != null && Object.hasOwn(RENAMED, value) ? RENAMED[value]! : null;
 }
 
-/** The page named in the address (`?page=plot`, `?page=cam`, `?page=pnp`, `?page=config`), else the one last shown in this browser, else the Jobs page. */
+/** The page named in the address (`?page=plot`, `?page=cam`, `?page=pnp`, `?page=auto`, `?page=config`), else the one last shown in this browser, else the Jobs page. */
 export function readPage(): PageId {
     try {
         const asked = pageNamed(new URLSearchParams(globalThis.location?.search ?? "").get("page"));

@@ -224,7 +224,7 @@ export function cssVar(node: Element, name: string, fallback: string): string {
     return value !== "" ? value : fallback;
 }
 
-/** Which page is up (jobs, plot, cam, pnp or config), as the tabs set it on #app. */
+/** Which page is up (jobs, plot, cam, pnp, auto or config), as the tabs set it on #app. */
 export function activePage(): string {
     return document.getElementById("app")?.getAttribute("data-page") ?? "jobs";
 }

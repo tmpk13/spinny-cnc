@@ -68,6 +68,7 @@ export class ApiError extends Error {
 
 import { thumbKey } from "./mock/thumbs.ts";
 import type { Marker, MarkersResponse, MillJobRequest, MillResponse } from "./types.ts";
+import type { AutoConversation, AutoSettings, AutoSettingsUpdate } from "./types.ts";
 import type {
     CameraPose,
     ComponentsResponse,
@@ -293,6 +294,19 @@ export interface Api {
     deviceResetFeeders(feeder?: string): Promise<DeviceState>;
     /** Centers the device's nozzle over the up camera, measuring where the camera is on the device; `step` 0 keeps the scale. */
     deviceNozzle(step: number): Promise<DeviceState>;
+
+    /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
+    autoSettings(): Promise<AutoSettings>;
+    /** Keeps the provider, a model or the base URL for the next turn; answers the settings as kept. */
+    setAutoSettings(patch: AutoSettingsUpdate): Promise<AutoSettings>;
+    /** The conversation so far, and whether a turn is under way. */
+    autoConversation(): Promise<AutoConversation>;
+    /** Starts a turn with the operator's message; answers at once, the turn coming as `auto` events. */
+    autoSend(text: string): Promise<AutoConversation>;
+    /** Stops the turn under way. */
+    autoStop(): Promise<AutoConversation>;
+    /** A new chat: the turn under way stopped and the conversation forgotten. */
+    autoClear(): Promise<AutoConversation>;
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -902,5 +916,29 @@ export class HttpApi implements Api {
 
     deviceNozzle(step: number): Promise<DeviceState> {
         return this.request<DeviceState>("POST", "/api/pnp/device/nozzle", { step });
+    }
+
+    autoSettings(): Promise<AutoSettings> {
+        return this.request<AutoSettings>("GET", "/api/auto/settings");
+    }
+
+    setAutoSettings(patch: AutoSettingsUpdate): Promise<AutoSettings> {
+        return this.request<AutoSettings>("PUT", "/api/auto/settings", patch);
+    }
+
+    autoConversation(): Promise<AutoConversation> {
+        return this.request<AutoConversation>("GET", "/api/auto/conversation");
+    }
+
+    autoSend(text: string): Promise<AutoConversation> {
+        return this.request<AutoConversation>("POST", "/api/auto/messages", { text });
+    }
+
+    autoStop(): Promise<AutoConversation> {
+        return this.request<AutoConversation>("POST", "/api/auto/stop");
+    }
+
+    autoClear(): Promise<AutoConversation> {
+        return this.request<AutoConversation>("DELETE", "/api/auto/conversation");
     }
 }

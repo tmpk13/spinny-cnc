@@ -111,6 +111,8 @@ export function parseEvent(raw: unknown): WsEvent | null {
             return { type, data: data as DataOf<"markers"> };
         case "camlog":
             return { type, data: data as DataOf<"camlog"> };
+        case "auto":
+            return { type, data: data as DataOf<"auto"> };
         default:
             return null;
     }

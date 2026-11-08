@@ -197,7 +197,12 @@ input[type="checkbox"] {
 #app[data-page="plot"] > #page-jobs,
 #app[data-page="cam"] > #page-jobs,
 #app[data-page="pnp"] > #page-jobs,
+#app[data-page="auto"] > #page-jobs,
 #app[data-page="config"] > #page-jobs {
+    display: none;
+}
+
+#app:not([data-page="auto"]) > #page-auto {
     display: none;
 }
 
@@ -437,6 +442,23 @@ table.settings .was {
     /* The Config page: the machine file on the left, the live settings on the right. */
     .config-grid {
         grid-template-columns: minmax(0, 3fr) minmax(24rem, 2fr);
+    }
+
+    /* The Auto page: the conversation fills its column's height and scrolls
+       inside itself, so the box to write in stays at the foot. */
+    .auto-grid {
+        grid-template-columns: minmax(0, 3fr) minmax(18rem, 1fr);
+    }
+
+    .column > #auto-chat {
+        flex: 1 1 0;
+        min-height: 24rem;
+    }
+
+    .auto-chat .auto-log {
+        flex: 1 1 0;
+        min-height: 0;
+        max-height: none;
     }
 }
 
@@ -2877,4 +2899,212 @@ a.btn.disabled {
 
 .camlog-what {
     font-weight: 600;
+}
+
+/* The Auto page: the provider row, the conversation and the box to write
+   in. The operator's lines sit to the right, the model's to the left, a
+   tool call is a folded line in the mono face with a stripe that says
+   whether it is running, done or failed. */
+.auto-chat {
+    display: flex;
+    flex-direction: column;
+}
+
+.auto-settings {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.auto-settings .labeled {
+    flex: 0 1 12rem;
+}
+
+.auto-settings .auto-model,
+.auto-settings .auto-base {
+    flex: 1 1 12rem;
+}
+
+.auto-key {
+    --tone: var(--jog);
+    flex: 1 1 100%;
+    font-size: 0.8rem;
+    color: var(--muted);
+    padding-left: 0.6rem;
+    border-left: 0.2rem solid var(--tone);
+}
+
+.auto-key[data-state="warn"] { --tone: var(--hold); }
+.auto-key[data-state="bad"] { --tone: var(--alarm); color: var(--alarm); }
+
+.auto-log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    max-height: 65vh;
+    min-height: 12rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.6rem;
+    margin-bottom: 0.75rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.auto-empty {
+    margin: auto 0;
+    text-align: center;
+    font-size: 0.9rem;
+    padding: 0 10%;
+}
+
+.auto-entry {
+    max-width: 92%;
+    min-width: 0;
+    border-radius: var(--radius-lg);
+    overflow-wrap: anywhere;
+}
+
+.auto-text {
+    white-space: pre-wrap;
+}
+
+.auto-user {
+    align-self: flex-end;
+    padding: 0.5rem 0.8rem;
+    background: color-mix(in oklab, var(--accent) 16%, var(--panel));
+    border: thin solid color-mix(in oklab, var(--accent) 35%, var(--border));
+    color: var(--strong);
+}
+
+.auto-assistant {
+    align-self: flex-start;
+    padding: 0.5rem 0.8rem;
+    background: var(--panel);
+    border: thin solid var(--border);
+}
+
+.auto-assistant.writing {
+    border-style: dashed;
+}
+
+.auto-notice {
+    align-self: center;
+    font-size: 0.85rem;
+    font-style: italic;
+    color: var(--muted);
+}
+
+.auto-error {
+    align-self: stretch;
+    max-width: none;
+    padding: 0.4rem 0.7rem;
+    color: var(--red);
+    background: color-mix(in oklab, var(--red) 8%, var(--panel));
+    border: thin solid color-mix(in oklab, var(--red) 45%, var(--border));
+}
+
+.auto-tool {
+    --tone: var(--cyan);
+    align-self: stretch;
+    max-width: none;
+    border-radius: var(--radius);
+    background: var(--field);
+    border: thin solid var(--border);
+    border-left: 0.25rem solid var(--tone);
+    font-size: 0.85rem;
+}
+
+.auto-tool.running { --tone: var(--hold); }
+.auto-tool.failed { --tone: var(--red); }
+
+.auto-tool > summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+    padding: 0.35rem 0.6rem;
+    cursor: pointer;
+    list-style-position: inside;
+}
+
+.auto-call {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--strong);
+    overflow-wrap: anywhere;
+}
+
+.auto-result {
+    flex: 1 1 12rem;
+    min-width: 0;
+    font-family: var(--mono);
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+.auto-tool.failed .auto-result {
+    color: var(--red);
+}
+
+.auto-tool-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0 0.6rem 0.5rem;
+}
+
+.auto-pre {
+    margin: 0;
+    max-height: 22rem;
+    overflow: auto;
+    padding: 0.4rem 0.5rem;
+    border-radius: 0.3rem;
+    background: var(--panel);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.auto-working {
+    align-self: flex-start;
+    margin: 0;
+    font-size: 0.85rem;
+}
+
+.auto-working::after {
+    content: "...";
+    display: inline-block;
+    width: 1.5em;
+    animation: auto-dots 1.2s steps(4, end) infinite;
+    overflow: hidden;
+    vertical-align: bottom;
+    white-space: nowrap;
+}
+
+@keyframes auto-dots {
+    from { width: 0; }
+    to { width: 1.5em; }
+}
+
+.auto-compose {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.auto-compose .auto-input {
+    resize: vertical;
+    min-height: 4.5rem;
+    line-height: 1.4;
+}
+
+.auto-compose .button-row {
+    margin: 0;
+    justify-content: flex-end;
 }

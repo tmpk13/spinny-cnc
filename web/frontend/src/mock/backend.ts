@@ -50,6 +50,7 @@ import { buildMillJob, carrySettings, cutMiddle, defaultOperation, MAX_OPERATION
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
 import { MockCameraLog } from "./camlog.ts";
+import { MockAuto } from "./auto.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import { DEVICE_ID, codeOf, deviceDocument, deviceFit, deviceGotoLines, gnum, parseDevice, placeLines, planDevice, planSummary, planText, type MockBlock, type MockDevice } from "./openpnp.ts";
 import {
@@ -75,6 +76,9 @@ import type { LinkStatus } from "../state.ts";
 import type {
     AlignFit,
     AlignMark,
+    AutoConversation,
+    AutoSettings,
+    AutoSettingsUpdate,
     CamLogEntry,
     CamLogState,
     LoggedCamera,
@@ -1843,6 +1847,8 @@ export class MockBackend implements Api, EventFeed {
     cameraRunning = false;
     /** The photos taken by hand, and whether the routines' looks would be kept. */
     private readonly cameraLog = new MockCameraLog();
+    /** The Auto tab: its conversation, settings and scripted provider. */
+    private readonly auto = new MockAuto((data) => this.emit({ type: "auto", data }), () => this.jobSummaries());
     private cameraJob: string | null = null;
     private cameraMarkPoint: Board | null = null;
     /** Where the loaded board really lies: the job's design a little off, so alignment has something to find. */
@@ -2027,6 +2033,8 @@ export class MockBackend implements Api, EventFeed {
         // The G-code device is a machine of its own, connected or not with this one.
         this.serviceDevice(dt);
         this.serviceDeviceRoutine(dt);
+        // So is the Auto tab, which moves nothing.
+        this.auto.step(dt);
     }
 
     /** Sends a board move now when a slot is free, else keeps it for the next tick. */
@@ -3791,6 +3799,11 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async jobs(): Promise<JobSummary[]> {
+        return this.jobSummaries();
+    }
+
+    /** Every job in short, as GET /api/jobs lists them. */
+    private jobSummaries(): JobSummary[] {
         return this.order.map((id) => {
             const job = this.jobStore.get(id);
             if (!job) {
@@ -6421,6 +6434,32 @@ export class MockBackend implements Api, EventFeed {
         this.emitPnp();
         this.emitDevice();
         return this.deviceStateOf();
+    }
+
+    // The Auto tab: the backend's routes, with the scripted provider besides its own.
+
+    async autoSettings(): Promise<AutoSettings> {
+        return this.auto.settings();
+    }
+
+    async setAutoSettings(patch: AutoSettingsUpdate): Promise<AutoSettings> {
+        return this.auto.update(patch);
+    }
+
+    async autoConversation(): Promise<AutoConversation> {
+        return this.auto.conversation();
+    }
+
+    async autoSend(text: string): Promise<AutoConversation> {
+        return this.auto.send(text);
+    }
+
+    async autoStop(): Promise<AutoConversation> {
+        return this.auto.stop();
+    }
+
+    async autoClear(): Promise<AutoConversation> {
+        return this.auto.clear();
     }
 
     /** The device's nozzle routine on the mock's clock: a step at a time, the camera's place from where it really is. */

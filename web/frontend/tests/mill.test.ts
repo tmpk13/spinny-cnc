@@ -410,5 +410,5 @@ describe("another width for a job", () => {
 });
 
 test("the Plot page has a tab", () => {
-    expect(PAGES.map((page) => page.id)).toEqual(["jobs", "plot", "cam", "pnp", "config"]);
+    expect(PAGES.map((page) => page.id)).toEqual(["jobs", "plot", "cam", "pnp", "auto", "config"]);
 });

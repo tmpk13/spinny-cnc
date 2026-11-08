@@ -886,7 +886,78 @@ export type WsEvent =
     | { type: "pnp"; data: PnpState }
     | { type: "pnp_device"; data: DeviceState }
     | { type: "markers"; data: MarkersResponse }
-    | { type: "camlog"; data: CamLogState };
+    | { type: "camlog"; data: CamLogState }
+    | { type: "auto"; data: AutoEvent };
+
+// --- The Auto tab ----------------------------------------------------------------
+
+/** Who a line of the conversation is from: the operator, the model, a tool call, or the backend's own notice or error. */
+export type AutoRole = "user" | "assistant" | "tool" | "notice" | "error";
+
+/** One line of the Auto tab's conversation, as the backend keeps it. */
+export interface AutoEntry {
+    /** Counts up for the backend's life; an update to a line comes under its id. */
+    id: number;
+    role: AutoRole;
+    text: string;
+    /** False while an answer is being written or a tool call runs. */
+    done: boolean;
+    /** A tool call only: the tool, what it was given and what it answered. */
+    name?: string;
+    arguments?: unknown;
+    result?: string | null;
+    error?: boolean;
+    /** What the call changed that the page shows: `jobs` has the page list the jobs again. */
+    changed?: string[];
+}
+
+export interface AutoConversation {
+    entries: AutoEntry[];
+    /** A turn is under way. */
+    busy: boolean;
+}
+
+/** An `auto` event: a line added or changed, or none when only `busy` changed; `cleared` empties the conversation. */
+export interface AutoEvent {
+    entry: AutoEntry | null;
+    busy: boolean;
+    cleared: boolean;
+}
+
+export type AutoProviderId = "anthropic" | "openai" | "claude-code" | "mock";
+
+export interface AutoProvider {
+    id: AutoProviderId;
+    label: string;
+    /** What a blank model means for this provider; empty when the provider has none of its own. */
+    default_model: string;
+    /** The environment variable the key is read from where the backend runs; null for a provider with none. */
+    key_name: string | null;
+    /** Whether that key is set; the key itself never comes to the page. Null for a provider with none. */
+    key_present: boolean | null;
+    /** False when a turn with it cannot start, such as Claude Code not installed. */
+    ready: boolean;
+    note: string | null;
+}
+
+export interface AutoSettings {
+    provider: AutoProviderId;
+    /** The provider's model as typed; empty takes its `default_model`. */
+    model: string;
+    /** The OpenAI-compatible provider's address. */
+    base_url: string;
+    /** Each provider's model as typed, kept apart. */
+    models: Partial<Record<AutoProviderId, string>>;
+    providers: AutoProvider[];
+    /** Tool calls in one turn at most. */
+    max_tool_calls: number;
+}
+
+export interface AutoSettingsUpdate {
+    provider?: AutoProviderId;
+    model?: string;
+    base_url?: string;
+}
 
 // --- The camera log ------------------------------------------------------------
 

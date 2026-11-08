@@ -187,3 +187,24 @@ describe("HttpApi stencil routes", () => {
         ]);
     });
 });
+
+describe("HttpApi Auto tab routes", () => {
+    test("methods, paths and bodies follow the contract", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.autoSettings();
+        await api.setAutoSettings({ provider: "openai", model: "qwen2.5:7b", base_url: "http://box:11434/v1" });
+        await api.autoConversation();
+        await api.autoSend("make a ring");
+        await api.autoStop();
+        await api.autoClear();
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["GET", "/api/auto/settings", null],
+            ["PUT", "/api/auto/settings", { provider: "openai", model: "qwen2.5:7b", base_url: "http://box:11434/v1" }],
+            ["GET", "/api/auto/conversation", null],
+            ["POST", "/api/auto/messages", { text: "make a ring" }],
+            ["POST", "/api/auto/stop", null],
+            ["DELETE", "/api/auto/conversation", null],
+        ]);
+    });
+});

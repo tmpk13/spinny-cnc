@@ -20,6 +20,8 @@ export interface Ctx {
     refreshPnp(): Promise<void>;
     refreshDevice(): Promise<void>;
     refreshMarkers(): Promise<void>;
+    /** The Auto tab's conversation as the backend has it. */
+    refreshAuto(): Promise<void>;
     /**
      * Loads a job in full and makes it the selected one; null clears the
      * selection. The last call wins, whatever order the replies come in.
