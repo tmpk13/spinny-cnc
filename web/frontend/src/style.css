@@ -648,10 +648,16 @@ select.field option {
     color: var(--text);
 }
 
-input[type="number"].field {
+input.num.field {
     width: 6rem;
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
+}
+
+/* A number field whose text reads as no number nor any arithmetic. */
+input.num.field.invalid {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 0.1rem color-mix(in oklab, var(--danger) 35%, transparent);
 }
 
 .labeled {
@@ -726,7 +732,7 @@ input[type="number"].field {
 }
 
 .goto-row .field,
-.goto-row input[type="number"].field {
+.goto-row input.num.field {
     flex: 1 1 4.5rem;
     width: auto;
 }
@@ -739,7 +745,7 @@ input[type="number"].field {
 }
 
 .field-grid .field,
-.field-grid input[type="number"].field {
+.field-grid input.num.field {
     width: 100%;
 }
 
@@ -1501,19 +1507,11 @@ table.groups input[type="checkbox"] {
     scrollbar-color: var(--border-strong) transparent;
 }
 
-table.groups input[type="number"] {
+table.groups input.num {
     width: 100%;
     min-width: 3rem;
     max-width: 5.5rem;
     padding-inline: 0.3rem;
-    appearance: textfield;
-    -moz-appearance: textfield;
-}
-
-table.groups input[type="number"]::-webkit-inner-spin-button,
-table.groups input[type="number"]::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
 }
 
 .swatch {

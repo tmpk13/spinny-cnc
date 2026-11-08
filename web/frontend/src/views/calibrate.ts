@@ -148,7 +148,7 @@ export function calibrationTest(ctx: Ctx): HTMLElement {
         // The fields of the test shown: the sets share some names.
         const shown = kind === "material" ? material : kind === "focus" ? focus : depth;
         const fields: CalibrateFields = { kind, fill: fill.checked ? "1" : "0" };
-        for (const input of shown.querySelectorAll("input[type=number]")) {
+        for (const input of shown.querySelectorAll("input.num")) {
             const name = input.getAttribute("aria-label");
             if (name) {
                 fields[name] = (input as HTMLInputElement).value;

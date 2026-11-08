@@ -1,5 +1,7 @@
 // Number formatting for the DRO and the job panel.
 
+import { evaluate } from "./calc.ts";
+
 /** Fixed decimals; a non-number shows as dashes and a rounded zero has no sign. */
 export function formatFixed(value: number | null | undefined, decimals: number): string {
     if (value === null || value === undefined || !Number.isFinite(value)) {
@@ -70,12 +72,15 @@ export function formatLength(mm: number | null | undefined): string {
     return formatFixed(mm, 1) + " mm";
 }
 
-/** Parses a text field; blank or invalid text gives null. */
+/** Parses a text field: a number, or arithmetic such as `25.4/2` or `1/8 in` (src/calc.ts); blank or anything else gives null. */
 export function parseNumber(text: string): number | null {
     const trimmed = text.trim();
     if (trimmed === "") {
         return null;
     }
     const value = Number(trimmed);
-    return Number.isFinite(value) ? value : null;
+    if (Number.isFinite(value)) {
+        return value;
+    }
+    return evaluate(trimmed);
 }

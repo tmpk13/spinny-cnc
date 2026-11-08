@@ -939,7 +939,7 @@ describe("jobs", () => {
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
         expect(root.querySelectorAll("table.groups tbody").length).toBe(4);
-        expect(root.querySelectorAll("table.groups tbody tr.group-fields input[type=number]").length).toBe(16);
+        expect(root.querySelectorAll("table.groups tbody tr.group-fields input.num").length).toBe(16);
         expect(root.querySelector(".stats")?.textContent).toContain("Table limited");
         expect(root.querySelector("li")?.classList.contains("selected")).toBe(true);
         store.set({ progress: { job: jobs[0]!.id, state: "running", sent: 1, acked: 1, total: 10, seconds: 1, estimate: 10, group: 0 } });

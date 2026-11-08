@@ -1,5 +1,8 @@
 // Small DOM helpers: element construction and a few common controls.
 
+import { calcText, calculate } from "./calc.ts";
+import { parseNumber } from "./format.ts";
+
 export type Child = Node | string | number | null | undefined | false;
 
 export type Attrs = Record<string, string | number | boolean | ((event: Event) => void) | undefined>;
@@ -98,26 +101,92 @@ export interface NumberFieldOptions {
     width?: string;
 }
 
+/**
+ * A field for a number, which also takes arithmetic (`25.4/2`, `1/8 in`,
+ * `3*(4+1.5)`; src/calc.ts reads it). It is a text field, since a number
+ * field throws away anything that is not a plain number: the arrow keys
+ * step it by `step` (1 for `any`) within `min` and `max` as a number field
+ * would, a text that reads as no number is marked invalid while typed, and
+ * on change (Enter, or leaving the field) a calculation is replaced by its
+ * value before anything else hears the change. Every reader of a field
+ * goes through `parseNumber`, which reads the arithmetic too.
+ */
 export function numberField(options: NumberFieldOptions = {}): HTMLInputElement {
     // The decimal keypad a phone shows for inputmode=decimal has no minus
-    // key, so only a field that cannot go below zero asks for it; the
-    // others get the keyboard that type=number brings, minus included.
+    // key, nor any operator, so only a field that cannot go below zero asks
+    // for it; the others get the phone's full keyboard, where both are.
     const unsigned = options.min !== undefined && options.min >= 0;
     const input = el("input", {
-        type: "number",
+        type: "text",
         inputmode: unsigned ? "decimal" : undefined,
-        step: options.step ?? "any",
-        min: options.min,
-        max: options.max,
+        autocomplete: "off",
+        spellcheck: "false",
         placeholder: options.placeholder,
-        class: "field",
+        class: "field num",
     });
+    // Kept where a number field keeps them, for the arrow keys and for
+    // anything that reads the field's limits.
+    input.setAttribute("step", String(options.step ?? "any"));
+    if (options.min !== undefined) {
+        input.setAttribute("min", String(options.min));
+    }
+    if (options.max !== undefined) {
+        input.setAttribute("max", String(options.max));
+    }
     if (options.value !== undefined && options.value !== null) {
         input.value = String(options.value);
     }
     if (options.width) {
         input.style.width = options.width;
     }
+    const mark = (): void => {
+        const text = input.value.trim();
+        const bad = text !== "" && parseNumber(text) === null;
+        input.classList.toggle("invalid", bad);
+        if (bad) {
+            input.setAttribute("aria-invalid", "true");
+            input.title = `not a number: ${calculate(text)}`;
+        } else if (input.getAttribute("aria-invalid") === "true") {
+            input.removeAttribute("aria-invalid");
+            input.removeAttribute("title");
+        }
+    };
+    input.addEventListener("input", mark);
+    input.addEventListener("change", () => {
+        const text = input.value.trim();
+        const value = parseNumber(text);
+        // A plain number stays as typed (3.50 is not made 3.5).
+        if (value !== null && !Number.isFinite(Number(text))) {
+            input.value = calcText(value);
+        }
+        mark();
+    });
+    input.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+            return;
+        }
+        const now = parseNumber(input.value);
+        if (now === null && input.value.trim() !== "") {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const stepAttr = Number(input.getAttribute("step"));
+        const step = Number.isFinite(stepAttr) && stepAttr > 0 ? stepAttr : 1;
+        let next = (now ?? 0) + (event.key === "ArrowUp" ? step : -step);
+        const min = input.getAttribute("min");
+        const max = input.getAttribute("max");
+        if (min !== null && next < Number(min)) {
+            next = Number(min);
+        }
+        if (max !== null && next > Number(max)) {
+            next = Number(max);
+        }
+        input.value = calcText(next);
+        mark();
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     return input;
 }
 
