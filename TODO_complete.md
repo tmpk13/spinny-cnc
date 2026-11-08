@@ -589,3 +589,52 @@
   the picture as it was and with what the finder found drawn on it (center,
   circle searched, the spot's box), misses included; *Photo* keeps one now;
   both camera panels show the newest (`/api/camlog`, `var/camlog/`).
+- Run button sticky (2026-11-08): the run controls (Run, the height map
+  choice, Hold, Resume, Stop, the progress, the pickup) are a Run panel at
+  the foot of the right column, stuck there on a wide screen while the
+  jobs and their groups scroll under it.
+- Tabs renamed (2026-11-08): Machine is Jobs and Mill is Plot (page ids
+  `jobs`, `plot`); old addresses and remembered pages still open them.
+- Arithmetic in number fields (2026-11-08): every number field takes
+  `25.4/2`, `3*(4+1.5)`, `1/8 in`, `sqrt(2)*10`, `sin(30)` (`src/calc.ts`,
+  its own reader, no eval); the value shows on leaving the field, the
+  arrow keys step it, text that reads as nothing is marked. Nickle was not
+  needed.
+- Rounded corners (2026-11-08): a Plot pocket or profile of a rectangle
+  takes a corner radius (`corner`), the bit's radius more outside, less
+  inside; square corners cut exactly as before.
+- A job per operation no more, Apply status, Add to job (2026-11-08): a
+  Plot job holds a list of operations; New job, Add to job, and a click on
+  one of the job's operations puts it in the fields for Apply; Up and
+  Remove; a mark (and the tab's count) says whether the fields are applied.
+- Preview images for jobs (2026-11-08): each job in the list carries a
+  small drawing of itself (`GET /api/jobs/{id}/thumb.svg`).
+- Top-down view and quarter turns (2026-11-08): Top view, CCW 90 and CW 90
+  in every preview's head.
+- Speed preview (2026-11-08): Speed draws every cut by the speed it runs
+  at, slow to fast, a red halo under moves a machine rate holds back, and
+  a key with the range and the share capped.
+- Slider for the job preview (2026-11-08): a slider with Back and On steps
+  through the paths in cut order, the rest faint.
+- CAD-like Plot, constraints preview (2026-11-08): the operation in the
+  fields is drawn with its sizes as a sketch shows them (width, height,
+  corners or center, corner radius, diameter, a line's points and legs).
+- TMC2209 settings (2026-11-08): interpolation, TOFF, TBL, HSTRT, HEND,
+  IHOLDDELAY, TPOWERDOWN and TPWMTHRS are firmware settings and machine
+  file `[drivers]` keys; defaults write what the firmware wrote before.
+- Center and size for rectangles (2026-11-08): a rectangle is given by two
+  corners or by its center, width and height.
+- Combine jobs (2026-11-08): check jobs in the list and Combine makes one
+  job of them, cut in the order checked (`POST /api/jobs/combine`).
+- Linear and circular arrays (2026-11-08): Array on picked paths copies
+  them in a row or round a center, drawn as typed, kept with Make array.
+- MCP integration (2026-11-08): `spinny-mcp` serves the backend's tools to
+  Claude Code or any MCP client (`claude mcp add spinny -- uv run
+  --directory <repo> spinny-mcp`): make and change jobs, Plot jobs (of
+  several operations), combined jobs, markers, pick and place references
+  and plans, CAM jobs; nothing that moves the machine or lights the laser.
+- Auto tab (2026-11-08): a conversation with a model working through the
+  same tools: the Anthropic API, any OpenAI-compatible server, or the
+  Claude Code CLI, keys from the backend's environment; at most 25 tool
+  calls a turn, Stop and New chat.
+- Integrated chat tab (2026-11-08): the Auto tab is it.
