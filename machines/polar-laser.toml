@@ -107,6 +107,14 @@ idle_ms = 0                 # motors off after this long idle; 0 is never
 step_us = 2
 hold_pct = 50
 stealth = true
+interpolate = true          # each microstep smoothed to 256
+toff = 3                    # chopper off time, 1 to 15
+tbl = 2                     # comparator blank time, 0 to 3
+hstrt = 5                   # hysteresis start, 0 to 7
+hend = 0                    # hysteresis end, 0 to 15
+hold_delay = 10             # run to hold current ramp, 0 to 15
+tpowerdown = 20             # standstill before the hold current, 0 to 255
+tpwmthrs = 0                # TSTEP under which stealthChop gives way; 0 is never
 
 [host]
 tolerance = 0.005           # chord tolerance of the streamed path, mm
