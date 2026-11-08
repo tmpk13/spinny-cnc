@@ -36,6 +36,7 @@ from spinny_laser.cam import CamError
 
 from . import __version__, calibration, center
 from .align import Alignment
+from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess
 from .camlog import CAMERAS, CameraLog
@@ -122,6 +123,7 @@ from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as 
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
 from .resume import PositionStore, ResumeStore
 from .runner import HOLD, RUNNING, Runner, RunnerError, halt
+from .tools import ToolBox
 from .vision import VisionError
 
 # The repository's layout gives the defaults: the page's build beside this
@@ -3782,6 +3784,9 @@ class OriginGuard:
 
 # How often a host told to keep a link up looks for the controller, s.
 AUTOCONNECT_INTERVAL = 5.0
+# Where the backend's own tools reach it when nothing says otherwise: the
+# Claude Code provider of the Auto tab hands this to `spinny-mcp`.
+DEFAULT_API_URL = "http://127.0.0.1:8000"
 
 
 async def _keep_connected(backend: Backend) -> None:
@@ -3798,9 +3803,20 @@ def create_app(
     frontend: Path | None = None,
     cors_origins: list[str] | None = None,
     allowed_hosts: list[str] | None = None,
+    api_url: str | None = None,
 ) -> FastAPI:
     backend = backend or Backend()
     frontend = FRONTEND_DIST if frontend is None else frontend
+    # The Auto tab's agent: its tools call into this app itself, so a tool
+    # meets the same routes and guards a page does.
+    agent = Agent(
+        config=backend.config,
+        save_config=backend._save_config,
+        publish=backend.broadcast.publish,
+        toolbox=lambda: ToolBox.in_process(app),
+        api_url=api_url or DEFAULT_API_URL,
+        workdir=backend.root / "auto",
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -3811,10 +3827,12 @@ def create_app(
         finally:
             if keeper is not None:
                 keeper.cancel()
+            await agent.shutdown()
             await run_in_threadpool(backend.shutdown)
 
     app = FastAPI(title="spinny-web", version=__version__, lifespan=lifespan)
     app.state.backend = backend
+    app.state.auto = agent
 
     @app.exception_handler(RequestValidationError)
     async def validation_failed(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -3844,9 +3862,9 @@ def create_app(
         from starlette.middleware.trustedhost import TrustedHostMiddleware
 
         # The loopback names are always taken: the backend's own tools come
-        # in under them (the MCP server on this machine), and a page served
-        # from elsewhere cannot send them as its host, which is all the
-        # check is for.
+        # in under them (the Auto tab's in-process calls, the MCP server the
+        # Claude Code provider starts), and a page served from elsewhere
+        # cannot send them as its host, which is all the check is for.
         hosts = list(dict.fromkeys([*allowed_hosts, "127.0.0.1", "localhost"]))
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
@@ -4528,6 +4546,40 @@ def create_app(
     def align_apply(body: AlignJobBody):
         return guarded(lambda: backend.align_apply(body.job))
 
+    # --- the Auto tab ---
+
+    @app.get("/api/auto/settings")
+    async def auto_settings():
+        return agent.settings()
+
+    @app.put("/api/auto/settings")
+    async def put_auto_settings(body: AutoSettingsBody):
+        try:
+            return agent.update_settings(body.provider, body.model, body.base_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/auto/conversation")
+    async def auto_conversation():
+        return agent.conversation()
+
+    @app.post("/api/auto/messages")
+    async def auto_message(body: AutoMessageBody):
+        try:
+            return agent.send(body.text)
+        except AutoBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/auto/stop")
+    async def auto_stop():
+        return await agent.stop()
+
+    @app.delete("/api/auto/conversation")
+    async def auto_clear():
+        return await agent.clear()
+
     # --- events ---
 
     @app.websocket("/ws")
@@ -4625,11 +4677,17 @@ def main(argv: list[str] | None = None) -> int:
     log.info("spinny-web %s starting on %s:%d", __version__, args.host, args.port)
     backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam, pnp_dir=args.pnp)
     backend.autoconnect = args.connect
+    # Where this backend is reached from the same machine, for the MCP
+    # server the Auto tab's Claude Code provider starts.
+    reach = "127.0.0.1" if args.host in ("", "0.0.0.0", "::") else args.host
+    if ":" in reach and not reach.startswith("["):
+        reach = f"[{reach}]"
     uvicorn.run(
         create_app(
             backend=backend,
             cors_origins=args.cors_origin,
             allowed_hosts=args.allowed_host,
+            api_url=f"http://{reach}:{args.port}",
         ),
         host=args.host,
         port=args.port,

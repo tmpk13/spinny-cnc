@@ -796,6 +796,49 @@ was from the pad or hole picked (0 for a point given), `angle` the
 board's turn a camera mark saw, and `residual` the mark's distance from
 where the last fit puts it.
 
+## Auto
+
+The Auto tab's conversation with a language model that works through the
+backend's tools (`web/backend/src/spinny_web/tools.py`): it makes and
+changes jobs, Plot jobs, markers, the pick and place device's references
+and plans, and CAM jobs, and reads the state, the machine files and the
+CAM profiles. No tool moves the machine; the list and the boundary are in
+[OPERATING.md](OPERATING.md). One conversation per backend, kept in
+memory, and one turn at a time, which streams as `auto` events and makes
+at most 25 tool calls. A tool calls the backend's own routes in-process,
+with no `Origin`, so it passes the guards a script does, and only routes
+that move nothing.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/auto/settings` | `{"provider": "anthropic", "model": "", "base_url": "http://localhost:11434/v1", "models": {"anthropic": "", "openai": "qwen2.5:7b", "claude-code": ""}, "providers": [provider, ...], "max_tool_calls": 25}`: the provider the next turn uses, its model as typed (empty takes its `default_model`), the OpenAI-compatible base URL, every provider's model, and each provider's state |
+| `PUT /api/auto/settings` | `{"provider": "openai", "model": "qwen2.5:7b", "base_url": "http://box:11434/v1"}`, any of them, kept in `config.json` under `auto`: `provider` is `anthropic`, `openai` or `claude-code`; `model` is the model of the provider given, or of the one in use (up to 200 letters, digits and `. _ : / @ + -`, empty for the default); `base_url` is http or https (empty for the default). 400 with the reason, and nothing kept; the next turn takes them |
+| `GET /api/auto/conversation` | `{"entries": [entry, ...], "busy": false}` |
+| `POST /api/auto/messages` | `{"text": "a 20 mm square, three passes at 300"}`: starts a turn and answers at once with the conversation, `busy` true; 409 while a turn is under way, 400 for an empty message or one over 20000 characters. A provider that cannot answer (no key, no `claude` command, a server that does not answer) ends the turn with an `error` entry, not an HTTP error |
+| `POST /api/auto/stop` | stops the turn under way: an answer being written keeps what it had, a tool call under way is marked stopped, a `notice` entry says so, and every call the model asked for is answered in its history, so the next message goes on from there. Answers the conversation |
+| `DELETE /api/auto/conversation` | a new chat: the turn under way stopped, the entries and the provider's history forgotten |
+
+Provider: `{"id": "anthropic", "label": "Anthropic API", "default_model":
+"claude-opus-5-5", "key_name": "ANTHROPIC_API_KEY", "key_present": true,
+"ready": true, "note": null}`. Keys are read from the backend's
+environment, `ANTHROPIC_API_KEY` (the SDK also takes
+`ANTHROPIC_AUTH_TOKEN`) and `OPENAI_API_KEY` (optional for a local
+server), and never reach the page: `key_present` says only whether one is
+set, `note` what is missing. `claude-code` has no key (`key_name` and
+`key_present` null; the `claude` command's own login is used) and is not
+`ready` when `claude` is not on the backend's PATH.
+
+Entry: `{"id": 4, "role": "user" | "assistant" | "tool" | "notice" |
+"error", "text": "...", "done": true}`; a tool entry adds `"name":
+"make_job", "arguments": {...}, "result": "...", "error": false,
+"changed": ["jobs"]`. `id` counts up for the backend's life, and an
+update to an entry (an answer as it is written, a call that has run)
+comes under its id; `done` is false while an answer is written or a call
+runs. `result` is what the model read: the route's answer as JSON (a job
+counted and boxed rather than listed), cut at 20000 characters, or the
+refusal. `changed` names what the call changed that a page shows: `jobs`,
+`markers` or `placement`.
+
 ## Events
 
 `WS /ws` sends JSON events; the client sends nothing. The payload's fields
@@ -817,3 +860,4 @@ it does not watch then.
 | `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
 | `pnp_device` | the G-code device state (`GET /api/pnp/device`), whenever it changes: connected, a line answered by a command, every part of a program, a reference or a feeder count |
 | `markers` | `{"markers": [...]}` whenever the list is put |
+| `auto` | `{"entry": entry or null, "busy": true, "cleared": false}`: an entry of the Auto conversation added or changed, or none when only `busy` changed (a turn ended); `cleared` when the conversation was cleared. An answer being written is sent at most ten times a second, its whole text so far each time, and once more when it is done |

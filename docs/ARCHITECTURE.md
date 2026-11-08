@@ -26,7 +26,7 @@ line at a time.
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (`spinny-mcp` serves them to any MCP client), API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
+| `web/backend` | serial link, job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
@@ -52,8 +52,16 @@ flowchart LR
         BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
         BE --> TH[thumbs: a job drawn small as SVG for the job list]
         BE --> MK[markers: named board positions in config.json]
-        EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP[spinny-mcp: the tools a model gets, thin calls on the API, only routes that move nothing]
-        MCP -->|HTTP| BE
+        BE --> AUTO[auto: the Auto tab's agent, one conversation, a turn at a time, at most 25 tool calls]
+        AUTO --> TOOLS[tools: what a model may call, thin calls on the API, only routes that move nothing]
+        TOOLS -->|in-process ASGI, no port| BE
+        AUTO <-->|HTTPS, Messages API with tools, streamed| ANT[Anthropic API]
+        AUTO <-->|HTTP, chat completions with tools| OAI[an OpenAI-compatible server: OpenAI, OpenRouter, ollama]
+        AUTO -->|a subprocess a turn, stream-json back| CC[claude: Claude Code in print mode, its own tools taken away]
+        CC <-->|stdio, MCP| MCP[spinny-mcp: the same tools over MCP]
+        EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP
+        MCP --> TOOLS2[tools, over HTTP]
+        TOOLS2 -->|HTTP| BE
         BE --> PNP[pick and place: a board's parts from its KiCad file, the nozzle centered over the up camera, a part's offset on it]
         PNP --> OPNP[openpnp: a device profile, the board fitted from references, a placement program]
         DF[pnp/*.toml: port, G-code dialect, heights, feeders] --> OPNP
@@ -79,6 +87,34 @@ flowchart LR
         RP[rp2040: embassy, USB with an E15 lockup guard, step timer, laser or spindle PWM, tool output, probe and endstop inputs on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, homing and endstop limits, spindle, a dispenser's plunger on A, tool output, machine]
         VIRT[virtual: TCP server, virtual clock, board surface, endstops] --> CORE
     end
+```
+
+A turn of the Auto tab with a provider that leaves the tools to the
+backend (the Anthropic API, an OpenAI-compatible one). With Claude Code the
+`claude` command runs the same loop itself, calling the tools through
+`spinny-mcp`, and the backend reads its stream into the same events.
+
+```mermaid
+sequenceDiagram
+    participant Page
+    participant Agent as auto (backend)
+    participant Model as provider
+    participant Tools as tools (in-process)
+    participant API as backend routes
+    Page->>Agent: POST /api/auto/messages
+    Agent-->>Page: auto event: the message, busy
+    loop until an answer with no call, a stop, or 25 calls
+        Agent->>Model: the history, the tools
+        Model-->>Agent: text as it is written, then tool calls
+        Agent-->>Page: auto events: the answer so far
+        Agent->>Tools: each call, its arguments checked
+        Tools->>API: a route that moves nothing
+        API-->>Tools: JSON
+        Tools-->>Agent: the result, cut to size
+        Agent-->>Page: auto event: the call with its result
+        Agent->>Model: the results
+    end
+    Agent-->>Page: auto event: not busy
 ```
 
 Each part keeps its own module diagram next to its code:

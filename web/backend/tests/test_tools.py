@@ -119,6 +119,9 @@ FORBIDDEN = {
     ("POST", "/api/align/mark"),
     ("POST", "/api/align/capture"),
     ("POST", "/api/align/apply"),
+    # A tool may not start or steer the Auto tab's own turns.
+    ("POST", "/api/auto/messages"),
+    ("PUT", "/api/auto/settings"),
 }
 
 # Arguments every tool is walked with; a tool missing here fails the walk.

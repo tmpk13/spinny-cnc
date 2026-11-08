@@ -15,7 +15,9 @@ dependencies = [
     "laser-sweep",
     "httpx",
     "jsonschema",
-    "mcp",
+    # The 2.x APIs: the low-level MCP server and the Messages SDK as used.
+    "mcp>=2",
+    "anthropic>=2",
 ]
 
 [project.scripts]

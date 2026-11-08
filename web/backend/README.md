@@ -48,6 +48,10 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `cam.py` | the CAM profiles in `cam/` (listed, read, saved whole, patched one value at a time), the uploaded files through a profile into a job (`spinny_laser.camjob`), a stored job as gcode for the profile's controller (`spinny_laser.post`) |
 | `tools.py` | the tools a language model gets, one registry for both front ends: each a name, a description, a JSON schema, the routes it calls and the call itself on the backend's HTTP API through httpx; arguments checked against the schema before anything is sent, every request outside the registry's routes answered 403 before it leaves (`RouteGuard`), answers cut to 20000 characters and a job counted rather than listed. None moves the machine: the tests hold the routes against a list of routes that do not |
 | `mcp_server.py` | `spinny-mcp`: the tools over MCP on stdio (the `mcp` SDK's low-level server), calling the backend at `--url` |
+| `auto.py` | the Auto tab's agent: one conversation in memory, a turn as an asyncio task that a stop cancels, the tool loop for a chat provider (every call answered, a stop included, at most 25 a turn), the provider settings in `config.json`, `auto` events; the tools called in-process through `httpx.ASGITransport`, so nothing listens on a new port |
+| `auto_anthropic.py` | the Anthropic provider: the Messages API through the `anthropic` SDK, streamed, adaptive thinking, the history sent back whole, server-side fallback on the models that have it |
+| `auto_openai.py` | the provider for an OpenAI-compatible chat completions endpoint with tools (OpenAI, OpenRouter, ollama), over httpx, one request an answer |
+| `auto_claude.py` | the Claude Code provider: `claude --print` with stream-json output per turn, its tools only those of `spinny-mcp` for this backend, its built-in tools taken away and anything else refused without a prompt, its session continued; the cap ends its process group |
 | `app.py` | FastAPI routes, the `/ws` fan-out, settings, the machine files in `machines/` (listed, matched against the live settings, loaded whole, their controls sent with the settings; read, checked, saved and removed through `machines.py`), the machine profile (polar or cartesian, laser or spindle) that picks the streamer, the frontend |
 
 ## Events
@@ -60,8 +64,9 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `{"type": "message", "level": "info", "text": "..."}`,
 `{"type": "camera", ...the camera state...}`,
 `{"type": "pnp", ...the up camera state...}`,
-`{"type": "pnp_device", ...the G-code device state...}` and
-`{"type": "align", "job": ..., "marks": ..., "fit": ...}`. Console events
+`{"type": "pnp_device", ...the G-code device state...}`,
+`{"type": "align", "job": ..., "marks": ..., "fit": ...}` and
+`{"type": "auto", "entry": ..., "busy": ..., "cleared": ...}`. Console events
 include the status polls and reports.
 
 `GET /api/run` answers `null` before any job has run, like the snapshot's
@@ -73,7 +78,8 @@ state is `error`.
 Runtime files go to `var/` at the repository root, or wherever `--data`
 points; none of them is tracked.
 
-- `config.json`: the host tolerance, the milling clearance and spin-up, the last url and the probe settings.
+- `config.json`: the host tolerance, the milling clearance and spin-up, the last url, the probe settings, the markers, and the Auto tab's provider, models and base URL (no key: those stay in the environment).
+- `auto/claude-code/`: the empty directory the Auto tab's Claude Code provider runs `claude` in; Claude Code keeps the sessions under its name.
 - `heightmap.json`: the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
 - `jobs/*.json`: one file per imported job.
 - `spinny.log`: the backend's log, rotated at 1 MB (`--log-level debug` for more): the link's opening and closing with what it last sent and heard, runs, probing, settings written, messages shown on the page and the machine's own messages, its boot reason and `diag` answer among them.
@@ -186,6 +192,16 @@ classDiagram
         Alignment.mark_camera(job, design, machine, angle)
         Alignment.fit / apply(job) a turn and a shift
     }
+    class auto {
+        Agent  one conversation, a turn at a time, at most 25 tool calls
+        ChatSession  the tool loop for a chat provider
+        Sink  what a turn reports, the tool calls in-process
+    }
+    class auto_providers {
+        AnthropicChat  the Messages API, streamed
+        OpenAIChat  chat completions with tools
+        ClaudeCodeSession  claude in print mode, stream-json
+    }
     class tools {
         TOOLS  name, schema, routes, the call on the API
         ToolBox.in_process(app) / over_http(url)
@@ -232,8 +248,12 @@ classDiagram
     }
     app --> link
     app --> jobs
+    app --> auto
+    auto --> tools
+    auto --> auto_providers
+    auto_providers ..> mcp_server : Claude Code starts it
     mcp_server --> tools
-    tools ..> app : HTTP
+    tools ..> app : HTTP, in-process or over the network
     app --> runner
     app --> kinematics
     app --> center
