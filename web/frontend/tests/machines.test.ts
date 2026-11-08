@@ -57,8 +57,8 @@ describe("machine files with a dispenser and a camera", () => {
         expect(doc.host).toEqual({ gap: 0.15, retract: 0.3, output: 120, extrude_rate: 80, dwell_ms: 250 });
         expect(doc.camera).toEqual({ device: "socket://pi:9000", size: "1920x1080", fps: 25, pcbv: "pcbv", side: "back", finish: "bare", offset: [12.5, -3.2], roll: 0.4, mm_per_px: 0.021 });
         expect(doc.controls).toEqual((fixture as unknown as Record<string, Controls>)["cartesian-dispenser-focus"]!);
-        expect(Object.keys(DEFAULT_SETTINGS)).toHaveLength(75);
-        expect(Object.keys(DEFAULT_SETTINGS).at(-1)).toBe("dispenser");
+        expect(Object.keys(DEFAULT_SETTINGS)).toHaveLength(83);
+        expect(Object.keys(DEFAULT_SETTINGS).at(-1)).toBe("tmc_tpwmthrs");
         expect(parseMachine('name = "x"', "x").camera).toEqual(CAMERA_DEFAULTS);
         expect(parseMachine('name = "x"', "x").settings["dispenser"]).toBe(0);
     });
@@ -103,6 +103,25 @@ describe("machine files with a dispenser and a camera", () => {
         refused("[camera]\nmm_per_px = -1", "f.toml: [camera] mm_per_px must be 0 or more and at most 10000000");
         refused('[camera]\ndevice = ""', "f.toml: [camera] device must be text");
         refused("[camera]\nzoom = 2", "f.toml: [camera] zoom is not a key here");
+        refused("[drivers]\ntoff = 0", "f.toml: [drivers] toff must be 1 to 15");
+        refused("[drivers]\ntpwmthrs = 1048576", "f.toml: [drivers] tpwmthrs must be 0 to 1048575");
+        refused("[drivers]\ntpowerdown = 2.5", "f.toml: [drivers] tpowerdown must be a whole number");
+        refused("[drivers]\ninterpolate = 1", "f.toml: [drivers] interpolate must be true or false");
+        refused("[drivers]\nintpol = true", "f.toml: [drivers] intpol is not a key here");
+        refused("[drivers]\ntoff = 1\ntbl = 1", "f.toml: [drivers] toff = 1 needs tbl 2 or 3");
+        refused("[drivers]\nhstrt = 7\nhend = 12", "f.toml: [drivers] hstrt + hend must be at most 18: the hysteresis, hstrt + 1 plus hend - 3, may not pass 16");
+        refused("[drivers]\ntpowerdown = 1", "f.toml: [drivers] tpowerdown must be 2 or more with stealth: stealthChop tunes itself in that time at rest");
+    });
+
+    test("the drivers' tuning reads onto its settings as the backend reads it", () => {
+        const tuned = parseMachine("[drivers]\ninterpolate = false\ntoff = 4\ntbl = 1\nhstrt = 3\nhend = 2\nhold_delay = 6\ntpowerdown = 40\ntpwmthrs = 234", "t").settings;
+        expect(["tmc_intpol", "tmc_toff", "tmc_tbl", "tmc_hstrt", "tmc_hend", "tmc_hold_delay", "tmc_tpowerdown", "tmc_tpwmthrs"].map((name) => tuned[name])).toEqual([0, 4, 1, 3, 2, 6, 40, 234]);
+        // Left out, each keeps what the firmware wrote before it was a setting.
+        const plain = parseMachine("[drivers]\nhold_pct = 40", "t").settings;
+        expect(["tmc_intpol", "tmc_toff", "tmc_tbl", "tmc_hstrt", "tmc_hend", "tmc_hold_delay", "tmc_tpowerdown", "tmc_tpwmthrs"].map((name) => plain[name])).toEqual([1, 3, 2, 5, 0, 10, 20, 0]);
+        // The edges the datasheet's rules leave open.
+        expect(parseMachine("[drivers]\ntoff = 1\ntbl = 2\nhstrt = 7\nhend = 11", "t").settings["tmc_toff"]).toBe(1);
+        expect(parseMachine("[drivers]\nstealth = false\ntpowerdown = 0", "t").settings["tmc_tpowerdown"]).toBe(0);
     });
 
     test("the mock checks and loads such a file, the load setting the host's values and the camera", async () => {

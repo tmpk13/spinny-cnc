@@ -2,11 +2,21 @@ import { describe, expect, test } from "bun:test";
 
 import fixture from "../../../toolpath/tests/data/machine-keys.json" with { type: "json" };
 import { MACHINE_KEYS, fromBoard, fuzzyScore, keyLine, setKey, valueOf } from "../src/machinekeys.ts";
-import { parseMachine } from "../src/mock/machines.ts";
+import { SETTINGS_SCHEMA } from "../src/mock/backend.ts";
+import { DEFAULT_SETTINGS, parseMachine } from "../src/mock/machines.ts";
 
 describe("machine keys", () => {
     test("are the backend's, key for key (mise run keys-fixture)", () => {
         expect(MACHINE_KEYS).toEqual(fixture.keys as typeof MACHINE_KEYS);
+    });
+
+    test("the mock's firmware defaults and settings table are the backend's, in the firmware's order (mise run keys-fixture)", () => {
+        expect(DEFAULT_SETTINGS).toEqual(fixture.defaults);
+        expect(Object.keys(DEFAULT_SETTINGS)).toEqual(Object.keys(fixture.defaults));
+        expect(SETTINGS_SCHEMA.map((entry) => entry.name)).toEqual(Object.keys(fixture.defaults));
+        // Every setting has its key in a file, the dispenser flag in the tool's.
+        const named = new Set(MACHINE_KEYS.map((entry) => entry.setting));
+        expect(Object.keys(fixture.defaults).filter((name) => !named.has(name))).toEqual(["dispenser"]);
     });
 
     test("read a board into a file as the backend does, line for line", () => {

@@ -19,7 +19,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 
-from spinny_laser.machines import AXES, ENDSTOPS, SOCKETS, MachineError, close, parse
+from spinny_laser.machines import AXES, ENDSTOPS, FIRMWARE_DEFAULTS, SOCKETS, TUNING_KEYS, MachineError, close, parse
 
 # How a key's value sits in its setting.
 NUMBER, INTEGER, FLAG, BIT, WORD, SOCKET, SCALE, KINEMATICS, TOOL, HOST = (
@@ -96,6 +96,8 @@ def _keys() -> tuple[Key, ...]:
         Key("step_us", "drivers", "step_us", INTEGER),
         Key("tmc_hold_pct", "drivers", "hold_pct", INTEGER),
         Key("tmc_stealth", "drivers", "stealth", FLAG),
+        Key("tmc_intpol", "drivers", "interpolate", FLAG),
+        *(Key(f"tmc_{key}", "drivers", key, INTEGER) for key in TUNING_KEYS),
     ]
     for key in ("tolerance", "travel", "clearance", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"):
         keys.append(Key(f"host.{key}", "host", key, HOST))
@@ -360,18 +362,22 @@ brake_ms = 0
 
 [drivers]
 hold_pct = 30
+interpolate = false
+tpwmthrs = 234
 """
 
 
 def fixture() -> dict:
-    """The keys, and what reading one sample board into another text gives,
-    for the page's twin to be checked against."""
+    """The keys, what reading one sample board into another text gives, and
+    the firmware's defaults in the order it lists them, for the page's twins
+    to be checked against."""
     board = parse(SAMPLE_BOARD, "board").settings
     host = {"tolerance": 0.01, "clearance": 3.5, "travel": None, "spinup": 2.0}
     read = from_board(SAMPLE_INTO, board, host)
     return {
         "keys": [key.to_dict() for key in KEYS],
         "case": {"into": SAMPLE_INTO, "board": board, "host": host, "text": read.text, "changes": read.changes, "left": read.left},
+        "defaults": dict(FIRMWARE_DEFAULTS),
     }
 
 

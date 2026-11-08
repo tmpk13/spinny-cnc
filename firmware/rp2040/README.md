@@ -213,10 +213,11 @@ at speed: 400 mm/min of surface speed needs 54 mm of radius at 422
 deg/min, against 21 mm at the 1080 deg/min the motor itself can do.
 
 Coarser microstepping buys that back, 16 at a time, and costs nothing in
-smoothness: `intpol` is on, so the driver interpolates whatever it is given
-to 256 microsteps internally. What it does cost is positioning resolution,
-which at 256 microsteps is 0.1 um on the radius and a quarter of an arc
-second on the table, both far under what the mechanics can hold.
+smoothness: `tmc_intpol` is on by default, so the driver interpolates
+whatever it is given to 256 microsteps internally. What it does cost is
+positioning resolution, which at 256 microsteps is 0.1 um on the radius
+and a quarter of an arc second on the table, both far under what the
+mechanics can hold.
 
 | `tmc_*_micro` | `r_steps` | radius ceiling | `a_steps` | table ceiling |
 | --- | --- | --- | --- | --- |

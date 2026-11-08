@@ -18,7 +18,7 @@ FIXTURE = Path(__file__).parent / "data" / "default-controls.json"
 
 
 def test_the_defaults_cover_every_setting_once():
-    assert len(FIRMWARE_DEFAULTS) == 75
+    assert len(FIRMWARE_DEFAULTS) == 83
     assert machines.FLAGS <= set(FIRMWARE_DEFAULTS) and machines.INTEGERS <= set(FIRMWARE_DEFAULTS)
     for name in machines.FLAGS | machines.INTEGERS:
         assert isinstance(FIRMWARE_DEFAULTS[name], int)
@@ -192,6 +192,14 @@ idle_ms = 30000
 step_us = 4
 hold_pct = 30
 stealth = false
+interpolate = false
+toff = 4
+tbl = 1
+hstrt = 3
+hend = 2
+hold_delay = 6
+tpowerdown = 40
+tpwmthrs = 234
 
 [host]
 tolerance = 0.01
@@ -215,6 +223,8 @@ def test_every_key_lands_on_its_setting():
     assert (s["probe_invert"], s["probe_ms"]) == (1, 0)
     assert (s["laser_hz"], s["s_max"], s["s_min"], s["laser_invert"], s["laser_ms"]) == (1000, 255, 10, 1, 7000)
     assert (s["en_invert"], s["idle_ms"], s["step_us"], s["tmc_hold_pct"], s["tmc_stealth"]) == (1, 30000, 4, 30, 0)
+    assert (s["tmc_intpol"], s["tmc_toff"], s["tmc_tbl"], s["tmc_hstrt"], s["tmc_hend"]) == (0, 4, 1, 3, 2)
+    assert (s["tmc_hold_delay"], s["tmc_tpowerdown"], s["tmc_tpwmthrs"]) == (6, 40, 234)
     assert (s["laser_pin"], s["probe_pin"], s["tool_out"], s["tool_pin"], s["tool_invert"]) == (23, 22, 1, 18, 1)
     assert found.host == {"tolerance": 0.01, "clearance": 3.0, "spinup": 1.5}
     assert set(s) == set(FIRMWARE_DEFAULTS)
@@ -246,6 +256,19 @@ def test_every_key_lands_on_its_setting():
         ("[output]\npwm_hz = 50\n", "[output] pwm_hz must be 100 to 100000"),
         ("[drivers]\nstep_us = 0\n", "[drivers] step_us must be 1 to 20"),
         ("[drivers]\nhold_pct = 101\n", "[drivers] hold_pct must be 0 to 100"),
+        ("[drivers]\ninterpolate = 1\n", "[drivers] interpolate must be true or false"),
+        ("[drivers]\nintpol = true\n", "[drivers] intpol is not a key here"),
+        ("[drivers]\ntoff = 0\n", "[drivers] toff must be 1 to 15"),
+        ("[drivers]\ntbl = 4\n", "[drivers] tbl must be 0 to 3"),
+        ("[drivers]\nhstrt = 8\n", "[drivers] hstrt must be 0 to 7"),
+        ("[drivers]\nhend = 16\n", "[drivers] hend must be 0 to 15"),
+        ("[drivers]\nhold_delay = 16\n", "[drivers] hold_delay must be 0 to 15"),
+        ("[drivers]\ntpowerdown = 256\n", "[drivers] tpowerdown must be 0 to 255"),
+        ("[drivers]\ntpwmthrs = 1048576\n", "[drivers] tpwmthrs must be 0 to 1048575"),
+        ("[drivers]\ntpwmthrs = 2.5\n", "[drivers] tpwmthrs must be a whole number"),
+        ("[drivers]\ntoff = 1\ntbl = 1\n", "[drivers] toff = 1 needs tbl 2 or 3"),
+        ("[drivers]\nhstrt = 7\nhend = 12\n", "[drivers] hstrt + hend must be at most 18"),
+        ("[drivers]\ntpowerdown = 1\n", "[drivers] tpowerdown must be 2 or more with stealth"),
         ("[host]\ntolerance = 0\n", "[host] tolerance must be above 0"),
         ("[host]\nclearance = 200\n", "[host] clearance must be above 0 and at most 100"),
         ("[host]\nfeed = 1\n", "[host] feed is not a key here"),
@@ -289,6 +312,26 @@ def test_mistakes_are_named(text, said):
     with pytest.raises(MachineError) as caught:
         parse(text, "rig", "rig")
     assert said in str(caught.value)
+
+
+def test_the_drivers_tuning_takes_what_the_datasheet_allows_together():
+    # The edges the TMC2209 datasheet's rules leave open: TOFF 1 with a
+    # blank time of 32 clocks, a hysteresis of exactly 16, and no wait
+    # before the hold current when stealthChop is off.
+    s = parse("[drivers]\ntoff = 1\ntbl = 2\nhstrt = 7\nhend = 11\n", "rig").settings
+    assert (s["tmc_toff"], s["tmc_tbl"], s["tmc_hstrt"], s["tmc_hend"]) == (1, 2, 7, 11)
+    s = parse("[drivers]\nstealth = false\ntpowerdown = 0\nhold_delay = 0\n", "rig").settings
+    assert (s["tmc_stealth"], s["tmc_tpowerdown"], s["tmc_hold_delay"]) == (0, 0, 0)
+    s = parse("[drivers]\ntpwmthrs = 1048575\ninterpolate = true\n", "rig").settings
+    assert (s["tmc_tpwmthrs"], s["tmc_intpol"]) == (1048575, 1)
+
+
+def test_a_file_without_the_drivers_tuning_keeps_what_the_firmware_wrote_before_it():
+    tuning = ["tmc_intpol", "tmc_toff", "tmc_tbl", "tmc_hstrt", "tmc_hend", "tmc_hold_delay", "tmc_tpowerdown", "tmc_tpwmthrs"]
+    assert [FIRMWARE_DEFAULTS[name] for name in tuning] == [1, 3, 2, 5, 0, 10, 20, 0]
+    assert list(FIRMWARE_DEFAULTS)[-len(tuning):] == tuning, "listed last, as the firmware lists them"
+    settings = parse("[drivers]\nhold_pct = 40\n", "rig").settings
+    assert [settings[name] for name in tuning] == [1, 3, 2, 5, 0, 10, 20, 0]
 
 
 def test_a_dispenser_is_the_table_s_driver_in_millimeters():

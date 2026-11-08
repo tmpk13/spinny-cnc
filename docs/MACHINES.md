@@ -145,6 +145,14 @@ idle_ms = 0                     # motors off after idle    -> idle_ms
 step_us = 2                     # 1 to 20                  -> step_us
 hold_pct = 50                   # 0 to 100                 -> tmc_hold_pct
 stealth = true                  # stealthChop              -> tmc_stealth
+interpolate = true              # each microstep to 256    -> tmc_intpol
+toff = 3                        # 1 to 15; see Driver tuning -> tmc_toff
+tbl = 2                         # 0 to 3                   -> tmc_tbl
+hstrt = 5                       # 0 to 7                   -> tmc_hstrt
+hend = 0                        # 0 to 15                  -> tmc_hend
+hold_delay = 10                 # 0 to 15                  -> tmc_hold_delay
+tpowerdown = 20                 # 0 to 255                 -> tmc_tpowerdown
+tpwmthrs = 0                    # 0 to 1048575, 0 = stealthChop at every speed -> tmc_tpwmthrs
 
 [host]                          # the host's own settings, not the firmware's
 tolerance = 0.005               # chord tolerance, mm, (0, 10]
@@ -202,6 +210,47 @@ one setting, `sockets`, a digit per axis (rail, table, slide, focus;
 1 X, 2 Y, 3 Z, 4 E). `cartesian-mill` is wired as a three axis mill:
 rail X, slide Y, focus Z as depth, and the table on E with `current_ma = 0`
 so its empty driver is left alone.
+
+## Driver tuning
+
+`[drivers]` sets, besides the enable pin, the step pulse and the hold
+current, the TMC2209 register fields every driver is given alike:
+`interpolate` and the keys named as the datasheet names the fields,
+`toff`, `tbl`, `hstrt`, `hend`, `hold_delay` (IHOLDDELAY), `tpowerdown`
+and `tpwmthrs`. What each one does and its range is in the settings table
+of [PROTOCOL.md](PROTOCOL.md). Left out, a key keeps the firmware's
+default, which is what the firmware wrote before these were settings, so a
+file without them runs the drivers as before.
+
+`interpolate` on, a driver moves its motor in 256ths of a full step
+whatever `microsteps` it is given, which keeps 16 microsteps smooth and
+quiet; off, it moves in the steps it is given.
+
+`tpwmthrs` is the speed at which a driver leaves stealthChop for
+spreadCycle when `stealth` is on, as a TSTEP: the time between two 1/256
+microsteps in the driver's 12 MHz clocks, whatever the microsteps. A speed
+of v mm/s (or deg/s) on an axis with `full_steps_per_mm` F is a TSTEP of
+46875 / (v * F): 10 mm/s on a 5 mm screw (F = 40) is 117. A larger value
+is a lower speed. One value serves all four drivers, so the change comes
+at the same full steps per second on every axis; it comes about 7 %
+above that speed on the way up and at it on the way down (the datasheet's
+hysteresis of a sixteenth of the TSTEP). 0, the default, keeps stealthChop
+at every speed.
+
+After its last step a driver waits 87 ms to find the motor at rest, keeps
+the run current for `tpowerdown` times 21.8 ms, then lowers it to
+`hold_pct` of it a step of the current scale at a time, `hold_delay` times
+21.8 ms a step. `toff`, `tbl`, `hstrt` and `hend` shape the chopper:
+`toff` the off time both modes use, `hstrt` and `hend` spreadCycle's
+hysteresis.
+
+The firmware takes its settings one at a time and holds each to its own
+field. The datasheet (TMC2209 Rev 1.09) also rules out some pairs, which
+a file is refused for, since it is seen whole: `toff = 1` with `tbl`
+below 2; `hstrt + hend` above 18, where the hysteresis, `hstrt + 1` plus
+`hend - 3`, would pass 16; and `tpowerdown` below 2 with `stealth` on,
+which leaves stealthChop no time at rest to tune itself. A value set at
+the console is not checked against the others.
 
 ## Pins
 
@@ -326,7 +375,7 @@ still taken and means nothing now. The virtual firmware checks only that
 
 ## How a load works
 
-The backend reads the file, maps it onto all 52 settings and writes the
+The backend reads the file, maps it onto every firmware setting and writes the
 ones that differ from the machine's, one `$name=value` line each, all or
 nothing: a value the firmware refuses has the ones sent before it put back.
 The host values are stored once the firmware's part is through. Nothing is
@@ -335,7 +384,7 @@ page), so a load can be tried and undone with a power cycle. A load is
 refused while a run or probing owns the machine, like any settings write.
 
 Which file the live settings are is decided on every settings read by
-comparing all 52 values, so a setting changed by hand at the console or in
+comparing every value, so a setting changed by hand at the console or in
 the table turns the pick to "settings of no file" until a file is loaded
 again. Values are compared as the firmware reports them: a 32 bit float
 printed with three decimals.

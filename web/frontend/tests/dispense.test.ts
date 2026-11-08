@@ -121,7 +121,7 @@ describe("a dispenser machine", () => {
         expect(settings.controls).toEqual(defaultControls(DISPENSER));
         expect(settings.host).toMatchObject({ gap: 0.1, retract: 0.2, output: 100, extrude_rate: 60, dwell_ms: 200 });
         expect(settings.schema.find((entry) => entry.name === "dispenser")).toEqual({ name: "dispenser", unit: "0/1", help: "1 = the table's joint is a dispenser's plunger in mm (with cartesian)" });
-        expect(settings.schema).toHaveLength(75);
+        expect(settings.schema).toHaveLength(83);
         expect(settings.values["dispenser"]).toBe(1);
         await expect(backend.updateSettings({ host: { tolerance: 0.005, gap: 0 } })).rejects.toMatchObject({ status: 400, message: "the gap must be above 0 and at most 10 mm" });
         await expect(backend.updateSettings({ host: { tolerance: 0.005, retract: 51 } })).rejects.toMatchObject({ status: 400, message: "the retract must be 0 to 50 mm" });

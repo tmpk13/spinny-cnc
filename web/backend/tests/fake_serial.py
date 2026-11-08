@@ -81,6 +81,8 @@ DEFAULT_SETTINGS = {
     "h_stop": 0, "h_stop_pin": 16, "h_home_pull": 1.0, "h_home_pos": 0.0, "h_home_travel": 50.0,
     "z_stop": 0, "z_stop_pin": 22, "z_home_pull": 1.0, "z_home_pos": 0.0, "z_home_travel": 200.0,
     "stop_invert": 0, "limits": 0,
+    "tmc_intpol": 1, "tmc_toff": 3, "tmc_tbl": 2, "tmc_hstrt": 5, "tmc_hend": 0,
+    "tmc_hold_delay": 10, "tmc_tpowerdown": 20, "tmc_tpwmthrs": 0,
 }
 
 

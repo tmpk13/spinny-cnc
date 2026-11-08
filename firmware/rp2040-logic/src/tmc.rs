@@ -15,6 +15,7 @@
 use core::fmt::Write;
 
 use heapless::String;
+use spinny_core::settings::Settings;
 use tmc2209::data::MicroStepResolution;
 use tmc2209::reg::{self, Address};
 use tmc2209::{ReadRequest, Reader, WriteRequest};
@@ -29,13 +30,9 @@ pub const ADDR: [u8; DRIVERS] = [0, 2, 1, 3];
 /// The joint on each socket when the board is wired as labeled: radius on
 /// X, table on Y, cross slide on Z, focus axis on E.
 pub const AXIS_LETTER: [char; DRIVERS] = ['R', 'A', 'Z', 'H'];
-/// IHOLD_IRUN.IHOLDDELAY: power-down ramp in units of 2^18 clocks.
-pub const IHOLD_DELAY: u8 = 10;
-/// CHOPCONF chopper fields: the datasheet's reset values with TBL=2.
-pub const TOFF: u32 = 3;
-pub const HSTRT: u32 = 5;
-pub const HEND: u32 = 0;
-pub const TBL: u32 = 2;
+/// Write datagrams in one driver's configuration, which is what its count
+/// of accepted writes (IFCNT) moves by when the configuration lands.
+pub const CONFIG_WRITES: usize = 6;
 
 /// GSTAT flags. `reset`: the driver came up from power-on since the flags
 /// were last cleared, with every register back at its reset value.
@@ -58,8 +55,55 @@ pub struct DriverConfig {
     pub hold_pct: u32,
     pub micro: [u32; DRIVERS],
     pub stealth: bool,
+    pub tuning: Tuning,
     /// Letter of the joint on each socket, for the messages.
     pub letters: [char; DRIVERS],
+}
+
+/// The register fields every driver is given alike, the `tmc_*`
+/// settings of the same names (TMC2209 datasheet Rev 1.09, CHOPCONF,
+/// IHOLD_IRUN, TPOWERDOWN and TPWMTHRS). The settings keep each within
+/// its field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tuning {
+    /// CHOPCONF.intpol: every microstep interpolated to 256.
+    pub intpol: bool,
+    /// CHOPCONF.TOFF: slow decay of 24 + 32 * TOFF clocks; 0 is off.
+    pub toff: u8,
+    /// CHOPCONF.TBL: comparator blank time of 16, 24, 32 or 40 clocks.
+    pub tbl: u8,
+    /// CHOPCONF.HSTRT: spreadCycle's hysteresis starts 1 to 8 above HEND.
+    pub hstrt: u8,
+    /// CHOPCONF.HEND: spreadCycle's hysteresis end, -3 to 12.
+    pub hend: u8,
+    /// IHOLD_IRUN.IHOLDDELAY: 2^18 clocks per step of the fall to hold.
+    pub hold_delay: u8,
+    /// TPOWERDOWN: 2^18 clocks from standstill to the fall to hold.
+    pub tpowerdown: u8,
+    /// TPWMTHRS: the TSTEP under which stealthChop gives way to spreadCycle.
+    pub tpwmthrs: u32,
+}
+
+impl Tuning {
+    pub fn of(settings: &Settings) -> Self {
+        Tuning {
+            intpol: settings.tmc_intpol,
+            toff: settings.tmc_toff,
+            tbl: settings.tmc_tbl,
+            hstrt: settings.tmc_hstrt,
+            hend: settings.tmc_hend,
+            hold_delay: settings.tmc_hold_delay,
+            tpowerdown: settings.tmc_tpowerdown,
+            tpwmthrs: settings.tmc_tpwmthrs,
+        }
+    }
+}
+
+impl Default for Tuning {
+    /// The settings' defaults.
+    fn default() -> Self {
+        Tuning::of(&Settings::default())
+    }
 }
 
 pub type Datagram = [u8; WriteRequest::LEN_BYTES];
@@ -115,12 +159,12 @@ fn datagram<R: reg::WritableRegister>(addr: u8, register: R) -> Datagram {
 }
 
 /// The writes for one axis: the GSTAT flags cleared, then GCONF,
-/// IHOLD_IRUN and CHOPCONF. The reset flag is set at every power-up, the
-/// first included, so it tells a driver that lost its configuration only
-/// once this has cleared it; clearing it first leaves a reset that lands
-/// while the rest is written on show. None when the axis is to be left
-/// alone or its microstep count is bad.
-pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 4]> {
+/// IHOLD_IRUN, CHOPCONF, TPOWERDOWN and TPWMTHRS. The reset flag is set at
+/// every power-up, the first included, so it tells a driver that lost its
+/// configuration only once this has cleared it; clearing it first leaves a
+/// reset that lands while the rest is written on show. None when the axis
+/// is to be left alone or its microstep count is bad.
+pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; CONFIG_WRITES]> {
     let ma = cfg.ma[axis];
     if ma == 0 {
         return None;
@@ -129,6 +173,7 @@ pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 4]
     let addr = ADDR[axis];
     let (vsense, irun) = current_to_vsense_cs(ma);
     let ihold = cs_for(hold_ma(ma, cfg.hold_pct), vsense);
+    let tuning = &cfg.tuning;
 
     let mut gconf = reg::GCONF::default();
     gconf.set_i_scale_analog(false);
@@ -140,19 +185,31 @@ pub fn config_datagrams(axis: usize, cfg: &DriverConfig) -> Option<[Datagram; 4]
     let mut currents = reg::IHOLD_IRUN::default();
     currents.set_ihold(ihold);
     currents.set_irun(irun);
-    currents.set_ihold_delay(IHOLD_DELAY);
+    currents.set_ihold_delay(tuning.hold_delay);
 
     let mut chop = reg::CHOPCONF::default();
-    chop.set_toff(TOFF);
-    chop.set_hstrt(HSTRT);
-    chop.set_hend(HEND);
-    chop.set_tbl(TBL);
+    chop.set_toff(tuning.toff as u32);
+    chop.set_hstrt(tuning.hstrt as u32);
+    chop.set_hend(tuning.hend as u32);
+    chop.set_tbl(tuning.tbl as u32);
     chop.set_vsense(vsense);
     chop.set_mres(MicroStepResolution::from_driver(mres as u32));
-    chop.set_intpol(true);
+    chop.set_intpol(tuning.intpol);
+
+    let mut powerdown = reg::TPOWERDOWN::default();
+    powerdown.set(tuning.tpowerdown);
+    let mut threshold = reg::TPWMTHRS::default();
+    threshold.set(tuning.tpwmthrs);
 
     let clear = reg::GSTAT::from(GSTAT_RESET | GSTAT_DRV_ERR | GSTAT_UV_CP);
-    Some([datagram(addr, clear), datagram(addr, gconf), datagram(addr, currents), datagram(addr, chop)])
+    Some([
+        datagram(addr, clear),
+        datagram(addr, gconf),
+        datagram(addr, currents),
+        datagram(addr, chop),
+        datagram(addr, powerdown),
+        datagram(addr, threshold),
+    ])
 }
 
 /// Whether a GSTAT read says the driver still holds what it was written:
@@ -347,7 +404,7 @@ pub fn report_text(socket: usize, letter: char, reply: Option<Reply>, in_use: bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tmc2209::reg::{CHOPCONF, GCONF, GSTAT, IHOLD_IRUN, IOIN};
+    use tmc2209::reg::{CHOPCONF, GCONF, GSTAT, IHOLD_IRUN, IOIN, TPOWERDOWN, TPWMTHRS};
 
     fn data(datagram: &Datagram) -> u32 {
         u32::from_be_bytes([datagram[3], datagram[4], datagram[5], datagram[6]])
@@ -392,10 +449,11 @@ mod tests {
             hold_pct: 50,
             micro: [16, 32, 128, 8],
             stealth: true,
+            tuning: Tuning::default(),
             letters: AXIS_LETTER,
         };
-        let [clear, gconf, currents, chop] = config_datagrams(0, &cfg).unwrap();
-        for d in [&clear, &gconf, &currents, &chop] {
+        let [clear, gconf, currents, chop, powerdown, threshold] = config_datagrams(0, &cfg).unwrap();
+        for d in [&clear, &gconf, &currents, &chop, &powerdown, &threshold] {
             assert_eq!(d[0], 0x05);
             assert_eq!(d[1], 0);
             assert_eq!(d[2] & 0x80, 0x80);
@@ -405,6 +463,8 @@ mod tests {
         assert_eq!(gconf[2] & 0x7f, Address::GCONF as u8);
         assert_eq!(currents[2] & 0x7f, Address::IHOLD_IRUN as u8);
         assert_eq!(chop[2] & 0x7f, Address::CHOPCONF as u8);
+        assert_eq!(powerdown[2] & 0x7f, 0x11, "TPOWERDOWN");
+        assert_eq!(threshold[2] & 0x7f, 0x13, "TPWMTHRS");
 
         let g = GCONF::from(data(&gconf));
         assert!(!g.i_scale_analog());
@@ -416,18 +476,18 @@ mod tests {
         let c = IHOLD_IRUN::from(data(&currents));
         assert_eq!(c.irun(), 25);
         assert_eq!(c.ihold(), 12);
-        assert_eq!(c.ihold_delay(), IHOLD_DELAY);
+        assert_eq!(c.ihold_delay(), 10);
 
         let ch = CHOPCONF::from(data(&chop));
-        assert_eq!(ch.toff(), TOFF);
-        assert_eq!(ch.hstrt(), HSTRT);
-        assert_eq!(ch.hend(), HEND);
-        assert_eq!(ch.tbl(), TBL);
+        assert_eq!(ch.toff(), 3);
+        assert_eq!(ch.hstrt(), 5);
+        assert_eq!(ch.hend(), 0);
+        assert_eq!(ch.tbl(), 2);
         assert!(ch.vsense());
         assert_eq!(ch.mres().number_of_microsteps(), 16);
         assert!(ch.intpol());
 
-        let [_, gconf, currents, chop] = config_datagrams(1, &cfg).unwrap();
+        let [_, gconf, currents, chop, ..] = config_datagrams(1, &cfg).unwrap();
         assert_eq!(gconf[1], 2);
         let c = IHOLD_IRUN::from(data(&currents));
         assert_eq!(c.irun(), 26);
@@ -436,9 +496,77 @@ mod tests {
         assert_eq!(ch.mres().number_of_microsteps(), 32);
 
         // The cross slide is the Z socket, which straps to address 1.
-        let [_, gconf, _, chop] = config_datagrams(2, &cfg).unwrap();
+        let [_, gconf, _, chop, ..] = config_datagrams(2, &cfg).unwrap();
         assert_eq!(gconf[1], 1);
         assert_eq!(CHOPCONF::from(data(&chop)).mres().number_of_microsteps(), 128);
+    }
+
+    #[test]
+    fn the_default_tuning_writes_what_the_firmware_always_wrote() {
+        // Before the tuning was a setting the firmware wrote these fields
+        // as constants and left TPOWERDOWN and TPWMTHRS at their power-up
+        // values, so a board whose settings were never changed sees the
+        // same registers, bit for bit.
+        assert_eq!(
+            Tuning::default(),
+            Tuning { intpol: true, toff: 3, tbl: 2, hstrt: 5, hend: 0, hold_delay: 10, tpowerdown: 20, tpwmthrs: 0 }
+        );
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [16; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
+        let [_, _, currents, chop, powerdown, threshold] = config_datagrams(0, &cfg).unwrap();
+        // IHOLD 12, IRUN 25, IHOLDDELAY 10.
+        assert_eq!(data(&currents), 0x000A_190C);
+        // TOFF 3, HSTRT 5, HEND 0, TBL 2, VSENSE, MRES 4 (16), intpol.
+        assert_eq!(data(&chop), 0x1403_0053);
+        assert_eq!(data(&powerdown), 20);
+        assert_eq!(data(&powerdown), u32::from(TPOWERDOWN::default()), "the reset value");
+        assert_eq!(data(&threshold), 0);
+    }
+
+    #[test]
+    fn each_tuning_setting_lands_in_its_register_field() {
+        // The field positions, from the TMC2209 datasheet Rev 1.09:
+        // CHOPCONF TOFF 3..0, HSTRT 6..4, HEND 10..7, TBL 16..15, intpol
+        // 28; IHOLD_IRUN IHOLDDELAY 19..16; TPOWERDOWN 7..0; TPWMTHRS 19..0.
+        let written = |tuning: Tuning, axis: usize| {
+            let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [16; DRIVERS], stealth: true, tuning, letters: AXIS_LETTER };
+            let [_, _, currents, chop, powerdown, threshold] = config_datagrams(axis, &cfg).unwrap();
+            assert_eq!(powerdown[1], ADDR[axis]);
+            assert_eq!(threshold[1], ADDR[axis]);
+            [data(&currents), data(&chop), data(&powerdown), data(&threshold)]
+        };
+        let base = written(Tuning::default(), 0);
+        let [currents, chop, ..] = base;
+        let one = |tuning: Tuning| written(tuning, 0);
+        let defaults = Tuning::default();
+        assert_eq!(one(Tuning { toff: 15, ..defaults })[1], chop | 0xf);
+        assert_eq!(one(Tuning { toff: 1, ..defaults })[1], chop & !0xf | 1);
+        assert_eq!(one(Tuning { hstrt: 0, ..defaults })[1], chop & !(0x7 << 4));
+        assert_eq!(one(Tuning { hstrt: 7, ..defaults })[1], chop | 0x7 << 4);
+        assert_eq!(one(Tuning { hend: 15, ..defaults })[1], chop | 0xf << 7);
+        assert_eq!(one(Tuning { tbl: 0, ..defaults })[1], chop & !(0x3 << 15));
+        assert_eq!(one(Tuning { tbl: 3, ..defaults })[1], chop | 0x3 << 15);
+        assert_eq!(one(Tuning { intpol: false, ..defaults })[1], chop & !(1 << 28));
+        assert_eq!(one(Tuning { hold_delay: 0, ..defaults })[0], currents & !(0xf << 16));
+        assert_eq!(one(Tuning { hold_delay: 15, ..defaults })[0], currents | 0xf << 16);
+        assert_eq!(one(Tuning { tpowerdown: 255, ..defaults })[2], 255);
+        assert_eq!(one(Tuning { tpowerdown: 0, ..defaults })[2], 0);
+        assert_eq!(one(Tuning { tpwmthrs: 234, ..defaults })[3], 234);
+        assert_eq!(one(Tuning { tpwmthrs: (1 << 20) - 1, ..defaults })[3], 0x000f_ffff);
+        // Every field at once lands the same on every socket, and leaves
+        // the current and resolution where they were.
+        let all = Tuning { intpol: false, toff: 15, tbl: 1, hstrt: 7, hend: 11, hold_delay: 0, tpowerdown: 255, tpwmthrs: 46875 };
+        for axis in 0..DRIVERS {
+            let [currents, chop, powerdown, threshold] = written(all, axis);
+            let ch = CHOPCONF::from(chop);
+            assert!(!ch.intpol());
+            assert_eq!([ch.toff(), ch.tbl(), ch.hstrt(), ch.hend()], [15, 1, 7, 11]);
+            assert!(ch.vsense());
+            assert_eq!(ch.mres().number_of_microsteps(), 16);
+            let c = IHOLD_IRUN::from(currents);
+            assert_eq!([c.irun(), c.ihold(), c.ihold_delay()], [25, 12, 0]);
+            assert_eq!(TPOWERDOWN::from(powerdown).get(), 255);
+            assert_eq!(TPWMTHRS::from(threshold).get(), 46875);
+        }
     }
 
     #[test]
@@ -448,8 +576,8 @@ mod tests {
         // protection runs. None is ours to set, and all of them ride on
         // the register defaults, so a change of those must fail here
         // rather than on the machine.
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
-        let [_, gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
+        let [_, gconf, _, chop, ..] = config_datagrams(0, &cfg).unwrap();
         let g = GCONF::from(data(&gconf));
         assert!(!g.internal_rsense(), "the driver would ignore the sense resistors");
         assert!(!g.shaft());
@@ -475,6 +603,7 @@ mod tests {
             hold_pct: 30,
             micro: [16, 12, 16, 16],
             stealth: false,
+            tuning: Tuning::default(),
             letters: AXIS_LETTER,
         };
         assert!(config_datagrams(0, &cfg).is_none());
@@ -489,7 +618,7 @@ mod tests {
         // Every driver comes up with the reset flag set, and nothing but a
         // write of ones clears it: left set, the first poll after a boot
         // would take every driver for one that had just lost its supply.
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
         for (axis, &addr) in ADDR.iter().enumerate() {
             let datagrams = config_datagrams(axis, &cfg).unwrap();
             let [clear, ..] = datagrams;
@@ -498,14 +627,16 @@ mod tests {
             let flags = GSTAT::from(data(&clear));
             assert!(flags.reset() && flags.drv_err() && flags.uv_cp());
             assert_eq!(data(&clear), GSTAT_RESET | GSTAT_DRV_ERR | GSTAT_UV_CP);
-            // The count of accepted writes the driver task checks for.
-            assert_eq!(datagrams.len(), 4);
+            // The count of accepted writes the driver task checks for:
+            // the flags, GCONF, IHOLD_IRUN, CHOPCONF, TPOWERDOWN, TPWMTHRS.
+            assert_eq!(datagrams.len(), CONFIG_WRITES);
+            assert_eq!(CONFIG_WRITES, 6);
         }
     }
 
     #[test]
     fn a_configuration_is_kept_only_while_it_has_not_landed() {
-        let cfg = DriverConfig { ma: [800, 800, 800, 0], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
+        let cfg = DriverConfig { ma: [800, 800, 800, 0], hold_pct: 50, micro: [256; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
         let mut links = Links::new();
         assert!(links.settled());
         links.configure(&cfg);
@@ -534,7 +665,7 @@ mod tests {
 
     #[test]
     fn a_supply_cycle_just_before_a_new_configuration_is_still_reported() {
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
         let mut links = Links::new();
         links.configure(&cfg);
         for axis in 0..DRIVERS {
@@ -567,7 +698,7 @@ mod tests {
 
     #[test]
     fn a_driver_that_loses_its_supply_is_reported_once_and_written_again() {
-        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, letters: AXIS_LETTER };
+        let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [256; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
         let mut links = Links::new();
         links.configure(&cfg);
         for axis in 0..DRIVERS {
@@ -678,8 +809,8 @@ mod tests {
         // What each axis reports when its configuration landed: GCONF
         // selects the register, and MRES says the rest.
         let asked = |micro: u32| {
-            let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [micro; DRIVERS], stealth: true, letters: AXIS_LETTER };
-            let [_, gconf, _, chop] = config_datagrams(0, &cfg).unwrap();
+            let cfg = DriverConfig { ma: [800; DRIVERS], hold_pct: 50, micro: [micro; DRIVERS], stealth: true, tuning: Tuning::default(), letters: AXIS_LETTER };
+            let [_, gconf, _, chop, ..] = config_datagrams(0, &cfg).unwrap();
             micro_of(data(&gconf), data(&chop), 0)
         };
         assert_eq!(asked(256), 256);

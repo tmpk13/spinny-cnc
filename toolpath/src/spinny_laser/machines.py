@@ -25,7 +25,8 @@ The sections and keys, with the firmware setting each one sets:
     [probe]   invert, brake_ms (probe_ms), pin (probe_pin)
     [output]  pwm_hz, s_max, s_min, invert, test_ms (laser_ms), pin (laser_pin)
     [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
-    [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth
+    [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth, interpolate (tmc_intpol), and the drivers'
+              register fields toff, tbl, hstrt, hend, hold_delay, tpowerdown, tpwmthrs (tmc_<key>)
     [host]    tolerance, clearance, spinup, speed_control, and for dispensing gap, retract, output, extrude_rate,
               dwell_ms: the host's own settings, not the firmware's
     [camera]  device, size, fps, pcbv, side, finish, offset, roll, mm_per_px: a camera on the head, the backend's
@@ -46,7 +47,7 @@ KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle", "dispenser")
 
 # The firmware's defaults, in the order it lists them. A file sets what it
-# names and leaves the rest here, so a machine is always all 75 settings.
+# names and leaves the rest here, so a machine is always all 83 settings.
 FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "r_steps": 10240.0, "a_steps": 14222.222, "r_rate": 560.0, "a_rate": 400.0,
     "r_accel": 50.0, "a_accel": 50.0, "r_jerk": 3.0, "a_jerk": 2.0,
@@ -66,15 +67,33 @@ FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "z_stop": 0, "z_stop_pin": 22, "z_home_pull": 1.0, "z_home_pos": 0.0, "z_home_travel": 200.0,
     "stop_invert": 0, "limits": 0,
     "dispenser": 0,
+    "tmc_intpol": 1, "tmc_toff": 3, "tmc_tbl": 2, "tmc_hstrt": 5, "tmc_hend": 0,
+    "tmc_hold_delay": 10, "tmc_tpowerdown": 20, "tmc_tpwmthrs": 0,
 }
 
-FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser"})
+# The drivers' register fields a file sets under [drivers], each under its
+# setting's name less the tmc_, with the field's bounds (TMC2209 datasheet
+# Rev 1.09: CHOPCONF TOFF, TBL, HSTRT, HEND; IHOLD_IRUN IHOLDDELAY;
+# TPOWERDOWN; TPWMTHRS, 20 bits). TOFF 0 would switch the driver off.
+TPWMTHRS_MAX = 2**20 - 1
+TUNING_KEYS = {
+    "toff": (1, 15),
+    "tbl": (0, 3),
+    "hstrt": (0, 7),
+    "hend": (0, 15),
+    "hold_delay": (0, 15),
+    "tpowerdown": (0, 255),
+    "tpwmthrs": (0, TPWMTHRS_MAX),
+}
+
+FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser", "tmc_intpol"})
 INTEGERS = frozenset({
     "dir_invert", "idle_ms", "step_us", "laser_hz", "laser_ms", "tmc_hold_pct", "probe_ms",
     "tmc_r_ma", "tmc_a_ma", "tmc_z_ma", "tmc_h_ma", "tmc_r_micro", "tmc_a_micro", "tmc_z_micro", "tmc_h_micro",
     "sockets", "laser_pin", "probe_pin", "tool_pin",
     "r_stop", "a_stop", "h_stop", "z_stop", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin",
     "stop_invert", "limits",
+    *(f"tmc_{key}" for key in TUNING_KEYS),
 })
 # Where an axis's endstops are, in the order of the <axis>_stop values.
 ENDSTOPS = ("none", "min", "max", "both")
@@ -368,7 +387,12 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     if "hold_pct" in drivers:
         settings["tmc_hold_pct"] = reader.integer(drivers, "hold_pct", "drivers", 0, 100)
     settings["tmc_stealth"] = int(reader.flag(drivers, "stealth", True, "drivers"))
-    reader.done(drivers, "drivers", {"enable_invert", "idle_ms", "step_us", "hold_pct", "stealth"})
+    settings["tmc_intpol"] = int(reader.flag(drivers, "interpolate", True, "drivers"))
+    for key, (low, high) in TUNING_KEYS.items():
+        if key in drivers:
+            settings[f"tmc_{key}"] = reader.integer(drivers, key, "drivers", low, high)
+    _check_tuning(where, settings)
+    reader.done(drivers, "drivers", {"enable_invert", "idle_ms", "step_us", "hold_pct", "stealth", "interpolate", *TUNING_KEYS})
 
     host_table = reader.table(top, "host")
     host: dict[str, float] = {}
@@ -403,6 +427,21 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         controls=controls,
         camera=camera,
     )
+
+
+def _check_tuning(where: str, settings: dict) -> None:
+    """The rules of the TMC2209 datasheet Rev 1.09 that join two of the
+    drivers' settings. The firmware takes settings one at a time, so it
+    holds each field to its own bounds only, and these are checked here,
+    where the whole file is seen. CHOPCONF: TOFF 1 only with TBL 2 or 3;
+    the hysteresis, HSTRT + 1 plus HEND - 3, at most 16. TPOWERDOWN: at
+    least 2 for stealthChop to tune itself while the motor rests."""
+    if settings["tmc_toff"] == 1 and settings["tmc_tbl"] < 2:
+        raise MachineError(f"{where}: [drivers] toff = 1 needs tbl 2 or 3")
+    if settings["tmc_hstrt"] + settings["tmc_hend"] > 18:
+        raise MachineError(f"{where}: [drivers] hstrt + hend must be at most 18: the hysteresis, hstrt + 1 plus hend - 3, may not pass 16")
+    if settings["tmc_stealth"] and settings["tmc_tpowerdown"] < 2:
+        raise MachineError(f"{where}: [drivers] tpowerdown must be 2 or more with stealth: stealthChop tunes itself in that time at rest")
 
 
 def _parse_camera(reader: "_Reader", table: dict) -> dict:

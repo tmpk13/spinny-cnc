@@ -19,7 +19,7 @@ use spinny_core::settings::Settings;
 use spinny_core::{A, H, R, Z};
 use spinny_fw_logic::tmc::{
     config_datagrams, holds_config, lost_text, micro_of, parse_reply, read_request, refused_text, report_text,
-    Datagram, DriverConfig, Link, Links, Reply, ADDR, AXIS_LETTER, DRIVERS,
+    Datagram, DriverConfig, Link, Links, Reply, Tuning, ADDR, AXIS_LETTER, DRIVERS,
 };
 use static_cell::StaticCell;
 use tmc2209::reg::Address;
@@ -65,9 +65,10 @@ pub fn start(spawner: &Spawner, uart: Peri<'static, UART1>, tx: Peri<'static, PI
 }
 
 /// Queues a reconfiguration from the current settings, each joint's
-/// current and microsteps on the socket `sockets` puts it on. The focus
-/// driver is left alone without `h_axis`: a board with nothing in its
-/// socket would otherwise report it refused, and retry, forever.
+/// current and microsteps on the socket `sockets` puts it on, and the
+/// tuning every driver shares. The focus driver is left alone without
+/// `h_axis`: a board with nothing in its socket would otherwise report it
+/// refused, and retry, forever.
 pub fn configure_from(settings: &Settings) {
     let focus_ma = if settings.h_axis { settings.tmc_ma[H] } else { 0 };
     let mut cfg = DriverConfig {
@@ -75,6 +76,7 @@ pub fn configure_from(settings: &Settings) {
         hold_pct: settings.tmc_hold_pct,
         micro: [256; DRIVERS],
         stealth: settings.tmc_stealth,
+        tuning: Tuning::of(settings),
         letters: AXIS_LETTER,
     };
     for (joint, letter, ma) in [

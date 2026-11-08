@@ -120,7 +120,7 @@ description = "Write the default controls fixture the toolpath and page tests ch
 run = "uv run python -m spinny_laser.controls > toolpath/tests/data/default-controls.json"
 
 [tasks.keys-fixture]
-description = "Write the machine keys fixture the page's copy of the keys, and its reading a board into a file, are checked against"
+description = "Write the machine keys fixture the page's copies of the keys and of the firmware's defaults, and its reading a board into a file, are checked against"
 run = "uv run python -m spinny_laser.machine_keys > toolpath/tests/data/machine-keys.json"
 
 [tasks.mill-fixture]

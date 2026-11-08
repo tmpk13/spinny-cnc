@@ -91,6 +91,16 @@ def test_values_read_per_key_from_settings():
     assert value_of(by[("rail", "endstop")], settings) == "max"
     assert value_of(by[(None, "kinematics")], settings) == "cartesian"
     assert value_of(by[(None, "tool")], settings) == "spindle"
+    # The drivers' tuning: interpolation as a flag, the register fields as
+    # the numbers the firmware holds.
+    tuned = dict(settings, tmc_intpol=0, tmc_tpwmthrs=234, tmc_toff=4)
+    assert value_of(by[("drivers", "interpolate")], settings) is True
+    assert value_of(by[("drivers", "interpolate")], tuned) is False
+    assert value_of(by[("drivers", "tpwmthrs")], tuned) == 234
+    assert value_of(by[("drivers", "toff")], tuned) == 4
+    assert [key.key for key in KEYS if key.setting.startswith("tmc_") and key.section == "drivers"] == [
+        "hold_pct", "stealth", "interpolate", "toff", "tbl", "hstrt", "hend", "hold_delay", "tpowerdown", "tpwmthrs",
+    ]
 
 
 def test_the_machine_keys_fixture_is_current():

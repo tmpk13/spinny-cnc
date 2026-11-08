@@ -3083,6 +3083,13 @@ mod tests {
         rig.run();
         assert_eq!(rig.line("$tmc_r_ma=500"), "ok\n");
         assert!(rig.machine.take_events().driver_config);
+        // The drivers' tuning is written to them like their currents.
+        assert_eq!(rig.line("$tmc_tpwmthrs=234"), "ok\n");
+        assert!(rig.machine.take_events().driver_config);
+        assert_eq!(rig.line("$tmc_toff=0"), "error:7 bad setting value\n");
+        assert!(!rig.machine.take_events().driver_config);
+        assert_eq!(rig.line("$tmc_tpwmthrs=0"), "ok\n");
+        rig.machine.take_events();
         assert_eq!(rig.line("$laser_hz=20000"), "ok\n");
         rig.advance(POLL_US);
         assert_eq!(rig.laser.hz, 20000);
@@ -3093,7 +3100,9 @@ mod tests {
         assert_eq!(rig.line("diag now"), "error:2 bad word\n");
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with("z_home_travel=200\nstop_invert=0\nlimits=0\ndispenser=0\nok\n"));
+        assert!(listing.ends_with(
+            "limits=0\ndispenser=0\ntmc_intpol=1\ntmc_toff=3\ntmc_tbl=2\ntmc_hstrt=5\ntmc_hend=0\ntmc_hold_delay=10\ntmc_tpowerdown=20\ntmc_tpwmthrs=0\nok\n"
+        ));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -4170,6 +4179,8 @@ mod tests {
         settings.stop_invert = 1;
         settings.limits = 1;
         settings.home_pull[R] = 2.5;
+        settings.tmc_tpwmthrs = 234;
+        settings.tmc_toff = 5;
         let mut rig = Rig::with(settings);
         rig.take_out();
         rig.advance(POLL_US);
@@ -4179,10 +4190,12 @@ mod tests {
         assert_eq!(rig.laser.duty, 1000, "an active-low laser lit by $defaults");
         let listed = rig.line("$");
         // The wiring stays: the polarities, the socket map and the pins.
+        // The drivers' tuning is a tuning, and goes back to its defaults.
         for line in [
             "laser_invert=1\n", "en_invert=1\n", "probe_invert=1\n", "dir_invert=5\n",
             "sockets=1423\n", "tool_out=1\n", "tool_invert=1\n", "tool_pin=21\n", "idle_ms=0\n",
             "r_stop=1\n", "r_stop_pin=22\n", "stop_invert=1\n", "limits=1\n", "r_home_pull=1\n",
+            "tmc_tpwmthrs=0\n", "tmc_toff=3\n",
         ] {
             assert!(listed.contains(line), "{line} in {listed}");
         }

@@ -229,6 +229,16 @@ SETTINGS_SCHEMA = [
     {"name": "dispenser", "unit": "0/1", "help": "1 = the table's joint is a dispenser's plunger in mm (with cartesian)"},
     {"name": "stop_invert", "unit": "mask", "help": "endstop inputs active high: bit 0 rail, bit 1 table, bit 2 cross slide, bit 3 focus axis"},
     {"name": "limits", "unit": "mask", "help": "endstops that halt a move closing them (ALARM:4, position lost), same bits"},
+    # The drivers' tuning, one value for all four: TMC2209 register fields,
+    # named and bounded as in its datasheet (Rev 1.09).
+    {"name": "tmc_intpol", "unit": "0/1", "help": "1 = the drivers interpolate every microstep to 256, whatever tmc_*_micro (CHOPCONF intpol)"},
+    {"name": "tmc_toff", "unit": "", "help": "chopper off time, CHOPCONF TOFF 1 to 15: slow decay of 24 + 32 * TOFF clocks; 1 only with tmc_tbl 2 or 3"},
+    {"name": "tmc_tbl", "unit": "", "help": "comparator blank time, CHOPCONF TBL 0 to 3: 16, 24, 32 or 40 clocks"},
+    {"name": "tmc_hstrt", "unit": "", "help": "spreadCycle hysteresis start, CHOPCONF HSTRT 0 to 7: 1 to 8 above its end; tmc_hstrt + tmc_hend at most 18"},
+    {"name": "tmc_hend", "unit": "", "help": "spreadCycle hysteresis end, CHOPCONF HEND 0 to 15: -3 to 12"},
+    {"name": "tmc_hold_delay", "unit": "", "help": "IHOLDDELAY 0 to 15: each step of the fall from run to hold current takes this many 2^18 clocks (21.8 ms); 0 drops at once"},
+    {"name": "tmc_tpowerdown", "unit": "", "help": "TPOWERDOWN 0 to 255: how long a motor at rest keeps its run current, in 2^18 clocks (21.8 ms) from 87 ms after its last step, before the fall to hold; 2 or more with stealthChop"},
+    {"name": "tmc_tpwmthrs", "unit": "TSTEP", "help": "TPWMTHRS 0 to 1048575: stealthChop while TSTEP is at least this, spreadCycle faster; TSTEP is the 12 MHz clocks between 1/256 microsteps, 46875 / full steps per second; 0 = stealthChop at every speed"},
 ]
 
 # How long a home may take before the request gives up on it: every axis

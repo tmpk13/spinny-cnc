@@ -449,14 +449,16 @@ connect and logs the answer.
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
 | `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert`, `dir_invert`, `sockets`, `laser_pin`, `probe_pin`, `tool_out`, `tool_pin`, `tool_invert`, the four `<axis>_stop` and `<axis>_stop_pin`, `stop_invert` and `limits` keep their values, so an active-low laser or tool output is not driven by it, the next move steps the motors it means, and an endstop that halts a move goes on doing so |
-| `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 4 for each configuration. A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does, raises `ALARM:3` even from `Idle` (the motors held nothing meanwhile), and configures the drivers again; the loss is seen at the next driver poll, about every quarter second, so a supply back sooner than that drives the beam or spindle at the job's duty until then |
+| `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 6 for each configuration (the flags, GCONF, IHOLD_IRUN, CHOPCONF, TPOWERDOWN and TPWMTHRS). A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does, raises `ALARM:3` even from `Idle` (the motors held nothing meanwhile), and configures the drivers again; the loss is seen at the next driver poll, about every quarter second, so a supply back sooner than that drives the beam or spindle at the job's duty until then |
 
 A value outside its bounds is `error:7`; an integer setting refuses
 decimal text such as `5000.0`. Steps, rates, accelerations and jerks must
 be above 0; `r_max` at least 0; `dir_invert` 0..15; `step_us` 1..20;
 `laser_hz` 100..100000; `laser_ms` 1..60000; `s_max` above 0 and `s_min`
 0..`s_max`; `tmc_*_ma` at most 2000; `tmc_hold_pct` at most 100; the
-microsteps a power of two up to 256.
+microsteps a power of two up to 256; `tmc_toff` 1..15; `tmc_tbl` 0..3;
+`tmc_hstrt` 0..7; `tmc_hend` and `tmc_hold_delay` 0..15; `tmc_tpowerdown`
+0..255; `tmc_tpwmthrs` 0..1048575.
 
 | Name | Unit | Default | Meaning |
 | --- | --- | --- | --- |
@@ -520,10 +522,25 @@ microsteps a power of two up to 256.
 | `stop_invert` | mask | 0 | the endstop inputs that are active high: bit 0 the rail, bit 1 the table, bit 2 the cross slide, bit 3 the focus axis, the `dir_invert` order |
 | `limits` | mask | 0 | the endstops that halt a move closing them, same bits (`ALARM:4`); a bit for an axis without a switch does nothing |
 | `dispenser` | 0/1 | 0 | with `cartesian`: the table's joint is a dispenser's plunger in mm, taken on `go` and `cut`, and the output is dark; see Dispenser |
+| `tmc_intpol` | 0/1 | 1 | CHOPCONF intpol: the drivers interpolate every microstep to 256, whatever `tmc_*_micro` they step at |
+| `tmc_toff` | | 3 | CHOPCONF TOFF, 1..15: the chopper's slow decay lasts 24 + 32 * TOFF clocks; 0 would switch the driver off |
+| `tmc_tbl` | | 2 | CHOPCONF TBL, 0..3: the current comparator is blanked for 16, 24, 32 or 40 clocks after each switch |
+| `tmc_hstrt` | | 5 | CHOPCONF HSTRT, 0..7: spreadCycle's hysteresis starts 1 to 8 above its end |
+| `tmc_hend` | | 0 | CHOPCONF HEND, 0..15: spreadCycle's hysteresis end, -3 to 12 |
+| `tmc_hold_delay` | 2^18 clocks | 10 | IHOLD_IRUN IHOLDDELAY, 0..15: each step of the fall from the run current to the hold current takes this long, 21.8 ms a unit; 0 drops at once |
+| `tmc_tpowerdown` | 2^18 clocks | 20 | TPOWERDOWN, 0..255: how long a motor at rest keeps its run current before that fall, 21.8 ms a unit (20 is 0.44 s), counted from when the driver finds it at rest, 2^20 clocks (87 ms) after its last step |
+| `tmc_tpwmthrs` | TSTEP | 0 | TPWMTHRS, 0..1048575: with `tmc_stealth`, a driver runs stealthChop while TSTEP is at least this and spreadCycle when it is less (faster); TSTEP is the time between two 1/256 microsteps in clocks, whatever the microsteps, 46875 / full steps per second; 0 keeps stealthChop at every speed |
 
 Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
 configuration; a `tmc_*` value and `dir_invert` follow the axis to its
 socket.
+The settings from `tmc_intpol` on are TMC2209 register fields, one value
+for all four drivers, named and bounded as in its datasheet (Rev 1.09); a
+clock is one of the driver's own, 12 MHz. Their defaults are what the
+firmware wrote before they were settings, so a board left at them drives
+its motors as it did. The firmware holds each to its own field; the
+datasheet's rules that join two of them are checked by a machine file
+([MACHINES.md](MACHINES.md), Driver tuning), which sees them together.
 Changing `spindle` stops whatever runs on the output.
 A pin setting names any GPIO up to 29 but the driver sockets' and the
 UART's (2, 5 to 15, 19 and 28). The firmware takes the three one at a
@@ -543,7 +560,9 @@ output runs at the defaults' polarity, which lights an active-low module.
 Settings stored before `z_jerk`, `z_max`, `cartesian` and `spindle` are
 read, with those four at their defaults, settings stored before
 `sockets` with it at 1234, and settings stored before the pins with those
-at their defaults, and settings stored before `dispenser` with it 0.
+at their defaults, settings stored before `dispenser` with it 0, and
+settings stored before the drivers' tuning (`tmc_intpol` on) with those
+at their defaults.
 
 ## Status line
 

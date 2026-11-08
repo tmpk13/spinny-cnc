@@ -9,10 +9,11 @@ import time
 from pathlib import Path
 
 import pytest
-from fake_serial import FakeSerial, fake_opener
+from fake_serial import DEFAULT_SETTINGS, FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
-from spinny_web.app import Backend, Broadcast, create_app
+from spinny_laser.machines import FIRMWARE_DEFAULTS
+from spinny_web.app import SETTINGS_SCHEMA, Backend, Broadcast, create_app
 from spinny_web.link import Link, LinkTimeout
 from spinny_web.log import setup as setup_log
 
@@ -242,6 +243,17 @@ def test_settings_read_write_save(client, fake, tmp_path):
     assert client.put("/api/settings", json={"host": {"tolerance": 0}}).status_code == 400
     assert client.post("/api/settings/save").json() == {"saved": True}
     assert fake.saved == 1
+
+
+def test_the_settings_tables_name_every_firmware_setting_once():
+    # The schema the page shows, the machine files' defaults and the fake's
+    # settings are three lists of the firmware's settings, kept by hand.
+    names = [entry["name"] for entry in SETTINGS_SCHEMA]
+    assert len(names) == len(set(names)) == len(FIRMWARE_DEFAULTS)
+    assert set(names) == set(FIRMWARE_DEFAULTS) == set(DEFAULT_SETTINGS)
+    tuning = {entry["name"]: entry for entry in SETTINGS_SCHEMA if entry["name"] in ("tmc_intpol", "tmc_tpwmthrs")}
+    assert tuning["tmc_intpol"]["unit"] == "0/1"
+    assert "12 MHz clocks between 1/256 microsteps" in tuning["tmc_tpwmthrs"]["help"]
 
 
 def test_the_settings_say_which_were_written_since_the_last_save(client, fake):

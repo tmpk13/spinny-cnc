@@ -137,14 +137,17 @@ def test_a_file_is_read_from_the_board_into_its_text_not_saved(client, fake):
     connect(client)
     fake.settings["r_rate"] = 900.0
     fake.settings["tmc_hold_pct"] = 30
+    fake.settings["tmc_tpwmthrs"] = 234
     text = 'name = "Bare"\n\n[rail]\nmax_rate = 560   # mm/min\n'
     answer = client.post("/api/machines/bare/from-board", json={"text": text})
     assert answer.status_code == 200, answer.text
     read = answer.json()
     assert "[rail] max_rate = 900 (was 560)" in read["changes"]
     assert "[drivers] hold_pct = 30 (was 50)" in read["changes"]
-    assert "max_rate = 900   # mm/min" in read["text"] and "[drivers]\nhold_pct = 30" in read["text"]
+    assert "[drivers] tpwmthrs = 234 (was 0)" in read["changes"]
+    assert "max_rate = 900   # mm/min" in read["text"] and "[drivers]\nhold_pct = 30\ntpwmthrs = 234" in read["text"]
     assert read["document"]["settings"]["r_rate"] == 900.0 and read["problems"] == [] and read["left"] == []
+    assert read["document"]["settings"]["tmc_tpwmthrs"] == 234
     # Nothing was written: the file is as it was.
     assert (client.machines_dir / "bare.toml").read_text(encoding="utf-8") == 'name = "Bare"\n'
     # A text that does not read is refused with what is wrong.

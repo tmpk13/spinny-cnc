@@ -125,6 +125,35 @@ pub struct Settings {
     /// over, and the output stays dark. On a polar machine the flag does
     /// nothing.
     pub dispenser: bool,
+    /// The drivers' tuning below, one value for all four, each a register
+    /// field of the TMC2209 (datasheet Rev 1.09). CHOPCONF.intpol: a
+    /// driver interpolates every microstep it is given to 256, whatever
+    /// `tmc_*_micro` it steps at.
+    pub tmc_intpol: bool,
+    /// CHOPCONF.TOFF, 1 to 15: the chopper's slow decay lasts 24 + 32 *
+    /// TOFF clocks. 0 switches the driver's bridges off, so it is refused.
+    pub tmc_toff: u8,
+    /// CHOPCONF.TBL, 0 to 3: the current comparator is blanked for 16,
+    /// 24, 32 or 40 clocks after each switching event.
+    pub tmc_tbl: u8,
+    /// CHOPCONF.HSTRT, 0 to 7: spreadCycle's hysteresis starts 1 to 8
+    /// above its end.
+    pub tmc_hstrt: u8,
+    /// CHOPCONF.HEND, 0 to 15: spreadCycle's hysteresis ends at -3 to 12.
+    pub tmc_hend: u8,
+    /// IHOLD_IRUN.IHOLDDELAY, 0 to 15: each step of the fall from the run
+    /// current to the hold current takes this many 2^18 clocks; 0 drops
+    /// to the hold current at once.
+    pub tmc_hold_delay: u8,
+    /// TPOWERDOWN, 0 to 255: the wait, in 2^18 clocks, between the driver
+    /// finding the motor at rest (2^20 clocks after its last step) and the
+    /// fall to the hold current.
+    pub tmc_tpowerdown: u8,
+    /// TPWMTHRS, up to `TPWMTHRS_MAX`: with `tmc_stealth`, the TSTEP below
+    /// which a driver leaves stealthChop for spreadCycle, TSTEP being the
+    /// clocks between two 1/256 microsteps whatever the microsteps; 0 keeps
+    /// stealthChop at every speed.
+    pub tmc_tpwmthrs: u32,
 }
 
 /// An endstop at the negative end of its axis, and one at the positive
@@ -155,6 +184,10 @@ pub const TOOL_PIN_DEFAULT: u32 = 17;
 /// E-STOP for the focus axis and the PROBE header for the cross slide,
 /// Z-STOP being the probe's.
 pub const STOP_PIN_DEFAULTS: [u32; AXES] = [4, 3, 16, 22];
+
+/// Largest `tmc_tpwmthrs`: TPWMTHRS is a 20 bit field (TMC2209 datasheet
+/// Rev 1.09, TPWMTHRS).
+pub const TPWMTHRS_MAX: u32 = (1 << 20) - 1;
 
 /// A pin setting names a GPIO the board has and nothing else owns.
 pub fn pin_valid(pin: u32) -> bool {
@@ -231,12 +264,26 @@ impl Default for Settings {
             stop_invert: 0,
             limits: 0,
             dispenser: false,
+            // What the firmware wrote before the tuning was a setting. The
+            // chopper fields are those a TMC2209 with unprogrammed OTP comes
+            // up with (TOFF 3, TBL 2, HSTRT 5, HEND 0, intpol on), and it
+            // never wrote TPOWERDOWN or TPWMTHRS, which come up at 20 and 0
+            // (TMC2209 datasheet Rev 1.09, CHOPCONF, TPOWERDOWN, TPWMTHRS
+            // and OTP_READ). IHOLDDELAY 10 was its own choice.
+            tmc_intpol: true,
+            tmc_toff: 3,
+            tmc_tbl: 2,
+            tmc_hstrt: 5,
+            tmc_hend: 0,
+            tmc_hold_delay: 10,
+            tmc_tpowerdown: 20,
+            tmc_tpwmthrs: 0,
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 75] = [
+pub const NAMES: [&str; 83] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -253,13 +300,16 @@ pub const NAMES: [&str; 75] = [
     "z_stop", "z_stop_pin", "z_home_pull", "z_home_pos", "z_home_travel",
     "stop_invert", "limits",
     "dispenser",
+    "tmc_intpol", "tmc_toff", "tmc_tbl", "tmc_hstrt", "tmc_hend", "tmc_hold_delay", "tmc_tpowerdown", "tmc_tpwmthrs",
 ];
 
 /// First of the endstop settings in `NAMES`: five per joint in the
-/// core's joint order, then the two masks; the dispenser flag follows
-/// them.
+/// core's joint order, then the two masks; the dispenser flag and the
+/// drivers' tuning follow them.
 const STOP_NAMES_AT: usize = 52;
 const STOP_NAMES_PER_JOINT: usize = 5;
+/// First of the drivers' tuning settings in `NAMES`, which run to its end.
+const TUNING_NAMES_AT: usize = 75;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetError {
@@ -292,9 +342,9 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
 /// older firmware is thrown away rather than read as this layout. Versions
-/// 5 to 9 are version 4 with fields appended, so a blob from version 4 on
+/// 5 to 10 are version 4 with fields appended, so a blob from version 4 on
 /// is still read, with the fields added after it at their defaults.
-const BLOB_VERSION: u8 = 9;
+const BLOB_VERSION: u8 = 10;
 /// Oldest version whose fields are a prefix of this layout.
 const BLOB_VERSION_PREFIX: u8 = 4;
 /// Bytes before the first field: magic and version.
@@ -310,13 +360,20 @@ const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
 /// Serialized size of the fields, in blob order: the version 4 fields,
 /// then `z_jerk`, `z_max`, `cartesian` and `spindle` (version 5), then
 /// `sockets` (version 6), then the pins and the tool output (version 7),
-/// then the endstops and homing (version 8), then `dispenser` (version 9).
-const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN + 1;
+/// then the endstops and homing (version 8), then `dispenser` (version 9),
+/// then the drivers' tuning (version 10).
+const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN + 1 + TUNING_LEN;
 /// Serialized size of the version 7 fields.
 const PINS_LEN: usize = 4 + 4 + 1 + 4 + 1;
 /// Serialized size of the version 8 fields: per joint the ends, the pin
 /// as a byte, the pull-off, the position and the travel, then the masks.
 const STOPS_LEN: usize = AXES * (1 + 1 + 4 + 4 + 4) + 1 + 1;
+/// Serialized size of the version 10 fields: the interpolation flag, a
+/// byte for each of the six small fields, and `tmc_tpwmthrs` in the three
+/// bytes its 20 bits need. They fill the blob up to its CRC, so a field
+/// added after them needs a longer blob, with the CRC's place read from
+/// the version.
+const TUNING_LEN: usize = 1 + 6 + 3;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
@@ -353,6 +410,8 @@ fn group(index: usize) -> Changed {
         // the next poll.
         47 | 48 | 50 => Changed::Other,
         49 | 51 => Changed::Laser,
+        // The drivers' tuning is written to them like their currents.
+        TUNING_NAMES_AT.. => Changed::Driver,
         // The endstops are read fresh by the stepper at every fill, and
         // a home reads its tuning when it starts.
         STOP_NAMES_AT.. => Changed::Other,
@@ -411,6 +470,12 @@ impl Writer<'_> {
         self.bytes(&value.to_le_bytes());
     }
 
+    /// The low three bytes of `value`, which must fit in them.
+    fn u24(&mut self, value: u32) {
+        debug_assert!(value < 1 << 24);
+        self.bytes(&value.to_le_bytes()[..3]);
+    }
+
     fn f32(&mut self, value: f32) {
         self.bytes(&value.to_le_bytes());
     }
@@ -439,6 +504,11 @@ impl Reader<'_> {
 
     fn u32(&mut self) -> u32 {
         u32::from_le_bytes(self.take())
+    }
+
+    fn u24(&mut self) -> u32 {
+        let [low, mid, high] = self.take::<3>();
+        u32::from_le_bytes([low, mid, high, 0])
     }
 
     fn f32(&mut self) -> f32 {
@@ -513,6 +583,14 @@ impl Settings {
             72 => Slot::Byte(&mut self.stop_invert),
             73 => Slot::Byte(&mut self.limits),
             74 => Slot::Flag(&mut self.dispenser),
+            75 => Slot::Flag(&mut self.tmc_intpol),
+            76 => Slot::Byte(&mut self.tmc_toff),
+            77 => Slot::Byte(&mut self.tmc_tbl),
+            78 => Slot::Byte(&mut self.tmc_hstrt),
+            79 => Slot::Byte(&mut self.tmc_hend),
+            80 => Slot::Byte(&mut self.tmc_hold_delay),
+            81 => Slot::Byte(&mut self.tmc_tpowerdown),
+            82 => Slot::Int(&mut self.tmc_tpwmthrs),
             _ => {
                 let at = index - STOP_NAMES_AT;
                 let joint = [R, A, H, Z][at / STOP_NAMES_PER_JOINT];
@@ -622,6 +700,17 @@ impl Settings {
             && self.home_travel.iter().all(|&v| positive(v))
             && self.stop_invert <= 15
             && self.limits <= 15
+            // The drivers' tuning: each register field's width, and TOFF
+            // above 0, which would switch the driver off (TMC2209
+            // datasheet Rev 1.09, CHOPCONF, IHOLD_IRUN and TPWMTHRS).
+            // TPOWERDOWN is 8 bits, all of its byte. Rules that join two
+            // fields are the machine file's, which sees them together.
+            && (1..=15).contains(&self.tmc_toff)
+            && self.tmc_tbl <= 3
+            && self.tmc_hstrt <= 7
+            && self.tmc_hend <= 15
+            && self.tmc_hold_delay <= 15
+            && self.tmc_tpwmthrs <= TPWMTHRS_MAX
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -742,6 +831,11 @@ impl Settings {
         w.u8(self.stop_invert);
         w.u8(self.limits);
         w.flag(self.dispenser);
+        w.flag(self.tmc_intpol);
+        for field in [self.tmc_toff, self.tmc_tbl, self.tmc_hstrt, self.tmc_hend, self.tmc_hold_delay, self.tmc_tpowerdown] {
+            w.u8(field);
+        }
+        w.u24(self.tmc_tpwmthrs);
         debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
@@ -827,6 +921,16 @@ impl Settings {
         }
         if version >= 9 {
             s.dispenser = r.flag()?;
+        }
+        if version >= 10 {
+            s.tmc_intpol = r.flag()?;
+            s.tmc_toff = r.u8();
+            s.tmc_tbl = r.u8();
+            s.tmc_hstrt = r.u8();
+            s.tmc_hend = r.u8();
+            s.tmc_hold_delay = r.u8();
+            s.tmc_tpowerdown = r.u8();
+            s.tmc_tpwmthrs = r.u24();
         }
         if !s.is_valid() {
             return None;
@@ -937,7 +1041,15 @@ mod tests {
         z_home_travel=200\n\
         stop_invert=0\n\
         limits=0\n\
-        dispenser=0\n";
+        dispenser=0\n\
+        tmc_intpol=1\n\
+        tmc_toff=3\n\
+        tmc_tbl=2\n\
+        tmc_hstrt=5\n\
+        tmc_hend=0\n\
+        tmc_hold_delay=10\n\
+        tmc_tpowerdown=20\n\
+        tmc_tpwmthrs=0\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -946,7 +1058,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 75> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 83> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -965,7 +1077,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 75] = [
+        let table: [(&str, &str, &str, Changed); 83] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -1041,6 +1153,14 @@ mod tests {
             ("stop_invert", "15", "15", Changed::Other),
             ("limits", "9", "9", Changed::Other),
             ("dispenser", "1", "1", Changed::Tool),
+            ("tmc_intpol", "0", "0", Changed::Driver),
+            ("tmc_toff", "5", "5", Changed::Driver),
+            ("tmc_tbl", "1", "1", Changed::Driver),
+            ("tmc_hstrt", "4", "4", Changed::Driver),
+            ("tmc_hend", "2", "2", Changed::Driver),
+            ("tmc_hold_delay", "6", "6", Changed::Driver),
+            ("tmc_tpowerdown", "128", "128", Changed::Driver),
+            ("tmc_tpwmthrs", "234", "234", Changed::Driver),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -1066,6 +1186,12 @@ mod tests {
         assert_eq!(settings.z_max, 8.0);
         assert!(settings.cartesian && settings.spindle && settings.dispenser);
         assert!(!settings.tmc_stealth);
+        assert!(!settings.tmc_intpol);
+        assert_eq!(
+            [settings.tmc_toff, settings.tmc_tbl, settings.tmc_hstrt, settings.tmc_hend, settings.tmc_hold_delay, settings.tmc_tpowerdown],
+            [5, 1, 4, 2, 6, 128]
+        );
+        assert_eq!(settings.tmc_tpwmthrs, 234);
     }
 
     #[test]
@@ -1451,7 +1577,10 @@ mod tests {
             assert_eq!(read_value, Some(value), "{name}");
         }
         let defaults = Settings::default();
-        for name in ["z_jerk", "z_max", "cartesian", "spindle", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert", "dispenser"] {
+        for name in ["z_jerk", "z_max", "cartesian", "spindle", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert", "dispenser"]
+            .into_iter()
+            .chain(NAMES[TUNING_NAMES_AT..].iter().copied())
+        {
             assert_eq!(line(&read, name).as_str(), line(&defaults, name).as_str(), "{name} came after version 4");
         }
     }
@@ -1475,7 +1604,7 @@ mod tests {
         assert_eq!(Settings::from_blob(&blob), Some(focus));
         // Then the cross slide's jerk and limit, the two mode flags and
         // the sockets, then the pins and the tool output, then the
-        // endstops and the dispenser flag just before the padding.
+        // endstops, the dispenser flag and the drivers' tuning.
         let modes = Settings {
             z_max: 9.5, cartesian: true, spindle: true, sockets: 1423,
             laser_pin: 23, probe_pin: 22, tool_out: true, tool_pin: 18, tool_invert: true,
@@ -1483,7 +1612,7 @@ mod tests {
         };
         modes.to_blob(&mut blob);
         let tail = HEADER_LEN + FIELDS_LEN;
-        let pins = tail - 1 - STOPS_LEN - PINS_LEN;
+        let pins = tail - TUNING_LEN - 1 - STOPS_LEN - PINS_LEN;
         assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
         assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
         assert_eq!(blob[pins - 6..pins - 4], [1, 1]);
@@ -1540,12 +1669,17 @@ mod tests {
     }
 
     #[test]
-    fn the_dispenser_flag_is_listed_last() {
+    fn the_dispenser_flag_and_the_drivers_tuning_are_listed_last() {
         let mut out = Out::new();
         Settings::default().format_all(&mut out);
-        assert_eq!(out.as_str().lines().count(), 75);
-        assert_eq!(out.as_str().lines().last(), Some("dispenser=0"));
-        assert_eq!(NAMES.len(), 75);
+        let lines: heapless::Vec<&str, 83> = out.as_str().lines().collect();
+        assert_eq!(lines.len(), NAMES.len());
+        assert_eq!(NAMES.len(), 83);
+        assert_eq!(lines[TUNING_NAMES_AT - 1], "dispenser=0");
+        assert_eq!(
+            lines[TUNING_NAMES_AT..],
+            ["tmc_intpol=1", "tmc_toff=3", "tmc_tbl=2", "tmc_hstrt=5", "tmc_hend=0", "tmc_hold_delay=10", "tmc_tpowerdown=20", "tmc_tpwmthrs=0"]
+        );
     }
 
     #[test]
@@ -1557,8 +1691,117 @@ mod tests {
         assert!(settings.dispensing());
         let mut blob = [0u8; BLOB_LEN];
         settings.to_blob(&mut blob);
-        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - 1], 1, "the last field");
+        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - TUNING_LEN - 1], 1, "just before the drivers' tuning");
         assert_eq!(Settings::from_blob(&blob), Some(settings));
+    }
+
+    /// The drivers' tuning with no field at its default, TPWMTHRS at its
+    /// largest so all three of its bytes are used.
+    fn tuned() -> Settings {
+        Settings {
+            tmc_intpol: false,
+            tmc_toff: 15,
+            tmc_tbl: 1,
+            tmc_hstrt: 7,
+            tmc_hend: 11,
+            tmc_hold_delay: 0,
+            tmc_tpowerdown: 255,
+            tmc_tpwmthrs: TPWMTHRS_MAX,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn the_drivers_tuning_takes_each_register_fields_range() {
+        // TMC2209 datasheet Rev 1.09: TOFF, HEND and IHOLDDELAY are 4 bits,
+        // HSTRT 3, TBL 2, TPOWERDOWN 8 and TPWMTHRS 20; TOFF 0 switches
+        // the driver off.
+        for (name, low, high, over) in [
+            ("tmc_toff", "1", "15", "16"),
+            ("tmc_tbl", "0", "3", "4"),
+            ("tmc_hstrt", "0", "7", "8"),
+            ("tmc_hend", "0", "15", "16"),
+            ("tmc_hold_delay", "0", "15", "16"),
+            ("tmc_tpowerdown", "0", "255", "256"),
+            ("tmc_tpwmthrs", "0", "1048575", "1048576"),
+        ] {
+            accepts(name, low);
+            accepts(name, high);
+            rejects(name, over);
+            rejects(name, "-1");
+            rejects(name, "2.5");
+        }
+        rejects("tmc_toff", "0");
+        rejects("tmc_intpol", "2");
+        accepts("tmc_intpol", "0");
+        // Two fields together are the machine file's to judge: TOFF 1 with
+        // a short blank time, and a hysteresis past what the datasheet
+        // allows, still pass one at a time.
+        let mut settings = Settings::default();
+        assert_eq!(settings.set("tmc_tbl", "0"), Ok(Changed::Driver));
+        assert_eq!(settings.set("tmc_toff", "1"), Ok(Changed::Driver));
+        assert_eq!(settings.set("tmc_hstrt", "7"), Ok(Changed::Driver));
+        assert_eq!(settings.set("tmc_hend", "15"), Ok(Changed::Driver));
+        assert!(settings.is_valid());
+    }
+
+    #[test]
+    fn the_drivers_tuning_fills_the_blob_up_to_its_crc() {
+        let settings = tuned();
+        let mut blob = [0u8; BLOB_LEN];
+        settings.to_blob(&mut blob);
+        assert_eq!(HEADER_LEN + FIELDS_LEN, CRC_OFFSET, "no padding is left");
+        let at = CRC_OFFSET - TUNING_LEN;
+        assert_eq!(blob[at..CRC_OFFSET], [0, 15, 1, 7, 11, 0, 255, 0xff, 0xff, 0x0f]);
+        assert_eq!(Settings::from_blob(&blob), Some(settings));
+        let defaults = Settings::default();
+        defaults.to_blob(&mut blob);
+        assert_eq!(blob[at..CRC_OFFSET], [1, 3, 2, 5, 0, 10, 20, 0, 0, 0]);
+        let middling = Settings { tmc_tpwmthrs: 0x0001_0203, ..Settings::default() };
+        middling.to_blob(&mut blob);
+        assert_eq!(blob[CRC_OFFSET - 3..CRC_OFFSET], [0x03, 0x02, 0x01], "little-endian");
+        assert_eq!(Settings::from_blob(&blob), Some(middling));
+    }
+
+    #[test]
+    fn a_stored_tuning_out_of_range_is_thrown_away() {
+        let mut blob = [0u8; BLOB_LEN];
+        for stored in [
+            Settings { tmc_toff: 0, ..Settings::default() },
+            Settings { tmc_tbl: 4, ..Settings::default() },
+            Settings { tmc_hend: 16, ..Settings::default() },
+            Settings { tmc_tpwmthrs: TPWMTHRS_MAX + 1, ..Settings::default() },
+        ] {
+            stored.to_blob(&mut blob);
+            assert_eq!(Settings::from_blob(&blob), None, "{stored:?}");
+        }
+        // The interpolation flag is a flag byte like the others.
+        Settings::default().to_blob(&mut blob);
+        blob[CRC_OFFSET - TUNING_LEN] = 2;
+        let crc = crc32(&blob[..CRC_OFFSET]);
+        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        assert_eq!(Settings::from_blob(&blob), None);
+    }
+
+    #[test]
+    fn a_version_9_blob_is_read_with_the_drivers_tuning_at_its_defaults() {
+        // Version 9 is this layout without the tuning appended after the
+        // dispenser flag. Its firmware left zeros there, which read as
+        // this layout would be TOFF 0 and throw the whole blob away, and
+        // with it the wiring; a stale tuning is not read either.
+        let stored = Settings { cartesian: true, dispenser: true, laser_invert: true, ..tuned() };
+        let kept = Settings { cartesian: true, dispenser: true, laser_invert: true, ..Settings::default() };
+        for padding in [false, true] {
+            let mut blob = [0u8; BLOB_LEN];
+            stored.to_blob(&mut blob);
+            blob[MAGIC.len()] = 9;
+            if padding {
+                blob[CRC_OFFSET - TUNING_LEN..CRC_OFFSET].fill(0);
+            }
+            let crc = crc32(&blob[..CRC_OFFSET]);
+            blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+            assert_eq!(Settings::from_blob(&blob), Some(kept), "zero padding: {padding}");
+        }
     }
 
     #[test]

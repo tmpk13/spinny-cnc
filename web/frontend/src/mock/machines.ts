@@ -98,6 +98,14 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     stop_invert: 0,
     limits: 0,
     dispenser: 0,
+    tmc_intpol: 1,
+    tmc_toff: 3,
+    tmc_tbl: 2,
+    tmc_hstrt: 5,
+    tmc_hend: 0,
+    tmc_hold_delay: 10,
+    tmc_tpowerdown: 20,
+    tmc_tpwmthrs: 0,
 };
 
 export const MACHINE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -117,6 +125,22 @@ const ENDSTOPS = ["none", "min", "max", "both"];
 const FLOAT_MAX = 1e7;
 const PROBE_MS_MAX = 160;
 const INT_MAX = 4294967295;
+/**
+ * The drivers' register fields a file sets under [drivers], each under its
+ * setting's name less the `tmc_`, with the field's bounds (TMC2209 datasheet
+ * Rev 1.09: CHOPCONF TOFF, TBL, HSTRT, HEND; IHOLD_IRUN IHOLDDELAY;
+ * TPOWERDOWN; TPWMTHRS, 20 bits), as spinny_laser.machines.TUNING_KEYS. TOFF
+ * 0 would switch the driver off.
+ */
+const TUNING_BOUNDS: [string, number, number][] = [
+    ["toff", 1, 15],
+    ["tbl", 0, 3],
+    ["hstrt", 0, 7],
+    ["hend", 0, 15],
+    ["hold_delay", 0, 15],
+    ["tpowerdown", 0, 255],
+    ["tpwmthrs", 0, 2 ** 20 - 1],
+];
 /**
  * What a machine file may say about the host's own settings: the bounds,
  * and whether the low one is allowed. The dispensing values are what a dot
@@ -487,7 +511,14 @@ export function parseMachine(text: string, id: string): MachineDocument {
         settings["tmc_hold_pct"] = reader.integer(drivers, "hold_pct", "drivers", 0, 100);
     }
     settings["tmc_stealth"] = reader.flag(drivers, "stealth", true, "drivers") ? 1 : 0;
-    reader.done(drivers, "drivers", ["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth"]);
+    settings["tmc_intpol"] = reader.flag(drivers, "interpolate", true, "drivers") ? 1 : 0;
+    for (const [key, low, high] of TUNING_BOUNDS) {
+        if (key in drivers) {
+            settings[`tmc_${key}`] = reader.integer(drivers, key, "drivers", low, high);
+        }
+    }
+    checkTuning(where, settings);
+    reader.done(drivers, "drivers", ["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth", "interpolate", ...TUNING_BOUNDS.map(([key]) => key)]);
 
     const hostTable = reader.table(top, "host");
     const hostNumbers: Record<string, number> = {};
@@ -519,6 +550,25 @@ export function parseMachine(text: string, id: string): MachineDocument {
     const controls = parseControls(reader, top, kinematics, tool, focus);
     reader.done(top, null, ["name", "description", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"]);
     return { id, name, description, kinematics, tool, focus, settings, host, camera, controls };
+}
+
+/**
+ * The rules of the TMC2209 datasheet Rev 1.09 that join two of the drivers'
+ * settings, checked where the whole file is seen as the backend checks them:
+ * CHOPCONF TOFF 1 only with TBL 2 or 3, the hysteresis (HSTRT + 1 plus
+ * HEND - 3) at most 16, and TPOWERDOWN at least 2 for stealthChop to tune
+ * itself while the motor rests.
+ */
+function checkTuning(where: string, settings: Record<string, number>): void {
+    if (settings["tmc_toff"] === 1 && settings["tmc_tbl"]! < 2) {
+        throw new Error(`${where}: [drivers] toff = 1 needs tbl 2 or 3`);
+    }
+    if (settings["tmc_hstrt"]! + settings["tmc_hend"]! > 18) {
+        throw new Error(`${where}: [drivers] hstrt + hend must be at most 18: the hysteresis, hstrt + 1 plus hend - 3, may not pass 16`);
+    }
+    if (settings["tmc_stealth"] && settings["tmc_tpowerdown"]! < 2) {
+        throw new Error(`${where}: [drivers] tpowerdown must be 2 or more with stealth: stealthChop tunes itself in that time at rest`);
+    }
 }
 
 /** The `[camera]` table over the defaults, each key named checked as the backend checks it. */

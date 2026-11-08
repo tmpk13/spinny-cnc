@@ -22,6 +22,8 @@ export type KeyValue = number | boolean | string | null;
 
 const ENDSTOPS = ["none", "min", "max", "both"];
 const SOCKETS = ["X", "Y", "Z", "E"];
+/** The `[drivers]` keys of the drivers' register fields, each its setting's name less the `tmc_`, as spinny_laser.machines.TUNING_KEYS. */
+const TUNING_KEYS = ["toff", "tbl", "hstrt", "hend", "hold_delay", "tpowerdown", "tpwmthrs"];
 /** Section, axis letter, the firmware's scale key and the axis's bit, as spinny_laser.machines.AXES. */
 const AXES: [string, string, string, number][] = [
     ["rail", "r", "steps_per_mm", 0],
@@ -85,6 +87,8 @@ export const MACHINE_KEYS: MachineKey[] = [
     key("step_us", "drivers", "step_us", "integer"),
     key("tmc_hold_pct", "drivers", "hold_pct", "integer"),
     key("tmc_stealth", "drivers", "stealth", "flag"),
+    key("tmc_intpol", "drivers", "interpolate", "flag"),
+    ...TUNING_KEYS.map((name) => key(`tmc_${name}`, "drivers", name, "integer")),
     ...["tolerance", "travel", "clearance", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"].map((name) => key(`host.${name}`, "host", name, "host")),
 ];
 

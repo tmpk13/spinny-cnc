@@ -21,6 +21,9 @@ const AXES: [(&str, &str, &str, u8); 4] = [
 
 /// Driver socket letters, numbered from 1 in the `sockets` setting.
 const SOCKETS: [&str; 4] = ["X", "Y", "Z", "E"];
+/// The `[drivers]` keys of the drivers' register fields, each its
+/// setting's name less the `tmc_`.
+const TUNING_KEYS: [&str; 7] = ["toff", "tbl", "hstrt", "hend", "hold_delay", "tpowerdown", "tpwmthrs"];
 /// The `endstop` words, in the order of the `<axis>_stop` values.
 const ENDSTOPS: [&str; 4] = ["none", "min", "max", "both"];
 
@@ -268,7 +271,20 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     if let Some(stealth) = flag(&drivers, "stealth", "drivers")? {
         writes.push(("tmc_stealth".into(), flag_text(stealth)));
     }
-    only(&drivers, "drivers", &["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth"])?;
+    if let Some(interpolate) = flag(&drivers, "interpolate", "drivers")? {
+        writes.push(("tmc_intpol".into(), flag_text(interpolate)));
+    }
+    // The drivers' register fields, each under its setting's name less
+    // the `tmc_`; the firmware holds each within its field, and the rules
+    // that join two of them are the host's.
+    for key in TUNING_KEYS {
+        if let Some(value) = integer(&drivers, key, "drivers")? {
+            writes.push((format!("tmc_{key}"), value));
+        }
+    }
+    let mut known = vec!["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth", "interpolate"];
+    known.extend(TUNING_KEYS);
+    only(&drivers, "drivers", &known)?;
 
     // The host's own values are not the firmware's: checked for shape only.
     let host = table_of(&top, "host")?;
@@ -448,6 +464,7 @@ mod tests {
              [output]\npwm_hz = 1000\ns_max = 255\ns_min = 10\ninvert = true\ntest_ms = 7000\npin = 23\n\
              [enable]\nfitted = true\npin = 18\ninvert = true\n\
              [drivers]\nenable_invert = true\nidle_ms = 30000\nstep_us = 4\nhold_pct = 30\nstealth = false\n\
+             interpolate = false\ntoff = 4\ntbl = 1\nhstrt = 3\nhend = 2\nhold_delay = 6\ntpowerdown = 40\ntpwmthrs = 234\n\
              [host]\ntolerance = 0.01\nclearance = 3\nspinup = 1.5\n",
         );
         assert!(settings.cartesian && settings.spindle && settings.h_axis);
@@ -481,6 +498,25 @@ mod tests {
         assert_eq!(settings.step_us, 4);
         assert_eq!(settings.tmc_hold_pct, 30);
         assert!(!settings.tmc_stealth);
+        assert!(!settings.tmc_intpol);
+        assert_eq!(
+            [settings.tmc_toff, settings.tmc_tbl, settings.tmc_hstrt, settings.tmc_hend, settings.tmc_hold_delay, settings.tmc_tpowerdown],
+            [4, 1, 3, 2, 6, 40]
+        );
+        assert_eq!(settings.tmc_tpwmthrs, 234);
+    }
+
+    #[test]
+    fn the_drivers_tuning_is_held_to_the_firmwares_bounds() {
+        let refused = |text: &str| apply(&mut Settings::default(), text).unwrap_err();
+        assert_eq!(refused("[drivers]\ntoff = 0\n"), "tmc_toff cannot be set to 0");
+        assert_eq!(refused("[drivers]\ntpwmthrs = 1048576\n"), "tmc_tpwmthrs cannot be set to 1048576");
+        assert!(refused("[drivers]\ntbl = -1\n").contains("[drivers] tbl must be a whole number"));
+        assert!(refused("[drivers]\ninterpolate = 1\n").contains("[drivers] interpolate must be true or false"));
+        assert!(refused("[drivers]\nintpol = true\n").contains("[drivers] intpol is not a key here"));
+        // Left out, every field keeps the value it had.
+        let tuned = applied("[drivers]\ntpowerdown = 2\n");
+        assert_eq!(tuned, Settings { tmc_tpowerdown: 2, ..Settings::default() });
     }
 
     #[test]

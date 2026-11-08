@@ -50,11 +50,15 @@ describe("the settings list", () => {
         expect(rows().map(keyOf)).toEqual(["[rail] max_rate"]);
         only.checked = false;
         only.dispatchEvent(new Event("change"));
-        // A search by the firmware's name, letters apart, finds the key.
+        // A search by the firmware's name, letters apart, finds the key,
+        // and one the file names otherwise too.
         const search = listRoot.querySelector("input[type=search]") as HTMLInputElement;
-        search.value = "tmchold";
+        search.value = "holdpct";
         search.dispatchEvent(new Event("input"));
         expect(keyOf(rows()[0]!)).toBe("[drivers] hold_pct");
+        search.value = "intpol";
+        search.dispatchEvent(new Event("input"));
+        expect(keyOf(rows()[0]!)).toBe("[drivers] interpolate");
         // Clicked, a key the file names is selected; one it leaves out is added.
         const text = root.querySelector("textarea") as HTMLTextAreaElement;
         search.value = "rail accel";
