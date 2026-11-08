@@ -13,7 +13,7 @@ describe("what the panels hold unapplied", () => {
         setPending(store, "machine-file", 1);
         setPending(store, "camera", 3);
         expect(pendingOn(store.get().pending, "config")).toBe(3);
-        expect(pendingOn(store.get().pending, "machine")).toBe(3);
+        expect(pendingOn(store.get().pending, "jobs")).toBe(3);
         expect(pendingOn(store.get().pending, "cam")).toBe(0);
         expect(pendingTotal(store.get().pending)).toBe(6);
         setPending(store, "settings", 0);

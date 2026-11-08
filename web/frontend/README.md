@@ -99,7 +99,7 @@ land on copper (*Plan* says how many and how long); the map's grid is
 filled in from the pads as they come, and the preview draws the pads,
 filled once probed.
 
-The Machine page's *Camera* panel (`src/views/vision.ts`; `camera.ts` is
+The Jobs page's *Camera* panel (`src/views/vision.ts`; `camera.ts` is
 the preview's camera) shows the picture from the camera on the head,
 refreshed while it shows and the camera runs, the pose pcbv reads off the
 board, the camera's settings and the measured offset, roll and scale,
@@ -150,9 +150,10 @@ toggle that hides the built-in system ports; it marks a machine whose
 last report is old, as the Position panel does, before the backend gives
 the link up. The console's *Log* shows the backend's log, *Wire* the last lines over the wire with their times, polls included.
 
-The page has three tabs under the status bar, remembered per browser and
-set by `?page=cam` or `?page=config` in the address: *Machine*, the
-panels above, *CAM* and *Config*. The CAM page shows a profile from
+The page has five tabs under the status bar, remembered per browser and
+set by `?page=plot`, `?page=cam`, `?page=pnp` or `?page=config` in the
+address (the old names `machine` and `mill` still open them): *Jobs*,
+the panels above, *Plot*, *CAM*, *PNP* and *Config*. The CAM page shows a profile from
 `cam/` (`docs/CAM.md`): its axes,
 its tools and its operations, every cutting setting of an operation in a
 field that writes the one value back into the file (a field left empty is
@@ -189,7 +190,7 @@ loses power sends no close. The page reads the settings again when the
 machine, or the profile in its state frames, changes, and after a setting
 typed at the console.
 
-The *Mill* page (`src/views/mill.ts`) is the machine used as a manual
+The *Plot* page (`src/views/mill.ts`) is the machine used as a manual
 mill: the readout, the jog panel (its keys work while the page shows), the
 spindle and the markers again, beside one operation at a time (drill
 points, a board job's holes, a line, a face, a pocket or a profile) whose
@@ -275,7 +276,7 @@ classDiagram
         buildCamJob / camGcode
     }
     class mock_mill {
-        buildMill(id, op, holes, limits) the backend's Mill page job, checked against its fixture
+        buildMill(id, op, holes, limits) the backend's Plot page job, checked against its fixture
         remakeMill / moveJob / carrySettings  a job made again for another width
     }
     class mock_machines {

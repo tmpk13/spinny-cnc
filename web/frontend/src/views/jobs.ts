@@ -158,7 +158,7 @@ export function dispenseRefusal(job: Job | null, dispensing: boolean): string {
 
 /**
  * What a new width does to a job, as the backend decides it: the job is
- * made again from its recipe (a kept board file, a Mill page operation),
+ * made again from its recipe (a kept board file, a Plot page operation),
  * its paths are kept and only the number changes (a drawing's lines), or
  * it cannot take one, since its paths follow the old width and nothing is
  * kept to make them again.
@@ -193,7 +193,12 @@ function setUnlessFocused(input: HTMLInputElement, value: string, focused: Eleme
     }
 }
 
-export function mountJobs(root: HTMLElement, ctx: Ctx): void {
+/**
+ * The Jobs panel in `root`, and the run controls in `runRoot`: a panel of
+ * their own at the foot of the column, so Run stays in reach however long
+ * the list and the groups grow. Without one they go at the panel's end.
+ */
+export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): void {
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Job file" });
     const powerField = numberField({ value: 500, min: 0, step: 1 });
     const speedField = numberField({ value: 400, min: 1, step: 1 });
@@ -773,6 +778,21 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
     // The job whose count the line field was filled from, so a new job or
     // a new record fills it again without overwriting what was typed.
     let pickupFilledFor: string | null = null;
+    // The run controls: the selected job's name over them, since the
+    // panel they sit in may be far from the list it was picked in.
+    const runTitle = el("span", { class: "muted run-job" });
+    const runParts = [
+        el("div", { class: "panel-head" }, el("h2", {}, "Run"), runTitle),
+        runRow,
+        compensateNote,
+        progressBox,
+        pickupBox,
+    ];
+    if (runRoot) {
+        runRoot.append(...runParts);
+    } else {
+        root.append(el("div", { class: "run-section" }, ...runParts));
+    }
 
     async function run(): Promise<void> {
         const job = ctx.store.get().job;
@@ -865,10 +885,6 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
                 offsetRow(job),
                 widthRow(job, milling),
                 marginRow(job),
-                runRow,
-                compensateNote,
-                progressBox,
-                pickupBox,
             );
         } else if (detailsJob !== job) {
             detailsJob = job;
@@ -933,6 +949,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx): void {
         runNote.classList.toggle("hidden", refusal === "");
         runButton.title = refusal;
         setLocked(runButton, !connected || active || !state.job || refusal !== "");
+        runTitle.textContent = state.job ? state.job.name : "no job selected";
         setLocked(holdButton, !connected || !active || progress.state !== "running");
         setLocked(resumeButton, !connected || !active || progress.state !== "hold");
         setLocked(stopButton, !connected || !active);

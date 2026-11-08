@@ -352,7 +352,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
 
     /** The panel is in view: the machine's page is up, the fold open and the tab shown. */
     function visible(): boolean {
-        return fold.open && activePage() === "machine" && (typeof document.visibilityState !== "string" || document.visibilityState !== "hidden");
+        return fold.open && activePage() === "jobs" && (typeof document.visibilityState !== "string" || document.visibilityState !== "hidden");
     }
 
     let lastFrame = 0;

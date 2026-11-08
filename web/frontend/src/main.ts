@@ -268,17 +268,17 @@ function main(): void {
     mountJog(panel("jog"), ctx);
     mountLaser(panel("laser"), ctx);
     mountMarkers(panel("markers"), ctx);
-    mountJobs(panel("jobs"), ctx);
+    mountJobs(panel("jobs"), ctx, panel("run"));
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountJobJson(panel("jobjson"), ctx);
     mountVision(panel("camera"), ctx);
     mountAlign(panel("align"), ctx);
     mountConsole(panel("console"), ctx);
-    // The Mill page: the position, the jog and the spindle again beside
+    // The Plot page: the position, the jog and the spindle again beside
     // its operations, the markers, and a preview of the operation planned.
     mountDro(panel("mill-dro"), ctx);
-    mountJog(panel("mill-jog"), ctx, "mill");
+    mountJog(panel("mill-jog"), ctx, "plot");
     mountLaser(panel("mill-spindle"), ctx);
     mountMarkers(panel("mill-markers"), ctx);
     mountPreviewPanel(panel("mill-preview"), ctx, (state) => state.millPlan ?? state.job);

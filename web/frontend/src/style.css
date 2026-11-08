@@ -193,10 +193,10 @@ input[type="checkbox"] {
 }
 
 /* Pages under one status bar; the tabs set which is up on #app. */
-#app[data-page="mill"] > #page-machine,
-#app[data-page="cam"] > #page-machine,
-#app[data-page="pnp"] > #page-machine,
-#app[data-page="config"] > #page-machine {
+#app[data-page="plot"] > #page-jobs,
+#app[data-page="cam"] > #page-jobs,
+#app[data-page="pnp"] > #page-jobs,
+#app[data-page="config"] > #page-jobs {
     display: none;
 }
 
@@ -204,7 +204,7 @@ input[type="checkbox"] {
     display: none;
 }
 
-#app:not([data-page="mill"]) > #page-mill {
+#app:not([data-page="plot"]) > #page-plot {
     display: none;
 }
 
@@ -351,6 +351,7 @@ table.settings .was {
         "jog"
         "laser"
         "jobs"
+        "run"
         "heightmap"
         "console";
     align-content: start;
@@ -416,6 +417,17 @@ table.settings .was {
         flex: 1 0 auto;
     }
 
+    /* The run controls stay at the foot of their column while the jobs
+       and the groups scroll under them; the shadow says something is
+       under there. */
+    .column > #run {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        margin-top: auto;
+        box-shadow: 0 -0.4rem 1rem -0.6rem color-mix(in oklab, var(--text) 35%, transparent), var(--shadow);
+    }
+
     /* The CAM page: the profile on the left, its preview and its file on the right. */
     .cam-grid {
         grid-template-columns: minmax(0, 3fr) minmax(22rem, 2fr);
@@ -433,6 +445,7 @@ table.settings .was {
 #jog { grid-area: jog; }
 #laser { grid-area: laser; }
 #jobs { grid-area: jobs; }
+#run { grid-area: run; }
 #heightmap { grid-area: heightmap; }
 #console { grid-area: console; }
 
@@ -2299,7 +2312,7 @@ table.cam-table input[type="checkbox"] {
     width: auto;
 }
 
-/* The Mill page: the operation's sections, its points, its notes. */
+/* The Plot page: the operation's sections, its points, its notes. */
 .choice-row.choice-wrap {
     flex-wrap: wrap;
     gap: 0.25rem;
@@ -2340,7 +2353,8 @@ table.cam-table input[type="checkbox"] {
     font-weight: 500;
 }
 
-.mill-run-job {
+.mill-run-job,
+.run-job {
     font-size: 0.9rem;
 }
 

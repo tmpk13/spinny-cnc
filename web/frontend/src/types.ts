@@ -452,14 +452,14 @@ export interface Job {
     stats: Stats;
 }
 
-/** How a job was made: a board upload's file and options, or a Mill page operation. */
+/** How a job was made: a board upload's file and options, or a Plot page operation. */
 export interface Recipe {
     file?: string | null;
     options?: Record<string, unknown> | null;
     mill?: MillOperation | null;
 }
 
-/** What the Mill page cuts: points drilled, a board job's holes, a line through points, a face, a pocket or a profile. */
+/** What the Plot page cuts: points drilled, a board job's holes, a line through points, a face, a pocket or a profile. */
 export type MillKind = "drill" | "holes" | "line" | "face" | "pocket" | "profile";
 
 /** The shape a pocket or a profile is of. */
@@ -468,7 +468,7 @@ export type MillShape = "rect" | "circle";
 /** Where a profile cuts: around the outside of the shape, inside it, or with the bit's center on its line. */
 export type MillSide = "outside" | "inside" | "on";
 
-/** One Mill page operation; which of the shape's fields count follows the kind and the shape. */
+/** One Plot page operation; which of the shape's fields count follows the kind and the shape. */
 export interface MillOperation {
     kind: MillKind;
     /** What cuts: a spindle's bit, or a laser's beam; left out, the spindle. */

@@ -73,7 +73,7 @@ the page and press *New*, which saves the text shown under that id.
    tool past the finish, or `band`), zero X and Y at the block's lower left
    (`anchor = "corner"`) and touch the tool off on the block's top: Z 0 is
    the block's top. For an air cut first, touch off a few mm above it.
-5. Run it on the mill from the *Machine* tab, or *Export gcode* for another
+5. Run it on the mill from the *Jobs* tab, or *Export gcode* for another
    controller. The operations were planned in order, each over what the one
    before left, so run them in that order and skip none; one switched off
    in the profile is planned alone on the whole block, which is safe to

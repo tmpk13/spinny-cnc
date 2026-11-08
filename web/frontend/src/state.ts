@@ -121,7 +121,7 @@ export interface AppState {
     device: DeviceState | null;
     /** The saved positions on the board, as the backend keeps them. */
     markers: Marker[];
-    /** The Mill page's operation as a job not made yet, drawn on its preview; null with nothing to show. */
+    /** The Plot page's operation as a job not made yet, drawn on its preview; null with nothing to show. */
     millPlan: Job | null;
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;

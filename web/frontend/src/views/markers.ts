@@ -1,6 +1,6 @@
 // Markers: named positions on the board, saved where the head is or typed,
 // listed with a button to go back to each, drawn on every preview, and
-// offered to the Mill page's corners, centers and points. The backend keeps
+// offered to the Plot page's corners, centers and points. The backend keeps
 // them, so every page and browser has the same ones.
 
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";

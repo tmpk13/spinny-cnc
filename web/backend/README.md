@@ -112,7 +112,7 @@ classDiagram
     }
     class mill {
         MillOperation
-        build(op, holes) Job, notes  the Mill page's operations
+        build(op, holes) Job, notes  the Plot page's operations
         remake(job, tool) the job again for another bit
     }
     class markers {

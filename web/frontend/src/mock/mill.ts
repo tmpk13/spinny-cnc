@@ -1,4 +1,4 @@
-// The Mill page's operations for the in-page mock backend, the backend's
+// The Plot page's operations for the in-page mock backend, the backend's
 // twin: the same paths, groups, labels and refusals for the same numbers,
 // with a spindle or a laser, so the page can be tried without a machine.
 // Also the turn and shift of a whole job and the group settings a job made
@@ -569,7 +569,7 @@ export function cutMiddle(job: Job): Point {
     return minX > maxX ? [0, 0] : [(minX + maxX) / 2, (minY + maxY) / 2];
 }
 
-/** A Mill page job made again for a bit `tool` mm across, where it is now, its groups' settings kept. */
+/** A Plot page job made again for a bit `tool` mm across, where it is now, its groups' settings kept. */
 export function remakeMill(job: Job, tool: number, limits: RateLimits): Job {
     const op: MillOperation = { ...job.recipe!.mill!, tool };
     let made: Job;

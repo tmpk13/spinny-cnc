@@ -1,4 +1,4 @@
-// The Mill page: one simple cut at a time, the way a manual mill is used.
+// The Plot page: simple cuts made by hand, the way a manual mill is used.
 // Pick what to cut (points drilled, a board job's holes, a line through
 // points, a face, or a pocket or a profile of a rectangle or a circle),
 // give its corners or center by typing them, from where the head is or

@@ -84,9 +84,9 @@ import type {
 } from "./types.ts";
 
 export interface Api {
-    /** A Mill page operation as a job, not stored, to be seen before it is made. */
+    /** A Plot page operation as a job, not stored, to be seen before it is made. */
     planMill(op: MillOperation): Promise<MillResponse>;
-    /** A Mill page operation made into a stored job. */
+    /** A Plot page operation made into a stored job. */
     makeMill(op: MillOperation): Promise<MillResponse>;
     /** The markers, kept by the backend for every page. */
     markers(): Promise<Marker[]>;

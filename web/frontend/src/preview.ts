@@ -1437,7 +1437,7 @@ export class Preview {
             ctx.globalAlpha = 1;
             if (job.outline.length > 0) {
                 ctx.strokeStyle = colors.outline;
-                // A model's outline and block, and the shape a Mill page
+                // A model's outline and block, and the shape a Plot page
                 // operation cuts, are where it lies, not a cut: a thin line,
                 // so the toolpaths under it show.
                 const thin = job.source === "mill" || job.groups.some((group) => (group.moves?.length ?? 0) > 0);

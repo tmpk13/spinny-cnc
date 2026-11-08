@@ -1,4 +1,4 @@
-"""The Mill page's operations, a job made again for another width, and the
+"""The Plot page's operations, a job made again for another width, and the
 markers, through the API."""
 
 from __future__ import annotations

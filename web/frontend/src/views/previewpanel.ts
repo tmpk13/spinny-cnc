@@ -31,7 +31,7 @@ const NONE: PathRef[] = [];
 /** Every preview panel's grid: a grid picked on one page's preview is picked on all of them. */
 const gridPanels = new Set<(on: boolean) => void>();
 
-/** `show` picks the job drawn: the selected one unless the page says otherwise, as the Mill page shows its plan. */
+/** `show` picks the job drawn: the selected one unless the page says otherwise, as the Plot page shows its plan. */
 export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: AppState) => Job | null = shownJob): Preview {
     const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board around the rotation axis" });
     const preview = new Preview(canvas);
@@ -68,7 +68,7 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: App
     }, "btn btn-quiet btn-small btn-toggle");
     box.title = "drag a box to pick every path inside it, with shift to add them; right drag still pans";
     box.setAttribute("aria-pressed", "false");
-    // Picks are of the stored job: a Mill page plan, not stored, has none.
+    // Picks are of the stored job: a Plot page plan, not stored, has none.
     const pickable = (): Job | null => {
         const job = show(ctx.store.get());
         return job !== null && job.id !== "" ? job : null;

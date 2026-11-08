@@ -217,7 +217,7 @@ class Design(Finite):
 class Recipe(Finite):
     """How a job was made, kept so that it can be made again for another
     bit or spot: a board upload's file name (the file is kept beside the
-    job) and the options it was imported with, or a Mill page operation."""
+    job) and the options it was imported with, or a Plot page operation."""
 
     file: str | None = None
     options: dict | None = None

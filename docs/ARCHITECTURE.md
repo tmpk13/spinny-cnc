@@ -26,7 +26,7 @@ line at a time.
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import (and again for another bit), the Mill page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
+| `web/backend` | serial link, job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, API, serves the page | `uv run spinny-web` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
@@ -49,7 +49,7 @@ flowchart LR
         BE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
-        BE --> MILL[mill: the Mill page's operations, drill, holes, line, face, pocket, profile, and a job made again for another width]
+        BE --> MILL[mill: the Plot page's operations, drill, holes, line, face, pocket, profile, and a job made again for another width]
         BE --> MK[markers: named board positions in config.json]
         BE --> PNP[pick and place: a board's parts from its KiCad file, the nozzle centered over the up camera, a part's offset on it]
         PNP --> OPNP[openpnp: a device profile, the board fitted from references, a placement program]

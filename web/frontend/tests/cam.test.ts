@@ -285,14 +285,24 @@ describe("the tabs", () => {
         document.body.append(app);
         mountTabs(nav);
         expect(Array.from(nav.querySelectorAll(".tab")).map((tab) => tab.textContent)).toEqual(PAGES.map((page) => page.label));
-        expect(activePage()).toBe("machine");
+        expect(activePage()).toBe("jobs");
         click(nav, "CAM");
         expect(app.getAttribute("data-page")).toBe("cam");
         expect(activePage()).toBe("cam");
         expect(readPage()).toBe("cam");
         expect(nav.querySelector('[data-page="cam"]')?.getAttribute("aria-selected")).toBe("true");
-        showPage("machine");
-        expect(readPage()).toBe("machine");
+        showPage("jobs");
+        expect(readPage()).toBe("jobs");
         app.remove();
+    });
+
+    test("a page remembered by its old name opens under its new one", () => {
+        localStorage.setItem("spinny.page", "mill");
+        expect(readPage()).toBe("plot");
+        localStorage.setItem("spinny.page", "machine");
+        expect(readPage()).toBe("jobs");
+        localStorage.setItem("spinny.page", "nonsense");
+        expect(readPage()).toBe("jobs");
+        localStorage.removeItem("spinny.page");
     });
 });

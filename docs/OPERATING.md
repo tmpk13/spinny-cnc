@@ -115,9 +115,9 @@ the spin-up (the Config tab's settings panel).
 FAN3 is a low side switch on the fan rail, not a logic output: see the
 spindle note in `firmware/rp2040/README.md` before connecting one.
 
-### The Mill page
+### The Plot page
 
-The *Mill* tab is the machine used like a manual mill: the position, the
+The *Plot* tab is the machine used like a manual mill: the position, the
 jog panel (its keys jog while the tab shows), the spindle, the markers
 and a preview beside one simple operation at a time. On a laser machine
 the same operations are burnt instead: the fields are the spot, the power
@@ -152,7 +152,7 @@ leave the corners between them standing.
 
 ### Markers
 
-The *Markers* panel (machine page and Mill tab) keeps named positions:
+The *Markers* panel (Jobs and Plot tabs) keeps named positions:
 *Mark here* saves where the head is, under the name typed or the next M
 number, *Add* a typed x and y; a name used again moves that marker. *Go*
 rises to the travel height and goes there, *Here* moves the marker to the
@@ -165,7 +165,7 @@ The job details have the width the job is cut for (*Tool mm* on a mill,
 *Spot mm* on a laser). *Re-cut* makes a board job again from its kept
 file for the new width and puts it where the job is now, alignment and
 moves included, so a second bit's isolation lands on the copper the
-first cut; a Mill page job is built again with the new bit. The groups
+first cut; a Plot page job is built again with the new bit. The groups
 keep their settings. A drawing's paths stay as they are and *Set* only
 changes the number. A board imported before its file was kept, a CAM job
 or a job loaded from JSON cannot be cut again: import it again.
@@ -207,7 +207,7 @@ for priming the needle and checking the flow.
 
 ### Setup steps
 
-The Setup panel at the top of the machine page shows a common setup as a
+The Setup panel at the top of the Jobs page shows a common setup as a
 row of numbered circles: *Probe and follow a height map*, *Mill a board*
 or *Measure the camera offset* (only the ones the machine has what for,
 once it is connected). A step fills in when the page sees it done (a job
@@ -282,7 +282,7 @@ A camera on the head ([MACHINES.md](MACHINES.md), `[camera]`) is read by
 the backend through `pcbv serve` from the sibling pcb-vision repository
 (`mise run build-pcbv` builds it; on a Raspberry Pi that runs the
 backend, build it there or point `pcbv` at a binary built for it). The
-Camera panel on the Machine page starts it, shows its picture with a
+Camera panel on the Jobs page starts it, shows its picture with a
 crosshair at the center, and, with *Look for board* on a job imported
 from a KiCad file, where on the board the picture is and how well it is
 locked.

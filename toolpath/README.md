@@ -5,7 +5,7 @@ polar kinematics (`polar`), copper clearing (`clear`) and deposition
 (`deposit`), solder paste stencils (`stencil`), the centering coupons
 (`center`, `fine`), the pads and holes
 of a board layer (`pads`), the turn and shift that line a job up with the
-board (`align`), the Mill page's simple operations (`mill`: drilling,
+board (`align`), the Plot page's simple operations (`mill`: drilling,
 a line, facing, pockets and profiles), the machine configuration files
 (`machines`), the CAM
 profiles (`cam`, `camjob`, `post`: a design through a profile's

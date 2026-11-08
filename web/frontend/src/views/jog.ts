@@ -88,7 +88,7 @@ export function travelText(travel: number | null | undefined): string {
 }
 
 /** `page` is the page whose panel this is: its keys jog only while that page shows. */
-export function mountJog(root: HTMLElement, ctx: Ctx, page = "machine"): void {
+export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
     // a step typed in, which is the step while it is there.
     const picks = new Map<BarId, number>();

@@ -2351,7 +2351,7 @@ class Backend:
 
     def set_job_width(self, job_id: str, width: float) -> Job:
         """The job made again for a bit or spot `width` mm across: a board
-        imported again from its kept file, a Mill page operation built
+        imported again from its kept file, a Plot page operation built
         again, or a drawing given the width with its paths as they are."""
         job = self.store.get(job_id)
         if job is None:
@@ -2394,7 +2394,7 @@ class Backend:
         return made
 
     def mill_operation(self, op: mill.MillOperation, keep: bool) -> dict:
-        """The Mill page's operation as a job and its notes; stored when
+        """The Plot page's operation as a job and its notes; stored when
         `keep`, else only shown."""
         holes = None
         if op.kind == mill.HOLES:

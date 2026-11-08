@@ -1,4 +1,4 @@
-// The Mill page, the markers, the preview's grid and a job made again for
+// The Plot page, the markers, the preview's grid and a job made again for
 // another width. The page's twin of the operations is read against the
 // fixture the backend prints for the same samples (mise run mill-fixture),
 // which the backend's own tests keep current.
@@ -97,7 +97,7 @@ function type(field: HTMLInputElement | HTMLTextAreaElement, value: string): voi
     field.dispatchEvent(new Event("input"));
 }
 
-describe("Mill page", () => {
+describe("Plot page", () => {
     test("plans the operation as it is typed and makes it into the selected job", async () => {
         const { root, store, calls } = mountPage();
         click(root, "Pocket");
@@ -320,6 +320,6 @@ describe("another width for a job", () => {
     });
 });
 
-test("the Mill page has a tab", () => {
-    expect(PAGES.map((page) => page.id)).toEqual(["machine", "mill", "cam", "pnp", "config"]);
+test("the Plot page has a tab", () => {
+    expect(PAGES.map((page) => page.id)).toEqual(["jobs", "plot", "cam", "pnp", "config"]);
 });

@@ -205,7 +205,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         el("label", { class: "btn btn-quiet" }, "pick files", fileInput),
     );
     const notes = el("ul", { class: "cam-notes muted hidden" });
-    const open = button("Show in Jobs", () => showPage("machine"), "btn btn-quiet btn-small");
+    const open = button("Show in Jobs", () => showPage("jobs"), "btn btn-quiet btn-small");
 
     // --- gcode ---
     const jobPick = el("select", { class: "field", "aria-label": "Job to write" });

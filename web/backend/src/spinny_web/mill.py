@@ -1,4 +1,4 @@
-"""The Mill page's operations: one simple cut described by its numbers and
+"""The Plot page's operations: one simple cut described by its numbers and
 made into a job, and made again for another bit or spot.
 
 An operation is drilling points, drilling (or boring) a board job's holes,
@@ -288,7 +288,7 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
 
 
 def remake(job: Job, tool: float, streamer: Streamer) -> Job:
-    """A Mill page job made again for a bit `tool` mm across, where it is
+    """A Plot page job made again for a bit `tool` mm across, where it is
     now: turned and moved as the job was since it was made, its groups'
     settings kept."""
     assert job.recipe is not None and job.recipe.mill is not None
