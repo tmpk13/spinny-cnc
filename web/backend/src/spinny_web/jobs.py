@@ -217,11 +217,14 @@ class Design(Finite):
 class Recipe(Finite):
     """How a job was made, kept so that it can be made again for another
     bit or spot: a board upload's file name (the file is kept beside the
-    job) and the options it was imported with, or a Plot page operation."""
+    job) and the options it was imported with, or the Plot page operations
+    (`ops`; a job made before a job could hold several keeps its one in
+    `mill`)."""
 
     file: str | None = None
     options: dict | None = None
     mill: dict | None = None
+    ops: list[dict] | None = None
 
 
 class JobStats(Finite):

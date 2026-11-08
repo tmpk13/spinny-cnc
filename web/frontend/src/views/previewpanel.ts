@@ -7,7 +7,7 @@
 // paths, which the Jobs panel moves between groups.
 
 import { button, el } from "../dom.ts";
-import { Preview } from "../preview.ts";
+import { Preview, type Dimension } from "../preview.ts";
 import { type PathRef, boxedAfter, pickedAfter } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Job } from "../types.ts";
@@ -38,8 +38,17 @@ const NONE: PathRef[] = [];
 /** Every preview panel's grid: a grid picked on one page's preview is picked on all of them. */
 const gridPanels = new Set<(on: boolean) => void>();
 
-/** `show` picks the job drawn: the selected one unless the page says otherwise, as the Plot page shows its plan. */
-export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: AppState) => Job | null = shownJob): Preview {
+/**
+ * `show` picks the job drawn: the selected one unless the page says
+ * otherwise, as the Plot page shows its plan; `dims` gives the sizes drawn
+ * over it, as the Plot page draws its operation's.
+ */
+export function mountPreviewPanel(
+    root: HTMLElement,
+    ctx: Ctx,
+    show: (state: AppState) => Job | null = shownJob,
+    dims: ((state: AppState) => Dimension[]) | null = null,
+): Preview {
     const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board around the rotation axis" });
     const preview = new Preview(canvas);
     const lock = button(LOCK_LABEL, () => showLock(preview.toggleRotationLock()), "btn btn-quiet btn-small btn-toggle");
@@ -138,6 +147,10 @@ export function mountPreviewPanel(root: HTMLElement, ctx: Ctx, show: (state: App
     ctx.store.subscribe((state) => {
         preview.setMarkers(state.markers);
     }, ["markers"]);
+    if (dims) {
+        ctx.store.subscribe((state) => preview.setDimensions(dims(state)), ["millDims"]);
+        preview.setDimensions(dims(ctx.store.get()));
+    }
     preview.setMarkers(ctx.store.get().markers);
     ctx.store.subscribe((state) => {
         // The board point comes from the backend, which knows the frame: on a

@@ -124,7 +124,7 @@ description = "Write the machine keys fixture the page's copy of the keys, and i
 run = "uv run python -m spinny_laser.machine_keys > toolpath/tests/data/machine-keys.json"
 
 [tasks.mill-fixture]
-description = "Write the Mill page samples fixture the page's in-page twin of the operations is checked against"
+description = "Write the Plot page samples fixture the page's in-page twin of the operations is checked against"
 run = "uv run python -m spinny_web.mill > web/backend/tests/data/mill-samples.json"
 
 [tasks.load-uf2]

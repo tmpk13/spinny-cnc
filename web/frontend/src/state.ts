@@ -1,6 +1,7 @@
 // One store for the page. Views subscribe to the keys they draw from.
 
 import type { JobPlace } from "./jsontext.ts";
+import type { Dimension } from "./preview.ts";
 import type { PathRef } from "./regroup.ts";
 
 import type {
@@ -121,8 +122,10 @@ export interface AppState {
     device: DeviceState | null;
     /** The saved positions on the board, as the backend keeps them. */
     markers: Marker[];
-    /** The Plot page's operation as a job not made yet, drawn on its preview; null with nothing to show. */
+    /** The Plot page's operations as a job not made yet, drawn on its preview; null with nothing to show. */
     millPlan: Job | null;
+    /** The sizes of the Plot page's operation in its fields, drawn over its preview as a sketch's. */
+    millDims: Dimension[];
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;
     /** Edits typed and not applied yet, counted by the panel that holds them (`pendingPages` puts them on a tab). */
@@ -165,6 +168,7 @@ export function initialState(mock: boolean): AppState {
         device: null,
         markers: [],
         millPlan: null,
+        millDims: [],
         mapChoice: "off",
         pending: {},
         console: [],

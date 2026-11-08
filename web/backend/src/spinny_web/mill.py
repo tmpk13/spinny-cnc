@@ -1,9 +1,13 @@
-"""The Plot page's operations: one simple cut described by its numbers and
-made into a job, and made again for another bit or spot.
+"""The Plot page's operations: simple cuts described by their numbers and
+made into a job, one operation or several in the same job, and made again
+for another bit or spot.
 
 An operation is drilling points, drilling (or boring) a board job's holes,
 a line through points, facing a rectangle, or a pocket or a profile of a
-rectangle or a circle. With `cutter` spindle every group is milled and goes
+rectangle (its corners square or rounded) or a circle. A job of several
+operations cuts them in order, each its own groups, with one cutter and
+one bit or spot, since nothing changes the tool halfway through a run.
+With `cutter` spindle every group is milled and goes
 down in steps of `step_down` to `depth` under the surface, the way every
 milled group does. With `cutter` laser the same paths are burnt with a beam
 `tool` mm across at `power`, each pass the whole path again: a point, which
@@ -15,6 +19,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import Field
@@ -46,6 +51,8 @@ BORE_SLACK = 0.05
 # Hole sizes are told apart to this, mm.
 SIZE_DECIMALS = 2
 MAX_POINTS = 5000
+# Operations in one job.
+MAX_OPERATIONS = 100
 
 
 class MillOperation(Finite):
@@ -80,11 +87,13 @@ class MillOperation(Finite):
     closed: bool = False
     # A pocket or a profile: of a rectangle or a circle.
     shape: Literal["rect", "circle"] = RECT
-    # A rectangle (a face, or a pocket or profile of one) by two corners.
+    # A rectangle (a face, or a pocket or profile of one) by two corners,
+    # and for a pocket or a profile the radius its corners are rounded to.
     x0: float = 0.0
     y0: float = 0.0
     x1: float = 0.0
     y1: float = 0.0
+    corner: float = 0.0
     # A circle by its center and diameter.
     cx: float = 0.0
     cy: float = 0.0
@@ -97,6 +106,10 @@ class MillOperation(Finite):
     job: str | None = None
     sizes: list[float] | None = None
     bore: bool = True
+    # The holes themselves, x, y and diameter: filled in from the job when
+    # the operation is made, and kept with it, so the operation is made
+    # again (another bit, another operation beside it) without that job.
+    holes: list[tuple[float, float, float]] | None = None
 
     @property
     def laser(self) -> bool:
@@ -129,12 +142,23 @@ class MillOperation(Finite):
                 check_power(self.spindle, "the spindle speed")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
-        values = [self.x0, self.y0, self.x1, self.y1, self.cx, self.cy, self.diameter]
+        values = [self.x0, self.y0, self.x1, self.y1, self.cx, self.cy, self.diameter, self.corner]
         values += [v for point in self.points for v in point]
         if not all(abs(v) <= MAX_VALUE for v in values):
             raise JobImportError(f"coordinates must be within {MAX_VALUE:g} mm")
         if len(self.points) > MAX_POINTS:
             raise JobImportError(f"at most {MAX_POINTS} points")
+        if self.holes is not None and len(self.holes) > MAX_POINTS:
+            raise JobImportError(f"at most {MAX_POINTS} holes")
+
+
+class MillJobBody(Finite):
+    """A job of one operation or several as the page sends it: `job` names
+    the Plot page job they are to replace, None for a new job."""
+
+    ops: list[MillOperation] = Field(min_length=1, max_length=MAX_OPERATIONS)
+    name: str | None = None
+    job: str | None = None
 
 
 def _group(op: MillOperation, label: str, paths: list[list[tuple[float, float]]]) -> Group:
@@ -164,9 +188,13 @@ def _mm(value: float) -> str:
     return f"{value:g}"
 
 
-def _rect_outline(op: MillOperation) -> list[list[tuple[float, float]]]:
-    xa, ya, xb, yb = ops.box(op.x0, op.y0, op.x1, op.y1)
-    return [[(xa, ya), (xb, ya), (xb, yb), (xa, yb), (xa, ya)]]
+def _rect_outline(op: MillOperation, corner: float = 0.0) -> list[list[tuple[float, float]]]:
+    return [ops.rounded_rectangle(op.x0, op.y0, op.x1, op.y1, corner, tolerance=max(0.01, corner * 0.002))]
+
+
+def _corners(op: MillOperation) -> str:
+    """How a rectangle's corners are rounded, for its label; nothing when square."""
+    return f", corners R{_mm(op.corner)}" if op.corner > 0.0 else ""
 
 
 def _circle_outline(cx: float, cy: float, diameter: float) -> list[tuple[float, float]]:
@@ -254,11 +282,11 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
                 outline = [_circle_outline(op.cx, op.cy, op.diameter)]
             else:
                 if op.kind == POCKET:
-                    paths = ops.pocket_rect(op.x0, op.y0, op.x1, op.y1, op.tool, op.stepover, op.climb)
+                    paths = ops.pocket_rect(op.x0, op.y0, op.x1, op.y1, op.tool, op.stepover, op.climb, corner=op.corner)
                 else:
-                    paths = ops.profile_rect(op.x0, op.y0, op.x1, op.y1, op.tool, op.side, op.climb)
-                size = f"{_mm(abs(op.x1 - op.x0))} x {_mm(abs(op.y1 - op.y0))} mm"
-                outline = _rect_outline(op)
+                    paths = ops.profile_rect(op.x0, op.y0, op.x1, op.y1, op.tool, op.side, op.climb, corner=op.corner)
+                size = f"{_mm(abs(op.x1 - op.x0))} x {_mm(abs(op.y1 - op.y0))} mm{_corners(op)}"
+                outline = _rect_outline(op, op.corner)
             what = "pocket" if op.kind == POCKET else f"profile {op.side}"
             groups = [_group(op, f"{what} {size}", paths)]
             name = f"{what} {size}"
@@ -287,24 +315,103 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
     return job, notes
 
 
+def recipe_ops(recipe: Recipe | None) -> list[dict]:
+    """The operations a Plot page job was made from: its list, or the one
+    operation a job made before there were lists keeps."""
+    if recipe is None:
+        return []
+    if recipe.ops:
+        return list(recipe.ops)
+    return [recipe.mill] if recipe.mill is not None else []
+
+
+def _bit(op: MillOperation) -> str:
+    return "spot" if op.laser else "bit"
+
+
+def build_job(
+    op_list: list[MillOperation],
+    holes_of: Callable[[MillOperation], list[tuple[float, float, float]] | None] | None = None,
+    streamer: Streamer | None = None,
+    name: str | None = None,
+) -> tuple[Job, list[str]]:
+    """The job of several operations, not stored, and what to know about
+    it: each operation's groups in order, every outline and hole, the
+    notes numbered by operation when there are several. `holes_of` gives a
+    holes operation the board job's holes where it does not carry them."""
+    if not op_list:
+        raise JobImportError("a job needs at least one operation")
+    first = op_list[0]
+    for index, op in enumerate(op_list[1:], 2):
+        if op.cutter != first.cutter:
+            raise JobImportError(f"operation {index} cuts with a {op.cutter} and operation 1 with a {first.cutter}: a job cuts with one")
+        if abs(op.tool - first.tool) > 1e-9:
+            raise JobImportError(
+                f"operation {index}'s {_mm(op.tool)} mm {_bit(op)} is not operation 1's {_mm(first.tool)} mm: a job cuts with one {_bit(first)}"
+            )
+    groups: list[Group] = []
+    outline: list[list[tuple[float, float]]] = []
+    kept: list[tuple[float, float, float]] = []
+    notes: list[str] = []
+    kept_ops: list[dict] = []
+    names: list[str] = []
+    for index, op in enumerate(op_list, 1):
+        holes = op.holes
+        if op.kind == HOLES and holes is None and holes_of is not None:
+            holes = holes_of(op)
+        part, part_notes = build(op, holes)
+        groups.extend(part.groups)
+        outline.extend(part.outline)
+        kept.extend(part.holes)
+        notes.extend(part_notes if len(op_list) == 1 else [f"{index}: {note}" for note in part_notes])
+        names.append(part.name)
+        data = op.model_dump()
+        if op.kind == HOLES:
+            data["holes"] = [list(hole) for hole in (holes or [])]
+        kept_ops.append(data)
+    made = (name or "").strip() or (names[0] if len(names) == 1 else f"{names[0]} and {len(names) - 1} more")
+    job = Job(
+        name=made,
+        source="mill",
+        spot=first.tool,
+        groups=groups,
+        outline=outline,
+        holes=kept,
+        recipe=Recipe(ops=kept_ops),
+    )
+    if streamer is not None:
+        job.refresh_stats(streamer)
+    return job, notes
+
+
+def placed(made: Job, where: Job) -> Job:
+    """A job made again from its operations put where `where` is: turned and
+    moved as it has been since it was made, under its id."""
+    made.turn(where.rotation)
+    made.shift(where.offset.x, where.offset.y)
+    made.id = where.id
+    made.offset = where.offset.model_copy()
+    made.rotation = where.rotation
+    return made
+
+
 def remake(job: Job, tool: float, streamer: Streamer) -> Job:
     """A Plot page job made again for a bit `tool` mm across, where it is
     now: turned and moved as the job was since it was made, its groups'
     settings kept."""
-    assert job.recipe is not None and job.recipe.mill is not None
-    op = MillOperation.model_validate({**job.recipe.mill, "tool": tool})
-    if op.kind == HOLES:
-        # The holes are kept in the job, and moved with it.
-        made, _ = build(op, job.holes)
+    op_list = [MillOperation.model_validate({**data, "tool": tool}) for data in recipe_ops(job.recipe)]
+    if len(op_list) == 1 and op_list[0].kind == HOLES and op_list[0].holes is None:
+        # A job made before operations kept their holes: the job's own,
+        # which moved with it.
+        made, _ = build(op_list[0], job.holes)
+        made.id = job.id
+        made.offset = job.offset.model_copy()
+        made.rotation = job.rotation
     else:
-        made, _ = build(op)
-        made.turn(job.rotation)
-        made.shift(job.offset.x, job.offset.y)
+        made, _ = build_job(op_list)
+        placed(made, job)
     carry_settings(job.groups, made.groups)
-    made.id = job.id
     made.name = job.name
-    made.offset = job.offset.model_copy()
-    made.rotation = job.rotation
     made.refresh_stats(streamer)
     return made
 
@@ -329,45 +436,76 @@ SAMPLES: list[dict] = [
     {"kind": "profile", "cutter": "laser", "shape": "circle", "cx": 1, "cy": 1, "diameter": 5, "tool": 0.1, "side": "outside", "passes": 3},
     {"kind": "holes", "cutter": "laser", "job": "board", "tool": 0.1, "bore": False, "holes": [[0, 0, 0.8], [2, 4, 3.0], [9, 9, 0.12]]},
     {"kind": "holes", "cutter": "laser", "job": "board", "tool": 0.1, "stepover": 0.9, "holes": [[0, 0, 0.8], [9, 9, 0.12]]},
+    {"kind": "pocket", "x0": 0, "y0": 0, "x1": 16, "y1": 9, "tool": 2, "stepover": 0.6, "corner": 2.5},
+    {"kind": "profile", "x0": -4, "y0": -3, "x1": 6, "y1": 3, "tool": 1.5, "side": "outside", "corner": 2},
+    {"kind": "profile", "x0": -4, "y0": -3, "x1": 6, "y1": 3, "tool": 1.5, "side": "inside", "corner": 2, "climb": False},
+    {"kind": "profile", "x0": -4, "y0": -3, "x1": 6, "y1": 3, "tool": 1.5, "side": "on", "corner": 3},
+    {"kind": "profile", "cutter": "laser", "x0": 0, "y0": 0, "x1": 5, "y1": 4, "tool": 0.1, "side": "inside", "corner": 1, "passes": 2},
+]
+
+# Jobs of several operations, checked the same way: one cutter and one
+# bit, each operation's groups in order, the notes numbered.
+JOB_SAMPLES: list[dict] = [
+    {
+        "name": None,
+        "ops": [
+            {"kind": "pocket", "x0": 0, "y0": 0, "x1": 10, "y1": 6, "tool": 1, "corner": 1.5, "depth": 1, "step_down": 0.5},
+            {"kind": "drill", "points": [[12, 3], [14, 3]], "tool": 1, "depth": 2, "step_down": 1},
+            {"kind": "holes", "job": "board", "tool": 1, "holes": [[20, 0, 1.0], [22, 1, 3.0]]},
+        ],
+    },
+    {
+        "name": "plate",
+        "ops": [
+            {"kind": "profile", "cutter": "laser", "shape": "circle", "cx": 0, "cy": 0, "diameter": 8, "tool": 0.2, "side": "inside", "passes": 2},
+            {"kind": "profile", "cutter": "laser", "x0": -10, "y0": -10, "x1": 10, "y1": 10, "tool": 0.2, "corner": 3},
+        ],
+    },
 ]
 
 
+def _rounded(value):
+    if isinstance(value, float):
+        return round(value, 6)
+    if isinstance(value, (list, tuple)):
+        return [_rounded(item) for item in value]
+    return value
+
+
+def _described(job: Job, notes: list[str]) -> dict:
+    """A made job as the page's twin is checked against it, its numbers to the micron."""
+    return {
+        "name": job.name,
+        "notes": notes,
+        "spot": job.spot,
+        "groups": [
+            {
+                "label": group.label,
+                "passes": group.passes,
+                "depth": group.depth,
+                "tool": group.tool,
+                "power": group.power,
+                "paths": _rounded(group.paths),
+            }
+            for group in job.groups
+        ],
+        "outline": len(job.outline),
+    }
+
+
 def sample_jobs() -> list[dict]:
-    """Every sample's job as the page sees it, its numbers to the micron."""
-
-    def rounded(value):
-        if isinstance(value, float):
-            return round(value, 6)
-        if isinstance(value, (list, tuple)):
-            return [rounded(item) for item in value]
-        return value
-
+    """Every sample's job as the page sees it: the one operation samples
+    with `op`, the several operation ones with `ops`."""
     out = []
     for sample in SAMPLES:
         fields = {key: value for key, value in sample.items() if key != "holes"}
         holes = [tuple(hole) for hole in sample.get("holes", [])] or None
         job, notes = build(MillOperation.model_validate(fields), holes)
-        out.append(
-            {
-                "op": fields,
-                "holes": sample.get("holes"),
-                "name": job.name,
-                "notes": notes,
-                "spot": job.spot,
-                "groups": [
-                    {
-                        "label": group.label,
-                        "passes": group.passes,
-                        "depth": group.depth,
-                        "tool": group.tool,
-                        "power": group.power,
-                        "paths": rounded(group.paths),
-                    }
-                    for group in job.groups
-                ],
-                "outline": len(job.outline),
-            }
-        )
+        out.append({"op": fields, "holes": sample.get("holes"), **_described(job, notes)})
+    for sample in JOB_SAMPLES:
+        op_list = [MillOperation.model_validate(fields) for fields in sample["ops"]]
+        job, notes = build_job(op_list, name=sample["name"])
+        out.append({"ops": sample["ops"], "job_name": sample["name"], **_described(job, notes)})
     return out
 
 

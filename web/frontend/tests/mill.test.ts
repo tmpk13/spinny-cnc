@@ -7,9 +7,9 @@ import { describe, expect, test } from "bun:test";
 
 import fixture from "../../backend/tests/data/mill-samples.json" with { type: "json" };
 import { parseEvent } from "../src/ws.ts";
-import { buildMill, defaultOperation, labelStem, passesOf } from "../src/mock/mill.ts";
+import { buildMill, buildMillJob, defaultOperation, labelStem, passesOf } from "../src/mock/mill.ts";
 import { GRID_KEY, Preview, formatTick, gridLinesIn } from "../src/preview.ts";
-import type { HolePoint, Job, MillOperation, Path } from "../src/types.ts";
+import type { HolePoint, Job, MillOperation, MillResponse, Path } from "../src/types.ts";
 import { PAGES } from "../src/views/tabs.ts";
 import { headPosition, mountMarkers, nextMarkerName, withMarker } from "../src/views/markers.ts";
 import { MILL_KEY, PLAN_DELAY_MS, holeSizes, millNeeds, mountMill, parsePoints, pointsText } from "../src/views/mill.ts";
@@ -27,9 +27,16 @@ function close(a: Path[], b: number[][][]): boolean {
 
 describe("the mock's operations", () => {
     for (const sample of fixture) {
-        const op = { ...defaultOperation(), ...(sample.op as Partial<MillOperation>) } as MillOperation;
+        const made = (): MillResponse => {
+            if ("ops" in sample && Array.isArray(sample.ops)) {
+                const ops = sample.ops.map((op) => ({ ...defaultOperation(), ...(op as Partial<MillOperation>) }) as MillOperation);
+                return buildMillJob("", ops, null, LIMITS, (sample as { job_name?: string | null }).job_name ?? null);
+            }
+            const op = { ...defaultOperation(), ...((sample as { op?: unknown }).op as Partial<MillOperation>) } as MillOperation;
+            return buildMill("", op, ((sample as { holes?: unknown }).holes ?? null) as HolePoint[] | null, LIMITS);
+        };
         test(`${sample.name} makes the backend's job`, () => {
-            const { job, notes } = buildMill("", op, (sample.holes ?? null) as HolePoint[] | null, LIMITS);
+            const { job, notes } = made();
             expect(job.name).toBe(sample.name);
             expect(notes).toEqual(sample.notes);
             expect(job.spot).toBe(sample.spot);
@@ -110,14 +117,96 @@ describe("Plot page", () => {
         expect(plan?.groups[0]?.label).toBe("pocket 20 x 10 mm");
         expect(plan?.id).toBe("");
         expect(root.querySelector(".mill-notes")?.textContent).toContain("pass");
-        click(root, "Make job");
+        click(root, "New job");
         await wait(20);
         expect(calls.some((call) => call.name === "makeMill")).toBe(true);
         expect(store.get().job?.name).toBe("pocket 20 x 10 mm");
         expect(store.get().job?.source).toBe("mill");
-        expect(store.get().millPlan).toBeNull();
+        expect(store.get().job?.recipe?.ops?.length).toBe(1);
         // Remembered for the next visit.
         expect(JSON.parse(localStorage.getItem(MILL_KEY) ?? "{}").kind).toBe("pocket");
+    });
+
+    test("builds a job of several operations: add, take one back in the fields, apply, reorder, remove", async () => {
+        const { root, store, calls } = mountPage();
+        const tab = document.createElement("nav");
+        const badge = (): string => root.querySelector(".plot-state")?.getAttribute("data-state") ?? "";
+        expect(badge()).toBe("new");
+        click(root, "Pocket");
+        type(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner x"]')[1]!, "20");
+        type(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner y"]')[1]!, "10");
+        click(root, "New job");
+        await wait(30);
+        const id = store.get().job!.id;
+        expect(badge()).toBe("applied");
+        // A second operation goes at the end of the same job. The fields
+        // were the first operation, so the mark says which one Apply would
+        // replace.
+        click(root, "Drill");
+        type(input(root, "Points"), "30, 5");
+        expect(badge()).toBe("changed");
+        expect(root.querySelector(".plot-state")?.textContent).toBe("changed from operation 1");
+        click(root, "Add to job");
+        await wait(30);
+        let job = store.get().job!;
+        expect(job.id).toBe(id);
+        expect(job.recipe?.ops?.map((op) => op.kind)).toEqual(["pocket", "drill"]);
+        expect(job.groups.map((group) => group.label)).toEqual(["pocket 20 x 10 mm", "drill 1 points"]);
+        expect(badge()).toBe("applied");
+        expect(root.querySelectorAll(".plot-op").length).toBe(2);
+        // The first one back in the fields, changed: marked, and counted on the tab.
+        findButton(root, "pocket 20 x 10 at 10, 5").click();
+        expect(input(root, "Corner radius").value).toBe("0.000");
+        expect(badge()).toBe("applied");
+        type(input(root, "Corner radius"), "2");
+        expect(badge()).toBe("changed");
+        expect(store.get().pending["plot"]).toBe(1);
+        click(root, "Apply");
+        await wait(30);
+        job = store.get().job!;
+        expect(job.id).toBe(id);
+        expect(job.groups[0]!.label).toBe("pocket 20 x 10 mm, corners R2");
+        expect(badge()).toBe("applied");
+        expect(store.get().pending["plot"]).toBeUndefined();
+        // The drill before the pocket, then out of the job.
+        root.querySelectorAll<HTMLButtonElement>(".plot-op .button-row button")[2]!.click();
+        await wait(30);
+        expect(store.get().job!.recipe?.ops?.map((op) => op.kind)).toEqual(["drill", "pocket"]);
+        expect(root.querySelector(".plot-op.editing")?.textContent).toContain("pocket");
+        root.querySelectorAll<HTMLButtonElement>(".plot-op .button-row button")[1]!.click();
+        await settle();
+        dialogButton("Remove").click();
+        await wait(30);
+        expect(store.get().job!.recipe?.ops?.map((op) => op.kind)).toEqual(["pocket"]);
+        expect(calls.filter((call) => call.name === "makeMill").length).toBe(5);
+        tab.remove();
+    });
+
+    test("a rectangle by its center and size, with rounded corners, and its sizes drawn as a sketch's", async () => {
+        const { root, store, calls } = mountPage();
+        click(root, "Pocket");
+        type(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner x"]')[1]!, "20");
+        type(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner y"]')[1]!, "10");
+        click(root, "Center and size");
+        expect([input(root, "Center x").value, input(root, "Center y").value, input(root, "Width").value, input(root, "Height").value]).toEqual(["10.000", "5.000", "20.000", "10.000"]);
+        type(input(root, "Width"), "25.4/2");
+        type(input(root, "Corner radius"), "1.5");
+        await wait(PLAN_DELAY_MS + 30);
+        const sent = calls.filter((call) => call.name === "planMill").at(-1)!.args[0] as { ops: MillOperation[] };
+        expect(sent.ops[0]!.x0).toBeCloseTo(3.65, 9);
+        expect(sent.ops[0]!.x1).toBeCloseTo(16.35, 9);
+        expect(sent.ops[0]).toMatchObject({ y0: 0, y1: 10, corner: 1.5 });
+        expect(store.get().millPlan?.groups[0]?.label).toBe("pocket 12.7 x 10 mm, corners R1.5");
+        const dims = store.get().millDims;
+        expect(dims.filter((dim) => dim.kind === "linear").map((dim) => dim.text)).toEqual(["12.7", "10"]);
+        expect(dims.find((dim) => dim.kind === "radius")?.text).toBe("R1.5");
+        expect(dims.find((dim) => dim.kind === "point")?.text).toBe("10, 5");
+        // Back to corners, the rectangle carried across.
+        click(root, "Corners");
+        expect(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner x"]')[0]!.value).toBe("3.650");
+        // A face has no corner radius.
+        click(root, "Face");
+        expect(input(root, "Corner radius").closest(".labeled")!.classList.contains("hidden")).toBe(true);
     });
 
     test("cuts with the machine's laser: spot, power and passes, a point marked with a ring", async () => {
@@ -136,8 +225,8 @@ describe("Plot page", () => {
         expect(plan.groups[0]!.label).toBe("mark 1 points");
         expect([plan.groups[0]!.tool, plan.groups[0]!.power, plan.groups[0]!.passes]).toEqual(["laser", 300, 2]);
         expect(plan.groups[0]!.paths[0]!.length).toBeGreaterThan(8);
-        const sent = calls.filter((call) => call.name === "planMill").at(-1)!.args[0] as { cutter: string; tool: number };
-        expect(sent).toMatchObject({ cutter: "laser", tool: 0.1 });
+        const sent = calls.filter((call) => call.name === "planMill").at(-1)!.args[0] as { ops: { cutter: string; tool: number }[] };
+        expect(sent.ops[0]).toMatchObject({ cutter: "laser", tool: 0.1 });
         expect(root.textContent).toContain("each pass burns the whole path again");
         // A spindle machine: the bit's fields again, planned for it.
         store.set({ snapshot: { ...connected(), profile: { ...profile, tool: "spindle" } } });
@@ -198,7 +287,7 @@ describe("Plot page", () => {
 
     test("runs the selected job from its run panel", async () => {
         const { run, store, calls, backend } = mountPage();
-        const job = await backend.makeMill({ ...defaultOperation("drill"), points: [[1, 1]] });
+        const job = await backend.makeMill({ ops: [{ ...defaultOperation("drill"), points: [[1, 1]] }] });
         store.set({ snapshot: connected(), job: job.job });
         expect(run.querySelector(".mill-run-job")?.textContent).toBe("drill 1 points");
         click(run, "Run");
@@ -292,7 +381,7 @@ describe("another width for a job", () => {
 
     test("makes a mill job again for another bit where it was moved, its settings kept", async () => {
         const { backend } = setup();
-        const made = (await backend.makeMill({ ...defaultOperation("pocket"), x1: 20, y1: 10, tool: 2, stepover: 0.5 })).job;
+        const made = (await backend.makeMill({ ops: [{ ...defaultOperation("pocket"), x1: 20, y1: 10, tool: 2, stepover: 0.5 }] })).job;
         await backend.patchJob(made.id, { offset: { x: 5, y: -3 }, groups: [{ index: 0, speed: 123 }] });
         const wider = await backend.setJobWidth(made.id, 4);
         const xs = wider.groups[0]!.paths.flat().map(([x]) => x);
@@ -306,7 +395,7 @@ describe("another width for a job", () => {
     test("the job details make it again with a confirm", async () => {
         const harness = setup();
         mountJobs(harness.root, harness.ctx);
-        const made = (await harness.backend.makeMill({ ...defaultOperation("drill"), points: [[1, 1]], tool: 0.8 })).job;
+        const made = (await harness.backend.makeMill({ ops: [{ ...defaultOperation("drill"), points: [[1, 1]], tool: 0.8 }] })).job;
         await harness.ctx.refreshJobs();
         await harness.ctx.selectJob(made.id);
         const field = input(harness.root, "Spot width");

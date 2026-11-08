@@ -34,6 +34,12 @@ group the job has, or deletes them. The *Job JSON* panel under the preview
 shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*.
+The preview's *Top view* looks straight down, the board square to the
+canvas, and *CCW 90* and *CW 90* turn it a quarter. The run controls (Run,
+the height map choice, Hold, Resume, Stop, the progress and the pickup of
+a stopped run) are the Run panel at the foot of the right column, kept in
+view while the jobs and their groups scroll under it. Every number field
+takes arithmetic (`25.4/2`, `1/8 in`; see the Plot page below).
 Both camera panels have the camera log: *log every look* keeps every
 picture the cameras' routines look at (finding the mark, centering the
 nozzle, looking at a part, a G-code device's run), each as it was and with
@@ -119,12 +125,12 @@ spindle note in `firmware/rp2040/README.md` before connecting one.
 
 The *Plot* tab is the machine used like a manual mill: the position, the
 jog panel (its keys jog while the tab shows), the spindle, the markers
-and a preview beside one simple operation at a time. On a laser machine
-the same operations are burnt instead: the fields are the spot, the power
-and the passes (each the whole path again), a point is marked with a ring
-the spot across, and a board hole is cut along its inside edge so the
-plug drops out, or with *clear* on burnt away in rings. Focus the beam
-instead of zeroing a depth.
+and a preview beside simple operations, one or several in a job. On a
+laser machine the same operations are burnt instead: the fields are the
+spot, the power and the passes (each the whole path again), a point is
+marked with a ring the spot across, and a board hole is cut along its
+inside edge so the plug drops out, or with *clear* on burnt away in rings.
+Focus the beam instead of zeroing a depth.
 
 1. Zero the depth on the surface (touch off, *Set H=0 here* or the jog
    panel's zero), as for any milled job.
@@ -132,15 +138,35 @@ instead of zeroing a depth.
    through points, *Face* a rectangle, or a *Pocket* or *Profile* of a
    rectangle or a circle.
 3. Give its corners, center or points: typed, *Here* for where the head is,
-   or a marker from the list beside each pair. Points are one `x, y` a
-   line; *Add here*, *add marker* and *All markers* append to them.
+   or a marker from the list beside each pair. A rectangle is given *By*
+   its two *Corners* or by its *Center and size* (width and height); a
+   pocket's or profile's rectangle takes a *Corner R* to round its
+   corners. Points are one `x, y` a line; *Add here*, *add marker* and
+   *All markers* append to them. Every number field takes arithmetic:
+   `25.4/2`, `3*(4+1.5)`, `1/8 in`, `sqrt(2)*10`, `sin(30)` (degrees);
+   leaving the field shows the value, and the arrow keys step it.
 4. Set the bit, the depth, the step down (the passes are as many as it
    takes), the stepover of a face or pocket, the feeds and the spindle
-   speed, and climb or conventional. The operation is planned as it is
-   typed and drawn on the preview with the bit's width, its notes and any
-   problem below the fields.
-5. *Make job* stores it, selected; *Run* in the panel beside it (or the
-   Jobs panel) cuts it.
+   speed, and climb or conventional. The job is planned as it is typed and
+   drawn on the preview with the bit's width, the operation's sizes over
+   it as a sketch shows them (width and height, corners or center, the
+   corner radius, a circle's diameter, the points and the legs of a line),
+   its notes and any problem below the fields.
+5. *New job* makes a job of the operation, selected; *Add to job* puts it
+   at the end of the selected Plot job, so one job can hold a pocket, the
+   holes beside it and the outline round both. The job's operations are
+   listed over the fields: a click puts one in the fields, *Apply* puts the
+   fields back in its place, *Up* cuts one before the one above it and
+   *Remove* takes it out. The mark beside the job's name says whether the
+   fields are one of its operations as kept (*applied*), changed since
+   (*changed*, also counted on the tab), or not in it. All of a job's
+   operations cut with one bit or spot.
+6. *Run* in the panel beside it (or the Run panel on the Jobs page) cuts
+   the selected job.
+
+A job moved or turned on the Jobs page keeps its place when its
+operations change: they are typed where they were before the move, and
+the plan, the sizes and the job are put where the job now is.
 
 *Holes* takes a job imported with its drill file: one group a hole size,
 smallest first, each checked size taken. A hole wider than the bit is

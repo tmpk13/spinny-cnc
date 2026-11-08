@@ -1,16 +1,27 @@
 // The Plot page: simple cuts made by hand, the way a manual mill is used.
 // Pick what to cut (points drilled, a board job's holes, a line through
-// points, a face, or a pocket or a profile of a rectangle or a circle),
-// give its corners or center by typing them, from where the head is or
-// from a marker, and the bit, the depth and the feeds, or on a laser the
-// spot, the power and the passes. The operation is planned as it is typed
-// and drawn on the page's preview, then made into a job, which the run
-// panel beside it runs. The fields are remembered in this browser.
+// points, a face, or a pocket or a profile of a rectangle, its corners
+// square or rounded, or of a circle), give its corners, or its center and
+// size, by typing them (arithmetic too), from where the head is or from a
+// marker, and the bit, the depth and the feeds, or on a laser the spot,
+// the power and the passes. The operation is planned as it is typed and
+// drawn on the page's preview with its sizes over it, as a sketch is.
+//
+// A job made here holds a list of operations, cut in order. New job makes
+// one of the operation in the fields; Add to job puts it at the end of the
+// selected Plot page job; a click on one of the job's operations puts it
+// in the fields, and Apply puts the fields back in its place. A mark says
+// whether the fields match the job, and the tab counts a change not
+// applied. The run panel beside runs the selected job. The fields are
+// remembered in this browser.
 
+import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
+import { defaultOperation, recipeOps } from "../mock/mill.ts";
 import { profileOf } from "../profile.ts";
-import type { AppState } from "../state.ts";
+import { movedDims, operationDims, operationSummary, sameOperation, type RectMode } from "../sketch.ts";
+import { setPending, type AppState } from "../state.ts";
 import type { Compensate, HolePoint, Job, MillKind, MillOperation, MillShape, MillSide, Point } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
 import { mapUsable } from "./heightmap.ts";
@@ -43,7 +54,7 @@ const SIDES: { side: MillSide; label: string }[] = [
 ];
 
 /** What each kind of operation asks for. */
-export function millNeeds(kind: MillKind, shape: MillShape): { points: boolean; closed: boolean; rect: boolean; circle: boolean; holes: boolean; stepover: boolean; direction: boolean; side: boolean; shape: boolean } {
+export function millNeeds(kind: MillKind, shape: MillShape): { points: boolean; closed: boolean; rect: boolean; circle: boolean; holes: boolean; stepover: boolean; direction: boolean; side: boolean; shape: boolean; corner: boolean } {
     const shaped = kind === "pocket" || kind === "profile";
     return {
         points: kind === "drill" || kind === "line",
@@ -55,7 +66,80 @@ export function millNeeds(kind: MillKind, shape: MillShape): { points: boolean; 
         direction: shaped || kind === "holes",
         side: kind === "profile",
         shape: shaped,
+        corner: shaped && shape === "rect",
     };
+}
+
+export const RECT_MODES: { mode: RectMode; label: string }[] = [
+    { mode: "corners", label: "Corners" },
+    { mode: "center", label: "Center and size" },
+];
+
+/** A rectangle's two corners from its center and its size. */
+export function cornersOf(cx: number, cy: number, width: number, height: number): [number, number, number, number] {
+    return [cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2];
+}
+
+/** A rectangle's center and size from two corners. */
+export function centerOf(x0: number, y0: number, x1: number, y1: number): [number, number, number, number] {
+    return [(x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0)];
+}
+
+/**
+ * The fields against the selected job: `new` with no Plot page job
+ * selected, `outside` when the fields are not one of its operations,
+ * `applied` when they match the operation they were taken from, `changed`
+ * when they no longer do (or no longer read).
+ */
+export type ApplyState = "new" | "outside" | "applied" | "changed";
+
+export function applyState(ops: MillOperation[] | null, editing: number | null, op: MillOperation | null): ApplyState {
+    if (ops === null) {
+        return "new";
+    }
+    if (editing === null || editing >= ops.length) {
+        return "outside";
+    }
+    return op !== null && sameOperation(ops[editing]!, op) ? "applied" : "changed";
+}
+
+/** What the mark says, naming the operation Apply would replace. */
+export function applyText(state: ApplyState, editing: number | null): string {
+    switch (state) {
+        case "new":
+            return "not in a job yet";
+        case "outside":
+            return "not in this job";
+        case "applied":
+            return `applied as operation ${(editing ?? 0) + 1}`;
+        case "changed":
+            return `changed from operation ${(editing ?? 0) + 1}`;
+    }
+}
+
+/** What each button would do with the fields in that state, for the mark's title. */
+export const APPLY_HINT: Record<ApplyState, string> = {
+    new: "New job makes a job of this operation",
+    outside: "Add to job puts this operation at the end of the job; New job makes a job of it alone",
+    applied: "the fields are this operation of the job as it is kept",
+    changed: "Apply puts the fields in place of the operation they were taken from; Add to job puts them at the end",
+};
+
+/** The selected job when it was made on this page (it keeps its operations), else null. */
+export function plotJobOf(state: AppState): Job | null {
+    const job = state.job;
+    return job !== null && recipeOps(job.recipe).length > 0 ? job : null;
+}
+
+/** The operations planned: the job's with the edited one in its place, or with the fields' at the end, or the fields' alone. */
+export function plannedOps(ops: MillOperation[] | null, editing: number | null, op: MillOperation): MillOperation[] {
+    if (ops === null) {
+        return [op];
+    }
+    if (editing !== null && editing < ops.length) {
+        return ops.map((each, index) => (index === editing ? op : each));
+    }
+    return [...ops, op];
 }
 
 /** Points typed one a line as `x, y` (or `x y`); a blank line is skipped. */
@@ -92,18 +176,29 @@ export function holeSizes(holes: HolePoint[]): { size: number; count: number }[]
     return [...counts.entries()].sort(([a], [b]) => a - b).map(([size, count]) => ({ size, count }));
 }
 
+/** What is remembered of the fields besides the operation: the bit and the spot apart, and how a rectangle is given. */
+export interface StoredFields {
+    bit?: number;
+    spot?: number;
+    rectMode?: RectMode;
+    rcx?: number;
+    rcy?: number;
+    rw?: number;
+    rh?: number;
+}
+
 /** The fields remembered from the last visit; anything that does not read is left out. */
-export function readStoredOperation(): Partial<MillOperation> {
+export function readStoredOperation(): Partial<MillOperation> & StoredFields {
     try {
         const text = globalThis.localStorage?.getItem(MILL_KEY);
         const data: unknown = text ? JSON.parse(text) : null;
-        return data && typeof data === "object" ? (data as Partial<MillOperation>) : {};
+        return data && typeof data === "object" ? (data as Partial<MillOperation> & StoredFields) : {};
     } catch {
         return {};
     }
 }
 
-function storeOperation(op: Partial<MillOperation>): void {
+function storeOperation(op: Partial<MillOperation> & StoredFields): void {
     try {
         globalThis.localStorage?.setItem(MILL_KEY, JSON.stringify(op));
     } catch {
@@ -138,17 +233,25 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     let shape: MillShape = stored.shape === "circle" ? "circle" : "rect";
     let side: MillSide = SIDES.some((entry) => entry.side === stored.side) ? stored.side! : "outside";
     let climb = stored.climb !== false;
+    let rectMode: RectMode = stored.rectMode === "center" ? "center" : "corners";
     // The holes' job, and the sizes left out of it, kept apart from the
     // job's own list so a size comes back checked when the job does.
     let holesJob: Job | null = null;
     const skipped = new Set<number>();
+    // The selected Plot page job's operations, the one of them in the
+    // fields (null: the fields are an operation of their own), and the
+    // holes of an operation taken from the job whose board job is gone.
+    let plotJob: Job | null = null;
+    let ops: MillOperation[] | null = null;
+    let editing: number | null = null;
+    let editingHoles: { job: string | null; holes: HolePoint[] } | null = null;
 
     const field = (value: number | undefined, fallback: number, options: { min?: number; step?: number } = {}): HTMLInputElement =>
         numberField({ value: typeof value === "number" && Number.isFinite(value) ? value : fallback, ...options });
     // The bit and the spot are remembered apart: a page used with both
     // machines keeps each one's own.
-    const storedBit = (stored as { bit?: number }).bit ?? (stored.cutter !== "laser" ? stored.tool : undefined);
-    const storedSpot = (stored as { spot?: number }).spot ?? (stored.cutter === "laser" ? stored.tool : undefined);
+    const storedBit = stored.bit ?? (stored.cutter !== "laser" ? stored.tool : undefined);
+    const storedSpot = stored.spot ?? (stored.cutter === "laser" ? stored.tool : undefined);
     const tool = field(storedBit, DEFAULTS.tool, { min: 0.01, step: 0.1 });
     const spot = field(storedSpot, DEFAULTS.spot, { min: 0.01, step: 0.01 });
     const power = field(stored.power, DEFAULTS.power, { min: 0, step: 10 });
@@ -164,10 +267,16 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const y0 = field(stored.y0, 0);
     const x1 = field(stored.x1, 10);
     const y1 = field(stored.y1, 10);
+    const [storedCx, storedCy, storedW, storedH] = centerOf(stored.x0 ?? 0, stored.y0 ?? 0, stored.x1 ?? 10, stored.y1 ?? 10);
+    const rcx = field(stored.rcx, storedCx);
+    const rcy = field(stored.rcy, storedCy);
+    const rw = field(stored.rw, storedW, { min: 0, step: 1 });
+    const rh = field(stored.rh, storedH, { min: 0, step: 1 });
+    const corner = field(stored.corner, 0, { min: 0, step: 0.5 });
     const cx = field(stored.cx, 0);
     const cy = field(stored.cy, 0);
     const diameter = field(stored.diameter, 10, { min: 0 });
-    const name = el("input", { type: "text", class: "field", placeholder: "made from the operation", spellcheck: "false", "aria-label": "Job name" }) as HTMLInputElement;
+    const name = el("input", { type: "text", class: "field", placeholder: "made from the operations", spellcheck: "false", "aria-label": "Job name" }) as HTMLInputElement;
     const points = el("textarea", { class: "field mill-points", rows: "4", spellcheck: "false", placeholder: "x, y\none point a line", "aria-label": "Points" }) as HTMLTextAreaElement;
     points.value = Array.isArray(stored.points) ? pointsText(stored.points) : "";
     const closed = el("input", { type: "checkbox", "aria-label": "Closed line" }) as HTMLInputElement;
@@ -234,6 +343,8 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         shape = picked;
         changed();
     }, (value) => SHAPES.find((entry) => entry.shape === value)!.label, "Shape");
+    const rectModes = choiceRow(RECT_MODES.map((entry) => entry.mode), rectMode, (picked) => setRectMode(picked), (value) => RECT_MODES.find((entry) => entry.mode === value)!.label, "By");
+    rectModes.title = "give the rectangle by two corners, or by its center, its width and its height";
     const sides = choiceRow(SIDES.map((entry) => entry.side), side, (picked) => {
         side = picked;
         changed();
@@ -269,7 +380,14 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         labeled("Points, board mm", points),
         el("div", { class: "button-row" }, addHere, addMarker, addAll, clearPoints, closedLabel),
     );
-    const rectBox = el("div", { class: "mill-section" }, pointRow("Corner", x0, y0), pointRow("Corner", x1, y1));
+    rw.setAttribute("aria-label", "Width");
+    rh.setAttribute("aria-label", "Height");
+    corner.setAttribute("aria-label", "Corner radius");
+    const cornersBox = el("div", {}, pointRow("Corner", x0, y0), pointRow("Corner", x1, y1));
+    const centerBox = el("div", {}, pointRow("Center", rcx, rcy), el("div", { class: "field-row" }, labeled("Width mm", rw), labeled("Height mm", rh)));
+    const cornerLabel = labeled("Corner R mm", corner);
+    cornerLabel.title = "the radius the rectangle's corners are rounded to, 0 for square ones; inside, a corner tighter than the bit gets the bit's";
+    const rectBox = el("div", { class: "mill-section" }, rectModes, cornersBox, centerBox, el("div", { class: "field-row" }, cornerLabel));
     diameter.setAttribute("aria-label", "Diameter");
     const circleBox = el("div", { class: "mill-section" }, pointRow("Center", cx, cy), el("div", { class: "field-row" }, labeled("Diameter mm", diameter)));
     const holesBox = el("div", { class: "mill-section" },
@@ -280,13 +398,21 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const cutGrid = el("div", { class: "field-grid" }, ...Object.values(labels));
     const notes = el("ul", { class: "mill-notes muted" });
     const problem = el("p", { class: "mill-problem hidden", role: "alert" });
-    const makeButton = button("Make job", () => make(), "btn btn-primary");
-    makeButton.title = "store the operation as a job, selected, ready to run";
+    const applyButton = button("Apply", () => apply(), "btn btn-primary");
+    applyButton.title = "put the fields in the job in place of the operation they were taken from";
+    const addButton = button("Add to job", () => add(), "btn");
+    addButton.title = "put the operation at the end of the selected job, or make a job of it when none is selected";
+    const newButton = button("New job", () => makeNew(), "btn");
+    newButton.title = "make a job of this operation alone, selected, ready to run";
+    const stateBadge = el("span", { class: "badge plot-state" });
+    const jobTitle = el("span", { class: "plot-job-title muted" });
+    const opList = el("ol", { class: "plot-ops" });
     const machineNote = el("p", { class: "muted hint hidden" });
     const hint = el("p", { class: "muted hint" });
 
     roots.operation.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Operation"), el("div", { class: "button-row" }, makeButton)),
+        el("div", { class: "panel-head" }, el("h2", {}, "Operation"), el("div", { class: "button-row" }, applyButton, addButton, newButton)),
+        el("div", { class: "plot-job" }, el("div", { class: "plot-job-head" }, jobTitle, stateBadge), opList),
         kinds,
         shapes,
         sides,
@@ -303,17 +429,47 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         hint,
     );
 
-    for (const input of [tool, spot, power, passes, depth, stepDown, stepover, speed, plunge, spindle, x0, y0, x1, y1, cx, cy, diameter, name, points]) {
+    for (const input of [tool, spot, power, passes, depth, stepDown, stepover, speed, plunge, spindle, x0, y0, x1, y1, rcx, rcy, rw, rh, corner, cx, cy, diameter, name, points]) {
         input.addEventListener("input", () => changed());
     }
     for (const input of [closed, bore]) {
         input.addEventListener("change", () => changed());
     }
-    holesSelect.addEventListener("change", () => void loadHoles(holesSelect.value));
+    holesSelect.addEventListener("change", () => {
+        editingHoles = null;
+        void loadHoles(holesSelect.value);
+    });
+
+    /** Each field given its number, as the fields write them. */
+    function fill(inputs: HTMLInputElement[], values: readonly number[]): void {
+        inputs.forEach((input, index) => {
+            input.value = formatMm(values[index] ?? 0);
+        });
+    }
 
     function appendPoint(point: Point): void {
         const text = points.value.trimEnd();
         points.value = `${text}${text ? "\n" : ""}${formatMm(point[0])}, ${formatMm(point[1])}`;
+        changed();
+    }
+
+    /** Switches how the rectangle is given, carrying the rectangle across. */
+    function setRectMode(mode: RectMode): void {
+        if (mode === rectMode) {
+            return;
+        }
+        const from = mode === "center" ? [x0, y0, x1, y1] : [rcx, rcy, rw, rh];
+        const values = from.map((input) => parseNumber(input.value));
+        if (values.every((value): value is number => value !== null)) {
+            const [a, b, c, d] = values as [number, number, number, number];
+            if (mode === "center") {
+                fill([rcx, rcy, rw, rh], centerOf(a, b, c, d));
+            } else {
+                fill([x0, y0, x1, y1], cornersOf(a, b, c, d));
+            }
+        }
+        rectMode = mode;
+        setPressed(rectModes, RECT_MODES.find((entry) => entry.mode === mode)!.label);
         changed();
     }
 
@@ -335,6 +491,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             y0: number(y0, "a corner"),
             x1: number(x1, "a corner"),
             y1: number(y1, "a corner"),
+            rcx: number(rcx, "the center"),
+            rcy: number(rcy, "the center"),
+            rw: number(rw, "the width"),
+            rh: number(rh, "the height"),
+            corner: number(corner, "the corner radius"),
             cx: number(cx, "the center"),
             cy: number(cy, "the center"),
             diameter: number(diameter, "the diameter"),
@@ -345,7 +506,10 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             used.push("stepover");
         }
         if (needs.rect) {
-            used.push("x0", "y0", "x1", "y1");
+            used.push(...(rectMode === "center" ? ["rcx", "rcy", "rw", "rh"] : ["x0", "y0", "x1", "y1"]));
+        }
+        if (needs.corner) {
+            used.push("corner");
         }
         if (needs.circle) {
             used.push("cx", "cy", "diameter");
@@ -360,6 +524,12 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         if (laser && !Number.isInteger(numbers.passes)) {
             return "the passes are a whole number";
         }
+        if (needs.rect && rectMode === "center") {
+            if (numbers.rw < 0 || numbers.rh < 0) {
+                return "the width and the height are 0 or more";
+            }
+            [numbers.x0, numbers.y0, numbers.x1, numbers.y1] = cornersOf(numbers.rcx, numbers.rcy, numbers.rw, numbers.rh);
+        }
         let list: Point[] = [];
         if (needs.points) {
             const parsed = parsePoints(points.value);
@@ -369,26 +539,93 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             list = parsed;
         }
         let sizes: number[] | null = null;
+        let jobId: string | null = null;
+        let holes: HolePoint[] | null = null;
         if (needs.holes) {
-            if (!holesJob) {
+            if (holesJob) {
+                jobId = holesJob.id;
+                sizes = holeSizes(holesJob.holes ?? []).map((entry) => entry.size).filter((size) => !skipped.has(size));
+            } else if (editingHoles) {
+                // An operation of the job whose board job is gone: its own holes.
+                jobId = editingHoles.job;
+                holes = editingHoles.holes;
+                sizes = holeSizes(holes).map((entry) => entry.size).filter((size) => !skipped.has(size));
+            } else {
                 return "pick a job with drill holes";
             }
-            sizes = holeSizes(holesJob.holes ?? []).map((entry) => entry.size).filter((size) => !skipped.has(size));
         }
+        const { rcx: _rcx, rcy: _rcy, rw: _rw, rh: _rh, ...opNumbers } = numbers;
         return {
             kind,
             cutter,
-            name: name.value.trim() || null,
-            ...numbers,
+            name: null,
+            ...opNumbers,
+            corner: needs.corner ? numbers.corner : 0,
             climb,
             points: list,
             closed: closed.checked,
             shape,
             side,
-            job: needs.holes ? holesJob?.id ?? null : null,
+            job: jobId,
             sizes,
             bore: bore.checked,
+            holes,
         };
+    }
+
+    /** Puts an operation of the job in the fields. */
+    function setFields(op: MillOperation): void {
+        const full: MillOperation = { ...defaultOperation(op.kind), ...op };
+        kind = full.kind;
+        shape = full.shape;
+        side = full.side;
+        climb = full.climb;
+        setPressed(kinds, MILL_KINDS.find((entry) => entry.kind === kind)!.label);
+        setPressed(shapes, SHAPES.find((entry) => entry.shape === shape)!.label);
+        setPressed(sides, SIDES.find((entry) => entry.side === side)!.label);
+        setPressed(directions, climb ? "Climb" : "Conventional");
+        (full.cutter === "laser" ? spot : tool).value = formatMm(full.tool);
+        power.value = String(full.power ?? DEFAULTS.power);
+        passes.value = String(full.passes ?? DEFAULTS.passes);
+        depth.value = formatMm(full.depth);
+        stepDown.value = formatMm(full.step_down);
+        stepover.value = String(full.stepover);
+        speed.value = String(full.speed);
+        plunge.value = String(full.plunge);
+        spindle.value = String(full.spindle);
+        x0.value = formatMm(full.x0);
+        y0.value = formatMm(full.y0);
+        x1.value = formatMm(full.x1);
+        y1.value = formatMm(full.y1);
+        fill([rcx, rcy, rw, rh], centerOf(full.x0, full.y0, full.x1, full.y1));
+        corner.value = formatMm(full.corner ?? 0);
+        cx.value = formatMm(full.cx);
+        cy.value = formatMm(full.cy);
+        diameter.value = formatMm(full.diameter);
+        points.value = pointsText(full.points);
+        closed.checked = full.closed;
+        bore.checked = full.bore;
+        editingHoles = null;
+        if (full.kind === "holes") {
+            const source = ctx.store.get().jobs.find((job) => job.id === full.job);
+            skipped.clear();
+            const all = holeSizes(full.holes ?? []).map((entry) => entry.size);
+            const wanted = full.sizes ? new Set(full.sizes) : null;
+            for (const size of all) {
+                if (wanted !== null && !wanted.has(size)) {
+                    skipped.add(size);
+                }
+            }
+            if (source) {
+                holesSelect.value = source.id;
+                void loadHoles(source.id);
+            } else {
+                holesSelect.value = "";
+                holesJob = null;
+                editingHoles = { job: full.job ?? null, holes: full.holes ?? [] };
+                renderSizes();
+            }
+        }
     }
 
     function show(): void {
@@ -411,14 +648,50 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             ? " clear a hole wider than the spot in rings, rather than cut along its edge"
             : " bore a hole wider than the bit out with it, in rings";
         hint.textContent = laser
-            ? "positions are board mm; a point is marked with a ring the spot across, and each pass burns the whole path again"
-            : "positions are board mm; the depth is under the surface where the tool was zeroed";
+            ? "positions are board mm; a point is marked with a ring the spot across, and each pass burns the whole path again; fields take arithmetic, such as 25.4/2 or 1/8 in"
+            : "positions are board mm; the depth is under the surface where the tool was zeroed; fields take arithmetic, such as 25.4/2 or 1/8 in";
         rectBox.classList.toggle("hidden", !needs.rect);
+        cornersBox.classList.toggle("hidden", rectMode !== "corners");
+        centerBox.classList.toggle("hidden", rectMode !== "center");
+        cornerLabel.classList.toggle("hidden", !needs.corner);
         circleBox.classList.toggle("hidden", !needs.circle);
         pointsBox.classList.toggle("hidden", !needs.points);
         closedLabel.classList.toggle("hidden", !needs.closed);
         holesBox.classList.toggle("hidden", !needs.holes);
         labels["stepover"]!.classList.toggle("hidden", !needs.stepover);
+    }
+
+    /** The mark of the fields against the job, the job's list, and what the buttons may do. */
+    function renderJob(): void {
+        const op = read();
+        const state = applyState(ops, editing, typeof op === "string" ? null : op);
+        stateBadge.textContent = applyText(state, editing);
+        stateBadge.title = APPLY_HINT[state];
+        stateBadge.setAttribute("data-state", state);
+        setPending(ctx.store, "plot", state === "changed" ? 1 : 0);
+        jobTitle.textContent = plotJob && ops
+            ? `${plotJob.name}: ${ops.length} operation${ops.length === 1 ? "" : "s"}${editing !== null ? `, number ${editing + 1} in the fields` : ""}`
+            : "no Plot page job selected";
+        setLocked(applyButton, state !== "changed");
+        setLocked(addButton, typeof op === "string");
+        setLocked(newButton, typeof op === "string");
+        addButton.textContent = plotJob ? "Add to job" : "Add to new job";
+        replace(opList, ...(ops ?? []).map((each, index) => {
+            const edit = button(operationSummary(each), () => {
+                editing = index;
+                setFields(each);
+                changed();
+            }, "btn btn-quiet btn-small plot-op-pick");
+            edit.title = "put this operation in the fields to change it";
+            const up = button("Up", () => move(index), "btn btn-quiet btn-small");
+            up.title = "cut this operation before the one above it";
+            setLocked(up, index === 0);
+            const remove = button("Remove", () => removeOp(index), "btn btn-quiet btn-small");
+            remove.title = "take this operation out of the job";
+            const row = el("li", { class: "plot-op" }, edit, el("span", { class: "button-row" }, up, remove));
+            row.classList.toggle("editing", index === editing);
+            return row;
+        }));
     }
 
     // Planned again a moment after the typing stops; a reply that a later
@@ -429,8 +702,21 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         show();
         const op = read();
         if (typeof op !== "string") {
-            storeOperation({ ...op, job: null, sizes: null, bit: parseNumber(tool.value) ?? undefined, spot: parseNumber(spot.value) ?? undefined } as Partial<MillOperation>);
+            storeOperation({
+                ...op,
+                job: null,
+                sizes: null,
+                holes: null,
+                bit: parseNumber(tool.value) ?? undefined,
+                spot: parseNumber(spot.value) ?? undefined,
+                rectMode,
+                rcx: parseNumber(rcx.value) ?? undefined,
+                rcy: parseNumber(rcy.value) ?? undefined,
+                rw: parseNumber(rw.value) ?? undefined,
+                rh: parseNumber(rh.value) ?? undefined,
+            });
         }
+        renderJob();
         if (timer !== null) {
             clearTimeout(timer);
         }
@@ -445,17 +731,26 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         problem.classList.toggle("hidden", text === "");
     }
 
+    /** The job's name for a request: the field's, or for a job already made, its own. */
+    function jobName(): string | null {
+        return name.value.trim() || plotJob?.name || null;
+    }
+
     async function plan(): Promise<void> {
         const op = read();
         const mine = ++ticket;
         if (typeof op === "string") {
             showProblem(op);
             replace(notes);
-            ctx.store.set({ millPlan: null });
+            ctx.store.set({ millPlan: null, millDims: [] });
             return;
         }
+        // The sizes go where the job is: a job moved on the Jobs page takes
+        // its operations with it.
+        const dims = operationDims(op, rectMode);
+        ctx.store.set({ millDims: plotJob ? movedDims(dims, plotJob.rotation ?? 0, plotJob.offset.x, plotJob.offset.y) : dims });
         try {
-            const planned = await ctx.api.planMill(op);
+            const planned = await ctx.api.planMill({ ops: plannedOps(ops, editing, op), name: jobName(), job: plotJob?.id ?? null });
             if (mine !== ticket) {
                 return;
             }
@@ -472,21 +767,85 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         }
     }
 
-    async function make(): Promise<void> {
+    /** Sends the job's operations: in the place of the selected job, or as a new one; selects what came back. */
+    async function send(list: MillOperation[], into: Job | null, nextEditing: number | null, what: string): Promise<void> {
+        const made = await ctx.call(ctx.api.makeMill({ ops: list, name: into ? jobName() : name.value.trim() || null, job: into?.id ?? null }));
+        if (!made) {
+            return;
+        }
+        // Set before the selection lands, so the job's arrival keeps the
+        // operation in the fields marked as the one it is.
+        plotJob = made.job;
+        ops = recipeOps(made.job.recipe);
+        editing = nextEditing;
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.job.id);
+        if (into) {
+            await ctx.reloadJob(made.job.id);
+        }
+        // The plan stays up and is made again for the job as it now is,
+        // so the view is not fitted again under the operator.
+        ctx.toast("info", `${what} ${made.job.name}`);
+        changed();
+    }
+
+    async function apply(): Promise<void> {
         const op = read();
         if (typeof op === "string") {
             showProblem(op);
             return;
         }
-        const made = await ctx.call(ctx.api.makeMill(op));
-        if (!made) {
+        if (!plotJob || !ops || editing === null) {
             return;
         }
-        await ctx.refreshJobs();
-        await ctx.selectJob(made.job.id);
-        // The made job is selected and drawn in the plan's place.
-        ctx.store.set({ millPlan: null });
-        ctx.toast("info", `made ${made.job.name}`);
+        await send(plannedOps(ops, editing, op), plotJob, editing, "applied to");
+    }
+
+    async function add(): Promise<void> {
+        const op = read();
+        if (typeof op === "string") {
+            showProblem(op);
+            return;
+        }
+        if (!plotJob || !ops) {
+            await makeNew();
+            return;
+        }
+        await send([...ops, op], plotJob, ops.length, "added to");
+    }
+
+    async function makeNew(): Promise<void> {
+        const op = read();
+        if (typeof op === "string") {
+            showProblem(op);
+            return;
+        }
+        await send([op], null, 0, "made");
+    }
+
+    async function move(index: number): Promise<void> {
+        if (!plotJob || !ops || index < 1) {
+            return;
+        }
+        const list = [...ops];
+        [list[index - 1], list[index]] = [list[index]!, list[index - 1]!];
+        const next = editing === index ? index - 1 : editing === index - 1 ? index : editing;
+        await send(list, plotJob, next, "moved an operation in");
+    }
+
+    async function removeOp(index: number): Promise<void> {
+        if (!plotJob || !ops) {
+            return;
+        }
+        if (ops.length === 1) {
+            ctx.toast("error", "a job keeps at least one operation: delete the job on the Jobs page");
+            return;
+        }
+        if (!(await askConfirm(`Take operation ${index + 1}, ${operationSummary(ops[index]!)}, out of ${plotJob.name}?`, "Remove"))) {
+            return;
+        }
+        const next = editing === null || editing === index ? null : editing > index ? editing - 1 : editing;
+        await send(ops.filter((_, at) => at !== index), plotJob, next, "took an operation out of");
     }
 
     async function loadHoles(id: string): Promise<void> {
@@ -499,13 +858,14 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         const job = await ctx.call(ctx.api.job(id));
         if (job && holesSelect.value === id) {
             holesJob = job;
+            editingHoles = null;
             renderSizes();
         }
         changed();
     }
 
     function renderSizes(): void {
-        const sizes = holeSizes(holesJob?.holes ?? []);
+        const sizes = holeSizes(holesJob?.holes ?? editingHoles?.holes ?? []);
         replace(sizesBox, ...sizes.map(({ size, count }) => {
             const box = el("input", { type: "checkbox", "aria-label": `${size} mm holes` }) as HTMLInputElement;
             box.checked = !skipped.has(size);
@@ -519,7 +879,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             });
             return el("label", { class: "hole-size" }, box, ` ${size.toFixed(2)} mm `, el("span", { class: "muted" }, `x${count}`));
         }));
-        if (holesJob && sizes.length === 0) {
+        if ((holesJob || editingHoles) && sizes.length === 0) {
             sizesBox.append(el("p", { class: "muted" }, "this job has no drill holes"));
         }
     }
@@ -551,12 +911,30 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         }
     }
 
+    /** The selected job, when it is a Plot page job, is the one the buttons work on. */
+    function renderSelected(state: AppState): void {
+        const job = plotJobOf(state);
+        if (job?.id !== plotJob?.id) {
+            editing = null;
+        }
+        plotJob = job;
+        ops = job ? recipeOps(job.recipe) : null;
+        if (editing !== null && (ops === null || editing >= ops.length)) {
+            editing = null;
+        }
+        changed();
+    }
+
     ctx.store.subscribe((state) => renderJobs(state), ["jobs"]);
     ctx.store.subscribe((state) => renderMachine(state), ["snapshot"]);
+    ctx.store.subscribe((state) => renderSelected(state), ["job"]);
     renderJobs(ctx.store.get());
     renderMachine(ctx.store.get());
     setPressed(kinds, MILL_KINDS.find((entry) => entry.kind === kind)!.label);
+    plotJob = plotJobOf(ctx.store.get());
+    ops = plotJob ? recipeOps(plotJob.recipe) : null;
     show();
+    renderJob();
     void plan();
 
     mountMillRun(roots.run, ctx);

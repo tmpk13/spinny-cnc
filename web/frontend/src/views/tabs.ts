@@ -31,6 +31,7 @@ export const PENDING_PAGES: Record<string, PageId> = {
     "machine-file": "config",
     camera: "jobs",
     "job-json": "jobs",
+    plot: "plot",
     "cam-profile": "cam",
     pnp: "pnp",
     "pnp-device": "pnp",

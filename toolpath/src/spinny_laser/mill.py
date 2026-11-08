@@ -1,6 +1,6 @@
 """Simple milling operations as toolpaths: drilling points, a line through
-points, facing a rectangle, and pocketing or profiling a rectangle or a
-circle.
+points, facing a rectangle, and pocketing or profiling a rectangle (its
+corners square or rounded) or a circle.
 
 Every function gives the paths of the tool's center in board mm for a bit
 `tool` mm across; how deep they cut and in how many steps is the caller's.
@@ -56,6 +56,16 @@ def box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float, float
     return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
 
 
+def check_corner(corner: float, xa: float, ya: float, xb: float, yb: float) -> None:
+    """A rectangle's corner radius: none (0), up to half its shorter side,
+    where the rounded corners meet."""
+    if not (math.isfinite(corner) and corner >= 0.0):
+        raise MillError("the corner radius must be 0 or more")
+    half = min(xb - xa, yb - ya) / 2.0
+    if corner > half + EPSILON:
+        raise MillError(f"the corner radius is at most half the shorter side, {half:g} mm")
+
+
 def arc(cx: float, cy: float, radius: float, start: float, sweep: float, tolerance: float = DEFAULT_TOLERANCE) -> Path:
     """Points along an arc from `start` degrees through `sweep` degrees
     (counterclockwise when positive), both ends included, each chord within
@@ -90,6 +100,45 @@ def _rectangle(xa: float, ya: float, xb: float, yb: float, ccw: bool, near: Poin
         first = min(range(4), key=lambda i: math.dist(corners[i], near))
     ordered = corners[first:] + corners[:first]
     return [*ordered, ordered[0]]
+
+
+def _rounded_loop(
+    xa: float, ya: float, xb: float, yb: float, rho: float, ccw: bool, near: Point | None = None, tolerance: float = DEFAULT_TOLERANCE
+) -> Path:
+    """A closed loop round the box with each corner a quarter circle of
+    radius `rho` about a center `rho` inside it, counterclockwise or
+    clockwise, starting and ending at the middle of the corner arc nearest
+    `near` (the low corner's without one)."""
+    centers = [(xa + rho, ya + rho), (xb - rho, ya + rho), (xb - rho, yb - rho), (xa + rho, yb - rho)]
+    # Each corner's arc, counterclockwise, from the side before it to the
+    # side after it, in two halves split at its middle.
+    halves = [
+        (arc(cx, cy, rho, start, 45.0, tolerance), arc(cx, cy, rho, start + 45.0, 45.0, tolerance))
+        for (cx, cy), start in zip(centers, (180.0, 270.0, 0.0, 90.0))
+    ]
+    first = 0
+    if near is not None:
+        first = min(range(4), key=lambda i: math.dist(halves[i][1][0], near))
+    path: Path = list(halves[first][1])
+    for step in range(1, 4):
+        early, late = halves[(first + step) % 4]
+        path.extend(early)
+        path.extend(late[1:])
+    path.extend(halves[first][0])
+    if not ccw:
+        path.reverse()
+    return path
+
+
+def rounded_rectangle(x0: float, y0: float, x1: float, y1: float, corner: float = 0.0, tolerance: float = DEFAULT_TOLERANCE) -> Path:
+    """The rectangle's own outline, closed, counterclockwise: from the low
+    corner when its corners are square, else from the middle of the low
+    corner's arc."""
+    xa, ya, xb, yb = box(x0, y0, x1, y1)
+    check_corner(corner, xa, ya, xb, yb)
+    if corner > EPSILON:
+        return _rounded_loop(xa, ya, xb, yb, corner, ccw=True, tolerance=tolerance)
+    return [(xa, ya), (xb, ya), (xb, yb), (xa, yb), (xa, ya)]
 
 
 def drill(points: list[Point]) -> list[Path]:
@@ -130,15 +179,30 @@ def face(x0: float, y0: float, x1: float, y1: float, tool: float, stepover: floa
     return line(path)
 
 
-def pocket_rect(x0: float, y0: float, x1: float, y1: float, tool: float, stepover: float, climb: bool = True) -> list[Path]:
+def pocket_rect(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    tool: float,
+    stepover: float,
+    climb: bool = True,
+    corner: float = 0.0,
+    tolerance: float = DEFAULT_TOLERANCE,
+) -> list[Path]:
     """The rectangle cleared to its walls as one path: from a line along
     its middle out loop by loop, at most `stepover` bits apart, to the
-    loop that finishes the walls. The corners keep the bit's radius."""
+    loop that finishes the walls. The corners keep the bit's radius, or
+    `corner` where that is larger: a loop whose corners would still be
+    round runs its arcs about the same centers as the wall's, so rounding
+    only brings the loops closer at the corners and the stepover limit for
+    square ones still holds."""
     check_tool(tool)
     check_stepover(stepover)
     if stepover > MAX_POCKET_STEPOVER:
         raise MillError(f"a rectangular pocket's stepover is at most {MAX_POCKET_STEPOVER:g}: wider, its loops leave the corners between them standing")
     xa, ya, xb, yb = box(x0, y0, x1, y1)
+    check_corner(corner, xa, ya, xb, yb)
     r = tool / 2.0
     a, c, b, d = xa + r, ya + r, xb - r, yb - r
     if b < a - EPSILON or d < c - EPSILON:
@@ -154,7 +218,11 @@ def pocket_rect(x0: float, y0: float, x1: float, y1: float, tool: float, stepove
         t -= stepover * tool
     insets.append(0.0)
     for t in insets:
-        loop = _rectangle(a + t, c + t, b - t, d - t, ccw=climb, near=path[-1])
+        rho = corner - r - t
+        if rho > EPSILON:
+            loop = _rounded_loop(a + t, c + t, b - t, d - t, rho, ccw=climb, near=path[-1], tolerance=tolerance)
+        else:
+            loop = _rectangle(a + t, c + t, b - t, d - t, ccw=climb, near=path[-1])
         path.extend(loop)
     return line(path)
 
@@ -186,35 +254,54 @@ def pocket_circle(
 
 
 def profile_rect(
-    x0: float, y0: float, x1: float, y1: float, tool: float, side: str = OUTSIDE, climb: bool = True, tolerance: float = DEFAULT_TOLERANCE
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    tool: float,
+    side: str = OUTSIDE,
+    climb: bool = True,
+    tolerance: float = DEFAULT_TOLERANCE,
+    corner: float = 0.0,
 ) -> list[Path]:
-    """One closed path along the rectangle's edge: outside it with the
-    corners rounded by the bit's radius so the part keeps them sharp,
-    inside it, where the corners keep the bit's radius, or on the line."""
+    """One closed path along the rectangle's edge: outside it, inside it or
+    on the line. Square corners (`corner` 0) stay sharp on a part cut
+    outside, the bit going round each corner on its radius, and keep the
+    bit's radius inside. Rounded corners are arcs about centers `corner`
+    inside each corner: the bit's radius more outside, less inside (where
+    a corner tighter than the bit gets the bit's radius), as given on the
+    line."""
     check_tool(tool)
     if side not in SIDES:
         raise MillError(f"the side is one of {', '.join(SIDES)}")
     xa, ya, xb, yb = box(x0, y0, x1, y1)
     if xb - xa <= EPSILON or yb - ya <= EPSILON:
         raise MillError("a rectangle needs a width and a height")
+    check_corner(corner, xa, ya, xb, yb)
     r = tool / 2.0
     if side == INSIDE:
         if xb - xa < tool - EPSILON or yb - ya < tool - EPSILON:
             raise MillError(f"the rectangle is narrower than the bit: {xb - xa:.3f} by {yb - ya:.3f} mm for a {tool:g} mm bit")
         a, c, b, d = xa + r, ya + r, max(xa + r, xb - r), max(ya + r, yb - r)
+        if corner - r > EPSILON:
+            return line(_rounded_loop(a, c, b, d, corner - r, ccw=climb, tolerance=tolerance))
         return line(_rectangle(a, c, b, d, ccw=climb))
     if side == ON:
+        if corner > EPSILON:
+            return line(_rounded_loop(xa, ya, xb, yb, corner, ccw=not climb, tolerance=tolerance))
         return line(_rectangle(xa, ya, xb, yb, ccw=not climb))
     # Outside, counterclockwise from under the low corner: each side, then
-    # the quarter circle about the next corner.
-    path: Path = [(xa, ya - r), (xb, ya - r)]
-    path.extend(arc(xb, ya, r, -90.0, 90.0, tolerance)[1:])
-    path.append((xb + r, yb))
-    path.extend(arc(xb, yb, r, 0.0, 90.0, tolerance)[1:])
-    path.append((xa, yb + r))
-    path.extend(arc(xa, yb, r, 90.0, 90.0, tolerance)[1:])
-    path.append((xa - r, ya))
-    path.extend(arc(xa, ya, r, 180.0, 90.0, tolerance)[1:])
+    # the quarter circle about the next corner's center, the bit's radius
+    # farther out than the corner's own.
+    k, rr = corner, r + corner
+    path: Path = [(xa + k, ya - r), (xb - k, ya - r)]
+    path.extend(arc(xb - k, ya + k, rr, -90.0, 90.0, tolerance)[1:])
+    path.append((xb + r, yb - k))
+    path.extend(arc(xb - k, yb - k, rr, 0.0, 90.0, tolerance)[1:])
+    path.append((xa + k, yb + r))
+    path.extend(arc(xa + k, yb - k, rr, 90.0, 90.0, tolerance)[1:])
+    path.append((xa - r, ya + k))
+    path.extend(arc(xa + k, ya + k, rr, 180.0, 90.0, tolerance)[1:])
     path[-1] = path[0]
     if climb:
         path.reverse()

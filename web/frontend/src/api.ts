@@ -66,7 +66,7 @@ export class ApiError extends Error {
     }
 }
 
-import type { Marker, MarkersResponse, MillOperation, MillResponse } from "./types.ts";
+import type { Marker, MarkersResponse, MillJobRequest, MillResponse } from "./types.ts";
 import type {
     CameraPose,
     ComponentsResponse,
@@ -84,10 +84,10 @@ import type {
 } from "./types.ts";
 
 export interface Api {
-    /** A Plot page operation as a job, not stored, to be seen before it is made. */
-    planMill(op: MillOperation): Promise<MillResponse>;
-    /** A Plot page operation made into a stored job. */
-    makeMill(op: MillOperation): Promise<MillResponse>;
+    /** Plot page operations as a job, not stored, to be seen before it is made; with `job`, placed where that job is. */
+    planMill(body: MillJobRequest): Promise<MillResponse>;
+    /** Plot page operations made into a stored job, or with `job` put in that Plot page job's place. */
+    makeMill(body: MillJobRequest): Promise<MillResponse>;
     /** The markers, kept by the backend for every page. */
     markers(): Promise<Marker[]>;
     /** Puts the whole list of markers in place of the one kept; answers it as kept. */
@@ -548,12 +548,12 @@ export class HttpApi implements Api {
         await this.request("DELETE", `/api/jobs/${encodeURIComponent(id)}`);
     }
 
-    planMill(op: MillOperation): Promise<MillResponse> {
-        return this.request<MillResponse>("POST", "/api/mill/plan", op);
+    planMill(body: MillJobRequest): Promise<MillResponse> {
+        return this.request<MillResponse>("POST", "/api/mill/plan", body);
     }
 
-    makeMill(op: MillOperation): Promise<MillResponse> {
-        return this.request<MillResponse>("POST", "/api/mill", op);
+    makeMill(body: MillJobRequest): Promise<MillResponse> {
+        return this.request<MillResponse>("POST", "/api/mill", body);
     }
 
     camLog(camera?: LoggedCamera): Promise<CamLogState> {

@@ -45,7 +45,7 @@ import {
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
-import { buildMill, carrySettings, cutMiddle, moveJob, remakeMill } from "./mill.ts";
+import { buildMillJob, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
 import { MockCameraLog } from "./camlog.ts";
@@ -162,7 +162,9 @@ import type {
     TouchRequest,
     UploadOptions,
     WsEvent,
+    HolePoint,
     Marker,
+    MillJobRequest,
     MillOperation,
     MillResponse,
 } from "../types.ts";
@@ -3540,7 +3542,7 @@ export class MockBackend implements Api, EventFeed {
     /** The job made again from its recipe for another width, or the refusal. */
     private remade(job: Job, width: number): Job {
         try {
-            if (job.recipe?.mill) {
+            if (recipeOps(job.recipe).length > 0) {
                 return remakeMill(job, width, this.limits());
             }
             const made = this.remadeUpload(job, { spot: width });
@@ -3581,35 +3583,68 @@ export class MockBackend implements Api, EventFeed {
         return made;
     }
 
-    async planMill(op: MillOperation): Promise<MillResponse> {
-        return this.millResponse(op, "");
+    async planMill(body: MillJobRequest): Promise<MillResponse> {
+        return this.millResponse(body, false);
     }
 
-    async makeMill(op: MillOperation): Promise<MillResponse> {
-        const made = this.millResponse(op, this.newId());
-        this.jobStore.set(made.job.id, made.job);
-        this.order.push(made.job.id);
-        return made;
+    async makeMill(body: MillJobRequest): Promise<MillResponse> {
+        return this.millResponse(body, true);
     }
 
-    private millResponse(op: MillOperation, id: string): MillResponse {
-        let holes: Job["holes"] | null = null;
-        let named = op;
-        if (op.kind === "holes") {
+    /** The operations as a job, stored when `keep`, in place of the Plot page job `job` names when it does. */
+    private millResponse(body: MillJobRequest, keep: boolean): MillResponse {
+        const ops = body.ops.map((op): MillOperation => ({ ...defaultOperation(op.kind), ...op }));
+        if (ops.length === 0 || ops.length > MAX_OPERATIONS) {
+            throw new ApiError(422, `a job holds 1 to ${MAX_OPERATIONS} operations`);
+        }
+        const only = ops[0]!;
+        if (ops.length === 1 && only.kind === "holes" && !only.name && !body.name && (only.holes ?? null) === null) {
+            const source = this.jobStore.get(only.job ?? "");
+            if (source) {
+                ops[0] = { ...only, name: `${source.name} holes` };
+            }
+        }
+        const holesOf = (op: MillOperation): HolePoint[] => {
             const source = this.jobStore.get(op.job ?? "");
             if (!source) {
                 throw new ApiError(404, `no job '${op.job ?? ""}' to take holes from`);
             }
-            holes = source.holes ?? [];
-            if (!op.name) {
-                named = { ...op, name: `${source.name} holes` };
+            return [...(source.holes ?? [])];
+        };
+        let target: Job | null = null;
+        if (body.job) {
+            target = this.jobStore.get(body.job) ?? null;
+            if (!target) {
+                throw new ApiError(404, `no job '${body.job}'`);
+            }
+            if (recipeOps(target.recipe).length === 0) {
+                throw new ApiError(400, `${target.name} was not made on the Plot page: its operations cannot be changed there`);
+            }
+            if (keep && this.session && this.session.job.id === target.id) {
+                throw new ApiError(409, "the job is running");
             }
         }
+        const name = body.name !== undefined && body.name !== null ? body.name : ops.length === 1 ? ops[0]!.name ?? null : null;
+        let made: MillResponse;
         try {
-            return buildMill(id, named, holes, this.limits());
+            made = buildMillJob("", ops, holesOf, this.limits(), name);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw error instanceof ApiError ? error : new ApiError(400, error instanceof Error ? error.message : String(error));
         }
+        if (target) {
+            placed(made.job, target);
+            made.job.stats = computeStats(made.job.groups, this.limits());
+        }
+        if (keep) {
+            if (target) {
+                this.jobStore.set(target.id, made.job);
+            } else {
+                made.job.id = this.newId();
+                this.jobStore.set(made.job.id, made.job);
+                this.order.push(made.job.id);
+            }
+        }
+        return made;
     }
 
     async markers(): Promise<Marker[]> {

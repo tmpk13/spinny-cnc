@@ -190,14 +190,22 @@ of its drill holes.
 
 ## Plot page
 
-One simple operation at a time, cut on a spindle: every group is made for
-`spindle`, goes down in passes of `step_down` to `depth` under the surface,
-and a path of one point is a drill.
+Simple operations made into a job, cut on a spindle: every group is made
+for `spindle`, goes down in passes of `step_down` to `depth` under the
+surface, and a path of one point is a drill. A job holds one operation or
+several, cut in order, each its own groups.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/mill/plan` | an operation (below); answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while the operation is typed; 400 with the reason for one that cannot be cut |
-| `POST /api/mill` | the same, the job stored with `source` `mill` and the operation as its `recipe` |
+| `POST /api/mill/plan` | `{"ops": [operation, ...], "name": null, "job": null}` (1 to 100 operations, below), or one operation alone; answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while an operation is typed; the notes are numbered `1: ...` by operation when there are several; with `job` the plan is placed where that job is (below); 400 with the reason for one that cannot be cut |
+| `POST /api/mill` | the same, the job stored with `source` `mill` and the operations as its `recipe` (`{"ops": [...]}`, each holes operation with its `holes` filled in); with `job` naming a Plot page job, the operations replace that job's in place: same id, turned and moved as the job has been since it was made (its `rotation` and `offset` kept), the groups made again from the operations; 400 for a job not made on this page, 404 for none, 409 while it runs |
+
+Every operation of a job cuts with the same `cutter` and the same `tool`
+(nothing changes the bit or the spot halfway through a run): 400 names the
+first that does not. Without `name`, a job of one operation is named after
+it and one of several `<the first's name> and N more`. A job made before
+jobs held several operations keeps its one as `recipe.mill`, and is still
+made again for another width.
 
 The operation: `{"kind": "drill" \| "holes" \| "line" \| "face" \| "pocket"
 \| "profile", "name": null, "tool": 1, "depth": 0.5, "step_down": 0.5,
@@ -210,11 +218,14 @@ true}` plus what the kind takes, every field optional but `kind`:
 | `holes` | `job` (a stored job's id), `sizes` (diameters to take, all when null), `bore` (default true) | one a hole size, smallest first, each a short tour on from the last: drilled, or bored out in rings with the bit when wider than the bit by over 0.05 mm and `bore` is on; 404 for no such job |
 | `line` | `points`, `closed` | one path through the points, back to the first when closed |
 | `face` | `x0`, `y0`, `x1`, `y1` | rows along X back and forth at most `stepover` bits apart; the bit's center runs over the whole rectangle |
-| `pocket` | `shape` `rect` with the corners, or `circle` with `cx`, `cy`, `diameter` | one path out from the middle, loops or rings at most `stepover` bits apart, the last on the walls; a rectangle's stepover is at most 0.85, past which its loops leave the corners between them |
-| `profile` | the shape, and `side` `outside` (corners rounded by the bit so the part keeps them), `inside` or `on` | one closed path; no tabs |
+| `pocket` | `shape` `rect` with the corners and `corner` (the radius its corners are rounded to, default 0, at most half the shorter side), or `circle` with `cx`, `cy`, `diameter` | one path out from the middle, loops or rings at most `stepover` bits apart, the last on the walls; a rectangle's stepover is at most 0.85, past which its loops leave the corners between them; rounded loops share the wall's corner centers, so rounding only brings them closer |
+| `profile` | the shape (a rectangle with `corner` as for a pocket), and `side` `outside` (square corners rounded by the bit so the part keeps them sharp; rounded ones the bit's radius farther out), `inside` (a corner tighter than the bit gets the bit's radius) or `on` | one closed path; no tabs |
 
 `climb` runs counterclockwise inside a pocket or a hole and clockwise
 around a part, with the spindle turning clockwise; false is conventional.
+A holes operation may carry `holes` (`[[x, y, diameter], ...]`) in place
+of looking them up in `job`; a made job keeps them there, so it is made
+again without the job they came from.
 
 `"cutter": "laser"` (default `spindle`) burns the same paths with a beam
 `tool` mm across: `power` (S, default 500) and `passes` (1 to 100, each

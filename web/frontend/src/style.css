@@ -80,6 +80,7 @@
     --pv-probe: #d33682;
     /* Saved positions on the board. */
     --pv-marker: #2aa198;
+    --pv-dim: #2aa198;
     /* Paths picked in the preview (a halo under them), and the place the
        JSON panel's caret is in. */
     --pv-select: #d33682;
@@ -2359,6 +2360,66 @@ table.cam-table input[type="checkbox"] {
     margin: 0.25rem 0;
     color: var(--danger);
     font-weight: 500;
+}
+
+/* The Plot page job's operations: the job and the mark of the fields
+   against it over a numbered list, each operation a button that puts it
+   in the fields, the one in them outlined. */
+.plot-job {
+    margin: 0.25rem 0 0.75rem;
+}
+
+.plot-job-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem 0.5rem;
+}
+
+.plot-state[data-state="new"],
+.plot-state[data-state="outside"] { --tone: var(--idle); }
+.plot-state[data-state="applied"] { --tone: var(--jog); }
+.plot-state[data-state="changed"] { --tone: var(--hold); }
+
+.plot-ops {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0.4rem 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: plot-op;
+}
+
+.plot-ops:empty {
+    display: none;
+}
+
+.plot-op {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* A flex row loses its list marker, so the number is drawn here. */
+.plot-op::before {
+    counter-increment: plot-op;
+    content: counter(plot-op) ".";
+    min-width: 1.4rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.plot-op .plot-op-pick {
+    flex: 1 1 10rem;
+    justify-content: flex-start;
+    text-align: left;
+}
+
+.plot-op.editing .plot-op-pick {
+    border-color: var(--accent);
+    font-weight: 600;
 }
 
 .mill-run-job,

@@ -452,11 +452,12 @@ export interface Job {
     stats: Stats;
 }
 
-/** How a job was made: a board upload's file and options, or a Plot page operation. */
+/** How a job was made: a board upload's file and options, or the Plot page operations (`ops`; a job made before a job could hold several keeps its one in `mill`). */
 export interface Recipe {
     file?: string | null;
     options?: Record<string, unknown> | null;
     mill?: MillOperation | null;
+    ops?: MillOperation[] | null;
 }
 
 /** What the Plot page cuts: points drilled, a board job's holes, a line through points, a face, a pocket or a profile. */
@@ -495,11 +496,12 @@ export interface MillOperation {
     points: Point[];
     closed: boolean;
     shape: MillShape;
-    /** A rectangle by two corners. */
+    /** A rectangle by two corners, and for a pocket or a profile the radius its corners are rounded to (0 square). */
     x0: number;
     y0: number;
     x1: number;
     y1: number;
+    corner?: number;
     /** A circle by its center and diameter. */
     cx: number;
     cy: number;
@@ -509,6 +511,15 @@ export interface MillOperation {
     job?: string | null;
     sizes?: number[] | null;
     bore: boolean;
+    /** The holes themselves, filled in when the operation is made and kept with it, so it is made again without the job they came from. */
+    holes?: HolePoint[] | null;
+}
+
+/** A job of one operation or several as the page sends it: `job` names the Plot page job they replace, null for a new job. */
+export interface MillJobRequest {
+    ops: MillOperation[];
+    name?: string | null;
+    job?: string | null;
 }
 
 /** An operation's job and what to know about it. */

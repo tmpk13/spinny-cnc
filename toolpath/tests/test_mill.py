@@ -157,3 +157,70 @@ def test_arguments_are_checked():
         mill.face(0, 0, 1, 1, TOOL, 1.5)
     with pytest.raises(mill.MillError, match="side"):
         mill.profile_circle(0, 0, 5, TOOL, "beside")
+
+
+def box_distance(p, xa, ya, xb, yb) -> float:
+    """How far a point is from a box, 0 inside it."""
+    dx = max(xa - p[0], 0.0, p[0] - xb)
+    dy = max(ya - p[1], 0.0, p[1] - yb)
+    return math.hypot(dx, dy)
+
+
+@pytest.mark.parametrize("corner", [0.5, 1.0, 2.5, 3.0])
+def test_rounded_profiles_keep_the_bit_off_the_rounded_edge(corner):
+    # A rectangle with rounded corners is the box `corner` inside it grown
+    # by `corner`, so a point's distance from its edge follows from the
+    # distance to that box.
+    inner = (corner, corner, 10 - corner, 6 - corner)
+    (outside,) = mill.profile_rect(0, 0, 10, 6, TOOL, mill.OUTSIDE, corner=corner)
+    assert outside[0] == outside[-1]
+    assert all(math.isclose(box_distance(p, *inner) - corner, R, abs_tol=1e-9) for p in outside)
+    assert signed_area(outside) < 0, "climb runs clockwise around a part"
+    (on,) = mill.profile_rect(0, 0, 10, 6, TOOL, mill.ON, corner=corner)
+    assert all(math.isclose(box_distance(p, *inner), corner, abs_tol=1e-9) for p in on)
+    (inside,) = mill.profile_rect(0, 0, 10, 6, TOOL, mill.INSIDE, corner=corner)
+    assert inside[0] == inside[-1]
+    assert signed_area(inside) > 0, "climb runs counterclockwise inside"
+    if corner > R:
+        assert all(math.isclose(corner - box_distance(p, *inner), R, abs_tol=1e-9) for p in inside)
+    else:
+        # A corner tighter than the bit gets the bit's radius: the square
+        # inside path.
+        assert inside == mill.profile_rect(0, 0, 10, 6, TOOL, mill.INSIDE)[0]
+
+
+@pytest.mark.parametrize("corner", [1.0, 1.7, 4.5])
+@pytest.mark.parametrize("stepover", [0.4, mill.MAX_POCKET_STEPOVER])
+def test_rounded_pocket_clears_to_its_rounded_walls_and_no_further(corner, stepover):
+    w, h = 16.0, 9.0
+    inner = (corner, corner, w - corner, h - corner)
+    (path,) = mill.pocket_rect(0, 0, w, h, TOOL, stepover, corner=corner)
+    # The bit's center keeps a radius off the rounded walls.
+    assert all(box_distance(p, *inner) <= corner - R + 1e-9 for p in path)
+    # With corners no tighter than the bit, everything inside is cut.
+    region = [p for p in samples(0, 0, w, h) if box_distance(p, *inner) <= corner]
+    assert all(path_distance(p, path) <= R + 1e-6 for p in region)
+    # The last loop finishes the walls all round, counterclockwise when
+    # climbing: the points from the end back to the first one off the wall.
+    wall = []
+    for p in reversed(path):
+        if not math.isclose(corner - box_distance(p, *inner), R, abs_tol=1e-9):
+            break
+        wall.append(p)
+    wall.reverse()
+    assert math.isclose(min(x for x, _ in wall), R) and math.isclose(max(x for x, _ in wall), w - R)
+    assert math.isclose(min(y for _, y in wall), R) and math.isclose(max(y for _, y in wall), h - R)
+    assert signed_area(wall) > 0
+
+
+def test_corners_square_by_default_and_checked():
+    assert mill.pocket_rect(0, 0, 12, 10, TOOL, 0.5, corner=0.0) == mill.pocket_rect(0, 0, 12, 10, TOOL, 0.5)
+    assert mill.profile_rect(0, 0, 10, 6, TOOL, corner=0.0) == mill.profile_rect(0, 0, 10, 6, TOOL)
+    assert mill.rounded_rectangle(4, 3, 0, 0) == [(0, 0), (4, 0), (4, 3), (0, 3), (0, 0)]
+    outline = mill.rounded_rectangle(0, 0, 10, 6, 3)
+    assert outline[0] == outline[-1]
+    assert all(math.isclose(box_distance(p, 3, 3, 7, 3), 3, abs_tol=1e-9) for p in outline)
+    with pytest.raises(mill.MillError, match="at most half the shorter side, 3 mm"):
+        mill.profile_rect(0, 0, 10, 6, TOOL, corner=3.5)
+    with pytest.raises(mill.MillError, match="0 or more"):
+        mill.pocket_rect(0, 0, 10, 6, TOOL, 0.5, corner=-1)

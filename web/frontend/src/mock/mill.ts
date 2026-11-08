@@ -1,11 +1,11 @@
 // The Plot page's operations for the in-page mock backend, the backend's
 // twin: the same paths, groups, labels and refusals for the same numbers,
-// with a spindle or a laser, so the page can be tried without a machine.
-// Also the turn and shift of a whole job and the group settings a job made
-// again keeps.
+// with a spindle or a laser, one operation a job or several, so the page
+// can be tried without a machine. Also the turn and shift of a whole job
+// and the group settings a job made again keeps.
 
 import { turnPoint } from "../align.ts";
-import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point } from "../types.ts";
+import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point, Recipe } from "../types.ts";
 import { checkDepth, checkPower, checkSpeed, computeStats, DEFAULT_DEPTH, DEFAULT_PLUNGE, formatG, MAX_GROUP_PASSES, MAX_VALUE, MAX_VALUE_TEXT, type RateLimits } from "./jobs.ts";
 
 export const DEFAULT_TOLERANCE = 0.005;
@@ -15,6 +15,7 @@ export const MAX_POCKET_STEPOVER = 0.85;
 const EPSILON = 1e-9;
 const BORE_SLACK = 0.05;
 const MAX_POINTS = 5000;
+export const MAX_OPERATIONS = 100;
 
 /** An operation the page would send: every field there, with the backend's defaults. */
 export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOperation {
@@ -39,6 +40,7 @@ export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOpe
         y0: 0,
         x1: 0,
         y1: 0,
+        corner: 0,
         cx: 0,
         cy: 0,
         diameter: 0,
@@ -46,6 +48,7 @@ export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOpe
         job: null,
         sizes: null,
         bore: true,
+        holes: null,
     };
 }
 
@@ -63,6 +66,17 @@ function checkStepover(stepover: number): void {
 
 export function box(x0: number, y0: number, x1: number, y1: number): [number, number, number, number] {
     return [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+}
+
+/** A rectangle's corner radius: none (0), up to half its shorter side, where the rounded corners meet. */
+export function checkCorner(corner: number, xa: number, ya: number, xb: number, yb: number): void {
+    if (!(Number.isFinite(corner) && corner >= 0)) {
+        throw new Error("the corner radius must be 0 or more");
+    }
+    const half = Math.min(xb - xa, yb - ya) / 2;
+    if (corner > half + EPSILON) {
+        throw new Error(`the corner radius is at most half the shorter side, ${formatG(half)} mm`);
+    }
 }
 
 export function arc(cx: number, cy: number, radius: number, start: number, sweep: number, tolerance = DEFAULT_TOLERANCE): Path {
@@ -110,6 +124,52 @@ function rectangle(xa: number, ya: number, xb: number, yb: number, ccw: boolean,
     return [...ordered, ordered[0]!];
 }
 
+/**
+ * A closed loop round the box with each corner a quarter circle of radius
+ * `rho` about a center `rho` inside it, counterclockwise or clockwise,
+ * starting and ending at the middle of the corner arc nearest `near` (the
+ * low corner's without one).
+ */
+function roundedLoop(xa: number, ya: number, xb: number, yb: number, rho: number, ccw: boolean, near: Point | null = null, tolerance = DEFAULT_TOLERANCE): Path {
+    const centers: Point[] = [[xa + rho, ya + rho], [xb - rho, ya + rho], [xb - rho, yb - rho], [xa + rho, yb - rho]];
+    const starts = [180, 270, 0, 90];
+    const halves = centers.map(([cx, cy], index): [Path, Path] => [
+        arc(cx, cy, rho, starts[index]!, 45, tolerance),
+        arc(cx, cy, rho, starts[index]! + 45, 45, tolerance),
+    ]);
+    let first = 0;
+    if (near !== null) {
+        let best = Infinity;
+        halves.forEach(([, late], index) => {
+            const distance = Math.hypot(late[0]![0] - near[0], late[0]![1] - near[1]);
+            if (distance < best) {
+                best = distance;
+                first = index;
+            }
+        });
+    }
+    const path: Path = [...halves[first]![1]];
+    for (let step = 1; step < 4; step++) {
+        const [early, late] = halves[(first + step) % 4]!;
+        path.push(...early, ...late.slice(1));
+    }
+    path.push(...halves[first]![0]);
+    if (!ccw) {
+        path.reverse();
+    }
+    return path;
+}
+
+/** The rectangle's own outline, closed, counterclockwise: from the low corner when its corners are square, else from the middle of the low corner's arc. */
+export function roundedRectangle(x0: number, y0: number, x1: number, y1: number, corner = 0, tolerance = DEFAULT_TOLERANCE): Path {
+    const [xa, ya, xb, yb] = box(x0, y0, x1, y1);
+    checkCorner(corner, xa, ya, xb, yb);
+    if (corner > EPSILON) {
+        return roundedLoop(xa, ya, xb, yb, corner, true, null, tolerance);
+    }
+    return [[xa, ya], [xb, ya], [xb, yb], [xa, yb], [xa, ya]];
+}
+
 export function drill(points: Point[]): Path[] {
     if (points.length === 0) {
         throw new Error("a drill needs at least one point");
@@ -153,13 +213,14 @@ export function face(x0: number, y0: number, x1: number, y1: number, tool: numbe
     return line(path);
 }
 
-export function pocketRect(x0: number, y0: number, x1: number, y1: number, tool: number, stepover: number, climb = true): Path[] {
+export function pocketRect(x0: number, y0: number, x1: number, y1: number, tool: number, stepover: number, climb = true, corner = 0, tolerance = DEFAULT_TOLERANCE): Path[] {
     checkTool(tool);
     checkStepover(stepover);
     if (stepover > MAX_POCKET_STEPOVER) {
         throw new Error(`a rectangular pocket's stepover is at most ${formatG(MAX_POCKET_STEPOVER)}: wider, its loops leave the corners between them standing`);
     }
     const [xa, ya, xb, yb] = box(x0, y0, x1, y1);
+    checkCorner(corner, xa, ya, xb, yb);
     const r = tool / 2;
     const a = xa + r;
     const c = ya + r;
@@ -178,7 +239,10 @@ export function pocketRect(x0: number, y0: number, x1: number, y1: number, tool:
     }
     insets.push(0);
     for (const t of insets) {
-        path.push(...rectangle(a + t, c + t, b - t, d - t, climb, path[path.length - 1]!));
+        const rho = corner - r - t;
+        path.push(...(rho > EPSILON
+            ? roundedLoop(a + t, c + t, b - t, d - t, rho, climb, path[path.length - 1]!, tolerance)
+            : rectangle(a + t, c + t, b - t, d - t, climb, path[path.length - 1]!)));
     }
     return line(path);
 }
@@ -209,7 +273,7 @@ export function pocketCircle(cx: number, cy: number, diameter: number, tool: num
 
 const SIDES = ["outside", "inside", "on"];
 
-export function profileRect(x0: number, y0: number, x1: number, y1: number, tool: number, side = "outside", climb = true, tolerance = DEFAULT_TOLERANCE): Path[] {
+export function profileRect(x0: number, y0: number, x1: number, y1: number, tool: number, side = "outside", climb = true, tolerance = DEFAULT_TOLERANCE, corner = 0): Path[] {
     checkTool(tool);
     if (!SIDES.includes(side)) {
         throw new Error(`the side is one of ${SIDES.join(", ")}`);
@@ -218,24 +282,37 @@ export function profileRect(x0: number, y0: number, x1: number, y1: number, tool
     if (xb - xa <= EPSILON || yb - ya <= EPSILON) {
         throw new Error("a rectangle needs a width and a height");
     }
+    checkCorner(corner, xa, ya, xb, yb);
     const r = tool / 2;
     if (side === "inside") {
         if (xb - xa < tool - EPSILON || yb - ya < tool - EPSILON) {
             throw new Error(`the rectangle is narrower than the bit: ${(xb - xa).toFixed(3)} by ${(yb - ya).toFixed(3)} mm for a ${formatG(tool)} mm bit`);
         }
-        return line(rectangle(xa + r, ya + r, Math.max(xa + r, xb - r), Math.max(ya + r, yb - r), climb));
+        const a = xa + r;
+        const c = ya + r;
+        const b = Math.max(xa + r, xb - r);
+        const d = Math.max(ya + r, yb - r);
+        if (corner - r > EPSILON) {
+            return line(roundedLoop(a, c, b, d, corner - r, climb, null, tolerance));
+        }
+        return line(rectangle(a, c, b, d, climb));
     }
     if (side === "on") {
+        if (corner > EPSILON) {
+            return line(roundedLoop(xa, ya, xb, yb, corner, !climb, null, tolerance));
+        }
         return line(rectangle(xa, ya, xb, yb, !climb));
     }
-    const path: Path = [[xa, ya - r], [xb, ya - r]];
-    path.push(...arc(xb, ya, r, -90, 90, tolerance).slice(1));
-    path.push([xb + r, yb]);
-    path.push(...arc(xb, yb, r, 0, 90, tolerance).slice(1));
-    path.push([xa, yb + r]);
-    path.push(...arc(xa, yb, r, 90, 90, tolerance).slice(1));
-    path.push([xa - r, ya]);
-    path.push(...arc(xa, ya, r, 180, 90, tolerance).slice(1));
+    const k = corner;
+    const rr = r + corner;
+    const path: Path = [[xa + k, ya - r], [xb - k, ya - r]];
+    path.push(...arc(xb - k, ya + k, rr, -90, 90, tolerance).slice(1));
+    path.push([xb + r, yb - k]);
+    path.push(...arc(xb - k, yb - k, rr, 0, 90, tolerance).slice(1));
+    path.push([xa + k, yb + r]);
+    path.push(...arc(xa + k, yb - k, rr, 90, 90, tolerance).slice(1));
+    path.push([xa - r, ya + k]);
+    path.push(...arc(xa + k, ya + k, rr, 180, 90, tolerance).slice(1));
     path[path.length - 1] = path[0]!;
     if (climb) {
         path.reverse();
@@ -298,12 +375,15 @@ function checkOperation(op: MillOperation): void {
         checkSpeed(op.plunge, "the plunge");
         checkPower(op.spindle, "the spindle speed");
     }
-    const values = [op.x0, op.y0, op.x1, op.y1, op.cx, op.cy, op.diameter, ...op.points.flat()];
+    const values = [op.x0, op.y0, op.x1, op.y1, op.cx, op.cy, op.diameter, op.corner ?? 0, ...op.points.flat()];
     if (!values.every((v) => Math.abs(v) <= MAX_VALUE)) {
         throw new Error(`coordinates must be within ${MAX_VALUE_TEXT} mm`);
     }
     if (op.points.length > MAX_POINTS) {
         throw new Error(`at most ${MAX_POINTS} points`);
+    }
+    if (op.holes && op.holes.length > MAX_POINTS) {
+        throw new Error(`at most ${MAX_POINTS} holes`);
     }
 }
 
@@ -322,9 +402,14 @@ function pointPaths(op: MillOperation, points: Point[]): Path[] {
     return drill(points);
 }
 
-function rectOutline(op: MillOperation): Path[] {
-    const [xa, ya, xb, yb] = box(op.x0, op.y0, op.x1, op.y1);
-    return [[[xa, ya], [xb, ya], [xb, yb], [xa, yb], [xa, ya]]];
+function rectOutline(op: MillOperation, corner = 0): Path[] {
+    return [roundedRectangle(op.x0, op.y0, op.x1, op.y1, corner, Math.max(0.01, corner * 0.002))];
+}
+
+/** How a rectangle's corners are rounded, for its label; nothing when square. */
+function cornersText(op: MillOperation): string {
+    const corner = op.corner ?? 0;
+    return corner > 0 ? `, corners R${formatG(corner)}` : "";
 }
 
 function circleOutline(cx: number, cy: number, diameter: number): Path {
@@ -445,11 +530,12 @@ export function buildMill(id: string, op: MillOperation, holes: HolePoint[] | nu
             size = `${mm(op.diameter)} mm circle`;
             outline = [circleOutline(op.cx, op.cy, op.diameter)];
         } else {
+            const corner = op.corner ?? 0;
             paths = op.kind === "pocket"
-                ? pocketRect(op.x0, op.y0, op.x1, op.y1, op.tool, op.stepover, op.climb)
-                : profileRect(op.x0, op.y0, op.x1, op.y1, op.tool, op.side, op.climb);
-            size = `${mm(Math.abs(op.x1 - op.x0))} x ${mm(Math.abs(op.y1 - op.y0))} mm`;
-            outline = rectOutline(op);
+                ? pocketRect(op.x0, op.y0, op.x1, op.y1, op.tool, op.stepover, op.climb, corner)
+                : profileRect(op.x0, op.y0, op.x1, op.y1, op.tool, op.side, op.climb, DEFAULT_TOLERANCE, corner);
+            size = `${mm(Math.abs(op.x1 - op.x0))} x ${mm(Math.abs(op.y1 - op.y0))} mm${cornersText(op)}`;
+            outline = rectOutline(op, corner);
         }
         const what = op.kind === "pocket" ? "pocket" : `profile ${op.side}`;
         groups = [group(op, `${what} ${size}`, paths)];
@@ -569,20 +655,106 @@ export function cutMiddle(job: Job): Point {
     return minX > maxX ? [0, 0] : [(minX + maxX) / 2, (minY + maxY) / 2];
 }
 
+/** The operations a Plot page job was made from: its list, or the one operation a job made before there were lists keeps. */
+export function recipeOps(recipe: Recipe | null | undefined): MillOperation[] {
+    if (!recipe) {
+        return [];
+    }
+    if (recipe.ops && recipe.ops.length > 0) {
+        return [...recipe.ops];
+    }
+    return recipe.mill ? [recipe.mill] : [];
+}
+
+function bitOf(op: MillOperation): string {
+    return isLaser(op) ? "spot" : "bit";
+}
+
+/**
+ * The job of several operations, not stored, and what to know about it:
+ * each operation's groups in order, every outline and hole, the notes
+ * numbered by operation when there are several. `holesOf` gives a holes
+ * operation the board job's holes where it does not carry them.
+ */
+export function buildMillJob(id: string, ops: MillOperation[], holesOf: ((op: MillOperation) => HolePoint[]) | null, limits: RateLimits, name: string | null = null): MillResponse {
+    if (ops.length === 0) {
+        throw new Error("a job needs at least one operation");
+    }
+    const first = ops[0]!;
+    ops.slice(1).forEach((op, at) => {
+        const index = at + 2;
+        const cutter = op.cutter ?? "spindle";
+        const firstCutter = first.cutter ?? "spindle";
+        if (cutter !== firstCutter) {
+            throw new Error(`operation ${index} cuts with a ${cutter} and operation 1 with a ${firstCutter}: a job cuts with one`);
+        }
+        if (Math.abs(op.tool - first.tool) > 1e-9) {
+            throw new Error(`operation ${index}'s ${formatG(op.tool)} mm ${bitOf(op)} is not operation 1's ${formatG(first.tool)} mm: a job cuts with one ${bitOf(first)}`);
+        }
+    });
+    const groups: Group[] = [];
+    const outline: Path[] = [];
+    const kept: HolePoint[] = [];
+    const notes: string[] = [];
+    const keptOps: MillOperation[] = [];
+    const names: string[] = [];
+    ops.forEach((op, at) => {
+        let holes = op.holes ?? null;
+        if (op.kind === "holes" && holes === null && holesOf !== null) {
+            holes = holesOf(op);
+        }
+        const part = buildMill(id, op, holes, limits);
+        groups.push(...part.job.groups);
+        outline.push(...part.job.outline);
+        kept.push(...(part.job.holes ?? []));
+        notes.push(...(ops.length === 1 ? part.notes : part.notes.map((note) => `${at + 1}: ${note}`)));
+        names.push(part.job.name);
+        keptOps.push(op.kind === "holes" ? { ...op, holes: (holes ?? []).map(([x, y, d]) => [x, y, d] as HolePoint) } : { ...op });
+    });
+    const made = (name ?? "").trim() || (names.length === 1 ? names[0]! : `${names[0]!} and ${names.length - 1} more`);
+    const job: Job = {
+        id,
+        name: made,
+        source: "mill",
+        spot: first.tool,
+        offset: { x: 0, y: 0 },
+        rotation: 0,
+        pads: [],
+        holes: kept,
+        design: null,
+        recipe: { ops: keptOps },
+        groups,
+        outline,
+        copper: [],
+        stats: computeStats(groups, limits),
+    };
+    return { job, notes };
+}
+
+/** A job made again from its operations put where `where` is: turned and moved as it has been since it was made, under its id. */
+export function placed(made: Job, where: Job): Job {
+    moveJob(made, where.rotation ?? 0, where.offset.x, where.offset.y);
+    made.id = where.id;
+    made.offset = { ...where.offset };
+    made.rotation = where.rotation ?? 0;
+    return made;
+}
+
 /** A Plot page job made again for a bit `tool` mm across, where it is now, its groups' settings kept. */
 export function remakeMill(job: Job, tool: number, limits: RateLimits): Job {
-    const op: MillOperation = { ...job.recipe!.mill!, tool };
+    const ops = recipeOps(job.recipe).map((op): MillOperation => ({ ...defaultOperation(), ...op, tool }));
     let made: Job;
-    if (op.kind === "holes") {
-        made = buildMill(job.id, op, job.holes ?? [], limits).job;
+    if (ops.length === 1 && ops[0]!.kind === "holes" && (ops[0]!.holes ?? null) === null) {
+        // A job made before operations kept their holes: the job's own,
+        // which moved with it.
+        made = buildMill(job.id, ops[0]!, job.holes ?? [], limits).job;
+        made.offset = { ...job.offset };
+        made.rotation = job.rotation ?? 0;
     } else {
-        made = buildMill(job.id, op, null, limits).job;
-        moveJob(made, job.rotation ?? 0, job.offset.x, job.offset.y);
+        made = placed(buildMillJob(job.id, ops, null, limits).job, job);
     }
     carrySettings(job.groups, made.groups);
     made.name = job.name;
-    made.offset = { ...job.offset };
-    made.rotation = job.rotation ?? 0;
     made.stats = computeStats(made.groups, limits);
     return made;
 }

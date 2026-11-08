@@ -2363,7 +2363,7 @@ class Backend:
         if refusal is not None:
             raise ValueError(refusal)
         recipe = job.recipe
-        if recipe is not None and recipe.mill is not None:
+        if mill.recipe_ops(recipe):
             made = mill.remake(job, width, self.streamer())
         elif recipe is not None and recipe.file:
             kept = self.store.upload_path(job.id, recipe.file)
@@ -2393,20 +2393,44 @@ class Backend:
         self.store.save(made)
         return made
 
-    def mill_operation(self, op: mill.MillOperation, keep: bool) -> dict:
-        """The Plot page's operation as a job and its notes; stored when
-        `keep`, else only shown."""
-        holes = None
-        if op.kind == mill.HOLES:
+    def mill_job(self, body: mill.MillJobBody | mill.MillOperation, keep: bool) -> dict:
+        """The Plot page's operations as a job and its notes; stored when
+        `keep`, else only shown. With `job` named, the operations replace
+        that Plot page job's in place: same id, put where that job is now,
+        turned and moved as it has been since it was made."""
+        if isinstance(body, mill.MillOperation):
+            body = mill.MillJobBody(ops=[body], name=body.name)
+        op_list = list(body.ops)
+        if len(op_list) == 1 and op_list[0].kind == mill.HOLES and not op_list[0].name and not body.name and op_list[0].holes is None:
+            source = self.store.get(op_list[0].job or "")
+            if source is not None:
+                op_list[0] = op_list[0].model_copy(update={"name": f"{source.name} holes"})
+
+        def holes_of(op: mill.MillOperation) -> list[tuple[float, float, float]]:
             source = self.store.get(op.job or "")
             if source is None:
                 raise NotFound(f"no job {op.job!r} to take holes from")
-            holes = source.holes
-            if not op.name:
-                op = op.model_copy(update={"name": f"{source.name} holes"})
-        job, notes = mill.build(op, holes, self.streamer())
+            return list(source.holes)
+
+        target = None
+        if body.job:
+            target = self.store.get(body.job)
+            if target is None:
+                raise NotFound(f"no job {body.job!r}")
+            if not mill.recipe_ops(target.recipe):
+                raise ValueError(f"{target.name} was not made on the Plot page: its operations cannot be changed there")
+            if keep and self.runner.active and self.runner.progress.job == target.id:
+                raise RunnerError("the job is running")
+        name = body.name if body.name is not None else (op_list[0].name if len(op_list) == 1 else None)
+        job, notes = mill.build_job(op_list, holes_of, None, name)
+        if target is not None:
+            mill.placed(job, target)
+        job.refresh_stats(self.streamer())
         if keep:
-            job = self.store.add(job)
+            if target is not None:
+                self.store.save(job)
+            else:
+                job = self.store.add(job)
         return {"job": job.model_dump(), "notes": notes}
 
     def markers(self) -> list[marker_list.Marker]:
@@ -4077,12 +4101,12 @@ def create_app(
         return made.model_dump()
 
     @app.post("/api/mill/plan")
-    async def plan_mill(op: mill.MillOperation):
-        return await run_in_threadpool(guarded, lambda: backend.mill_operation(op, keep=False))
+    async def plan_mill(body: mill.MillJobBody | mill.MillOperation):
+        return await run_in_threadpool(guarded, lambda: backend.mill_job(body, keep=False))
 
     @app.post("/api/mill")
-    async def make_mill(op: mill.MillOperation):
-        return await run_in_threadpool(guarded, lambda: backend.mill_operation(op, keep=True))
+    async def make_mill(body: mill.MillJobBody | mill.MillOperation):
+        return await run_in_threadpool(guarded, lambda: backend.mill_job(body, keep=True))
 
     @app.get("/api/markers")
     def get_markers():

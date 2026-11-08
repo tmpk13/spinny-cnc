@@ -555,6 +555,8 @@ interface Colors {
     high: string;
     select: string;
     highlight: string;
+    /** The sketch dimensions of the operation being edited. */
+    dim: string;
 }
 
 function readColors(node: Element): Colors {
@@ -581,6 +583,7 @@ function readColors(node: Element): Colors {
         high: cssVar(node, "--hm-high", "#dc322f"),
         select: cssVar(node, "--pv-select", "#d33682"),
         highlight: cssVar(node, "--pv-highlight", "#6c71c4"),
+        dim: cssVar(node, "--pv-dim", "#2aa198"),
     };
 }
 
@@ -588,9 +591,26 @@ function sameColors(a: Colors, b: Colors): boolean {
     return a.bg === b.bg && a.grid === b.grid && a.axis === b.axis && a.rail === b.rail && a.rmax === b.rmax
         && a.copper === b.copper && a.outline === b.outline && a.head === b.head && a.trail === b.trail
         && a.text === b.text && a.probe === b.probe && a.marker === b.marker && a.low === b.low && a.high === b.high
-        && a.select === b.select && a.highlight === b.highlight
+        && a.select === b.select && a.highlight === b.highlight && a.dim === b.dim
         && a.groups.length === b.groups.length && a.groups.every((color, index) => color === b.groups[index]);
 }
+
+/**
+ * A size drawn over the work the way a sketch shows it, board mm in and
+ * the drawing in screen px, so it reads at any zoom: the length between two
+ * points on a line set off to one side of them (`side` 1 the left of `from`
+ * to `to`, -1 the right, 0 on the points themselves, arrows at both ends),
+ * a radius from its center out to its arc at `angle` degrees, or a point
+ * marked with a cross and named.
+ */
+export type Dimension =
+    | { kind: "linear"; from: [number, number]; to: [number, number]; side: -1 | 0 | 1; text: string }
+    | { kind: "radius"; center: [number, number]; radius: number; angle: number; text: string }
+    | { kind: "point"; at: [number, number]; text: string };
+
+/** How far a dimension line stands off what it measures, and its arrowheads' length, px. */
+const DIM_OFFSET_PX = 18;
+const DIM_ARROW_PX = 7;
 
 /** Everything the still layers were drawn from; a change in any of it draws them again. */
 interface SceneKey {
@@ -683,6 +703,7 @@ export class Preview {
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
     private markers: Marker[] = [];
+    private dims: Dimension[] = [];
     private selection: PathRef[] = [];
     private highlight: JobPlace | null = null;
     /** A drag picks the paths inside its box instead of orbiting or panning. */
@@ -1217,6 +1238,7 @@ export class Preview {
             }
         }
         this.drawMarkerLabels(ctx, at, colors, width, height);
+        this.drawDimensions(ctx, at, colors);
         ctx.textAlign = "right";
         ctx.textBaseline = "bottom";
         const notes = [`elev ${Math.round(camera.pitch)} deg`];
@@ -1520,6 +1542,129 @@ export class Preview {
             }
         }
         ctx.globalAlpha = 1;
+    }
+
+    /** The sizes of the operation being edited, as a sketch shows them; none clears them. */
+    setDimensions(dims: Dimension[]): void {
+        if (dims.length === 0 && this.dims.length === 0) {
+            return;
+        }
+        this.dims = dims;
+        this.requestDraw();
+    }
+
+    get dimensions(): Dimension[] {
+        return this.dims;
+    }
+
+    /** The sketch dimensions over everything, in screen space, each text on a patch of the background so it reads over the paths. */
+    private drawDimensions(ctx: CanvasRenderingContext2D, at: (x: number, y: number, z?: number) => { x: number; y: number } | null, colors: Colors): void {
+        if (this.dims.length === 0) {
+            return;
+        }
+        type Px = { x: number; y: number };
+        const arrow = (tip: Px, from: Px): void => {
+            const length = Math.hypot(tip.x - from.x, tip.y - from.y);
+            if (length < 1e-6) {
+                return;
+            }
+            const ux = (tip.x - from.x) / length;
+            const uy = (tip.y - from.y) / length;
+            const back = { x: tip.x - ux * DIM_ARROW_PX, y: tip.y - uy * DIM_ARROW_PX };
+            ctx.beginPath();
+            ctx.moveTo(tip.x, tip.y);
+            ctx.lineTo(back.x - uy * DIM_ARROW_PX * 0.35, back.y + ux * DIM_ARROW_PX * 0.35);
+            ctx.lineTo(back.x + uy * DIM_ARROW_PX * 0.35, back.y - ux * DIM_ARROW_PX * 0.35);
+            ctx.closePath();
+            ctx.fill();
+        };
+        const segment = (a: Px, b: Px): void => {
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+        };
+        const text = (label: string, x: number, y: number): void => {
+            const w = ctx.measureText(label).width;
+            ctx.save();
+            ctx.fillStyle = colors.bg;
+            ctx.globalAlpha = 0.85;
+            ctx.fillRect(x - w / 2 - 3, y - 8, w + 6, 16);
+            ctx.restore();
+            ctx.fillText(label, x, y);
+        };
+        ctx.save();
+        ctx.strokeStyle = colors.dim;
+        ctx.fillStyle = colors.dim;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.font = "0.75rem system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        for (const dim of this.dims) {
+            if (dim.kind === "point") {
+                const p = at(dim.at[0], dim.at[1], 0);
+                if (!p) {
+                    continue;
+                }
+                segment({ x: p.x - 5, y: p.y }, { x: p.x + 5, y: p.y });
+                segment({ x: p.x, y: p.y - 5 }, { x: p.x, y: p.y + 5 });
+                ctx.textAlign = "left";
+                const w = ctx.measureText(dim.text).width;
+                ctx.textAlign = "center";
+                text(dim.text, p.x + 9 + w / 2, p.y - 10);
+            } else if (dim.kind === "radius") {
+                const c = at(dim.center[0], dim.center[1], 0);
+                const rad = (dim.angle * Math.PI) / 180;
+                const p = at(dim.center[0] + dim.radius * Math.cos(rad), dim.center[1] + dim.radius * Math.sin(rad), 0);
+                if (!c || !p) {
+                    continue;
+                }
+                segment(c, p);
+                arrow(p, c);
+                const length = Math.hypot(p.x - c.x, p.y - c.y) || 1;
+                text(dim.text, p.x + ((p.x - c.x) / length) * 16, p.y + ((p.y - c.y) / length) * 16);
+            } else {
+                const [x0, y0] = dim.from;
+                const [x1, y1] = dim.to;
+                const length = Math.hypot(x1 - x0, y1 - y0);
+                const a = at(x0, y0, 0);
+                const b = at(x1, y1, 0);
+                if (!a || !b || length < 1e-9 || Math.hypot(b.x - a.x, b.y - a.y) < 4) {
+                    continue;
+                }
+                // The side the line stands off to, taken to the screen
+                // through a point a little way out on the board.
+                let ox = 0;
+                let oy = 0;
+                if (dim.side !== 0) {
+                    const nx = (-(y1 - y0) / length) * dim.side;
+                    const ny = ((x1 - x0) / length) * dim.side;
+                    const out = at(x0 + nx * length * 0.05, y0 + ny * length * 0.05, 0);
+                    if (out) {
+                        const d = Math.hypot(out.x - a.x, out.y - a.y);
+                        if (d > 1e-6) {
+                            ox = (out.x - a.x) / d;
+                            oy = (out.y - a.y) / d;
+                        }
+                    }
+                }
+                const off = dim.side === 0 ? 0 : DIM_OFFSET_PX;
+                const da = { x: a.x + ox * off, y: a.y + oy * off };
+                const db = { x: b.x + ox * off, y: b.y + oy * off };
+                if (off > 0) {
+                    ctx.globalAlpha = 0.6;
+                    segment({ x: a.x + ox * 3, y: a.y + oy * 3 }, { x: da.x + ox * 4, y: da.y + oy * 4 });
+                    segment({ x: b.x + ox * 3, y: b.y + oy * 3 }, { x: db.x + ox * 4, y: db.y + oy * 4 });
+                    ctx.globalAlpha = 1;
+                }
+                segment(da, db);
+                arrow(da, db);
+                arrow(db, da);
+                text(dim.text, (da.x + db.x) / 2 + ox * 9, (da.y + db.y) / 2 + oy * 9);
+            }
+        }
+        ctx.restore();
     }
 
     /** The markers' names beside them, in screen space so they stay upright. */

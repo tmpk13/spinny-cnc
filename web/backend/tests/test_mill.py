@@ -157,7 +157,99 @@ def test_a_mill_job_is_made_again_for_another_bit_where_it_was_moved(client):
     assert bbox(group["paths"]) == pytest.approx((7, -1, 23, 5))
     assert group["speed"] == 123
     assert made["offset"] == {"x": 5, "y": -3}
-    assert made["recipe"]["mill"]["tool"] == 4
+    assert made["recipe"]["ops"][0]["tool"] == 4
+
+
+def test_a_job_of_several_operations_cuts_them_in_order_with_one_bit():
+    pocket = mill.MillOperation(**{**POCKET, "corner": 3})
+    drill = mill.MillOperation(kind="drill", points=[(30, 5)], tool=2, depth=2, step_down=1)
+    holes = mill.MillOperation(kind="holes", job="board", tool=2)
+    job, notes = mill.build_job([pocket, drill, holes], lambda op: [(40, 0, 2.0), (44, 0, 4.0)])
+    assert [group.label for group in job.groups] == [
+        "pocket 20 x 10 mm, corners R3",
+        "drill 1 points",
+        "drill 2.00 mm holes (1)",
+        "bore 4.00 mm holes (1)",
+    ]
+    assert job.name == "pocket 20 x 10 mm, corners R3 and 2 more"
+    assert job.spot == 2 and job.source == "mill"
+    assert notes[0].startswith("1: ") and any(note.startswith("3: ") for note in notes)
+    # The holes are kept with their operation, so it is made again without
+    # the job they came from; the rest keep what the page sent.
+    assert [op["kind"] for op in job.recipe.ops] == ["pocket", "drill", "holes"]
+    assert job.recipe.ops[2]["holes"] == [[40, 0, 2.0], [44, 0, 4.0]]
+    assert job.recipe.ops[0]["corner"] == 3
+    assert len(job.outline) == 1 + 1 + 2 and len(job.holes) == 2
+    with pytest.raises(JobImportError, match="operation 2's 1 mm bit is not operation 1's 2 mm: a job cuts with one bit"):
+        mill.build_job([pocket, drill.model_copy(update={"tool": 1})])
+    with pytest.raises(JobImportError, match="operation 2 cuts with a laser and operation 1 with a spindle"):
+        mill.build_job([pocket, drill.model_copy(update={"cutter": "laser"})])
+    with pytest.raises(JobImportError, match="at least one operation"):
+        mill.build_job([])
+
+
+def test_rounded_corners_round_the_outline_and_are_checked(client):
+    job, _ = mill.build(mill.MillOperation(**{**POCKET, "corner": 2}))
+    (outline,) = job.outline
+    assert outline[0] == pytest.approx(outline[-1])
+    assert bbox([outline]) == pytest.approx((0, 0, 20, 10))
+    assert len(outline) > 5, "arcs, not four corners"
+    face, _ = mill.build(mill.MillOperation(kind="face", x0=0, y0=0, x1=20, y1=10, corner=2))
+    assert len(face.outline[0]) == 5, "a face covers its whole rectangle, corners and all"
+    refused = client.post("/api/mill/plan", json={**POCKET, "corner": 6})
+    assert refused.status_code == 400 and "half the shorter side, 5 mm" in refused.json()["detail"]
+
+
+def test_operations_are_applied_to_a_job_in_place_where_it_was_moved(client):
+    made = client.post("/api/mill", json={"ops": [POCKET], "name": "plate"}).json()["job"]
+    assert made["name"] == "plate" and made["recipe"]["ops"][0]["kind"] == "pocket"
+    client.patch(f"/api/jobs/{made['id']}", json={"offset": {"x": 5, "y": -3}})
+    drill = {"kind": "drill", "points": [[0, 0]], "tool": 2, "depth": 1, "step_down": 0.5}
+    body = {"ops": [POCKET, drill], "name": "plate", "job": made["id"]}
+    plan = client.post("/api/mill/plan", json=body).json()["job"]
+    # The plan shows the job where it now is, and stores nothing.
+    assert plan["groups"][1]["paths"] == [[[5, -3]]]
+    assert len(client.get(f"/api/jobs/{made['id']}").json()["groups"]) == 1
+    applied = client.post("/api/mill", json=body)
+    assert applied.status_code == 200, applied.text
+    job = applied.json()["job"]
+    assert job["id"] == made["id"] and job["offset"] == {"x": 5, "y": -3}
+    assert [group["label"] for group in job["groups"]] == ["pocket 20 x 10 mm", "drill 1 points"]
+    assert bbox(job["groups"][0]["paths"]) == pytest.approx((6, -2, 24, 6))
+    assert len(client.get("/api/jobs").json()["jobs"]) == 1
+    # Only a Plot page job takes operations.
+    board = Job(name="board", source="gerber", groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
+    other = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()
+    refused = client.post("/api/mill", json={"ops": [POCKET], "job": other["id"]})
+    assert refused.status_code == 400 and "not made on the Plot page" in refused.json()["detail"]
+    assert client.post("/api/mill", json={"ops": [POCKET], "job": "none"}).status_code == 404
+    assert client.post("/api/mill", json={"ops": []}).status_code == 422
+
+
+def test_a_job_of_operations_is_made_again_for_another_bit_holes_and_all(client):
+    board = Job(name="board", source="gerber", holes=[(10, 10, 3.0)], groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
+    uploaded = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()
+    body = {"ops": [POCKET, {"kind": "holes", "job": uploaded["id"], "tool": 2}]}
+    job = client.post("/api/mill", json=body).json()["job"]
+    client.delete(f"/api/jobs/{uploaded['id']}")
+    client.patch(f"/api/jobs/{job['id']}", json={"offset": {"x": 1, "y": 0}})
+    wider = client.post(f"/api/jobs/{job['id']}/width", json={"width": 1}).json()
+    pocket, bore = wider["groups"]
+    assert bbox(pocket["paths"]) == pytest.approx((1.5, 0.5, 20.5, 9.5))
+    # The hole, kept with its operation, is bored where the job moved it.
+    assert bbox(bore["paths"]) == pytest.approx((10, 9, 12, 11))
+
+
+def test_a_job_made_before_operations_were_lists_is_still_made_again():
+    streamer = Streamer()
+    old, _ = mill.build(mill.MillOperation(**POCKET))
+    assert old.recipe.ops is None and old.recipe.mill is not None
+    remade = mill.remake(old, 4, streamer)
+    assert bbox(remade.groups[0].paths) == pytest.approx((2, 2, 18, 8))
+    holes, _ = mill.build(mill.MillOperation(kind="holes", tool=1, job="x"), [(3, 3, 1.0)])
+    holes.shift(2, 0)
+    remade = mill.remake(holes, 1, streamer)
+    assert remade.groups[0].paths == [[(5.0, 3.0)]], "its own holes, which moved with it"
 
 
 def test_a_board_is_imported_again_for_another_spot_onto_the_same_copper(client, tmp_path):

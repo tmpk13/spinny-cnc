@@ -281,7 +281,7 @@ function main(): void {
     mountJog(panel("mill-jog"), ctx, "plot");
     mountLaser(panel("mill-spindle"), ctx);
     mountMarkers(panel("mill-markers"), ctx);
-    mountPreviewPanel(panel("mill-preview"), ctx, (state) => state.millPlan ?? state.job);
+    mountPreviewPanel(panel("mill-preview"), ctx, (state) => state.millPlan ?? state.job, (state) => state.millDims);
     mountMill({ operation: panel("mill-operation"), run: panel("mill-run") }, ctx);
     // The CAM page has a preview of its own, since the panels of the
     // machine's page are not shown beside it.
