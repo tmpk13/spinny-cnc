@@ -94,6 +94,8 @@ export interface AppState {
     selection: { job: string; paths: PathRef[] } | null;
     /** The job as the JSON panel's text has it while it is edited, drawn in the stored one's place; null with no edit. */
     jobDraft: Job | null;
+    /** The selected job with the copies the Jobs panel's array fields would add, drawn on the preview until they are made or let go. */
+    arrayDraft: Job | null;
     /** The place in the job the JSON panel's caret is in, drawn on the preview; null for none. */
     highlight: (JobPlace & { job: string }) | null;
     progress: Progress | null;
@@ -152,6 +154,7 @@ export function initialState(mock: boolean): AppState {
         job: null,
         selection: null,
         jobDraft: null,
+        arrayDraft: null,
         highlight: null,
         progress: null,
         settings: null,

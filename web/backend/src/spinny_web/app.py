@@ -66,6 +66,7 @@ from .jobs import (
     DEFAULT_THICKNESS,
     DISPENSER,
     MODE_DISPENSE,
+    MAX_COMBINED,
     MODE_STENCIL,
     PASTE_LAYER,
     Group,
@@ -78,6 +79,7 @@ from .jobs import (
     apply_patch,
     check_thickness,
     check_width,
+    combined,
     import_file,
     recipe_options,
     remake_upload,
@@ -87,6 +89,7 @@ from .jobs import (
 )
 from . import markers as marker_list
 from . import mill
+from . import thumbs
 from .machines import MachineStore
 from .kinematics import (
     DEFAULT_TOLERANCE,
@@ -275,6 +278,13 @@ class Finite(BaseModel):
     """A body whose numbers are numbers: NaN and infinity are refused."""
 
     model_config = ConfigDict(allow_inf_nan=False)
+
+
+class CombineBody(Finite):
+    """Jobs to make one job of, in the order they are cut, and its name."""
+
+    ids: list[str] = Field(min_length=2, max_length=MAX_COMBINED)
+    name: str | None = None
 
 
 class JogBody(Finite):
@@ -2217,6 +2227,18 @@ class Backend:
     def clear_camlog(self) -> dict:
         return {"deleted": self.camlog.clear()}
 
+    def combine_jobs(self, ids: list[str], name: str | None = None) -> Job:
+        """A new job of the jobs named, cut in that order, stored."""
+        jobs = []
+        for job_id in ids:
+            job = self.store.get(job_id)
+            if job is None:
+                raise NotFound(f"no job {job_id!r}")
+            jobs.append(job)
+        made = combined(jobs, name)
+        made.refresh_stats(self.streamer())
+        return self.store.add(made)
+
     def replace_job(self, job_id: str, data: dict) -> Job:
         """The job under `job_id` made what `data` says, as the page's JSON
         editor or its regrouping of paths sends it: checked as an upload
@@ -4081,9 +4103,23 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such job")
         return job.model_dump()
 
+    @app.get("/api/jobs/{job_id}/thumb.svg")
+    def get_job_thumb(job_id: str):
+        # The page asks with a key of the job's state in the address, so a
+        # drawing can be kept as long as the address is the same.
+        job = backend.store.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return Response(content=thumbs.thumbnail(job), media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
+
     @app.patch("/api/jobs/{job_id}")
     def patch_job(job_id: str, patch: JobPatch):
         return guarded(lambda: backend.patch_job(job_id, patch)).model_dump()
+
+    @app.post("/api/jobs/combine")
+    async def combine_jobs(body: CombineBody):
+        made = await run_in_threadpool(guarded, lambda: backend.combine_jobs(body.ids, body.name))
+        return made.model_dump()
 
     @app.put("/api/jobs/{job_id}")
     async def put_job(job_id: str, body: dict):

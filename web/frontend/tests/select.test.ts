@@ -163,6 +163,52 @@ describe("moving picked paths between groups", () => {
     });
 });
 
+describe("arrays of picked paths", () => {
+    test("the copies are drawn as the fields change, kept with Make array, and stay picked", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        mountJobs(root, ctx);
+        const made = await api.uploadJob(new File([SVG], "lines.svg"), { anchor: "keep" });
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.id);
+        const row = root.querySelector(".picked-row") as HTMLElement;
+        const button = (label: string): HTMLButtonElement => Array.from(row.querySelectorAll("button")).find((b) => b.textContent === label)!;
+        const field = (label: string): HTMLInputElement => row.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
+        const type = (label: string, value: string): void => {
+            field(label).value = value;
+            field(label).dispatchEvent(new Event("input"));
+        };
+        store.set({ selection: { job: made.id, paths: [[1, 0]] } });
+        button("Array").click();
+        expect(row.querySelector(".array-box")?.classList.contains("hidden")).toBe(false);
+        // Three in a row, 5 mm apart: drawn, not yet kept.
+        type("Step x", "5");
+        let draft = store.get().arrayDraft!;
+        expect(draft.groups[1]!.paths.map((path) => path[0])).toEqual([[20, 0], [25, 0], [30, 0]]);
+        expect(shownJob(store.get())).toBe(draft);
+        expect(row.querySelector(".array-box")?.textContent).toContain("2 copies of 1 path");
+        // Round the origin, four in a whole turn.
+        button("Circular").click();
+        type("Count", "4");
+        draft = store.get().arrayDraft!;
+        expect(draft.groups[1]!.paths.length).toBe(4);
+        expect(Math.round(draft.groups[1]!.paths[2]![0]![0])).toBe(-20);
+        type("Count", "1");
+        expect(store.get().arrayDraft).toBeNull();
+        expect(row.querySelector(".array-box")?.textContent).toContain("2 to 1000");
+        type("Count", "4");
+        button("Make array").click();
+        await settleMany();
+        expect(calls.filter((call) => call.name === "replaceJob").length).toBe(1);
+        const job = store.get().job!;
+        expect(job.groups[1]!.paths.length).toBe(4);
+        expect(job.recipe ?? null).toBeNull();
+        expect(store.get().arrayDraft).toBeNull();
+        expect(store.get().selection).toEqual({ job: made.id, paths: [[1, 1], [1, 2], [1, 3]] });
+        expect(row.querySelector(".array-box")?.classList.contains("hidden")).toBe(true);
+        root.remove();
+    });
+});
+
 describe("the job as JSON", () => {
     test("reads text back as a job, or says what is wrong", () => {
         const job = lineJob();

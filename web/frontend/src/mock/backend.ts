@@ -45,6 +45,7 @@ import {
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
+import { thumbKey, thumbnail } from "./thumbs.ts";
 import { buildMillJob, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
@@ -3355,6 +3356,9 @@ export class MockBackend implements Api, EventFeed {
         this.order.push(id);
     }
 
+    /** The jobs' small drawings, each with the key it was drawn for. */
+    private readonly thumbs = new Map<string, { key: string; url: string }>();
+
     private newId(): string {
         const id = (this.nextId++).toString(16).padStart(4, "0");
         return id;
@@ -3498,6 +3502,59 @@ export class MockBackend implements Api, EventFeed {
         }
         this.jobStore.set(id, made);
         return structuredClone(made);
+    }
+
+    async combineJobs(ids: string[], name: string | null = null): Promise<Job> {
+        if (ids.length < 2 || ids.length > 50) {
+            throw new ApiError(422, "combine 2 to 50 jobs");
+        }
+        const jobs = ids.map((id) => {
+            const job = this.jobStore.get(id);
+            if (!job) {
+                throw new ApiError(404, `no job '${id}'`);
+            }
+            return job;
+        });
+        const tools = [...new Set(jobs.flatMap((job) => job.groups.map((group) => group.tool).filter((tool): tool is NonNullable<typeof tool> => !!tool)))].sort();
+        if (tools.length > 1) {
+            throw new ApiError(400, `the jobs cut with different tools (${tools.join(", ")}): a job runs on one machine`);
+        }
+        const names = jobs.map((job) => job.name);
+        const layers = new Set(jobs.map((job) => job.layer ?? null));
+        const groups = jobs.flatMap((job) => job.groups.map((group) => ({ ...structuredClone(group), label: `${job.name}: ${group.label}` })));
+        const made: Job = {
+            id: this.newId(),
+            name: (name ?? "").trim() || (names.length <= 3 ? names.join(" + ") : `${names[0]!} and ${names.length - 1} more`),
+            source: "combined",
+            layer: layers.size === 1 ? [...layers][0]! : null,
+            spot: jobs[0]!.spot,
+            offset: { x: 0, y: 0 },
+            rotation: 0,
+            groups,
+            outline: jobs.flatMap((job) => structuredClone(job.outline)),
+            copper: jobs.flatMap((job) => structuredClone(job.copper)),
+            pads: jobs.flatMap((job) => structuredClone(job.pads ?? [])),
+            holes: jobs.flatMap((job) => structuredClone(job.holes ?? [])),
+            design: null,
+            recipe: null,
+            stats: computeStats(groups, this.limits()),
+        };
+        this.jobStore.set(made.id, made);
+        this.order.push(made.id);
+        return structuredClone(made);
+    }
+
+    /** The job's small drawing as a data address, drawn again only when its key changes. */
+    jobThumbUrl(summary: JobSummary): string {
+        const key = thumbKey(summary);
+        const kept = this.thumbs.get(summary.id);
+        if (kept && kept.key === key) {
+            return kept.url;
+        }
+        const job = this.jobStore.get(summary.id);
+        const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(job ? thumbnail(job) : "<svg xmlns=\"http://www.w3.org/2000/svg\"/>")}`;
+        this.thumbs.set(summary.id, { key, url });
+        return url;
     }
 
     async setJobWidth(id: string, width: number): Promise<Job> {

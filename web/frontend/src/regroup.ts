@@ -234,3 +234,118 @@ export function boxedAfter(current: PathRef[], refs: PathRef[], additive: boolea
     const keys = new Set(current.map(refKey));
     return [...current, ...refs.filter((ref) => !keys.has(refKey(ref)))];
 }
+
+/**
+ * A pattern of copies of the picked paths: `count` instances in all, the
+ * picked ones included. Linear steps each copy on by (dx, dy) mm; circular
+ * turns each about (cx, cy) by an even share of `sweep` degrees,
+ * counterclockwise when positive: a whole turn spreads the instances
+ * round it, anything less puts the last on the end of the sweep.
+ */
+export type ArraySpec =
+    | { kind: "linear"; count: number; dx: number; dy: number }
+    | { kind: "circular"; count: number; cx: number; cy: number; sweep: number };
+
+/** Instances in one pattern, and paths one pattern may make, at most. */
+export const MAX_ARRAY = 1000;
+export const MAX_ARRAY_PATHS = 100_000;
+
+/** The turn between two instances of a circular pattern, degrees. */
+export function arrayStep(spec: Extract<ArraySpec, { kind: "circular" }>): number {
+    return Math.abs(spec.sweep) >= 360 - 1e-9 ? spec.sweep / spec.count : spec.sweep / (spec.count - 1);
+}
+
+/** Where copy `k` (1 for the first copy) puts a point. */
+export function arrayPlace(spec: ArraySpec, k: number): (point: [number, number]) => [number, number] {
+    if (spec.kind === "linear") {
+        return ([x, y]) => [x + spec.dx * k, y + spec.dy * k];
+    }
+    const angle = (arrayStep(spec) * k * Math.PI) / 180;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return ([x, y]) => {
+        const dx = x - spec.cx;
+        const dy = y - spec.cy;
+        return [spec.cx + dx * c - dy * s, spec.cy + dx * s + dy * c];
+    };
+}
+
+/** Why the picked paths cannot be made a pattern; empty when they can. */
+export function arrayRefusal(job: Job, refs: PathRef[], spec: ArraySpec): string {
+    const picked = tidyRefs(job, refs);
+    if (picked.length === 0) {
+        return "pick some paths in the preview first";
+    }
+    for (const g of new Set(picked.map(([group]) => group))) {
+        const group = job.groups[g]!;
+        if ((group.joints?.length ?? 0) > 0) {
+            return `${group.label}: a joint-space group's paths are drawn from its joints and cannot be copied`;
+        }
+        if ((group.moves?.length ?? 0) > 0) {
+            return `${group.label}: a model's moves cannot be copied`;
+        }
+    }
+    if (!Number.isInteger(spec.count) || spec.count < 2 || spec.count > MAX_ARRAY) {
+        return `the count is a whole number from 2 to ${MAX_ARRAY}, the picked paths included`;
+    }
+    const numbers = spec.kind === "linear" ? [spec.dx, spec.dy] : [spec.cx, spec.cy, spec.sweep];
+    if (!numbers.every(Number.isFinite)) {
+        return "every field needs a number";
+    }
+    if (spec.kind === "linear" && spec.dx === 0 && spec.dy === 0) {
+        return "the copies need a step: give a step in x or y";
+    }
+    if (spec.kind === "circular" && spec.sweep === 0) {
+        return "the copies need an angle to turn through";
+    }
+    if (picked.length * (spec.count - 1) > MAX_ARRAY_PATHS) {
+        return `${picked.length * (spec.count - 1)} copies are too many: at most ${MAX_ARRAY_PATHS} paths at once`;
+    }
+    return "";
+}
+
+/**
+ * The job with copies of the picked paths, each copy at the end of the
+ * group its path is in (with its pad's area, in a group of dots), and
+ * where the copies are in it, to pick them. The paths picked stay where
+ * they are. Throws with the reason when `arrayRefusal` has one.
+ */
+export function arrayPaths(job: Job, refs: PathRef[], spec: ArraySpec): Regrouped {
+    const refusal = arrayRefusal(job, refs, spec);
+    if (refusal) {
+        throw new Error(refusal);
+    }
+    const picked = tidyRefs(job, refs);
+    const made = structuredClone(job);
+    const copies: PathRef[] = [];
+    for (let k = 1; k < spec.count; k++) {
+        const place = arrayPlace(spec, k);
+        for (const [g, p] of picked) {
+            const group = made.groups[g]!;
+            const source = job.groups[g]!;
+            group.paths.push(source.paths[p]!.map((point) => place(point)));
+            if (isDotGroup(source)) {
+                group.areas = [...(group.areas ?? []), source.areas?.[p] ?? 0];
+            }
+            copies.push([g, group.paths.length - 1]);
+        }
+    }
+    return { job: made, refs: copies };
+}
+
+/** The middle of the box round the picked paths; the origin when none is picked. */
+export function pathsMiddle(job: Job, refs: PathRef[]): [number, number] {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const [g, p] of tidyRefs(job, refs)) {
+        for (const [x, y] of job.groups[g]!.paths[p]!) {
+            x0 = Math.min(x0, x);
+            y0 = Math.min(y0, y);
+            x1 = Math.max(x1, x);
+            y1 = Math.max(y1, y);
+        }
+    }
+    return x0 > x1 ? [0, 0] : [(x0 + x1) / 2, (y0 + y1) / 2];
+}

@@ -66,6 +66,7 @@ export class ApiError extends Error {
     }
 }
 
+import { thumbKey } from "./mock/thumbs.ts";
 import type { Marker, MarkersResponse, MillJobRequest, MillResponse } from "./types.ts";
 import type {
     CameraPose,
@@ -156,6 +157,10 @@ export interface Api {
     setJobWidth(id: string, width: number): Promise<Job>;
     /** The job made what `job` says, its id kept, as the JSON editor or a regrouping of paths sends it; answers the job as kept. */
     replaceJob(id: string, job: Job): Promise<Job>;
+    /** A new job of the jobs named, cut in that order, each group's label led by its job's name. */
+    combineJobs(ids: string[], name?: string | null): Promise<Job>;
+    /** Where the job's small drawing for the list is: the address changes with what the drawing shows. */
+    jobThumbUrl(job: JobSummary): string;
     /** A stencil made again with every opening shrunk by `margin` mm. */
     setJobMargin(id: string, margin: number): Promise<Job>;
     deleteJob(id: string): Promise<void>;
@@ -538,6 +543,14 @@ export class HttpApi implements Api {
 
     replaceJob(id: string, job: Job): Promise<Job> {
         return this.request<Job>("PUT", `/api/jobs/${encodeURIComponent(id)}`, job);
+    }
+
+    combineJobs(ids: string[], name: string | null = null): Promise<Job> {
+        return this.request<Job>("POST", "/api/jobs/combine", { ids, name });
+    }
+
+    jobThumbUrl(job: JobSummary): string {
+        return `${this.base}/api/jobs/${encodeURIComponent(job.id)}/thumb.svg?v=${thumbKey(job)}`;
     }
 
     setJobMargin(id: string, margin: number): Promise<Job> {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { formatJson, lineColumn, offsetOf, placeOf, stepsAt } from "../src/jsontext.ts";
-import { freshLabel, groupRefs, regroup, regroupRefusal, removePaths, tidyRefs } from "../src/regroup.ts";
+import { arrayPaths, arrayPlace, arrayRefusal, arrayStep, freshLabel, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../src/regroup.ts";
 import type { Group, Job } from "../src/types.ts";
 
 function group(label: string, paths: [number, number][][], extra: Partial<Group> = {}): Group {
@@ -85,6 +85,52 @@ describe("regrouping paths", () => {
         expect(tidyRefs(before, [[1, 0], [0, 1], [1, 0], [0, 5], [4, 0]])).toEqual([[0, 1], [1, 0]]);
         expect(groupRefs(before, 0)).toEqual([[0, 0], [0, 1]]);
         expect(freshLabel(job([group("group", []), group("group 2", [])]))).toBe("group 3");
+    });
+});
+
+describe("arrays of paths", () => {
+    const round = (point: [number, number]): [number, number] => [Math.round(point[0] * 1e9) / 1e9 + 0, Math.round(point[1] * 1e9) / 1e9 + 0];
+
+    test("a linear array steps each copy on, at the end of its own group, the picked paths left where they are", () => {
+        const before = job([group("a", [line(0), line(1)]), group("b", [line(5)])]);
+        const { job: after, refs } = arrayPaths(before, [[0, 1], [1, 0]], { kind: "linear", count: 3, dx: 10, dy: 0 });
+        expect(after.groups[0]!.paths).toEqual([line(0), line(1), [[10, 1], [15, 1]], [[20, 1], [25, 1]]]);
+        expect(after.groups[1]!.paths).toEqual([line(5), [[10, 5], [15, 5]], [[20, 5], [25, 5]]]);
+        // The copies, to pick them, in the order they were made.
+        expect(refs).toEqual([[0, 2], [1, 1], [0, 3], [1, 2]]);
+        // Deleting what was picked takes the array back.
+        expect(removePaths(after, refs).groups.map((g) => g.paths)).toEqual(before.groups.map((g) => g.paths));
+        expect(before.groups[0]!.paths.length).toBe(2);
+    });
+
+    test("a circular array spreads a whole turn evenly and puts the last copy on the end of a part turn", () => {
+        const full = { kind: "circular" as const, count: 4, cx: 0, cy: 0, sweep: 360 };
+        expect(arrayStep(full)).toBe(90);
+        expect(round(arrayPlace(full, 1)([10, 0]))).toEqual([0, 10]);
+        expect(round(arrayPlace(full, 3)([10, 0]))).toEqual([0, -10]);
+        const part = { kind: "circular" as const, count: 3, cx: 5, cy: 0, sweep: -90 };
+        expect(arrayStep(part)).toBe(-45);
+        expect(round(arrayPlace(part, 2)([10, 0]))).toEqual([5, -5]);
+        const { job: after } = arrayPaths(job([group("a", [[[10, 0], [12, 0]]])]), [[0, 0]], full);
+        expect(after.groups[0]!.paths.map((path) => round(path[0]!))).toEqual([[10, 0], [0, 10], [-10, 0], [0, -10]]);
+    });
+
+    test("dots keep their areas, and what cannot be copied says why", () => {
+        const dots = job([group("dots", [[[1, 1]], [[2, 2]]], { areas: [0.5, 0.7] })]);
+        const { job: after } = arrayPaths(dots, [[0, 1]], { kind: "linear", count: 2, dx: 0, dy: 3 });
+        expect(after.groups[0]!.paths).toEqual([[[1, 1]], [[2, 2]], [[2, 5]]]);
+        expect(after.groups[0]!.areas).toEqual([0.5, 0.7, 0.7]);
+        const before = job([group("a", [line(0)]), group("joints", [line(1)], { joints: [[[0, 0], [1, 1]]] } as Partial<Group>)]);
+        expect(arrayRefusal(before, [], { kind: "linear", count: 2, dx: 1, dy: 0 })).toBe("pick some paths in the preview first");
+        expect(arrayRefusal(before, [[1, 0]], { kind: "linear", count: 2, dx: 1, dy: 0 })).toContain("joint-space");
+        expect(arrayRefusal(before, [[0, 0]], { kind: "linear", count: 1, dx: 1, dy: 0 })).toContain("2 to 1000");
+        expect(arrayRefusal(before, [[0, 0]], { kind: "linear", count: 2.5, dx: 1, dy: 0 })).toContain("whole number");
+        expect(arrayRefusal(before, [[0, 0]], { kind: "linear", count: 2, dx: 0, dy: 0 })).toContain("a step");
+        expect(arrayRefusal(before, [[0, 0]], { kind: "circular", count: 2, cx: 0, cy: 0, sweep: 0 })).toContain("an angle");
+        expect(arrayRefusal(before, [[0, 0]], { kind: "linear", count: 2, dx: Number.NaN, dy: 0 })).toContain("needs a number");
+        expect(() => arrayPaths(before, [[1, 0]], { kind: "linear", count: 2, dx: 1, dy: 0 })).toThrow("joint-space");
+        expect(pathsMiddle(before, [[0, 0]])).toEqual([2.5, 0]);
+        expect(pathsMiddle(before, [])).toEqual([0, 0]);
     });
 });
 

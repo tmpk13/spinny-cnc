@@ -5,13 +5,13 @@ import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts"
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
 import { isDispensing, isMilling, profileOf } from "../profile.ts";
-import { type PathRef, type Regrouped, boxedAfter, groupRefs, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
+import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
 import { calibrationTest } from "./calibrate.ts";
 import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
-import type { Ctx } from "./context.ts";
+import { choiceRow, type Ctx } from "./context.ts";
 
 export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gts,.gbs,.gtp,.gbp,.gto,.gbo,.gm1,.kicad_pcb,.gcode,.nc";
 
@@ -334,8 +334,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
     const details = el("div", { class: "job-details" });
     const saveButton = button("Save job", () => saveJob(), "btn btn-quiet btn-small");
     const deleteAllButton = button("Delete all", () => removeAll(), "btn btn-quiet btn-small");
+    // The jobs checked to be made one, in the order they were checked,
+    // which is the order they are cut in.
+    let combining: string[] = [];
+    const combineButton = button("Combine", () => combine(), "btn btn-quiet btn-small");
+    combineButton.title = "make one job of the jobs checked in the list, cut in the order they were checked; the jobs themselves stay";
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, saveButton, deleteAllButton)),
+        el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, combineButton, saveButton, deleteAllButton)),
         drop, chooser, options, centerTest(ctx), calibrationTest(ctx), list, details,
     );
 
@@ -567,20 +572,57 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
 
     function renderList(state: AppState): void {
         const selected = state.job?.id ?? null;
+        combining = combining.filter((id) => state.jobs.some((job) => job.id === id));
         replace(list, ...state.jobs.map((job) => {
             const item = el("li", { class: job.id === selected ? "selected" : "" });
+            const check = el("input", { type: "checkbox", class: "job-check", "aria-label": `combine ${job.name}`, title: "check two or more jobs to combine them" }) as HTMLInputElement;
+            check.checked = combining.includes(job.id);
+            check.addEventListener("change", () => {
+                combining = check.checked ? [...combining.filter((id) => id !== job.id), job.id] : combining.filter((id) => id !== job.id);
+                renderCombine();
+            });
+            // A small drawing of the job; its address changes with what it
+            // shows, so an unchanged job's is not asked for again.
+            const thumb = el("img", { class: "job-thumb", src: ctx.api.jobThumbUrl(job), alt: "", loading: "lazy", decoding: "async" });
             const pick = el("button", { type: "button", class: "job-pick", onclick: () => void ctx.selectJob(job.id) },
-                el("span", { class: "job-name" }, job.name),
-                el("span", { class: "muted" }, job.layer ? ` ${job.source} ${job.layer}` : ` ${job.source}`),
-                job.stats ? el("span", { class: "muted job-stat" }, ` ${formatLength(job.stats.length_mm)}, ${formatDuration(job.stats.seconds)}`) : null,
+                thumb,
+                el("span", { class: "job-text" },
+                    el("span", { class: "job-name" }, job.name),
+                    el("span", { class: "muted" }, job.layer ? ` ${job.source} ${job.layer}` : ` ${job.source}`),
+                    job.stats ? el("span", { class: "muted job-stat" }, ` ${formatLength(job.stats.length_mm)}, ${formatDuration(job.stats.seconds)}`) : null,
+                ),
             );
             const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small");
-            item.append(pick, remove);
+            item.append(check, pick, remove);
             return item;
         }));
         if (state.jobs.length === 0) {
             list.append(el("li", { class: "muted" }, "no jobs yet"));
         }
+        renderCombine();
+    }
+
+    function renderCombine(): void {
+        setLocked(combineButton, combining.length < 2);
+        combineButton.textContent = combining.length >= 2 ? `Combine ${combining.length}` : "Combine";
+    }
+
+    async function combine(): Promise<void> {
+        const jobs = combining.map((id) => ctx.store.get().jobs.find((job) => job.id === id)).filter((job): job is NonNullable<typeof job> => job !== undefined);
+        if (jobs.length < 2) {
+            return;
+        }
+        if (!(await askConfirm(`Make one job of ${jobs.map((job) => job.name).join(", then ")}? It cuts them in that order; the jobs themselves stay.`, "Combine"))) {
+            return;
+        }
+        const made = await ctx.call(ctx.api.combineJobs(jobs.map((job) => job.id)));
+        if (!made) {
+            return;
+        }
+        combining = [];
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.id);
+        ctx.toast("info", `made ${made.name}`);
     }
 
     async function removeJob(id: string, name: string): Promise<void> {
@@ -628,12 +670,147 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
     pickedMove.title = "move the picked paths into the group chosen; a new group takes the settings of the first group they come from";
     const pickedDelete = button("Delete paths", () => deletePicked(), "btn btn-quiet btn-small");
     const pickedClear = button("Clear", () => ctx.store.set({ selection: null }), "btn btn-quiet btn-small");
+    const pickedArray = button("Array", () => toggleArray(), "btn btn-quiet btn-small btn-toggle");
+    pickedArray.title = "copies of the picked paths in a row or round a center, drawn as they are typed";
+    pickedArray.setAttribute("aria-pressed", "false");
+    // The pattern of copies: a row stepped by x and y, or a turn about a
+    // center, the count taking the picked paths in. The copies are drawn
+    // on the preview as the fields change, and kept with Make array.
+    let arrayKind: ArraySpec["kind"] = "linear";
+    const arrayKinds = choiceRow<ArraySpec["kind"]>(["linear", "circular"], arrayKind, (kind) => {
+        arrayKind = kind;
+        arrayChanged();
+    }, (kind) => (kind === "linear" ? "Linear" : "Circular"), "Array");
+    const arrayField = (value: number, label: string, min?: number): HTMLInputElement => {
+        const field = numberField({ value, min, step: 1 });
+        field.setAttribute("aria-label", label);
+        field.addEventListener("input", () => arrayChanged());
+        return field;
+    };
+    const arrayCount = arrayField(3, "Count", 2);
+    const arrayDx = arrayField(10, "Step x");
+    const arrayDy = arrayField(0, "Step y");
+    const arrayCx = arrayField(0, "Center x");
+    const arrayCy = arrayField(0, "Center y");
+    const arraySweep = arrayField(360, "Sweep");
+    const arrayMiddle = button("Middle", () => {
+        const state = ctx.store.get();
+        if (state.job) {
+            [arrayCx.value, arrayCy.value] = pathsMiddle(state.job, picked(state)).map((v) => formatMm(v)) as [string, string];
+            arrayChanged();
+        }
+    }, "btn btn-quiet btn-small");
+    arrayMiddle.title = "turn about the middle of the picked paths";
+    const arrayAxis = button("Origin", () => {
+        arrayCx.value = "0";
+        arrayCy.value = "0";
+        arrayChanged();
+    }, "btn btn-quiet btn-small");
+    arrayAxis.title = "turn about the board's origin, the rotation axis on the polar machine";
+    const linearFields = el("div", { class: "field-row" }, labeled("Step x mm", arrayDx), labeled("Step y mm", arrayDy));
+    const circularFields = el("div", { class: "field-row" }, labeled("Center x mm", arrayCx), labeled("Center y mm", arrayCy), arrayMiddle, arrayAxis, labeled("Sweep deg", arraySweep));
+    circularFields.title = "a whole turn (360) spreads the copies evenly round it; less puts the last one on the end of the sweep; positive turns counterclockwise";
+    const arrayNote = el("p", { class: "muted hint" });
+    const arrayMake = button("Make array", () => makeArray(), "btn btn-primary btn-small");
+    const arrayCancel = button("Cancel", () => closeArray(), "btn btn-quiet btn-small");
+    const arrayBox = el("div", { class: "array-box hidden" },
+        arrayKinds,
+        el("div", { class: "field-row" }, labeled("Count", arrayCount)),
+        linearFields,
+        circularFields,
+        arrayNote,
+        el("div", { class: "button-row" }, arrayMake, arrayCancel),
+    );
     const pickedRow = el("div", { class: "picked-row hidden" },
         pickedCount,
-        el("div", { class: "picked-controls" }, pickedTarget, pickedLabel, pickedMove, pickedDelete, pickedClear),
+        el("div", { class: "picked-controls" }, pickedTarget, pickedLabel, pickedMove, pickedDelete, pickedArray, pickedClear),
+        arrayBox,
     );
     pickedTarget.addEventListener("change", () => renderPicked(ctx.store.get()));
     ctx.store.subscribe((state) => renderPicked(state), ["selection", "job"]);
+
+    /** The pattern the array fields give. */
+    function arraySpec(): ArraySpec {
+        const read = (field: HTMLInputElement): number => parseNumber(field.value) ?? Number.NaN;
+        return arrayKind === "linear"
+            ? { kind: "linear", count: read(arrayCount), dx: read(arrayDx), dy: read(arrayDy) }
+            : { kind: "circular", count: read(arrayCount), cx: read(arrayCx), cy: read(arrayCy), sweep: read(arraySweep) };
+    }
+
+    function toggleArray(): void {
+        if (arrayBox.classList.contains("hidden")) {
+            arrayBox.classList.remove("hidden");
+            pickedArray.setAttribute("aria-pressed", "true");
+            arrayChanged();
+        } else {
+            closeArray();
+        }
+    }
+
+    function closeArray(): void {
+        arrayBox.classList.add("hidden");
+        pickedArray.setAttribute("aria-pressed", "false");
+        if (ctx.store.get().arrayDraft !== null) {
+            ctx.store.set({ arrayDraft: null });
+        }
+    }
+
+    /** The copies as the fields give them, drawn on the preview, or why there are none. */
+    function arrayChanged(): void {
+        linearFields.classList.toggle("hidden", arrayKind !== "linear");
+        circularFields.classList.toggle("hidden", arrayKind !== "circular");
+        const state = ctx.store.get();
+        const job = state.job;
+        const refs = picked(state);
+        if (arrayBox.classList.contains("hidden") || job === null) {
+            return;
+        }
+        const spec = arraySpec();
+        const refusal = arrayRefusal(job, refs, spec);
+        setLocked(arrayMake, refusal !== "");
+        if (refusal) {
+            arrayNote.textContent = refusal;
+            ctx.store.set({ arrayDraft: null });
+            return;
+        }
+        const made = arrayPaths(job, refs, spec);
+        arrayNote.textContent = `${made.refs.length} ${made.refs.length === 1 ? "copy" : "copies"} of ${refs.length} ${refs.length === 1 ? "path" : "paths"}, drawn on the preview; each goes at the end of its path's group`;
+        ctx.store.set({ arrayDraft: made.job });
+    }
+
+    async function makeArray(): Promise<void> {
+        const state = ctx.store.get();
+        const job = state.job;
+        const refs = picked(state);
+        if (job === null || refs.length === 0) {
+            return;
+        }
+        let result: Regrouped;
+        try {
+            result = arrayPaths(job, refs, arraySpec());
+        } catch (error) {
+            ctx.toast("error", error instanceof Error ? error.message : String(error));
+            return;
+        }
+        // The copies are nothing the job's file or operations would make
+        // again, so a job made from either stops being made again from it.
+        if (job.recipe && !(await askConfirm(
+            `Add ${result.refs.length} copies to ${job.name}? It is then no longer made again from its ${job.recipe.file ? "file" : "operations"} (another width, the Plot page), which would lose them.`,
+            "Make array",
+        ))) {
+            return;
+        }
+        const made = await ctx.call(ctx.api.replaceJob(job.id, { ...result.job, recipe: null }));
+        if (!made) {
+            return;
+        }
+        closeArray();
+        await ctx.reloadJob(job.id);
+        // The copies stay picked: Delete paths takes the array back.
+        ctx.store.set({ selection: { job: job.id, paths: result.refs } });
+        await ctx.refreshJobs();
+        ctx.toast("info", `${result.refs.length} ${result.refs.length === 1 ? "copy" : "copies"} added to ${job.name}`);
+    }
 
     /** The picked paths of the selected job, those it still has. */
     function picked(state: AppState): PathRef[] {
@@ -647,8 +824,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         const refs = picked(state);
         pickedRow.classList.toggle("hidden", job === null || refs.length === 0);
         if (job === null || refs.length === 0) {
+            closeArray();
             return;
         }
+        // The copies follow the paths picked.
+        arrayChanged();
         const groups = new Set(refs.map(([g]) => g)).size;
         pickedCount.textContent = `${refs.length} ${refs.length === 1 ? "path" : "paths"} picked from ${groups} ${groups === 1 ? "group" : "groups"}`;
         const chosen = pickedTarget.value;

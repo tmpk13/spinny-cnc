@@ -1377,6 +1377,34 @@ input.num.field.invalid {
     color: var(--strong);
 }
 
+/* A job's row: the box that picks it for combining, its small drawing
+   beside its name, and Delete. */
+.job-check {
+    flex: none;
+    margin-left: 0.6rem;
+}
+
+.job-list .job-pick {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding-left: 0.4rem;
+}
+
+.job-thumb {
+    flex: none;
+    width: 3rem;
+    height: 3rem;
+    object-fit: contain;
+    border-radius: calc(var(--radius) / 2);
+    background: var(--pv-bg);
+    border: thin solid var(--border);
+}
+
+.job-text {
+    min-width: 0;
+}
+
 .job-stat {
     font-size: 0.8rem;
 }

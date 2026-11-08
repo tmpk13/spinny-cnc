@@ -741,3 +741,82 @@ def test_a_job_is_replaced_by_its_edited_json_and_checked_as_an_upload_is():
             jobs.replaced("ab12", bad, old)
     with pytest.raises(JobImportError, match="must be a JSON object"):
         jobs.replaced("ab12", [], old)
+
+
+def test_jobs_combine_into_one_cut_in_order_their_groups_named_by_job(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from spinny_web.app import Backend, create_app
+
+    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        def upload(job: Job) -> dict:
+            body = job.model_dump_json().encode()
+            return client.post("/api/jobs", files={"file": (f"{job.name}.json", body, "application/json")}).json()
+
+        a = upload(Job(name="lid", layer="F.Cu", holes=[(1, 1, 0.8)], outline=[[(0, 0), (1, 0)]], groups=[Group(label="cut", paths=[[(0, 0), (5, 0)]])]))
+        b = upload(Job(name="base", layer="F.Cu", groups=[Group(label="cut", power=900, paths=[[(0, 9), (5, 9)]]), Group(label="mark", paths=[[(1, 1)]])]))
+        client.patch(f"/api/jobs/{b['id']}", json={"offset": {"x": 10, "y": 0}})
+        made = client.post("/api/jobs/combine", json={"ids": [b["id"], a["id"]]})
+        assert made.status_code == 200, made.text
+        job = made.json()
+        assert job["name"] == "base + lid" and job["source"] == "combined" and job["layer"] == "F.Cu"
+        assert [group["label"] for group in job["groups"]] == ["base: cut", "base: mark", "lid: cut"]
+        # Where the jobs are now: the moved one's paths moved, the new job not.
+        assert job["groups"][0]["paths"] == [[[10, 9], [15, 9]]] and job["groups"][0]["power"] == 900
+        assert job["offset"] == {"x": 0, "y": 0} and job["recipe"] is None
+        assert job["holes"] == [[1, 1, 0.8]] and len(job["outline"]) == 1
+        assert len(client.get("/api/jobs").json()["jobs"]) == 3
+        named = client.post("/api/jobs/combine", json={"ids": [a["id"], b["id"]], "name": "set"}).json()
+        assert named["name"] == "set"
+        assert client.post("/api/jobs/combine", json={"ids": [a["id"]]}).status_code == 422
+        assert client.post("/api/jobs/combine", json={"ids": [a["id"], "none"]}).status_code == 404
+        laser = upload(Job(name="engrave", groups=[Group(label="burn", tool="laser", paths=[[(0, 0), (1, 1)]])]))
+        mill_job = upload(Job(name="slot", groups=[Group(label="mill", tool="spindle", depth=0.5, paths=[[(0, 0), (1, 1)]])]))
+        refused = client.post("/api/jobs/combine", json={"ids": [laser["id"], mill_job["id"]]})
+        assert refused.status_code == 400 and "different tools (laser, spindle)" in refused.json()["detail"]
+
+
+def test_a_combined_name_stays_short():
+    from spinny_web.jobs import combined_name
+
+    assert combined_name(["a", "b", "c"]) == "a + b + c"
+    assert combined_name(["a", "b", "c", "d"]) == "a and 3 more"
+
+
+def test_a_job_is_drawn_small_for_the_list(tmp_path):
+    import xml.etree.ElementTree as ET
+
+    from fastapi.testclient import TestClient
+
+    from spinny_web import thumbs
+    from spinny_web.app import Backend, create_app
+
+    long_path = [(math.cos(i / 500 * math.pi), math.sin(i / 500 * math.pi)) for i in range(1001)]
+    job = Job(name="t", groups=[
+        Group(label="ring", paths=[[(x * 20, y * 20) for x, y in long_path]]),
+        Group(label="dots", enabled=False, paths=[[(1, 1)], [(2, 2)]]),
+    ])
+    svg = ET.fromstring(thumbs.thumbnail(job))
+    ns = "{http://www.w3.org/2000/svg}"
+    (line,) = svg.iter(f"{ns}polyline")
+    # The ring, 1001 points 0.126 mm apart, keeps one a 100th of its 40 mm
+    # box (0.4 mm) on: between its perimeter over 0.4 and over 0.526.
+    perimeter = 40 * math.pi
+    assert perimeter / 0.526 < len(line.get("points").split()) < perimeter / 0.4 + 2
+    # The board's Y is up: the ring's top is at the box's top.
+    assert svg.get("viewBox").split()[1] == "-22.40"
+    dots = list(svg.iter(f"{ns}circle"))
+    assert len(dots) == 2
+    groups = [g for g in svg.iter(f"{ns}g") if g.get("fill") == thumbs.COLORS[1]]
+    assert groups and groups[0].get("opacity") == "0.3", "a group switched off is faint"
+    assert svg.get("width") == "64" and svg.get("height") == "64"
+    assert "polyline" not in thumbs.thumbnail(Job(name="empty"))
+
+    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        made = client.post("/api/jobs", files={"file": ("t.json", job.model_dump_json().encode(), "application/json")}).json()
+        reply = client.get(f"/api/jobs/{made['id']}/thumb.svg?v=1")
+        assert reply.status_code == 200 and reply.headers["content-type"] == "image/svg+xml"
+        assert reply.text.startswith("<svg")
+        assert client.get("/api/jobs/none/thumb.svg").status_code == 404

@@ -19,8 +19,12 @@ export const HEIGHTS_LABEL = "Heights";
 export const GRID_LABEL = "Grid";
 export const BOX_LABEL = "Box select";
 
-/** The selected job, or its edit in the JSON panel while one is typed. */
+/** The selected job, with the copies an array would add while its fields are open, or its edit in the JSON panel while one is typed. */
 export function shownJob(state: AppState): Job | null {
+    const array = state.arrayDraft;
+    if (array !== null && state.job !== null && array.id === state.job.id) {
+        return array;
+    }
     const draft = state.jobDraft;
     return draft !== null && state.job !== null && draft.id === state.job.id ? draft : state.job;
 }
@@ -135,7 +139,7 @@ export function mountPreviewPanel(
         shownJob = job?.id ?? null;
         shownPlan = plan;
         preview.setJob(job, keep);
-    }, ["job", "millPlan", "jobDraft"]);
+    }, ["job", "millPlan", "jobDraft", "arrayDraft"]);
     // The picked paths and the JSON panel's place, for the job shown.
     ctx.store.subscribe((state) => {
         const job = show(state);
@@ -143,7 +147,7 @@ export function mountPreviewPanel(
         preview.setSelection(job !== null && selection !== null && selection.job === job.id ? selection.paths : NONE);
         const highlight = state.highlight;
         preview.setHighlight(job !== null && highlight !== null && highlight.job === job.id ? highlight : null);
-    }, ["selection", "highlight", "job", "millPlan", "jobDraft"]);
+    }, ["selection", "highlight", "job", "millPlan", "jobDraft", "arrayDraft"]);
     ctx.store.subscribe((state) => {
         preview.setMarkers(state.markers);
     }, ["markers"]);

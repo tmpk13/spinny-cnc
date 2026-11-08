@@ -764,6 +764,53 @@ def from_json(text: str, name: str) -> Job:
     return checked(job)
 
 
+# Jobs one combined job may be made of.
+MAX_COMBINED = 50
+
+
+def combined_name(names: list[str]) -> str:
+    """A combined job's name from its jobs': joined by a plus up to three,
+    the first and how many more past that."""
+    if len(names) <= 3:
+        return " + ".join(names)
+    return f"{names[0]} and {len(names) - 1} more"
+
+
+def combined(jobs: list[Job], name: str | None = None) -> Job:
+    """One job of several, cut in the order given: every group of the
+    first, then every group of the next, each label led by its job's name
+    so groups of the same name stay apart, with their outlines, copper,
+    pads and holes, all where the jobs are now (an offset or a turn is in
+    the paths already, so the new job starts unmoved). Nothing keeps a
+    combined job's paths to make them again, so it has no recipe, and a
+    design map is one job's, so it has none either. Jobs whose groups were
+    made for different tools are refused: a job runs on one machine."""
+    if not 2 <= len(jobs) <= MAX_COMBINED:
+        raise JobImportError(f"combine 2 to {MAX_COMBINED} jobs")
+    tools = sorted({group.tool for job in jobs for group in job.groups if group.tool})
+    if len(tools) > 1:
+        raise JobImportError(f"the jobs cut with different tools ({', '.join(tools)}): a job runs on one machine")
+    groups: list[Group] = []
+    for job in jobs:
+        for group in job.groups:
+            copy = group.model_copy(deep=True)
+            copy.label = f"{job.name}: {group.label}"
+            groups.append(copy)
+    layers = {job.layer for job in jobs}
+    made = Job(
+        name=(name or "").strip() or combined_name([job.name for job in jobs]),
+        source="combined",
+        layer=layers.pop() if len(layers) == 1 else None,
+        spot=jobs[0].spot,
+        groups=groups,
+        outline=[list(path) for job in jobs for path in job.outline],
+        copper=[list(path) for job in jobs for path in job.copper],
+        pads=[pad for job in jobs for pad in job.pads],
+        holes=[hole for job in jobs for hole in job.holes],
+    )
+    return checked(made)
+
+
 def replaced(job_id: str, data: dict, old: Job) -> Job:
     """The job `data` describes, in place of `old` under its id: a job's
     JSON as the page's editor holds it, checked as an upload is. A field

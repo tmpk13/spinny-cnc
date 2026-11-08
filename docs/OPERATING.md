@@ -30,7 +30,18 @@ it back, *Box select* picks every path inside a dragged box, a click on a
 group's name in the Jobs panel all of its paths); the Jobs panel then moves
 the picked paths into a group of their own, which takes the first one's
 settings and can be given its own power, speed, passes or focus, or into a
-group the job has, or deletes them. The *Job JSON* panel under the preview
+group the job has, or deletes them. *Array* copies the picked paths: in a
+*Linear* row stepped by x and y, or *Circular* round a center (*Middle* of
+the picked paths, the *Origin*, or typed) through a sweep, a whole turn
+spreading them evenly; the count takes the picked paths in, the copies are
+drawn on the preview as the fields change, and *Make array* keeps them,
+each at the end of its path's group, picked, so *Delete paths* takes them
+back. A job made from a file or on the Plot page is then no longer made
+again from it, which would lose the copies. Each job in the list carries a
+small drawing of itself; checking two or more and pressing *Combine* makes
+one new job of them, cut in the order they were checked, each group's name
+led by its job's (the jobs themselves stay; jobs made for different tools
+do not combine). The *Job JSON* panel under the preview
 shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*.
