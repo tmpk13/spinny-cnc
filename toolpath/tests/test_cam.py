@@ -565,6 +565,17 @@ def test_the_spindle_starts_at_the_safe_height_after_a_laser_group():
         assert lines[at + 1 : at + 5] == ["G0 Z3.000", "M5", "M3 S9000", "G4 P2"]
 
 
+def test_a_rapid_from_zero_counts_its_time():
+    profile = parse(MINIMAL.replace('role = "x"\n', 'role = "x"\nrapid = 600\n'), "bench")
+    seconds = []
+    for end in (0.0, 0.5):
+        group = milled("two", 0.0, "bit")
+        group.paths = [[(1.0 + end, 0.0), (end, 0.0)], [(60.0 + end, 0.0), (61.0 + end, 0.0)]]
+        seconds.append(post.post(built_of(group), profile).report.seconds)
+    # The 60 mm rapid between the paths takes 6 s at 600 mm/min from X0 as from X0.5.
+    assert seconds[0] == pytest.approx(seconds[1]) and seconds[0] > 6.0
+
+
 def test_a_job_with_nothing_enabled_is_refused_as_a_run_refuses_it():
     switched_off = built_of(milled("a", 0.0, "bit", enabled=False), burnt("b", 2.0, enabled=False), burnt("empty", 4.0))
     switched_off.groups[2].paths = []

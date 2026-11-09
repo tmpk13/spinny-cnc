@@ -131,6 +131,10 @@ run = "uv run python -m spinny_laser.machine_keys > toolpath/tests/data/machine-
 description = "Write the Plot page samples fixture the page's in-page twin of the operations is checked against"
 run = "uv run python -m spinny_web.mill > web/backend/tests/data/mill-samples.json"
 
+[tasks.cam-fixture]
+description = "Write the CAM post samples fixture the page's mock post is checked against, line for line"
+run = "uv run python -m spinny_web.cam > web/backend/tests/data/cam-post-samples.json"
+
 [tasks.load-uf2]
 description = "Build the uf2 and write it onto a board held in BOOTSEL, here or on a Pi over ssh, through the /mnt/pico automount from relay/pico-udev-setup.sh: mise run load-uf2 -- pi@spinny.local"
 depends = ["uf2"]

@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import millText from "../../../cam/mill-3axis.toml" with { type: "text" };
+import twinSamples from "../../backend/tests/data/cam-post-samples.json" with { type: "json" };
 import { ApiError, type Api } from "../src/api.ts";
 import { activePage } from "../src/dom.ts";
 import { createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { buildCamJob, camGcode, formatValue, parseProfile, setValue, summaryOf } from "../src/mock/cam.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
-import type { Group, Job } from "../src/types.ts";
+import type { CamGcodeResponse, Group, Job } from "../src/types.ts";
 import { describeTool, mountCam, reportLines, sourceFields } from "../src/views/cam.ts";
 import { PAGES, mountTabs, readPage, showPage } from "../src/views/tabs.ts";
 
@@ -253,6 +254,44 @@ describe("the mock's CAM profiles", () => {
         expect(lines).toContain("(slot G1 Z-5 F2000 : 1 paths)");
         expect(lines).toContain("(a  b c d e: 1 paths)");
     });
+});
+
+/** A job the backend wrote through a profile: the program and its report, or the refusal. */
+interface TwinSample {
+    name: string;
+    profile: string;
+    job: unknown;
+    written?: CamGcodeResponse;
+    error?: string;
+}
+
+describe("the mock's post, line for line with the backend's (mise run cam-fixture)", () => {
+    for (const sample of twinSamples as unknown as TwinSample[]) {
+        test(sample.name, () => {
+            const profile = parseProfile(sample.profile, "twin");
+            const job = sample.job as Job;
+            if (sample.error !== undefined) {
+                let refused = "";
+                try {
+                    camGcode(profile, job);
+                } catch (error) {
+                    refused = error instanceof Error ? error.message : String(error);
+                }
+                expect(refused).toBe(sample.error);
+                return;
+            }
+            const written = camGcode(profile, job);
+            const expected = sample.written!;
+            expect(written.text.split("\n")).toEqual(expected.text.split("\n"));
+            expect(written.filename).toBe(expected.filename);
+            const { length_mm: length, seconds, ...report } = written.report;
+            const { length_mm: wantLength, seconds: wantSeconds, ...wantReport } = expected.report;
+            expect(report).toEqual(wantReport);
+            // The sums may part in the last place, which a rounding can show.
+            expect(Math.abs(length - wantLength)).toBeLessThanOrEqual(0.0011);
+            expect(Math.abs(seconds - wantSeconds)).toBeLessThanOrEqual(0.11);
+        });
+    }
 });
 
 describe("the mock backend's CAM routes", () => {

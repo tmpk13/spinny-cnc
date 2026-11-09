@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from spinny_laser import cam, camjob, post
 from spinny_web.app import Backend, create_app
-from spinny_web.cam import read_design
+from spinny_web.cam import read_design, twin_samples
 from spinny_web.jobs import Group
 from spinny_web.kinematics import Spindle, Streamer
 from spinny_web.link import Link
@@ -352,3 +352,8 @@ def test_a_run_refuses_a_job_of_more_than_one_bit(client, fake):
     # A laser machine has no bits to change: the groups' tool is what it refuses.
     with pytest.raises(ValueError, match="made for a spindle"):
         Streamer().check_job(stored)
+
+
+def test_the_fixture_the_page_s_post_is_checked_against_is_current():
+    fixture = Path(__file__).resolve().parent / "data" / "cam-post-samples.json"
+    assert json.loads(fixture.read_text(encoding="utf-8")) == json.loads(json.dumps(twin_samples())), "run: mise run cam-fixture"

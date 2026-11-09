@@ -166,31 +166,31 @@ class _Cartesian:
         return seconds
 
     def go(self, point: Point | None = None, z: float | None = None, setup: dict[cam.Axis, float] | None = None) -> None:
-        """A rapid in machine coordinates: the plane, the depth, or setup axes."""
+        """A rapid in machine coordinates: the plane, the depth, or setup axes.
+        An axis already there is left out, but for a park or a home; one
+        that nothing has put anywhere yet adds no time."""
         words: list[str] = []
         moves: dict[cam.Axis, float] = {}
+
+        def step(axis: cam.Axis, value: float, always: bool = False) -> None:
+            before = self.at[axis.letter]
+            if not always and before is not None and abs(before - value) <= 1e-9:
+                return
+            words.append(f"{axis.letter}{self.num(value)}")
+            moves[axis] = value - before if before is not None else 0.0
+            self.at[axis.letter] = value
+            self.reach(axis, value)
+
         if point is not None:
             assert self.x is not None and self.y is not None
             mx, my = self.machine_xy(point)
-            for axis, value in ((self.x, mx), (self.y, my)):
-                if self.at[axis.letter] is None or abs(self.at[axis.letter] - value) > 1e-9:  # type: ignore[operator]
-                    words.append(f"{axis.letter}{self.num(value)}")
-                    moves[axis] = value - (self.at[axis.letter] or value)
-                    self.at[axis.letter] = value
-                    self.reach(axis, value)
+            step(self.x, mx)
+            step(self.y, my)
         if z is not None:
             assert self.depth is not None
-            value = self.machine_z(z)
-            if self.at[self.depth.letter] is None or abs(self.at[self.depth.letter] - value) > 1e-9:  # type: ignore[operator]
-                words.append(f"{self.depth.letter}{self.num(value)}")
-                moves[self.depth] = value - (self.at[self.depth.letter] or value)
-                self.at[self.depth.letter] = value
-                self.reach(self.depth, value)
+            step(self.depth, self.machine_z(z))
         for axis, value in (setup or {}).items():
-            words.append(f"{axis.letter}{self.num(value)}")
-            moves[axis] = value - (self.at[axis.letter] or value)
-            self.at[axis.letter] = value
-            self.reach(axis, value)
+            step(axis, value, always=True)
         if words:
             self.emit("G0 " + " ".join(words))
             self.report.seconds += self.rapid_seconds(moves)

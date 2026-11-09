@@ -32,7 +32,7 @@ import type {
     Point,
     Tool,
 } from "../types.ts";
-import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, isBottom, layerOf, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, formatG, isBottom, layerOf, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
 import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
@@ -1476,11 +1476,54 @@ function commentLine(text: string): string {
     return `(${text.replace(LINE_BREAKING, " ").replaceAll("(", "[").replaceAll(")", "]")})`;
 }
 
-/** A job as gcode for a cartesian profile, the way the backend's post writes it. */
+/** A group has something to cut: paths, or a model's moves. */
+function hasCuts(group: Group): boolean {
+    return group.paths.length > 0 || (group.moves?.length ?? 0) > 0;
+}
+
+/**
+ * Python's f"{value:.{decimals}f}": the nearest, with an exact tie to the
+ * even digit where toFixed takes it away from zero. toFixed at 100 places
+ * is the double's exact value for anything a program writes, so a tie is
+ * a 5 there followed by nothing but zeros.
+ */
+function fixed(value: number, decimals: number): string {
+    const exact = Math.abs(value).toFixed(100);
+    const point = exact.indexOf(".");
+    const kept = exact.slice(point + 1, point + 1 + decimals);
+    const tie = /^50*$/.test(exact.slice(point + 1 + decimals));
+    const last = Number((decimals > 0 ? kept : exact.slice(0, point)).slice(-1));
+    if (tie && last % 2 === 0) {
+        const text = decimals > 0 ? `${exact.slice(0, point)}.${kept}` : exact.slice(0, point);
+        return value < 0 ? `-${text}` : text;
+    }
+    return value.toFixed(decimals);
+}
+
+/** Python's round(value, digits), as the backend rounds the report. */
+function rounded(value: number, digits: number): number {
+    return Number(fixed(value, digits));
+}
+
+/**
+ * A job as gcode for a cartesian profile, the way the backend's post
+ * writes it, line for line, with the same report: the mock has no polar
+ * writer. A spindle group is milled the way a run streams one (the tool up,
+ * the spindle started and given its spin-up, each path a rapid to its
+ * start, a plunge, the cuts at depth and a rise, pass by pass down to the
+ * depth), one cut with another bit than the spindle group before it after a
+ * stop to change the bit; a laser group is cut at its height on a depth
+ * axis, with its power on every cut.
+ */
 export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
+    for (const group of job.groups) {
+        if ((group.joints?.length ?? 0) > 0) {
+            throw new Error(`${group.label}: a joint-space group has no board paths to write`);
+        }
+    }
     // A job with nothing switched on to cut is refused, as a run refuses it:
     // its program would only rise and go home.
-    if (!job.groups.some((group) => group.enabled && (group.paths.length > 0 || (group.moves?.length ?? 0) > 0))) {
+    if (!job.groups.some((group) => group.enabled && hasCuts(group))) {
         throw new Error("the job has nothing enabled to cut: switch on a group");
     }
     const x = profile.axes.find((axis) => axis.role === "x");
@@ -1491,319 +1534,381 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
     }
     const post = profile.post;
     const lines: string[] = [];
-    const report: CamGcodeReport = { lines: 0, cuts: 0, length_mm: 0, seconds: 0, extents: {}, warnings: [] };
-    const at: Record<string, number | undefined> = {};
-    const num = (value: number): string => (Math.abs(value) < 10 ** -post.decimals ? 0 : value).toFixed(post.decimals);
-    const warn = (text: string): void => {
-        if (!report.warnings.includes(text)) {
-            report.warnings.push(text);
-        }
-    };
-    const reach = (axis: CamAxis, value: number): void => {
-        const span = report.extents[axis.letter] ?? [value, value];
-        report.extents[axis.letter] = [Math.min(span[0], value), Math.max(span[1], value)];
-    };
-    // One warning for each end of an axis the program goes past, at the farthest it goes.
-    const checkTravel = (): void => {
-        for (const axis of profile.axes) {
-            const span = report.extents[axis.letter];
-            if (!span) {
-                continue;
-            }
-            if (axis.min !== null && span[0] < axis.min - 1e-9) {
-                warn(`${axis.letter} reaches ${span[0].toFixed(3)}, under its min ${axis.min}`);
-            }
-            if (axis.max !== null && span[1] > axis.max + 1e-9) {
-                warn(`${axis.letter} reaches ${span[1].toFixed(3)}, over its max ${axis.max}`);
-            }
-        }
-    };
-    // A park or a home is written even where the axis already is, as the
-    // backend's post writes it; a move on the way is left out when it goes nowhere.
-    const word = (axis: CamAxis, value: number, always = false): string | null => {
-        const before = at[axis.letter];
-        if (!always && before !== undefined && Math.abs(before - value) <= 1e-9) {
-            return null;
-        }
-        at[axis.letter] = value;
-        reach(axis, value);
-        return `${axis.letter}${num(value)}`;
-    };
-    const go = (words: (string | null)[]): void => {
-        const kept = words.filter((w): w is string => w !== null);
-        if (kept.length > 0) {
-            lines.push(`G0 ${kept.join(" ")}`);
-        }
-    };
-    let feed: number | null = null;
-    let power: number | null = null;
+    let cuts = 0;
+    let length = 0;
+    let seconds = 0;
+    // Machine coordinates reached, by axis letter: [min, max].
+    const extents: Record<string, [number, number]> = {};
+    const warnings: string[] = [];
+    // Machine coordinates the controller is at, by letter; missing until written.
+    const at = new Map<string, number>();
+    // The output's state, the modal feed and power words; null for off or not yet written.
     let output: [Tool, number] | null = null;
-    const off = (): void => {
-        if (output) {
-            lines.push("M5");
-            output = null;
-            power = null;
-        }
-    };
-    const cut = (point: Point, rate: number, s: number | null, label: string): void => {
-        const before: [number | undefined, number | undefined] = [at[x.letter], at[y.letter]];
-        const words = [word(x, point[0] + x.offset), word(y, point[1] + y.offset)].filter((w): w is string => w !== null);
-        if (words.length === 0) {
-            return;
-        }
-        const capped = Math.min(rate, x.rate ?? rate, y.rate ?? rate);
-        if (capped < rate) {
-            warn(`${label}: ${rate} mm/min is over the axes' rate; written as ${capped}`);
-        }
-        if (feed !== capped) {
-            words.push(`F${num(capped)}`);
-            feed = capped;
-        }
-        if (s !== null && power !== s) {
-            words.push(`S${s}`);
-            power = s;
-        }
-        lines.push(`G1 ${words.join(" ")}`);
-        const dx = before[0] === undefined ? 0 : point[0] + x.offset - before[0];
-        const dy = before[1] === undefined ? 0 : point[1] + y.offset - before[1];
-        const length = Math.hypot(dx, dy);
-        report.cuts++;
-        report.length_mm += length;
-        report.seconds += (length / capped) * 60;
-    };
-    const safeZ = (): number => (depth ? depth.offset + (depth.safe ?? 0) : 0);
-    const plunge = (over: number, rate: number): void => {
-        if (!depth) {
-            return;
-        }
-        const w = word(depth, depth.offset + over);
-        if (w === null) {
-            return;
-        }
-        const capped = Math.min(rate, depth.rate ?? rate);
-        const words = [w];
-        if (feed !== capped) {
-            words.push(`F${num(capped)}`);
-            feed = capped;
-        }
-        lines.push(`G1 ${words.join(" ")}`);
-    };
-    // A move in three dimensions at its feed along the move, held where an
-    // axis' share of it would go over that axis' rate.
-    const capped3: Set<string> = new Set();
-    const cut3 = (point: Point, over: number, rate: number, label: string): void => {
-        const words: string[] = [];
-        const moved: [CamAxis, number][] = [];
-        for (const [axis, value] of [[x, point[0] + x.offset], [y, point[1] + y.offset], [depth!, depth!.offset + over]] as [CamAxis, number][]) {
-            const before = at[axis.letter];
-            const w = word(axis, value);
-            if (w !== null) {
-                words.push(w);
-                moved.push([axis, before === undefined ? 0 : value - before]);
-            }
-        }
-        if (words.length === 0) {
-            return;
-        }
-        const length = Math.hypot(...moved.map(([, delta]) => delta));
-        let held = rate;
-        for (const [axis, delta] of moved) {
-            if (axis.rate !== null && length > 0 && Math.abs(delta) > 0) {
-                held = Math.min(held, (axis.rate * length) / Math.abs(delta));
-            }
-        }
-        if (held < rate - 1e-9 && !capped3.has(label)) {
-            capped3.add(label);
-            warn(`${label}: ${rate} mm/min is over an axis' rate on some moves; those are written slower`);
-        }
-        if (feed === null || Math.abs(feed - held) > 1e-9) {
-            words.push(`F${num(held)}`);
-            feed = held;
-        }
-        lines.push(`G1 ${words.join(" ")}`);
-        report.cuts++;
-        report.length_mm += length;
-        report.seconds += (length / held) * 60;
-    };
-    const spindle = (speed: number): void => {
-        if (output && output[0] === "spindle" && output[1] === speed) {
-            return;
-        }
-        if (output && output[0] !== "spindle") {
-            off();
-        }
-        lines.push(`${post.spindle_on} S${speed}`);
-        output = ["spindle", speed];
-        if (post.spinup > 0) {
-            lines.push(`G4 P${post.spinup}`);
-            report.seconds += post.spinup;
-        }
-    };
-
-    const enabled = job.groups.filter((group) => group.enabled && (group.paths.length > 0 || (group.moves?.length ?? 0) > 0));
-    lines.push(commentLine(`${job.name}: ${enabled.length} operations through ${profile.name}`));
-    lines.push(commentLine(`board X/Y on ${profile.axes.map((axis) => `${axis.letter}=${axis.role}`).join(" ")}`));
-    lines.push(...post.header);
-    if (depth) {
-        go([word(depth, safeZ())]);
-    }
-    const parks = profile.axes.filter((axis) => axis.role === "setup" && axis.park !== null);
-    if (parks.length > 0) {
-        go(parks.map((axis) => word(axis, axis.park!, true)));
-    }
+    let feedWord: number | null = null;
+    let powerWord: number | null = null;
+    // The kinds of move a capped feed was said for, once each.
+    const capped = new Set<string>();
     // The id of the bit the last spindle group that named one cut with: the
     // one fitted, as far as the program knows; null before any.
     let bit: string | null = null;
-    for (const group of enabled) {
-        const moves = group.moves ?? [];
-        const kind: Tool = group.tool ?? profile.tools[0]!.kind;
-        const groupBit = group.tool_id ?? null;
-        if (kind === "spindle" && groupBit !== null) {
-            if (bit !== null && groupBit !== bit) {
-                // A stop for the group's bit: the spindle off, the tool up,
-                // the bit named and a pause the operator resumes once it is
-                // fitted and Z is zeroed with it.
-                const name = group.tool_name || groupBit;
-                off();
-                if (depth) {
-                    go([word(depth, safeZ())]);
-                }
-                lines.push(commentLine(`change the bit to ${name} and zero Z with it as before, then resume`));
-                lines.push("M0");
-                warn(`${group.label}: the program stops (M0) to change the bit to ${name}`);
-            }
-            bit = groupBit;
+
+    // A number with the profile's decimals, a negative zero written as zero.
+    const num = (value: number): string => {
+        const text = fixed(value, post.decimals);
+        return text.startsWith("-") && Number(text) === 0 ? text.slice(1) : text;
+    };
+    const warn = (text: string): void => {
+        if (!warnings.includes(text)) {
+            warnings.push(text);
         }
-        lines.push(commentLine(`${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths`));
-        if (moves.length > 0) {
-            // A model's paths: each from the safe height down to its first
-            // point, its moves as they are, and up again.
-            if (!depth) {
-                throw new Error(`${group.label}: a model's paths need a depth axis in the profile`);
+    };
+    const reach = (axis: CamAxis, value: number): void => {
+        const span = extents[axis.letter];
+        extents[axis.letter] = span ? [Math.min(span[0], value), Math.max(span[1], value)] : [value, value];
+    };
+    const safe = (): number => depth!.safe!;
+    // One axis of a move: its word unless it is there already (a park or a
+    // home is written all the same), and how far it goes, 0 from where
+    // nothing has put it yet.
+    const step = (axis: CamAxis, value: number, words: string[], moved: [CamAxis, number][], always = false): void => {
+        const before = at.get(axis.letter);
+        if (!always && before !== undefined && Math.abs(before - value) <= 1e-9) {
+            return;
+        }
+        words.push(`${axis.letter}${num(value)}`);
+        moved.push([axis, before !== undefined ? value - before : 0]);
+        at.set(axis.letter, value);
+        reach(axis, value);
+    };
+    // A rapid in machine coordinates: the plane, the depth, or setup axes;
+    // it takes as long as its slowest axis at its rapid, else at its rate.
+    const go = (point: Point | null, z: number | null = null, setup: [CamAxis, number][] = []): void => {
+        const words: string[] = [];
+        const moved: [CamAxis, number][] = [];
+        if (point) {
+            step(x, point[0] + x.offset, words, moved);
+            step(y, point[1] + y.offset, words, moved);
+        }
+        if (z !== null) {
+            step(depth!, depth!.offset + z, words, moved);
+        }
+        for (const [axis, value] of setup) {
+            step(axis, value, words, moved, true);
+        }
+        if (words.length === 0) {
+            return;
+        }
+        lines.push(`G0 ${words.join(" ")}`);
+        let longest = 0;
+        for (const [axis, distance] of moved) {
+            const rate = axis.rapid || axis.rate;
+            if (rate) {
+                longest = Math.max(longest, (Math.abs(distance) / rate) * 60);
             }
-            if (group.tool !== "spindle") {
-                throw new Error(`${group.label}: a model's paths are cut with a spindle`);
+        }
+        seconds += longest;
+    };
+    // The feed, held to the slowest of the axes that move; said once.
+    const cap = (feed: number, axes: CamAxis[], what: string): number => {
+        let held = feed;
+        for (const axis of axes) {
+            if (axis.rate !== null && axis.rate < held) {
+                held = axis.rate;
             }
-            if (!(group.power > 0)) {
-                throw new Error(`${group.label}: a spindle needs a speed above 0`);
+        }
+        if (held < feed && !capped.has(what)) {
+            capped.add(what);
+            warn(`${what}: ${formatG(feed)} mm/min is over the axes' rate; written as ${formatG(held)}`);
+        }
+        return held;
+    };
+    // A G1 across the plane at the feed, with S for a laser.
+    const cut = (point: Point, feed: number, power: number | null, what: string): void => {
+        const words: string[] = [];
+        const moved: [CamAxis, number][] = [];
+        step(x, point[0] + x.offset, words, moved);
+        step(y, point[1] + y.offset, words, moved);
+        if (words.length === 0) {
+            return;
+        }
+        const run = moved.length === 2 ? Math.hypot(moved[0]![1], moved[1]![1]) : Math.abs(moved[0]![1]);
+        const rate = cap(feed, moved.map(([axis]) => axis), what);
+        if (feedWord !== rate) {
+            words.push(`F${num(rate)}`);
+            feedWord = rate;
+        }
+        if (power !== null && powerWord !== power) {
+            words.push(`S${formatG(power)}`);
+            powerWord = power;
+        }
+        lines.push(`G1 ${words.join(" ")}`);
+        cuts += 1;
+        length += run;
+        seconds += (run / rate) * 60;
+    };
+    // A G1 in three dimensions at the feed along the move, held so that no
+    // axis goes faster than its rate.
+    const cut3 = (point: Point, over: number, feed: number, what: string): void => {
+        const words: string[] = [];
+        const moved: [CamAxis, number][] = [];
+        step(x, point[0] + x.offset, words, moved);
+        step(y, point[1] + y.offset, words, moved);
+        step(depth!, depth!.offset + over, words, moved);
+        if (words.length === 0) {
+            return;
+        }
+        const run = Math.sqrt(moved.reduce((sum, [, delta]) => sum + delta * delta, 0));
+        // Each axis covers its share of the move: the feed is held where
+        // the share of the slowest makes it go over its rate.
+        let held = feed;
+        for (const [axis, delta] of moved) {
+            if (axis.rate !== null && run > 0 && Math.abs(delta) > 0) {
+                held = Math.min(held, (axis.rate * run) / Math.abs(delta));
             }
-            go([word(depth, safeZ())]);
-            spindle(group.power);
-            for (const path of moves) {
+        }
+        if (held < feed - 1e-9 && !capped.has(what)) {
+            capped.add(what);
+            warn(`${what}: ${formatG(feed)} mm/min is over an axis' rate on some moves; those are written slower`);
+        }
+        if (feedWord === null || Math.abs(feedWord - held) > 1e-9) {
+            words.push(`F${num(held)}`);
+            feedWord = held;
+        }
+        lines.push(`G1 ${words.join(" ")}`);
+        cuts += 1;
+        length += run;
+        seconds += (run / held) * 60;
+    };
+    const plunge = (over: number, rate: number, what: string): void => {
+        const value = depth!.offset + over;
+        const before = at.get(depth!.letter);
+        if (before !== undefined && Math.abs(before - value) <= 1e-9) {
+            return;
+        }
+        const held = cap(rate, [depth!], what);
+        const words = [`${depth!.letter}${num(value)}`];
+        if (feedWord !== held) {
+            words.push(`F${num(held)}`);
+            feedWord = held;
+        }
+        lines.push(`G1 ${words.join(" ")}`);
+        at.set(depth!.letter, value);
+        reach(depth!, value);
+        if (before !== undefined) {
+            seconds += (Math.abs(before - value) / held) * 60;
+        }
+    };
+    const outputOff = (): void => {
+        if (output !== null) {
+            lines.push("M5");
+            output = null;
+            powerWord = null;
+        }
+    };
+    const spindle = (speed: number): void => {
+        if (output !== null && output[0] === "spindle" && output[1] === speed) {
+            return;
+        }
+        if (output !== null && output[0] !== "spindle") {
+            outputOff();
+        }
+        lines.push(`${post.spindle_on} S${formatG(speed)}`);
+        output = ["spindle", speed];
+        if (post.spinup > 0) {
+            lines.push(`G4 P${formatG(post.spinup)}`);
+            seconds += post.spinup;
+        }
+    };
+    const laser = (): void => {
+        if (output !== null && output[0] === "laser") {
+            return;
+        }
+        outputOff();
+        lines.push(`${post.laser_on} S0`);
+        output = ["laser", 0];
+        powerWord = 0;
+    };
+    // A stop for the group's bit: the spindle off, the tool up, the bit
+    // named and a pause the operator resumes once it is fitted and Z is
+    // zeroed with it.
+    const changeBit = (group: Group): void => {
+        const name = group.tool_name || group.tool_id!;
+        outputOff();
+        if (depth) {
+            go(null, safe());
+        }
+        lines.push(commentLine(`change the bit to ${name} and zero Z with it as before, then resume`));
+        lines.push("M0");
+        warn(`${group.label}: the program stops (M0) to change the bit to ${name}`);
+    };
+    const mill = (group: Group): void => {
+        if (!depth) {
+            throw new Error(`${group.label}: a spindle operation needs a depth axis in the profile`);
+        }
+        if (!(group.power > 0)) {
+            throw new Error(`${group.label}: a spindle needs a speed above 0`);
+        }
+        // Up before the spindle starts: a laser group before this one may
+        // have left the tool at its focus height, on the work.
+        go(null, safe());
+        spindle(group.power);
+        const passes = Math.max(1, group.passes);
+        const rate = group.plunge ?? DEFAULT_PLUNGE;
+        for (let k = 1; k <= passes; k++) {
+            const cutDepth = ((group.depth ?? DEFAULT_DEPTH) * k) / passes;
+            for (const path of group.paths) {
                 const first = path[0];
                 if (!first) {
                     continue;
                 }
-                go([word(depth, safeZ())]);
-                go([word(x, first[0] + x.offset), word(y, first[1] + y.offset)]);
-                if (first[3] === 0) {
-                    go([word(depth, depth.offset + first[2])]);
+                go(null, safe());
+                go(first);
+                plunge(-cutDepth, rate, `${group.label} plunge`);
+                for (const target of path.slice(1)) {
+                    cut(target, group.speed, null, group.label);
+                }
+                go(null, safe());
+            }
+        }
+    };
+    // A model's paths: each from the safe height down to its first point,
+    // its moves as they are, and up again.
+    const carve = (group: Group, kind: Tool): void => {
+        if (!depth) {
+            throw new Error(`${group.label}: a model's paths need a depth axis in the profile`);
+        }
+        if (kind !== "spindle") {
+            throw new Error(`${group.label}: a model's paths are cut with a spindle`);
+        }
+        if (!(group.power > 0)) {
+            throw new Error(`${group.label}: a spindle needs a speed above 0`);
+        }
+        go(null, safe());
+        spindle(group.power);
+        const rate = group.plunge ?? DEFAULT_PLUNGE;
+        for (const path of group.moves ?? []) {
+            const first = path[0];
+            if (!first) {
+                continue;
+            }
+            go(null, safe());
+            go([first[0], first[1]]);
+            if (first[3] === 0) {
+                go(null, first[2]);
+            } else {
+                plunge(first[2], rate, `${group.label} plunge`);
+            }
+            for (const [mx, my, mz, how] of path.slice(1)) {
+                if (how === 0) {
+                    go([mx, my], mz);
+                } else if (how === 2) {
+                    cut3([mx, my], mz, rate, `${group.label} plunge`);
                 } else {
-                    plunge(first[2], group.plunge ?? DEFAULT_PLUNGE);
-                }
-                for (const [mx, my, mz, how] of path.slice(1)) {
-                    if (how === 0) {
-                        go([word(x, mx + x.offset), word(y, my + y.offset), word(depth, depth.offset + mz)]);
-                    } else if (how === 2) {
-                        cut3([mx, my], mz, group.plunge ?? DEFAULT_PLUNGE, `${group.label} plunge`);
-                    } else {
-                        cut3([mx, my], mz, group.speed, group.label);
-                    }
-                }
-                go([word(depth, safeZ())]);
-            }
-        } else if (kind === "spindle") {
-            if (!depth) {
-                throw new Error(`${group.label}: a spindle operation needs a depth axis in the profile`);
-            }
-            if (!(group.power > 0)) {
-                throw new Error(`${group.label}: a spindle needs a speed above 0`);
-            }
-            // Up before the spindle starts: a laser group before this one may
-            // have left the tool at its focus height, on the work.
-            go([word(depth, safeZ())]);
-            if (!output || output[0] !== "spindle" || output[1] !== group.power) {
-                if (output && output[0] !== "spindle") {
-                    off();
-                }
-                lines.push(`${post.spindle_on} S${group.power}`);
-                output = ["spindle", group.power];
-                if (post.spinup > 0) {
-                    lines.push(`G4 P${post.spinup}`);
-                    report.seconds += post.spinup;
+                    cut3([mx, my], mz, group.speed, group.label);
                 }
             }
-            const passes = Math.max(1, group.passes);
-            for (let k = 1; k <= passes; k++) {
-                const cutDepth = ((group.depth ?? DEFAULT_DEPTH) * k) / passes;
-                for (const path of group.paths) {
-                    const first = path[0];
-                    if (!first) {
-                        continue;
-                    }
-                    go([word(depth, safeZ())]);
-                    go([word(x, first[0] + x.offset), word(y, first[1] + y.offset)]);
-                    plunge(-cutDepth, group.plunge ?? DEFAULT_PLUNGE);
-                    for (const point of path.slice(1)) {
-                        cut(point, group.speed, null, group.label);
-                    }
-                    go([word(depth, safeZ())]);
+            go(null, safe());
+        }
+    };
+    const burn = (group: Group, height: number | null): void => {
+        if (group.min_power > 0) {
+            warn(`${group.label}: the power floor ${formatG(group.min_power)} has no gcode word and is left out`);
+        }
+        if (depth) {
+            go(null, safe());
+        }
+        laser();
+        if (depth && height !== null) {
+            go(null, height);
+        }
+        for (let pass = 0; pass < Math.max(1, group.passes); pass++) {
+            for (const path of group.paths) {
+                if (path.length < 2) {
+                    continue;
                 }
-            }
-        } else {
-            if (group.min_power > 0) {
-                warn(`${group.label}: the power floor ${group.min_power} has no gcode word and is left out`);
-            }
-            if (depth) {
-                go([word(depth, safeZ())]);
-            }
-            if (!output || output[0] !== "laser") {
-                off();
-                lines.push(`${post.laser_on} S0`);
-                output = ["laser", 0];
-                power = 0;
-            }
-            // A laser group a profile made keeps its operation's height, or
-            // none; one made otherwise takes the first laser tool's that gives one.
-            let height = group.height ?? null;
-            if (height === null && (group.tool_id ?? null) === null) {
-                height = profile.tools.find((tool) => tool.kind === "laser" && tool.settings["height"] !== undefined)?.settings["height"] ?? null;
-            }
-            if (depth && height !== null) {
-                go([word(depth, depth.offset + height)]);
-            }
-            for (let pass = 0; pass < Math.max(1, group.passes); pass++) {
-                for (const path of group.paths) {
-                    const first = path[0];
-                    if (!first || path.length < 2) {
-                        continue;
-                    }
-                    go([word(x, first[0] + x.offset), word(y, first[1] + y.offset)]);
-                    for (const point of path.slice(1)) {
-                        cut(point, group.speed, group.power, group.label);
-                    }
+                go(path[0]!);
+                for (const target of path.slice(1)) {
+                    cut(target, group.speed, group.power, group.label);
                 }
             }
         }
-    }
-    off();
+    };
+
+    const enabled = job.groups.filter((group) => group.enabled && hasCuts(group));
+    lines.push(commentLine(`${job.name}: ${enabled.length} operations through ${profile.name}`));
+    lines.push(commentLine(`board X/Y on ${profile.axes.map((axis) => `${axis.letter}=${axis.role}`).join(" ")}`));
+    lines.push(...post.header);
+    const parks = profile.axes.filter((axis) => axis.role === "setup" && axis.park !== null).map((axis): [CamAxis, number] => [axis, axis.park!]);
     if (depth) {
-        go([word(depth, safeZ())]);
+        go(null, safe());
+    }
+    if (parks.length > 0) {
+        go(null, null, parks);
+    }
+    // A group that names no tool is written for the profile's first tool's
+    // kind. A laser group a profile made keeps its operation's height, or
+    // none; one made otherwise takes the first laser tool's that gives one.
+    const kindOf = (group: Group): Tool => group.tool || profile.tools[0]!.kind;
+    const firstHeight = profile.tools.find((tool) => tool.kind === "laser" && tool.settings["height"] !== undefined)?.settings["height"] ?? null;
+    const heightOf = (group: Group): number | null => {
+        const own = group.height ?? null;
+        return own === null && (group.tool_id ?? null) === null ? firstHeight : own;
+    };
+    for (const group of enabled) {
+        const kind = kindOf(group);
+        const groupBit = group.tool_id ?? null;
+        if (kind === "spindle" && groupBit !== null) {
+            if (bit !== null && groupBit !== bit) {
+                changeBit(group);
+            }
+            bit = groupBit;
+        }
+        const moves = group.moves ?? [];
+        lines.push(commentLine(`${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths`));
+        if (moves.length > 0) {
+            carve(group, kind);
+        } else if (kind === "spindle") {
+            mill(group);
+        } else {
+            burn(group, kind === "laser" ? heightOf(group) : null);
+        }
+    }
+    outputOff();
+    if (depth) {
+        go(null, safe());
     }
     if (post.return_home) {
-        const homes = profile.axes.filter((axis) => axis.home !== null && axis.role !== "depth");
+        const homes = profile.axes.filter((axis) => axis.home !== null && axis.role !== "depth").map((axis): [CamAxis, number] => [axis, axis.home!]);
         if (homes.length > 0) {
-            go(homes.map((axis) => word(axis, axis.home!, true)));
+            go(null, null, homes);
         }
         if (depth && depth.home !== null) {
-            go([word(depth, depth.home, true)]);
+            go(null, null, [[depth, depth.home]]);
         }
     }
     lines.push(...post.footer);
-    checkTravel();
-    report.lines = lines.length;
-    report.length_mm = Math.round(report.length_mm * 1000) / 1000;
-    report.seconds = Math.round(report.seconds * 10) / 10;
-    const stem = job.name.replace(/[^A-Za-z0-9_.-]/g, "_") || "job";
+    // One warning for each end of an axis the program goes past, at the farthest it goes.
+    for (const axis of profile.axes) {
+        const span = extents[axis.letter];
+        if (!span) {
+            continue;
+        }
+        if (axis.min !== null && span[0] < axis.min - 1e-9) {
+            warn(`${axis.letter} reaches ${fixed(span[0], 3)}, under its min ${formatG(axis.min)}`);
+        }
+        if (axis.max !== null && span[1] > axis.max + 1e-9) {
+            warn(`${axis.letter} reaches ${fixed(span[1], 3)}, over its max ${formatG(axis.max)}`);
+        }
+    }
+    const report: CamGcodeReport = {
+        lines: lines.length,
+        cuts,
+        length_mm: rounded(length, 3),
+        seconds: rounded(seconds, 1),
+        extents: Object.fromEntries(Object.entries(extents).map(([letter, [low, high]]): [string, [number, number]] => [letter, [rounded(low, 3), rounded(high, 3)]])),
+        warnings,
+    };
+    // The file's name: the job's, every character but a letter, a digit, -, _ and . made _.
+    const stem = job.name.replace(/[^\p{L}\p{N}_.-]/gu, "_") || "job";
     return { text: lines.join("\n") + "\n", report, filename: `${stem}.nc` };
 }

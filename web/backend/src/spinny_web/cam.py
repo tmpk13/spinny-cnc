@@ -253,3 +253,206 @@ def gcode_of(job: Job, profile: Profile) -> dict:
     program = post.post(built_of(job, profile), profile)
     stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in job.name) or "job"
     return {"text": program.text, "report": program.report.document(), "filename": f"{stem}.nc"}
+
+
+# --- the page's twin ----------------------------------------------------------------
+
+# Jobs written through profiles of their own, which the page's mock post is
+# checked against line for line (mise run cam-fixture): rapids, plunges and
+# cuts, feeds held to the axes' rates, a stop to change the bit, a laser's
+# height, the words' decimals, the report, and the refusals. The profiles
+# are written here rather than read from cam/, whose files are the
+# operator's to edit.
+TWIN_PROFILE = """
+name = "Twin bench"
+[[axes]]
+letter = "X"
+role = "x"
+min = 0
+max = 100
+rate = 3000
+rapid = 6000
+offset = 1.5
+home = 0
+[[axes]]
+letter = "Y"
+role = "y"
+rate = 1000
+rapid = 4000
+home = 0
+[[axes]]
+letter = "Z"
+role = "depth"
+min = -1.5
+rate = 300
+rapid = 900
+safe = 4
+home = 10
+[[axes]]
+letter = "A"
+kind = "rotary"
+role = "setup"
+park = 15
+home = 0
+[[tools]]
+id = "diode"
+kind = "laser"
+spot = 0.1
+power = 300
+speed = 2000
+height = 2
+[[tools]]
+id = "vbit"
+kind = "mill"
+name = "V bit"
+diameter = 0.2
+rpm = 12000
+feed = 300
+plunge = 600
+[[operations]]
+name = "marks"
+source = "paths"
+tool = "diode"
+[post]
+spinup = 1.5
+"""
+
+PLAIN_PROFILE = """
+name = "Plain mill"
+[[axes]]
+letter = "X"
+role = "x"
+[[axes]]
+letter = "Y"
+role = "y"
+[[axes]]
+letter = "Z"
+role = "depth"
+safe = 2.5
+[[tools]]
+id = "flat"
+kind = "mill"
+diameter = 1
+rpm = 9000
+feed = 250
+[[tools]]
+id = "beam"
+kind = "laser"
+spot = 0.1
+power = 80
+speed = 900
+[[operations]]
+name = "cut"
+source = "outline"
+tool = "flat"
+[post]
+header = ["G21", "G90"]
+footer = ["M30"]
+spindle_on = "M4"
+laser_on = "M3"
+spinup = 0
+decimals = 2
+return_home = false
+"""
+
+LASER_ONLY_PROFILE = """
+[[axes]]
+letter = "X"
+role = "x"
+[[axes]]
+letter = "Y"
+role = "y"
+[[tools]]
+id = "beam"
+kind = "laser"
+spot = 0.1
+power = 80
+speed = 900
+[[operations]]
+name = "cut"
+source = "paths"
+tool = "beam"
+"""
+
+MODEL_MOVES = [
+    [[0.0, 0.0, 1.0, 0], [0.0, 0.0, -0.5, 2], [10.0, 0.0, -0.5, 1], [10.0, 10.0, -1.0, 1], [10.0, 10.0, 2.0, 0], [12.0, 10.0, 2.0, 0], [12.0, 10.0, -0.2, 2]],
+    [[20.0, 0.0, 0.5, 1], [21.0, 0.0, 0.5, 1]],
+]
+
+TWIN_SAMPLES: list[dict] = [
+    {
+        "name": "laser and spindle on one depth axis",
+        "profile": TWIN_PROFILE,
+        "job": {
+            "name": "twin (a)\nM3 S1",
+            "groups": [
+                {"label": "marks", "tool": "laser", "tool_id": "diode", "tool_name": "Diode", "height": 3, "power": 300, "min_power": 50,
+                 "speed": 2000, "passes": 2, "paths": [[[20, 0], [30, 0]], [[20, -0.0006], [25, -0.0006], [25, 5]], [[40, 0]]]},
+                {"label": "slot", "tool": "spindle", "tool_id": "vbit", "tool_name": "V bit", "power": 12000, "speed": 300, "plunge": 600,
+                 "depth": 0.3, "passes": 2, "paths": [[[10, 10], [15, 10], [15, 12]], [[5, 5]]]},
+                {"label": "holes", "tool": "spindle", "tool_id": "drill", "power": 8000, "speed": 100, "plunge": 50, "depth": 1.8,
+                 "paths": [[[1, 1]], [[2, 1]]]},
+                {"label": "off", "tool": "spindle", "tool_id": "other", "enabled": False, "power": 1, "paths": [[[0, 0], [1, 1]]]},
+                {"label": "drawn", "power": 120, "speed": 600, "paths": [[[50, 50], [60, 50]]]},
+                {"label": "traced", "tool": "laser", "tool_id": "beam", "power": 50, "speed": 600, "paths": [[[70, 50], [80, 50]]]},
+                {"label": "model: V bit", "tool": "spindle", "tool_id": "vbit", "tool_name": "V bit", "power": 11000, "speed": 300,
+                 "plunge": 600, "depth": 1.0, "moves": MODEL_MOVES},
+            ],
+        },
+    },
+    {
+        "name": "the post's own words",
+        "profile": PLAIN_PROFILE,
+        "job": {
+            "name": "Platine-\N{LATIN SMALL LETTER E WITH ACUTE}t\N{LATIN SMALL LETTER E WITH ACUTE} 1/2",
+            "groups": [
+                {"label": "edge", "tool": "spindle", "power": 9000.5, "speed": 250, "plunge": 60, "depth": 0.25,
+                 "paths": [[[0.004, -0.004], [3.333333, 0.004], [3.333333, 7.125]]]},
+                {"label": "mark", "tool": "laser", "power": 80, "speed": 900, "paths": [[[1, 1], [2, 2]]]},
+                {"label": "edge again", "tool": "spindle", "power": 9000.5, "speed": 250, "plunge": 60, "depth": 0.25,
+                 "paths": [[[0, 0], [1, 0]]]},
+            ],
+        },
+    },
+    {
+        "name": "nothing enabled",
+        "profile": TWIN_PROFILE,
+        "job": {"name": "off", "groups": [{"label": "a", "enabled": False, "paths": [[[0, 0], [1, 0]]]}, {"label": "b", "paths": []}]},
+    },
+    {
+        "name": "a joint-space group",
+        "profile": TWIN_PROFILE,
+        "job": {"name": "j", "groups": [{"label": "rail", "paths": [[[1, 0], [2, 0]]], "joints": [[[1, 0], [2, 0]]]}]},
+    },
+    {
+        "name": "a spindle without a depth axis",
+        "profile": LASER_ONLY_PROFILE,
+        "job": {"name": "m", "groups": [{"label": "slot", "tool": "spindle", "power": 9000, "paths": [[[0, 0], [1, 0]]]}]},
+    },
+    {
+        "name": "a spindle at no speed",
+        "profile": PLAIN_PROFILE,
+        "job": {"name": "s0", "groups": [{"label": "slot", "tool": "spindle", "power": 0, "paths": [[[0, 0], [1, 0]]]}]},
+    },
+]
+
+
+def twin_samples() -> list[dict]:
+    """Every sample with what the backend writes for it: the program and
+    its report, or the refusal."""
+    out = []
+    for sample in TWIN_SAMPLES:
+        job = Job.model_validate(sample["job"])
+        entry: dict = {"name": sample["name"], "profile": sample["profile"], "job": job.model_dump(mode="json")}
+        try:
+            entry["written"] = gcode_of(job, cam.parse(sample["profile"], "twin"))
+        except post.PostError as exc:
+            entry["error"] = str(exc)
+        out.append(entry)
+    return out
+
+
+if __name__ == "__main__":
+    import json
+
+    print(json.dumps(twin_samples(), indent=1))

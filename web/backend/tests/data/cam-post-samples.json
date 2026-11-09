@@ -1,0 +1,809 @@
+[
+ {
+  "name": "laser and spindle on one depth axis",
+  "profile": "\nname = \"Twin bench\"\n[[axes]]\nletter = \"X\"\nrole = \"x\"\nmin = 0\nmax = 100\nrate = 3000\nrapid = 6000\noffset = 1.5\nhome = 0\n[[axes]]\nletter = \"Y\"\nrole = \"y\"\nrate = 1000\nrapid = 4000\nhome = 0\n[[axes]]\nletter = \"Z\"\nrole = \"depth\"\nmin = -1.5\nrate = 300\nrapid = 900\nsafe = 4\nhome = 10\n[[axes]]\nletter = \"A\"\nkind = \"rotary\"\nrole = \"setup\"\npark = 15\nhome = 0\n[[tools]]\nid = \"diode\"\nkind = \"laser\"\nspot = 0.1\npower = 300\nspeed = 2000\nheight = 2\n[[tools]]\nid = \"vbit\"\nkind = \"mill\"\nname = \"V bit\"\ndiameter = 0.2\nrpm = 12000\nfeed = 300\nplunge = 600\n[[operations]]\nname = \"marks\"\nsource = \"paths\"\ntool = \"diode\"\n[post]\nspinup = 1.5\n",
+  "job": {
+   "id": "",
+   "name": "twin (a)\nM3 S1",
+   "source": "json",
+   "layer": null,
+   "spot": 0.1,
+   "offset": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "rotation": 0.0,
+   "groups": [
+    {
+     "label": "marks",
+     "power": 300.0,
+     "min_power": 50.0,
+     "speed": 2000.0,
+     "passes": 2,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "laser",
+     "tool_id": "diode",
+     "tool_name": "Diode",
+     "height": 3.0,
+     "paths": [
+      [
+       [
+        20.0,
+        0.0
+       ],
+       [
+        30.0,
+        0.0
+       ]
+      ],
+      [
+       [
+        20.0,
+        -0.0006
+       ],
+       [
+        25.0,
+        -0.0006
+       ],
+       [
+        25.0,
+        5.0
+       ]
+      ],
+      [
+       [
+        40.0,
+        0.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "slot",
+     "power": 12000.0,
+     "min_power": 0.0,
+     "speed": 300.0,
+     "passes": 2,
+     "enabled": true,
+     "depth": 0.3,
+     "plunge": 600.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": "vbit",
+     "tool_name": "V bit",
+     "height": null,
+     "paths": [
+      [
+       [
+        10.0,
+        10.0
+       ],
+       [
+        15.0,
+        10.0
+       ],
+       [
+        15.0,
+        12.0
+       ]
+      ],
+      [
+       [
+        5.0,
+        5.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "holes",
+     "power": 8000.0,
+     "min_power": 0.0,
+     "speed": 100.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 1.8,
+     "plunge": 50.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": "drill",
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        1.0,
+        1.0
+       ]
+      ],
+      [
+       [
+        2.0,
+        1.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "off",
+     "power": 1.0,
+     "min_power": 0.0,
+     "speed": 400.0,
+     "passes": 1,
+     "enabled": false,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": "other",
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        1.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "drawn",
+     "power": 120.0,
+     "min_power": 0.0,
+     "speed": 600.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": null,
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        50.0,
+        50.0
+       ],
+       [
+        60.0,
+        50.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "traced",
+     "power": 50.0,
+     "min_power": 0.0,
+     "speed": 600.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "laser",
+     "tool_id": "beam",
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        70.0,
+        50.0
+       ],
+       [
+        80.0,
+        50.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "model: V bit",
+     "power": 11000.0,
+     "min_power": 0.0,
+     "speed": 300.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 1.0,
+     "plunge": 600.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": "vbit",
+     "tool_name": "V bit",
+     "height": null,
+     "paths": [],
+     "areas": [],
+     "joints": [],
+     "moves": [
+      [
+       [
+        0.0,
+        0.0,
+        1.0,
+        0
+       ],
+       [
+        0.0,
+        0.0,
+        -0.5,
+        2
+       ],
+       [
+        10.0,
+        0.0,
+        -0.5,
+        1
+       ],
+       [
+        10.0,
+        10.0,
+        -1.0,
+        1
+       ],
+       [
+        10.0,
+        10.0,
+        2.0,
+        0
+       ],
+       [
+        12.0,
+        10.0,
+        2.0,
+        0
+       ],
+       [
+        12.0,
+        10.0,
+        -0.2,
+        2
+       ]
+      ],
+      [
+       [
+        20.0,
+        0.0,
+        0.5,
+        1
+       ],
+       [
+        21.0,
+        0.0,
+        0.5,
+        1
+       ]
+      ]
+     ]
+    }
+   ],
+   "outline": [],
+   "copper": [],
+   "pads": [],
+   "holes": [],
+   "design": null,
+   "recipe": null,
+   "stats": {
+    "length_mm": 0.0,
+    "seconds": 0.0,
+    "max_radius": 0.0,
+    "min_radius": 0.0,
+    "limited_fraction": 0.0,
+    "moves": 0
+   }
+  },
+  "written": {
+   "text": "(twin [a] M3 S1: 6 operations through Twin bench)\n(board X/Y on X=x Y=y Z=depth A=setup)\nG21\nG90\nG94\nG17\nG0 Z4.000\nG0 A15.000\n(marks: 3 paths)\nM4 S0\nG0 Z3.000\nG0 X21.500 Y0.000\nG1 X31.500 F2000.000 S300\nG0 X21.500 Y-0.001\nG1 X26.500\nG1 Y5.000 F1000.000\nG0 X21.500 Y0.000\nG1 X31.500 F2000.000\nG0 X21.500 Y-0.001\nG1 X26.500\nG1 Y5.000 F1000.000\n(slot: 2 paths)\nG0 Z4.000\nM5\nM3 S12000\nG4 P1.5\nG0 X11.500 Y10.000\nG1 Z-0.150 F300.000\nG1 X16.500\nG1 Y12.000\nG0 Z4.000\nG0 X6.500 Y5.000\nG1 Z-0.150\nG0 Z4.000\nG0 X11.500 Y10.000\nG1 Z-0.300\nG1 X16.500\nG1 Y12.000\nG0 Z4.000\nG0 X6.500 Y5.000\nG1 Z-0.300\nG0 Z4.000\nM5\n(change the bit to drill and zero Z with it as before, then resume)\nM0\n(holes: 2 paths)\nM3 S8000\nG4 P1.5\nG0 X2.500 Y1.000\nG1 Z-1.800 F50.000\nG0 Z4.000\nG0 X3.500\nG1 Z-1.800\nG0 Z4.000\n(drawn: 1 paths)\nM5\nM4 S0\nG0 Z2.000\nG0 X51.500 Y50.000\nG1 X61.500 F600.000 S120\n(traced: 1 paths)\nG0 Z4.000\nG0 X71.500\nG1 X81.500 S50\nM5\n(change the bit to V bit and zero Z with it as before, then resume)\nM0\n(model: V bit: 2 paths)\nM3 S11000\nG4 P1.5\nG0 X1.500 Y0.000\nG0 Z1.000\nG1 Z-0.500 F300.000\nG1 X11.500\nG1 Y10.000 Z-1.000\nG0 Z2.000\nG0 X13.500\nG1 Z-0.200\nG0 Z4.000\nG0 X21.500 Y0.000\nG1 Z0.500\nG1 X22.500\nG0 Z4.000\nM5\nG0 X0.000 Y0.000 A0.000\nG0 Z10.000\nM5\nM2\n",
+   "report": {
+    "lines": 88,
+    "cuts": 17,
+    "length_mm": 98.714,
+    "seconds": 40.2,
+    "extents": {
+     "Z": [
+      -1.8,
+      10.0
+     ],
+     "A": [
+      0.0,
+      15.0
+     ],
+     "X": [
+      0.0,
+      81.5
+     ],
+     "Y": [
+      -0.001,
+      50.0
+     ]
+    },
+    "warnings": [
+     "marks: the power floor 50 has no gcode word and is left out",
+     "marks: 2000 mm/min is over the axes' rate; written as 1000",
+     "slot plunge: 600 mm/min is over the axes' rate; written as 300",
+     "holes: the program stops (M0) to change the bit to drill",
+     "model: V bit: the program stops (M0) to change the bit to V bit",
+     "model: V bit plunge: 600 mm/min is over an axis' rate on some moves; those are written slower",
+     "Z reaches -1.800, under its min -1.5"
+    ]
+   },
+   "filename": "twin__a__M3_S1.nc"
+  }
+ },
+ {
+  "name": "the post's own words",
+  "profile": "\nname = \"Plain mill\"\n[[axes]]\nletter = \"X\"\nrole = \"x\"\n[[axes]]\nletter = \"Y\"\nrole = \"y\"\n[[axes]]\nletter = \"Z\"\nrole = \"depth\"\nsafe = 2.5\n[[tools]]\nid = \"flat\"\nkind = \"mill\"\ndiameter = 1\nrpm = 9000\nfeed = 250\n[[tools]]\nid = \"beam\"\nkind = \"laser\"\nspot = 0.1\npower = 80\nspeed = 900\n[[operations]]\nname = \"cut\"\nsource = \"outline\"\ntool = \"flat\"\n[post]\nheader = [\"G21\", \"G90\"]\nfooter = [\"M30\"]\nspindle_on = \"M4\"\nlaser_on = \"M3\"\nspinup = 0\ndecimals = 2\nreturn_home = false\n",
+  "job": {
+   "id": "",
+   "name": "Platine-\u00e9t\u00e9 1/2",
+   "source": "json",
+   "layer": null,
+   "spot": 0.1,
+   "offset": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "rotation": 0.0,
+   "groups": [
+    {
+     "label": "edge",
+     "power": 9000.5,
+     "min_power": 0.0,
+     "speed": 250.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.25,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        0.004,
+        -0.004
+       ],
+       [
+        3.333333,
+        0.004
+       ],
+       [
+        3.333333,
+        7.125
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "mark",
+     "power": 80.0,
+     "min_power": 0.0,
+     "speed": 900.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "laser",
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        1.0,
+        1.0
+       ],
+       [
+        2.0,
+        2.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "edge again",
+     "power": 9000.5,
+     "min_power": 0.0,
+     "speed": 250.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.25,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    }
+   ],
+   "outline": [],
+   "copper": [],
+   "pads": [],
+   "holes": [],
+   "design": null,
+   "recipe": null,
+   "stats": {
+    "length_mm": 0.0,
+    "seconds": 0.0,
+    "max_radius": 0.0,
+    "min_radius": 0.0,
+    "limited_fraction": 0.0,
+    "moves": 0
+   }
+  },
+  "written": {
+   "text": "(Platine-\u00e9t\u00e9 1/2: 3 operations through Plain mill)\n(board X/Y on X=x Y=y Z=depth)\nG21\nG90\nG0 Z2.50\n(edge: 1 paths)\nM4 S9000.5\nG0 X0.00 Y0.00\nG1 Z-0.25 F60.00\nG1 X3.33 Y0.00 F250.00\nG1 Y7.12\nG0 Z2.50\n(mark: 1 paths)\nM5\nM3 S0\nG0 X1.00 Y1.00\nG1 X2.00 Y2.00 F900.00 S80\n(edge again: 1 paths)\nM5\nM4 S9000.5\nG0 X0.00 Y0.00\nG1 Z-0.25 F60.00\nG1 X1.00 F250.00\nG0 Z2.50\nM5\nM30\n",
+   "report": {
+    "lines": 26,
+    "cuts": 4,
+    "length_mm": 12.865,
+    "seconds": 8.3,
+    "extents": {
+     "Z": [
+      -0.25,
+      2.5
+     ],
+     "X": [
+      0.0,
+      3.333
+     ],
+     "Y": [
+      -0.004,
+      7.125
+     ]
+    },
+    "warnings": []
+   },
+   "filename": "Platine-\u00e9t\u00e9_1_2.nc"
+  }
+ },
+ {
+  "name": "nothing enabled",
+  "profile": "\nname = \"Twin bench\"\n[[axes]]\nletter = \"X\"\nrole = \"x\"\nmin = 0\nmax = 100\nrate = 3000\nrapid = 6000\noffset = 1.5\nhome = 0\n[[axes]]\nletter = \"Y\"\nrole = \"y\"\nrate = 1000\nrapid = 4000\nhome = 0\n[[axes]]\nletter = \"Z\"\nrole = \"depth\"\nmin = -1.5\nrate = 300\nrapid = 900\nsafe = 4\nhome = 10\n[[axes]]\nletter = \"A\"\nkind = \"rotary\"\nrole = \"setup\"\npark = 15\nhome = 0\n[[tools]]\nid = \"diode\"\nkind = \"laser\"\nspot = 0.1\npower = 300\nspeed = 2000\nheight = 2\n[[tools]]\nid = \"vbit\"\nkind = \"mill\"\nname = \"V bit\"\ndiameter = 0.2\nrpm = 12000\nfeed = 300\nplunge = 600\n[[operations]]\nname = \"marks\"\nsource = \"paths\"\ntool = \"diode\"\n[post]\nspinup = 1.5\n",
+  "job": {
+   "id": "",
+   "name": "off",
+   "source": "json",
+   "layer": null,
+   "spot": 0.1,
+   "offset": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "rotation": 0.0,
+   "groups": [
+    {
+     "label": "a",
+     "power": 500.0,
+     "min_power": 0.0,
+     "speed": 400.0,
+     "passes": 1,
+     "enabled": false,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": null,
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    },
+    {
+     "label": "b",
+     "power": 500.0,
+     "min_power": 0.0,
+     "speed": 400.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": null,
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    }
+   ],
+   "outline": [],
+   "copper": [],
+   "pads": [],
+   "holes": [],
+   "design": null,
+   "recipe": null,
+   "stats": {
+    "length_mm": 0.0,
+    "seconds": 0.0,
+    "max_radius": 0.0,
+    "min_radius": 0.0,
+    "limited_fraction": 0.0,
+    "moves": 0
+   }
+  },
+  "error": "the job has nothing enabled to cut: switch on a group"
+ },
+ {
+  "name": "a joint-space group",
+  "profile": "\nname = \"Twin bench\"\n[[axes]]\nletter = \"X\"\nrole = \"x\"\nmin = 0\nmax = 100\nrate = 3000\nrapid = 6000\noffset = 1.5\nhome = 0\n[[axes]]\nletter = \"Y\"\nrole = \"y\"\nrate = 1000\nrapid = 4000\nhome = 0\n[[axes]]\nletter = \"Z\"\nrole = \"depth\"\nmin = -1.5\nrate = 300\nrapid = 900\nsafe = 4\nhome = 10\n[[axes]]\nletter = \"A\"\nkind = \"rotary\"\nrole = \"setup\"\npark = 15\nhome = 0\n[[tools]]\nid = \"diode\"\nkind = \"laser\"\nspot = 0.1\npower = 300\nspeed = 2000\nheight = 2\n[[tools]]\nid = \"vbit\"\nkind = \"mill\"\nname = \"V bit\"\ndiameter = 0.2\nrpm = 12000\nfeed = 300\nplunge = 600\n[[operations]]\nname = \"marks\"\nsource = \"paths\"\ntool = \"diode\"\n[post]\nspinup = 1.5\n",
+  "job": {
+   "id": "",
+   "name": "j",
+   "source": "json",
+   "layer": null,
+   "spot": 0.1,
+   "offset": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "rotation": 0.0,
+   "groups": [
+    {
+     "label": "rail",
+     "power": 500.0,
+     "min_power": 0.0,
+     "speed": 400.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": null,
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        1.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [
+      [
+       [
+        1.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0
+       ]
+      ]
+     ],
+     "moves": []
+    }
+   ],
+   "outline": [],
+   "copper": [],
+   "pads": [],
+   "holes": [],
+   "design": null,
+   "recipe": null,
+   "stats": {
+    "length_mm": 0.0,
+    "seconds": 0.0,
+    "max_radius": 0.0,
+    "min_radius": 0.0,
+    "limited_fraction": 0.0,
+    "moves": 0
+   }
+  },
+  "error": "rail: a joint-space group has no board paths to write"
+ },
+ {
+  "name": "a spindle without a depth axis",
+  "profile": "\n[[axes]]\nletter = \"X\"\nrole = \"x\"\n[[axes]]\nletter = \"Y\"\nrole = \"y\"\n[[tools]]\nid = \"beam\"\nkind = \"laser\"\nspot = 0.1\npower = 80\nspeed = 900\n[[operations]]\nname = \"cut\"\nsource = \"paths\"\ntool = \"beam\"\n",
+  "job": {
+   "id": "",
+   "name": "m",
+   "source": "json",
+   "layer": null,
+   "spot": 0.1,
+   "offset": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "rotation": 0.0,
+   "groups": [
+    {
+     "label": "slot",
+     "power": 9000.0,
+     "min_power": 0.0,
+     "speed": 400.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    }
+   ],
+   "outline": [],
+   "copper": [],
+   "pads": [],
+   "holes": [],
+   "design": null,
+   "recipe": null,
+   "stats": {
+    "length_mm": 0.0,
+    "seconds": 0.0,
+    "max_radius": 0.0,
+    "min_radius": 0.0,
+    "limited_fraction": 0.0,
+    "moves": 0
+   }
+  },
+  "error": "slot: a spindle operation needs a depth axis in the profile"
+ },
+ {
+  "name": "a spindle at no speed",
+  "profile": "\nname = \"Plain mill\"\n[[axes]]\nletter = \"X\"\nrole = \"x\"\n[[axes]]\nletter = \"Y\"\nrole = \"y\"\n[[axes]]\nletter = \"Z\"\nrole = \"depth\"\nsafe = 2.5\n[[tools]]\nid = \"flat\"\nkind = \"mill\"\ndiameter = 1\nrpm = 9000\nfeed = 250\n[[tools]]\nid = \"beam\"\nkind = \"laser\"\nspot = 0.1\npower = 80\nspeed = 900\n[[operations]]\nname = \"cut\"\nsource = \"outline\"\ntool = \"flat\"\n[post]\nheader = [\"G21\", \"G90\"]\nfooter = [\"M30\"]\nspindle_on = \"M4\"\nlaser_on = \"M3\"\nspinup = 0\ndecimals = 2\nreturn_home = false\n",
+  "job": {
+   "id": "",
+   "name": "s0",
+   "source": "json",
+   "layer": null,
+   "spot": 0.1,
+   "offset": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "rotation": 0.0,
+   "groups": [
+    {
+     "label": "slot",
+     "power": 0.0,
+     "min_power": 0.0,
+     "speed": 400.0,
+     "passes": 1,
+     "enabled": true,
+     "depth": 0.1,
+     "plunge": 60.0,
+     "thickness": 0.12,
+     "focus": null,
+     "tool": "spindle",
+     "tool_id": null,
+     "tool_name": null,
+     "height": null,
+     "paths": [
+      [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0
+       ]
+      ]
+     ],
+     "areas": [],
+     "joints": [],
+     "moves": []
+    }
+   ],
+   "outline": [],
+   "copper": [],
+   "pads": [],
+   "holes": [],
+   "design": null,
+   "recipe": null,
+   "stats": {
+    "length_mm": 0.0,
+    "seconds": 0.0,
+    "max_radius": 0.0,
+    "min_radius": 0.0,
+    "limited_fraction": 0.0,
+    "moves": 0
+   }
+  },
+  "error": "slot: a spindle needs a speed above 0"
+ }
+]
