@@ -735,12 +735,18 @@ export function buildMillJob(id: string, ops: MillOperation[], holesOf: ((op: Mi
     return { job, notes };
 }
 
-/** A job made again from its operations put where `where` is: turned and moved as it has been since it was made, under its id. */
-export function placed(made: Job, where: Job): Job {
+/** A job made from operations typed in `where`'s frame turned and moved as `where` has been since it was made, so it lands where `where`'s operations do. */
+export function movedAs(made: Job, where: Job): Job {
     moveJob(made, where.rotation ?? 0, where.offset.x, where.offset.y);
-    made.id = where.id;
     made.offset = { ...where.offset };
     made.rotation = where.rotation ?? 0;
+    return made;
+}
+
+/** A job made again from its operations put where `where` is: turned and moved as it has been since it was made, under its id. */
+export function placed(made: Job, where: Job): Job {
+    movedAs(made, where);
+    made.id = where.id;
     return made;
 }
 

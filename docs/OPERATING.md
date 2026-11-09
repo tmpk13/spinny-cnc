@@ -188,7 +188,10 @@ Focus the beam instead of zeroing a depth.
 
 A job moved or turned on the Jobs page keeps its place when its
 operations change: they are typed where they were before the move, and
-the plan, the sizes and the job are put where the job now is. A holes
+the plan, the sizes and the job are put where the job now is. *Here* and
+the markers are taken into that frame, so they land where the head or the
+marker is, and *New job* with such a job selected makes one put as it is,
+where the plan showed it; the hint under the fields says so. A holes
 operation keeps the holes it was made with; a board job picked again in
 *Holes of* gives its holes where that job now is.
 

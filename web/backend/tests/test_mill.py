@@ -271,6 +271,26 @@ def test_holes_taken_from_a_board_job_land_on_its_holes_in_a_moved_job(client):
     assert answer.json()["job"]["recipe"]["ops"][1]["holes"] == [pytest.approx([10, 10, 0.8])]
 
 
+def test_a_new_job_typed_in_a_moved_jobs_frame_is_put_as_that_job_is(client):
+    made = client.post("/api/mill", json={"ops": [POCKET]}).json()["job"]
+    client.patch(f"/api/jobs/{made['id']}", json={"offset": {"x": 10, "y": 0}, "turn": 90, "about": "origin"})
+    # (-6, -3) in the moved job's frame is (3, 4) on the board.
+    drill = {"kind": "drill", "points": [[-6, -3]], "tool": 1, "depth": 1, "step_down": 0.5}
+    answer = client.post("/api/mill", json={"ops": [drill], "like": made["id"]})
+    assert answer.status_code == 200, answer.text
+    job = answer.json()["job"]
+    assert job["id"] not in ("", made["id"])
+    ((point,),) = job["groups"][0]["paths"]
+    assert point == pytest.approx([3, 4])
+    assert job["offset"] == pytest.approx({"x": 0, "y": 10}) and job["rotation"] == 90
+    assert len(client.get("/api/jobs").json()["jobs"]) == 2
+    # It stays there when made again for another bit.
+    wider = client.post(f"/api/jobs/{job['id']}/width", json={"width": 2}).json()
+    ((point,),) = wider["groups"][0]["paths"]
+    assert point == pytest.approx([3, 4])
+    assert client.post("/api/mill", json={"ops": [drill], "like": "none"}).status_code == 404
+
+
 def test_changing_the_operations_keeps_the_settings_set_on_the_jobs_page(client):
     profile = {"kind": "profile", "x0": -5, "y0": -5, "x1": 25, "y1": 15, "tool": 2, "side": "outside"}
     made = client.post("/api/mill", json={"ops": [POCKET, profile], "name": "part"}).json()["job"]

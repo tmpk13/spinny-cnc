@@ -515,11 +515,17 @@ export interface MillOperation {
     holes?: HolePoint[] | null;
 }
 
-/** A job of one operation or several as the page sends it: `job` names the Plot page job they replace, null for a new job. */
+/**
+ * A job of one operation or several as the page sends it: `job` names the
+ * Plot page job they replace, null for a new job; `like` names a job a new
+ * one is put as, its operations typed in that job's frame from before its
+ * move.
+ */
 export interface MillJobRequest {
     ops: MillOperation[];
     name?: string | null;
     job?: string | null;
+    like?: string | null;
 }
 
 /** An operation's job and what to know about it. */

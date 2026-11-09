@@ -199,8 +199,8 @@ several, cut in order, each its own groups.
 
 | Method and path | Body |
 | --- | --- |
-| `POST /api/mill/plan` | `{"ops": [operation, ...], "name": null, "job": null}` (1 to 100 operations, below), or one operation alone; answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while an operation is typed; the notes are numbered `1: ...` by operation when there are several; with `job` the plan is placed where that job is (below); 400 with the reason for one that cannot be cut |
-| `POST /api/mill` | the same, the job stored with `source` `mill` and the operations as its `recipe` (`{"ops": [...]}`, each holes operation with its `holes` filled in); with `job` naming a Plot page job, the operations replace that job's in place: same id, turned and moved as the job has been since it was made (its `rotation` and `offset` kept), the groups made again from the operations, each keeping the settings its operation's numbers do not change as the job's group had them (`enabled`, `focus`, `min_power`, a feed changed on the Jobs page), matched to the operation it was made from (an unchanged one wherever it moved, a changed one in its place) and then by label but for its numbers; 400 for a job not made on this page, 404 for none, 409 while it runs |
+| `POST /api/mill/plan` | `{"ops": [operation, ...], "name": null, "job": null, "like": null}` (1 to 100 operations, below), or one operation alone; answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while an operation is typed; the notes are numbered `1: ...` by operation when there are several; with `job` the plan is placed where that job is (below); 400 with the reason for one that cannot be cut |
+| `POST /api/mill` | the same, the job stored with `source` `mill` and the operations as its `recipe` (`{"ops": [...]}`, each holes operation with its `holes` filled in); with `job` naming a Plot page job, the operations replace that job's in place: same id, turned and moved as the job has been since it was made (its `rotation` and `offset` kept), the groups made again from the operations, each keeping the settings its operation's numbers do not change as the job's group had them (`enabled`, `focus`, `min_power`, a feed changed on the Jobs page), matched to the operation it was made from (an unchanged one wherever it moved, a changed one in its place) and then by label but for its numbers; 400 for a job not made on this page, 404 for none, 409 while it runs. Without `job`, `like` naming a job makes the new one turned and moved as that job has been since it was made (its `rotation` and `offset` taken), the operations typed in its frame from before the move, as the page does with a Plot page job selected; 404 for none |
 
 Every operation of a job cuts with the same `cutter` and the same `tool`
 (nothing changes the bit or the spot halfway through a run): 400 names the
@@ -228,8 +228,8 @@ around a part, with the spindle turning clockwise; false is conventional.
 A holes operation may carry `holes` (`[[x, y, diameter], ...]`) in place
 of looking them up in `job`; a made job keeps them there, so it is made
 again without the job they came from. Holes looked up in `job` are where
-that job is now; with `job` in the body naming a moved Plot page job they
-are taken into its frame from before the move, as its operations are
+that job is now; with `job` or `like` in the body naming a moved job they
+are taken into its frame from before the move, as the operations are
 typed, so they land on the board job's holes.
 
 `"cutter": "laser"` (default `spindle`) burns the same paths with a beam

@@ -2461,7 +2461,8 @@ class Backend:
         """The Plot page's operations as a job and its notes; stored when
         `keep`, else only shown. With `job` named, the operations replace
         that Plot page job's in place: same id, put where that job is now,
-        turned and moved as it has been since it was made."""
+        turned and moved as it has been since it was made. With `like`
+        named instead, a new job is turned and moved as that one has been."""
         if isinstance(body, mill.MillOperation):
             body = mill.MillJobBody(ops=[body], name=body.name)
         op_list = list(body.ops)
@@ -2479,15 +2480,22 @@ class Backend:
                 raise ValueError(f"{target.name} was not made on the Plot page: its operations cannot be changed there")
             if keep and self.runner.active and self.runner.progress.job == target.id:
                 raise RunnerError("the job is running")
+        # The job whose frame the operations are typed in: the one they
+        # replace, or the one a new job is put as.
+        frame = target
+        if target is None and body.like:
+            frame = self.store.get(body.like)
+            if frame is None:
+                raise NotFound(f"no job {body.like!r}")
 
         def holes_of(op: mill.MillOperation) -> list[tuple[float, float, float]]:
             source = self.store.get(op.job or "")
             if source is None:
                 raise NotFound(f"no job {op.job!r} to take holes from")
             # The board job's holes are where it is now, on the board; the
-            # target's operations are typed from before its move, which
-            # placed() applies to everything built.
-            return list(source.holes) if target is None else mill.unplaced(source.holes, target)
+            # operations are typed from before the frame job's move, which
+            # is applied to everything built.
+            return list(source.holes) if frame is None else mill.unplaced(source.holes, frame)
 
         name = body.name if body.name is not None else (op_list[0].name if len(op_list) == 1 else None)
         job, notes = mill.build_job(op_list, holes_of, None, name)
@@ -2495,6 +2503,8 @@ class Backend:
             # The settings made on the Jobs page stay with the groups.
             mill.carry_job_settings(target, job)
             mill.placed(job, target)
+        elif frame is not None:
+            mill.moved_as(job, frame)
         job.refresh_stats(self.streamer())
         if keep:
             if target is not None:

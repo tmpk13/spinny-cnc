@@ -157,11 +157,14 @@ class MillOperation(Finite):
 
 class MillJobBody(Finite):
     """A job of one operation or several as the page sends it: `job` names
-    the Plot page job they are to replace, None for a new job."""
+    the Plot page job they are to replace, None for a new job; `like` names
+    a job a new one is put as, its operations typed in that job's frame
+    from before its move."""
 
     ops: list[MillOperation] = Field(min_length=1, max_length=MAX_OPERATIONS)
     name: str | None = None
     job: str | None = None
+    like: str | None = None
 
 
 def _group(op: MillOperation, label: str, paths: list[list[tuple[float, float]]]) -> Group:
@@ -402,14 +405,22 @@ def build_job(
     return job, notes
 
 
+def moved_as(made: Job, where: Job) -> Job:
+    """A job made from operations typed in `where`'s frame turned and moved
+    as `where` has been since it was made, so it lands where `where`'s
+    operations do."""
+    made.turn(where.rotation)
+    made.shift(where.offset.x, where.offset.y)
+    made.offset = where.offset.model_copy()
+    made.rotation = where.rotation
+    return made
+
+
 def placed(made: Job, where: Job) -> Job:
     """A job made again from its operations put where `where` is: turned and
     moved as it has been since it was made, under its id."""
-    made.turn(where.rotation)
-    made.shift(where.offset.x, where.offset.y)
+    moved_as(made, where)
     made.id = where.id
-    made.offset = where.offset.model_copy()
-    made.rotation = where.rotation
     return made
 
 

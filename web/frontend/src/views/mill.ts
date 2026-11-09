@@ -15,6 +15,7 @@
 // applied. The run panel beside runs the selected job. The fields are
 // remembered in this browser.
 
+import { turnPoint } from "../align.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
@@ -129,6 +130,25 @@ export const APPLY_HINT: Record<ApplyState, string> = {
 export function plotJobOf(state: AppState): Job | null {
     const job = state.job;
     return job !== null && recipeOps(job.recipe).length > 0 ? job : null;
+}
+
+/** Whether a job has been moved or turned since it was made, so its operations are typed in a frame of their own. */
+export function jobMoved(job: Job | null): boolean {
+    return job !== null && (job.offset.x !== 0 || job.offset.y !== 0 || (job.rotation ?? 0) !== 0);
+}
+
+/**
+ * A board position in the frame a Plot page job's operations are typed in,
+ * from before the job was turned and moved: the inverse of the turn and
+ * the shift that put the job where it is. The position itself with no job.
+ */
+export function boardToJob(point: Point, job: Job | null): Point {
+    if (job === null) {
+        return point;
+    }
+    const shifted: Point = [point[0] - job.offset.x, point[1] - job.offset.y];
+    const degrees = job.rotation ?? 0;
+    return degrees === 0 ? shifted : turnPoint(shifted, -degrees);
 }
 
 /** The operations planned: the job's with the edited one in its place, or with the fields' at the end, or the fields' alone. */
@@ -312,6 +332,13 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     // On a laser the speed is the beam's along the cut, not a feed.
     const speedText = labels["speed"]!.querySelector(".labeled-text");
 
+    /**
+     * A position on the board as the fields take it: in the selected Plot
+     * page job's frame from before it was moved, where its operations are
+     * typed, so it lands there again when the job is made.
+     */
+    const fromBoard = (x: number, y: number): Point => boardToJob([x, y], plotJob);
+
     /** A row of two fields with a button that fills them from the head and a pick of the markers. */
     const pointRow = (title: string, fx: HTMLInputElement, fy: HTMLInputElement): HTMLElement => {
         fx.setAttribute("aria-label", `${title} x`);
@@ -322,14 +349,12 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
                 ctx.toast("error", "no head position: connect the machine first");
                 return;
             }
-            fx.value = formatMm(head.x);
-            fy.value = formatMm(head.y);
+            fill([fx, fy], fromBoard(head.x, head.y));
             changed();
         }, "btn btn-quiet btn-small");
         here.title = "take where the head is over the board";
         const pick = markerPicker(ctx, "marker", (marker) => {
-            fx.value = formatMm(marker.x);
-            fy.value = formatMm(marker.y);
+            fill([fx, fy], fromBoard(marker.x, marker.y));
             changed();
         });
         return el("div", { class: "goto-row mill-point" }, el("span", { class: "choice-label" }, title), fx, fy, here, pick);
@@ -363,13 +388,13 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             ctx.toast("error", "no head position: connect the machine first");
             return;
         }
-        appendPoint([head.x, head.y]);
+        appendPoint(fromBoard(head.x, head.y));
     }, "btn btn-quiet btn-small");
     addHere.title = "add where the head is over the board";
-    const addMarker = markerPicker(ctx, "add marker", (marker) => appendPoint([marker.x, marker.y]));
+    const addMarker = markerPicker(ctx, "add marker", (marker) => appendPoint(fromBoard(marker.x, marker.y)));
     const addAll = button("All markers", () => {
         for (const marker of ctx.store.get().markers) {
-            appendPoint([marker.x, marker.y]);
+            appendPoint(fromBoard(marker.x, marker.y));
         }
     }, "btn btn-quiet btn-small");
     const clearPoints = button("Clear", () => {
@@ -378,8 +403,10 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     }, "btn btn-quiet btn-small");
     const closedLabel = el("label", { class: "muted" }, closed, " back to the first point");
 
+    const pointsLabel = labeled("Points, board mm", points);
+    const pointsLabelText = pointsLabel.querySelector(".labeled-text");
     const pointsBox = el("div", { class: "mill-section" },
-        labeled("Points, board mm", points),
+        pointsLabel,
         el("div", { class: "button-row" }, addHere, addMarker, addAll, clearPoints, closedLabel),
     );
     rw.setAttribute("aria-label", "Width");
@@ -653,9 +680,18 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         boreText.textContent = laser
             ? " clear a hole wider than the spot in rings, rather than cut along its edge"
             : " bore a hole wider than the bit out with it, in rings";
+        // A job moved or turned on the Jobs page has its operations typed
+        // where they were before the move.
+        const moved = jobMoved(plotJob);
+        const where = moved
+            ? `positions are ${plotJob!.name}'s own, from before it was moved or turned on the Jobs page: Here and the markers are taken into them, and the plan and the job made are put where it now is`
+            : "positions are board mm";
+        if (pointsLabelText) {
+            pointsLabelText.textContent = moved ? "Points, the job's mm" : "Points, board mm";
+        }
         hint.textContent = laser
-            ? "positions are board mm; a point is marked with a ring the spot across, and each pass burns the whole path again; fields take arithmetic, such as 25.4/2 or 1/8 in"
-            : "positions are board mm; the depth is under the surface where the tool was zeroed; fields take arithmetic, such as 25.4/2 or 1/8 in";
+            ? `${where}; a point is marked with a ring the spot across, and each pass burns the whole path again; fields take arithmetic, such as 25.4/2 or 1/8 in`
+            : `${where}; the depth is under the surface where the tool was zeroed; fields take arithmetic, such as 25.4/2 or 1/8 in`;
         rectBox.classList.toggle("hidden", !needs.rect);
         cornersBox.classList.toggle("hidden", rectMode !== "corners");
         centerBox.classList.toggle("hidden", rectMode !== "center");
@@ -773,9 +809,17 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         }
     }
 
-    /** Sends the job's operations: in the place of the selected job, or as a new one; selects what came back. */
+    /**
+     * Sends the job's operations: in the place of the selected job, or as a
+     * new one; selects what came back. A new one made while a Plot page job
+     * is selected is put as that job is, since the fields are typed in its
+     * frame and the plan showed them there.
+     */
     async function send(list: MillOperation[], into: Job | null, nextEditing: number | null, what: string): Promise<void> {
-        const made = await ctx.call(ctx.api.makeMill({ ops: list, name: into ? jobName() : name.value.trim() || null, job: into?.id ?? null }));
+        const body = into
+            ? { ops: list, name: jobName(), job: into.id }
+            : { ops: list, name: name.value.trim() || null, job: null, like: plotJob?.id ?? null };
+        const made = await ctx.call(ctx.api.makeMill(body));
         if (!made) {
             return;
         }

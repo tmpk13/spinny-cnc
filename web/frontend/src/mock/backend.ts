@@ -46,7 +46,7 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, par
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbKey, thumbnail } from "./thumbs.ts";
-import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
+import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, movedAs, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
 import { MockCameraLog } from "./camlog.ts";
@@ -3752,16 +3752,25 @@ export class MockBackend implements Api, EventFeed {
                 throw new ApiError(409, "the job is running");
             }
         }
-        const where = target;
+        // The job whose frame the operations are typed in: the one they
+        // replace, or the one a new job is put as.
+        let where = target;
+        if (!target && body.like) {
+            where = this.jobStore.get(body.like) ?? null;
+            if (!where) {
+                throw new ApiError(404, `no job '${body.like}'`);
+            }
+        }
+        const frame = where;
         const holesOf = (op: MillOperation): HolePoint[] => {
             const source = this.jobStore.get(op.job ?? "");
             if (!source) {
                 throw new ApiError(404, `no job '${op.job ?? ""}' to take holes from`);
             }
             // The board job's holes are where it is now, on the board; the
-            // target's operations are typed from before its move, which
-            // placed() applies to everything built.
-            return where ? unplaced(source.holes ?? [], where) : [...(source.holes ?? [])];
+            // operations are typed from before the frame job's move, which
+            // is applied to everything built.
+            return frame ? unplaced(source.holes ?? [], frame) : [...(source.holes ?? [])];
         };
         const name = body.name !== undefined && body.name !== null ? body.name : ops.length === 1 ? ops[0]!.name ?? null : null;
         let made: MillResponse;
@@ -3774,6 +3783,9 @@ export class MockBackend implements Api, EventFeed {
             // The settings made on the Jobs page stay with the groups.
             carryJobSettings(target, made.job);
             placed(made.job, target);
+            made.job.stats = computeStats(made.job.groups, this.limits());
+        } else if (frame) {
+            movedAs(made.job, frame);
             made.job.stats = computeStats(made.job.groups, this.limits());
         }
         if (keep) {

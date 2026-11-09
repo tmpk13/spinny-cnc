@@ -268,6 +268,48 @@ describe("Plot page", () => {
         expect(store.get().millPlan?.groups[0]?.label).toBe("line through 3 points");
     });
 
+    test("puts the head and the markers where they are on the board into a moved job", async () => {
+        const { root, store, backend, ctx } = mountPage();
+        const spindle = { kinematics: "cartesian" as const, tool: "spindle" as const, h_axis: true, r_max: 300, z_max: 200 };
+        store.set({ snapshot: connected({ board: { x: 3, y: 4 } }, { profile: spindle }), markers: [{ name: "A", x: 7, y: 8 }] });
+        const made = (await backend.makeMill({ ops: [{ ...defaultOperation("pocket"), x1: 20, y1: 10, tool: 1 }] })).job;
+        // Lined up with the stock: moved 10 mm in x, then a quarter turn about the origin.
+        await backend.patchJob(made.id, { offset: { x: 10, y: 0 }, turn: 90, about: "origin" });
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.id);
+        click(root, "Drill");
+        type(input(root, "Points"), "");
+        click(root, "Add here");
+        click(root, "All markers");
+        click(root, "Add to job");
+        await wait(30);
+        const drilled = (job: Job): number[][] => job.groups.at(-1)!.paths.map((path) => path[0]!.map((v) => Math.round(v * 1e6) / 1e6));
+        expect(drilled(store.get().job!)).toEqual([[3, 4], [7, 8]]);
+        // A corner from the head, applied in place of the pocket's.
+        findButton(root, "pocket 20 x 10 at 10, 5").click();
+        findButton(root.querySelector(".mill-point")!, "Here").click();
+        click(root, "Apply");
+        await wait(30);
+        // The pocket's corner is at the head on the board, its bit half a millimeter in.
+        const corner = store.get().job!.groups[0]!.paths.flat();
+        expect(Math.max(...corner.map(([x]) => x))).toBeCloseTo(2.5, 6);
+        expect(Math.min(...corner.map(([, y]) => y))).toBeCloseTo(4.5, 6);
+        // A new job of the fields is put as the selected one is, where the plan shows it.
+        click(root, "Drill");
+        type(input(root, "Points"), "");
+        click(root, "Add here");
+        click(root, "New job");
+        await wait(30);
+        const fresh = store.get().job!;
+        expect(fresh.id).not.toBe(made.id);
+        expect(drilled(fresh)).toEqual([[3, 4]]);
+        expect(fresh.offset.x).toBeCloseTo(0, 9);
+        expect(fresh.offset.y).toBeCloseTo(10, 9);
+        expect(fresh.rotation).toBe(90);
+        // The hint names the frame the fields are in.
+        expect(root.textContent).toContain("before it was moved");
+    });
+
     test("drills a board job's holes, a group a size, leaving out the sizes unchecked", async () => {
         const { root, store, backend } = mountPage();
         const board: Job = await backend.job((await backend.jobs())[0]!.id);
