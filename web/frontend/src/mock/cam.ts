@@ -1047,6 +1047,12 @@ function readGeometry(fileName: string, text: string): Geometry {
         case "gbr":
         case "gtl":
         case "gbl":
+        case "gts":
+        case "gbs":
+        case "gtp":
+        case "gbp":
+        case "gto":
+        case "gbo":
         case "gm1":
         case "kicad_pcb": {
             const coupon = demoCoupon();

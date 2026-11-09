@@ -5,6 +5,7 @@ import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts"
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
 import { isDispensing, isMilling, profileOf } from "../profile.ts";
+import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
@@ -13,7 +14,8 @@ import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 
-export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gts,.gbs,.gtp,.gbp,.gto,.gbo,.gm1,.kicad_pcb,.gcode,.nc";
+/** Every file the Jobs import reads: a drawing, a job, a board layer's gerber or the KiCad file, or gcode. */
+export const ACCEPT = [".svg", ".json", ...GERBER_SUFFIXES, ".kicad_pcb", ...GCODE_SUFFIXES].join(",");
 
 /** The layers of a KiCad board a job is usually cut from, offered under the layer field; any other name may be typed. */
 export const BOARD_LAYERS = ["F.Cu", "B.Cu", "F.Paste", "B.Paste", "F.Mask", "B.Mask", "F.SilkS", "B.SilkS"];

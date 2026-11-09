@@ -1602,6 +1602,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
                 break;
             case "gcode":
             case "nc":
+            case "ngc":
                 geometry = parseGcode(text);
                 source = "gcode";
                 break;

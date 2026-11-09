@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import { SHIPPED_PROFILES, buildCamJob, parseProfile, setValue } from "../src/mock/cam.ts";
+import { buildJob } from "../src/mock/jobs.ts";
 import type { Path } from "../src/types.ts";
+import { ACCEPT as CAM_ACCEPT } from "../src/views/cam.ts";
+import { ACCEPT as JOBS_ACCEPT } from "../src/views/jobs.ts";
 
 const limits = { rRate: 560, aRate: 400, tolerance: 0.005 };
 
@@ -98,5 +101,20 @@ depth = 0.2
         expect(said(text, "board-F_Cu.gbr")).toEqual([]);
         // A KiCad board is read on the profile's layer.
         expect(said(setValue(text, ["placement", "layer"], "B.Cu"), "board.kicad_pcb").length).toBe(1);
+    });
+});
+
+describe("the file pickers", () => {
+    test("offer every file the backend reads, and the mocks read them", () => {
+        // The backend's board.GERBER_SUFFIXES and its gcode suffixes.
+        const gerbers = [".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gtp", ".gbp", ".gto", ".gbo", ".gm1"];
+        const gcode = [".gcode", ".nc", ".ngc"];
+        expect(CAM_ACCEPT.split(",").sort()).toEqual([".svg", ".json", ...gerbers, ".drl", ".kicad_pcb", ...gcode, ".stl"].sort());
+        expect(JOBS_ACCEPT.split(",").sort()).toEqual([".svg", ".json", ...gerbers, ".kicad_pcb", ...gcode].sort());
+        // A paste layer's gerber through a CAM profile, and a .ngc file through the Jobs import.
+        const paste = buildCamJob("0009", parseProfile(shipped("polar-laser"), "p"), "paste", "board-F_Paste.gtp", "G04*", limits);
+        expect(paste.job.source).toBe("gerber");
+        const ngc = buildJob("0010", "part.ngc", "G0 X0 Y0\nM3 S200\nG1 X10 Y0 F300\n", {}, limits);
+        expect(ngc.job.source).toBe("gcode");
     });
 });

@@ -18,11 +18,13 @@ import type {
     CamValue,
     Tool,
 } from "../types.ts";
+import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
 import { showPage } from "./tabs.ts";
 
-export const ACCEPT = ".svg,.json,.gbr,.gtl,.gbl,.gm1,.drl,.kicad_pcb,.gcode,.nc,.stl";
+/** Every design the CAM reads: a drawing, a job, a board (its layers' gerbers and drill files, or the KiCad file), gcode or a model. */
+export const ACCEPT = [".svg", ".json", ...GERBER_SUFFIXES, ".drl", ".kicad_pcb", ...GCODE_SUFFIXES, ".stl"].join(",");
 
 export interface NumberSpec {
     key: string;
