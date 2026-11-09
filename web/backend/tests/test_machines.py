@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -333,3 +334,57 @@ def test_the_virtual_firmware_started_from_a_file_is_recognized_as_that_machine(
             process.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
             process.kill()
+
+
+@contextmanager
+def _virtual_client(tmp_path):
+    """A backend connected to a virtual firmware with its default settings;
+    both are stopped on the way out."""
+    if not BINARY or not Path(BINARY).exists():
+        pytest.skip("SPINNY_VIRTUAL does not name a virtual firmware binary")
+    port = _free_port()
+    process = subprocess.Popen(
+        [BINARY, "--listen", f"127.0.0.1:{port}", "--fast", "--quiet"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert _wait_port(port), "the virtual firmware did not open its port"
+        backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json", machines_dir=SHIPPED)
+        with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+            response = client.post("/api/connect", json={"url": f"socket://127.0.0.1:{port}"})
+            assert response.status_code == 200, response.text
+            yield client
+            client.post("/api/disconnect")
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+@pytest.mark.e2e
+@pytest.mark.timeout(120)
+def test_a_write_that_lowers_s_max_under_the_s_min_in_force_sends_s_min_first(tmp_path):
+    """The firmware checks s_min <= s_max on every line, so the order of
+    the two decides whether a write that is valid as a whole goes in."""
+    with _virtual_client(tmp_path) as client:
+        assert client.put("/api/settings", json={"values": {"s_min": 600}}).status_code == 200
+        response = client.put("/api/settings", json={"values": {"s_max": 500, "s_min": 0}})
+        assert response.status_code == 200, response.text
+        values = client.get("/api/settings").json()["values"]
+        assert (values["s_max"], values["s_min"]) == (500, 0)
+
+
+@pytest.mark.e2e
+@pytest.mark.timeout(120)
+def test_a_refused_write_puts_back_what_it_changed_in_reverse(tmp_path):
+    """Raising both s_max and s_min and then being refused at a later key
+    puts s_min back before s_max, so neither restore is refused."""
+    with _virtual_client(tmp_path) as client:
+        before = client.get("/api/settings").json()["values"]
+        response = client.put("/api/settings", json={"values": {"s_max": 2000, "s_min": 1500, "tmc_r_micro": 3}})
+        assert response.status_code == 400, response.text
+        values = client.get("/api/settings").json()["values"]
+        assert (values["s_max"], values["s_min"]) == (before["s_max"], before["s_min"])

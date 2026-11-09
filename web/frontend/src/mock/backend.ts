@@ -3318,6 +3318,13 @@ export class MockBackend implements Api, EventFeed {
             }
             texts.push([name, settingText(value)]);
         }
+        // The firmware checks s_min <= s_max on every line, so a write that
+        // lowers s_max under the s_min in force sends its s_min first.
+        const sMax = texts.find(([name]) => name === "s_max");
+        const sMin = texts.findIndex(([name]) => name === "s_min");
+        if (sMax && sMin >= 0 && Number(sMax[1]) < (current["s_min"] ?? 0)) {
+            texts.unshift(...texts.splice(sMin, 1));
+        }
         const applied: [string, number][] = [];
         try {
             for (const [name, text] of texts) {
@@ -3332,9 +3339,10 @@ export class MockBackend implements Api, EventFeed {
                 applied.push([name, before]);
             }
         } catch (error) {
-            // Whatever went before is put back; a value that cannot be is
-            // skipped for the next.
-            for (const [name, before] of applied) {
+            // Whatever went before is put back, last first, so the board
+            // steps back through states it took once; a value that cannot
+            // be is skipped for the next.
+            for (const [name, before] of [...applied].reverse()) {
                 try {
                     this.exchange(`$${name}=${settingText(before)}`, () => this.machine.setSetting(name, before));
                 } catch {

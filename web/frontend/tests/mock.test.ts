@@ -455,6 +455,18 @@ describe("mock backend", () => {
         expect(events.some((e) => e.type === "message" && e.data.text.includes("flash"))).toBe(true);
     });
 
+    test("orders s_min and s_max so a write valid as a whole goes in, and puts a refused one back last first", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { s_min: 600 } });
+        await backend.updateSettings({ values: { s_max: 500, s_min: 0 } });
+        let values = (await backend.settings()).values;
+        expect([values["s_max"], values["s_min"]]).toEqual([500, 0]);
+        await expect(backend.updateSettings({ values: { s_max: 2000, s_min: 1500, tmc_r_micro: 3 } })).rejects.toBeInstanceOf(ApiError);
+        values = (await backend.settings()).values;
+        expect([values["s_max"], values["s_min"]]).toEqual([500, 0]);
+    });
+
     test("laser test and mode", async () => {
         const { backend } = backendWithLog();
         await backend.connect("/dev/ttyACM0");

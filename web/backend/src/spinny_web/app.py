@@ -1978,6 +1978,10 @@ class Backend:
             if name not in current:
                 raise ValueError(f"unknown setting {name!r}")
             texts[name] = _setting_text(name, value)
+        # The firmware checks s_min <= s_max on every line, so a write that
+        # lowers s_max under the s_min in force sends its s_min first.
+        if "s_min" in texts and "s_max" in texts and float(_number(texts["s_max"])) < float(current["s_min"]):
+            texts = {"s_min": texts["s_min"], **{name: text for name, text in texts.items() if name != "s_min"}}
         applied: list[str] = []
         # The line on its way: one lost unanswered may still have been
         # taken, as a refused one was not.
@@ -2000,8 +2004,10 @@ class Backend:
                 applied.append(sending)
             # Refused, or lost on the way: whatever went before is put
             # back, so the write is all or nothing as far as the link
-            # allows, and what the machine is read again.
-            self._restore_settings(link, {name: current[name] for name in applied})
+            # allows, and what the machine is read again. Last first, so
+            # the board steps back through states it took once (s_min
+            # and s_max are checked against each other on every line).
+            self._restore_settings(link, {name: current[name] for name in reversed(applied)})
             self._settings_cache = None
             try:
                 self.read_settings(force=True)
