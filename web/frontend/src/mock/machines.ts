@@ -364,7 +364,13 @@ export function parseMachine(text: string, id: string): MachineDocument {
             throw reader.fail(section, fullKey, `and ${scaleKey} cannot both be given: ${scaleKey} counts microsteps, ${fullKey} does not`);
         }
         if (fullKey in table) {
-            settings[`${axis}_steps`] = reader.positive(table, fullKey, section) * micro;
+            const steps = reader.positive(table, fullKey, section) * micro;
+            // The firmware takes the product, not the key, so the product is
+            // what must be within its bound.
+            if (steps > FLOAT_MAX) {
+                throw reader.fail(section, fullKey, `times the ${micro} microsteps is ${steps} steps, above the firmware's ${FLOAT_MAX}`);
+            }
+            settings[`${axis}_steps`] = steps;
         } else if (scaleKey in table) {
             settings[`${axis}_steps`] = reader.positive(table, scaleKey, section);
         } else if ("microsteps" in table) {
@@ -406,7 +412,11 @@ export function parseMachine(text: string, id: string): MachineDocument {
             }
         }
         if ("home_pos" in table) {
-            settings[`${axis}_home_pos`] = reader.number(table, "home_pos", section);
+            const home = reader.number(table, "home_pos", section);
+            if (!(home >= -FLOAT_MAX && home <= FLOAT_MAX)) {
+                throw reader.fail(section, "home_pos", `must be within ${FLOAT_MAX} either side of 0`);
+            }
+            settings[`${axis}_home_pos`] = home;
         }
         const known = [
             scaleKey, fullKey, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",

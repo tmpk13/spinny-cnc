@@ -289,7 +289,12 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         if scale_key in table and full_key in table:
             raise reader.fail(section, full_key, f"and {scale_key} cannot both be given: {scale_key} counts microsteps, {full_key} does not")
         if full_key in table:
-            settings[f"{axis}_steps"] = reader.positive(table, full_key, section) * micro
+            steps = reader.positive(table, full_key, section) * micro
+            # The firmware takes the product, not the key, so the product is
+            # what must be within its bound.
+            if steps > FLOAT_MAX:
+                raise reader.fail(section, full_key, f"times the {micro} microsteps is {steps:g} steps, above the firmware's {FLOAT_MAX:g}")
+            settings[f"{axis}_steps"] = steps
         elif scale_key in table:
             settings[f"{axis}_steps"] = reader.positive(table, scale_key, section)
         elif "microsteps" in table:
@@ -315,7 +320,10 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
             if key in table:
                 settings[f"{axis}_{key}"] = reader.positive(table, key, section)
         if "home_pos" in table:
-            settings[f"{axis}_home_pos"] = reader.number(table, "home_pos", section)
+            home = reader.number(table, "home_pos", section)
+            if not -FLOAT_MAX <= home <= FLOAT_MAX:
+                raise reader.fail(section, "home_pos", f"must be within {FLOAT_MAX:g} either side of 0")
+            settings[f"{axis}_home_pos"] = home
         reader.done(table, section, {scale_key, full_key, "max_rate", "accel", "jerk", "jog_rate", "invert", "current_ma", "microsteps", "socket",
                                      "endstop", "endstop_pin", "endstop_invert", "endstop_halt", "home_pull", "home_pos", "home_travel"}
                     | ({"limit"} if axis in ("r", "z") else set()) | ({"fitted"} if axis == "h" else set()))

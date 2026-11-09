@@ -64,6 +64,17 @@ def test_full_steps_keep_the_distance_whatever_the_microsteps():
     assert dispenser.settings["a_steps"] == pytest.approx(1600)
 
 
+def test_a_scale_the_firmware_would_refuse_is_refused_in_the_file():
+    # The firmware bounds the steps per mm, which full steps times the
+    # microsteps make: a key within its own bound can still pass it.
+    assert parse("[rail]\nfull_steps_per_mm = 39000\n", "rig").settings["r_steps"] == pytest.approx(39000 * 256)
+    with pytest.raises(MachineError, match=r"\[rail\] full_steps_per_mm times the 256 microsteps is 1\.024e\+07 steps"):
+        parse("[rail]\nfull_steps_per_mm = 40000\n", "rig")
+    with pytest.raises(MachineError, match=r"\[rail\] home_pos must be within 1e\+07 either side of 0"):
+        parse("[rail]\nhome_pos = 20000000\n", "rig")
+    assert parse("[rail]\nhome_pos = -9999999\n", "rig").settings["r_home_pos"] == -9999999
+
+
 def test_an_empty_file_is_the_firmware_at_its_defaults():
     found = parse("", "bare")
     assert found.settings == FIRMWARE_DEFAULTS

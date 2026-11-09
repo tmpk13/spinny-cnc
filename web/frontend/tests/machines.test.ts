@@ -77,6 +77,12 @@ describe("machine files with a dispenser and a camera", () => {
         expect(() => parseMachine("[table]\nfull_steps_per_mm = 5", "f")).toThrow("f.toml: [table] full_steps_per_mm is not a key here");
     });
 
+    test("refuses a scale whose steps the firmware would refuse, and a home position past its bound", () => {
+        expect(parseMachine("[rail]\nfull_steps_per_mm = 39000", "f").settings["r_steps"]).toBe(39000 * 256);
+        expect(() => parseMachine("[rail]\nfull_steps_per_mm = 40000", "f")).toThrow("f.toml: [rail] full_steps_per_mm times the 256 microsteps is 10240000 steps");
+        expect(() => parseMachine("[rail]\nhome_pos = 20000000", "f")).toThrow("f.toml: [rail] home_pos must be within 10000000 either side of 0");
+    });
+
     test("refuses what the backend refuses, in its words", () => {
         const refused = (text: string, message: string): void => {
             expect(() => parseMachine(text, "f")).toThrow(message);
