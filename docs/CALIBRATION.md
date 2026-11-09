@@ -112,8 +112,9 @@ was cut with and one can be switched off or cut again alone.
   no focus axis, such as the K40, it is the focus and power test as well:
   one speed (`speed steps` 1) and a ladder of powers shows where the beam
   starts to mark, which moves with the focus.
-- A mill gets the depth test: a row of slots, each a step deeper, at one
-  feed and spindle speed. Touch the tool off on the copper first. The
+- A mill gets the depth test: a row of slots, shallowest first whichever
+  end of the ladder was typed first, each a step deeper, at one feed and
+  spindle speed. Touch the tool off on the copper first. The
   shallowest slot that parts the copper is the isolation depth, and a slot
   measured against its number shows how far the depth axis really moves.
 

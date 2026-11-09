@@ -608,4 +608,10 @@ def test_a_laser_makes_a_material_test_and_a_mill_a_depth_test(client, fake):
     assert slots.status_code == 200, slots.text
     groups = slots.json()["job"]["groups"]
     assert [(g["depth"], g["power"], g["speed"]) for g in groups] == [(0.1, 8000, 90), (0.2, 8000, 90), (0.3, 8000, 90)]
+    # Typed deep to shallow, the row still runs shallowest first from Y,
+    # as the summary says.
+    backwards = client.post("/api/calibrate", json={"kind": "depth", "depths": [0.3, 0.05, 6]}).json()
+    first = backwards["job"]["groups"][0]
+    assert (first["depth"], first["paths"][0][0][1]) == (0.05, 0.0)
+    assert backwards["summary"][0].startswith("depth test: 6 slots 0.05 to 0.3 mm deep") and backwards["summary"][0].endswith("shallowest at Y0")
     assert client.post("/api/calibrate", json={"kind": "material"}).status_code == 400

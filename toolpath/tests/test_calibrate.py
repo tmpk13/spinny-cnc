@@ -40,6 +40,11 @@ def test_the_depth_row_has_a_slot_per_depth():
         depth([0.0], length=10, gap=3, speed=8000, feed=120)
 
 
+def test_the_depth_row_runs_shallowest_first_whichever_way_it_was_asked():
+    patches = depth([0.2, 0.1], length=10, gap=3, speed=8000, feed=120, origin=(1, 2))
+    assert [(p.label, p.depth, p.paths[0][0]) for p in patches] == [("test depth 0.1 mm", 0.1, (1, 2)), ("test depth 0.2 mm", 0.2, (1, 5))]
+
+
 def test_the_focus_ladder_has_a_line_per_step_lowest_first():
     patches = calibrate.focus_ladder([0.5, -0.5, 0.0], 8.0, 1.5, 300.0, 900.0, (2.0, 3.0))
     assert [patch.label for patch in patches] == ["test focus -0.5 mm", "test focus 0 mm", "test focus +0.5 mm"]

@@ -105,7 +105,8 @@ def build(request: CalibrateRequest, streamer: Streamer, milling: bool, focus_ax
     else:
         if not milling:
             raise ValueError("the depth test is a mill's ($spindle=1): a laser takes the material test")
-        depths = calibrate.ladder(*request.depths)
+        # Shallowest first, as the row is laid out and the summary says.
+        depths = sorted(calibrate.ladder(*request.depths))
         for cut in depths:
             check_depth(cut)
         check_speed(request.feed, "feed")

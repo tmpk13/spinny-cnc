@@ -52,6 +52,17 @@ describe("calibration test", () => {
         root.remove();
     });
 
+    test("a mill's depth test runs shallowest first whichever way it was asked, as the backend lays it", async () => {
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        const made = await backend.calibrateJob({ kind: "depth", depths: [0.3, 0.05, 6] });
+        const first = made.job.groups[0]!;
+        expect([first.depth, first.paths[0]![0]![1]]).toEqual([0.05, 0]);
+        expect(made.summary[0]!.startsWith("depth test: 6 slots 0.05 to 0.3 mm deep")).toBe(true);
+        expect(made.summary[0]!.endsWith("shallowest at Y0")).toBe(true);
+    });
+
     test("a laser with a focus axis makes a focus ladder, and each line's focus shows in the groups table", async () => {
         const store = new Store<AppState>(initialState(true));
         const backend = new MockBackend({ timers: false });

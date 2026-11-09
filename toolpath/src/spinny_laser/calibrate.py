@@ -101,13 +101,14 @@ def material(
 
 def depth(depths: list[float], length: float, gap: float, speed: float, feed: float, origin: Point = (0.0, 0.0)) -> list[Patch]:
     """The mill's row: a slot `length` long along X per depth, `gap` apart in
-    Y from `origin` up, shallowest first."""
+    Y from `origin` up, shallowest first whatever order the depths come in,
+    so the coupon reads the same way however the ladder was typed."""
     if not 0.0 < length <= MAX_SIZE:
         raise ValueError(f"length must be above 0 and at most {MAX_SIZE:g} mm")
     if not 0.0 < gap <= MAX_SIZE:
         raise ValueError(f"gap must be above 0 and at most {MAX_SIZE:g} mm")
     patches = []
-    for i, cut in enumerate(depths):
+    for i, cut in enumerate(sorted(depths)):
         if not cut > 0.0:
             raise ValueError("every depth must be above 0")
         y = origin[1] + i * gap

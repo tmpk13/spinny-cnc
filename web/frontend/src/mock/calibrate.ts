@@ -146,7 +146,8 @@ export function calibrateJob(id: string, request: CalibrateRequest, milling: boo
             throw new Error("the depth test is a mill's ($spindle=1): a laser takes the material test");
         }
         const [d0, d1, dn] = request.depths ?? [0.05, 0.3, 6];
-        const depths = ladder(d0, d1, dn);
+        // Shallowest first, as the row is laid out and the summary says.
+        const depths = ladder(d0, d1, dn).sort((a, b) => a - b);
         depths.forEach((depth) => checkDepth(depth));
         const feed = request.feed ?? 120;
         const spindle = request.spindle ?? 1000;
