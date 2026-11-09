@@ -845,7 +845,7 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
     numbers: a job made again from it for another width is made as its
     file or operations make it, so paths moved between groups or taken out
     would come back where they were, and a renamed group's settings would
-    be lost."""
+    be lost. A joint-space group whose joints changed is drawn again."""
     if not isinstance(data, dict):
         raise JobImportError("not a job: the body must be a JSON object")
     body = {key: value for key, value in data.items() if key not in ("id", "stats")}
@@ -872,6 +872,14 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
 
     if job.recipe is not None and cuts(job) != cuts(old):
         job.recipe = None
+    for index, group in enumerate(job.groups):
+        # A joint-space group's paths are only its drawing, and its joints
+        # are what the run streams: joints changed are drawn again, so the
+        # preview shows where the run cuts, while joints as they were keep
+        # the drawing sent, which a centering burn shown as burnt makes
+        # apart from them on purpose.
+        if group.joints and (index >= len(old.groups) or points(group.joints) != points(old.groups[index].joints)):
+            group.paths = []
     return checked(job)
 
 

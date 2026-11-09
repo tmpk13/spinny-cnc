@@ -549,4 +549,16 @@ describe("a job put back whole", () => {
         const named = (await backend.makeMill({ ops: [line(0)] })).job;
         expect((await backend.replaceJob(named.id, { ...named, groups: [{ ...named.groups[0]!, label: "edges" }] })).recipe ?? null).toBeNull();
     });
+
+    test("draws a joint-space group whose joints changed again, and keeps one's drawing whose joints did not", async () => {
+        const backend = new MockBackend({ timers: false });
+        const radii = (job: Job): number[] => [...new Set(job.groups[0]!.paths.flat().map(([x, y]) => Math.round(Math.hypot(x, y) * 1e6) / 1e6))];
+        const job = await backend.uploadJob(new File([JSON.stringify({ groups: [{ label: "arc", joints: [[[10, 0], [10, 90]]] }] })], "arc.json"), {});
+        expect(radii(job)).toEqual([10]);
+        const moved = await backend.replaceJob(job.id, { ...job, groups: [{ ...job.groups[0]!, joints: [[[20, 0], [20, 90]]] }] });
+        expect(radii(moved)).toEqual([20]);
+        const shown = moved.groups[0]!.paths.map((path) => path.map(([x, y]): [number, number] => [x * 1.01, y * 1.01]));
+        const kept = await backend.replaceJob(job.id, { ...moved, groups: [{ ...moved.groups[0]!, paths: shown }] });
+        expect(kept.groups[0]!.paths).toEqual(shown);
+    });
 });

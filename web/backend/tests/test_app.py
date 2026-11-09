@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import shutil
 import threading
@@ -1277,6 +1278,28 @@ def test_a_job_whose_paths_were_taken_out_or_moved_is_not_made_again_with_them(c
     recut = client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.12})
     assert recut.status_code == 200, recut.text
     assert [(len(g["paths"]), g["power"]) for g in recut.json()["groups"]] == [(32, 250)]
+
+
+def test_a_joint_space_group_whose_joints_changed_is_drawn_again(client):
+    def radii(job: dict) -> set[float]:
+        return {round(math.hypot(x, y), 6) for path in job["groups"][0]["paths"] for x, y in path}
+
+    body = json.dumps({"groups": [{"label": "arc", "joints": [[[10, 0], [10, 90]]]}]})
+    job = client.post("/api/jobs", files={"file": ("arc.json", body, "application/json")}).json()
+    assert radii(job) == {10.0}
+    # The radius changed with the drawing sent as it was: the run streams
+    # the joints, and the drawing follows them.
+    group = job["groups"][0]
+    moved = client.put(f"/api/jobs/{job['id']}", json={**job, "groups": [{**group, "joints": [[[20, 0], [20, 90]]]}]})
+    assert moved.status_code == 200, moved.text
+    assert radii(moved.json()) == {20.0}
+    # Joints as they were keep the drawing sent: a centering burn shown as
+    # burnt is drawn apart from its joints on purpose.
+    drawn = moved.json()
+    shown = [[[x * 1.01, y * 1.01] for x, y in path] for path in drawn["groups"][0]["paths"]]
+    kept = client.put(f"/api/jobs/{job['id']}", json={**drawn, "groups": [{**drawn["groups"][0], "paths": shown}]})
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["groups"][0]["paths"] == shown
 
 
 def _held_recut(monkeypatch):

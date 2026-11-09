@@ -8,6 +8,7 @@
 
 import { button, el, setLocked } from "../dom.ts";
 import { type JobPlace, formatJson, offsetOf, placeOf, stepsAt } from "../jsontext.ts";
+import { jointPreview } from "../mock/jobs.ts";
 import { setPending } from "../state.ts";
 import type { Job } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -36,9 +37,12 @@ function isPaths(value: unknown): boolean {
 /**
  * The job a text says, as far as the page can tell before the backend
  * checks it, with the stored job's id and the fields a drawing needs
- * filled in; a message saying what is wrong otherwise.
+ * filled in; a message saying what is wrong otherwise. A joint-space
+ * group's paths are only its drawing: one whose joints are not the
+ * `stored` job's group's, or that has none, is drawn from its joints, as
+ * the backend draws it once applied, so the edit shows where a run cuts.
  */
-export function readJobText(text: string, id: string): Job | string {
+export function readJobText(text: string, id: string, stored: Job | null = null): Job | string {
     let data: unknown;
     try {
         data = JSON.parse(text);
@@ -69,9 +73,17 @@ export function readJobText(text: string, id: string): Job | string {
             return `${key}: lists of [x, y] points`;
         }
     }
-    const groups = (raw["groups"] as Record<string, unknown>[]).map((group) => ({
-        power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [], ...group,
-    }));
+    const groups = (raw["groups"] as Record<string, unknown>[]).map((group, index) => {
+        const made = { power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [] as unknown, ...group };
+        const joints = group["joints"];
+        if (Array.isArray(joints) && joints.length > 0 && isPaths(joints)) {
+            const drawn = Array.isArray(made.paths) && made.paths.length > 0;
+            if (!drawn || JSON.stringify(joints) !== JSON.stringify(stored?.groups[index]?.joints ?? [])) {
+                made.paths = (joints as [number, number][][]).map((poly) => jointPreview(poly));
+            }
+        }
+        return made;
+    });
     return {
         name: "job",
         source: "json",
@@ -212,7 +224,7 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         if (!job) {
             return;
         }
-        const made = readJobText(editor.value, job.id);
+        const made = readJobText(editor.value, job.id, job);
         if (typeof made === "string") {
             status.textContent = made;
             return;
@@ -290,7 +302,7 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         if (!job) {
             return;
         }
-        const made = readJobText(editor.value, job.id);
+        const made = readJobText(editor.value, job.id, job);
         if (typeof made === "string") {
             ctx.toast("error", made);
             return;

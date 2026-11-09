@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Camera } from "../src/camera.ts";
 import { formatJson } from "../src/jsontext.ts";
+import { jointPreview } from "../src/mock/jobs.ts";
 import { defaultOperation } from "../src/mock/mill.ts";
 import { Preview } from "../src/preview.ts";
 import { boxedAfter, pickedAfter } from "../src/regroup.ts";
@@ -325,6 +326,22 @@ describe("the job as JSON", () => {
         expect(readJobText('{"groups": [{"label": "x", "paths": [[1, 2]]}]}', "j1")).toBe("x: paths are lists of [x, y] points");
         expect(placeText({ list: "groups", group: 1, path: 0, point: 2 }, job)).toBe("b: path 1, point 3");
         expect(placeText({ list: "outline", group: null, path: 3, point: null }, job)).toBe("outline: path 4");
+    });
+
+    test("a joint-space group's edited joints are drawn where they now cut", () => {
+        const arc: [number, number][] = [[10, 0], [10, 90]];
+        const stored: Job = { ...lineJob(), groups: [{ label: "arc", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [jointPreview(arc)], joints: [arc] }] };
+        const radii = (job: Job | string): number[] => typeof job === "string" ? [] : [...new Set(job.groups[0]!.paths.flat().map(([x, y]) => Math.round(Math.hypot(x, y) * 1e6) / 1e6))];
+        expect(radii(stored)).toEqual([10]);
+        const text = jobText(stored);
+        expect(text).toContain("[[10, 0], [10, 90]]");
+        expect(radii(readJobText(text.replace("[[10, 0], [10, 90]]", "[[20, 0], [20, 90]]"), stored.id, stored))).toEqual([20]);
+        // Joints as kept keep the drawing the text gives, and joints with
+        // no drawing are drawn as the backend draws them.
+        const same = readJobText(text, stored.id, stored);
+        expect(typeof same === "string" ? same : same.groups[0]!.paths).toEqual(stored.groups[0]!.paths);
+        const bare = JSON.stringify({ groups: [{ label: "arc", joints: [arc] }] });
+        expect(radii(readJobText(bare, stored.id, stored))).toEqual([10]);
     });
 
     test("the caret's place is drawn, an edit is shown as it is typed, and Apply keeps it", async () => {

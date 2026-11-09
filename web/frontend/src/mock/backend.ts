@@ -3606,14 +3606,29 @@ export class MockBackend implements Api, EventFeed {
         if (this.session && this.session.job.id === id) {
             throw new ApiError(409, "the job is running");
         }
+        // A joint-space group's paths are only its drawing: one whose joints
+        // changed comes without them, to be drawn again from the joints the
+        // run streams; one whose joints are as they were keeps the drawing
+        // sent, which a centering burn shown as burnt makes on purpose.
+        const given = data as unknown as Record<string, unknown>;
+        const body = !Array.isArray(given["groups"]) ? given : {
+            ...given,
+            groups: given["groups"].map((raw: unknown, index: number) => {
+                const group = raw as Record<string, unknown> | null;
+                const joints = group?.["joints"];
+                if (!Array.isArray(joints) || joints.length === 0 || JSON.stringify(joints) === JSON.stringify(old.groups[index]?.joints ?? [])) {
+                    return raw;
+                }
+                return { ...group, paths: [] };
+            }),
+        };
         let made: Job;
         try {
-            made = jobFromJson(id, old.name, data, this.limits());
+            made = jobFromJson(id, old.name, body, this.limits());
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
         // What a job file cannot say of itself stays the old job's.
-        const given = data as unknown as Record<string, unknown>;
         made.source = typeof given["source"] === "string" ? given["source"] : old.source;
         made.layer = given["layer"] === undefined ? old.layer ?? null : (given["layer"] as string | null);
         made.recipe = given["recipe"] === undefined ? old.recipe ?? null : (given["recipe"] as Job["recipe"]);
