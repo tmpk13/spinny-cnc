@@ -463,7 +463,6 @@ def _polar(job: BuiltJob, profile: cam.Profile) -> Program:
             rotary_max_rate=angle.rate,
             decimals=profile.post.decimals,
             preamble=tuple(profile.post.header),
-            postamble=tuple(profile.post.footer),
             laser_mode=profile.post.laser_on,
             axis_x=radius.offset,
             return_home=profile.post.return_home,
@@ -471,8 +470,12 @@ def _polar(job: BuiltJob, profile: cam.Profile) -> Program:
     except ValueError as exc:
         raise PostError(str(exc)) from exc
     written = gcode.generate(groups, options, [f"{job.name} through {profile.name}"])
+    # The footer comes last, as the cartesian post writes it: after the
+    # writer's own end (the output off, the feed mode back, the return
+    # home), which a program end in it would otherwise cut off.
+    text = written.text + "".join(f"{line}\n" for line in profile.post.footer)
     report = Report(
-        lines=written.text.count("\n"),
+        lines=text.count("\n"),
         cuts=written.segment_count,
         length_mm=written.cut_length,
         seconds=written.seconds,
@@ -480,4 +483,4 @@ def _polar(job: BuiltJob, profile: cam.Profile) -> Program:
     )
     if radius.max is not None and report.extents[radius.letter][1] > radius.max + 1e-9:
         report.warnings.append(f"{radius.letter} reaches {report.extents[radius.letter][1]:.3f}, over its max {radius.max:g}")
-    return Program(written.text, report)
+    return Program(text, report)

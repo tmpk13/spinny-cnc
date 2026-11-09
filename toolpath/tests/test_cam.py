@@ -613,6 +613,20 @@ def test_a_polar_profile_is_written_by_the_polar_writer():
         post.post(milled, profile)
 
 
+def test_a_polar_profile_s_footer_comes_after_the_writer_s_own_end():
+    text = (SHIPPED / "polar-laser.toml").read_text(encoding="utf-8")
+    assert text.count("\nfooter = []\n") == 1
+    # Left out, the footer is the default program end.
+    profile = parse(text.replace("\nfooter = []\n", "\n"), "polar-laser")
+    assert profile.post.footer == cam.DEFAULT_FOOTER
+    built = built_of(burnt("line", 5.0))
+    program = post.post(built, profile)
+    lines = [line for line in program.text.splitlines() if line.strip()]
+    assert lines[-2:] == ["M5", "M2"]
+    assert lines[-3].startswith("G0 X0.000 A") and lines.index("G94         ; Back to units per minute") < len(lines) - 3
+    assert program.report.lines == program.text.count("\n")
+
+
 def test_the_command_line_tool_writes_the_program_and_a_report(tmp_path, capsys):
     out = tmp_path / "board.nc"
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(BOARD_COPPER), "-o", str(out)]) == 0
