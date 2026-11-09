@@ -1843,6 +1843,8 @@ export class MockBackend implements Api, EventFeed {
     /** The host's milling settings: travel height over the surface, mm, and the spin-up dwell, s. */
     clearance = 2;
     spinup = 2;
+    /** Whether the spindle's speed follows the groups; off, it runs at s_max whenever it runs. */
+    speedControl = true;
     /** The H the page's moves and probing rise to before going across; null leaves the head where it is. */
     travel: number | null = null;
     /** The host's dispensing settings: what every dot of a dispensing run is made of. */
@@ -3099,6 +3101,7 @@ export class MockBackend implements Api, EventFeed {
             clearance: this.clearance,
             travel: this.travel,
             spinup: this.spinup,
+            speed_control: this.speedControl,
             gap: this.gap,
             retract: this.retract,
             output: this.output,
@@ -3270,6 +3273,14 @@ export class MockBackend implements Api, EventFeed {
         const output = host?.output ?? this.output;
         const extrudeRate = host?.extrude_rate ?? this.extrudeRate;
         const dwellMs = host?.dwell_ms ?? this.dwellMs;
+        let speedControl = this.speedControl;
+        if (host && host.speed_control !== undefined) {
+            const flag: unknown = host.speed_control;
+            if (!(typeof flag === "boolean" || (typeof flag === "number" && Number.isFinite(flag)))) {
+                throw new ApiError(400, "speed_control must be true or false");
+            }
+            speedControl = Boolean(flag);
+        }
         if (!(Number.isFinite(gap) && gap > 0 && gap <= 10)) {
             throw new ApiError(400, "the gap must be above 0 and at most 10 mm");
         }
@@ -3294,6 +3305,7 @@ export class MockBackend implements Api, EventFeed {
         }
         this.clearance = clearance;
         this.spinup = spinup;
+        this.speedControl = speedControl;
         this.travel = travel;
         this.gap = gap;
         this.retract = retract;
@@ -4226,8 +4238,10 @@ export class MockBackend implements Api, EventFeed {
                 throw new Error(`${group.label}: a joint-space group cannot be milled`);
             }
             lastGroup = index;
-            if (group.power !== speed) {
-                speed = group.power;
+            // With the speed control off the spindle runs full on, at s_max.
+            const wanted = this.speedControl ? group.power : machine.settings["s_max"] ?? 1000;
+            if (wanted !== speed) {
+                speed = wanted;
                 moves.push({ kind: "spindle", target: joint, power: speed, feed: null, group: index });
                 if (spinupMs > 0) {
                     moves.push({ kind: "dwell", target: joint, ms: spinupMs, power: 0, feed: null, group: index });

@@ -466,6 +466,25 @@ describe("mock backend", () => {
         expect((await backend.settings()).values["sockets"]).toBe(1234);
     });
 
+    test("keeps the spindle's speed control as the backend does, and runs the spindle at s_max without it", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        const listed = await backend.jobs();
+        const job = await backend.job(listed[0]!.id);
+        const spins = (): number[] => backend.movesFor(job).filter((move) => move.kind === "spindle" && !move.off).map((move) => move.power);
+        expect(spins()).toEqual([job.groups[0]!.power]);
+        await expect(backend.updateSettings({ host: { speed_control: "no" as unknown as boolean } })).rejects.toMatchObject({
+            status: 400, message: "speed_control must be true or false",
+        });
+        await backend.updateSettings({ host: { speed_control: false } });
+        const settings = await backend.settings();
+        expect(settings.host.speed_control).toBe(false);
+        expect(spins()).toEqual([settings.values["s_max"]!]);
+        const read = await backend.machineFromBoard("cartesian-mill", "[host]\nspeed_control = true\n");
+        expect(read.changes).toContain("[host] speed_control = false (was true)");
+    });
+
     test("orders s_min and s_max so a write valid as a whole goes in, and puts a refused one back last first", async () => {
         const { backend } = backendWithLog();
         await backend.connect("/dev/ttyACM0");
@@ -1833,7 +1852,7 @@ describe("machine files in the mock", () => {
         expect([applied.values["cartesian"], applied.values["spindle"], applied.values["h_axis"]]).toEqual([1, 1, 1]);
         // The slide's travel is measured on the machine and edited in the file, so it is not asserted by value.
         expect(applied.values["z_max"]).toBeGreaterThan(0);
-        expect(applied.host).toEqual({ tolerance: 0.005, clearance: 2, travel: null, spinup: 2, gap: 0.1, retract: 0.2, output: 100, extrude_rate: 60, dwell_ms: 200 });
+        expect(applied.host).toEqual({ tolerance: 0.005, clearance: 2, travel: null, spinup: 2, speed_control: true, gap: 0.1, retract: 0.2, output: 100, extrude_rate: 60, dwell_ms: 200 });
         expect((await backend.state()).profile).toMatchObject({ kinematics: "cartesian", tool: "spindle", h_axis: true });
         expect((await backend.machines()).current).toBe("cartesian-mill");
 
