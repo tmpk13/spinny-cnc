@@ -79,6 +79,8 @@ describe("the operation's fields", () => {
 
     test("a job's holes are counted by size", () => {
         expect(holeSizes([[0, 0, 0.8], [1, 1, 0.801], [2, 2, 3]])).toEqual([{ size: 0.8, count: 2 }, { size: 3, count: 1 }]);
+        // A half rounded up, as the backend tells the sizes sent back apart.
+        expect(holeSizes([[0, 0, 3.175], [1, 1, 0.305]])).toEqual([{ size: 0.31, count: 1 }, { size: 3.18, count: 1 }]);
     });
 });
 

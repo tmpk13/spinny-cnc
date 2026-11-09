@@ -439,6 +439,7 @@ export function tour(points: Point[], start: Point = [0, 0]): number[] {
     return order;
 }
 
+/** A hole's size in hundredths, a half rounded up (3.175 is 3.18), as the page lists it and the backend's size_of takes it. */
 function sizeOf(diameter: number): number {
     return Math.round(diameter * 100) / 100;
 }

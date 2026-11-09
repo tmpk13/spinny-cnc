@@ -144,6 +144,23 @@ def test_holes_come_from_a_stored_job(client):
     assert missing.status_code == 404
 
 
+def test_hole_sizes_are_told_apart_as_the_page_lists_them(client):
+    # 1/8 in (3.175) and 0.305 mm lie on a half of the last decimal: the
+    # page lists them as 3.18 and 0.31 and sends those sizes back.
+    board = Job(name="board", source="gerber", holes=[(0, 0, 0.8), (5, 5, 3.175), (9, 9, 0.305)], groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
+    uploaded = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()
+    body = {"ops": [{"kind": "holes", "job": uploaded["id"], "tool": 0.8, "sizes": [0.8, 3.18, 0.31]}]}
+    plan = client.post("/api/mill/plan", json=body)
+    assert plan.status_code == 200, plan.text
+    job = plan.json()["job"]
+    assert [group["label"] for group in job["groups"]] == ["drill 0.31 mm holes (1)", "drill 0.80 mm holes (1)", "bore 3.18 mm holes (1)"]
+    assert len(job["holes"]) == 3
+    only = client.post("/api/mill/plan", json={"ops": [{**body["ops"][0], "sizes": [3.18]}]})
+    assert only.status_code == 200, only.text
+    assert [group["label"] for group in only.json()["job"]["groups"]] == ["bore 3.18 mm holes (1)"]
+    assert mill.size_of(3.175) == 3.18 and mill.size_of(0.305) == 0.31 and mill.size_of(0.8) == 0.8
+
+
 def test_a_mill_job_is_made_again_for_another_bit_where_it_was_moved(client):
     job = client.post("/api/mill", json=POCKET).json()["job"]
     patched = client.patch(f"/api/jobs/{job['id']}", json={"offset": {"x": 5, "y": -3}, "groups": [{"index": 0, "speed": 123}]})

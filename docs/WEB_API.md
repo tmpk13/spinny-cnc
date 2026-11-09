@@ -217,7 +217,7 @@ true}` plus what the kind takes, every field optional but `kind`:
 | `kind` | Fields | Groups |
 | --- | --- | --- |
 | `drill` | `points` `[[x, y], ...]` | one: a one-point path a point, in the order given |
-| `holes` | `job` (a stored job's id), `sizes` (diameters to take, all when null), `bore` (default true) | one a hole size, smallest first, each a short tour on from the last: drilled, or bored out in rings with the bit when wider than the bit by over 0.05 mm and `bore` is on; 404 for no such job |
+| `holes` | `job` (a stored job's id), `sizes` (diameters to take, all when null; a hole and a size are told apart to 0.01 mm, a half rounded up, so 3.175 is 3.18), `bore` (default true) | one a hole size, smallest first, each a short tour on from the last: drilled, or bored out in rings with the bit when wider than the bit by over 0.05 mm and `bore` is on; 404 for no such job |
 | `line` | `points`, `closed` | one path through the points, back to the first when closed |
 | `face` | `x0`, `y0`, `x1`, `y1` | rows along X back and forth at most `stepover` bits apart; the bit's center runs over the whole rectangle |
 | `pocket` | `shape` `rect` with the corners and `corner` (the radius its corners are rounded to, default 0, at most half the shorter side), or `circle` with `cx`, `cy`, `diameter` | one path out from the middle, loops or rings at most `stepover` bits apart, the last on the walls; a rectangle's stepover is at most 0.85, past which its loops leave the corners between them; rounded loops share the wall's corner centers, so rounding only brings them closer |

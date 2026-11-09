@@ -201,15 +201,30 @@ def _circle_outline(cx: float, cy: float, diameter: float) -> list[tuple[float, 
     return ops.circle(cx, cy, diameter / 2.0, tolerance=max(0.01, diameter * 0.002))
 
 
+def size_of(diameter: float) -> float:
+    """A hole's size as the page lists it and sends it back: the diameter
+    in hundredths rounded half up, the very arithmetic the page does, so a
+    diameter on a half (3.175 mm, 1/8 in) comes out the same number on
+    both sides. round() breaks that tie by the binary value's digits, which
+    for 3.175 gives 3.17 where the page shows 3.18."""
+    scale = 10**SIZE_DECIMALS
+    return math.floor(diameter * scale + 0.5) / scale
+
+
+def _wanted(op: MillOperation) -> set[float] | None:
+    """The hole sizes a holes operation takes; None for all."""
+    return None if op.sizes is None else {size_of(size) for size in op.sizes}
+
+
 def hole_groups(op: MillOperation, holes: list[tuple[float, float, float]]) -> tuple[list[Group], list[str]]:
     """A group a hole size, smallest first, each in a short tour on from
     where the last one ended: drilled, or bored out with the bit when it
     is wider than the bit and boring is asked for."""
     notes: list[str] = []
-    wanted = None if op.sizes is None else {round(size, SIZE_DECIMALS) for size in op.sizes}
+    wanted = _wanted(op)
     by_size: dict[float, list[tuple[float, float]]] = defaultdict(list)
     for x, y, d in holes:
-        size = round(d, SIZE_DECIMALS)
+        size = size_of(d)
         if wanted is None or size in wanted:
             by_size[size].append((x, y))
     if not by_size:
@@ -258,8 +273,8 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
             if not holes:
                 raise JobImportError("the job has no drill holes: import its board with the drill file")
             groups, notes = hole_groups(op, holes)
-            wanted = None if op.sizes is None else {round(size, SIZE_DECIMALS) for size in op.sizes}
-            kept_holes = [h for h in holes if wanted is None or round(h[2], SIZE_DECIMALS) in wanted]
+            wanted = _wanted(op)
+            kept_holes = [h for h in holes if wanted is None or size_of(h[2]) in wanted]
             outline = [_circle_outline(x, y, d) for x, y, d in kept_holes]
             name = f"holes {len(kept_holes)}"
         elif op.kind == LINE:
@@ -431,6 +446,8 @@ SAMPLES: list[dict] = [
     {"kind": "profile", "shape": "circle", "cx": 2, "cy": 2, "diameter": 6, "tool": 1, "side": "outside", "climb": False},
     {"kind": "holes", "job": "board", "tool": 0.8, "stepover": 0.5, "holes": [[0, 0, 0.8], [5, 1, 0.8], [2, 4, 3.0], [9, 9, 0.6], [1, 1, 0.8]]},
     {"kind": "holes", "job": "board", "tool": 0.8, "bore": False, "sizes": [3.0, 0.6], "holes": [[0, 0, 0.8], [2, 4, 3.0], [9, 9, 0.6]]},
+    # Diameters on a half of the last decimal, as the page lists and sends them.
+    {"kind": "holes", "job": "board", "tool": 0.8, "sizes": [0.8, 3.18, 0.31], "holes": [[0, 0, 0.8], [5, 5, 3.175], [9, 9, 0.305], [3, 7, 1.575]]},
     {"kind": "drill", "cutter": "laser", "points": [[1, 2], [-3, 4.5]], "tool": 0.1, "power": 300, "passes": 2},
     {"kind": "pocket", "cutter": "laser", "x0": 0, "y0": 0, "x1": 3, "y1": 2, "tool": 0.2, "stepover": 0.8, "power": 800, "speed": 600},
     {"kind": "profile", "cutter": "laser", "shape": "circle", "cx": 1, "cy": 1, "diameter": 5, "tool": 0.1, "side": "outside", "passes": 3},

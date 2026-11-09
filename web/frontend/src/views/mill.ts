@@ -170,6 +170,8 @@ export function pointsText(points: Point[]): string {
 export function holeSizes(holes: HolePoint[]): { size: number; count: number }[] {
     const counts = new Map<number, number>();
     for (const [, , diameter] of holes) {
+        // In hundredths, a half rounded up: the backend's size_of does the
+        // same arithmetic, so the sizes sent back match its holes.
         const size = Math.round(diameter * 100) / 100;
         counts.set(size, (counts.get(size) ?? 0) + 1);
     }
