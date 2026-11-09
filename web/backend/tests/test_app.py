@@ -1095,6 +1095,116 @@ def test_the_last_position_the_machine_reported_is_kept_across_sessions(client, 
     assert later.snapshot()["position"]["r"] == 12.5
 
 
+def test_a_board_back_from_power_on_keeps_the_last_known_position(tmp_path):
+    # The ports the connects find, in order.
+    ports: list[FakeSerial] = []
+
+    def factory(url: str) -> Link:
+        return Link(url, open_port=fake_opener(ports.pop(0)))
+
+    def board(up: float, joint: list[float], h: float) -> FakeSerial:
+        fake = FakeSerial(move_time=0.002, boot="power on", up=up)
+        fake.settings["h_axis"] = 1
+        fake.joint = joint
+        fake.h = h
+        ports.append(fake)
+        return fake
+
+    def position() -> dict:
+        return client.get("/api/state").json()["position"]
+
+    def make() -> Backend:
+        return Backend(root=tmp_path, link_factory=factory, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+
+    backend = make()
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        first = board(time.monotonic() - 100.0, [42.5, 117.25], -3.0)
+        connect(client)
+        assert wait_for(lambda: (position() or {}).get("r") == 42.5)
+        first.vanish()
+        assert wait_for(lambda: not client.get("/api/state").json()["connected"], 3.0)
+        # Back from power on, counting from zero where the head stands.
+        second = board(time.monotonic(), [0.0, 0.0], 0.0)
+        connect(client)
+        assert wait_for(lambda: client.get("/api/state").json()["machine"]["joint"]["r"] == 0.0)
+        time.sleep(0.3)
+        kept = position()
+        assert (kept["r"], kept["a"], kept["h"]) == (42.5, 117.25, -3.0)
+        assert kept["held"]
+        # A new session finds it held too.
+        assert make().snapshot()["position"]["r"] == 42.5
+        # A focus height declared alone says nothing of where the head is.
+        assert client.post("/api/position", json={"h": 0}).status_code == 200
+        time.sleep(0.3)
+        assert position()["r"] == 42.5
+        # Declared from it, the machine's reports are kept again.
+        assert client.post("/api/position", json={"r": 42.5, "a": 117.25, "h": -3}).status_code == 200
+        second.joint = [40.0, 117.25]
+        assert wait_for(lambda: position()["r"] == 40.0)
+        assert "held" not in position()
+        # A board that stayed up through a failure kept its position.
+        second.vanish()
+        assert wait_for(lambda: not client.get("/api/state").json()["connected"], 3.0)
+        board(time.monotonic() - 100.0, [12.0, 5.0], 1.0)
+        connect(client)
+        assert wait_for(lambda: position()["r"] == 12.0)
+        assert "held" not in position()
+
+
+def test_a_connect_holds_the_last_known_position_until_the_board_shows_it_kept_it(tmp_path):
+    ports: list[FakeSerial] = []
+
+    def factory(url: str) -> Link:
+        return Link(url, open_port=fake_opener(ports.pop(0)))
+
+    def board(joint: list[float]) -> FakeSerial:
+        fake = FakeSerial(move_time=0.002)
+        fake.joint = joint
+        ports.append(fake)
+        return fake
+
+    def position() -> dict:
+        return client.get("/api/state").json()["position"] or {}
+
+    backend = Backend(root=tmp_path, link_factory=factory, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        board([7.0, 30.0])
+        connect(client)
+        assert wait_for(lambda: position().get("r") == 7.0)
+        # Closed, switched off and on, connected: a board that says nothing
+        # of its uptime and counts from zero.
+        client.post("/api/disconnect")
+        board([0.0, 0.0])
+        connect(client)
+        time.sleep(0.3)
+        assert position()["r"] == 7.0 and position()["held"]
+        # A board that reads the joints kept has kept its count.
+        client.post("/api/disconnect")
+        same = board([7.0, 30.0])
+        connect(client)
+        assert wait_for(lambda: "held" not in position())
+        same.joint = [8.0, 30.0]
+        assert wait_for(lambda: position()["r"] == 8.0)
+
+
+def test_a_board_that_starts_over_under_an_open_link_keeps_the_last_known_position(client, fake):
+    connect(client)
+    fake.joint = [42.5, 117.25]
+    assert wait_for(lambda: (client.get("/api/state").json()["position"] or {}).get("r") == 42.5)
+    # A banner no reset came before: the board started over, at zero.
+    fake.joint = [0.0, 0.0]
+    fake._emit(fake.banner())
+    client.post("/api/realtime", json={"action": "status"})
+    assert wait_for(lambda: client.get("/api/state").json()["machine"]["joint"]["r"] == 0.0)
+    time.sleep(0.3)
+    kept = client.get("/api/state").json()["position"]
+    assert kept["r"] == 42.5 and kept["held"]
+    # A home declares the position too.
+    fake.settings["r_stop"] = 1
+    assert client.post("/api/home", json={"axes": "R"}).status_code == 200
+    assert wait_for(lambda: "held" not in client.get("/api/state").json()["position"])
+
+
 @pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
 def test_a_kicad_upload_can_be_cut_on_a_layers_lines(client):
     board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board.kicad_pcb"

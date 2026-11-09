@@ -743,6 +743,9 @@ class Backend:
         # note the boot line would make waits for the uptime in `_loss_note`.
         self._lost: tuple[float, str] | None = None
         self._loss_note: str | None = None
+        # The next status report is a new link's first, which says whether
+        # the board kept the position held at the connect.
+        self._first_report = False
         # The focus axis frame, counted up whenever it may have changed, and
         # the frame the stored map's heights were probed in (None for a map
         # from before). Focus here ties heights from another frame to this
@@ -924,6 +927,12 @@ class Backend:
             self._soft_resets = 0
             self._restarts_seen = None
             self._unsaved.clear()
+            # The board may have started over since it last reported, its
+            # supply gone or its reset pulled, and count from zero where the
+            # head stands: its last position is held until it shows it kept
+            # the count, or the position is declared.
+            self.position_store.hold()
+            self._first_report = True
             self.link = link
             try:
                 link.open()
@@ -1216,8 +1225,13 @@ class Backend:
 
     def _on_link_event(self, event: Event) -> None:
         if event.kind == "status":
-            self.position_store.note(event.data)
+            # A restart is seen before the report is kept: it is the first
+            # of the new count, not a position.
             self._check_restart()
+            if self._first_report:
+                self._first_report = False
+                self.position_store.first_report(event.data)
+            self.position_store.note(event.data)
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
         elif event.kind == "console":
             data = event.data
@@ -1237,6 +1251,9 @@ class Backend:
             (log.error if event.data.get("level") == "error" else log.info)("machine: %s", text)
             wire_note(f"message: {text}")
             self._name_loss(text)
+            uptime = re.match(r"diag up (\d+) s\b", text)
+            if uptime is not None:
+                self.position_store.board_started(time.time() - int(uptime.group(1)))
             if text == "reset":
                 self._soft_resets += 1
             self.broadcast.publish_threadsafe({"type": "message", **event.data})
@@ -1301,6 +1318,10 @@ class Backend:
             return
         unasked = link.restarts - self._soft_resets
         if unasked > seen:
+            # It counts from zero where the head stands: the position it
+            # reported last is the one to declare. Held before the restart
+            # is marked seen, so a report noted meanwhile cannot slip in.
+            self.position_store.hold()
             self._restarts_seen = unasked
             self._unsaved.clear()
             self._frame_changed("the machine restarted")
@@ -1540,6 +1561,11 @@ class Backend:
                 # Z goes on a line of its own: on a polar machine it is never
                 # a word beside R or A, and on a cartesian one it may be.
                 link.request_ok(f"set Z{num(body.z)}")
+            if body.r is not None or body.a is not None or body.z is not None:
+                # Where the head is over the board is declared: the machine's
+                # reports are the position from here on. A focus height
+                # alone says nothing of that.
+                self.position_store.release()
         finally:
             # H renumbered moves the frame the map's heights are in, and R,
             # A or Z the board under them. Taken back whether or not the
@@ -1655,6 +1681,9 @@ class Backend:
             lines = send()
         if reframes and lines and lines[-1] == "ok":
             self._frame_changed("a position or setting changed at the console")
+            if first == "set" and any(word[:1] in ("r", "a", "z") for word in words[1:]):
+                # A position declared at the console, as from the jog panel.
+                self.position_store.release()
         if lines and lines[-1] == "ok":
             self._note_flash(text)
         if setting:
@@ -1791,7 +1820,12 @@ class Backend:
             link = self._movable()
             self._jog_target = None
             try:
-                link.request_ok(line, timeout=HOME_TIMEOUT)
+                answer = link.request_ok(line, timeout=HOME_TIMEOUT)
+                # `[HOME:<letter>:<position>:1]` for each joint homed: a
+                # board joint found its switch, so the reports place the
+                # head again.
+                if any(text[:7] in ("[HOME:R", "[HOME:A", "[HOME:Z") and text.endswith(":1]") for text in answer):
+                    self.position_store.release()
             finally:
                 # A home renumbers an axis as a `set` does: the frame the
                 # height map's heights and points are in has moved.

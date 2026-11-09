@@ -124,6 +124,12 @@ export interface LastPosition {
     h: number | null;
     state: string;
     at: string;
+    /**
+     * Since when the position is held: the board was connected again, or
+     * started over, and its reports are not taken until it shows it kept
+     * its count or the position is declared. Missing while they are taken.
+     */
+    held?: string;
 }
 
 /** The last run's progress with what a later session needs to pick the job up where it stopped. */

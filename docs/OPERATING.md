@@ -544,7 +544,9 @@ survives the host as well as the controller.
    while moving), tell it where the head is first: *Here is* in the Jog
    panel declares the joints without moving them, and *Last known* fills
    in the last position the machine reported before the link closed,
-   run or no run. The head sits where the run left
+   run or no run. A board that comes back counting from zero does not
+   overwrite it: the position is held (the toast says so) until it is
+   declared. The head sits where the run left
    it, so the X/Y screws keep that position across a power cycle; the
    depth axis may have sunk under the spindle's weight.
 2. With a height map, tie it to the new frame: *Probe nearest: tie map*,

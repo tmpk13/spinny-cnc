@@ -1355,6 +1355,23 @@ describe("jog position row", () => {
         expect(byLetter["declare A"]).toBe("30");
     });
 
+    test("Last known says when the position is held from before a connect or a restart", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        const at = "2026-10-14T03:00:00+00:00";
+        store.set({
+            snapshot: {
+                ...connected(),
+                resume: null,
+                position: { r: 42.5, a: 117.25, z: 0, h: -3, state: "Idle", at, held: "2026-10-14T03:16:00+00:00" },
+            },
+        });
+        mountJog(root, ctx);
+        click(root, "Last known");
+        const said = store.get().toasts.map((toast) => toast.text);
+        expect(said.some((text) => text.includes("held from before the board was connected again or started over"))).toBe(true);
+    });
+
     test("Last known with nothing reported says so", async () => {
         const { store, ctx, root, api } = setup();
         await api.connect("/dev/ttyACM0");

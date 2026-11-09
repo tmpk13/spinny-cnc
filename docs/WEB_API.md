@@ -49,7 +49,14 @@ plan it was made from (see `GET /api/resume`), kept across sessions.
 `position` is the last position the machine reported, with its state and
 when, kept across sessions in `var/position.json` (written at most once
 a second while it changes and when the link closes): what *Last known*
-in the Jog panel declares after a power cycle, run or no run.
+in the Jog panel declares after a power cycle, run or no run. A board
+may start over between two links, or under an open one (a banner no
+reset came before), and count from zero where the head stands, so the
+position is held at every connect and at such a restart, `held` saying
+since when: the reports are not taken until the new link's first report
+reads the same joints, the board's `diag` uptime reaches back past the
+kept report, a position declared names `r`, `a` or `z` (a focus height
+alone does not), or a home finds a switch on one of those joints.
 
 `board` is derived on the host from `joint`: `x = r cos a`, `y = r sin a`
 on the polar machine; on a cartesian one it is `(r, z)` turned by `a`.

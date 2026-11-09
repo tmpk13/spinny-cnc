@@ -338,10 +338,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
                 // a position reported mid-move is less certain than one at rest.
                 const when = new Date(reported.at);
                 const time = Number.isNaN(when.getTime()) ? reported.at : when.toLocaleString();
-                ctx.toast("info", `last reported ${time}, ${reported.state}`);
+                // Held, they are not what the machine reads now: it may count
+                // from zero again since.
+                const held = reported.held ? "; held from before the board was connected again or started over" : "";
+                ctx.toast("info", `last reported ${time}, ${reported.state}${held}`);
             }
         }, "btn btn-quiet");
-        last.title = "Fill in the last position the machine reported: its last report before the link closed, or a run's record";
+        last.title = "Fill in the last position the machine reported: its last report before the link closed or the board started over, or a run's record";
         for (const field of fields) {
             field.input.addEventListener("keydown", onEnter(set));
         }
