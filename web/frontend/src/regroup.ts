@@ -36,12 +36,18 @@ function isDotGroup(group: Group): boolean {
     return (group.areas?.length ?? 0) > 0;
 }
 
+/** The CAM profile's tool a group was made with, by name, as a refusal says it. */
+function madeWith(group: Group): string {
+    return group.tool_name || group.tool_id || "no tool of a profile";
+}
+
 /**
  * Why the paths cannot be moved into `target` (a group's index, or a new
  * group); empty when they can. A joint-space group's paths are only drawn
  * from its joints, and a model's group has moves, not paths: neither can
  * give a path away. Dots and paths do not mix, nor do groups made for
- * different tools.
+ * different tools, or with different tools of a CAM profile: the gcode
+ * stops to change the bit between groups, never inside one.
  */
 export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"): string {
     const picked = tidyRefs(job, refs);
@@ -66,6 +72,9 @@ export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"
         if ((group.tool ?? null) !== (first.tool ?? null)) {
             return `${group.label} was made for ${group.tool ?? "any tool"} and ${first.label} for ${first.tool ?? "any tool"}: they do not go in one group`;
         }
+        if ((group.tool_id ?? null) !== (first.tool_id ?? null)) {
+            return `${group.label} was made with ${madeWith(group)} and ${first.label} with ${madeWith(first)}: they do not go in one group`;
+        }
     }
     if (target !== "new") {
         const into = job.groups[target];
@@ -80,6 +89,9 @@ export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"
         }
         if (into.paths.length > 0 && (into.tool ?? null) !== (first.tool ?? null)) {
             return `${into.label} was made for ${into.tool ?? "any tool"}, the paths for ${first.tool ?? "any tool"}`;
+        }
+        if (into.paths.length > 0 && (into.tool_id ?? null) !== (first.tool_id ?? null)) {
+            return `${into.label} was made with ${madeWith(into)}, the paths with ${madeWith(first)}`;
         }
     }
     return "";
@@ -156,7 +168,7 @@ export function regroup(job: Job, refs: PathRef[], target: number | "new", label
                 enabled: true,
                 paths: movedPaths,
             };
-            for (const key of ["depth", "plunge", "thickness", "focus", "tool"] as const) {
+            for (const key of ["depth", "plunge", "thickness", "focus", "tool", "tool_id", "tool_name", "height"] as const) {
                 if (first[key] !== undefined) {
                     (made as unknown as Record<string, unknown>)[key] = first[key];
                 }

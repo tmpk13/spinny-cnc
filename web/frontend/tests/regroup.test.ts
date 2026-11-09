@@ -65,6 +65,26 @@ describe("regrouping paths", () => {
         expect(() => regroup(before, [[0, 0]], 1)).toThrow("dots and paths do not go in one group");
     });
 
+    test("a CAM profile's bit goes with its paths, and two bits do not share a group", () => {
+        const vbit = { tool: "spindle" as const, tool_id: "vbit", tool_name: "30 degree V bit" };
+        const drill = { tool: "spindle" as const, tool_id: "drill", tool_name: "0.8 mm drill" };
+        const before = job([
+            group("isolation", [line(0), line(1)], vbit),
+            group("drills", [[[1, 1]], [[2, 2]]], drill),
+            group("engraving", [line(5)], { tool: "laser", tool_id: "diode", tool_name: "Diode", height: 6 }),
+        ]);
+        const made = regroup(before, [[1, 1]], "new").job.groups[2]!;
+        expect([made.tool, made.tool_id, made.tool_name]).toEqual(["spindle", "drill", "0.8 mm drill"]);
+        const engraved = regroup(before, [[2, 0]], "new").job.groups;
+        expect(engraved.map((g) => [g.label, g.height])).toEqual([["isolation", undefined], ["drills", undefined], ["group", 6]]);
+        // The gcode stops to change the bit between groups, never inside one.
+        expect(regroupRefusal(before, [[0, 0], [1, 0]], "new")).toBe("drills was made with 0.8 mm drill and isolation with 30 degree V bit: they do not go in one group");
+        expect(regroupRefusal(before, [[1, 0]], 0)).toBe("isolation was made with 30 degree V bit, the paths with 0.8 mm drill");
+        expect(regroupRefusal(job([group("drawn", [line(0)], { tool: "spindle" }), before.groups[1]!]), [[1, 0]], 0)).toBe(
+            "drawn was made with no tool of a profile, the paths with 0.8 mm drill",
+        );
+    });
+
     test("a joint-space or a model's group gives no path away, and nothing picked moves nothing", () => {
         const joints = group("ring", [line(0)], { joints: [[[1, 0], [1, 90]]] });
         const model = group("rough", [line(1)], { moves: [[[0, 0, 0, 0]]] });
