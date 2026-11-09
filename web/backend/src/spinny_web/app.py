@@ -1998,16 +1998,21 @@ class Backend:
                 sending = None
             self._unsaved.update(applied)
         except Exception as exc:
-            if isinstance(exc, CommandError):
-                sending = None
-            elif sending is not None:
-                applied.append(sending)
             # Refused, or lost on the way: whatever went before is put
             # back, so the write is all or nothing as far as the link
             # allows, and what the machine is read again. Last first, so
             # the board steps back through states it took once (s_min
-            # and s_max are checked against each other on every line).
-            self._restore_settings(link, {name: current[name] for name in reversed(applied)})
+            # and s_max are checked against each other on every line);
+            # a line lost on the way, which may or may not have been
+            # taken, goes back after them, since a link that fails ends
+            # the putting back.
+            back = list(reversed(applied))
+            if isinstance(exc, CommandError):
+                sending = None
+            elif sending is not None:
+                applied.append(sending)
+                back.append(sending)
+            self._restore_settings(link, {name: current[name] for name in back})
             self._settings_cache = None
             try:
                 self.read_settings(force=True)
