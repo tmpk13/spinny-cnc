@@ -276,6 +276,61 @@ def test_the_resume_route_plans_and_picks_the_job_up(client, fake, tmp_path):
     assert response.status_code == 200 and client.get("/api/resume").json()["resume"] is None
 
 
+def test_a_pickup_of_a_job_changed_since_its_run_is_refused(tmp_path):
+    fake = FakeSerial(move_time=0.01, ok_delay=0.04)
+    fake.settings.update(cartesian=1)
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+
+    def square(x0: float, y0: float) -> list[tuple[float, float]]:
+        return [(x0, y0), (x0 + 2.0, y0), (x0 + 2.0, y0 + 2.0), (x0, y0 + 2.0), (x0, y0)]
+
+    job = Job(
+        name="board",
+        groups=[
+            Group(label="first", power=500, speed=400, paths=[square(0, 0), square(5, 0), square(10, 0)]),
+            Group(label="second", power=500, speed=400, paths=[square(0, 10), square(5, 10), square(10, 10)]),
+        ],
+    )
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        job_id = client.post("/api/jobs", files={"file": ("board.json", job.model_dump_json(), "application/json")}).json()["id"]
+        assert client.post(f"/api/jobs/{job_id}/run").status_code == 200
+        deadline = time.monotonic() + 20.0
+        while client.get("/api/run").json()["acked"] < 14:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        client.post("/api/run/stop")
+        assert wait_run(client)["state"] == "stopped"
+        client.post("/api/unlock")
+        record = client.get("/api/resume").json()["resume"]
+        assert record["fingerprint"]
+        pickup = {"line": record["acked"]}
+        # Another power moves no line: the count is still the run's.
+        patched = client.patch(f"/api/jobs/{job_id}", json={"groups": [{"index": 0, "power": 300}]})
+        assert patched.status_code == 200, patched.text
+        assert client.post(f"/api/jobs/{job_id}/resume/plan", json=pickup).status_code == 200
+        # The first square deleted, as the page's Delete paths does: the
+        # same count is another line of the job now.
+        changed = client.get(f"/api/jobs/{job_id}").json()
+        changed["groups"][0]["paths"] = changed["groups"][0]["paths"][1:]
+        assert client.put(f"/api/jobs/{job_id}", json=changed).status_code == 200
+        refused = client.post(f"/api/jobs/{job_id}/resume/plan", json=pickup)
+        assert refused.status_code == 409
+        assert f"line {record['acked']} is not where that run got to" in refused.text
+        assert refused.text.rstrip('"}').endswith("a line counted in the job as it is now")
+        assert client.post(f"/api/jobs/{job_id}/resume", json=pickup).status_code == 409
+        assert client.get("/api/run").json()["state"] == "stopped"
+        # Counted in the job as it is now, on the operator's word.
+        planned = client.post(f"/api/jobs/{job_id}/resume/plan", json={**pickup, "changed": True})
+        assert planned.status_code == 200, planned.text
+        assert planned.json()["total"] == record["total"] - 4
+
+
 def test_the_resume_route_refuses_nonsense(client, fake):
     job = mill_job()
     job_id = client.post("/api/jobs", files={"file": ("mill.json", job.model_dump_json(), "application/json")}).json()["id"]

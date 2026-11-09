@@ -1717,6 +1717,43 @@ describe("the mock backend answers as the backend does", () => {
         expect(here.skip).toBe(3);
     });
 
+    test("a pickup of a job changed since its run is refused, unless the line is counted in the job as it is now", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        const square = (x: number, y: number): number[][] => [[x, y], [x + 2, y], [x + 2, y + 2], [x, y + 2], [x, y]];
+        const board = { groups: [
+            { label: "first", power: 500, speed: 400, paths: [square(10, 0), square(15, 0), square(20, 0)] },
+            { label: "second", power: 500, speed: 400, paths: [square(10, 10), square(15, 10), square(20, 10)] },
+        ] };
+        const job = await backend.uploadJob(new File([JSON.stringify(board)], "board.json"), {});
+        await backend.runJob(job.id);
+        advance(backend, 4);
+        await backend.runStop();
+        advance(backend, 1);
+        const record = (await backend.resumeRecord())!;
+        expect(record.fingerprint).toBeTruthy();
+        expect(record.acked).toBeGreaterThan(0);
+        const pickup = { line: record.acked };
+        // Planned from where the run began, wherever the head is now, the
+        // count is the run's; another power moves no line.
+        await backend.patchJob(job.id, { groups: [{ index: 0, power: 300 }] });
+        expect((await backend.planResume(job.id, pickup)).total).toBe(record.total);
+        // The first square deleted: the same count is another line now.
+        const changed = structuredClone(await backend.job(job.id));
+        changed.groups[0]!.paths = changed.groups[0]!.paths.slice(1);
+        await backend.replaceJob(job.id, changed);
+        const refusal = `the plan of ${job.name} is not the one the run being picked up counted its lines in: the job` +
+            " was changed since (re-cut, regrouped, turned or moved, paths deleted or added), or the pickup" +
+            ` follows the height map otherwise, so line ${record.acked} is not where that run got to: run it` +
+            " from the top, or pick it up at a line counted in the job as it is now";
+        await expect(backend.planResume(job.id, pickup)).rejects.toMatchObject({ status: 409, message: refusal });
+        await expect(backend.resumeJob(job.id, pickup)).rejects.toMatchObject({ status: 409, message: refusal });
+        expect((await backend.run())?.state).toBe("stopped");
+        // Counted in the job as it is now, on the operator's word.
+        const planned = await backend.planResume(job.id, { ...pickup, changed: true });
+        expect(planned.total).toBeLessThan(record.total);
+    });
+
     test("probing refuses a grid past the soft limit before anything moves", async () => {
         const { backend } = backendWithLog();
         await backend.connect("/dev/ttyACM0");

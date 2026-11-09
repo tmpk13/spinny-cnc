@@ -1375,6 +1375,38 @@ interface RunPlan {
     start_h: number | null;
     /** The focus axis frame that height was read in. */
     frame: string;
+    /** The plan's moves as `planPrint` sums them up. */
+    fingerprint: string;
+}
+
+/** Where a run's plan began: the joints and the cross slide. */
+interface PlanStart {
+    joint: Joint;
+    z: number;
+}
+
+/**
+ * A short print of a plan's moves: what each one is and where it goes,
+ * without the words that only say how (feed, power, floor, dwell time and
+ * focus height), as the backend's PlanPrint sums its lines up. Two plans
+ * with the same print have the same moves at the same counts.
+ */
+export function planPrint(moves: Move[]): string {
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (const move of moves) {
+        const words = formatMove(move).split(" ");
+        const kept = words.slice(1).filter((word) => !["F", "S", "M", "T", "H"].includes(word.charAt(0).toUpperCase()));
+        const text = `${move.kind} ${words[0]} ${kept.join(" ")}\n`;
+        for (let i = 0; i < text.length; i++) {
+            const code = text.charCodeAt(i);
+            h1 = Math.imul(h1 ^ code, 2654435761);
+            h2 = Math.imul(h2 ^ code, 1597334677);
+        }
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, "0");
 }
 
 /** Points per side of a probe grid. */
@@ -1930,6 +1962,8 @@ export class MockBackend implements Api, EventFeed {
     private consoleLog: string[] = [];
     /** What the last run was planned from, kept with its progress as the resume record. */
     private lastPlan: RunPlan | null = null;
+    /** Where the last run's plan began, all of it, so a pickup plans the same moves. */
+    private lastStart: PlanStart | null = null;
     /** Board moves waiting for a free line slot, sent as the machine drains. */
     private outbox: { line: string; move: Move }[] = [];
     private eventListeners = new Set<(event: WsEvent) => void>();
@@ -4156,9 +4190,10 @@ export class MockBackend implements Api, EventFeed {
      * at as the run begins (`focusBase` when given, the height a run picked
      * up began at): said on the group's first move (a lift of its own
      * before a cut that starts where the head is), and the head goes back
-     * to that height after the last group.
+     * to that height after the last group. `from` is where the plan
+     * begins, the machine's end of motion when left out.
      */
-    movesFor(job: Job, focus: HeightMap | null = null, focusBase: number | null = null): Move[] {
+    movesFor(job: Job, focus: HeightMap | null = null, focusBase: number | null = null, from: PlanStart | null = null): Move[] {
         const machine = this.machine;
         const surface = focus ? (target: Joint, z: number): number => {
             const board = machine.headBoard(target, z);
@@ -4206,16 +4241,17 @@ export class MockBackend implements Api, EventFeed {
                 throw new Error(`${label} asks for a focus height and the machine has no focus axis ($h_axis=1)`);
             }
         }
+        const begin: PlanStart = from ?? { joint: machine.endpoint(), z: machine.endpointZ() };
         if (machine.dispensing()) {
-            return this.dispensingMoves(job, focus, surface);
+            return this.dispensingMoves(job, focus, surface, begin);
         }
         if (machine.milling()) {
-            return this.millingMoves(job, focus, surface);
+            return this.millingMoves(job, focus, surface, begin);
         }
         const cartesian = machine.cartesian();
         const moves: Move[] = [];
-        let joint = machine.endpoint();
-        let z = machine.endpointZ();
+        let joint = begin.joint;
+        let z = begin.z;
         const base = focusBase ?? machine.endpointH();
         // The height the plan last said, when a group's focus has it say any.
         let current: number | null = null;
@@ -4266,10 +4302,8 @@ export class MockBackend implements Api, EventFeed {
         }
         const first = moves[0];
         if (surface && first?.kind === "cut") {
-            const start = machine.endpoint();
-            const startZ = machine.endpointZ();
             const extra = offsets.get(first.group) ?? 0;
-            moves.unshift({ kind: "go", target: start, h: round4(surface(start, startZ) + extra), headOnly: true, feed: null, power: 0, group: first.group });
+            moves.unshift({ kind: "go", target: begin.joint, h: round4(surface(begin.joint, begin.z) + extra), headOnly: true, feed: null, power: 0, group: first.group });
         }
         return moves;
     }
@@ -4284,7 +4318,7 @@ export class MockBackend implements Api, EventFeed {
      * With a map the depth is under the surface it gives, and the travel
      * height over its highest point.
      */
-    private millingMoves(job: Job, map: HeightMap | null, surface: ((target: Joint, z: number) => number) | null): Move[] {
+    private millingMoves(job: Job, map: HeightMap | null, surface: ((target: Joint, z: number) => number) | null, begin: PlanStart): Move[] {
         // A spindle at S0 is stopped, and every plunge after it would drive
         // a still tool into the board.
         for (const group of job.groups) {
@@ -4299,8 +4333,8 @@ export class MockBackend implements Api, EventFeed {
         const spinupMs = Math.round(this.spinup * 1000);
         const under = (target: Joint, z: number, depth: number): number => round4((surface ? surface(target, z) : 0) - depth);
         const moves: Move[] = [];
-        let joint = machine.endpoint();
-        let z = machine.endpointZ();
+        let joint = begin.joint;
+        let z = begin.z;
         const lift = (group: number): Move => ({ kind: "go", target: joint, h: travel, headOnly: true, feed: null, power: 0, group });
         moves.push(lift(-1));
         let speed: number | null = null;
@@ -4391,7 +4425,7 @@ export class MockBackend implements Api, EventFeed {
      * waits the dwell, pulls the plunger back by the retract and lifts.
      * The plunger's position only ever grows by the dots' volumes.
      */
-    private dispensingMoves(job: Job, map: HeightMap | null, surface: ((target: Joint, z: number) => number) | null): Move[] {
+    private dispensingMoves(job: Job, map: HeightMap | null, surface: ((target: Joint, z: number) => number) | null, begin: PlanStart): Move[] {
         const machine = this.machine;
         const cartesian = machine.cartesian();
         for (const group of job.groups) {
@@ -4408,8 +4442,8 @@ export class MockBackend implements Api, EventFeed {
         const travel = round4((map ? highestSurface(map) : 0) + this.clearance);
         const over = (target: Joint, z: number): number => round4((surface ? surface(target, z) : 0) + this.gap);
         const moves: Move[] = [];
-        let joint = machine.endpoint();
-        let z = machine.endpointZ();
+        let joint = begin.joint;
+        let z = begin.z;
         let plunger = joint.a;
         const lift = (group: number): Move => ({ kind: "go", target: joint, h: travel, headOnly: true, feed: null, power: 0, group });
         moves.push(lift(-1));
@@ -4520,22 +4554,25 @@ export class MockBackend implements Api, EventFeed {
         this.jogTracked = false;
         this.session = { job, moves, next: 0, okSent: 0, state: "running", seconds: 0, group: 0, compensate: followed?.mode ?? "off" };
         this.lastProgress = null;
-        this.lastPlan = this.planOf(followed?.mode ?? "off", this.focusStartOf(job, null));
+        this.lastStart = { joint: this.machine.endpoint(), z: this.machine.endpointZ() };
+        this.lastPlan = this.planOf(followed?.mode ?? "off", this.focusStartOf(job, null), this.lastStart, moves);
         const following = followed ? `, following the board by ${followed.mode}` : "";
         this.message("info", `running ${job.name}: ${moves.length} moves${following}`);
         this.serviceRun(0);
     }
 
-    private planOf(compensate: MapMode, startH: number | null): RunPlan {
+    /** The record's plan of a run whose `moves` begin at `begin`. */
+    private planOf(compensate: MapMode, startH: number | null, begin: PlanStart, moves: Move[]): RunPlan {
         const machine = this.machine;
         const cartesian = machine.cartesian();
         return {
-            start: cartesian ? [machine.joint.r, machine.z] : [machine.joint.r, machine.joint.a],
+            start: cartesian ? [begin.joint.r, begin.z] : [begin.joint.r, begin.joint.a],
             compensate,
             cartesian,
             spindle: machine.milling(),
             start_h: startH,
             frame: this.frameName(),
+            fingerprint: planPrint(moves),
         };
     }
 
@@ -4593,9 +4630,15 @@ export class MockBackend implements Api, EventFeed {
      * began, when the record is this job's and the focus axis frame is the
      * one it began in, or from where the head stands on the operator's word
      * (`focus_here`); in another frame the pickup is refused, as the
-     * backend's is.
+     * backend's is. The plan begins where the run picked up began when the
+     * record is this job's, so its moves are the ones counted, and a plan
+     * that prints otherwise than that run's is refused unless the operator
+     * says the line is counted in the job as it is now (`changed`).
      */
-    private resumePlanOf(id: string, request: ResumeRequest): { job: Job; moves: Move[]; skip: number; line: number; compensate: MapMode; startH: number | null } {
+    private resumePlanOf(
+        id: string,
+        request: ResumeRequest,
+    ): { job: Job; moves: Move[]; skip: number; line: number; compensate: MapMode; startH: number | null; begin: PlanStart } {
         const job = this.requireJob(id);
         if (!Number.isInteger(request.line) || request.line < 0) {
             throw new ApiError(400, "the line to pick the job up at cannot be negative");
@@ -4620,12 +4663,23 @@ export class MockBackend implements Api, EventFeed {
             }
             base = began;
         }
+        const recorded = theirs && this.lastStart !== null && (record.cartesian ?? false) === this.machine.cartesian() ? this.lastStart : null;
+        const begin: PlanStart = recorded ?? { joint: this.machine.endpoint(), z: this.machine.endpointZ() };
         let moves: Move[];
         try {
             refusePowerWithFocus(job, followed?.mode ?? "off");
-            moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null, base);
+            moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null, base, begin);
         } catch (error) {
             throw new ApiError(400, errorText(error));
+        }
+        if (theirs && typeof record.fingerprint === "string" && !request.changed && planPrint(moves) !== record.fingerprint) {
+            throw new ApiError(
+                409,
+                `the plan of ${job.name} is not the one the run being picked up counted its lines in: the job` +
+                    " was changed since (re-cut, regrouped, turned or moved, paths deleted or added), or the pickup" +
+                    ` follows the height map otherwise, so line ${request.line} is not where that run got to: run it` +
+                    " from the top, or pick it up at a line counted in the job as it is now",
+            );
         }
         const line = Math.min(request.line, moves.length);
         let skip = line;
@@ -4637,7 +4691,7 @@ export class MockBackend implements Api, EventFeed {
                 skip -= 1;
             }
         }
-        return { job, moves, skip, line, compensate: followed?.mode ?? "off", startH: this.focusStartOf(job, base) };
+        return { job, moves, skip, line, compensate: followed?.mode ?? "off", startH: this.focusStartOf(job, base), begin };
     }
 
     async planResume(id: string, request: ResumeRequest): Promise<ResumePlan> {
@@ -4663,7 +4717,7 @@ export class MockBackend implements Api, EventFeed {
         if (this.machine.milling() && !this.machine.hasFocusAxis()) {
             throw new ApiError(400, "a spindle needs the focus axis as its depth axis: set $h_axis=1");
         }
-        const { job, moves, skip, compensate, startH } = this.resumePlanOf(id, request);
+        const { job, moves, skip, compensate, startH, begin } = this.resumePlanOf(id, request);
         if (this.session) {
             throw new ApiError(409, "a job is already running");
         }
@@ -4676,7 +4730,8 @@ export class MockBackend implements Api, EventFeed {
         this.jogTracked = false;
         this.session = { job, moves, next: skip, okSent: skip, state: "running", seconds: 0, group: moves[skip]?.group ?? 0, resumedFrom: skip, compensate };
         this.lastProgress = null;
-        this.lastPlan = this.planOf(compensate, startH);
+        this.lastStart = begin;
+        this.lastPlan = this.planOf(compensate, startH, begin, moves);
         this.message("info", `picking ${job.name} up at line ${skip} of ${moves.length}`);
         this.serviceRun(0);
         const progress = this.progress();
@@ -4696,6 +4751,7 @@ export class MockBackend implements Api, EventFeed {
         }
         this.lastProgress = null;
         this.lastPlan = null;
+        this.lastStart = null;
     }
 
     async runHold(): Promise<void> {

@@ -8,12 +8,12 @@ import { isDispensing, isMilling, profileOf } from "../profile.ts";
 import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumeRecord, UploadOptions } from "../types.ts";
+import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest, UploadOptions } from "../types.ts";
 import { calibrationTest } from "./calibrate.ts";
 import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
-import { withFocusHere } from "./focushere.ts";
+import { changedWord, focusHereWord, withFocusHere, withWords } from "./focushere.ts";
 
 /** Every file the Jobs import reads: a drawing, a job, a board layer's gerber or the KiCad file, or gcode. */
 export const ACCEPT = [".svg", ".json", ...GERBER_SUFFIXES, ".kicad_pcb", ...GCODE_SUFFIXES].join(",");
@@ -997,13 +997,30 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         return { line, rewind: pickupRewind.checked, compensate: compensateTouched ? (compensate.value as Compensate) : null };
     }
 
+    /**
+     * The pickup's plan, with the words the backend asked the operator for:
+     * that the head is at focus where it stands, or that the line is
+     * counted in the job as it is now. Undefined when refused or declined.
+     */
+    function planWithWords(job: Job, request: ResumeRequest): Promise<{ value: ResumePlan; given: ReadonlySet<"focus_here" | "changed"> } | undefined> {
+        const words = [focusHereWord("Focused here: plan"), changedWord(request.line)];
+        return withWords(ctx, words, (given) => ctx.api.planResume(job.id, { ...request, focus_here: given.has("focus_here"), changed: given.has("changed") }));
+    }
+
+    /** What the operator's words make of the plan, said after it. */
+    function wordsText(given: ReadonlySet<"focus_here" | "changed">): string {
+        const here = given.has("focus_here") ? " Its groups' focus counts from where the head is now." : "";
+        const changed = given.has("changed") ? " Its lines are counted in the job as it is now, not as the stopped run had them." : "";
+        return `${here}${changed}`;
+    }
+
     async function planPickup(): Promise<void> {
         const job = ctx.store.get().job;
         const request = pickupRequest();
         if (!job || !request) {
             return;
         }
-        const planned = await withFocusHere(ctx, (focusHere) => ctx.api.planResume(job.id, { ...request, focus_here: focusHere }), "Focused here: plan");
+        const planned = await planWithWords(job, request);
         if (!planned) {
             return;
         }
@@ -1011,8 +1028,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         const approach = plan.approach.length ? ` First: ${plan.approach.join("; ")}.` : "";
         const where = plan.next ? ` Then line ${plan.skip}: ${plan.next}.` : " Nothing is left to send.";
         const fromRecord = plan.planned_from_record ? "" : " The last run's record is another job's, so the lines are counted from where the head is now.";
-        const here = planned.focusHere ? " Its groups' focus counts from where the head is now." : "";
-        pickupNote.textContent = `Starts at line ${plan.skip} of ${plan.total} (${plan.compensate === "off" ? "no height map" : `height map: ${plan.compensate}`}).${approach}${where}${fromRecord}${here}`;
+        pickupNote.textContent = `Starts at line ${plan.skip} of ${plan.total} (${plan.compensate === "off" ? "no height map" : `height map: ${plan.compensate}`}).${approach}${where}${fromRecord}${wordsText(planned.given)}`;
     }
 
     async function pickup(): Promise<void> {
@@ -1021,7 +1037,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         if (!job || !request) {
             return;
         }
-        const planned = await withFocusHere(ctx, (focusHere) => ctx.api.planResume(job.id, { ...request, focus_here: focusHere }), "Focused here: plan");
+        const planned = await planWithWords(job, request);
         if (!planned) {
             return;
         }
@@ -1029,13 +1045,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         const ok = await askConfirm(
             `Pick ${job.name} up at line ${plan.skip} of ${plan.total}? The head is brought there from where it is now:`
             + ` ${plan.approach.join("; ") || "nothing to do"}. Check that the position shown is where the head really is.`
-            + (planned.focusHere ? " Its groups' focus counts from where the head is now." : ""),
+            + wordsText(planned.given),
             "Resume",
         );
         if (!ok) {
             return;
         }
-        const started = await ctx.call(ctx.api.resumeJob(job.id, { ...request, focus_here: planned.focusHere }));
+        const words = { focus_here: planned.given.has("focus_here"), changed: planned.given.has("changed") };
+        const started = await ctx.call(ctx.api.resumeJob(job.id, { ...request, ...words }));
         if (started) {
             ctx.store.set({ progress: started });
             pickupNote.textContent = "";

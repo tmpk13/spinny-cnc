@@ -240,6 +240,9 @@ class Runner:
                     # it, and the focus axis frame that height was read in.
                     "start_h": streamer.focus_base,
                     "frame": frame,
+                    # The plan's lines as `PlanPrint` sums them up: a pickup
+                    # whose plan prints otherwise would count other lines.
+                    "fingerprint": stats.fingerprint,
                     "compensate": compensation.mode if compensation is not None else "off",
                     "cartesian": streamer.cartesian,
                     "angle": float(getattr(streamer, "angle", 0.0)),

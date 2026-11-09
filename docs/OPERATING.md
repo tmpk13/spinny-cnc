@@ -573,6 +573,12 @@ survives the host as well as the controller.
    that, so keep it only when you know the head was not moved.
 3. *Plan* says which line the run starts at, how the head gets there and
    what goes out first; *Resume from line* does it after a confirmation.
+   The count is of the stopped run's lines: a job re-cut, regrouped,
+   turned or moved since, with paths deleted or added, or picked up with
+   the map followed otherwise, has other lines at that count, and the
+   pickup says so. Run it from the top, or give the line counted in the
+   job as it is now and answer *Pick up the changed job*. Another power,
+   speed or focus height, or the map tied again, changes no count.
    Leave *from the start of its path* on: the run then redoes the path the
    line belongs to from its rapid, so a count one line off cannot leave a
    gap in a trace. A spindle rises to the travel height, goes over the

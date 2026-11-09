@@ -27,9 +27,10 @@ the travel height, with each pass of a group a step deeper.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 from spinny_laser import polar
 from spinny_laser.polar import Joint, Kinematics, Point
@@ -172,6 +173,39 @@ class Piece:
     h: float | None = None
 
 
+# The words a plan's print leaves out of each line: the feed, the power and
+# its floor, a dwell's time and the focus axis height change with a group's
+# settings, the spindle's spin-up and the height map's tie, and none of them
+# moves a line to another count in the plan or another place on the board.
+PRINT_SKIPS = frozenset("FSMTH")
+
+
+class PlanPrint:
+    """A short fingerprint of a plan's lines: what each one is and where it
+    goes, without the words that only say how. Two plans with the same
+    print have the same lines at the same counts, so a count of lines done
+    in one is the same place in the other."""
+
+    def __init__(self) -> None:
+        self._hash = hashlib.sha256()
+
+    def add(self, piece: Piece) -> None:
+        words = piece.line.split()
+        kept = [word for word in words[1:] if word[:1].upper() not in PRINT_SKIPS]
+        self._hash.update(f"{piece.kind} {words[0] if words else ''} {' '.join(kept)}\n".encode())
+
+    def hexdigest(self) -> str:
+        return self._hash.hexdigest()[:16]
+
+
+def plan_print(pieces: Iterable[Piece]) -> str:
+    """The `PlanPrint` of a plan's pieces."""
+    printed = PlanPrint()
+    for piece in pieces:
+        printed.add(piece)
+    return printed.hexdigest()
+
+
 @dataclass
 class Stats:
     length_mm: float = 0.0
@@ -180,6 +214,9 @@ class Stats:
     min_radius: float = 0.0
     limited_fraction: float = 0.0
     moves: int = 0
+    # The lines priced, as `PlanPrint` sums them up: what a run keeps to
+    # tell a pickup's plan from another.
+    fingerprint: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -1256,10 +1293,11 @@ class Streamer:
         compensation: "Compensation | None" = None,
         pieces: list[Piece] | None = None,
     ) -> Stats:
-        """What the job costs from `start`. `pieces` is the job's lines
-        already made from that start, when the caller has them, so they
-        are not made twice."""
+        """What the job costs from `start`, and the print of its lines.
+        `pieces` is the job's lines already made from that start, when the
+        caller has them, so they are not made twice."""
         stats = Stats()
+        printed = PlanPrint()
         limited = 0.0
         radii: list[float] = []
         lows: list[float] = []
@@ -1286,9 +1324,11 @@ class Streamer:
             stats.length_mm += piece.length
             if piece.limited:
                 limited += piece.length
+            printed.add(piece)
         stats.max_radius = max(radii) if radii else 0.0
         stats.min_radius = min(lows) if lows else 0.0
         stats.limited_fraction = limited / stats.length_mm if stats.length_mm > 0 else 0.0
+        stats.fingerprint = printed.hexdigest()
         return stats
 
     # --- jogs -------------------------------------------------------------

@@ -105,6 +105,7 @@ from .kinematics import (
     group_focus,
     head_board,
     num,
+    plan_print,
 )
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import (
@@ -411,11 +412,14 @@ class ResumeBody(BaseModel):
     # picked up followed the board. `focus_here` is the operator's word
     # that the head is at focus where it stands, so a laser group's own
     # focus counts from here rather than from where the run picked up
-    # began, which the focus axis may no longer count the same.
+    # began, which the focus axis may no longer count the same. `changed`
+    # is the operator's word that `line` is counted in the job as it is
+    # now, though its plan is no longer the one the recorded run counted.
     line: int
     rewind: bool = True
     compensate: str | None = None
     focus_here: bool = False
+    changed: bool = False
 
 
 class FocusBody(Finite):
@@ -2488,6 +2492,18 @@ class Backend:
                     elif status.h is not None:
                         streamer.focus_base = status.h
                 pieces = list(streamer.job_pieces(job, plan_start, compensation))
+                # The count is the recorded run's, of the lines its plan
+                # had: a job re-cut, regrouped, turned or moved since, paths
+                # deleted or added, or a pickup that follows the map
+                # otherwise, has other lines at the same count.
+                kept = record.get("fingerprint") if theirs and record is not None else None
+                if isinstance(kept, str) and not body.changed and plan_print(pieces) != kept:
+                    raise RunnerError(
+                        f"the plan of {job.name} is not the one the run being picked up counted its lines in: the job"
+                        " was changed since (re-cut, regrouped, turned or moved, paths deleted or added), or the pickup"
+                        f" follows the height map otherwise, so line {body.line} is not where that run got to: run it"
+                        " from the top, or pick it up at a line counted in the job as it is now"
+                    )
                 line = min(body.line, len(pieces))
                 skip = streamer.rewind(pieces, line) if body.rewind else line
                 if dry_run:

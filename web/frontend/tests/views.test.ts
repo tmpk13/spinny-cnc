@@ -671,6 +671,46 @@ describe("jobs", () => {
         await api.runStop();
     });
 
+    test("a pickup of a job changed since its run says so, and goes on only on the operator's word", async () => {
+        const { ctx, root, api, calls, backend } = setup();
+        await api.connect("/dev/ttyACM0");
+        const square = (x: number, y: number): number[][] => [[x, y], [x + 2, y], [x + 2, y + 2], [x, y + 2], [x, y]];
+        const board = { groups: [{ label: "first", power: 500, speed: 400, paths: [square(10, 0), square(15, 0), square(20, 0)] }] };
+        const job = await api.uploadJob(new File([JSON.stringify(board)], "board.json"), {});
+        await api.runJob(job.id);
+        backend.step(4);
+        await api.runStop();
+        backend.step(1);
+        // The first square deleted since.
+        const changed = structuredClone(await api.job(job.id));
+        changed.groups[0]!.paths = changed.groups[0]!.paths.slice(1);
+        await api.replaceJob(job.id, changed);
+        mountJobs(root, ctx);
+        await ctx.refreshState();
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        click(root, "Resume from line");
+        await settle();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain(`The plan of ${job.name} is not the one the run being picked up counted its lines in`);
+        dialogButton("Cancel").click();
+        await settle();
+        expect(calls.some((c) => c.name === "resumeJob")).toBe(false);
+        click(root, "Resume from line");
+        await settle();
+        await settle();
+        dialogButton("Pick up the changed job").click();
+        await settle();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Its lines are counted in the job as it is now");
+        dialogButton("Resume").click();
+        await settle();
+        await settle();
+        const resumed = calls.filter((c) => c.name === "resumeJob").at(-1)?.args[1] as { changed?: boolean } | undefined;
+        expect(resumed?.changed).toBe(true);
+        await api.runStop();
+    });
+
     test("delete asks first, and a refused delete keeps the job selected with its controls", async () => {
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");

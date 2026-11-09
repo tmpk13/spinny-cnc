@@ -142,6 +142,8 @@ export interface ResumeRecord extends Progress {
     start_h?: number | null;
     /** The focus axis frame `start_h` was read in: a pickup counts from it only in the same frame. */
     frame?: string | null;
+    /** A print of the plan's lines: a pickup whose plan prints otherwise counts other lines, and is refused. */
+    fingerprint?: string | null;
     cartesian?: boolean;
     angle?: number;
     spindle?: boolean;
@@ -166,6 +168,11 @@ export interface ResumeRequest {
      * began, which the focus axis may no longer count the same.
      */
     focus_here?: boolean;
+    /**
+     * The operator's word that `line` is counted in the job as it is now,
+     * though the job changed since the run being picked up stopped.
+     */
+    changed?: boolean;
 }
 
 /** What picking a job up would do, without moving anything. */
