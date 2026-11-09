@@ -114,6 +114,21 @@ def test_a_laser_cuts_a_hole_along_its_edge_or_clears_it_and_marks_one_under_the
     assert cleared.groups[1].label == "clear 3.00 mm holes (1)"
 
 
+def test_a_laser_circle_the_spot_fills_is_refused_rather_than_made_into_nothing():
+    for side in ("pocket", "inside"):
+        fields = {"kind": "pocket"} if side == "pocket" else {"kind": "profile", "side": "inside"}
+        op = mill.MillOperation(**fields, cutter="laser", shape="circle", cx=5, cy=5, diameter=0.2, tool=0.2, power=300, speed=600)
+        with pytest.raises(JobImportError, match="the 0.2 mm spot fills the 0.2 mm circle"):
+            mill.build(op)
+        # A circle a little wider is burnt in rings the streamer cuts.
+        wider, _ = mill.build(op.model_copy(update={"diameter": 0.21}))
+        lines = [piece.line for piece in Streamer().job_pieces(wider, (0.0, 0.0))]
+        assert sum(line.startswith("cut ") for line in lines) > 2
+    # On a spindle the same circle is a drill.
+    drilled, _ = mill.build(mill.MillOperation(kind="pocket", shape="circle", cx=5, cy=5, diameter=2, tool=2))
+    assert drilled.groups[0].paths == [[(5.0, 5.0)]]
+
+
 def test_an_operation_that_cannot_be_cut_says_why():
     with pytest.raises(JobImportError, match="narrower than the bit"):
         mill.build(mill.MillOperation(**{**POCKET, "x1": 1.5}))

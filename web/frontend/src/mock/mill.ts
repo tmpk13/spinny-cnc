@@ -529,6 +529,12 @@ export function buildMill(id: string, op: MillOperation, holes: HolePoint[] | nu
             paths = op.kind === "pocket"
                 ? pocketCircle(op.cx, op.cy, op.diameter, op.tool, op.stepover, op.climb)
                 : profileCircle(op.cx, op.cy, op.diameter, op.tool, op.side, op.climb);
+            if (isLaser(op) && paths.every((path) => path.length < 2)) {
+                // A bit drills such a circle; a beam burns nothing standing
+                // still, and a ring about the point would burn twice the
+                // circle's width.
+                throw new Error(`the ${mm(op.tool)} mm spot fills the ${mm(op.diameter)} mm circle, and a beam burns nothing standing still: mark its middle with a drill point, or give a wider circle`);
+            }
             size = `${mm(op.diameter)} mm circle`;
             outline = [circleOutline(op.cx, op.cy, op.diameter)];
         } else {

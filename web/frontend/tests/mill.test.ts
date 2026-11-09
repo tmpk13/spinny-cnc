@@ -58,6 +58,12 @@ describe("the mock's operations", () => {
         expect(() => buildMill("", pocket, null, LIMITS)).toThrow("narrower than the bit");
         expect(() => buildMill("", { ...pocket, x1: 20, stepover: 0.9 }, null, LIMITS)).toThrow("corners");
         expect(() => buildMill("", { ...defaultOperation("holes") }, [], LIMITS)).toThrow("no drill holes");
+        // A laser circle the spot fills: nothing to burn standing still.
+        const dot: MillOperation = { ...defaultOperation("pocket"), cutter: "laser", shape: "circle", cx: 5, cy: 5, diameter: 0.2, tool: 0.2 };
+        const fills = "the 0.2 mm spot fills the 0.2 mm circle, and a beam burns nothing standing still: mark its middle with a drill point, or give a wider circle";
+        expect(() => buildMill("", dot, null, LIMITS)).toThrow(fills);
+        expect(() => buildMill("", { ...dot, kind: "profile", side: "inside" }, null, LIMITS)).toThrow(fills);
+        expect(buildMill("", { ...dot, diameter: 0.21 }, null, LIMITS).job.groups[0]!.paths[0]!.length).toBeGreaterThan(2);
         expect(passesOf({ ...defaultOperation(), depth: 1, step_down: 0.3 })).toBe(4);
         expect(labelStem("bore 3.20 mm holes (4)")).toBe("bore # mm holes (#)");
     });

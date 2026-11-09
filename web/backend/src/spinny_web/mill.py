@@ -299,6 +299,14 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
                     paths = ops.pocket_circle(op.cx, op.cy, op.diameter, op.tool, op.stepover, op.climb)
                 else:
                     paths = ops.profile_circle(op.cx, op.cy, op.diameter, op.tool, op.side, op.climb)
+                if op.laser and all(len(path) < 2 for path in paths):
+                    # A bit drills such a circle; a beam burns nothing
+                    # standing still, and a ring about the point would burn
+                    # twice the circle's width.
+                    raise JobImportError(
+                        f"the {_mm(op.tool)} mm spot fills the {_mm(op.diameter)} mm circle, and a beam burns nothing standing still:"
+                        " mark its middle with a drill point, or give a wider circle"
+                    )
                 size = f"{_mm(op.diameter)} mm circle"
                 outline = [_circle_outline(op.cx, op.cy, op.diameter)]
             else:

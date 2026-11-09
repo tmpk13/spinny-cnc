@@ -240,7 +240,9 @@ groups at that power. A beam drills nothing standing still, so a `drill`
 point is marked with a ring the spot across (`mark N points`), a hole no
 wider than the spot likewise (`mark ... holes`), and a wider hole is cut
 along its inside edge (`cut ... holes`) or with `bore` cleared in rings
-(`clear ... holes`).
+(`clear ... holes`). A pocket or an inside profile of a circle the spot
+fills, which a bit would drill, is refused (400): mark its middle with a
+drill point, or give a wider circle.
 
 ## Markers
 
