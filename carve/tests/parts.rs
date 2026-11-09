@@ -90,6 +90,48 @@ fn heights(x: [f64; 2], y: [f64; 2], n: usize, bottom: f64, top: impl Fn(f64, f6
     mesh
 }
 
+/// The mesh as an STL file holds it: f32 coordinates, read back welded.
+fn through_stl(mesh: &Mesh) -> Mesh {
+    let mut bytes = vec![0u8; 80];
+    bytes.extend_from_slice(&(mesh.triangles.len() as u32).to_le_bytes());
+    for i in 0..mesh.triangles.len() {
+        bytes.extend_from_slice(&[0u8; 12]);
+        for v in mesh.triangle(i) {
+            for c in v {
+                bytes.extend_from_slice(&(c as f32).to_le_bytes());
+            }
+        }
+        bytes.extend_from_slice(&[0u8; 2]);
+    }
+    Mesh::from_stl(&bytes).unwrap()
+}
+
+/// An L 30 long and 20 deep, its base 3.2 high and its first 10 mm 6.4
+/// high, with two large triangles a face as CAD programs write them, drawn
+/// where `place` puts (along, height, depth), as an STL file holds it.
+fn l_block(place: impl Fn(f64, f64, f64) -> [f64; 3]) -> Mesh {
+    let profile = [(0.0, 0.0), (30.0, 0.0), (30.0, 3.2), (10.0, 3.2), (10.0, 6.4), (0.0, 6.4)];
+    let mut mesh = Mesh::default();
+    let mut triangle = |corners: [[f64; 3]; 3]| {
+        let first = mesh.vertices.len() as u32;
+        mesh.vertices.extend_from_slice(&corners);
+        mesh.triangles.push([first, first + 1, first + 2]);
+    };
+    let n = profile.len();
+    for i in 0..n {
+        let ((u0, h0), (u1, h1)) = (profile[i], profile[(i + 1) % n]);
+        let (a, b, c, d) = (place(u0, h0, 0.0), place(u1, h1, 0.0), place(u1, h1, 20.0), place(u0, h0, 20.0));
+        triangle([a, b, c]);
+        triangle([a, c, d]);
+    }
+    for fan in [[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 5]] {
+        let [(u0, h0), (u1, h1), (u2, h2)] = fan.map(|k| profile[k]);
+        triangle([place(u0, h0, 0.0), place(u2, h2, 0.0), place(u1, h1, 0.0)]);
+        triangle([place(u0, h0, 20.0), place(u1, h1, 20.0), place(u2, h2, 20.0)]);
+    }
+    through_stl(&mesh)
+}
+
 /// 30 x 20 x 6 mm plate of 0.5 mm voxels: a 10 x 8 pocket 3 deep, a 4 x 4
 /// hole through, and a 4 mm shoulder 2 down along one end.
 fn plate() -> Mesh {
@@ -250,6 +292,56 @@ fn the_tool_ramps_down_into_every_level_and_never_feeds_straight_into_stock() {
     check_moves(&response);
     let steep = steep_entries(&response, &[1.5, 1.5], 2.0);
     assert!(steep.is_empty(), "{} feeds go straight down into stock: {:?}", steep.len(), &steep[..steep.len().min(4)]);
+}
+
+#[test]
+fn a_part_stood_up_by_a_quarter_turn_has_its_top_faced_and_its_floor_cut_to_height() {
+    // Drawn with Y up and stood up front down, as the page's Model choice
+    // does, with the shipped profile's rough and walls.
+    let mut placed = l_block(|u, h, w| [u, h, -w]);
+    let request: Request = serde_json::from_value(json!({
+        "model": "test.stl",
+        "turn": [90, 0, 0],
+        "stock": { "margin": 3, "top": 0.5, "anchor": "corner" },
+        "tolerance": 0.01,
+        "travel": 5,
+        "clearance": 1,
+        "operations": [
+            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 0.6, "stepover": 0.9, "leave": 0.2, "leave_floor": 0, "below": -0.3, "ramp": 2 },
+            { "name": "walls", "strategy": "waterline", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 3, "stepover": 1.2, "leave": 0, "below": 0, "ramp": 2 },
+        ],
+    }))
+    .unwrap();
+    let (response, stock) = plan_with_stock(&mut placed, &request).unwrap();
+    check_moves(&response);
+    assert_eq!(response.model.open_edges, 0);
+    // The top 0.5 under the block's top, the low base 3.2 under that.
+    assert_eq!(response.model.flats, vec![-0.5, -3.7]);
+    for op in &response.operations {
+        for flat in [-0.5, -3.7] {
+            assert!(op.levels.contains(&flat), "{}: {flat} not in {:?}", op.name, op.levels);
+        }
+    }
+    // The high end along X from the model's side, the low base past it.
+    let (lo, hi) = (response.model.min, response.model.max);
+    let mut checked = [0, 0];
+    for (p, h) in stock.cells() {
+        let u = p[0] - lo[0];
+        if p[1] < lo[1] + 2.0 || p[1] > hi[1] - 2.0 {
+            continue;
+        }
+        if (2.0..8.0).contains(&u) {
+            assert!(h <= -0.5 + 0.01, "{p:?}: stock at {h} over the top at -0.5");
+            checked[0] += 1;
+        }
+        if (13.0..28.0).contains(&u) {
+            assert!(h <= -3.7 + 0.01, "{p:?}: stock at {h} over the floor at -3.7");
+            checked[1] += 1;
+        }
+    }
+    assert!(checked[0] > 1000 && checked[1] > 1000, "{checked:?}");
 }
 
 #[test]

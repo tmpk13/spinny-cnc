@@ -121,26 +121,22 @@ impl Mesh {
 
     /// Turned about X, then Y, then Z, by degrees, and scaled about the origin.
     pub fn turn(&mut self, degrees: V3, scale: f64) {
-        let [ax, ay, az] = degrees.map(f64::to_radians);
-        let (sx, cx) = ax.sin_cos();
-        let (sy, cy) = ay.sin_cos();
-        let (sz, cz) = az.sin_cos();
+        // A quarter or half turn takes sines and cosines of exactly 0 and 1,
+        // so it only swaps and negates coordinates. As computed, cos 90 is
+        // 6e-17: every height would pick up a share of another coordinate,
+        // the corners of one flat face would differ in their last places,
+        // and the face would no longer count as flat.
+        let exact = |v: f64| if (v - v.round()).abs() < 1e-12 { v.round() } else { v };
+        let [(sx, cx), (sy, cy), (sz, cz)] = degrees.map(|d| {
+            let (s, c) = d.to_radians().sin_cos();
+            (exact(s), exact(c))
+        });
         for v in self.vertices.iter_mut() {
             let [x, y, z] = *v;
             let (y, z) = (y * cx - z * sx, y * sx + z * cx);
             let (x, z) = (x * cy + z * sy, -x * sy + z * cy);
             let (x, y) = (x * cz - y * sz, x * sz + y * cz);
             *v = [x * scale, y * scale, z * scale];
-        }
-        // Quarter turns land on numbers like 1e-16 instead of 0; snapping
-        // them keeps flat faces flat.
-        for v in self.vertices.iter_mut() {
-            for c in v.iter_mut() {
-                let rounded = (*c * 1e9).round() / 1e9;
-                if (*c - rounded).abs() < 1e-12 {
-                    *c = rounded;
-                }
-            }
         }
         if scale < 0.0 {
             for t in self.triangles.iter_mut() {
@@ -333,5 +329,19 @@ pub mod tests {
         assert_eq!(max[2], 0.0);
         assert!(mesh.volume() > 0.0);
         assert_eq!(mesh.shape().flats.len(), 1);
+    }
+
+    #[test]
+    fn quarter_and_half_turns_keep_a_flat_face_of_large_triangles_flat() {
+        // A 30 x 20 plate 3.2 thick, a height an STL's f32 holds as
+        // 3.2000000476837158: drawn with Y up and stood up front down, and
+        // drawn upside down and turned over.
+        let top = 3.2f32 as f64;
+        for (min, max, turn) in [([0.0, 0.0, -20.0], [30.0, 3.2, 0.0], [90.0, 0.0, 0.0]), ([0.0, 0.0, -3.2], [30.0, 20.0, 0.0], [180.0, 0.0, 0.0])] {
+            let mut mesh = Mesh::from_stl(&to_binary_stl(&block(min, max))).unwrap();
+            mesh.turn(turn, 1.0);
+            let flats: Vec<f64> = mesh.shape().flats.iter().map(|f| f.0).collect();
+            assert_eq!(flats, vec![top], "turned {turn:?}");
+        }
     }
 }
