@@ -224,11 +224,14 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
             // A tool that made or changed a job: the Jobs and Plot tabs list them again.
             const entry = event.data.entry;
             if (entry && entry.role === "tool" && entry.done && (entry.changed ?? []).includes("jobs")) {
-                void ctx.refreshJobs();
-                const selected = store.get().job;
-                if (selected) {
-                    void ctx.reloadJob(selected.id);
-                }
+                // The list first: it lets go of a selected job the tool
+                // deleted, which is then not asked for.
+                void ctx.refreshJobs().then(() => {
+                    const selected = store.get().job;
+                    if (selected) {
+                        void ctx.reloadJob(selected.id);
+                    }
+                });
             }
             // A turn has ended: the whole of it as the backend has it, in
             // case the feed dropped one of its events on the way.

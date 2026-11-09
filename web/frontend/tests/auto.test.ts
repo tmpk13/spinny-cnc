@@ -197,6 +197,27 @@ describe("the Auto tab", () => {
         expect(ctx.store.get().auto?.entries.map((entry) => entry.id)).toEqual([1, 2]);
     });
 
+    test("a tool that deleted the selected job lets go of it without an error, and one that changed it reloads it", async () => {
+        const { ctx, api, calls, store } = setup();
+        const svg = (y: number): File => new File([`<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"><path d="M0 ${y} L5 ${y}" stroke="#f00"/></svg>`], `${y}.svg`);
+        const first = await api.uploadJob(svg(0), { anchor: "keep" });
+        const second = await api.uploadJob(svg(1), { anchor: "keep" });
+        await ctx.refreshJobs();
+        await ctx.selectJob(first.id);
+        await api.deleteJob(first.id);
+        applyEvent(ctx, { type: "auto", data: { entry: tool(1, { name: "delete_job" }), busy: true, cleared: false } });
+        await settleMany();
+        expect(store.get().toasts.filter((toast) => toast.level === "error")).toEqual([]);
+        expect(store.get().job).toBeNull();
+        // A tool that changed the selected job has it read again.
+        await ctx.selectJob(second.id);
+        const reads = (): number => calls.filter((call) => call.name === "job").length;
+        const before = reads();
+        applyEvent(ctx, { type: "auto", data: { entry: tool(2, { name: "change_job" }), busy: true, cleared: false } });
+        await settleMany();
+        expect(reads()).toBe(before + 1);
+    });
+
     test("a line is put in its place, a late reply keeps the newer lines, and a clear empties it", async () => {
         const user: AutoEntry = { id: 1, role: "user", text: "hi", done: true };
         const answer: AutoEntry = { id: 3, role: "assistant", text: "Hel", done: false };
