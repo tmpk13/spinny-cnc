@@ -113,7 +113,9 @@ export function settingRows(document: MachineDocument | null, text: string, sett
             const boardRaw = boardSettings ? valueOf(entry, boardSettings) : null;
             file = entry.kind === "scale" ? scaleValue(entry, fileSettings, plain) : fileRaw;
             board = entry.kind === "scale" ? scaleValue(entry, boardSettings, plain) : boardRaw;
-            differs = fileRaw !== null && boardRaw !== null && !sameValue(fileRaw, boardRaw);
+            // Compared as shown: a scale in full steps differs when the full
+            // steps do, whatever the microsteps (they have a row of their own).
+            differs = file !== null && board !== null && !sameValue(file, board);
         }
         let what = entry.kind === "host" ? HOST_HELP[entry.key] ?? "" : help.get(entry.setting) ?? "";
         if (entry.kind === "scale" && name.startsWith("full_")) {

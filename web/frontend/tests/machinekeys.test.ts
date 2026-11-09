@@ -27,6 +27,20 @@ describe("machine keys", () => {
         expect(read.left).toEqual(left);
     });
 
+    test("a scale is compared in full steps, so other microsteps at the same steps per mm are other full steps", () => {
+        const text = "[rail]\nfull_steps_per_mm = 40\nmicrosteps = 256\n";
+        const settings = parseMachine(text, "into").settings;
+        const live = { ...settings, tmc_r_micro: 32 };
+        const read = fromBoard(text, live, null, (given) => parseMachine(given, "into"), "into.toml");
+        expect(read.changes).toContain("[rail] full_steps_per_mm = 320 (was 40)");
+        expect(read.changes).toContain("[rail] microsteps = 32 (was 256)");
+        expect(read.left).toEqual([]);
+        expect(parseMachine(read.text, "into").settings.r_steps).toBe(settings.r_steps);
+        // The same full steps at other microsteps need only the microsteps.
+        const halved = fromBoard(text, { ...settings, tmc_r_micro: 128, r_steps: settings.r_steps! / 2 }, null, (given) => parseMachine(given, "into"), "into.toml");
+        expect(halved.changes).toEqual(["[rail] microsteps = 128 (was 256)"]);
+    });
+
     test("a file read from the board it describes is left as it is", () => {
         const { into } = fixture.case;
         const settings = parseMachine(into, "into").settings;

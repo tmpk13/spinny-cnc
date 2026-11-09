@@ -287,7 +287,7 @@ def from_board(text: str, live: dict, host: dict | None = None, where: str = "ma
         else:
             board = value_of(key, live)
             mine = value_of(key, machine.settings)
-        if board is None or same(board, mine):
+        if board is None:
             continue
         section = section_for(key, machine.tool)
         name = key.key
@@ -299,8 +299,13 @@ def from_board(text: str, live: dict, host: dict | None = None, where: str = "ma
             if has_key(text, section, plain):
                 name = plain
             else:
+                # Compared as full steps: the same steps per mm at other
+                # microsteps are other full steps, and the same full steps
+                # at other microsteps need no line of their own.
                 board = board / int(live.get(f"tmc_{key.setting[0]}_micro", 256))
                 mine = mine / int(machine.settings[f"tmc_{key.setting[0]}_micro"])
+        if same(board, mine):
+            continue
         text = set_key(text, section, name, board)
         where_key = f"[{section}] {name}" if section else name
         changes.append(f"{where_key} = {toml_value(board)} (was {toml_value(mine) if mine is not None else 'unset'})")

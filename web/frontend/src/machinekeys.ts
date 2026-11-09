@@ -342,7 +342,7 @@ export function fromBoard(text: string, live: Record<string, number>, host: Reco
             board = valueOf(entry, live);
             mine = valueOf(entry, machine.settings);
         }
-        if (board === null || sameValue(board, mine)) {
+        if (board === null) {
             continue;
         }
         const section = sectionFor(entry, machine.tool);
@@ -357,9 +357,15 @@ export function fromBoard(text: string, live: Record<string, number>, host: Reco
             if (hasKey(text, section, plain)) {
                 name = plain;
             } else {
+                // Compared as full steps: the same steps per mm at other
+                // microsteps are other full steps, and the same full steps
+                // at other microsteps need no line of their own.
                 board = (board as number) / (live[`tmc_${axis}_micro`] ?? 256);
                 mine = (mine as number) / machine.settings[`tmc_${axis}_micro`]!;
             }
+        }
+        if (sameValue(board, mine)) {
+            continue;
         }
         text = setKey(text, section, name, board);
         const at = section ? `[${section}] ${name}` : name;

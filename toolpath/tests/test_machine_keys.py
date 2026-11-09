@@ -48,10 +48,24 @@ def test_a_scale_goes_in_the_key_the_section_uses_else_as_full_steps():
     live = dict(FIRMWARE_DEFAULTS, r_steps=800.0, tmc_r_micro=16, z_steps=1280.0, tmc_z_micro=32)
     read = from_board("[rail]\nsteps_per_mm = 10240\n[slide]\ninvert = false\n", live)
     assert "[rail] steps_per_mm = 800 (was 10240)" in read.changes
-    assert "[slide] full_steps_per_mm = 40 (was 40)" in read.changes
+    # The slide's full steps are the same at either microstep count, so
+    # only its microsteps change.
+    assert not any(change.startswith("[slide] full_steps_per_mm") for change in read.changes)
+    assert "[slide] microsteps = 32 (was 256)" in read.changes
     assert "[rail] microsteps = 16 (was 256)" in read.changes
     assert parse(read.text, "x").settings["z_steps"] == 1280.0
     assert read.left == []
+
+
+def test_a_scale_is_compared_in_full_steps():
+    # Microsteps changed at the console with the steps per mm left alone:
+    # the same steps per mm are other full steps, so the full steps change.
+    live = dict(settings_of("polar-laser"), tmc_r_micro=32)
+    read = from_board(FILES["polar-laser"], live)
+    assert "[rail] full_steps_per_mm = 320 (was 40)" in read.changes
+    assert "[rail] microsteps = 32 (was 256)" in read.changes
+    assert read.left == []
+    assert parse(read.text, "x").settings["r_steps"] == live["r_steps"]
 
 
 def test_host_keys_are_read_only_where_the_file_names_them():
