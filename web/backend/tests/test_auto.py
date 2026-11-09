@@ -491,13 +491,13 @@ def test_the_anthropic_provider_streams_a_tool_round_trip_through_the_sdk(client
     assert second[2]["content"] == [{"type": "tool_result", "tool_use_id": "toolu_1", "content": state["entries"][2]["result"], "is_error": False}]
 
 
-def answer_calling(name: str, arguments: dict) -> bytes:
+def answer_calling(name: str, arguments: dict, stop: str = "tool_use") -> bytes:
     return sse(
         message_start(),
         {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_9", "name": name, "input": {}}},
         {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps(arguments)}},
         {"type": "content_block_stop", "index": 0},
-        {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 20}},
+        {"type": "message_delta", "delta": {"stop_reason": stop, "stop_sequence": None}, "usage": {"output_tokens": 20}},
         {"type": "message_stop"},
     )
 
@@ -589,6 +589,47 @@ def test_after_a_content_filter_the_next_message_starts_clean(client):
     state = settle(client)
     assert state["entries"][-1] == {"id": state["entries"][-1]["id"], "role": "assistant", "text": "Here.", "done": True}
     assert bodies[1]["messages"][1:] == [{"role": "user", "content": "put another way"}]
+
+
+def test_a_context_stop_or_a_declined_answer_with_calls_answers_them(client):
+    chat = FakeChat(
+        Reply(text="", calls=[Call("t", "list_jobs", {})], stop="context"),
+        Reply(text="", calls=[Call("r", "list_jobs", {})], stop="refusal"),
+    )
+    use(client.agent, chat)
+    client.post("/api/auto/messages", json={"text": "jobs?"})
+    state = settle(client)
+    assert "longer than the model takes" in state["entries"][-1]["text"]
+    client.post("/api/auto/messages", json={"text": "again"})
+    settle(client)
+    # None of them ran, and each is answered, so the history stays one the
+    # provider takes.
+    assert [[(call.id, error) for call, _, error in results] for results in chat.results] == [[("t", True)], [("r", True)]]
+    assert all(text.startswith("not run: ") for results in chat.results for _, text, _ in results)
+    assert roles(state).count("tool") == 0
+
+
+def test_a_call_cut_off_at_the_context_window_is_answered_in_the_history(client):
+    requests: list[httpx2.Request] = []
+    answers = [answer_calling("list_jobs", {}, stop="model_context_window_exceeded"), answer_in_text("Hm.")]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=answers[len(requests) - 1])
+
+    def sdk() -> anthropic.AsyncAnthropic:
+        return anthropic.AsyncAnthropic(api_key="test-key", http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)), max_retries=0)
+
+    client.agent.factories["anthropic"] = lambda agent, choice: ChatSession(AnthropicChat(choice.model_or_default, SYSTEM_PROMPT, TOOLS, client=sdk), agent.max_calls)
+    client.post("/api/auto/messages", json={"text": "jobs?"})
+    settle(client)
+    client.post("/api/auto/messages", json={"text": "again"})
+    settle(client)
+    messages = json.loads(requests[1].content)["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "user", "user"]
+    assert messages[1]["content"][0]["type"] == "tool_use"
+    [result] = messages[2]["content"]
+    assert result["type"] == "tool_result" and result["tool_use_id"] == "toolu_9" and result["is_error"] is True
 
 
 def test_a_declined_turn_is_not_handed_to_a_provider_picked_after_it(client):

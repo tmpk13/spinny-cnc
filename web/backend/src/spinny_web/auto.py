@@ -188,6 +188,13 @@ class ChatSession:
     def seed(self, turns: list[tuple[str, str]]) -> None:
         self.chat.seed(turns)
 
+    def _not_run(self, calls: list[Call], why: str) -> None:
+        """Answers calls of an answer that stopped short, none of them run:
+        a call the history holds unanswered makes the provider refuse every
+        later request."""
+        if calls:
+            self.chat.add_results([(call, f"not run: {why}", True) for call in calls])
+
     async def turn(self, text: str, sink: Sink) -> None:
         # Told again should this turn be declined too.
         made, self._carried = self._carried, []
@@ -196,11 +203,14 @@ class ChatSession:
             reply = await self.chat.reply(sink.text)
             sink.end_text(reply.text)
             if reply.stop == "refusal":
+                self._not_run(reply.calls, "the answer was declined")
                 said = f" ({reply.note})" if reply.note else ""
                 sink.declined(f"The model declined this{said}: put it another way, or start a new chat.")
                 self._carried = made
                 return
             if reply.stop == "context":
+                # Cut off at the model's window, as one at its length limit.
+                self._not_run(reply.calls, "the answer reached the model's context window before this call was whole")
                 sink.notice("The conversation is longer than the model takes: start a new chat.")
                 return
             if not reply.calls:
@@ -210,7 +220,7 @@ class ChatSession:
             if reply.stop == "max_tokens":
                 # A call cut off part way can read as a whole one with
                 # arguments missing: none of them runs.
-                self.chat.add_results([(call, "not run: the answer was cut off before this call was whole", True) for call in reply.calls])
+                self._not_run(reply.calls, "the answer was cut off before this call was whole")
                 sink.notice("The answer was cut off at its length limit before its tool calls were whole: nothing was run.")
                 return
             results: list[tuple[Call, str, bool]] = []
