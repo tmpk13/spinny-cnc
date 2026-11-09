@@ -233,7 +233,8 @@ def detect(pcbv: str, held: tuple[str, ...] = (), ports: list[int] | None = None
         asked = []
         for port in ports:
             device = f"socket://{host}:{port}"
-            if device in held:
+            # Held under either name the loopback goes by.
+            if any(name in held for name in _aliases(host, device)):
                 found.append((port, _camera(device, _aliases(host, device), f"pcbv serving on port {port}", "pcbv", [])))
             else:
                 asked.append((port, pool.submit(probe, host, port)))

@@ -267,6 +267,15 @@ def test_detect_puts_the_cameras_here_first_and_lists_a_held_pcbv_unasked(server
     ]
 
 
+def test_a_held_pcbv_is_known_by_its_localhost_name_too(server, monkeypatch):
+    monkeypatch.setattr(cameras_module, "local_cameras", lambda pcbv: ([], []))
+    held = server(silent)
+    started = time.monotonic()
+    found = detect("pcbv", held=(f"socket://localhost:{held.port}",), ports=[held.port])
+    assert time.monotonic() - started < 1.0
+    assert [(camera["device"], camera["kind"]) for camera in found["cameras"]] == [(f"socket://127.0.0.1:{held.port}", "pcbv")]
+
+
 def test_the_route_lists_with_the_cameras_program_and_what_runs(tmp_path, monkeypatch):
     asked: list[tuple] = []
 
