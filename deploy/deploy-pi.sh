@@ -99,20 +99,30 @@ if [[ $mode == web ]]; then
     # optimized), stripped of its debug info to a size worth copying.
     vision="$here/../pcb-vision"
     cross="$vision/target/aarch64-unknown-linux-gnu/debug/pcbv"
+    built=0
     if [[ ! -d $vision ]]; then
         echo "no pcb-vision next to this repository: the Pi's cameras will not run" >&2
     elif [[ $build == 1 ]]; then
         if command -v aarch64-linux-gnu-gcc >/dev/null \
             && rustup target list --installed 2>/dev/null | grep -qx aarch64-unknown-linux-gnu; then
-            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-                cargo build -q -p pcbv --target aarch64-unknown-linux-gnu --manifest-path "$vision/Cargo.toml" \
-                || echo "pcbv did not build for the Pi: its cameras will not run" >&2
+            if CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+                cargo build -q -p pcbv --target aarch64-unknown-linux-gnu --manifest-path "$vision/Cargo.toml"; then
+                built=1
+            else
+                echo "pcbv did not build for the Pi: its cameras will not run" >&2
+            fi
         else
             echo "pcbv for the Pi needs aarch64-linux-gnu-gcc and rustup target add aarch64-unknown-linux-gnu here" >&2
         fi
     fi
-    if [[ -x $cross ]]; then
-        aarch64-linux-gnu-strip -o "$staging/pcbv" "$cross"
+    # Only the pcbv built now goes, or with --no-build the one there: one
+    # left by an earlier build may lack what the backend now asks of it.
+    if [[ -x $cross ]] && [[ $built == 1 || $build == 0 ]]; then
+        if command -v aarch64-linux-gnu-strip >/dev/null; then
+            aarch64-linux-gnu-strip -o "$staging/pcbv" "$cross"
+        else
+            echo "no aarch64-linux-gnu-strip here to make pcbv small enough to copy: the Pi's cameras will not run" >&2
+        fi
     fi
 fi
 
