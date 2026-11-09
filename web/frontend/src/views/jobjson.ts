@@ -34,6 +34,11 @@ function isPaths(value: unknown): boolean {
     return Array.isArray(value) && value.every((path) => Array.isArray(path) && path.every(isPoint));
 }
 
+/** A model's moves: lists of [x, y, z, kind]. */
+function isMoves(value: unknown): boolean {
+    return Array.isArray(value) && value.every((path) => Array.isArray(path) && path.every((move) => isPoint(move) && (move as unknown[]).length === 4));
+}
+
 /**
  * The job a text says, as far as the page can tell before the backend
  * checks it, with the stored job's id and the fields a drawing needs
@@ -64,8 +69,22 @@ export function readJobText(text: string, id: string, stored: Job | null = null)
         if (typeof fields["label"] !== "string") {
             return `group ${index + 1} needs a label`;
         }
-        if (!isPaths(fields["paths"] ?? [])) {
+        // Each list the preview walks is refused when given as anything
+        // else (null included), as the backend refuses it: drawn, it would
+        // stop the preview.
+        const given = (key: string): boolean => fields[key] !== undefined;
+        if (given("paths") && !isPaths(fields["paths"])) {
             return `${fields["label"]}: paths are lists of [x, y] points`;
+        }
+        if (given("joints") && !isPaths(fields["joints"])) {
+            return `${fields["label"]}: joints are lists of [radius, angle] points`;
+        }
+        if (given("moves") && !isMoves(fields["moves"])) {
+            return `${fields["label"]}: moves are lists of [x, y, z, kind] moves`;
+        }
+        const areas = fields["areas"];
+        if (given("areas") && !(Array.isArray(areas) && areas.every((area) => typeof area === "number" && Number.isFinite(area)))) {
+            return `${fields["label"]}: areas are a list of numbers`;
         }
     }
     for (const key of ["outline", "copper"]) {
@@ -76,7 +95,7 @@ export function readJobText(text: string, id: string, stored: Job | null = null)
     const groups = (raw["groups"] as Record<string, unknown>[]).map((group, index) => {
         const made = { power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [] as unknown, ...group };
         const joints = group["joints"];
-        if (Array.isArray(joints) && joints.length > 0 && isPaths(joints)) {
+        if (Array.isArray(joints) && joints.length > 0) {
             const drawn = Array.isArray(made.paths) && made.paths.length > 0;
             if (!drawn || JSON.stringify(joints) !== JSON.stringify(stored?.groups[index]?.joints ?? [])) {
                 made.paths = (joints as [number, number][][]).map((poly) => jointPreview(poly));

@@ -324,6 +324,15 @@ describe("the job as JSON", () => {
         expect(readJobText("[]", "j1")).toBe("a job is a JSON object");
         expect(readJobText('{"groups": [{"paths": []}]}', "j1")).toBe("group 1 needs a label");
         expect(readJobText('{"groups": [{"label": "x", "paths": [[1, 2]]}]}', "j1")).toBe("x: paths are lists of [x, y] points");
+        // Lists the preview walks, given as something else, are refused
+        // rather than drawn: the preview would throw on them.
+        expect(readJobText('{"groups": [{"label": "a", "paths": null}]}', "j1")).toBe("a: paths are lists of [x, y] points");
+        expect(readJobText('{"groups": [{"label": "a", "paths": [], "moves": 5}]}', "j1")).toBe("a: moves are lists of [x, y, z, kind] moves");
+        expect(readJobText('{"groups": [{"label": "a", "paths": [], "moves": [[[0, 0, 0]]]}]}', "j1")).toBe("a: moves are lists of [x, y, z, kind] moves");
+        expect(readJobText('{"groups": [{"label": "a", "paths": [], "joints": 7}]}', "j1")).toBe("a: joints are lists of [radius, angle] points");
+        expect(readJobText('{"groups": [{"label": "a", "paths": [], "areas": "big"}]}', "j1")).toBe("a: areas are a list of numbers");
+        const model = readJobText('{"groups": [{"label": "a", "moves": [[[0, 0, 1, 0], [1, 0, -0.5, 2]]]}]}', "j1");
+        expect(typeof model === "string" ? model : model.groups[0]!.moves).toEqual([[[0, 0, 1, 0], [1, 0, -0.5, 2]]]);
         expect(placeText({ list: "groups", group: 1, path: 0, point: 2 }, job)).toBe("b: path 1, point 3");
         expect(placeText({ list: "outline", group: null, path: 3, point: null }, job)).toBe("outline: path 4");
     });

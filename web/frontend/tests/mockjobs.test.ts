@@ -562,6 +562,11 @@ describe("a job put back whole", () => {
         // Areas name one pad each.
         const dots = { label: "dots", tool: "dispenser", paths: [[[1, 1]], [[2, 2]]], areas: [0.5] };
         await expect(backend.replaceJob(made.id, { ...body, groups: [dots] } as unknown as Job)).rejects.toThrow("group 'dots': areas must have one entry per path");
+        // A list given as null is no list, as the backend's model has it.
+        for (const key of ["paths", "joints", "moves"]) {
+            await expect(backend.replaceJob(made.id, { ...body, groups: [{ label: "g", [key]: null }] } as unknown as Job)).rejects.toThrow("not a job");
+        }
+        await expect(backend.replaceJob(made.id, { ...body, outline: null } as unknown as Job)).rejects.toThrow("not a job");
     });
 
     test("draws a joint-space group whose joints changed again, and keeps one's drawing whose joints did not", async () => {

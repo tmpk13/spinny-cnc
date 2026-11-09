@@ -1296,9 +1296,9 @@ function finiteNumber(value: unknown, what: string): number {
     return value;
 }
 
-/** A list of polylines from JSON: every point two finite numbers within the bound. */
+/** A list of polylines from JSON: every point two finite numbers within the bound; left out, none, but null is no list. */
 function pathsOf(value: unknown, what: string): Path[] {
-    if (value === undefined || value === null) {
+    if (value === undefined) {
         return [];
     }
     if (!Array.isArray(value)) {
@@ -1329,7 +1329,7 @@ function pathsOf(value: unknown, what: string): Path[] {
  * twenty times the deepest cut.
  */
 function movesOf(value: unknown, what: string): Move[][] {
-    if (value === undefined || value === null) {
+    if (value === undefined) {
         return [];
     }
     if (!Array.isArray(value)) {
