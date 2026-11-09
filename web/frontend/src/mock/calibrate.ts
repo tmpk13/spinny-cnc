@@ -10,6 +10,9 @@ import { DEFAULT_DEPTH, DEFAULT_PLUNGE, checkDepth, checkFocus, checkPower, chec
 /** The most patches along a side, and the largest patch or slot, mm. */
 export const MAX_STEPS = 12;
 export const MAX_SIZE = 100;
+/** The finest a material test's fill may be, mm, and the most points it may make in all, as the backend bounds them. */
+export const MIN_PITCH = 0.01;
+export const MAX_POINTS = 200000;
 /** A focus step as a label says it: +0.25 above focus, -0.5 below, 0 at it. */
 export function focusLabel(focus: number): string {
     return focus === 0 ? "0" : `${focus > 0 ? "+" : ""}${formatG(focus)}`;
@@ -35,9 +38,14 @@ function square(x: number, y: number, size: number): Path {
     return [[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]];
 }
 
+/** How many lines a fill a pitch apart puts across a square. */
+function rows(size: number, pitch: number): number {
+    return Math.max(1, Math.floor(size / pitch + 1e-9) + 1);
+}
+
 /** One path back and forth across the square, a pitch apart. */
 function hatch(x: number, y: number, size: number, pitch: number): Path {
-    const lines = Math.max(1, Math.floor(size / pitch + 1e-9) + 1);
+    const lines = rows(size, pitch);
     const step = lines > 1 ? size / (lines - 1) : 0;
     const points: Point[] = [];
     for (let i = 0; i < lines; i += 1) {
@@ -86,8 +94,18 @@ export function calibrateJob(id: string, request: CalibrateRequest, milling: boo
         if (!(gap >= 0 && gap <= MAX_SIZE)) {
             throw new Error(`gap must be 0 to ${MAX_SIZE} mm`);
         }
-        if (fill && !(spot > 0 && spot <= size)) {
-            throw new Error("the fill's pitch must be above 0 and at most the size");
+        if (fill && !(spot >= MIN_PITCH && spot <= size)) {
+            throw new Error(`the fill's pitch must be at least ${formatG(MIN_PITCH)} mm and at most the size`);
+        }
+        if (fill) {
+            const squares = powers.length * speeds.length;
+            const points = squares * 2 * rows(size, spot);
+            if (points > MAX_POINTS) {
+                throw new Error(
+                    `a fill ${formatG(spot)} mm apart over ${squares} squares of ${formatG(size)} mm is ${points} points, more than ${MAX_POINTS}:`
+                    + " give a wider pitch, or smaller or fewer squares",
+                );
+            }
         }
         groups = speeds.flatMap((speed, row) => powers.map((power, column) => {
             const cx = x + column * (size + gap);

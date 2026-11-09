@@ -49,6 +49,11 @@ describe("calibration test", () => {
         expect(job?.groups.at(-1)!.label).toBe("test S1000 F1500");
         expect(panel.querySelector(".center-test-summary")?.textContent).toContain("3 powers S100 to S1000");
         await expect(backend.calibrateJob({ kind: "depth" })).rejects.toMatchObject({ status: 400, message: "the depth test is a mill's ($spindle=1): a laser takes the material test" });
+        // A fill too fine, or too many lines in all, is refused as the backend refuses it.
+        await expect(backend.calibrateJob({ kind: "material", powers: [100, 100, 1], speeds: [300, 300, 1], size: 20, spot: 0.001 }))
+            .rejects.toMatchObject({ status: 400, message: "the fill's pitch must be at least 0.01 mm and at most the size" });
+        await expect(backend.calibrateJob({ kind: "material", powers: [100, 100, 12], speeds: [300, 300, 12], size: 100, spot: 0.05 }))
+            .rejects.toMatchObject({ status: 400, message: "a fill 0.05 mm apart over 144 squares of 100 mm is 576288 points, more than 200000: give a wider pitch, or smaller or fewer squares" });
         root.remove();
     });
 

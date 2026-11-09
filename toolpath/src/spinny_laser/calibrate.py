@@ -30,6 +30,13 @@ Point = tuple[float, float]
 # The most patches along a side, and the largest patch or slot, mm.
 MAX_STEPS = 12
 MAX_SIZE = 100.0
+# The finest a material test's fill may be, mm: well under any beam's
+# spot, and short of a pitch typed in the wrong unit.
+MIN_PITCH = 0.01
+# The most points a material test's fill may make in all: past any test a
+# machine can cut, and short of a build that takes the backend minutes and
+# a job file of hundreds of megabytes.
+MAX_POINTS = 200_000
 
 
 @dataclass
@@ -59,10 +66,15 @@ def _square(x: float, y: float, size: float) -> list[Point]:
     return [(x, y), (x + size, y), (x + size, y + size), (x, y + size), (x, y)]
 
 
+def _rows(size: float, pitch: float) -> int:
+    """How many lines a fill a pitch apart puts across a square."""
+    return max(1, int(math.floor(size / pitch + 1e-9)) + 1)
+
+
 def _hatch(x: float, y: float, size: float, pitch: float) -> list[Point]:
     """One path back and forth across the square, a pitch apart: the beam
     stays on along the short step between two lines."""
-    lines = max(1, int(math.floor(size / pitch + 1e-9)) + 1)
+    lines = _rows(size, pitch)
     step = size / (lines - 1) if lines > 1 else 0.0
     points: list[Point] = []
     for i in range(lines):
@@ -87,8 +99,16 @@ def material(
         raise ValueError(f"size must be above 0 and at most {MAX_SIZE:g} mm")
     if not 0.0 <= gap <= MAX_SIZE:
         raise ValueError(f"gap must be 0 to {MAX_SIZE:g} mm")
-    if fill and not 0.0 < pitch <= size:
-        raise ValueError("the fill's pitch must be above 0 and at most the size")
+    if fill and not MIN_PITCH <= pitch <= size:
+        raise ValueError(f"the fill's pitch must be at least {MIN_PITCH:g} mm and at most the size")
+    if fill:
+        squares = len(powers) * len(speeds)
+        points = squares * 2 * _rows(size, pitch)
+        if points > MAX_POINTS:
+            raise ValueError(
+                f"a fill {pitch:g} mm apart over {squares} squares of {size:g} mm is {points} points, more than {MAX_POINTS}:"
+                " give a wider pitch, or smaller or fewer squares"
+            )
     patches = []
     for row, speed in enumerate(speeds):
         for column, power in enumerate(powers):

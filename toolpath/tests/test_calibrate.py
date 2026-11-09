@@ -30,6 +30,16 @@ def test_the_material_grid_has_a_square_per_power_and_speed():
         material([100], [300], size=5, gap=2, pitch=6, fill=True)
 
 
+def test_a_material_fill_too_fine_or_too_big_is_refused_before_it_is_built():
+    with pytest.raises(ValueError, match="the fill's pitch must be at least 0.01 mm and at most the size"):
+        material([100], [300], size=100, gap=0, pitch=0.001, fill=True)
+    # Twelve by twelve 100 mm squares 0.05 mm apart would be 576,288 points.
+    with pytest.raises(ValueError, match=r"a fill 0.05 mm apart over 144 squares of 100 mm is 576288 points, more than 200000"):
+        material([100] * 12, [300] * 12, size=100, gap=0, pitch=0.05, fill=True)
+    # Outlined, the squares are a few points each whatever the pitch.
+    assert len(material([100] * 12, [300] * 12, size=100, gap=0, pitch=0.001, fill=False)) == 144
+
+
 def test_the_depth_row_has_a_slot_per_depth():
     patches = depth([0.1, 0.2], length=10, gap=3, speed=8000, feed=120, origin=(1, 2))
     assert [(p.label, p.depth, p.power, p.speed) for p in patches] == [

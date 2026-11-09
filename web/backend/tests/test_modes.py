@@ -600,6 +600,9 @@ def test_a_laser_makes_a_material_test_and_a_mill_a_depth_test(client, fake):
     refused = client.post("/api/calibrate", json={"kind": "depth"})
     assert refused.status_code == 400 and "a laser takes the material test" in refused.text
     assert client.post("/api/calibrate", json={"kind": "material", "powers": [100, 400, 20]}).status_code == 400
+    # A mistyped fill pitch is refused before millions of lines are made.
+    fine = client.post("/api/calibrate", json={"kind": "material", "powers": [100, 100, 1], "speeds": [300, 300, 1], "size": 20, "spot": 0.001})
+    assert fine.status_code == 400 and "the fill's pitch must be at least 0.01 mm" in fine.json()["detail"]
     # On a spindle machine the depth test, its slots a step deeper each.
     for line in ("$spindle=1", "$h_axis=1"):
         assert client.post("/api/command", json={"line": line}).json()["lines"] == ["ok"]
