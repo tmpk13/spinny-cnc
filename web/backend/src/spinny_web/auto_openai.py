@@ -53,12 +53,15 @@ class OpenAIChat:
         self.tools = tool_params(tools)
         self.transport = transport
         self.messages: list[dict] = [{"role": "system", "content": system}]
+        # Where the turn under way begins in the history.
+        self._turn = len(self.messages)
 
     def seed(self, turns: list[tuple[str, str]]) -> None:
         for role, text in turns:
             self.messages.append({"role": role, "content": text})
 
     def add_user(self, text: str) -> None:
+        self._turn = len(self.messages)
         self.messages.append({"role": "user", "content": text})
 
     def add_results(self, results: list[tuple[Call, str, bool]]) -> None:
@@ -105,15 +108,19 @@ class OpenAIChat:
             call_id = str(raw.get("id") or f"call_{index}")
             calls.append(Call(id=call_id, name=str(function.get("name") or ""), arguments=arguments, raw=None if arguments is not None else str(written)))
             sent.append({"id": call_id, "type": "function", "function": {"name": function.get("name") or "", "arguments": written or "{}"}})
+        finish = choice.get("finish_reason")
+        if finish == "content_filter":
+            # Declined: the turn that was, the operator's message and all
+            # that followed it, leaves the history, or the next message
+            # would carry it again; its calls go with it, unanswered.
+            del self.messages[self._turn :]
+            return Reply(text=text, calls=[], stop="refusal")
         turn: dict[str, Any] = {"role": "assistant", "content": text or None}
         if sent:
             turn["tool_calls"] = sent
         self.messages.append(turn)
-        finish = choice.get("finish_reason")
         if finish == "length":
             stop = "max_tokens"
-        elif finish == "content_filter":
-            stop = "refusal"
         else:
             stop = "tool_use" if calls else "end"
         return Reply(text=text, calls=calls, stop=stop)

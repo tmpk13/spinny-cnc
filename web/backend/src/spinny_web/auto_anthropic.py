@@ -1,12 +1,13 @@
 """The Auto tab's Anthropic provider: the Messages API with tool use,
 streamed through the official SDK so an answer shows as it is written.
 
-The history is kept as the API takes it and only ever added to: every
-assistant turn goes back whole (thinking blocks included, which the API
-needs unchanged), every tool call is answered. A model that declines on a
-safety ground is retried on another model by the API itself where it
-offers that (`fallbacks`); the history then follows the rule for a turn
-that changed model part way.
+The history is kept as the API takes it and added to: every assistant turn
+goes back whole (thinking blocks included, which the API needs unchanged),
+every tool call is answered. A model that declines on a safety ground is
+retried on another model by the API itself where it offers that
+(`fallbacks`); the history then follows the rule for a turn that changed
+model part way. A turn declined by every model is taken out whole, as the
+API asks before going on.
 """
 
 from __future__ import annotations
@@ -84,6 +85,8 @@ class AnthropicChat:
         # else the SDK takes. None of them passes through the page.
         self.client = client
         self.messages: list[dict] = []
+        # Where the turn under way begins in the history.
+        self._turn = 0
 
     def seed(self, turns: list[tuple[str, str]]) -> None:
         for role, text in turns:
@@ -91,6 +94,7 @@ class AnthropicChat:
                 self.messages.append({"role": role, "content": text})
 
     def add_user(self, text: str) -> None:
+        self._turn = len(self.messages)
         self.messages.append({"role": "user", "content": text})
 
     def add_results(self, results: list[tuple[Call, str, bool]]) -> None:
@@ -171,8 +175,11 @@ class AnthropicChat:
             failures = 0
             text = "\n\n".join(block.text for block in message.content if block.type == "text" and block.text)
             if message.stop_reason == "refusal":
-                # Declined by every model asked: nothing of it goes into the
-                # history, so the next message starts clean.
+                # Declined by every model asked. The API asks for the turn
+                # that was declined to go before going on, or it is declined
+                # again: the operator's message and all that followed it
+                # leave the history, and what came before stays as it was.
+                del self.messages[self._turn :]
                 details = message.stop_details
                 note = (details.category or details.explanation) if details is not None else None
                 return Reply(text=text, calls=[], stop="refusal", note=note)

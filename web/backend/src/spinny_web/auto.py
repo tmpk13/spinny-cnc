@@ -112,7 +112,9 @@ class Call:
 @dataclass
 class Reply:
     """One answer of a model: its text, the calls it asks for, and why it
-    stopped: `end`, `tool_use`, `max_tokens`, `refusal` or `context`."""
+    stopped: `end`, `tool_use`, `max_tokens`, `refusal` or `context`. The
+    calls are those the provider's history holds, each to be answered; a
+    declined answer leaves the history, and its calls with it."""
 
     text: str
     calls: list[Call]
@@ -158,6 +160,9 @@ class Entry:
     changed: list[str] = field(default_factory=list)
     id: int = 0
     sent: float = field(default=0.0, repr=False)
+    # An operator's message the model declined: the provider has taken its
+    # turn out of its history, and a provider picked later is not told it.
+    declined: bool = field(default=False, repr=False)
 
     def to_dict(self) -> dict:
         out: dict[str, Any] = {"id": self.id, "role": self.role, "text": self.text, "done": self.done}
@@ -176,18 +181,24 @@ class ChatSession:
     def __init__(self, chat: Chat, max_calls: int = MAX_TOOL_CALLS) -> None:
         self.chat = chat
         self.max_calls = max_calls
+        # Tools that made or changed something in turns the model declined:
+        # those turns left the history, so the next message says so.
+        self._carried: list[str] = []
 
     def seed(self, turns: list[tuple[str, str]]) -> None:
         self.chat.seed(turns)
 
     async def turn(self, text: str, sink: Sink) -> None:
-        self.chat.add_user(text)
+        # Told again should this turn be declined too.
+        made, self._carried = self._carried, []
+        self.chat.add_user(_carried_note(made) + text)
         while True:
             reply = await self.chat.reply(sink.text)
             sink.end_text(reply.text)
             if reply.stop == "refusal":
                 said = f" ({reply.note})" if reply.note else ""
-                sink.notice(f"The model declined this{said}: put it another way, or start a new chat.")
+                sink.declined(f"The model declined this{said}: put it another way, or start a new chat.")
+                self._carried = made
                 return
             if reply.stop == "context":
                 sink.notice("The conversation is longer than the model takes: start a new chat.")
@@ -222,6 +233,9 @@ class ChatSession:
                     sink.tool_finished(entry, outcome)
                     results.append((call, outcome.text, outcome.error))
                     current = None
+                    tool = BY_NAME.get(call.name)
+                    if tool is not None and not tool.read_only and not outcome.error:
+                        made.append(call.name)
             except Exception as exc:
                 why, under_way = f"the turn failed: {exc!r}", f"failed: {exc!r}"
                 raise
@@ -239,13 +253,26 @@ class ChatSession:
                 return
 
 
+def _carried_note(made: list[str]) -> str:
+    """What declined turns had already done, put before the next message."""
+    if not made:
+        return ""
+    return (
+        "(From the backend: an earlier message was declined and is left out of this conversation. Tool calls"
+        f" made for it had already run, and what they made or changed stands: {', '.join(made)}. Look before"
+        " doing any of it again.)\n\n"
+    )
+
+
 class Sink:
     """What a turn reports to the conversation, and the tool calls it makes
     in-process; a provider that runs its own tools (Claude Code) only
     reports them."""
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(self, agent: Agent, asked: Entry | None = None) -> None:
         self.agent = agent
+        # The operator's message the turn answers.
+        self.asked = asked
         self.calls = 0
         self._text: Entry | None = None
         self._toolbox: ToolBox | None = None
@@ -311,6 +338,14 @@ class Sink:
     def notice(self, text: str) -> None:
         self.end_text()
         self.agent._add(Entry(role="notice", text=text))
+
+    def declined(self, text: str) -> None:
+        """The model declined the operator's message, which the provider has
+        taken out of its history: said, and kept from a provider picked
+        later."""
+        if self.asked is not None:
+            self.asked.declined = True
+        self.notice(text)
 
     def error(self, text: str) -> None:
         self.end_text()
@@ -576,8 +611,16 @@ class Agent:
 
     def _turns(self) -> list[tuple[str, str]]:
         """The conversation so far as plain turns, for a provider that
-        starts in the middle of it."""
-        return [(entry.role, entry.text) for entry in self.entries if entry.role in ("user", "assistant") and entry.text.strip()]
+        starts in the middle of it. A turn the model declined is left out,
+        as the provider that declined it left it out of its own history."""
+        turns: list[tuple[str, str]] = []
+        declined = False
+        for entry in self.entries:
+            if entry.role == "user":
+                declined = entry.declined
+            if not declined and entry.role in ("user", "assistant") and entry.text.strip():
+                turns.append((entry.role, entry.text))
+        return turns
 
     def _session_for(self, earlier: list[tuple[str, str]]) -> Session:
         choice = self.choice()
@@ -598,12 +641,12 @@ class Agent:
             raise AutoBusy("a turn is under way: wait for it, or stop it")
         earlier = self._turns()
         self._busy = True
-        self._add(Entry(role="user", text=text))
-        self._task = asyncio.get_running_loop().create_task(self._run(text, earlier))
+        asked = self._add(Entry(role="user", text=text))
+        self._task = asyncio.get_running_loop().create_task(self._run(text, earlier, asked))
         return self.conversation()
 
-    async def _run(self, text: str, earlier: list[tuple[str, str]]) -> None:
-        sink = Sink(self)
+    async def _run(self, text: str, earlier: list[tuple[str, str]], asked: Entry) -> None:
+        sink = Sink(self, asked)
         try:
             await self._session_for(earlier).turn(text, sink)
         except asyncio.CancelledError:

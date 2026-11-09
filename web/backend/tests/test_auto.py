@@ -491,6 +491,121 @@ def test_the_anthropic_provider_streams_a_tool_round_trip_through_the_sdk(client
     assert second[2]["content"] == [{"type": "tool_result", "tool_use_id": "toolu_1", "content": state["entries"][2]["result"], "is_error": False}]
 
 
+def answer_calling(name: str, arguments: dict) -> bytes:
+    return sse(
+        message_start(),
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_9", "name": name, "input": {}}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps(arguments)}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 20}},
+        {"type": "message_stop"},
+    )
+
+
+def answer_declined() -> bytes:
+    return sse(
+        message_start(),
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "I can"}},
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "refusal", "stop_sequence": None, "stop_details": {"type": "refusal", "category": "cyber", "explanation": None}},
+            "usage": {"output_tokens": 3},
+        },
+        {"type": "message_stop"},
+    )
+
+
+def test_after_a_refusal_the_next_message_starts_clean(client):
+    # The API asks for the declined turn to be taken out before going on;
+    # sent again with the next message, it is declined again.
+    requests: list[httpx2.Request] = []
+    answers = [
+        answer_declined(),
+        answer_in_text("Done."),
+        answer_calling("save_marker", {"name": "corner", "x": 1, "y": 2}),
+        answer_declined(),
+        answer_in_text("Saved before."),
+    ]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=answers[len(requests) - 1])
+
+    def sdk() -> anthropic.AsyncAnthropic:
+        return anthropic.AsyncAnthropic(api_key="test-key", http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)), max_retries=0)
+
+    client.agent.factories["anthropic"] = lambda agent, choice: ChatSession(AnthropicChat(choice.model_or_default, SYSTEM_PROMPT, TOOLS, client=sdk), agent.max_calls)
+    client.post("/api/auto/messages", json={"text": "the first, declined"})
+    state = settle(client)
+    assert state["entries"][-1]["role"] == "notice" and "declined this (cyber)" in state["entries"][-1]["text"]
+    client.post("/api/auto/messages", json={"text": "put another way"})
+    settle(client)
+    assert json.loads(requests[1].content)["messages"] == [{"role": "user", "content": "put another way"}]
+    # A declined turn whose calls ran: they stay done, and the next message
+    # says so, since the turn they were in is gone.
+    client.post("/api/auto/messages", json={"text": "save a corner"})
+    settle(client)
+    assert client.get("/api/markers").json()["markers"] == [{"name": "corner", "x": 1.0, "y": 2.0}]
+    client.post("/api/auto/messages", json={"text": "and again"})
+    settle(client)
+    messages = json.loads(requests[4].content)["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+    assert messages[0] == {"role": "user", "content": "put another way"}
+    assert "save_marker" in messages[2]["content"] and messages[2]["content"].endswith("and again")
+
+
+def test_after_a_content_filter_the_next_message_starts_clean(client):
+    # A server that holds to the chat completions rule: every tool call of
+    # an assistant turn is answered before anything else is sent.
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        owed: set[str] = set()
+        for message in body["messages"]:
+            if owed and message["role"] != "tool":
+                return httpx.Response(400, json={"error": {"message": "An assistant message with 'tool_calls' must be followed by tool messages"}})
+            if message["role"] == "assistant":
+                owed = {call["id"] for call in message.get("tool_calls") or []}
+            elif message["role"] == "tool":
+                owed.discard(message["tool_call_id"])
+        if len(bodies) == 1:
+            calls = [{"id": "call_1", "type": "function", "function": {"name": "list_jobs", "arguments": "{}"}}]
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "Let me", "tool_calls": calls}, "finish_reason": "content_filter"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "Here."}, "finish_reason": "stop"}]})
+
+    def make(agent, choice):
+        return ChatSession(OpenAIChat(choice.base_url, choice.model, None, SYSTEM_PROMPT, TOOLS, transport=httpx.MockTransport(handler)), agent.max_calls)
+
+    client.agent.factories["openai"] = make
+    client.put("/api/auto/settings", json={"provider": "openai", "model": "llama3.1"})
+    client.post("/api/auto/messages", json={"text": "jobs?"})
+    state = settle(client)
+    assert "declined" in state["entries"][-1]["text"]
+    client.post("/api/auto/messages", json={"text": "put another way"})
+    state = settle(client)
+    assert state["entries"][-1] == {"id": state["entries"][-1]["id"], "role": "assistant", "text": "Here.", "done": True}
+    assert bodies[1]["messages"][1:] == [{"role": "user", "content": "put another way"}]
+
+
+def test_a_declined_turn_is_not_handed_to_a_provider_picked_after_it(client):
+    first = FakeChat(Reply(text="Hi.", calls=[], stop="end"), Reply(text="", calls=[], stop="refusal", note="cyber"))
+    use(client.agent, first)
+    client.post("/api/auto/messages", json={"text": "hello"})
+    settle(client)
+    client.post("/api/auto/messages", json={"text": "the declined one"})
+    settle(client)
+    second = FakeChat(Reply(text="Here.", calls=[], stop="end"))
+    use(client.agent, second, "openai")
+    client.put("/api/auto/settings", json={"provider": "openai", "model": "local"})
+    client.post("/api/auto/messages", json={"text": "and now"})
+    settle(client)
+    assert second.seeded == [("user", "hello"), ("assistant", "Hi.")]
+
+
 def test_a_model_without_server_side_fallback_is_asked_without_it():
     chat = AnthropicChat("claude-haiku-5-5", "s", TOOLS)
     assert "fallbacks" not in chat.params() and "betas" not in chat.params()
