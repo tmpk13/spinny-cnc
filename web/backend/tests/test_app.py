@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -1087,3 +1088,69 @@ def test_a_job_put_back_from_the_page_keeps_its_id_and_is_priced_again(client):
     assert client.put("/api/jobs/nope", json=data).status_code == 404
     bad = client.put(f"/api/jobs/{job['id']}", json={**data, "spot": -1})
     assert bad.status_code == 400 and "spot" in bad.text
+
+
+def _held_recut(monkeypatch):
+    """A width re-cut that waits, once it has made the new job from the
+    kept file and before it saves it, until released: (started, release)."""
+    import spinny_web.app as app_module
+
+    started, release = threading.Event(), threading.Event()
+    real = app_module.remake_upload
+
+    def held(*args, **kwargs):
+        made = real(*args, **kwargs)
+        started.set()
+        assert release.wait(10.0)
+        return made
+
+    monkeypatch.setattr(app_module, "remake_upload", held)
+    return started, release
+
+
+def _board_job(client) -> dict:
+    gerber = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board-F_Cu.gbr"
+    response = client.post("/api/jobs", files={"file": ("board-F_Cu.gbr", gerber.read_bytes(), "application/octet-stream")})
+    assert response.status_code == 200, response.text
+    job = response.json()
+    assert job["recipe"]["file"]
+    return job
+
+
+def test_a_change_made_while_a_job_is_cut_again_is_kept(client, monkeypatch):
+    job = _board_job(client)
+    started, release = _held_recut(monkeypatch)
+    answers = {}
+    recut = threading.Thread(target=lambda: answers.update(width=client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.3})))
+    recut.start()
+    assert started.wait(10.0)
+    patch = threading.Thread(target=lambda: answers.update(patch=client.patch(f"/api/jobs/{job['id']}", json={"name": "kept"})))
+    patch.start()
+    time.sleep(0.2)
+    release.set()
+    recut.join(10.0)
+    patch.join(10.0)
+    assert answers["width"].status_code == 200 and answers["patch"].status_code == 200
+    stored = client.get(f"/api/jobs/{job['id']}").json()
+    assert stored["name"] == "kept" and stored["spot"] == 0.3
+
+
+def test_a_job_deleted_while_it_is_cut_again_stays_deleted(client, monkeypatch):
+    job = _board_job(client)
+    started, release = _held_recut(monkeypatch)
+    answers = {}
+    recut = threading.Thread(target=lambda: answers.update(width=client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.3})))
+    recut.start()
+    assert started.wait(10.0)
+    delete = threading.Thread(target=lambda: answers.update(delete=client.delete(f"/api/jobs/{job['id']}")))
+    delete.start()
+    time.sleep(0.2)
+    release.set()
+    recut.join(10.0)
+    delete.join(10.0)
+    assert answers["delete"].status_code == 200
+    assert client.get(f"/api/jobs/{job['id']}").status_code == 404
+    assert job["id"] not in [entry["id"] for entry in client.get("/api/jobs").json()["jobs"]]
+    assert client.backend.store.get(job["id"]) is None
+    # Nothing is left on disk to bring it back at a restart.
+    assert not list((client.backend.store.directory).glob(f"{job['id']}.*"))

@@ -17,6 +17,8 @@ import secrets
 import tempfile
 import threading
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,6 +104,10 @@ Polyline = list[Point]
 
 class JobImportError(ValueError):
     """The file could not be turned into a job."""
+
+
+class NotFound(LookupError):
+    """No profile, or no job, of that id."""
 
 
 class Finite(BaseModel):
@@ -1358,6 +1364,9 @@ class JobStore:
         self.directory = directory
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        # One per job, held from a writer's read of a job to its save, so
+        # two writers take turns and a delete waits for a write under way.
+        self._editing: dict[str, threading.RLock] = {}
         if directory is not None:
             directory.mkdir(parents=True, exist_ok=True)
             for file in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime):
@@ -1382,8 +1391,21 @@ class JobStore:
             self._write(job)
         return job
 
-    def save(self, job: Job) -> None:
+    @contextmanager
+    def editing(self, job_id: str) -> Iterator[None]:
+        """Held around reading a job, making the new one and saving it: a
+        writer reads the job inside, so it builds on the last one saved."""
         with self._lock:
+            lock = self._editing.setdefault(job_id, threading.RLock())
+        with lock:
+            yield
+
+    def save(self, job: Job) -> None:
+        """Stores a new version of a job still kept; one deleted meanwhile
+        stays deleted."""
+        with self._lock:
+            if job.id not in self._jobs:
+                raise NotFound(f"no job {job.id!r}: it was deleted")
             self._jobs[job.id] = job
             self._write(job)
 
@@ -1396,7 +1418,8 @@ class JobStore:
             return list(self._jobs.values())
 
     def remove(self, job_id: str) -> bool:
-        with self._lock:
+        with self.editing(job_id), self._lock:
+            self._editing.pop(job_id, None)
             job = self._jobs.pop(job_id, None)
             if job is None:
                 return False

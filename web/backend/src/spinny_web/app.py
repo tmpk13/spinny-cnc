@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import math
 import os
@@ -632,6 +633,19 @@ class Broadcast:
 
 
 # --- the backend --------------------------------------------------------------
+
+
+def editing_job(method):
+    """Holds the job's editing lock across a method whose first argument is
+    a job id: the job it reads is the last one saved, two writers of one
+    job take turns, and a delete or a run waits for a write under way."""
+
+    @functools.wraps(method)
+    def wrapped(self, job_id, *args, **kwargs):
+        with self.store.editing(job_id):
+            return method(self, job_id, *args, **kwargs)
+
+    return wrapped
 
 
 class Backend:
@@ -2201,6 +2215,7 @@ class Backend:
         result.job = self.store.add(result.job)
         return result.model_dump()
 
+    @editing_job
     def patch_job(self, job_id: str, patch: JobPatch) -> Job:
         job = self.store.get(job_id)
         if job is None:
@@ -2262,6 +2277,7 @@ class Backend:
         made.refresh_stats(self.streamer())
         return self.store.add(made)
 
+    @editing_job
     def replace_job(self, job_id: str, data: dict) -> Job:
         """The job under `job_id` made what `data` says, as the page's JSON
         editor or its regrouping of paths sends it: checked as an upload
@@ -2276,6 +2292,7 @@ class Backend:
         self.store.save(made)
         return made
 
+    @editing_job
     def run_job(self, job_id: str, compensate: str = OFF) -> dict:
         # The check that nothing is being probed and the runner's claim are
         # one step: probing asked for at the same moment waits for this,
@@ -2394,6 +2411,7 @@ class Backend:
             finally:
                 self.runner.release()
 
+    @editing_job
     def set_job_width(self, job_id: str, width: float) -> Job:
         """The job made again for a bit or spot `width` mm across: a board
         imported again from its kept file, a Plot page operation built
@@ -2420,6 +2438,7 @@ class Backend:
         self.store.save(made)
         return made
 
+    @editing_job
     def set_job_margin(self, job_id: str, margin: float) -> Job:
         """A stencil made again from its kept file with every opening shrunk
         by `margin` mm, where the job is now."""
@@ -3444,6 +3463,7 @@ class Backend:
             raise HTTPException(status_code=404, detail="no such job")
         return self.alignment.fit(job_id).to_dict()
 
+    @editing_job
     def align_apply(self, job_id: str) -> dict:
         job = self.store.get(job_id)
         if job is None:

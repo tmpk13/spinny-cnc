@@ -11,15 +11,11 @@ from laser_sweep import isocli
 from spinny_laser import cam, camjob, post
 from spinny_laser.cam import CamError, Profile
 
-from .jobs import Group, Job, JobImportError, Offset, from_json, svg_polylines
+from .jobs import Group, Job, JobImportError, NotFound, Offset, from_json, svg_polylines
 from .kinematics import Streamer
 
 SVG_SUFFIXES = (".svg",)
 GCODE_SUFFIXES = (".gcode", ".nc", ".ngc")
-
-
-class NotFound(LookupError):
-    """No profile, or no job, of that id."""
 
 
 class ProfileStore:
