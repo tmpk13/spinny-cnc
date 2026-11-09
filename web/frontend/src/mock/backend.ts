@@ -343,7 +343,7 @@ const WIRING_SETTINGS = [
     "r_stop", "a_stop", "h_stop", "z_stop", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin", "stop_invert", "limits",
 ];
 /** Settings that scale or turn the axes, so the focus axis frame a height map is tied to. */
-const FRAME_SETTINGS = new Set(["r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis"]);
+const FRAME_SETTINGS = new Set(["r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis", "sockets"]);
 
 /** A typed `$` line that may change the frame the axes count in. */
 function reframes(text: string): boolean {
@@ -420,8 +420,18 @@ export function settingsValid(settings: Record<string, number>): boolean {
         within("tmc_tpwmthrs", 0, TPWMTHRS_MAX) &&
         value("s_max") > 0 &&
         value("s_max") <= FLOAT_MAX &&
-        within("s_min", 0, value("s_max"))
+        within("s_min", 0, value("s_max")) &&
+        socketsValid(value("sockets"))
     );
+}
+
+/** Four digits, each of the four driver sockets 1 to 4 once, as the firmware takes them. */
+function socketsValid(sockets: number): boolean {
+    if (!(sockets >= 1000 && sockets <= 9999)) {
+        return false;
+    }
+    const digits = String(sockets).split("").sort().join("");
+    return digits === "1234";
 }
 
 /**

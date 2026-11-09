@@ -5,7 +5,7 @@ import { DEG } from "../src/kinematics.ts";
 import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock/backend.ts";
 import { outputDuty } from "../src/profile.ts";
 import { defaultControls } from "../src/controls.ts";
-import { DEFAULT_SETTINGS } from "../src/mock/backend.ts";
+import { DEFAULT_SETTINGS, settingsValid } from "../src/mock/backend.ts";
 import type { Compensate, GotoRequest, Grid, HeightMap, HeightMapState, Job, JogRequest, WsEvent } from "../src/types.ts";
 
 function stepped(machine: MockMachine, seconds: number, dt = 0.01): void {
@@ -453,6 +453,17 @@ describe("mock backend", () => {
         await expect(backend.updateSettings({ values: { nope: 1 } })).rejects.toBeInstanceOf(ApiError);
         await backend.saveSettings();
         expect(events.some((e) => e.type === "message" && e.data.text.includes("flash"))).toBe(true);
+    });
+
+    test("takes a socket map only with each of the four sockets once, as the firmware does", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        expect(settingsValid({ ...DEFAULT_SETTINGS, sockets: 1123 })).toBe(false);
+        expect(settingsValid({ ...DEFAULT_SETTINGS, sockets: 0 })).toBe(false);
+        expect(settingsValid({ ...DEFAULT_SETTINGS, sockets: 12345 })).toBe(false);
+        expect(settingsValid({ ...DEFAULT_SETTINGS, sockets: 1243 })).toBe(true);
+        expect(await backend.command("$sockets=1123")).toEqual(["error:7 bad setting value"]);
+        expect((await backend.settings()).values["sockets"]).toBe(1234);
     });
 
     test("orders s_min and s_max so a write valid as a whole goes in, and puts a refused one back last first", async () => {
@@ -1770,6 +1781,14 @@ describe("the mock backend answers as the backend does", () => {
         await putFocused(backend, map);
         await backend.updateSettings({ values: { h_steps: 3200 } });
         expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        // A motor moved to another socket moves every measured point.
+        await putFocused(backend, map);
+        expect(await backend.command("$sockets=1243")).toEqual(["ok"]);
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        await putFocused(backend, map);
+        await backend.updateSettings({ values: { sockets: 2143 } });
+        expect((await backend.heightMap()).map?.focus_set).toBe(false);
+        await backend.updateSettings({ values: { sockets: 1234 } });
         await putFocused(backend, map);
         await backend.connect("/dev/ttyACM0");
         expect((await backend.heightMap()).map?.focus_set).toBe(false);
