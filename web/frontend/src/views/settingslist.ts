@@ -200,7 +200,10 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
                 el("td", { class: "mono" }, shown(row.file)),
                 el("td", { class: "mono" }, shown(row.board)),
             );
-            line.addEventListener("click", () => source.reveal(row.section, row.name, row.file));
+            // A host key the file leaves out has the host's value, so that
+            // is the value it is added with.
+            const value = row.entry.kind === "host" ? row.file ?? row.board : row.file;
+            line.addEventListener("click", () => source.reveal(row.section, row.name, value));
             return line;
         }));
         replace(table,

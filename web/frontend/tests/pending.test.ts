@@ -74,6 +74,40 @@ describe("the settings list", () => {
         expect(store.get().pending["machine-file"]).toBe(1);
         localStorage.removeItem("spinny.machine");
     });
+
+    test("a host key the file leaves out is added with the host's value, or named when the host has none", async () => {
+        localStorage.removeItem("spinny.machine");
+        const { store, ctx, root, api } = setup();
+        const listRoot = document.createElement("section");
+        document.body.append(listRoot);
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountConfig(root, ctx, listRoot);
+        await ctx.refreshSettings();
+        await settle();
+        await settle();
+        const text = root.querySelector("textarea") as HTMLTextAreaElement;
+        expect(text.value.includes("travel")).toBe(false);
+        const search = listRoot.querySelector("input[type=search]") as HTMLInputElement;
+        const travelRow = (): HTMLTableRowElement => {
+            search.value = "host travel";
+            search.dispatchEvent(new Event("input"));
+            return listRoot.querySelector("table.settings-list tbody tr") as HTMLTableRowElement;
+        };
+        // The host has no travel height: nothing to add, and the toast says so.
+        travelRow().click();
+        expect(text.value.includes("travel")).toBe(false);
+        const errors = (): string[] => store.get().toasts.filter((toast) => toast.level === "error").map((toast) => toast.text);
+        expect(errors()).toEqual(["[host] travel has no value to add: type it into the file"]);
+        // With one, the key goes in with it.
+        await api.updateSettings({ host: { travel: 5 } });
+        await ctx.refreshSettings();
+        travelRow().click();
+        expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe("travel = 5");
+        expect(text.value).toContain("[host]");
+        expect(errors().length).toBe(1);
+        localStorage.removeItem("spinny.machine");
+    });
 });
 
 describe("the camera panel", () => {

@@ -176,8 +176,15 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
         let text = editor.getText();
         let line = keyLine(text, section, name);
         if (line === null) {
-            if (value === null || editor.syntaxProblem() !== null) {
-                ctx.toast("error", value === null ? "open a file that reads first" : "mend the text first: it does not read");
+            if (editor.syntaxProblem() !== null) {
+                ctx.toast("error", "mend the text first: it does not read");
+                return;
+            }
+            if (value === null) {
+                // With no file read there is nothing to take a value from;
+                // with one, the key has none to add (a host value left off).
+                const where = section ? `[${section}] ${name}` : name;
+                ctx.toast("error", (checked ?? shown?.document) ? `${where} has no value to add: type it into the file` : "open a file that reads first");
                 return;
             }
             text = setKey(text, section, name, value);
