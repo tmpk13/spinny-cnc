@@ -40,11 +40,12 @@ for p in $camera_ports; do
         echo "a camera streams on port \$p on the Pi: http://127.0.0.1:\$p/snapshot here" >&2
     fi
 done
-command -v socat >/dev/null || { echo "socat is missing on the Pi: sudo apt install socat" >&2; exit 1; }
 if ss -Hltn "sport = :$port" | grep -q .; then
     echo "a bridge already listens on port $port on the Pi; forwarding to it" >&2
     exec sleep infinity
 fi
+# Only a relay started here needs socat; a Pi with the bridge has none.
+command -v socat >/dev/null || { echo "socat is missing on the Pi: sudo apt install socat" >&2; exit 1; }
 dev='$device'
 [ -n "\$dev" ] || dev=\$(ls /dev/serial/by-id/usb-spinny_* 2>/dev/null | head -n 1)
 [ -n "\$dev" ] || { echo "no spinny controller under /dev/serial/by-id on the Pi" >&2; exit 1; }
