@@ -1295,6 +1295,12 @@ export function buildModelJob(id: string, profile: CamProfile, name: string, fil
     if (operations.length === 0) {
         throw new Error(`${profile.name} has no rough, waterline or parallel operation for a 3D model`);
     }
+    for (const operation of operations) {
+        const tool = profile.tools.find((candidate) => candidate.id === operation.tool)!;
+        if (tool.shape === "vee" && tool.shank === undefined) {
+            throw new Error(`${operation.name}: the V bit ${tool.id} needs its diameter to cut a model`);
+        }
+    }
     let read: ReturnType<typeof stlBounds>;
     try {
         read = stlBounds(bytes);

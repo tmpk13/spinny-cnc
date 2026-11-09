@@ -121,6 +121,12 @@ describe("a model in the mock", () => {
         expect(written.report.warnings).toEqual([]);
     });
 
+    test("a V bit without its diameter is refused for a model, as the backend refuses it", () => {
+        // toolpath/tests/test_carve.py holds the backend's twin of this.
+        const text = edited({ "diameter = 3.175        # the shank, which bounds the cut\n": "", 'tool = "ball2"': 'tool = "vee60"' });
+        expect(() => buildModelJob("j", parseProfile(text, "t"), "box", "box.stl", boxStl(30, 20, 6))).toThrow("surfaces: the V bit vee60 needs its diameter to cut a model");
+    });
+
     test("the mock backend makes a job from an STL file", async () => {
         const backend = new MockBackend({ timers: false });
         const answer = await backend.camJob("mill-3d", [new File([boxStl(10, 8, 2)], "part.stl")]);

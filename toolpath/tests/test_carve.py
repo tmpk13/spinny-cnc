@@ -178,6 +178,13 @@ def test_a_board_profile_says_it_has_nothing_for_a_model(plate: Path):
         camjob.build(profile, camjob.read_model(plate))
 
 
+def test_a_v_bit_without_its_diameter_cannot_cut_a_model(plate: Path):
+    # web/frontend/tests/carve.test.ts holds the page's twin of this.
+    text = profile_text(**{"diameter = 3.175        # the shank, which bounds the cut\n": "", 'tool = "ball2"': 'tool = "vee60"'})
+    with pytest.raises(camjob.DesignError, match="surfaces: the V bit vee60 needs its diameter to cut a model"):
+        camjob.build(parse(text), camjob.read_model(plate))
+
+
 def test_a_model_is_an_stl(tmp_path: Path):
     (tmp_path / "part.obj").write_text("o part\n")
     with pytest.raises(camjob.DesignError, match="a 3D model is an STL file"):
