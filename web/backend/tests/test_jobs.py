@@ -784,6 +784,20 @@ def test_a_combined_name_stays_short():
     assert combined_name(["a", "b", "c", "d"]) == "a and 3 more"
 
 
+def test_an_empty_path_draws_nothing_in_the_small_drawing(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from spinny_web import thumbs
+    from spinny_web.app import Backend, create_app
+
+    job = Job(name="t", groups=[Group(label="g", paths=[[(0, 0), (5, 0)], []])])
+    assert thumbs.thumbnail(job).count("<polyline") == 1
+    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    stored = backend.store.add(job)
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        assert client.get(f"/api/jobs/{stored.id}/thumb.svg").status_code == 200
+
+
 def test_a_job_is_drawn_small_for_the_list(tmp_path):
     import xml.etree.ElementTree as ET
 

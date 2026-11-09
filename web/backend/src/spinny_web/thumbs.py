@@ -25,9 +25,11 @@ def _paths(job: Job) -> list[tuple[int, bool, list[list[tuple[float, float]]]]]:
     """Each group's index, whether it is on, and its paths as X and Y."""
     out = []
     for index, group in enumerate(job.groups):
-        paths = [[(float(x), float(y)) for x, y in path] for path in group.paths]
+        # An empty path, which a job put back from the page may hold, draws
+        # nothing.
+        paths = [[(float(x), float(y)) for x, y in path] for path in group.paths if path]
         if not paths and group.moves:
-            paths = [[(float(move[0]), float(move[1])) for move in path] for path in group.moves]
+            paths = [[(float(move[0]), float(move[1])) for move in path] for path in group.moves if path]
         out.append((index, group.enabled, paths))
     return out
 

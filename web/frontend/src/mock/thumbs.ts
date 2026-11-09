@@ -15,9 +15,11 @@ const STEP_SHARE = 1 / 100;
 /** The job as a small SVG; an empty one when it draws nothing. */
 export function thumbnail(job: Job): string {
     const groups = job.groups.map((group, index) => {
-        let paths: Point[][] = group.paths.map((path) => path.map(([x, y]) => [x, y] as Point));
+        // An empty path, which a job put back from the page may hold, draws
+        // nothing.
+        let paths: Point[][] = group.paths.filter((path) => path.length > 0).map((path) => path.map(([x, y]) => [x, y] as Point));
         if (paths.length === 0 && group.moves && group.moves.length > 0) {
-            paths = group.moves.map((path) => path.map(([x, y]) => [x, y] as Point));
+            paths = group.moves.filter((path) => path.length > 0).map((path) => path.map(([x, y]) => [x, y] as Point));
         }
         return { index, enabled: group.enabled, paths };
     });

@@ -64,6 +64,11 @@ describe("a job drawn small", () => {
         stats: { length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 },
     });
 
+    test("draws nothing for an empty path, as the backend does", () => {
+        const svg = thumbnail(job([group("a", [[[0, 0], [5, 0]], []])]));
+        expect(svg.split("<polyline").length - 1).toBe(1);
+    });
+
     test("fits the paths with Y up, each group in its color, one switched off faint, a point a dot", () => {
         const svg = thumbnail(job([group("a", [[[0, 0], [10, 0], [10, 20]]]), group("b", [[[5, 5]]], { enabled: false })]));
         expect(svg).toContain('width="35" height="64"');
