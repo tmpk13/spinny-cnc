@@ -356,7 +356,10 @@ past what the camera gives), and *Start* sends what the fields show
 before starting. A device can still be typed into *Device* by hand.
 *Apply* on a running camera with another device, size or fps starts it
 again on them. The Up camera panel on the PNP page has the same list,
-and each list says which camera the other one is set to.
+and each list says which camera the other one is set to. A pcbv that
+leaves a request unanswered for 6 s (a stalled link to a Pi, a hung
+program) or whose connection fails is closed, and the panel shows the
+camera stopped: start it again once the link is back.
 
 The camera is useful once the machine knows where it looks from the tool:
 

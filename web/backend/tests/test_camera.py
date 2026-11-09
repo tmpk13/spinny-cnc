@@ -136,7 +136,13 @@ def test_a_served_pcbv_takes_the_size_asked_for_here_and_outlives_its_clients():
             assert not client.running
         opens = [r for r in served.requests if r["cmd"] == "camera"]
         assert len(opens) == 2
-        assert opens[0] == {"id": 1, "cmd": "camera", "path": "/dev/v4l/by-id/usb-cam-video-index0", "width": 640, "height": 480, "fps": 15}
+        assert {k: v for k, v in opens[0].items() if k != "id"} == {
+            "cmd": "camera",
+            "path": "/dev/v4l/by-id/usb-cam-video-index0",
+            "width": 640,
+            "height": 480,
+            "fps": 15,
+        }
         assert not any(r["cmd"] == "quit" for r in served.requests)
     finally:
         served.close()
@@ -171,6 +177,145 @@ def test_a_forwarded_port_with_nothing_behind_it_is_named():
         assert not client.running
     finally:
         listener.close()
+
+
+class ScriptedPcbv:
+    """A pcbv serving over TCP, one client at a time, whose answers a test
+    holds back: `silent` answers nothing past `hello` and `camera`,
+    `late_spot` answers the first spot that many seconds late, and `stray`
+    puts a reply carrying an id nobody asked for before each pose's own."""
+
+    JPEG = b"\xff\xd8JPEG\xff\xd9"
+
+    def __init__(self, silent: bool = False, late_spot: float = 0.0, stray: bool = False) -> None:
+        self.silent = silent
+        self.late_spot = late_spot
+        self.stray = stray
+        self.spots = 0
+        self.requests: list[dict] = []
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self.listener.getsockname()[1]
+        self.device = f"socket://127.0.0.1:{self.port}"
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                conn, _ = self.listener.accept()
+            except OSError:
+                return
+            try:
+                with conn, conn.makefile("rwb") as stream:
+                    for raw in stream:
+                        request = json.loads(raw)
+                        self.requests.append(request)
+                        self._answer(stream, request)
+            except OSError:
+                pass
+
+    def _answer(self, stream, request: dict) -> None:
+        rid, cmd = request["id"], request["cmd"]
+        if cmd == "hello":
+            reply = {"id": rid, "version": "0.1.0", "camera": "/dev/video0", "board": None}
+        elif cmd == "camera":
+            reply = {"id": rid, "ok": True}
+        elif self.silent:
+            return
+        elif cmd == "pose":
+            if self.stray:
+                stream.write(json.dumps({"id": -7, "found": True, "dx": 99.0, "dy": 0.0}).encode() + b"\n")
+            reply = {"id": rid, "state": "none", "width": 640, "height": 480, "frame": 1}
+        elif cmd == "spot":
+            self.spots += 1
+            if self.spots == 1 and self.late_spot:
+                time.sleep(self.late_spot)
+            reply = {"id": rid, "found": True, "dx": 10.0 * self.spots, "dy": 0.0}
+        elif cmd == "frame":
+            stream.write(json.dumps({"id": rid, "width": 640, "height": 480, "bytes": len(self.JPEG)}).encode() + b"\n" + self.JPEG)
+            stream.flush()
+            return
+        else:
+            reply = {"id": rid, "error": "unknown command " + cmd}
+        stream.write(json.dumps(reply).encode() + b"\n")
+        stream.flush()
+
+    def close(self) -> None:
+        self.listener.close()
+
+
+def test_a_silent_pcbv_keeps_no_caller_waiting_past_one_request_s_time():
+    # A pcbv still connected but answering nothing, as over a stalled link,
+    # and the page's frames and polls asking all the while: each caller
+    # must give up within one request's time, not wait its turn behind
+    # every caller before it, or the server's route threads run out.
+    served = ScriptedPcbv(silent=True)
+    client = VisionClient()
+    try:
+        client.start(served.device, "640x480", 15, "pcbv")
+        timeout = 2.0
+        ended: list[float] = []
+        errors: list[str] = []
+
+        def ask() -> None:
+            try:
+                client.request("frame", timeout=timeout, width=640)
+            except VisionError as exc:
+                errors.append(str(exc))
+            ended.append(time.monotonic())
+
+        began = time.monotonic()
+        threads = [threading.Thread(target=ask, daemon=True) for _ in range(10)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=timeout + 1.5 - (time.monotonic() - began))
+        assert len(ended) == 10 and max(ended) - began < timeout + 1.5, f"{len(ended)} of 10 callers ended"
+        assert len(errors) == 10
+        assert any(f"did not answer 'frame' within {timeout:g} s" in error for error in errors)
+        # The reply still owed would answer the next request: the camera
+        # is stopped, and the next caller is told so at once.
+        assert not client.running and client.device is None
+        asked = time.monotonic()
+        with pytest.raises(VisionError, match="not running"):
+            client.pose()
+        assert time.monotonic() - asked < 0.5
+    finally:
+        client.close()
+        served.close()
+
+
+def test_a_late_reply_never_answers_a_later_request():
+    served = ScriptedPcbv(late_spot=1.0)
+    client = VisionClient()
+    try:
+        client.start(served.device, "640x480", 15, "pcbv")
+        with pytest.raises(VisionError, match="did not answer 'spot' within 0.3 s"):
+            client.request("spot", timeout=0.3)
+        # Its answer comes later, and is no answer to the pose asked next.
+        with pytest.raises(VisionError, match="not running"):
+            client.pose()
+        assert not client.running
+        client.start(served.device, "640x480", 15, "pcbv")
+        assert client.pose()["state"] == "none"
+        reply, data = client.frame(width=640)
+        assert data == ScriptedPcbv.JPEG and reply["bytes"] == len(data)
+        assert client.spot()["dx"] == 20.0
+        # Every request has an id of its own.
+        ids = [request["id"] for request in served.requests]
+        assert len(ids) == len(set(ids))
+    finally:
+        client.close()
+        served.close()
+    # A reply carrying an id that is not the one awaited is passed over.
+    served = ScriptedPcbv(stray=True)
+    client = VisionClient()
+    try:
+        client.start(served.device, "640x480", 15, "pcbv")
+        assert client.pose()["state"] == "none"
+        assert client.pose()["state"] == "none" and client.running
+    finally:
+        client.close()
+        served.close()
 
 
 def test_a_pcbv_that_cannot_open_its_camera_says_why(tmp_path):

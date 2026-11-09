@@ -1,17 +1,18 @@
 """The camera, through pcb-vision's `pcbv serve`.
 
 pcbv owns the capture and the localizer and answers a line protocol: one
-JSON request a line, one JSON reply a line in the same order, and a
-frame's JPEG bytes right after its reply line. The backend runs it as a
-program on a device here, or reaches one serving over TCP elsewhere (a
-`socket://host:port` device, a Raspberry Pi with the camera). Either way
-one request is in flight at a time, so the replies pair up by order; a
-reader thread takes them off the stream so a request can time out instead
-of blocking the caller for good.
+JSON request a line, one JSON reply a line in the same order carrying the
+request's id, and a frame's JPEG bytes right after its reply line. The
+backend runs it as a program on a device here, or reaches one serving over
+TCP elsewhere (a `socket://host:port` device, a Raspberry Pi with the
+camera). Either way one request is in flight at a time, each with an id of
+its own; a reader thread takes the replies off the stream so a request can
+time out instead of blocking the caller for good.
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import queue
@@ -19,6 +20,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from .log import log
@@ -27,6 +29,11 @@ from .log import log
 # camera open waits for its first frame.
 REQUEST_SECONDS = 6.0
 LOAD_SECONDS = 30.0
+# How long a request waits for its turn behind the one in flight. That one
+# can take its whole time when pcbv is slow or silent, and callers queued
+# behind it would each hold a thread (the server's route threads among
+# them, which Stop and Hold need too) for every turn ahead of theirs.
+TURN_SECONDS = 1.0
 # The largest frame taken from the stream, bytes.
 MAX_FRAME_BYTES = 32 * 1024 * 1024
 # Where the pcbv program is looked for when the settings name it by a
@@ -60,13 +67,17 @@ def find_pcbv(name: str) -> str:
 
 
 class _Stream:
-    """A byte stream to pcbv: a program's pipes, or a socket."""
+    """A byte stream to pcbv: a program's pipes, or a socket, and the
+    replies its reader thread has taken off it."""
 
     def __init__(self, reader, writer, process: subprocess.Popen | None, sock: socket.socket | None) -> None:
         self._reader = reader
         self._writer = writer
         self.process = process
         self._socket = sock
+        # Each stream's replies are its own: a reader still draining a
+        # stream that was closed can never answer a request on the next.
+        self.replies: queue.Queue[tuple[dict, bytes] | Exception] = queue.Queue()
 
     def write(self, data: bytes) -> None:
         self._writer.write(data)
@@ -116,8 +127,11 @@ class VisionClient:
     def __init__(self) -> None:
         self._stream: _Stream | None = None
         self._lock = threading.Lock()
-        self._replies: queue.Queue[tuple[dict, bytes] | Exception] = queue.Queue()
         self._reader: threading.Thread | None = None
+        # Request ids, never reused while the client lives, so no reply to
+        # an earlier request, on this stream or one before it, carries the
+        # id a request waits for.
+        self._ids = itertools.count(1)
         self.device: str | None = None
 
     @property
@@ -153,7 +167,6 @@ class VisionClient:
                 stream = _Stream(process.stdout, process.stdin, process, None)
             self._stream = stream
             self.device = device
-            self._replies = queue.Queue()
             self._reader = threading.Thread(target=self._read_replies, args=(stream,), name="pcbv-reader", daemon=True)
             self._reader.start()
         try:
@@ -192,8 +205,11 @@ class VisionClient:
             stream = self._stream
             self._stream = None
             self.device = None
-        if stream is None:
-            return
+        if stream is not None:
+            self._end(stream)
+
+    @staticmethod
+    def _end(stream: _Stream) -> None:
         # A pcbv this started is told to end; one serving over TCP would end
         # for every later client too, so it is only left.
         try:
@@ -205,29 +221,59 @@ class VisionClient:
 
     def request(self, cmd: str, timeout: float = REQUEST_SECONDS, **fields) -> dict:
         """One request and its reply; the reply's bytes, for a frame, come
-        back under `bytes`."""
-        with self._lock:
+        back under `bytes`. A request that cannot have its turn within
+        TURN_SECONDS is refused as busy. When the stream fails, or pcbv
+        leaves the request unanswered past its time, the camera is closed:
+        every later request then fails at once instead of waiting on a
+        silent pcbv, and a reply that comes late has nothing to answer."""
+        if not self._lock.acquire(timeout=TURN_SECONDS):
+            raise VisionError(f"the camera is busy: {cmd!r} waited {TURN_SECONDS:g} s behind another request")
+        broken: tuple[_Stream, str | None] | None = None
+        try:
             stream = self._stream
             if stream is None or not stream.alive:
                 self._stream = None
                 raise VisionError("the camera is not running")
-            line = json.dumps({"id": 1, "cmd": cmd, **fields}).encode() + b"\n"
             try:
-                stream.write(line)
-            except (OSError, ValueError) as exc:
-                raise VisionError(f"pcbv went away: {exc}") from exc
-            try:
-                answer = self._replies.get(timeout=timeout)
-            except queue.Empty:
-                raise VisionError(f"pcbv did not answer {cmd!r} within {timeout:g} s") from None
-        if isinstance(answer, Exception):
-            raise VisionError(f"pcbv went away: {answer}")
-        reply, data = answer
+                reply, data = self._exchange(stream, cmd, timeout, fields)
+            except VisionError as exc:
+                broken = (stream, self.device)
+                self._stream = None
+                self.device = None
+                log.warning("closed the camera on %s: %s", broken[1], exc)
+                raise
+        finally:
+            self._lock.release()
+            if broken is not None:
+                self._end(broken[0])
         if "error" in reply:
             raise VisionError(str(reply["error"]))
         if data:
             reply = {**reply, "bytes": data}
         return dict(reply)
+
+    def _exchange(self, stream: _Stream, cmd: str, timeout: float, fields: dict) -> tuple[dict, bytes]:
+        """Sends one request and waits for the reply carrying its id; a
+        VisionError says the stream is past use."""
+        rid = next(self._ids)
+        line = json.dumps({"id": rid, "cmd": cmd, **fields}).encode() + b"\n"
+        try:
+            stream.write(line)
+        except (OSError, ValueError) as exc:
+            raise VisionError(f"pcbv went away: {exc}") from exc
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                answer = stream.replies.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                raise VisionError(f"pcbv did not answer {cmd!r} within {timeout:g} s") from None
+            if isinstance(answer, Exception):
+                raise VisionError(f"pcbv went away: {answer}")
+            reply, data = answer
+            # A line pcbv cannot read is answered in its turn with a null id.
+            if reply.get("id") in (rid, None):
+                return reply, data
+            log.warning("pcbv answered request %r while %r was awaited: the reply is dropped", reply.get("id"), rid)
 
     # --- the requests ---------------------------------------------------------
 
@@ -279,9 +325,9 @@ class VisionClient:
                     data = stream.read_exactly(count)
                     if len(data) != count:
                         raise VisionError("pcbv's frame ended early")
-                self._replies.put((reply, data))
+                stream.replies.put((reply, data))
         except Exception as exc:
-            self._replies.put(exc)
+            stream.replies.put(exc)
 
     @staticmethod
     def _log_stderr(pipe, said: list[str]) -> None:
