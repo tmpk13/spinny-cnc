@@ -990,7 +990,9 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         machineNote.textContent = dispenser ? "the machine is a dispenser, which lays dots: a job made here cuts with a spindle or a laser" : "";
         machineNote.classList.toggle("hidden", !dispenser);
         // The operation follows the machine: planned again for its cutter.
-        const now = cutterOf(state, stored);
+        // A page the machine goes away from keeps the cutter it was using,
+        // not the one stored when the page was mounted.
+        const now = state.snapshot.connected ? cutterOf(state, stored) : cutter;
         if (now !== cutter) {
             cutter = now;
             changed();

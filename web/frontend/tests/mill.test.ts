@@ -279,6 +279,22 @@ describe("Plot page", () => {
         expect(JSON.parse(localStorage.getItem(MILL_KEY) ?? "{}")).toMatchObject({ cutter: "spindle", bit: 1, spot: 0.1 });
     });
 
+    test("keeps the cutter it was using when the machine goes away", async () => {
+        const { root, store } = mountPage();
+        const profile = { kinematics: "cartesian" as const, tool: "laser" as const, h_axis: false, r_max: 300, z_max: 200 };
+        const shown = (label: string): boolean => !input(root, label).closest(".labeled")!.classList.contains("hidden");
+        click(root, "Drill");
+        type(input(root, "Points"), "1, 2");
+        // Nothing was stored when the page was mounted: a spindle then.
+        store.set({ snapshot: { ...connected(), profile } });
+        expect(shown("Spot mm")).toBe(true);
+        store.set({ snapshot: { ...connected(), profile, connected: false } });
+        expect([shown("Spot mm"), shown("Bit mm")]).toEqual([true, false]);
+        expect(JSON.parse(localStorage.getItem(MILL_KEY) ?? "{}").cutter).toBe("laser");
+        await wait(PLAN_DELAY_MS + 30);
+        expect(store.get().millPlan?.groups[0]?.tool).toBe("laser");
+    });
+
     test("says what is wrong instead of planning", async () => {
         const { root, store } = mountPage();
         click(root, "Drill");
