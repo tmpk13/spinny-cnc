@@ -388,7 +388,9 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
             } else {
                 ops::waterline(part, &settings)
             };
-            let check = Cutter::new(Shape::Flat, (radius + op.leave - 2.0 * tolerance).max(radius * 0.5));
+            // A link fed at depth keeps the leave, less two tolerances, and
+            // never comes closer than the gouge check below allows.
+            let check = Cutter::new(Shape::Flat, (radius + op.leave - 2.0 * tolerance).max(radius - tolerance).max(radius * 0.5));
             let link = if op.strategy == "rough" { 2.0 * op.stepover } else { 2.0 * radius };
             (cuts, area, levels, check, link)
         }
@@ -411,7 +413,7 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
     if skipped > 0 && !cuts.is_empty() {
         notes.push(format!("{skipped} of its {} cuts left out: nothing was left there for them", cuts.len()));
     }
-    let gouge = link::gouge(&paths, &surface, &cutter.shrunk(tolerance), (radius / 4.0).clamp(0.02, 0.1));
+    let gouge = link::gouge(&paths, &surface, &cutter.shrunk(tolerance), link::check_step(radius), tolerance);
     if gouge > 2.0 * tolerance {
         notes.push(format!("the moves come {gouge:.3} mm into the model: a fault in the toolpaths, do not run them"));
     }

@@ -287,11 +287,10 @@ impl<'a> Linker<'a> {
     }
 
     /// Whether the tool may feed straight from p to q at the heights of
-    /// the move without meeting the model.
+    /// the move without meeting the model, looked at as closely as the
+    /// gouge check looks at the paths.
     fn clean(&self, p: V3, q: V3) -> bool {
-        let run = (q[0] - p[0]).hypot(q[1] - p[1]);
-        let step = (self.check.radius / 2.0).clamp(0.02, 0.25);
-        let n = (run / step).ceil().max(1.0) as usize;
+        let n = pieces(p, q, check_step(self.cutter.radius), self.settings.tolerance);
         (0..=n).all(|k| {
             let t = k as f64 / n as f64;
             let xy: P2 = [p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])];
@@ -301,18 +300,37 @@ impl<'a> Linker<'a> {
     }
 }
 
+/// How far apart along a move's run the checks against the model look: a
+/// quarter of the tool's radius, 0.02 to 0.1 mm.
+pub fn check_step(radius: f64) -> f64 {
+    (radius / 4.0).clamp(0.02, 0.1)
+}
+
+/// How many pieces a move is checked in: one every `step` of its run and
+/// one every `rise` of its height, so a steep move is looked at between its
+/// ends and not only where its short run would put the samples. A move
+/// straight up or down is checked at its ends: the drop cutter's height is
+/// the same all along it, and the lower end is the worst.
+fn pieces(a: V3, b: V3, step: f64, rise: f64) -> usize {
+    let run = (b[0] - a[0]).hypot(b[1] - a[1]);
+    if run <= 1e-9 {
+        return 1;
+    }
+    (run / step).max((b[2] - a[2]).abs() / rise).ceil().max(1.0) as usize
+}
+
 /// The deepest the paths cut into the model: how far below the drop
-/// cutter's height for the tool any move comes, sampled along every move.
-/// Pass the tool narrowed by the tolerance, or a side that only touches a
-/// wall reads as a cut the wall's height deep.
-pub fn gouge(paths: &[Vec<Move>], surface: &Surface, cutter: &Cutter, step: f64) -> f64 {
+/// cutter's height for the tool any move comes, sampled along every move
+/// every `step` of its run and every `rise` of its height. Pass the tool
+/// narrowed by the tolerance, or a side that only touches a wall reads as a
+/// cut the wall's height deep.
+pub fn gouge(paths: &[Vec<Move>], surface: &Surface, cutter: &Cutter, step: f64, rise: f64) -> f64 {
     use rayon::prelude::*;
     let moves: Vec<(Move, Move)> = paths.iter().flat_map(|path| path.windows(2).map(|w| (w[0], w[1]))).collect();
     moves
         .par_iter()
         .map(|&(a, b)| {
-            let run = (b[0] - a[0]).hypot(b[1] - a[1]);
-            let n = (run / step).ceil().max(1.0) as usize;
+            let n = pieces([a[0], a[1], a[2]], [b[0], b[1], b[2]], step, rise);
             let mut worst: f64 = 0.0;
             for k in 0..=n {
                 let t = k as f64 / n as f64;
@@ -326,4 +344,52 @@ pub fn gouge(paths: &[Vec<Move>], surface: &Surface, cutter: &Cutter, step: f64)
             worst
         })
         .reduce(|| 0.0, f64::max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cutter::Shape;
+    use crate::mesh::tests::block;
+    use crate::region;
+
+    #[test]
+    fn a_link_down_past_an_edge_through_air_is_not_fed_through_the_edge() {
+        // A block's top edge at x 10. One cut ends with the tool on the top
+        // at x 10.9; the next starts 3 mm lower at x 11, clear of the block.
+        // The air between them is already cut down, so nothing but the model
+        // is in the way, and the straight move would take the edge with the
+        // tool's side though both its ends are clear.
+        let surface = Surface::new(&block([0.0, 0.0, -5.0], [10.0, 10.0, 0.0]), 2.0);
+        let mut stock = Stock::new([-5.0, -5.0], [20.0, 20.0], 1.0, 0.05);
+        stock.cut(&Cutter::new(Shape::Flat, 1.2), [10.95, 5.0, -3.0], [10.95, 5.0, -3.0]);
+        let area = region::pieces(&vec![region::path(&[[-5.0, -5.0], [20.0, -5.0], [20.0, 20.0], [-5.0, 20.0]])]);
+        let tolerance = 0.01;
+        let cutter = Cutter::new(Shape::Flat, 1.0);
+        let settings = Settings { travel: 5.0, clearance: 1.0, ramp: 3f64.to_radians().tan(), link: 2.0, tolerance };
+        let mut linker = Linker::new(cutter, Cutter::new(Shape::Flat, 1.0 - tolerance), &surface, &mut stock, &area, settings);
+        let line = |points: Vec<V3>| Cut { points, closed: false, stay_down: true };
+        linker.add(&line(vec![[10.9, 2.0, 0.0], [10.9, 5.0, 0.0]]));
+        linker.add(&line(vec![[11.0, 5.0, -3.0], [11.0, 8.0, -3.0]]));
+        let (paths, skipped) = linker.finish();
+        assert_eq!(skipped, 0);
+        let deepest = gouge(&paths, &surface, &cutter.shrunk(tolerance), check_step(cutter.radius), tolerance);
+        assert!(deepest <= 2.0 * tolerance, "{deepest}: {paths:?}");
+    }
+
+    #[test]
+    fn a_steep_move_is_checked_between_its_ends() {
+        // A flat tool 1 mm in radius going down past a block's top edge at
+        // x 10: over the top at its start, clear beside it at its end, and
+        // through the edge in between, on a run shorter than the step.
+        let surface = Surface::new(&block([0.0, 0.0, -5.0], [10.0, 10.0, 0.0]), 2.0);
+        let flat = Cutter::new(Shape::Flat, 1.0);
+        let step = check_step(flat.radius);
+        let past = vec![[10.97, 5.0, 0.0, FEED], [11.04, 5.0, -5.0, FEED]];
+        let deepest = gouge(&[past], &surface, &flat, step, 0.01);
+        assert!(deepest > 2.0, "{deepest}");
+        // Straight down beside the block: clear all the way.
+        let beside = vec![[11.04, 5.0, 0.0, FEED], [11.04, 5.0, -5.0, FEED]];
+        assert_eq!(gouge(&[beside], &surface, &flat, step, 0.01), 0.0);
+    }
 }
