@@ -726,12 +726,14 @@ class Streamer:
 
         A group a CAM profile made for the other tool is refused: its
         power is a spindle speed or a laser duty, its depth means nothing
-        to a laser. A spindle at S0 is stopped, and every plunge and cut
-        after it would drive a still tool into the board: a milling group
-        must ask for a speed. A laser group may have power 0, which is a
-        harmless trace.
+        to a laser. So is a milling job of a profile's groups made with more
+        than one bit, since nothing stops to change it. A spindle at S0 is
+        stopped, and every plunge and cut after it would drive a still tool
+        into the board: a milling group must ask for a speed. A laser group
+        may have power 0, which is a harmless trace.
         """
         self.check_tools(job)
+        self.check_bits(job)
         self._check_speeds(job)
         self._check_dots(job)
         self._check_focus(job)
@@ -760,6 +762,26 @@ class Streamer:
                     f"{group.label} was made for {_article(group.tool)} and this machine has {_article(mine)}:"
                     f" disable the group, or load the machine file the profile names"
                 )
+
+    def check_bits(self, job: "Job") -> None:
+        """A run has no stop to change the bit, so a milling job whose
+        enabled groups a CAM profile made with more than one bit is refused,
+        naming the groups to switch off to cut with the first bit alone. A
+        group that names no bit cuts with whatever is fitted."""
+        if self.tool != "spindle":
+            return
+        cutting = [group for group in job.groups if group.enabled and group.has_cuts and group.tool_id is not None]
+        bits: dict[str, str] = {}
+        for group in cutting:
+            bits.setdefault(group.tool_id, group.tool_name or group.tool_id)
+        if len(bits) < 2:
+            return
+        first = next(iter(bits))
+        later = [group.label for group in cutting if group.tool_id != first]
+        raise ValueError(
+            f"the job cuts with {len(bits)} bits ({', '.join(bits.values())}) and a run does not stop to change one:"
+            f" switch off {'; '.join(later)} to cut with the {bits[first]} alone, then each other bit's groups after fitting it"
+        )
 
     def _check_focus(self, job: "Job") -> None:
         """A focus height is a laser's: a spindle's focus axis is its depth,

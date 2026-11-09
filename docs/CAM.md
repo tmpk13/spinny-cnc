@@ -31,13 +31,13 @@ the page and press *New*, which saves the text shown under that id.
 
 ## A board on a three axis mill
 
-1. Zero the work coordinates with the bit touching the copper at the
-   board's lower left corner. The profile's `[placement]` is `corner`, so
-   board X 0, Y 0 is there and the surface is Z 0; the depth axis'
-   `offset` can hold another Z for the surface. The outline is milled
-   outside the board's edge, so the end mill goes about its radius past
-   X 0 and Y 0 (the shipped axes' `min = 0` warns of it): leave stock
-   there.
+1. Zero the work coordinates with the first operation's bit touching the
+   copper at the board's lower left corner. The profile's `[placement]`
+   is `corner`, so board X 0, Y 0 is there and the surface is Z 0; the
+   depth axis' `offset` can hold another Z for the surface. The outline
+   is milled outside the board's edge, so the end mill goes about its
+   radius past X 0 and Y 0 (the shipped axes' `min = 0` warns of it):
+   leave stock there.
 2. Drop the KiCad board on the CAM tab, or the copper gerber together with
    its `Edge.Cuts` gerber and its drill files, the plated and unplated
    holes' (`-PTH.drl` and `-NPTH.drl`), or the one `.drl` (one drop,
@@ -49,14 +49,19 @@ the page and press *New*, which saves the text shown under that id.
 4. *Export gcode*. The report gives the lines, the cut length, the time
    and what each axis reaches; a reach past an axis' `min` or `max` is a
    warning, and so is a feed over an axis' `rate`, which is written at the
-   rate. For an air cut first, raise the depth axis' `offset` by the
-   height of the air and run the same program.
+   rate, and every stop to change the bit. For an air cut first, raise
+   the depth axis' `offset` by the height of the air and run the same
+   program.
 5. Run the file on the mill's own sender. The program starts by rising to
    the safe height, parks any setup axis, then for every operation starts
    the spindle (`M3 S`, a `G4` spin-up), and mills each path as a rapid at
    the safe height to its start, a plunge at the plunge rate, the cuts at
-   depth and a rise, pass by pass down to the depth. It ends with the
-   spindle off, the tool up, the X/Y home, the Z home, and the footer.
+   depth and a rise, pass by pass down to the depth. Before an operation
+   cut with another bit than the one before it (the shipped file's drills
+   and outline), it stops the spindle, rises to the safe height, names the
+   bit in a comment and pauses (`M0`): fit that bit, zero Z with it as in
+   step 1, and resume. It ends with the spindle off, the tool up, the X/Y
+   home, the Z home, and the footer.
 
 ## A part from a 3D model
 
@@ -82,7 +87,10 @@ the page and press *New*, which saves the text shown under that id.
    controller. The operations were planned in order, each over what the one
    before left, so run them in that order and skip none; one switched off
    in the profile is planned alone on the whole block, which is safe to
-   turn on later.
+   turn on later. A run from the *Jobs* tab cannot stop to change the bit,
+   so operations of several bits (the surfaces' ball end mill between the
+   end mill's rough and walls) are run a bit at a time, the others
+   switched off; the exported gcode stops for each change.
 
 What the operations cut:
 
@@ -280,9 +288,13 @@ without `safe`, or a spindle depth that takes more than 100 passes.
 | `paths` | nothing, noted | the design's paths whose label holds `match`: an SVG's strokes, a gcode file's runs at one S and F, a job's groups; within a group, whatever lies inside a closed shape is cut before the shape |
 
 Every group carries the tool's kind (`tool` in the job): the web backend
-refuses to run a group made for the other tool than the machine has, so a
-job with laser and spindle operations is run twice, once on each machine
-file with the other operations switched off. The job's `spot` is the
+refuses to run a group made for the other tool than the machine has, so
+a job with laser and spindle operations is run twice, once on each
+machine file with the other operations switched off. It carries the
+tool's id and name too (`tool_id`, `tool_name`): the exported gcode
+stops to change the bit between two, and a run, which cannot, refuses a
+job whose enabled groups were made with more than one, naming the groups
+to switch off to cut with the first bit alone. The job's `spot` is the
 isolation tool's width, or the narrowest tool's. The placement is one
 for the whole board, around the copper's loops, the holes and the drawn
 outline at that width; a mill's outline cut runs its bit's radius outside
@@ -291,8 +303,11 @@ the drawn outline, past what the anchor places.
 ## How the gcode is written
 
 A cartesian profile is written by `spinny_laser.post`: the two comment
-lines, the header, `G0` to the safe height, the setup axes to their park,
-then each enabled operation with paths. A spindle operation starts the
+lines, the header, `G0` to the safe height, the setup axes to their
+park, then each enabled operation with paths. A spindle operation cut
+with another bit than the spindle operation before it is preceded by a
+stop: the spindle off (`M5`), the tool up, a comment naming the bit,
+`M0`, and a warning in the report. A spindle operation starts the
 spindle when its speed differs from the one running and dwells the
 spin-up; a laser operation turns the spindle off, writes `M4 S0` (or
 `M3`), moves the depth axis to the tool's `height` when it has one, and

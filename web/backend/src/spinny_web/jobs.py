@@ -149,6 +149,12 @@ class Group(Finite):
     # spindle. A run refuses a group made for another tool, since its
     # numbers mean something else there.
     tool: str | None = None
+    # The CAM profile's tool the group was made with, its id and its name:
+    # the gcode stops to change the bit between groups of two bits, and a
+    # run, which cannot, refuses a job of more than one. None for a group
+    # made otherwise, which cuts with whatever is fitted.
+    tool_id: str | None = None
+    tool_name: str | None = None
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
     # Dispensing: the area in mm^2 of the pad under each path, which is a
     # single point, in the paths' order; empty for every other group.

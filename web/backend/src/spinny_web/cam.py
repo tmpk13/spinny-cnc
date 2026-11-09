@@ -183,6 +183,8 @@ def build_job(profile: Profile, folder: Path, name: str | None, streamer: Stream
                 depth=group.depth,
                 plunge=group.plunge,
                 tool=group.tool,
+                tool_id=group.tool_id,
+                tool_name=group.tool_name,
                 paths=[[tuple(p) for p in path_] for path_ in group.paths],
                 moves=[[tuple(m) for m in path_] for path_ in group.moves],
             )
@@ -225,6 +227,8 @@ def built_of(job: Job, profile: Profile) -> camjob.BuiltJob:
                 enabled=group.enabled,
                 height=height,
                 moves=[[(float(x), float(y), float(z), int(kind)) for x, y, z, kind in path_] for path_ in group.moves],
+                tool_id=group.tool_id,
+                tool_name=group.tool_name,
             )
         )
     return camjob.BuiltJob(

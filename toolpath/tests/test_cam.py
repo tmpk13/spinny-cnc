@@ -45,6 +45,32 @@ depth = 1.2
 step_down = 0.5
 """
 
+# A spindle and a laser on one depth axis, the laser in focus at the surface.
+COMBINED = MINIMAL + """
+[[tools]]
+id = "diode"
+kind = "laser"
+spot = 0.1
+power = 300
+speed = 600
+height = 0
+"""
+
+
+def built_of(*groups: camjob.BuiltGroup, name: str = "job") -> camjob.BuiltJob:
+    return camjob.BuiltJob(name, "json", 0.5, (0.0, 0.0), list(groups), [], [], [])
+
+
+def milled(label: str, x: float, tool_id: str | None = None, **settings) -> camjob.BuiltGroup:
+    """A spindle group of one line from x along X, cut with the bit named."""
+    name = f"{tool_id} bit" if tool_id else None
+    return camjob.BuiltGroup(label, "spindle", 9000.0, 0.0, 240.0, 1, 0.5, 60.0, [[(x, 0.0), (x + 1.0, 0.0)]], tool_id=tool_id, tool_name=name, **settings)
+
+
+def burnt(label: str, x: float, **settings) -> camjob.BuiltGroup:
+    """A laser group of one line from x along X."""
+    return camjob.BuiltGroup(label, "laser", 300.0, 0.0, 600.0, 1, 0.1, 60.0, [[(x, 0.0), (x + 1.0, 0.0)]], **settings)
+
 
 def test_the_shipped_profiles_load_and_say_what_they_are():
     found, problems = load_all(SHIPPED)
@@ -461,6 +487,67 @@ def test_the_post_refuses_what_the_axes_cannot_do_and_warns_past_the_travel():
     assert "Y reaches" not in " ".join(program.report.warnings)
     assert any(w.startswith("X reaches 500.000, over its max 400") for w in program.report.warnings)
     assert any("power floor 100" in w for w in program.report.warnings)
+
+
+def test_a_change_of_bit_stops_the_program_to_fit_the_next():
+    profile = cam.load(SHIPPED / "mill-3axis.toml")
+    built = camjob.build(profile, camjob.read_board(BOARD_COPPER, "F.Cu"))
+    assert [(g.tool_id, g.tool_name) for g in built.groups] == [
+        ("vbit", "30 degree V bit"),
+        ("endmill", "1 mm end mill"),
+        ("drill", "0.8 mm drill"),
+        ("drill", "0.8 mm drill"),
+        ("endmill", "1 mm end mill"),
+    ]
+    program = post.post(built, profile)
+    lines = program.text.splitlines()
+    drills = lines.index("(drills: 2 holes at the bit's size: 2 paths)")
+    # The spindle stops with the tool up, the next bit is named, and the program waits.
+    assert lines[drills - 4 : drills + 3] == [
+        "G0 Z5.000",
+        "M5",
+        "(change the bit to 0.8 mm drill and zero Z with it as before, then resume)",
+        "M0",
+        "(drills: 2 holes at the bit's size: 2 paths)",
+        "M3 S8000",
+        "G4 P2",
+    ]
+    outline = lines.index("(outline: board outline: 1 paths)")
+    assert lines[outline - 4 : outline + 2] == [
+        "G0 Z5.000",
+        "M5",
+        "(change the bit to 1 mm end mill and zero Z with it as before, then resume)",
+        "M0",
+        "(outline: board outline: 1 paths)",
+        "M3 S10000",
+    ]
+    # The second drill group keeps the drill.
+    assert lines.count("M0") == 2
+    # The end mill runs outside the board's edge, past the travel's start.
+    assert program.report.warnings == [
+        "drills: 2 holes at the bit's size: the program stops (M0) to change the bit to 0.8 mm drill",
+        "outline: board outline: the program stops (M0) to change the bit to 1 mm end mill",
+        "X reaches -0.400, under its min 0",
+        "Y reaches -0.400, under its min 0",
+    ]
+
+
+def test_only_another_known_bit_stops_the_program():
+    # A laser group between two of the same bit changes nothing, and a
+    # group that names no bit cuts with the one fitted.
+    built = built_of(
+        milled("a", 0.0, "one"),
+        burnt("mark", 2.0, tool_id="diode", tool_name="diode"),
+        milled("a again", 4.0, "one"),
+        milled("any", 6.0),
+        milled("b", 8.0, "two"),
+    )
+    program = post.post(built, parse(COMBINED, "bench"))
+    lines = program.text.splitlines()
+    assert lines.count("M0") == 1
+    stop = lines.index("M0")
+    assert lines[stop - 1 : stop + 2] == ["(change the bit to two bit and zero Z with it as before, then resume)", "M0", "(b: 1 paths)"]
+    assert program.report.warnings == ["b: the program stops (M0) to change the bit to two bit"]
 
 
 def test_a_line_break_in_a_name_or_a_label_stays_inside_its_comment():

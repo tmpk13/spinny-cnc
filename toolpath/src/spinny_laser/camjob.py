@@ -107,6 +107,11 @@ class BuiltGroup:
     # travel height. With these, `paths` is empty and `depth` and
     # `passes` say nothing about the cut.
     moves: list[list[Move]] = field(default_factory=list)
+    # The profile's tool the group is cut with, its id and its name: a
+    # change of bit between groups is a stop to fit the next one. None for
+    # a group made otherwise, which cuts with whatever is fitted.
+    tool_id: str | None = None
+    tool_name: str | None = None
 
     @property
     def has_cuts(self) -> bool:
@@ -127,6 +132,9 @@ class BuiltGroup:
         }
         if self.moves:
             out["moves"] = [[list(m) for m in path] for path in self.moves]
+        if self.tool_id is not None:
+            out["tool_id"] = self.tool_id
+            out["tool_name"] = self.tool_name
         return out
 
 
@@ -450,6 +458,8 @@ def _model_job(profile: cam.Profile, design: Design, name: str | None, tolerance
                 paths=[],
                 enabled=operation.enabled,
                 moves=moves,
+                tool_id=tool.id,
+                tool_name=tool.name,
             )
         )
     if not any(group.moves for group in groups):
@@ -529,6 +539,8 @@ def _group(operation: cam.Operation, tool: cam.Tool, label: str, paths: list[Pol
             plunge=cutting["plunge"],
             paths=paths,
             enabled=operation.enabled,
+            tool_id=tool.id,
+            tool_name=tool.name,
         )
     return BuiltGroup(
         label=label,
@@ -542,6 +554,8 @@ def _group(operation: cam.Operation, tool: cam.Tool, label: str, paths: list[Pol
         paths=paths,
         enabled=operation.enabled,
         height=cutting.get("height"),
+        tool_id=tool.id,
+        tool_name=tool.name,
     )
 
 

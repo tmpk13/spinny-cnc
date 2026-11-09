@@ -1132,6 +1132,8 @@ function groupOf(operation: CamOperation, tool: CamTool, label: string, paths: P
             depth: cutting["depth"]!,
             plunge: cutting["plunge"]!,
             tool: "spindle",
+            tool_id: tool.id,
+            tool_name: tool.name,
             paths,
         };
     }
@@ -1145,6 +1147,8 @@ function groupOf(operation: CamOperation, tool: CamTool, label: string, paths: P
         depth: DEFAULT_DEPTH,
         plunge: DEFAULT_PLUNGE,
         tool: "laser",
+        tool_id: tool.id,
+        tool_name: tool.name,
         paths,
     };
 }
@@ -1427,6 +1431,8 @@ export function buildModelJob(id: string, profile: CamProfile, name: string, fil
             depth: Math.max(deepest, 0.01),
             plunge: cutting["plunge"]!,
             tool: "spindle",
+            tool_id: tool.id,
+            tool_name: tool.name,
             paths: [],
             moves,
         });
@@ -1639,10 +1645,30 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
     if (parks.length > 0) {
         go(parks.map((axis) => word(axis, axis.park!, true)));
     }
+    // The id of the bit the last spindle group that named one cut with: the
+    // one fitted, as far as the program knows; null before any.
+    let bit: string | null = null;
     for (const group of enabled) {
         const moves = group.moves ?? [];
-        lines.push(commentLine(`${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths`));
         const kind: Tool = group.tool ?? profile.tools[0]!.kind;
+        const groupBit = group.tool_id ?? null;
+        if (kind === "spindle" && groupBit !== null) {
+            if (bit !== null && groupBit !== bit) {
+                // A stop for the group's bit: the spindle off, the tool up,
+                // the bit named and a pause the operator resumes once it is
+                // fitted and Z is zeroed with it.
+                const name = group.tool_name || groupBit;
+                off();
+                if (depth) {
+                    go([word(depth, safeZ())]);
+                }
+                lines.push(commentLine(`change the bit to ${name} and zero Z with it as before, then resume`));
+                lines.push("M0");
+                warn(`${group.label}: the program stops (M0) to change the bit to ${name}`);
+            }
+            bit = groupBit;
+        }
+        lines.push(commentLine(`${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths`));
         if (moves.length > 0) {
             // A model's paths: each from the safe height down to its first
             // point, its moves as they are, and up again.

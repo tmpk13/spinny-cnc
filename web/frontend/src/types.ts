@@ -380,6 +380,10 @@ export interface Group {
     plunge?: number;
     /** What a CAM profile or a dispense import made the group for; a run refuses a group made for another tool than the machine has. Missing or null runs on a laser or a spindle. */
     tool?: Tool | null;
+    /** The CAM profile's tool the group was made with: the gcode stops to change the bit between two, a run refuses more than one. Missing or null cuts with whatever is fitted. */
+    tool_id?: string | null;
+    /** That tool's name, for the stop's comment and the refusal. */
+    tool_name?: string | null;
     /** Dispensing: mm of paste over every pad of the group. */
     thickness?: number;
     /** A laser with a focus axis: mm the head is raised above focus for the group, negative lowers it; missing or null leaves it where the run puts it. */

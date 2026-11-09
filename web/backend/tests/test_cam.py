@@ -12,6 +12,8 @@ from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, create_app
+from spinny_web.jobs import Group
+from spinny_web.kinematics import Spindle, Streamer
 from spinny_web.link import Link
 
 REPO = Path(__file__).resolve().parents[3]
@@ -140,6 +142,13 @@ def test_a_board_with_its_siblings_goes_through_the_mill_profile(client):
         ("outline: board outline", True, "spindle"),
     ]
     assert job["groups"][4]["passes"] == 3 and job["groups"][4]["depth"] == 1.7 and job["groups"][2]["power"] == 8000
+    assert [(g["tool_id"], g["tool_name"]) for g in job["groups"]] == [
+        ("vbit", "30 degree V bit"),
+        ("endmill", "1 mm end mill"),
+        ("drill", "0.8 mm drill"),
+        ("drill", "0.8 mm drill"),
+        ("endmill", "1 mm end mill"),
+    ]
     assert job["outline"] and job["copper"] and job["stats"]["moves"] > 0
     # The switched-off clearing's end mill is wider than the V bit's trench.
     assert [note.split(",")[0] for note in notes] == ["clearing: 1 mm end mill cuts 1 mm wide"]
@@ -189,11 +198,19 @@ def test_a_job_is_written_as_gcode_for_the_profile(client):
     text = written["text"]
     assert text.startswith("(board-F_Cu: 4 operations through 3 axis mill)") and "M3 S12000" in text and "G1 Z-0.100 F60.000" in text
     assert "G1 Z-1.800 F50.000" in text and text.endswith("M5\nM2\n")
+    # The drills and the outline are cut with bits of their own: the program stops for each.
+    assert text.count("\nM0\n") == 2
+    assert "M5\n(change the bit to 0.8 mm drill and zero Z with it as before, then resume)\nM0\n(drills: 2 holes" in text
     report = written["report"]
     assert report["extents"]["Z"][0] == -1.8 and report["lines"] > 100
     # The end mill's middle runs half a millimeter outside the board's edge,
     # past the lower left corner the shipped profile's travel starts at.
-    assert report["warnings"] == ["X reaches -0.400, under its min 0", "Y reaches -0.400, under its min 0"]
+    assert report["warnings"] == [
+        "drills: 2 holes at the bit's size: the program stops (M0) to change the bit to 0.8 mm drill",
+        "outline: board outline: the program stops (M0) to change the bit to 1 mm end mill",
+        "X reaches -0.400, under its min 0",
+        "Y reaches -0.400, under its min 0",
+    ]
     assert client.post("/api/cam/mill-3axis/gcode", json={"job": "nope"}).status_code == 404
     # The laser profile has no depth axis for a milled job.
     refused = client.post("/api/cam/cartesian-laser/gcode", json={"job": job["id"]})
@@ -211,3 +228,28 @@ def test_a_run_refuses_a_group_made_for_the_other_tool(client, fake):
     assert client.patch(f"/api/jobs/{job['id']}", json=patch).status_code == 200
     refused = client.post(f"/api/jobs/{job['id']}/run", json={})
     assert refused.status_code in (400, 409)
+
+
+def test_a_run_refuses_a_job_of_more_than_one_bit(client, fake):
+    job = upload(client, "mill-3axis", BOARD_FILES)["job"]
+    fake.settings["spindle"] = 1
+    fake.settings["h_axis"] = 1
+    client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"})
+    refused = client.post(f"/api/jobs/{job['id']}/run", json={})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["detail"] == (
+        "the job cuts with 3 bits (30 degree V bit, 0.8 mm drill, 1 mm end mill) and a run does not stop to change one:"
+        " switch off drills: 2 holes at the bit's size; drills: 1 holes milled round; outline: board outline"
+        " to cut with the 30 degree V bit alone, then each other bit's groups after fitting it"
+    )
+    assert not any(line.split()[0] in ("go", "cut", "spindle", "dwell") for line in fake.received_lines if line.strip())
+    # One bit's groups, and groups that name no bit, are a job the run takes.
+    stored = client.backend.store.get(job["id"]).model_copy(deep=True)
+    streamer = Streamer(spindle=Spindle())
+    for group in stored.groups[2:]:
+        group.enabled = False
+    stored.groups.append(Group(label="drawn", power=9000, paths=[[(0.0, 0.0), (1.0, 0.0)]]))
+    streamer.check_job(stored)
+    # A laser machine has no bits to change: the groups' tool is what it refuses.
+    with pytest.raises(ValueError, match="made for a spindle"):
+        Streamer().check_job(stored)

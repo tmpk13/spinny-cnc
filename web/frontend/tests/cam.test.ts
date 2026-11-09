@@ -77,10 +77,10 @@ describe("the mock's CAM profiles", () => {
         const mill = parseProfile(millText, "mill-3axis");
         const built = buildCamJob("0001", mill, "coupon", "board-F_Cu.gbr", "G04*", { rRate: 560, aRate: 400, tolerance: 0.005 });
         expect(built.notes[0]).toMatch(/demo coupon/);
-        expect(built.job.groups.map((group) => [group.label, group.enabled, group.tool])).toEqual([
-            ["isolation: loop 1 at 0.100 mm", true, "spindle"],
-            ["drills: 3 holes at the bit's size", true, "spindle"],
-            ["outline: board outline", true, "spindle"],
+        expect(built.job.groups.map((group) => [group.label, group.enabled, group.tool, group.tool_id, group.tool_name])).toEqual([
+            ["isolation: loop 1 at 0.100 mm", true, "spindle", "vbit", "30 degree V bit"],
+            ["drills: 3 holes at the bit's size", true, "spindle", "drill", "0.8 mm drill"],
+            ["outline: board outline", true, "spindle", "endmill", "1 mm end mill"],
         ]);
         expect(built.job.groups[1]?.paths.every((path) => path.length === 1)).toBe(true);
         expect(built.job.groups[2]?.passes).toBe(3);
@@ -97,9 +97,43 @@ describe("the mock's CAM profiles", () => {
         expect(written.text).toContain("G1 Z-1.800 F50.000");
         expect(written.text.endsWith("M5\nG0 X0.000 Y0.000\nG0 Z20.000\nM5\nM2\n")).toBe(true);
         expect(written.report.extents["Z"]).toEqual([-1.8, 20]);
+        // The drills and the outline are cut with bits of their own: the program stops for each.
+        const lines = written.text.split("\n");
+        const drills = lines.indexOf("(drills: 3 holes at the bit's size: 3 paths)");
+        expect(lines.slice(drills - 4, drills + 3)).toEqual([
+            "G0 Z5.000",
+            "M5",
+            "(change the bit to 0.8 mm drill and zero Z with it as before, then resume)",
+            "M0",
+            "(drills: 3 holes at the bit's size: 3 paths)",
+            "M3 S8000",
+            "G4 P2",
+        ]);
+        expect(lines.filter((line) => line === "M0").length).toBe(2);
         // The end mill runs half a millimeter outside the board's lower left
         // corner, where the shipped profile's travel starts.
-        expect(written.report.warnings).toEqual(["X reaches -0.500, under its min 0", "Y reaches -0.500, under its min 0"]);
+        expect(written.report.warnings).toEqual([
+            "drills: 3 holes at the bit's size: the program stops (M0) to change the bit to 0.8 mm drill",
+            "outline: board outline: the program stops (M0) to change the bit to 1 mm end mill",
+            "X reaches -0.500, under its min 0",
+            "Y reaches -0.500, under its min 0",
+        ]);
+    });
+
+    test("only another known bit stops the program, as the backend writes it", () => {
+        const mill = parseProfile(millText, "mill-3axis");
+        const job = jobOf("bits", [
+            { label: "a", tool_id: "one", tool_name: "one bit", paths: [[[0, 0], [1, 0]]] },
+            { label: "a again", tool_id: "one", tool_name: "one bit", paths: [[[2, 0], [3, 0]]] },
+            { label: "any", paths: [[[4, 0], [5, 0]]] },
+            { label: "b", tool_id: "two", paths: [[[6, 0], [7, 0]]] },
+        ]);
+        const written = camGcode(mill, job);
+        const lines = written.text.split("\n");
+        expect(lines.filter((line) => line === "M0").length).toBe(1);
+        const stop = lines.indexOf("M0");
+        expect(lines.slice(stop - 1, stop + 2)).toEqual(["(change the bit to two and zero Z with it as before, then resume)", "M0", "(b: 1 paths)"]);
+        expect(written.report.warnings).toEqual(["b: the program stops (M0) to change the bit to two"]);
     });
 
     test("a line break in a name or a label stays inside its comment, as the backend writes it", () => {
@@ -156,6 +190,23 @@ describe("the mock backend's CAM routes", () => {
         const listed = await backend.jobs();
         expect(listed.find((job) => job.id === answer.job.id)?.groups[0]?.tool).toBe("laser");
         await expect(backend.camGcode("polar-laser", answer.job.id)).rejects.toThrow(/polar gcode writer/);
+    });
+
+    test("a run refuses a job of more than one bit, naming the groups to switch off", async () => {
+        const backend = new MockBackend({ timers: false });
+        const answer = await backend.camJob("mill-3axis", [new File(["G04 x*"], "board-F_Cu.gbr")]);
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1, cartesian: 1, z_max: 100 } });
+        await expect(backend.runJob(answer.job.id)).rejects.toMatchObject({
+            status: 400,
+            message: "the job cuts with 3 bits (30 degree V bit, 0.8 mm drill, 1 mm end mill) and a run does not stop to change one:"
+                + " switch off drills: 3 holes at the bit's size; outline: board outline to cut with the 30 degree V bit alone,"
+                + " then each other bit's groups after fitting it",
+        });
+        await backend.patchJob(answer.job.id, { groups: [{ index: 1, enabled: false }, { index: 2, enabled: false }] });
+        await backend.runJob(answer.job.id);
+        expect((await backend.run())?.state).toBe("running");
+        await backend.runStop();
     });
 });
 

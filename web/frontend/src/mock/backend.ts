@@ -4159,6 +4159,29 @@ export class MockBackend implements Api, EventFeed {
                 throw new Error(`${group.label}: made for a ${group.tool}, not this machine's ${tool}`);
             }
         }
+        // A run has no stop to change the bit: a milling job whose enabled
+        // groups a CAM profile made with more than one bit is refused, as
+        // the backend refuses it. A group that names no bit cuts with
+        // whatever is fitted.
+        if (tool === "spindle") {
+            const cutting = job.groups.filter((group) => group.enabled
+                && (group.paths.length > 0 || (group.joints?.length ?? 0) > 0 || (group.moves?.length ?? 0) > 0)
+                && (group.tool_id ?? null) !== null);
+            const bits = new Map<string, string>();
+            for (const group of cutting) {
+                if (!bits.has(group.tool_id!)) {
+                    bits.set(group.tool_id!, group.tool_name || group.tool_id!);
+                }
+            }
+            if (bits.size > 1) {
+                const [first, firstName] = bits.entries().next().value!;
+                const later = cutting.filter((group) => group.tool_id !== first).map((group) => group.label);
+                throw new Error(
+                    `the job cuts with ${bits.size} bits (${[...bits.values()].join(", ")}) and a run does not stop to change one:`
+                    + ` switch off ${later.join("; ")} to cut with the ${firstName} alone, then each other bit's groups after fitting it`,
+                );
+            }
+        }
         const offsets = groupFocus(job);
         const focused = offsets.keys().next();
         if (!focused.done) {

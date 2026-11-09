@@ -1316,6 +1316,15 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
         if (tool !== null && (typeof tool !== "string" || !TOOL_NAMES.includes(tool))) {
             throw new Error(`${what}: tool must be one of ${TOOL_NAMES.join(", ")}`);
         }
+        const textOf = (key: string): string | null => {
+            const value = raw[key] ?? null;
+            if (value !== null && typeof value !== "string") {
+                throw new Error(`not a job: ${what}: ${key} must be a string`);
+            }
+            return value;
+        };
+        const toolId = textOf("tool_id");
+        const toolName = textOf("tool_name");
         const areas = raw["areas"] === undefined ? [] : raw["areas"];
         if (!Array.isArray(areas) || !areas.every((area) => typeof area === "number" && Number.isFinite(area) && area >= 0)) {
             throw new Error(`${what}: areas must be a list of numbers`);
@@ -1337,6 +1346,8 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
             thickness,
             ...(focus !== null ? { focus } : {}),
             tool: tool as Tool | null,
+            ...(toolId !== null ? { tool_id: toolId } : {}),
+            ...(toolName !== null ? { tool_name: toolName } : {}),
             areas: areas as number[],
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
         };

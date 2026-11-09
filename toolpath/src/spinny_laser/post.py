@@ -5,9 +5,11 @@ the angle of a polar machine), which one is the depth, and where the setup
 axes are parked. A spindle operation is milled the way the web backend
 streams one: the tool rises to the safe height, the spindle starts and is
 given its spin-up, each path is a rapid to its start, a plunge, the cuts at
-depth and a rise, pass by pass down to the depth. A laser operation cuts at
-the surface (or at the tool's height on a depth axis) with its power on every
-cut. A polar profile is written by the grblHAL polar writer in `gcode`.
+depth and a rise, pass by pass down to the depth; one cut with another bit
+than the spindle operation before it is preceded by a stop (M0) to change
+the bit. A laser operation cuts at the surface (or at the tool's height on a
+depth axis) with its power on every cut. A polar profile is written by the
+grblHAL polar writer in `gcode`.
 """
 
 from __future__ import annotations
@@ -96,6 +98,9 @@ class _Cartesian:
         self.feed: float | None = None
         self.power_word: float | None = None
         self.capped: set[str] = set()
+        # The id of the bit the last spindle group that named one cut with:
+        # the one fitted, as far as the program knows; None before any.
+        self.bit: str | None = None
 
     # --- words ----------------------------------------------------------------
 
@@ -311,6 +316,10 @@ class _Cartesian:
         for group in job.groups:
             if not group.enabled or not group.has_cuts:
                 continue
+            if group.tool == cam.SPINDLE and group.tool_id is not None:
+                if self.bit is not None and group.tool_id != self.bit:
+                    self.change_bit(group)
+                self.bit = group.tool_id
             self.comment(f"{group.label}: {len(group.moves or group.paths)} paths")
             if group.moves:
                 self.carve(group)
@@ -336,6 +345,18 @@ class _Cartesian:
     def safe(self) -> float:
         assert self.depth is not None and self.depth.safe is not None
         return self.depth.safe
+
+    def change_bit(self, group: BuiltGroup) -> None:
+        """A stop for the group's bit: the spindle off, the tool up, the bit
+        named and a pause (M0), which the operator resumes once the bit is
+        fitted and Z is zeroed with it, its length being another."""
+        name = group.tool_name or group.tool_id
+        self.output_off()
+        if self.depth is not None:
+            self.go(z=self.safe())
+        self.comment(f"change the bit to {name} and zero Z with it as before, then resume")
+        self.emit("M0")
+        self.warn(f"{group.label}: the program stops (M0) to change the bit to {name}")
 
     def mill(self, group: BuiltGroup) -> None:
         if self.depth is None:
