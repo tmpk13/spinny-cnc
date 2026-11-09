@@ -3,9 +3,10 @@
 //! - Rough: level by level down from the stock's top, the area the tool may
 //!   be in at that height (inside the boundary, `leave` and its radius away
 //!   from everything of the model above the level) is cleared with loops a
-//!   stepover apart, from the inside out. Levels are added at every flat
-//!   face, so floors come out at their height. Each piece of a level is
-//!   followed down through the pieces under it before the next one.
+//!   stepover apart, the tool's radius at most, from the inside out. Levels
+//!   are added at every flat face, so floors come out at their height. Each
+//!   piece of a level is followed down through the pieces under it before
+//!   the next one.
 //! - Waterline: at each level, one loop along every wall at the tool's
 //!   radius from it.
 //! - Parallel: lines across the model a stepover apart, the tool dropped
@@ -200,11 +201,21 @@ fn unreachable_gaps(part: &Part, shadow: &Paths64, free: &Paths64, keep: f64, z:
     out
 }
 
+/// How far apart a rough's loops run: the stepover, but never more than the
+/// tool's radius less two tolerances. A point deeper in a piece than its
+/// innermost loop is less than one pitch from it, so with loops farther
+/// apart than the tool reaches, the middle of a piece of the wrong width
+/// would stand uncut at every level.
+pub fn ring_pitch(s: &Levels, tolerance: f64) -> f64 {
+    s.stepover.min((s.radius - 2.0 * tolerance).max(s.radius / 2.0))
+}
+
 pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>, Vec<Gap>) {
     let tolerance = part.tolerance;
+    let pitch = ring_pitch(s, tolerance);
     // Past the block's edge only as far as the outer loop still takes a
-    // stepover off it.
-    let area = part.boundary(s.radius + s.leave + s.band, Some(s.radius - s.stepover));
+    // pitch off it.
+    let area = part.boundary(s.radius + s.leave + s.band, Some(s.radius - pitch));
     let levels = part.levels(s.step_down, s.floor, s.flats, s.leave_floor);
     let shadows = part.slicer.shadows(&levels);
     let keep = s.radius + s.leave;
@@ -221,7 +232,7 @@ pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>, Vec<Gap>) {
                     let paths = piece.paths();
                     let mut rings = Vec::new();
                     for k in 0.. {
-                        let ring = region::inflate(&paths, -(k as f64) * s.stepover, tolerance);
+                        let ring = region::inflate(&paths, -(k as f64) * pitch, tolerance);
                         let loops: Vec<Vec<P2>> =
                             ring.iter().map(region::polyline).filter(|l| l.len() >= 3 && perimeter(l) > 2.0 * tolerance).collect();
                         if loops.is_empty() || k > 100_000 {

@@ -83,7 +83,7 @@ What the operations cut:
 
 | Source | Cuts |
 | --- | --- |
-| `rough` | level by level from the block's top, every `step_down` and at every flat face (lifted by `leave_floor`), down to the model's bottom less `below`: the area the tool may be in at that height, `leave` and its radius away from everything of the model above the level, cleared with loops `stepover` apart from the inside out; inside the block and a `band` round the model, never the whole block. Each piece of a level is followed down through the pieces under it before the next. |
+| `rough` | level by level from the block's top, every `step_down` and at every flat face (lifted by `leave_floor`), down to the model's bottom less `below`: the area the tool may be in at that height, `leave` and its radius away from everything of the model above the level, cleared with loops `stepover` apart from the inside out (the tool's radius apart at most: farther, the middle of a wide area would stand, and the notes say the loops were brought closer); inside the block and a `band` round the model, never the whole block. Each piece of a level is followed down through the pieces under it before the next. |
 | `waterline` | a loop along every wall at each level, the tool's radius plus `leave` from it, climb milling unless `direction` says otherwise; with `step_down = 0` only at the flat faces and the bottom, a full depth pass on light stock |
 | `parallel` | lines `stepover` of the diameter apart at `angle` degrees from X, the tool dropped onto the mesh along them (flat, ball, bull nose or V bit), back and forth, over the model's outline and `band` past it: the finish for slopes and curves |
 

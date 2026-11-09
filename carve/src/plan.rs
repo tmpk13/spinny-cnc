@@ -382,6 +382,13 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
             };
             let levels = part.levels(settings.step_down, floor, settings.flats, leave_floor);
             let (cuts, area) = if op.strategy == "rough" {
+                if op.stepover > radius {
+                    notes.push(format!(
+                        "its loops run {:.2} mm apart, not the stepover's {:.2}: farther apart than the tool's radius, they would leave the middle of a wide area standing",
+                        ops::ring_pitch(&settings, tolerance),
+                        op.stepover
+                    ));
+                }
                 let (cuts, area, gaps) = ops::rough(part, &settings);
                 gap_notes(&gaps, &op.tool, &mut notes);
                 (cuts, area)

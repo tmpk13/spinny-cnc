@@ -345,6 +345,63 @@ fn a_part_stood_up_by_a_quarter_turn_has_its_top_faced_and_its_floor_cut_to_heig
 }
 
 #[test]
+fn a_rough_stepover_over_the_radius_leaves_nothing_standing() {
+    // Loops asked for 0.7 of a 3 mm tool apart: the middle of an area deeper
+    // than the radius past the innermost loop would stand uncut. First a
+    // 10 x 10 x 5 block in a band 8 mm wide.
+    let mut placed = voxels([20, 20, 10], 0.5, |_, _, _| true);
+    let request: Request = serde_json::from_value(json!({
+        "model": "test.stl",
+        "stock": { "margin": 12, "top": 0, "anchor": "corner" },
+        "tolerance": 0.01,
+        "travel": 5,
+        "clearance": 1,
+        "operations": [
+            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 1, "stepover": 2.1, "leave": 0, "band": 8 },
+        ],
+    }))
+    .unwrap();
+    let (response, stock) = plan_with_stock(&mut placed, &request).unwrap();
+    check_moves(&response);
+    let notes = &response.operations[0].notes;
+    assert!(notes.iter().any(|n| n.contains("its loops run 1.48 mm apart, not the stepover's 2.10")), "{notes:?}");
+    let (lo, hi) = (response.model.min, response.model.max);
+    let mut checked = 0;
+    for (p, h) in stock.cells() {
+        let dx = (lo[0] - p[0]).max(p[0] - hi[0]).max(0.0);
+        let dy = (lo[1] - p[1]).max(p[1] - hi[1]).max(0.0);
+        let from_block = dx.hypot(dy);
+        if from_block > 1.0 && from_block < 10.0 {
+            assert!(h <= lo[2] + 0.5, "{p:?}: stock at {h}, {from_block:.2} from the block");
+            checked += 1;
+        }
+    }
+    assert!(checked > 10_000, "{checked}");
+    // An 11 mm square pocket 4 deep in a 20 x 20 x 5 plate, with the
+    // shipped rough's leave: the tool's area in it is 7.6 mm across.
+    let pocketed = voxels([40, 40, 10], 0.5, |i, j, k| !((9..31).contains(&i) && (9..31).contains(&j) && k >= 2));
+    let (response, stock, _) = run(
+        &pocketed,
+        json!([
+            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 1, "stepover": 2.1, "leave": 0.2, "leave_floor": 0 },
+        ]),
+    );
+    check_moves(&response);
+    // The plate sits 4 in, so the pocket's walls are at 8.5 and 19.5 and
+    // its middle at 14; its floor is 4 under the plate's top at -0.5.
+    let mut checked = 0;
+    for (p, h) in stock.cells() {
+        if (p[0] - 14.0).abs() < 3.0 && (p[1] - 14.0).abs() < 3.0 {
+            assert!(h <= -4.5 + 0.5, "{p:?}: stock at {h} in the pocket");
+            checked += 1;
+        }
+    }
+    assert!(checked > 10_000, "{checked}");
+}
+
+#[test]
 fn a_dome_is_finished_with_a_ball_to_the_scallop() {
     let radius = 20.0;
     let dome = heights([-10.0, 10.0], [-10.0, 10.0], 80, -8.0, |x, y| ((radius * radius - x * x - y * y).sqrt() - radius).max(-6.0));
