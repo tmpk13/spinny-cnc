@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { stepCeilingHz } from "../src/kinematics.ts";
+import { jointPreview } from "../src/mock/jobs.ts";
 import { isCapped, SPEED_COLORS, speedBucket, speedMap, type SpeedLimits } from "../src/speed.ts";
 import type { Group, Job } from "../src/types.ts";
 import { scrubText, speedLimitsOf } from "../src/views/previewpanel.ts";
@@ -45,6 +46,25 @@ describe("the speed view", () => {
         expect(map.segments.length).toBeGreaterThan(0);
         expect(map.segments.every((segment) => segment.wanted === 400)).toBe(true);
         expect(map.length).toBeCloseTo(10, 3);
+    });
+
+    test("a joint-space move is drawn along the arc the beam follows, not its chord", () => {
+        const arc: [number, number][] = [[10, 0], [10, 90]];
+        const map = speedMap(job([group("arc", [jointPreview(arc)], { joints: [arc] })]), POLAR);
+        expect(map.segments.length).toBeGreaterThan(1);
+        for (const segment of map.segments) {
+            for (const [x, y] of [segment.from, segment.to]) {
+                expect(Math.abs(Math.hypot(x, y) - 10)).toBeLessThan(0.01);
+            }
+        }
+        // One move, counted once: the quarter arc, every piece at its speed.
+        expect(map.length).toBeCloseTo(5 * Math.PI, 6);
+        expect(new Set(map.segments.map((segment) => segment.speed)).size).toBe(1);
+        expect(map.cappedLength).toBeCloseTo(map.length, 6);
+        // A spiral out is drawn through the radii between.
+        const spiral = speedMap(job([group("spiral", [], { joints: [[[5, 0], [15, 360]]] })]), POLAR);
+        const middle = spiral.segments[Math.floor(spiral.segments.length / 2)]!;
+        expect(Math.hypot(...middle.from)).toBeCloseTo(10, 0);
     });
 
     test("on a cartesian machine an axis's rate holds a move back along its direction", () => {

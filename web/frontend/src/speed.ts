@@ -9,7 +9,7 @@
 // its group asks is capped. These are the same sums the job's stats make.
 
 import { boardOfJoint, moveMinutes, surfaceLength } from "./kinematics.ts";
-import { groupMoves } from "./mock/jobs.ts";
+import { groupMoves, jointPreview } from "./mock/jobs.ts";
 import type { Job, Joint, Kinematics, Point } from "./types.ts";
 
 /** The rates a machine moves at, mm/min (degrees a minute for the table), and the chord tolerance the moves are planned to. */
@@ -93,18 +93,29 @@ export function speedMap(job: Job, limits: SpeedLimits): SpeedMap {
             }
             continue;
         }
+        // A board path's moves are within the chord tolerance of their
+        // line, but a joint-space group's are its joint pairs as written:
+        // an arc or a spiral on the board, drawn through the points its
+        // group's drawing is sampled at.
+        const jointSpace = (group.joints?.length ?? 0) > 0;
         // Each pass runs the same moves: one is enough to know their speeds.
         for (const move of groupMoves({ ...group, passes: 1 }, joint, limits.tolerance)) {
             if (move.kind === "cut") {
                 const step = surfaceLength(joint, move.target);
                 const minutes = moveMinutes(joint, move.target, group.speed, limits.rRate, limits.aRate);
                 if (step > 0 && minutes > 0) {
-                    const a = boardOfJoint(joint);
-                    const b = boardOfJoint(move.target);
-                    const segment = { from: [a.x, a.y] as Point, to: [b.x, b.y] as Point, speed: step / minutes, wanted: group.speed };
-                    segments.push(segment);
+                    const points: Point[] = jointSpace
+                        ? jointPreview([[joint.r, joint.a], [move.target.r, move.target.a]])
+                        : [joint, move.target].map((end): Point => {
+                            const board = boardOfJoint(end);
+                            return [board.x, board.y];
+                        });
+                    const speed = step / minutes;
+                    for (let index = 1; index < points.length; index++) {
+                        segments.push({ from: points[index - 1]!, to: points[index]!, speed, wanted: group.speed });
+                    }
                     length += step;
-                    cappedLength += isCapped(segment) ? step : 0;
+                    cappedLength += isCapped({ from: points[0]!, to: points[1]!, speed, wanted: group.speed }) ? step : 0;
                 }
             }
             joint = move.target;
