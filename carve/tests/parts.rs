@@ -161,6 +161,29 @@ fn run(mesh: &Mesh, operations: serde_json::Value) -> (Response, Stock, Mesh) {
     (response, stock, placed)
 }
 
+/// The shipped profile's rough and walls on aluminum with a 3 mm end mill:
+/// a 0.6 mm step, a 2 degree ramp, a skin under the rough that the walls
+/// cut through.
+fn shipped_rough_and_walls() -> serde_json::Value {
+    json!([
+        { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
+          "step_down": 0.6, "stepover": 0.9, "leave": 0.2, "leave_floor": 0, "below": -0.3, "ramp": 2 },
+        { "name": "walls", "strategy": "waterline", "tool": { "shape": "flat", "diameter": 3 },
+          "step_down": 3, "stepover": 1.2, "leave": 0, "below": 0, "ramp": 2 },
+    ])
+}
+
+/// Several meshes as one, each keeping its own vertices.
+fn joined(meshes: &[Mesh]) -> Mesh {
+    let mut out = Mesh::default();
+    for mesh in meshes {
+        let offset = out.vertices.len() as u32;
+        out.vertices.extend_from_slice(&mesh.vertices);
+        out.triangles.extend(mesh.triangles.iter().map(|t| t.map(|v| v + offset)));
+    }
+    out
+}
+
 fn check_moves(response: &Response) {
     for op in &response.operations {
         assert!(op.gouge <= 0.02, "{} comes {} mm into the model", op.name, op.gouge);
@@ -278,17 +301,7 @@ fn a_waterline_after_roughing_runs_the_pocket_walls_at_the_tool_radius() {
 
 #[test]
 fn the_tool_ramps_down_into_every_level_and_never_feeds_straight_into_stock() {
-    // The shipped profile's rough and walls on aluminum: a 0.6 mm step, a 2
-    // degree ramp, a skin under the rough that the walls cut through.
-    let (response, _, _) = run(
-        &plate(),
-        json!([
-            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
-              "step_down": 0.6, "stepover": 0.9, "leave": 0.2, "leave_floor": 0, "below": -0.3, "ramp": 2 },
-            { "name": "walls", "strategy": "waterline", "tool": { "shape": "flat", "diameter": 3 },
-              "step_down": 3, "stepover": 1.2, "leave": 0, "below": 0, "ramp": 2 },
-        ]),
-    );
+    let (response, _, _) = run(&plate(), shipped_rough_and_walls());
     check_moves(&response);
     let steep = steep_entries(&response, &[1.5, 1.5], 2.0);
     assert!(steep.is_empty(), "{} feeds go straight down into stock: {:?}", steep.len(), &steep[..steep.len().min(4)]);
@@ -297,7 +310,7 @@ fn the_tool_ramps_down_into_every_level_and_never_feeds_straight_into_stock() {
 #[test]
 fn a_part_stood_up_by_a_quarter_turn_has_its_top_faced_and_its_floor_cut_to_height() {
     // Drawn with Y up and stood up front down, as the page's Model choice
-    // does, with the shipped profile's rough and walls.
+    // does.
     let mut placed = l_block(|u, h, w| [u, h, -w]);
     let request: Request = serde_json::from_value(json!({
         "model": "test.stl",
@@ -306,12 +319,7 @@ fn a_part_stood_up_by_a_quarter_turn_has_its_top_faced_and_its_floor_cut_to_heig
         "tolerance": 0.01,
         "travel": 5,
         "clearance": 1,
-        "operations": [
-            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
-              "step_down": 0.6, "stepover": 0.9, "leave": 0.2, "leave_floor": 0, "below": -0.3, "ramp": 2 },
-            { "name": "walls", "strategy": "waterline", "tool": { "shape": "flat", "diameter": 3 },
-              "step_down": 3, "stepover": 1.2, "leave": 0, "below": 0, "ramp": 2 },
-        ],
+        "operations": shipped_rough_and_walls(),
     }))
     .unwrap();
     let (response, stock) = plan_with_stock(&mut placed, &request).unwrap();
@@ -342,6 +350,19 @@ fn a_part_stood_up_by_a_quarter_turn_has_its_top_faced_and_its_floor_cut_to_heig
         }
     }
     assert!(checked[0] > 1000 && checked[1] > 1000, "{checked:?}");
+}
+
+#[test]
+fn a_part_of_two_overlapping_bodies_is_cut_round_both() {
+    // Two 20 x 20 x 6 boxes overlapping by 10 mm, as a part exported as two
+    // bodies: the mesh is closed, so no note points at it, and where the
+    // bodies overlap the part is solid at every level.
+    let box_from = |x0: f64| heights([x0, x0 + 20.0], [0.0, 20.0], 1, 0.0, |_, _| 6.0);
+    let two = through_stl(&joined(&[box_from(0.0), box_from(10.0)]));
+    let (response, _, _) = run(&two, shipped_rough_and_walls());
+    check_moves(&response);
+    assert!(response.notes.is_empty(), "{:?}", response.notes);
+    assert_eq!(response.model.size, [30.0, 20.0, 6.0]);
 }
 
 #[test]

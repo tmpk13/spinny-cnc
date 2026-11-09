@@ -44,8 +44,13 @@ impl<'a> Slicer<'a> {
 
     /// The solid's cross section just above z, as an area: what is
     /// strictly higher than z. A face lying at z is not in it.
+    ///
+    /// Every triangle's cut runs with the solid on its left, and the loops
+    /// are filled by how many times they wind round a point, so shells that
+    /// overlap, as a part exported as several bodies, or a face given
+    /// twice, add up instead of cancelling.
     pub fn section(&self, z: f64) -> Paths64 {
-        let mut segments: Vec<([u32; 2], [u32; 2], P2, P2)> = Vec::new();
+        let mut segments: Vec<Segment> = Vec::new();
         for (i, &(lo, hi)) in self.span.iter().enumerate() {
             if hi <= z || lo > z {
                 continue;
@@ -56,20 +61,28 @@ impl<'a> Slicer<'a> {
             if count == 0 || count == 3 {
                 continue;
             }
-            let mut ends: Vec<([u32; 2], P2)> = Vec::with_capacity(2);
+            // Round the triangle as it is wound, counterclockwise seen from
+            // outside: the cut starts where an edge goes down through z and
+            // ends where one comes back up, which puts the solid on its left.
+            let (mut start, mut end) = (None, None);
             for k in 0..3 {
                 let (a, b) = (t[k], t[(k + 1) % 3]);
                 if above[k] != above[(k + 1) % 3] {
                     let key = [a.min(b), a.max(b)];
-                    ends.push((key, self.crossing(key, z)));
+                    let at = Some((key, self.crossing(key, z)));
+                    if above[k] {
+                        start = at;
+                    } else {
+                        end = at;
+                    }
                 }
             }
-            if ends.len() == 2 {
-                segments.push((ends[0].0, ends[1].0, ends[0].1, ends[1].1));
+            if let (Some(start), Some(end)) = (start, end) {
+                segments.push((start.0, end.0, start.1, end.1));
             }
         }
         let loops = chain(&segments);
-        region::union(&loops, FillRule::EvenOdd)
+        region::union(&loops, FillRule::NonZero)
     }
 
     /// Where the edge between two vertices crosses z, worked out from the
@@ -146,14 +159,25 @@ impl<'a> Slicer<'a> {
     }
 }
 
+/// A triangle's cut through a height: the mesh edges it starts and ends on
+/// and the points there, the solid on its left from start to end.
+type Segment = ([u32; 2], [u32; 2], P2, P2);
+
 /// Segments joined end to end into loops by the mesh edges they end on. A
-/// chain that cannot close (an open mesh) is closed straight across.
-fn chain(segments: &[([u32; 2], [u32; 2], P2, P2)]) -> Paths64 {
-    let mut at: HashMap<[u32; 2], Vec<usize>> = HashMap::with_capacity(segments.len() * 2);
+/// loop goes on from a segment's end to one that starts there, and only
+/// when there is none to one that ends there, taken backward; it then runs
+/// the way most of its length says. So a face given twice, or two shells
+/// meeting at an edge, still give loops that run one way, and a triangle
+/// wound the wrong way is outvoted. A chain that cannot close (an open
+/// mesh) is closed straight across.
+fn chain(segments: &[Segment]) -> Paths64 {
+    let mut starting: HashMap<[u32; 2], Vec<usize>> = HashMap::with_capacity(segments.len());
+    let mut ending: HashMap<[u32; 2], Vec<usize>> = HashMap::with_capacity(segments.len());
     for (i, s) in segments.iter().enumerate() {
-        at.entry(s.0).or_default().push(i);
-        at.entry(s.1).or_default().push(i);
+        starting.entry(s.0).or_default().push(i);
+        ending.entry(s.1).or_default().push(i);
     }
+    let unused = |list: Option<&Vec<usize>>, used: &[bool]| list.and_then(|list| list.iter().copied().find(|&j| !used[j]));
     let mut used = vec![false; segments.len()];
     let mut loops = Paths64::new();
     for start in 0..segments.len() {
@@ -163,22 +187,29 @@ fn chain(segments: &[([u32; 2], [u32; 2], P2, P2)]) -> Paths64 {
         used[start] = true;
         let first_key = segments[start].0;
         let mut points: Vec<P2> = vec![segments[start].2, segments[start].3];
+        // Length taken the way its triangle runs, less length taken against it.
+        let mut along = region::dist(segments[start].2, segments[start].3);
         let mut key = segments[start].1;
-        loop {
-            if key == first_key {
-                break;
-            }
-            let next = at.get(&key).and_then(|list| list.iter().copied().find(|&j| !used[j]));
-            let Some(j) = next else { break };
+        while key != first_key {
+            let next = match unused(starting.get(&key), &used) {
+                Some(j) => Some((j, true)),
+                None => unused(ending.get(&key), &used).map(|j| (j, false)),
+            };
+            let Some((j, forward)) = next else { break };
             used[j] = true;
             let s = &segments[j];
-            let (other_key, other_point) = if s.0 == key { (s.1, s.3) } else { (s.0, s.2) };
+            let (other_key, other_point) = if forward { (s.1, s.3) } else { (s.0, s.2) };
+            let length = region::dist(s.2, s.3);
+            along += if forward { length } else { -length };
             if other_key != first_key {
                 points.push(other_point);
             }
             key = other_key;
         }
         if points.len() >= 3 {
+            if along < 0.0 {
+                points.reverse();
+            }
             let path: Path64 = region::path(&points);
             loops.push(path);
         }
@@ -220,10 +251,58 @@ fn clip_plane(poly: &[V3], side: impl Fn(&V3) -> f64) -> Vec<V3> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesh::tests::block;
+    use crate::mesh::tests::{block, to_binary_stl};
 
     fn area(paths: &Paths64) -> f64 {
         clipper2_rust::area_paths(paths) / (region::SCALE * region::SCALE)
+    }
+
+    fn joined(meshes: &[Mesh]) -> Mesh {
+        let mut out = Mesh::default();
+        for mesh in meshes {
+            let offset = out.vertices.len() as u32;
+            out.vertices.extend_from_slice(&mesh.vertices);
+            out.triangles.extend(mesh.triangles.iter().map(|t| t.map(|v| v + offset)));
+        }
+        out
+    }
+
+    #[test]
+    fn overlapping_shells_and_a_face_given_twice_add_up() {
+        // Two blocks overlapping by 10 mm, as a part exported as two bodies,
+        // and one block with every face twice, as an STL file holds them:
+        // the overlap is solid once, not a hole.
+        let one = block([0.0, 0.0, 0.0], [30.0, 20.0, 6.0]);
+        let two = joined(&[block([0.0, 0.0, 0.0], [20.0, 20.0, 6.0]), block([10.0, 0.0, 0.0], [30.0, 20.0, 6.0])]);
+        let doubled = joined(&[one.clone(), one]);
+        for mesh in [two, doubled] {
+            let read = Mesh::from_stl(&to_binary_stl(&mesh)).unwrap();
+            let slicer = Slicer::new(&read);
+            let found = area(&slicer.section(3.0));
+            assert!((found - 600.0).abs() < 1e-6, "{found}");
+        }
+    }
+
+    #[test]
+    fn triangles_wound_the_wrong_way_leave_the_section_whole() {
+        // A triangle of the front side turned over, then one of the left too.
+        let mut mesh = block([0.0, 0.0, 0.0], [10.0, 20.0, 5.0]);
+        for side in [4, 8] {
+            mesh.triangles[side].swap(1, 2);
+            let slicer = Slicer::new(&mesh);
+            assert!((area(&slicer.section(2.5)) - 200.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn two_blocks_meeting_at_an_edge_are_both_solid() {
+        // Corner to corner, sharing the edge up through x 10, y 10 once the
+        // file's vertices are welded.
+        let mesh = joined(&[block([0.0, 0.0, 0.0], [10.0, 10.0, 5.0]), block([10.0, 10.0, 0.0], [20.0, 20.0, 5.0])]);
+        let read = Mesh::from_stl(&to_binary_stl(&mesh)).unwrap();
+        assert_eq!(read.vertices.len(), 14);
+        let slicer = Slicer::new(&read);
+        assert!((area(&slicer.section(2.5)) - 200.0).abs() < 1e-6);
     }
 
     #[test]
