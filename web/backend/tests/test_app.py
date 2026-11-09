@@ -1241,6 +1241,44 @@ def test_a_job_put_back_from_the_page_keeps_its_id_and_is_priced_again(client):
     assert bad.status_code == 400 and "spot" in bad.text
 
 
+def test_a_job_whose_paths_were_taken_out_or_moved_is_not_made_again_with_them(client):
+    # A board job with paths taken out and two moved into a group switched
+    # off, sent back with the recipe it had: imported again for another
+    # width, every path would come back in one group that is on.
+    job = _board_job(client)
+    group = job["groups"][0]
+    edited = [{**group, "paths": group["paths"][:1]}, {**group, "label": "keep off", "enabled": False, "power": 120, "paths": group["paths"][1:3]}]
+    response = client.put(f"/api/jobs/{job['id']}", json={**job, "groups": edited})
+    assert response.status_code == 200, response.text
+    made = response.json()
+    assert made["recipe"] is None
+    assert [(g["label"], len(g["paths"]), g["enabled"]) for g in made["groups"]] == [(group["label"], 1, True), ("keep off", 2, False)]
+    refused = client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.12})
+    assert refused.status_code == 400 and "import it again" in refused.text
+    assert [len(g["paths"]) for g in client.get(f"/api/jobs/{job['id']}").json()["groups"]] == [1, 2]
+    # A Plot page job with a path taken out is not built again from its
+    # operations either.
+    line = {"kind": "line", "tool": 1, "depth": 0.3, "step_down": 0.3}
+    plot = client.post("/api/mill", json={"ops": [{**line, "points": [[0, 0], [10, 0]]}, {**line, "points": [[0, 5], [10, 5]]}]}).json()["job"]
+    response = client.put(f"/api/jobs/{plot['id']}", json={**plot, "groups": plot["groups"][:1]})
+    assert response.status_code == 200, response.text
+    assert response.json()["recipe"] is None
+    assert client.post(f"/api/jobs/{plot['id']}/width", json={"width": 2}).status_code == 400
+    # A group renamed past its numbers would lose its settings to the one
+    # the file makes in its place.
+    job = _board_job(client)
+    renamed = client.put(f"/api/jobs/{job['id']}", json={**job, "groups": [{**job["groups"][0], "label": "edges"}]})
+    assert renamed.json()["recipe"] is None
+    # Settings changed, and a label's numbers, keep the recipe, and the job
+    # made again keeps the settings.
+    job = _board_job(client)
+    kept = client.put(f"/api/jobs/{job['id']}", json={**job, "groups": [{**job["groups"][0], "power": 250, "label": "isolation loop 1 at 0.1 mm"}]})
+    assert kept.json()["recipe"] == job["recipe"]
+    recut = client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.12})
+    assert recut.status_code == 200, recut.text
+    assert [(len(g["paths"]), g["power"]) for g in recut.json()["groups"]] == [(32, 250)]
+
+
 def _held_recut(monkeypatch):
     """A width re-cut that waits, once it has made the new job from the
     kept file and before it saves it, until released: (started, release)."""

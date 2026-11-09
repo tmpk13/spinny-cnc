@@ -176,6 +176,16 @@ export function widthMode(job: Job): "remake" | "width" | "refused" {
     return "width";
 }
 
+/**
+ * What a job made from its recipe gives up when its paths are copied,
+ * moved or taken out, said in a confirm: made again for another width or
+ * from the Plot page, the job's file or operations would make its paths as
+ * they were, which would `undo` the change. Empty for a job with no recipe.
+ */
+export function recipeLost(job: Job, undo: string): string {
+    return job.recipe ? ` It is then no longer made again from its ${job.recipe.file ? "file" : "operations"} (another width, the Plot page), which would ${undo}.` : "";
+}
+
 /** The labels a milling machine gives the job's numbers, and a laser's. */
 export function jobLabels(milling: boolean): { power: string; speed: string; spot: string } {
     return milling
@@ -795,12 +805,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
             ctx.toast("error", error instanceof Error ? error.message : String(error));
             return;
         }
-        // The copies are nothing the job's file or operations would make
-        // again, so a job made from either stops being made again from it.
-        if (job.recipe && !(await askConfirm(
-            `Add ${result.refs.length} copies to ${job.name}? It is then no longer made again from its ${job.recipe.file ? "file" : "operations"} (another width, the Plot page), which would lose them.`,
-            "Make array",
-        ))) {
+        if (job.recipe && !(await askConfirm(`Add ${result.refs.length} copies to ${job.name}?${recipeLost(job, "lose them")}`, "Make array"))) {
             return;
         }
         const made = await ctx.call(ctx.api.replaceJob(job.id, { ...result.job, recipe: null }));
@@ -861,7 +866,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
             ctx.toast("error", error instanceof Error ? error.message : String(error));
             return;
         }
-        const made = await ctx.call(ctx.api.replaceJob(job.id, result.job));
+        const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;
+        if (job.recipe && !(await askConfirm(`Move ${count} of ${job.name}?${recipeLost(job, "put them back")}`, "Move"))) {
+            return;
+        }
+        const made = await ctx.call(ctx.api.replaceJob(job.id, { ...result.job, recipe: null }));
         if (!made) {
             return;
         }
@@ -889,10 +898,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
             return;
         }
         const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;
-        if (!(await askConfirm(`Take ${count} out of ${job.name}? A group left empty goes too.`, "Delete paths"))) {
+        if (!(await askConfirm(`Take ${count} out of ${job.name}? A group left empty goes too.${recipeLost(job, "bring them back")}`, "Delete paths"))) {
             return;
         }
-        const kept = await ctx.call(ctx.api.replaceJob(job.id, made));
+        const kept = await ctx.call(ctx.api.replaceJob(job.id, { ...made, recipe: null }));
         if (!kept) {
             return;
         }

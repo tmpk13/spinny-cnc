@@ -840,7 +840,12 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
     """The job `data` describes, in place of `old` under its id: a job's
     JSON as the page's editor holds it, checked as an upload is. A field
     left out keeps the default a new job has, but for the name and the
-    source, which stay the old job's."""
+    source, which stay the old job's. The recipe stays only while the
+    groups cut what the old job's did, under the same labels but for their
+    numbers: a job made again from it for another width is made as its
+    file or operations make it, so paths moved between groups or taken out
+    would come back where they were, and a renamed group's settings would
+    be lost."""
     if not isinstance(data, dict):
         raise JobImportError("not a job: the body must be a JSON object")
     body = {key: value for key, value in data.items() if key not in ("id", "stats")}
@@ -853,6 +858,20 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
     job.id = job_id
     if not job.name:
         job.name = old.name
+
+    def points(paths) -> list[list[tuple[float, ...]]]:
+        # Lists and tuples alike, however the job was built.
+        return [[tuple(float(v) for v in point) for point in path] for path in paths]
+
+    def cuts(of: Job) -> list[tuple]:
+        # A joint-space group's paths are only its drawing.
+        return [
+            (label_stem(group.label), points(group.joints), points(group.moves), [float(a) for a in group.areas], [] if group.joints else points(group.paths))
+            for group in of.groups
+        ]
+
+    if job.recipe is not None and cuts(job) != cuts(old):
+        job.recipe = None
     return checked(job)
 
 

@@ -46,7 +46,7 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, par
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbKey, thumbnail } from "./thumbs.ts";
-import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, movedAs, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
+import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, labelStem, MAX_OPERATIONS, moveJob, movedAs, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
 import { MockCameraLog } from "./camlog.ts";
@@ -3610,6 +3610,16 @@ export class MockBackend implements Api, EventFeed {
         made.source = typeof given["source"] === "string" ? given["source"] : old.source;
         made.layer = given["layer"] === undefined ? old.layer ?? null : (given["layer"] as string | null);
         made.recipe = given["recipe"] === undefined ? old.recipe ?? null : (given["recipe"] as Job["recipe"]);
+        // A recipe makes the groups again as the file or operations make
+        // them, carrying settings by label but for its numbers: it stays
+        // only while the groups cut what the old job's did under those
+        // labels. A joint-space group's paths are only its drawing.
+        const cuts = (job: Job): string => JSON.stringify(job.groups.map((group) => [
+            labelStem(group.label), group.joints ?? [], group.moves ?? [], group.areas ?? [], (group.joints?.length ?? 0) > 0 ? [] : group.paths,
+        ]));
+        if (made.recipe && cuts(made) !== cuts(old)) {
+            made.recipe = null;
+        }
         if (made.design && old.design) {
             made.design.board = old.design.board;
         }

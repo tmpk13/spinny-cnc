@@ -298,7 +298,10 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         ctx.store.set({ jobDraft: null, selection: null });
         await ctx.reloadJob(job.id);
         await ctx.refreshJobs();
-        ctx.toast("info", `${kept.name}: kept as the text says`);
+        // Paths changed are nothing the file or operations would make
+        // again, so the backend keeps no recipe for such a job.
+        const lost = job.recipe && !kept.recipe ? `, no longer made again from its ${job.recipe.file ? "file" : "operations"}` : "";
+        ctx.toast("info", `${kept.name}: kept as the text says${lost}`);
     }
 
     function revert(): void {

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Camera } from "../src/camera.ts";
+import { defaultOperation } from "../src/mock/mill.ts";
 import { Preview } from "../src/preview.ts";
 import { boxedAfter, pickedAfter } from "../src/regroup.ts";
-import type { Job } from "../src/types.ts";
+import type { Job, MillOperation } from "../src/types.ts";
 import { jobText, mountJobJson, placeText, readJobText } from "../src/views/jobjson.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { mountPreviewPanel, shownJob } from "../src/views/previewpanel.ts";
@@ -161,6 +162,46 @@ describe("moving picked paths between groups", () => {
         expect((await api.job(made.id)).groups.length).toBe(1);
         root.remove();
     });
+
+    test("a job made from operations is no longer made again from them once its paths are moved or taken out", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJobs(root, ctx);
+        const line = (y: number): MillOperation => ({ ...defaultOperation("line"), depth: 0.3, step_down: 0.3, points: [[0, y], [10, y]] });
+        const made = (await api.makeMill({ ops: [line(0), line(5), line(10)] })).job;
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.id);
+        const row = root.querySelector(".picked-row") as HTMLElement;
+        const press = (label: string): void => Array.from(row.querySelectorAll("button")).find((b) => b.textContent === label)!.click();
+        const sent = (): Job => calls.filter((call) => call.name === "replaceJob").at(-1)!.args[1] as Job;
+        // Taken out: asked first, saying the operations would bring it back.
+        store.set({ selection: { job: made.id, paths: [[1, 0]] } });
+        press("Delete paths");
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("no longer made again from its operations");
+        dialogButton("Delete paths").click();
+        await settleMany();
+        expect(sent().recipe).toBeNull();
+        expect(store.get().job!.recipe ?? null).toBeNull();
+        expect(store.get().job!.groups.length).toBe(2);
+        // Another width cannot bring the line back.
+        await expect(api.setJobWidth(made.id, 0.2)).rejects.toThrow("nothing is kept to make them again");
+        expect((await api.job(made.id)).groups.length).toBe(2);
+        // Moved: asked the same way while there is a recipe to lose.
+        const other = (await api.makeMill({ ops: [line(0), line(5)] })).job;
+        await ctx.refreshJobs();
+        await ctx.selectJob(other.id);
+        store.set({ selection: { job: other.id, paths: [[1, 0]] } });
+        press("Move");
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("no longer made again from its operations");
+        dialogButton("Move").click();
+        await settleMany();
+        expect(sent().recipe).toBeNull();
+        expect((await api.job(other.id)).recipe ?? null).toBeNull();
+        root.remove();
+    });
 });
 
 describe("arrays of picked paths", () => {
@@ -267,6 +308,25 @@ describe("the job as JSON", () => {
         Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Revert")!.click();
         expect(editor.value).toContain('"label": "stroke #0000ff"');
         expect(store.get().pending["job-json"]).toBeUndefined();
+        root.remove();
+    });
+
+    test("Apply of paths taken out says the job is no longer made again from its operations", async () => {
+        const { store, ctx, root, api } = setup();
+        mountJobJson(root, ctx);
+        const line = (y: number): MillOperation => ({ ...defaultOperation("line"), depth: 0.3, step_down: 0.3, points: [[0, y], [10, y]] });
+        const made = (await api.makeMill({ ops: [line(0), line(5)] })).job;
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.id);
+        const editor = root.querySelector("textarea.json-input") as HTMLTextAreaElement;
+        const text = JSON.parse(editor.value) as Job;
+        expect(text.recipe).not.toBeNull();
+        editor.value = JSON.stringify({ ...text, groups: text.groups.slice(0, 1) });
+        editor.dispatchEvent(new Event("input"));
+        Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Apply")!.click();
+        await settleMany();
+        expect((await api.job(made.id)).recipe ?? null).toBeNull();
+        expect(store.get().toasts.map((toast) => toast.text)).toContain(`${made.name}: kept as the text says, no longer made again from its operations`);
         root.remove();
     });
 });

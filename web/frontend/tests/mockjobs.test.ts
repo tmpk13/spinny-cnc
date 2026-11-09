@@ -23,7 +23,8 @@ import {
     placeJob,
 } from "../src/mock/jobs.ts";
 import { MockBackend } from "../src/mock/backend.ts";
-import type { Group } from "../src/types.ts";
+import { defaultOperation } from "../src/mock/mill.ts";
+import type { Group, Job, MillOperation } from "../src/types.ts";
 
 const limits = { rRate: 1000, aRate: 1080, tolerance: 0.005 };
 
@@ -524,5 +525,28 @@ describe("checks the backend makes", () => {
         expect(moves[1]).toEqual({ kind: "cut", target: { r: 0, a: 90 } });
         expect(moves[2]!.target.r).toBeCloseTo(5, 9);
         expect(moves.length).toBe(3);
+    });
+});
+
+describe("a job put back whole", () => {
+    const line = (y: number): MillOperation => ({ ...defaultOperation("line"), depth: 0.3, step_down: 0.3, points: [[0, y], [10, y]] });
+
+    test("keeps its recipe only while its groups cut what they did under their labels", async () => {
+        const backend = new MockBackend({ timers: false });
+        const made = (await backend.makeMill({ ops: [line(0), line(5)] })).job;
+        const [first, second] = made.groups as [Group, Group];
+        const put = (groups: Group[]): Promise<Job> => backend.replaceJob(made.id, { ...made, groups });
+        // Settings and a label's numbers change nothing a re-cut makes.
+        const renumbered = first.label.replace(/\d/, "7");
+        expect(renumbered).not.toBe(first.label);
+        expect((await put([{ ...first, power: 250, enabled: false, label: renumbered }, second])).recipe).toEqual(made.recipe!);
+        // A path taken out or moved, or a group renamed, would come back as
+        // the operations make it.
+        expect((await put([first])).recipe ?? null).toBeNull();
+        const again = (await backend.makeMill({ ops: [line(0), line(5)] })).job;
+        const moved = await backend.replaceJob(again.id, { ...again, groups: [{ ...again.groups[0]!, paths: [...again.groups[0]!.paths, ...again.groups[1]!.paths] }] });
+        expect(moved.recipe ?? null).toBeNull();
+        const named = (await backend.makeMill({ ops: [line(0)] })).job;
+        expect((await backend.replaceJob(named.id, { ...named, groups: [{ ...named.groups[0]!, label: "edges" }] })).recipe ?? null).toBeNull();
     });
 });
