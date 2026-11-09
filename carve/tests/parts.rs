@@ -138,6 +138,36 @@ fn top_at(surface: &Surface, p: [f64; 2]) -> f64 {
     surface.drop(&Cutter::new(Shape::Flat, 1e-3), p)
 }
 
+/// The feed moves that go down into material steeper than the ramp: every
+/// move replayed over a fresh stock map, cut with a flat tool of each
+/// operation's radius, and a descending feed named when the material under
+/// the middle half of the tool stands more than 0.05 mm over its end.
+fn steep_entries(response: &Response, radii: &[f64], ramp_degrees: f64) -> Vec<String> {
+    let (min, max) = (response.stock.min, response.stock.max);
+    let mut stock = Stock::new([min[0], min[1]], [max[0], max[1]], 0.0, 0.05);
+    let slope = ramp_degrees.to_radians().tan();
+    let mut found = Vec::new();
+    for (op, &radius) in response.operations.iter().zip(radii) {
+        let tool = Cutter::new(Shape::Flat, radius);
+        for path in &op.paths {
+            for w in path.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                if b[3] == RAPID {
+                    continue;
+                }
+                let run = (b[0] - a[0]).hypot(b[1] - a[1]);
+                let drop = a[2] - b[2];
+                let material = stock.highest([b[0], b[1]], [b[0], b[1]], radius / 2.0) - b[2];
+                if b[3] == FEED && drop > slope * run * 1.05 + 1e-6 && material > 0.05 {
+                    found.push(format!("{}: {a:?} -> {b:?} with {material:.3} mm of material", op.name));
+                }
+                stock.cut(&tool, [a[0], a[1], a[2]], [b[0], b[1], b[2]]);
+            }
+        }
+    }
+    found
+}
+
 #[test]
 fn a_plate_is_roughed_to_the_leave_and_finished_to_size() {
     let plate = plate();
@@ -202,6 +232,24 @@ fn a_waterline_after_roughing_runs_the_pocket_walls_at_the_tool_radius() {
     let corners = [[10.5, 11.5], [17.5, 11.5], [17.5, 16.5], [10.5, 16.5]];
     let found = corners.iter().all(|c| at_floor.iter().any(|p| (p[0] - c[0]).abs() < 1e-3 && (p[1] - c[1]).abs() < 1e-3));
     assert!(found, "no loop round the pocket at its floor");
+}
+
+#[test]
+fn the_tool_ramps_down_into_every_level_and_never_feeds_straight_into_stock() {
+    // The shipped profile's rough and walls on aluminum: a 0.6 mm step, a 2
+    // degree ramp, a skin under the rough that the walls cut through.
+    let (response, _, _) = run(
+        &plate(),
+        json!([
+            { "name": "rough", "strategy": "rough", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 0.6, "stepover": 0.9, "leave": 0.2, "leave_floor": 0, "below": -0.3, "ramp": 2 },
+            { "name": "walls", "strategy": "waterline", "tool": { "shape": "flat", "diameter": 3 },
+              "step_down": 3, "stepover": 1.2, "leave": 0, "below": 0, "ramp": 2 },
+        ]),
+    );
+    check_moves(&response);
+    let steep = steep_entries(&response, &[1.5, 1.5], 2.0);
+    assert!(steep.is_empty(), "{} feeds go straight down into stock: {:?}", steep.len(), &steep[..steep.len().min(4)]);
 }
 
 #[test]

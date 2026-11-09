@@ -3,7 +3,9 @@
 //! An operation hands over its cuts in order: loops and lines at the height
 //! they finish the work at. The linker gets the tool from one to the next.
 //! A cut close to the last one, which may be reached at depth without
-//! touching the model, is fed to directly. Otherwise the tool rises to just
+//! touching the model, is fed to directly; when it lies lower and stock
+//! stands over it, the tool crosses at its own height and comes down the
+//! cut's ramp, as into any other cut. Otherwise the tool rises to just
 //! over the material between the two, as the stock map has it, crosses, and
 //! comes down; when that move would leave the area the operation cuts in,
 //! or rise to the travel height, the path ends and the machine's own travel
@@ -71,12 +73,18 @@ impl<'a> Linker<'a> {
         Linker { cutter, check, surface, stock, area, settings, paths: Vec::new(), path: Vec::new(), at: None, skipped: 0 }
     }
 
-    /// Whether any of the cut's moves has material over it: the stock
-    /// map never shows less than there is, so a cut it calls empty is.
-    /// Material only in the last two tolerances of the tool's reach, the
-    /// wall a finished loop ran against, does not count.
+    /// The tool's reach less its last two tolerances: material only past
+    /// it is the wall a finished loop ran against, which does not count as
+    /// stock left to take.
+    fn inner_reach(&self) -> f64 {
+        (self.cutter.radius - 2.0 * self.settings.tolerance).max(self.cutter.radius / 2.0)
+    }
+
+    /// Whether any of the cut's moves has material over it, within the
+    /// tool's inner reach: the stock map never shows less than there is,
+    /// so a cut it calls empty is.
     fn takes_material(&self, cut: &Cut) -> bool {
-        let r = (self.cutter.radius - 2.0 * self.settings.tolerance).max(self.cutter.radius / 2.0);
+        let r = self.inner_reach();
         let lift = self.settings.tolerance;
         if cut.points.len() == 1 {
             let p = cut.points[0];
@@ -100,9 +108,7 @@ impl<'a> Linker<'a> {
         if let Some(p) = self.at {
             let (pxy, qxy) = ([p[0], p[1]], [q[0], q[1]]);
             let run = (q[0] - p[0]).hypot(q[1] - p[1]);
-            if cut.stay_down && run <= self.settings.link && self.clean(p, q) {
-                self.feed(q, FEED);
-                self.follow(cut, 1);
+            if cut.stay_down && run <= self.settings.link && self.stay_down(p, cut) {
                 return;
             }
             let high = self.stock.highest(pxy, qxy, self.cutter.radius).max(p[2]).max(q[2]) + self.settings.clearance;
@@ -117,6 +123,40 @@ impl<'a> Linker<'a> {
             self.end_path();
         }
         self.enter(cut, self.settings.travel);
+    }
+
+    /// Onto a cut close to the last one without leaving the depth: fed
+    /// straight to its start, unless that goes down into stock; then across
+    /// at the tool's height and down the cut's own ramp. False, and nothing
+    /// written, when the move would meet the model.
+    fn stay_down(&mut self, p: V3, cut: &Cut) -> bool {
+        let q = cut.points[0];
+        if !self.down_into_stock(p, q) {
+            if !self.clean(p, q) {
+                return false;
+            }
+            self.feed(q, FEED);
+            self.follow(cut, 1);
+            return true;
+        }
+        // Across at the tool's height to over the cut's start, then down the
+        // ramp as into any other cut.
+        let over = [q[0], q[1], p[2]];
+        if !self.clean(p, over) {
+            return false;
+        }
+        if (q[0] - p[0]).hypot(q[1] - p[1]) > 1e-9 {
+            self.feed(over, FEED);
+        }
+        self.enter(cut, p[2]);
+        true
+    }
+
+    /// Whether the tool going from p down to q would take stock on the way:
+    /// material within its inner reach anywhere along the move standing
+    /// over q.
+    fn down_into_stock(&self, p: V3, q: V3) -> bool {
+        q[2] < p[2] - 1e-9 && self.stock.above([p[0], p[1]], [q[0], q[1]], self.inner_reach(), q[2] + self.settings.tolerance)
     }
 
     /// The paths, and how many cuts were left out as taking nothing.
