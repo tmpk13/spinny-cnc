@@ -76,6 +76,29 @@ describe("the steps panel", () => {
         expect(root.querySelector('[aria-current="step"] .roadmap-label')?.textContent).toBe("Run");
     });
 
+    test("keeps its buttons through status frames that change nothing it shows, so a press is not lost", () => {
+        const { store, ctx, root } = setup();
+        store.set({ snapshot: connected() });
+        mountSteps(root, ctx, SETUPS, "test.frames");
+        const first = root.querySelector(".roadmap-button");
+        store.set({ snapshot: { ...store.get().snapshot } });
+        store.set({ snapshot: { ...store.get().snapshot } });
+        expect(root.querySelector(".roadmap-button")).toBe(first);
+        expect(first?.isConnected).toBe(true);
+        // A step done is drawn again.
+        store.set({ job: job(), settings: settings({ travel: 3 }) });
+        expect(root.querySelector(".roadmap-button")).not.toBe(first);
+        localStorage.removeItem("test.frames.setup");
+    });
+
+    test("the map and run steps lead to the Run panel, where Run and the height map pick are", () => {
+        const { store } = setup();
+        store.set({ snapshot: connected() });
+        const map = SETUPS.find((entry) => entry.id === "map")!;
+        const panels = Object.fromEntries(map.steps(store.get()).map((entry) => [entry.label, entry.panel]));
+        expect([panels["Map on"], panels["Run"]]).toEqual(["run", "run"]);
+    });
+
     test("the setup picked is kept, and a step takes the page to its panel", () => {
         const { store, ctx, root } = setup();
         store.set({ snapshot: connected() });

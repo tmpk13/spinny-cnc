@@ -221,23 +221,46 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
         });
     }
 
+    let drawnMarks = "";
+
     function renderMarks(state: AppState): void {
         const job = state.job;
         const align = state.align;
         const marks = align && job && align.job === job.id ? align.marks : [];
         badge.textContent = marks.length === 0 ? "no marks" : `${marks.length} mark${marks.length === 1 ? "" : "s"}`;
-        const rows = marks.map((mark, index) => {
+        const cells = marks.map((mark) => {
             const words = markWords(mark);
-            return el("tr", {},
-                el("td", { class: "mono" }, words.design),
-                el("td", { class: "mono" }, words.machine),
-                el("td", {}, mark.source),
-                el("td", {}, mark.kind),
-                el("td", {}, words.distance),
-                el("td", {}, words.residual),
-                el("td", {}, button("Remove", () => remove(index), "btn btn-quiet btn-small")),
-            );
+            return [words.design, words.machine, mark.source, mark.kind, words.distance, words.residual];
         });
+        // Drawn again only when what it shows changes: the store changes
+        // with every status report, and a Remove button replaced between a
+        // press and its release takes no click.
+        const shown = JSON.stringify(cells);
+        if (shown !== drawnMarks) {
+            drawnMarks = shown;
+            drawMarks(cells);
+        }
+        if (!job) {
+            note.textContent = "select a job to align";
+        } else if (align && align.job !== null && align.job !== job.id && align.marks.length > 0) {
+            const other = state.jobs.find((entry) => entry.id === align.job)?.name ?? align.job;
+            note.textContent = `the marks are for ${other}; a mark here replaces them`;
+        } else {
+            note.textContent = "";
+        }
+    }
+
+    function drawMarks(cells: string[][]): void {
+        const rows = cells.map(([design, machine, source, kind, distance, residual], index) =>
+            el("tr", {},
+                el("td", { class: "mono" }, design!),
+                el("td", { class: "mono" }, machine!),
+                el("td", {}, source!),
+                el("td", {}, kind!),
+                el("td", {}, distance!),
+                el("td", {}, residual!),
+                el("td", {}, button("Remove", () => remove(index), "btn btn-quiet btn-small")),
+            ));
         replace(table,
             el("thead", {}, el("tr", {},
                 el("th", { title: "The design point: a pad or hole of the job, or a point typed in, in the job's frame" }, "Design"),
@@ -250,14 +273,6 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
             )),
             el("tbody", {}, ...rows),
         );
-        if (!job) {
-            note.textContent = "select a job to align";
-        } else if (align && align.job !== null && align.job !== job.id && align.marks.length > 0) {
-            const other = state.jobs.find((entry) => entry.id === align.job)?.name ?? align.job;
-            note.textContent = `the marks are for ${other}; a mark here replaces them`;
-        } else {
-            note.textContent = "";
-        }
     }
 
     function render(state: AppState): void {

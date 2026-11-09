@@ -156,6 +156,11 @@ describe("the align panel", () => {
         expect(calls.find((c) => c.name === "alignMark")?.args[0]).toEqual({ job: jobs[0]!.id, nearest: "pad", within: 5 });
         expect(root.querySelectorAll("table.align-marks tbody tr").length).toBe(1);
         expect(root.querySelector(".align-badge")?.textContent).toBe("1 mark");
+        // A status frame that changes no mark keeps the Remove button, so a
+        // press on it is not lost.
+        const remove = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Remove");
+        store.set({ snapshot: { ...store.get().snapshot } });
+        expect(Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Remove")).toBe(remove);
         await settle();
         expect(root.querySelector(".align-fit")?.textContent).toContain("one mark: a shift");
         expect(root.querySelector(".align-fit")?.textContent).toContain("shift X 0.100");

@@ -85,7 +85,7 @@ function followStep(state: AppState): Step {
         label: "Map on",
         done: following || planned.kind === "on",
         hint: `Pick height map: auto beside Run; the chip there says map on once a run will follow the map. Now: ${planned.detail}`,
-        panel: "jobs",
+        panel: "run",
     };
 }
 
@@ -95,7 +95,7 @@ function runStep(state: AppState): Step {
         label: "Run",
         done: progress !== null && progress.job === state.job?.id && progress.state === "done",
         hint: "Press Run; while it lasts the status bar says whether it follows the map.",
-        panel: "jobs",
+        panel: "run",
     };
 }
 
@@ -215,6 +215,7 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
 
     let chosen = readStored(`${key}.setup`);
     let offered = "";
+    let drawn = "";
     pick.addEventListener("change", () => {
         chosen = pick.value;
         writeStored(`${key}.setup`, chosen);
@@ -232,6 +233,22 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
         pick.value = setup.id;
         const steps = setup.steps(state);
         const states = stepStates(steps);
+        // Rebuilt only when what the row shows changes: the store changes
+        // with every status report, and a button replaced between a press
+        // and its release takes no click.
+        const shown = JSON.stringify([setup.id, steps.map((step) => [step.label, step.hint, step.panel]), states]);
+        if (shown !== drawn) {
+            drawn = shown;
+            drawSteps(steps, states);
+        }
+        const at = states.indexOf("next");
+        next.textContent = at < 0 ? "Every step is done." : `Next, ${steps[at]!.label}: ${steps[at]!.hint}`;
+        const done = states.filter((entry) => entry === "done").length;
+        count.textContent = `${done} of ${steps.length}`;
+        count.setAttribute("data-apply", done === steps.length ? "applied" : "pending");
+    }
+
+    function drawSteps(steps: Step[], states: StepState[]): void {
         replace(list, ...steps.map((step, index) => {
             const item = el("li", { class: "roadmap-step", "data-step": states[index]! },
                 el("button", { type: "button", class: "roadmap-button", title: step.hint, onclick: () => goToPanel(step.panel) },
@@ -249,11 +266,6 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
         if (current && list.scrollWidth > list.clientWidth) {
             list.scrollLeft = Math.max(0, current.offsetLeft - (list.clientWidth - current.offsetWidth) / 2);
         }
-        const at = states.indexOf("next");
-        next.textContent = at < 0 ? "Every step is done." : `Next, ${steps[at]!.label}: ${steps[at]!.hint}`;
-        const done = states.filter((entry) => entry === "done").length;
-        count.textContent = `${done} of ${steps.length}`;
-        count.setAttribute("data-apply", done === steps.length ? "applied" : "pending");
     }
 
     ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components", "device", "pnpTarget"]);
