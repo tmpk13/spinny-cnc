@@ -611,3 +611,28 @@ def test_a_config_save_reads_the_config_again_when_another_thread_changed_it(cli
     client.backend._save_config()
     monkeypatch.setattr(app_module.json, "dumps", real)
     assert calls["n"] == 2 and '"travel": 7.5' in (tmp_path / "config.json").read_text()
+
+
+def test_two_saves_of_one_device_profile_at_once_both_succeed(tmp_path):
+    from spinny_web.openpnp import DeviceStore
+
+    store = DeviceStore(tmp_path / "pnp")
+    text = SHIPPED.read_text(encoding="utf-8")
+    failures: list[Exception] = []
+    for round_ in range(20):
+        barrier = threading.Barrier(2)
+
+        def save(name: str) -> None:
+            barrier.wait()
+            try:
+                store.save("rig", text.replace('name = "', f'name = "{name} ', 1))
+            except Exception as exc:
+                failures.append(exc)
+
+        threads = [threading.Thread(target=save, args=(name,)) for name in (f"A{round_}", f"B{round_}")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    assert failures == []
+    assert sorted(path.name for path in (tmp_path / "pnp").iterdir()) == ["rig.toml"]

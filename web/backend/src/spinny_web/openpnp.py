@@ -23,13 +23,14 @@ turns with the nozzle as the part is turned to its angle.
 from __future__ import annotations
 
 import math
-import os
 import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from spinny_laser.align import Fit, fit_rigid
+
+from .cam import write_whole
 
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 AXIS = re.compile(r"^[A-Z]$")
@@ -423,9 +424,9 @@ class DeviceStore:
             text += "\n"
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(path.name + ".tmp")
-            temporary.write_text(text, encoding="utf-8")
-            os.replace(temporary, path)
+            # Through a temporary of its own: two saves at once each move a
+            # whole file, where a shared one left the second without its own.
+            write_whole(path, text)
         except OSError as exc:
             raise DeviceError(f"cannot write {path}: {exc.strerror or exc}") from exc
         return {"document": device.document(), "text": text}
