@@ -182,8 +182,18 @@ export function parsePoints(text: string): Point[] | string {
     return points;
 }
 
+/**
+ * A kept number as a field shows it: to the micron when that reads back as
+ * the very number, else every digit it takes (1/16 in is 1.5875), so an
+ * operation put back in the fields reads as it was kept.
+ */
+export function fieldText(value: number): string {
+    const short = formatMm(value);
+    return Number(short) === value ? short : String(value);
+}
+
 export function pointsText(points: Point[]): string {
-    return points.map(([x, y]) => `${formatMm(x)}, ${formatMm(y)}`).join("\n");
+    return points.map(([x, y]) => `${fieldText(x)}, ${fieldText(y)}`).join("\n");
 }
 
 /** A job's holes by size, smallest first, with how many there are of each. */
@@ -267,6 +277,12 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     let ops: MillOperation[] | null = null;
     let editing: number | null = null;
     let editingHoles: { job: string | null; holes: HolePoint[] } | null = null;
+    // The corners the center and size fields were last written from, and
+    // the texts written: while the fields still read so, the rectangle is
+    // those corners to the last digit, not to the micron the fields show,
+    // so an operation put in them, or a rectangle carried from its
+    // corners, reads back as it was.
+    let centerFrom: { texts: string[]; corners: [number, number, number, number] } | null = null;
 
     const field = (value: number | undefined, fallback: number, options: { min?: number; step?: number } = {}): HTMLInputElement =>
         numberField({ value: typeof value === "number" && Number.isFinite(value) ? value : fallback, ...options });
@@ -476,6 +492,25 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         });
     }
 
+    /** Each field given a kept number, every digit it takes to read back as it. */
+    function fillKept(inputs: HTMLInputElement[], values: readonly number[]): void {
+        inputs.forEach((input, index) => {
+            input.value = fieldText(values[index] ?? 0);
+        });
+    }
+
+    /** The center and size fields written from a rectangle's corners, which they stand for while they read as written. */
+    function writeCenter(corners: [number, number, number, number]): void {
+        fill([rcx, rcy, rw, rh], centerOf(...corners));
+        centerFrom = { texts: [rcx, rcy, rw, rh].map((input) => input.value), corners };
+    }
+
+    /** The corners the center and size fields were written from, while they still read as written; else null. */
+    function keptCenter(): [number, number, number, number] | null {
+        const from = centerFrom;
+        return from !== null && [rcx, rcy, rw, rh].every((input, index) => input.value === from.texts[index]) ? from.corners : null;
+    }
+
     function appendPoint(point: Point): void {
         const text = points.value.trimEnd();
         points.value = `${text}${text ? "\n" : ""}${formatMm(point[0])}, ${formatMm(point[1])}`;
@@ -487,12 +522,17 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         if (mode === rectMode) {
             return;
         }
+        const kept = mode === "corners" ? keptCenter() : null;
         const from = mode === "center" ? [x0, y0, x1, y1] : [rcx, rcy, rw, rh];
         const values = from.map((input) => parseNumber(input.value));
-        if (values.every((value): value is number => value !== null)) {
+        if (kept !== null) {
+            // The center fields untouched since they were written from
+            // these corners: the corners as they were, every digit.
+            fillKept([x0, y0, x1, y1], kept);
+        } else if (values.every((value): value is number => value !== null)) {
             const [a, b, c, d] = values as [number, number, number, number];
             if (mode === "center") {
-                fill([rcx, rcy, rw, rh], centerOf(a, b, c, d));
+                writeCenter([a, b, c, d]);
             } else {
                 fill([x0, y0, x1, y1], cornersOf(a, b, c, d));
             }
@@ -557,7 +597,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             if (numbers.rw < 0 || numbers.rh < 0) {
                 return "the width and the height are 0 or more";
             }
-            [numbers.x0, numbers.y0, numbers.x1, numbers.y1] = cornersOf(numbers.rcx, numbers.rcy, numbers.rw, numbers.rh);
+            [numbers.x0, numbers.y0, numbers.x1, numbers.y1] = keptCenter() ?? cornersOf(numbers.rcx, numbers.rcy, numbers.rw, numbers.rh);
         }
         let list: Point[] = [];
         if (needs.points) {
@@ -613,24 +653,20 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         setPressed(shapes, SHAPES.find((entry) => entry.shape === shape)!.label);
         setPressed(sides, SIDES.find((entry) => entry.side === side)!.label);
         setPressed(directions, climb ? "Climb" : "Conventional");
-        (full.cutter === "laser" ? spot : tool).value = formatMm(full.tool);
+        // Every number as kept, so the fields read back as this operation.
+        (full.cutter === "laser" ? spot : tool).value = fieldText(full.tool);
         power.value = String(full.power ?? DEFAULTS.power);
         passes.value = String(full.passes ?? DEFAULTS.passes);
-        depth.value = formatMm(full.depth);
-        stepDown.value = formatMm(full.step_down);
+        depth.value = fieldText(full.depth);
+        stepDown.value = fieldText(full.step_down);
         stepover.value = String(full.stepover);
         speed.value = String(full.speed);
         plunge.value = String(full.plunge);
         spindle.value = String(full.spindle);
-        x0.value = formatMm(full.x0);
-        y0.value = formatMm(full.y0);
-        x1.value = formatMm(full.x1);
-        y1.value = formatMm(full.y1);
-        fill([rcx, rcy, rw, rh], centerOf(full.x0, full.y0, full.x1, full.y1));
-        corner.value = formatMm(full.corner ?? 0);
-        cx.value = formatMm(full.cx);
-        cy.value = formatMm(full.cy);
-        diameter.value = formatMm(full.diameter);
+        fillKept([x0, y0, x1, y1], [full.x0, full.y0, full.x1, full.y1]);
+        writeCenter([full.x0, full.y0, full.x1, full.y1]);
+        corner.value = fieldText(full.corner ?? 0);
+        fillKept([cx, cy, diameter], [full.cx, full.cy, full.diameter]);
         points.value = pointsText(full.points);
         closed.checked = full.closed;
         bore.checked = full.bore;

@@ -12,7 +12,7 @@ import { GRID_KEY, Preview, formatTick, gridLinesIn } from "../src/preview.ts";
 import type { HolePoint, Job, MillOperation, MillResponse, Path } from "../src/types.ts";
 import { PAGES } from "../src/views/tabs.ts";
 import { headPosition, mountMarkers, nextMarkerName, withMarker } from "../src/views/markers.ts";
-import { MILL_KEY, PLAN_DELAY_MS, holeSizes, millNeeds, mountMill, parsePoints, pointsText } from "../src/views/mill.ts";
+import { MILL_KEY, PLAN_DELAY_MS, fieldText, holeSizes, millNeeds, mountMill, parsePoints, pointsText } from "../src/views/mill.ts";
 import { mountJobs, widthMode } from "../src/views/jobs.ts";
 import { mountPreviewPanel } from "../src/views/previewpanel.ts";
 import { click, connected, dialogButton, findButton, settle, setup } from "./harness.ts";
@@ -68,6 +68,9 @@ describe("the operation's fields", () => {
         expect(parsePoints("1, 2\n\n-3.5 4\n5;6")).toEqual([[1, 2], [-3.5, 4], [5, 6]]);
         expect(parsePoints("1, 2\nthree")).toBe("line 2 is not x, y: three");
         expect(pointsText([[1, 2.5]])).toBe("1.000, 2.500");
+        // A number with more than three decimals keeps them, to read back as it.
+        expect(pointsText([[1.5875, 25.4 / 3]])).toBe(`1.5875, ${25.4 / 3}`);
+        expect([fieldText(0), fieldText(0.79375), fieldText(-3.25)]).toEqual(["0.000", "0.79375", "-3.250"]);
     });
 
     test("each kind asks for its own fields", () => {
@@ -182,6 +185,43 @@ describe("Plot page", () => {
         expect(store.get().job!.recipe?.ops?.map((op) => op.kind)).toEqual(["pocket"]);
         expect(calls.filter((call) => call.name === "makeMill").length).toBe(5);
         tab.remove();
+    });
+
+    test("an operation taken back in the fields reads as it was kept: an inch bit, arithmetic, either way a rectangle is given", async () => {
+        const { root, store } = mountPage();
+        const badge = (): string => root.querySelector(".plot-state")?.getAttribute("data-state") ?? "";
+        type(input(root, "Bit mm"), "1/16 in");
+        click(root, "Pocket");
+        type(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner x"]')[1]!, "25.4/3");
+        type(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner y"]')[1]!, "10");
+        click(root, "New job");
+        await wait(30);
+        click(root, "Drill");
+        type(input(root, "Points"), "30, 5");
+        click(root, "Add to job");
+        await wait(30);
+        expect(store.get().job!.recipe?.ops?.map((op) => op.tool)).toEqual([1.5875, 1.5875]);
+        findButton(root, "pocket 8.467 x 10 at 4.233, 5").click();
+        expect(input(root, "Bit mm").value).toBe("1.5875");
+        expect(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner x"]')[1]!.value).toBe(String(25.4 / 3));
+        expect(input(root, "Depth mm").value).toBe("0.500");
+        expect(badge()).toBe("applied");
+        expect(store.get().pending["plot"]).toBeUndefined();
+        // The same rectangle given by its center and size still reads as
+        // kept, shown to the micron, and carried back to its corners.
+        click(root, "Center and size");
+        expect(input(root, "Width").value).toBe("8.467");
+        expect(badge()).toBe("applied");
+        findButton(root, "pocket 8.467 x 10 at 4.233, 5").click();
+        expect(badge()).toBe("applied");
+        click(root, "Corners");
+        expect(badge()).toBe("applied");
+        type(input(root, "Depth mm"), "0.8");
+        click(root, "Apply");
+        await wait(30);
+        const first = store.get().job!.recipe!.ops![0]!;
+        expect([first.depth, first.tool, first.x1]).toEqual([0.8, 1.5875, 25.4 / 3]);
+        expect(badge()).toBe("applied");
     });
 
     test("a rectangle by its center and size, with rounded corners, and its sizes drawn as a sketch's", async () => {
