@@ -263,7 +263,10 @@ def test_the_resume_route_plans_and_picks_the_job_up(client, fake, tmp_path):
     fake.received_lines.clear()
     response = client.post(f"/api/jobs/{job_id}/resume", json={"line": 5, "rewind": False})
     assert response.status_code == 200, response.text
-    assert response.json()["resumed_from"] == 5 and response.json()["acked"] == 5
+    # The thread is off as soon as the start returns, so the counts may
+    # have moved on by a line or two; they began at the line picked.
+    started = response.json()
+    assert started["resumed_from"] == 5 and 5 <= started["acked"] <= started["sent"]
     progress = wait_run(client)
     assert progress["state"] == "done" and progress["resumed_from"] == 5
     sent = [line for line in fake.received_lines if not line.startswith(("$", "?", "status"))]
