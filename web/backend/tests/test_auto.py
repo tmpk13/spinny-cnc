@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import stat
 import sys
 import threading
@@ -657,7 +658,9 @@ def test_the_claude_code_command_line_keeps_it_to_the_spinny_tools():
 
 
 FAKE_CLAUDE = """#!{python}
-import json, os, sys, time
+import json, os, signal, sys, time
+if os.environ.get("FAKE_CLAUDE_DEAF"):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 prompt = sys.stdin.read()
 with open(os.environ["FAKE_CLAUDE_LOG"], "a") as log:
     log.write(json.dumps({{"argv": sys.argv[1:], "prompt": prompt, "pid": os.getpid()}}) + "\\n")
@@ -762,6 +765,48 @@ def test_a_stop_ends_the_claude_command_and_the_conversation_goes_on(tmp_path, m
     pid = json.loads(log.read_text().splitlines()[0])["pid"]
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_a_new_chat_or_a_second_stop_during_a_stop_still_ends_the_claude_command(tmp_path, monkeypatch):
+    # A claude that does not end on the interrupt, as the terminate and the
+    # kill after it are there for.
+    log = tmp_path / "log.jsonl"
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    monkeypatch.setenv("FAKE_CLAUDE_HANG", "1")
+    monkeypatch.setenv("FAKE_CLAUDE_DEAF", "1")
+    script = fake_claude(tmp_path)
+    for second in ("clear", "stop", "cancel"):
+        log.write_text("")
+        agent, _ = agent_for(tmp_path, lambda name: str(script))
+
+        async def go():
+            agent.send("hang")
+            while not any(entry.role == "tool" for entry in agent.entries):
+                await asyncio.sleep(0.01)
+            stopping = asyncio.ensure_future(agent.stop())
+            await asyncio.sleep(0.5)
+            if second == "cancel":
+                # As a shutdown cancels what is left.
+                agent._task.cancel()
+            else:
+                await (agent.clear() if second == "clear" else agent.stop())
+            await stopping
+
+        pid = None
+        try:
+            asyncio.run(go())
+            pid = json.loads(log.read_text().splitlines()[0])["pid"]
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+            assert not agent.busy
+        finally:
+            if pid is None and log.read_text().strip():
+                pid = json.loads(log.read_text().splitlines()[0])["pid"]
+            if pid is not None:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_a_missing_claude_command_is_said_in_the_conversation(tmp_path):

@@ -17,7 +17,7 @@ import asyncio
 import json
 import os
 import signal
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +64,26 @@ def command(binary: str, python: str, api_url: str, system: str, model: str = ""
     if session:
         argv += ["--resume", session]
     return argv
+
+
+async def _to_the_end(work: Coroutine[Any, Any, None]) -> None:
+    """Runs `work` to its end even when the caller is cancelled on the way
+    (a shutdown during a stop), then lets the cancel through: the command
+    ended part way would be left running in its own session, free to go on
+    calling the tools."""
+    task = asyncio.ensure_future(work)
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                raise
+            cancelled = True
+            continue
+        break
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def _flat(content: Any) -> str:
@@ -246,7 +266,7 @@ class ClaudeCodeSession:
             stopped = True
             raise
         finally:
-            await self._end(process, kill=not ended)
+            await _to_the_end(self._end(process, kill=not ended))
             stderr = await self._errors(errors)
             if reader.pending and not stopped:
                 reader.unanswered("no answer: Claude Code ended first")

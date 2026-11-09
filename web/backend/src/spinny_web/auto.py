@@ -624,7 +624,12 @@ class Agent:
     async def stop(self) -> dict:
         task = self._task
         if task is not None and not task.done():
-            task.cancel()
+            # Cancelled once: a second stop, or a new chat during the first,
+            # waits for that one to end, which a second cancel would cut
+            # short (the wait for a call under way, the claude command's
+            # interrupt, terminate and kill).
+            if not task.cancelling():
+                task.cancel()
             await asyncio.wait({task})
         return self.conversation()
 
