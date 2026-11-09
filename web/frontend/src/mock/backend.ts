@@ -3685,6 +3685,11 @@ export class MockBackend implements Api, EventFeed {
         if (job.recipe?.file) {
             throw new ApiError(400, `the file ${job.name} was imported from is no longer kept: import it again with the new width`);
         }
+        // A recipe with neither a file nor operations makes nothing again:
+        // the width is the number alone, as the backend gives it.
+        if (job.recipe) {
+            return { ...structuredClone(job), spot: width };
+        }
         throw new ApiError(400, `${job.name}'s paths were made for ${formatG(job.spot)} mm and nothing is kept to make them again: import it again with the new width`);
     }
 

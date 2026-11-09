@@ -1923,3 +1923,16 @@ describe("machine files read, checked, saved and removed in the mock", () => {
         await expect(backend.updateSettings({ values: { probe_pin: 11 } })).rejects.toBeInstanceOf(ApiError);
     });
 });
+
+describe("another width in the mock", () => {
+    test("is the number alone for a job whose recipe keeps neither a file nor operations, as the backend gives it", async () => {
+        const { backend } = backendWithLog();
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"><path d="M0 0 L5 0" stroke="#f00"/></svg>';
+        const job = await backend.uploadJob(new File([svg], "a.svg"), { anchor: "keep" });
+        const put = await backend.replaceJob(job.id, { ...job, recipe: { options: { mode: "isolate" } } } as unknown as Job);
+        expect(put.recipe).not.toBeNull();
+        const wider = await backend.setJobWidth(job.id, 0.3);
+        expect(wider.spot).toBe(0.3);
+        expect(wider.groups[0]!.paths).toEqual(job.groups[0]!.paths);
+    });
+});
