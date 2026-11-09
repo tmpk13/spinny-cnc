@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 
 import httpx
@@ -271,6 +272,30 @@ def test_arguments_that_do_not_fit_are_refused_before_any_request():
                 outcome = await box.call(name, arguments)
                 assert outcome.error, name
             assert (await box.call("list_jobs", [1, 2])).error
+        assert seen == []
+
+    asyncio.run(go())
+
+
+def test_numbers_and_text_json_cannot_carry_are_refused_before_any_request():
+    # What a model's parser can make of NaN, Infinity or 1e400, and of an
+    # unpaired surrogate escape: the schema's number and string take them,
+    # and the request body could not be written.
+    async def go():
+        box, seen = recording_box()
+        async with box:
+            for name, arguments, where in (
+                ("save_marker", {"name": "a", "x": math.inf, "y": 0}, "x: not a finite number"),
+                ("save_marker", {"name": "a", "x": 0, "y": -math.inf}, "y: not a finite number"),
+                ("save_marker", {"name": "a", "x": math.nan, "y": 0}, "x: not a finite number"),
+                ("plan_plot_job", {"kind": "drill", "points": [[1.0, 2.0], [math.inf, 0.0]], "tool": 1}, "points/1/0: not a finite number"),
+                ("make_job", {"filename": "a.svg", "content": "<svg>\ud800</svg>"}, "content: not valid text (an unpaired surrogate)"),
+                ("save_marker", {"name": "a\udfff", "x": 0, "y": 0}, "name: not valid text (an unpaired surrogate)"),
+                ("change_job", {"job_id": "a1b2", "\ud800": 1}, "\\ud800: not valid text (an unpaired surrogate)"),
+            ):
+                outcome = await box.call(name, arguments)
+                assert outcome.error and outcome.text == f"the arguments do not fit {name}: {where}", (name, outcome.text)
+                outcome.text.encode("utf-8")
         assert seen == []
 
     asyncio.run(go())

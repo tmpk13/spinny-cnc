@@ -904,6 +904,39 @@ def _short(message: str, limit: int = 300) -> str:
     return message if len(message) <= limit else message[:limit] + "..."
 
 
+def sendable(text: str) -> str:
+    """Text as UTF-8 takes it: an unpaired surrogate is written as its
+    backslash escape."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+NOT_FINITE = "not a finite number"
+NOT_TEXT = "not valid text (an unpaired surrogate)"
+
+
+def unfit(value: Any, path: tuple[str, ...] = ()) -> str | None:
+    """Where `value` holds what JSON cannot carry, and what it is: a number
+    that is not finite (NaN, an infinity, or a number too large for a float,
+    which a parser reads as one), or text that is not valid Unicode (an
+    unpaired surrogate), a key's included. None when it holds neither. A
+    model's parser can make either, and the schema's number and string take
+    both."""
+    where = sendable("/".join(path)) or "arguments"
+    if isinstance(value, float):
+        return None if math.isfinite(value) else f"{where}: {NOT_FINITE}"
+    if isinstance(value, str):
+        return None if sendable(value) == value else f"{where}: {NOT_TEXT}"
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+    for key, item in items:
+        inner = (*path, str(key))
+        if isinstance(key, str) and sendable(key) != key:
+            return f"{sendable('/'.join(inner))}: {NOT_TEXT}"
+        problem = unfit(item, inner)
+        if problem is not None:
+            return problem
+    return None
+
+
 class ToolBox:
     """The tools over one client: arguments checked against the tool's
     schema, the call made, the answer turned into what the model reads."""
@@ -941,6 +974,11 @@ class ToolBox:
             arguments = {}
         if not isinstance(arguments, dict):
             return Outcome("the arguments must be a JSON object", True)
+        # Before the schema, whose messages quote the values: the request
+        # could not be written, and neither could an answer quoting them.
+        problem = unfit(arguments)
+        if problem is not None:
+            return Outcome(f"the arguments do not fit {name}: {problem}", True)
         problems = sorted(tool.validator.iter_errors(arguments), key=lambda error: [str(part) for part in error.path])
         if problems:
             said = "; ".join(f"{'/'.join(str(part) for part in error.path) or 'arguments'}: {_short(error.message)}" for error in problems[:5])

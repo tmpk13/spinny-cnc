@@ -200,6 +200,28 @@ def test_a_stop_during_a_tool_call_answers_every_call(client):
     assert all(error and "stopped" in text for _, text, error in chat.results[0])
 
 
+def test_a_turn_that_fails_in_a_call_ends_the_call_and_says_why(client):
+    class Broken:
+        async def call(self, name, arguments):
+            raise RuntimeError("boom")
+
+        async def aclose(self):
+            pass
+
+    client.agent.toolbox = Broken
+    chat = FakeChat(Reply(text="", calls=[Call("a", "list_jobs", {}), Call("b", "list_markers", {})], stop="tool_use"))
+    use(client.agent, chat)
+    client.post("/api/auto/messages", json={"text": "go"})
+    state = settle(client)
+    assert roles(state) == ["user", "tool", "error"]
+    tool = state["entries"][1]
+    assert tool["done"] and tool["error"] and "boom" in tool["result"]
+    # The model is told what happened, not that the operator stopped it.
+    told = {call.id: text for call, text, _ in chat.results[0]}
+    assert "boom" in told["a"] and told["b"].startswith("not run: the turn failed")
+    assert not any("operator" in text for text in told.values())
+
+
 def test_a_provider_that_fails_is_an_error_in_the_conversation(client):
     async def refuse(on_text):
         raise ProviderError("no Anthropic credentials: set ANTHROPIC_API_KEY")
@@ -476,6 +498,60 @@ def test_the_openai_provider_round_trips_a_tool_call(client):
     assert after[2]["role"] == "assistant" and [call["id"] for call in after[2]["tool_calls"]] == ["call_1", "call_2"]
     assert after[3] == {"role": "tool", "tool_call_id": "call_1", "content": good["result"]}
     assert after[4]["tool_call_id"] == "call_2" and after[4]["content"].startswith("error: ")
+
+
+def strict_json(text: str):
+    """JSON as a browser reads it: no NaN or Infinity."""
+
+    def refuse(constant: str):
+        raise ValueError(f"{constant} is not JSON")
+
+    return json.loads(text, parse_constant=refuse)
+
+
+def test_a_call_with_nan_or_a_lone_surrogate_is_refused_and_the_conversation_still_loads(client):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        if len(bodies) == 1:
+            written = [
+                ("save_marker", '{"name": "corner", "x": NaN, "y": 0}'),
+                ("plan_plot_job", '{"kind": "drill", "points": [[1e400, 0]], "tool": 1}'),
+                ("make_job", '{"filename": "a.svg", "content": "<svg>\\ud800</svg>"}'),
+            ]
+            calls = [{"id": f"call_{i}", "type": "function", "function": {"name": name, "arguments": arguments}} for i, (name, arguments) in enumerate(written)]
+            return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": calls}, "finish_reason": "tool_calls"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "Those did not read."}, "finish_reason": "stop"}]})
+
+    def make(agent, choice):
+        return ChatSession(OpenAIChat(choice.base_url, choice.model, None, SYSTEM_PROMPT, TOOLS, transport=httpx.MockTransport(handler)), agent.max_calls)
+
+    client.agent.factories["openai"] = make
+    client.put("/api/auto/settings", json={"provider": "openai", "model": "llama3.1"})
+    with client.websocket_connect("/ws") as socket:
+        assert socket.receive_json()["type"] == "state"
+        assert client.post("/api/auto/messages", json={"text": "a marker, a drill, a drawing"}).status_code == 200
+        while True:
+            # Every event reads as JSON in the page.
+            event = strict_json(socket.receive_text())
+            if event["type"] == "auto" and event["entry"] is None and not event["busy"]:
+                break
+    response = client.get("/api/auto/conversation")
+    assert response.status_code == 200, response.text
+    state = strict_json(response.text)
+    assert roles(state) == ["user", "tool", "tool", "tool", "assistant"], state
+    tools = state["entries"][1:4]
+    assert all(tool["done"] and tool["error"] for tool in tools)
+    assert tools[0]["result"] == "the arguments do not fit save_marker: x: not a finite number"
+    assert tools[1]["result"] == "the arguments do not fit plan_plot_job: points/0/0: not a finite number"
+    assert tools[2]["result"] == "the arguments do not fit make_job: content: not valid text (an unpaired surrogate)"
+    # What the model wrote is shown as text JSON can carry.
+    assert tools[0]["arguments"] == {"unreadable": '{"name": "corner", "x": NaN, "y": 0}'}
+    assert state["entries"][-1]["text"] == "Those did not read."
+    answers = [message for message in bodies[1]["messages"] if message["role"] == "tool"]
+    assert [answer["content"] for answer in answers] == ["error: " + tool["result"] for tool in tools]
+    assert client.get("/api/markers").json()["markers"] == [] and client.get("/api/jobs").json()["jobs"] == []
 
 
 def test_the_openai_provider_sends_a_key_only_when_there_is_one_and_needs_a_model():

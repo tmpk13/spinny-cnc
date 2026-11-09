@@ -31,7 +31,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from .log import log
-from .tools import GUIDE, TOOLS, Outcome, ToolBox
+from .tools import GUIDE, TOOLS, Outcome, ToolBox, sendable, unfit
 
 # A turn's tool calls at most: past it the turn ends, and the model is told
 # why for the calls it asked for and did not get.
@@ -194,12 +194,15 @@ class ChatSession:
                 return
             results: list[tuple[Call, str, bool]] = []
             capped = False
+            current: Call | None = None
+            why = "the operator stopped the turn"
             try:
                 for call in reply.calls:
                     if sink.calls >= self.max_calls:
                         results.append((call, f"not run: a turn makes at most {self.max_calls} tool calls", True))
                         capped = True
                         continue
+                    current = call
                     shown = call.arguments if call.arguments is not None else {"unreadable": call.raw}
                     entry = sink.tool_started(call.name, shown)
                     if call.arguments is None:
@@ -208,9 +211,15 @@ class ChatSession:
                         outcome = await sink.call(call.name, call.arguments)
                     sink.tool_finished(entry, outcome)
                     results.append((call, outcome.text, outcome.error))
+                    current = None
+            except Exception as exc:
+                why = f"the turn failed: {exc!r}"
+                if current is not None:
+                    results.append((current, f"failed: {exc!r}", True))
+                raise
             finally:
                 answered = {id(call) for call, _, _ in results}
-                results += [(call, "not run: the operator stopped the turn", True) for call in reply.calls if id(call) not in answered]
+                results += [(call, f"not run: {why}", True) for call in reply.calls if id(call) not in answered]
                 self.chat.add_results(results)
             if capped:
                 sink.notice(f"Stopped after {self.max_calls} tool calls in one turn: send a message to go on.")
@@ -252,7 +261,12 @@ class Sink:
     def tool_started(self, name: str, arguments: Any) -> Entry:
         self.end_text()
         self.calls += 1
-        return self.agent._add(Entry(role="tool", name=name, arguments=arguments, done=False))
+        if unfit(arguments) is not None:
+            # A number JSON cannot carry (NaN, an infinity) or text that is
+            # not Unicode would keep the conversation from being sent at
+            # all: the call is kept as the text JSON makes of it.
+            arguments = {"unreadable": json.dumps(arguments, ensure_ascii=True)}
+        return self.agent._add(Entry(role="tool", name=sendable(name), arguments=arguments, done=False))
 
     def tool_finished(self, entry: Entry, outcome: Outcome) -> None:
         entry.result = outcome.text
@@ -274,18 +288,27 @@ class Sink:
         self.end_text()
         self.agent._add(Entry(role="error", text=text))
 
-    def stopped(self) -> None:
-        """The operator stopped the turn: whatever was under way is done,
-        an answer with what it had written, a call as stopped."""
+    def _close(self, result: str) -> None:
+        """Whatever was under way is done: an answer with what it had
+        written, a call with `result`."""
         self._text = None
         for entry in self.agent.entries:
             if not entry.done:
                 entry.done = True
                 if entry.role == "tool":
-                    entry.result = "stopped by the operator"
+                    entry.result = result
                     entry.error = True
                 self.agent._update(entry)
+
+    def stopped(self) -> None:
+        """The operator stopped the turn: a call under way as stopped."""
+        self._close("stopped by the operator")
         self.agent._add(Entry(role="notice", text="Stopped."))
+
+    def failed(self, text: str) -> None:
+        """The turn ended on an error: a call under way ends with it."""
+        self._close(text)
+        self.agent._add(Entry(role="error", text=text))
 
     async def close(self) -> None:
         toolbox, self._toolbox = self._toolbox, None
@@ -522,10 +545,10 @@ class Agent:
             sink.stopped()
             raise
         except ProviderError as exc:
-            sink.error(str(exc))
+            sink.failed(str(exc))
         except Exception as exc:
             log.exception("auto: the turn failed")
-            sink.error(f"the turn failed: {exc!r}")
+            sink.failed(f"the turn failed: {exc!r}")
         finally:
             sink.end_text()
             await sink.close()
