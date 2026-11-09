@@ -93,8 +93,14 @@ export interface AppState {
     jobs: JobSummary[];
     /** The selected job in full. */
     job: Job | null;
-    /** The paths picked in the preview, of the job named; null with none picked. */
-    selection: { job: string; paths: PathRef[] } | null;
+    /**
+     * The paths picked in the preview, of the job named; null with none
+     * picked. `draft` marks paths picked on the JSON panel's edit: they are
+     * the edit's group and path indices, which need not be the stored
+     * job's, so they find their place in the text and nothing acts on them
+     * in the stored job.
+     */
+    selection: { job: string; paths: PathRef[]; draft?: boolean } | null;
     /** The job as the JSON panel's text has it while it is edited, drawn in the stored one's place; null with no edit. */
     jobDraft: Job | null;
     /** The selected job with the copies the Jobs panel's array fields would add, drawn on the preview until they are made or let go. */

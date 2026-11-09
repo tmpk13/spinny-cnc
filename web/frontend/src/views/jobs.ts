@@ -820,11 +820,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         ctx.toast("info", `${result.refs.length} ${result.refs.length === 1 ? "copy" : "copies"} added to ${job.name}`);
     }
 
-    /** The picked paths of the selected job, those it still has. */
+    /** The picked paths of the selected job, those it still has; paths picked on the JSON panel's edit are the edit's, not its. */
     function picked(state: AppState): PathRef[] {
         const job = state.job;
         const selection = state.selection;
-        return job !== null && selection !== null && selection.job === job.id ? tidyRefs(job, selection.paths) : [];
+        return job !== null && selection !== null && selection.job === job.id && !selection.draft ? tidyRefs(job, selection.paths) : [];
     }
 
     function renderPicked(state: AppState): void {
@@ -1302,7 +1302,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
             name.addEventListener("click", (event) => {
                 const refs = groupRefs(job, index);
                 const selection = ctx.store.get().selection;
-                const current = selection !== null && selection.job === job.id ? selection.paths : [];
+                const current = selection !== null && selection.job === job.id && !selection.draft ? selection.paths : [];
                 ctx.store.set({ selection: { job: job.id, paths: boxedAfter(current, refs, event.shiftKey) } });
             });
             const body = el("tbody", { class: group.enabled ? "" : "disabled" },

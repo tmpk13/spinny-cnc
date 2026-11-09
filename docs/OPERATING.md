@@ -46,7 +46,9 @@ led by its job's (the jobs themselves stay; jobs made for different tools
 do not combine). The *Job JSON* panel under the preview
 shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
-is drawn as it is typed and kept with *Apply*.
+is drawn as it is typed and kept with *Apply*. A path picked on an edit
+not yet applied is only found in the text: the Jobs panel moves, deletes
+and copies the paths of the job as it is kept.
 The preview's *Top view* looks straight down, the board square to the
 canvas, and *CCW 90* and *CW 90* turn it a quarter. *Speed* draws every
 cut by the speed it runs at, violet for the job's slowest through yellow

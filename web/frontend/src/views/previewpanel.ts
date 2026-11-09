@@ -165,27 +165,34 @@ export function mountPreviewPanel(
         scrub.max = String(total);
         setScrub(reset || wasEnd ? total : Number(scrub.value));
     }
-    // Picks are of the stored job: a Plot page plan, not stored, has none.
-    const pickable = (): Job | null => {
-        const job = show(ctx.store.get());
-        return job !== null && job.id !== "" ? job : null;
+    // Whose group and path indices a pick on the job shown is: the stored
+    // job's (the copies an array would add come after its own paths), the
+    // JSON panel's edit's, which need not be the stored job's, or none for
+    // a Plot page plan, which nothing acts on.
+    const pickedOn = (state: AppState, job: Job | null): "stored" | "draft" | null => {
+        if (job === null) {
+            return null;
+        }
+        if (job === state.job || job === state.arrayDraft) {
+            return "stored";
+        }
+        return job === state.jobDraft ? "draft" : null;
     };
-    const current = (job: Job): PathRef[] => {
-        const selection = ctx.store.get().selection;
-        return selection !== null && selection.job === job.id ? selection.paths : [];
+    /** The paths picked on the job shown so far, those of picks of the same kind. */
+    const current = (state: AppState, job: Job, on: "stored" | "draft"): PathRef[] => {
+        const selection = state.selection;
+        return selection !== null && selection.job === job.id && (selection.draft === true) === (on === "draft") ? selection.paths : NONE;
     };
-    preview.onPick = (ref, additive) => {
-        const job = pickable();
-        if (job) {
-            ctx.store.set({ selection: { job: job.id, paths: pickedAfter(current(job), ref, additive) } });
+    const pick = (after: (picked: PathRef[]) => PathRef[]): void => {
+        const state = ctx.store.get();
+        const job = show(state);
+        const on = pickedOn(state, job);
+        if (job !== null && on !== null) {
+            ctx.store.set({ selection: { job: job.id, paths: after(current(state, job, on)), ...(on === "draft" ? { draft: true } : {}) } });
         }
     };
-    preview.onBox = (refs, additive) => {
-        const job = pickable();
-        if (job) {
-            ctx.store.set({ selection: { job: job.id, paths: boxedAfter(current(job), refs, additive) } });
-        }
-    };
+    preview.onPick = (ref, additive) => pick((picked) => pickedAfter(picked, ref, additive));
+    preview.onBox = (refs, additive) => pick((picked) => boxedAfter(picked, refs, additive));
     root.append(
         el("div", { class: "panel-head" },
             el("h2", {}, "Preview"),
@@ -221,11 +228,13 @@ export function mountPreviewPanel(
         preview.setJob(job, keep);
         showScrub(another);
     }, ["job", "millPlan", "jobDraft", "arrayDraft"]);
-    // The picked paths and the JSON panel's place, for the job shown.
+    // The picked paths and the JSON panel's place, for the job shown: picks
+    // of the stored job are not drawn on an edit, nor an edit's on the
+    // stored job, as their indices need not name the same paths.
     ctx.store.subscribe((state) => {
         const job = show(state);
-        const selection = state.selection;
-        preview.setSelection(job !== null && selection !== null && selection.job === job.id ? selection.paths : NONE);
+        const on = pickedOn(state, job);
+        preview.setSelection(job !== null && on !== null ? current(state, job, on) : NONE);
         const highlight = state.highlight;
         preview.setHighlight(job !== null && highlight !== null && highlight.job === job.id ? highlight : null);
     }, ["selection", "highlight", "job", "millPlan", "jobDraft", "arrayDraft"]);

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Camera } from "../src/camera.ts";
+import { formatJson } from "../src/jsontext.ts";
 import { defaultOperation } from "../src/mock/mill.ts";
 import { Preview } from "../src/preview.ts";
 import { boxedAfter, pickedAfter } from "../src/regroup.ts";
@@ -97,6 +98,66 @@ describe("picking paths in the preview", () => {
         press("pointermove", 60, 40);
         press("pointerup", 60, 40);
         expect(store.get().selection?.paths).toEqual([[0, 0], [1, 0]]);
+        preview.dispose();
+        root.remove();
+    });
+
+    test("a path picked on the JSON panel's edit is found in the text and never acted on in the stored job", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJobs(root, ctx);
+        mountJobJson(root, ctx);
+        const preview = mountPreviewPanel(root, ctx);
+        const canvasEl = root.querySelector("canvas.preview") as HTMLCanvasElement;
+        canvasEl.getBoundingClientRect = (() => ({ width: W, height: H, x: 0, y: 0, top: 0, left: 0, right: W, bottom: H, toJSON: () => ({}) })) as typeof canvasEl.getBoundingClientRect;
+        preview.resize();
+        const made = await api.uploadJob(new File([SVG], "lines.svg"), { anchor: "keep" });
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.id);
+        (root.querySelector("details.json-panel") as HTMLDetailsElement).open = true;
+        // The blue group's block moved above the red one: drawn, not kept.
+        const editor = root.querySelector("textarea.json-input") as HTMLTextAreaElement;
+        const text = JSON.parse(editor.value) as Job;
+        editor.value = formatJson({ ...text, groups: [...text.groups].reverse() });
+        editor.dispatchEvent(new Event("input"));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(shownJob(store.get())?.groups[0]!.label).toBe("stroke #0000ff");
+        preview.setCamera(topDown);
+        const scale = (H / 2) / Math.tan((20 * Math.PI) / 180) / 60;
+        const press = (type: string, x: number, y: number): void => {
+            canvasEl.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, button: 0, bubbles: true }));
+        };
+        press("pointerdown", W / 2 + 25 * scale, H / 2);
+        press("pointerup", W / 2 + 25 * scale, H / 2);
+        // The blue line, first in the edit, is found in the text.
+        expect(store.get().selection).toEqual({ job: made.id, paths: [[0, 0]], draft: true });
+        expect(editor.value.slice(editor.selectionStart, editor.selectionStart + 9)).toBe("[[20, 0],");
+        // The Jobs panel offers nothing to do with it: in the stored job
+        // [0, 0] is a red line.
+        expect((root.querySelector(".picked-row") as HTMLElement).classList.contains("hidden")).toBe(true);
+        // Once the edit is thrown away, the stored job's picks work again.
+        Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Revert")!.click();
+        press("pointerdown", W / 2 + 25 * scale, H / 2);
+        press("pointerup", W / 2 + 25 * scale, H / 2);
+        expect(store.get().selection).toEqual({ job: made.id, paths: [[1, 0]] });
+        expect((root.querySelector(".picked-row") as HTMLElement).classList.contains("hidden")).toBe(false);
+        preview.dispose();
+        root.remove();
+    });
+
+    test("a Plot page plan of a stored job takes no picks", async () => {
+        const { store, ctx, root } = setup();
+        const preview = mountPreviewPanel(root, ctx, (state) => state.millPlan ?? state.job);
+        const canvasEl = root.querySelector("canvas.preview") as HTMLCanvasElement;
+        canvasEl.getBoundingClientRect = (() => ({ width: W, height: H, x: 0, y: 0, top: 0, left: 0, right: W, bottom: H, toJSON: () => ({}) })) as typeof canvasEl.getBoundingClientRect;
+        preview.resize();
+        const job = lineJob();
+        store.set({ job, millPlan: { ...job, groups: [...job.groups].reverse() } });
+        preview.setCamera(topDown);
+        canvasEl.dispatchEvent(new PointerEvent("pointerdown", { clientX: W / 2, clientY: H / 2, pointerId: 1, button: 0, bubbles: true }));
+        canvasEl.dispatchEvent(new PointerEvent("pointerup", { clientX: W / 2, clientY: H / 2, pointerId: 1, button: 0, bubbles: true }));
+        expect(store.get().selection).toBeNull();
         preview.dispose();
         root.remove();
     });

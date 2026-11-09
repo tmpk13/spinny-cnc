@@ -261,11 +261,16 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         editor.addEventListener(type, follow);
     }
 
-    /** A path picked in the preview: the caret goes to its line, scrolled into view. */
+    /**
+     * A path picked in the preview: the caret goes to its line, scrolled
+     * into view. While the text is edited the preview shows the edit, so
+     * the picks whose indices are the text's are the edit's; until then,
+     * the stored job's.
+     */
     ctx.store.subscribe((state) => {
         const job = state.job;
         const selection = state.selection;
-        if (!job || !selection || selection.job !== job.id || selection.paths.length === 0 || editor.disabled || !body.open) {
+        if (!job || !selection || selection.job !== job.id || selection.paths.length === 0 || editor.disabled || !body.open || (selection.draft === true) !== dirty) {
             return;
         }
         const [group, path] = selection.paths[selection.paths.length - 1]!;
