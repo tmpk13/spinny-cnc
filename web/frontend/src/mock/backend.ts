@@ -3532,7 +3532,7 @@ export class MockBackend implements Api, EventFeed {
         const text = await file.text();
         let built: ReturnType<typeof buildJob>;
         try {
-            built = buildJob(this.newId(), file.name, text, options, this.limits());
+            built = buildJob(this.newId(), file.name, text, options, this.limits(), this.machine.milling());
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
@@ -3704,7 +3704,7 @@ export class MockBackend implements Api, EventFeed {
             return null;
         }
         const options: UploadOptions = { ...upload.options, ...(job.recipe.options as UploadOptions | null | undefined), ...changes };
-        const made = buildJob(job.id, upload.name, upload.text, options, this.limits()).job;
+        const made = buildJob(job.id, upload.name, upload.text, options, this.limits(), this.machine.milling()).job;
         if (job.design && made.design) {
             moveJob(made, job.design.rotation - made.design.rotation, 0, 0);
             moveJob(made, 0, job.design.shift[0] - made.design.shift[0], job.design.shift[1] - made.design.shift[1]);

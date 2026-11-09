@@ -262,7 +262,12 @@ circles; curves flattened; mm from the viewBox; one group per stroke
 color, and within a group whatever lies inside a closed shape is cut
 before the shape, so a part's holes and marks go before the outline that
 frees it, the deepest first, the drawing's order kept otherwise; a board's
-outline group cuts its cutouts before its edge the same way), `.gcode`/`.nc` (absolute
+outline group joins its pieces where their ends meet and cuts its cutouts
+before its edge the same way, and on a machine with a spindle the bit, the
+spot wide, runs half the spot outside the board's edge and inside each
+cutout, a cutout narrower than it going, switched off and on its line,
+into a group `board outline cutouts narrower than the bit, on their
+line`), `.gcode`/`.nc` (absolute
 X/Y `G0`/`G1` with `S` and `F`), `.json` (a job), a gerber of one layer
 (`.gbr`, or the Protel extensions kicad-cli gives its layers, `.gtl`,
 `.gbl`, `.gts`, `.gbs`, `.gtp`, `.gbp`, `.gto`, `.gbo`, `.gm1`; isolation

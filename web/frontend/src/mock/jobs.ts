@@ -826,6 +826,43 @@ export function demoCoupon(): CouponGeometry {
     };
 }
 
+/** Chords in each rounded corner of a bit's cut round the outline. */
+const CORNER_STEPS = 8;
+
+/**
+ * A board's outline as it is cut, the backend's way: a beam on the line
+ * (`radius` 0), a bit's middle `radius` off the board, so the board comes
+ * out the size it is drawn. The demo's outlines are rectangles along the
+ * axes, so each grows to the same rectangle `radius` bigger on every side
+ * with its corners rounded to `radius`, as the backend's round-joined
+ * offset draws it, from its lowest left point counterclockwise.
+ */
+export function outlineCut(outline: Path[], radius: number): Path[] {
+    if (!(radius > 0)) {
+        return outline;
+    }
+    return outline.map((path) => {
+        const xs = path.map(([x]) => x);
+        const ys = path.map(([, y]) => y);
+        const [x0, y0, x1, y1] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        const start: Point = [x0, y0 - radius];
+        const loop: Point[] = [start];
+        const corners: [number, number, number][] = [[x1, y0, -90], [x1, y1, 0], [x0, y1, 90], [x0, y0, 180]];
+        for (const [cx, cy, from] of corners) {
+            for (let i = 0; i <= CORNER_STEPS; i += 1) {
+                const angle = ((from + (90 * i) / CORNER_STEPS) * Math.PI) / 180;
+                loop.push([cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+            }
+        }
+        // The last corner ends where the loop began.
+        loop[loop.length - 1] = start;
+        return loop;
+    });
+}
+
+/** The groups that cut a board's outline: the demo coupon's, and the backend's name for it. */
+const OUTLINE_GROUPS = ["outline", "board outline pass 1"];
+
 /** A stencil's openings are shrunk by at most this much on every side, mm, as the backend bounds the margin. */
 export const MAX_MARGIN = 10;
 /** Room for the beam narrower than this is none, mm, as the backend leaves a hairline. */
@@ -1422,8 +1459,12 @@ function flipped<T extends { groups: { label: string; paths: Path[] }[]; copper?
 }
 const FILL_CHOICES: string[] = ["contour", "radial", "rings", "lines"];
 
-/** Turns an uploaded file into a job the way the backend would, as far as the browser can. */
-export function buildJob(id: string, name: string, text: string, options: UploadOptions, limits: RateLimits): BuiltJob {
+/**
+ * Turns an uploaded file into a job the way the backend would, as far as
+ * the browser can. `milling` says the machine cuts with a spindle, whose
+ * bit, the spot wide, runs round a board's outline off the board.
+ */
+export function buildJob(id: string, name: string, text: string, options: UploadOptions, limits: RateLimits, milling = false): BuiltJob {
     const lower = name.toLowerCase();
     const extension = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
     const power = options.power ?? DEFAULT_POWER;
@@ -1572,7 +1613,12 @@ export function buildJob(id: string, name: string, text: string, options: Upload
     // A layer on the back is cut with the board turned over, flipped in X
     // unless the upload says otherwise.
     const mirror: Mirror = board ? options.mirror ?? (isBottom(jobLayer) ? "x" : "none") : "none";
-    const placed = placeJob(flipped(geometry, mirror), anchor, offset);
+    let turned = flipped(geometry, mirror);
+    if (board && milling) {
+        // The bit's middle runs its radius off the board round the outline.
+        turned = { ...turned, groups: turned.groups.map((group) => OUTLINE_GROUPS.includes(group.label) ? { ...group, paths: outlineCut(group.paths, spot / 2) } : group) };
+    }
+    const placed = placeJob(turned, anchor, offset);
     // A gcode group keeps the power and feed the file ran it at.
     const groups: Group[] = placed.groups.map((group, index) => ({
         label: group.label,

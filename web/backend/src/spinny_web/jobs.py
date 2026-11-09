@@ -29,6 +29,7 @@ from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
 from spinny_laser import lines as cut_lines
 from spinny_laser import order as cut_order
+from spinny_laser import outline as board_outline
 from spinny_laser import pads as board_pads
 from spinny_laser import stencil as paste_stencil
 
@@ -751,7 +752,7 @@ def import_file(path: Path, name: str, options: ImportOptions, streamer: Streame
     elif suffix in (".gcode", ".nc", ".ngc"):
         job = from_gcode(path.read_text(encoding="utf-8", errors="replace"), name, options)
     elif suffix == ".kicad_pcb" or suffix in GERBER_SUFFIXES:
-        job = from_board(path, name, options, pace=streamer.rates.r_rate / streamer.rates.a_rate)
+        job = from_board(path, name, options, pace=streamer.rates.r_rate / streamer.rates.a_rate, milled=streamer.tool == SPINDLE)
     else:
         raise JobImportError(f"cannot import {path.name}: unknown file type {suffix!r}")
     job.refresh_stats(streamer)
@@ -1043,7 +1044,7 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
     )
 
 
-def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE) -> Job:
+def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE, milled: bool = False) -> Job:
     """Isolation loops for a gerber or a KiCad board, with the outline when found,
     or with `mode` deposit the copper itself burnt, or with `mode` stencil
     every opening cut round its inside edge, the outline switched off for
@@ -1055,7 +1056,9 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     it is, and the groups are named for what the layer draws.
 
     `pace` is the machine's rail rate in mm/min over its table rate in
-    deg/min, which a radial clearing or fill orders its spokes by."""
+    deg/min, which a radial clearing or fill orders its spokes by. `milled`
+    says the machine cuts with a spindle, whose bit, the spot wide, runs
+    round the outline off the board rather than on its line."""
     from laser_sweep import geom, gerber, isocli, isolate
 
     from laser_sweep import excellon
@@ -1193,21 +1196,30 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     # The outline's own lines are the job when it is the layer cut on them.
     outline_cut = not (options.mode == MODE_LINES and layer == OUTLINE_LAYER)
     if outline and options.mode != MODE_DISPENSE and outline_cut:
-        groups.append(
-            Group(
-                label="board outline pass 1",
-                power=options.power,
-                speed=options.speed,
-                # A deposit burns copper wherever the beam goes, so the
-                # outline is there to cut the board free with a power of its
-                # own once the copper is down, and is off until then; a
-                # stencil's film needs no board's shape unless asked, and a
-                # drawing cut on its lines may be a mark on a board in place.
-                enabled=options.mode not in (MODE_DEPOSIT, MODE_STENCIL, MODE_LINES),
-                # A cutout inside the board before the edge that frees it.
-                paths=cut_order.inner_first([[tuple(p) for p in path] for path in outline]),
+        # The pieces joined into loops, a cutout inside the board before
+        # the edge that frees it; a beam on the line, a bit's middle its
+        # radius off the board, so the board comes out the size drawn.
+        made = board_outline.cut([[tuple(p) for p in path] for path in outline], options.spot / 2.0 if milled else 0.0)
+        # A deposit burns copper wherever the beam goes, so the outline is
+        # there to cut the board free with a power of its own once the
+        # copper is down, and is off until then; a stencil's film needs no
+        # board's shape unless asked, and a drawing cut on its lines may be
+        # a mark on a board in place.
+        enabled = options.mode not in (MODE_DEPOSIT, MODE_STENCIL, MODE_LINES)
+        if made.paths:
+            groups.append(Group(label="board outline pass 1", power=options.power, speed=options.speed, enabled=enabled, paths=made.paths))
+        if made.narrow:
+            # Cutouts the bit cannot go round inside are not cut; kept
+            # switched off on their line, the preview shows them.
+            groups.append(
+                Group(
+                    label="board outline cutouts narrower than the bit, on their line",
+                    power=options.power,
+                    speed=options.speed,
+                    enabled=False,
+                    paths=made.narrow,
+                )
             )
-        )
     return Job(
         name=name,
         source=source,

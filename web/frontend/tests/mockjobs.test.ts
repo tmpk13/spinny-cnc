@@ -22,6 +22,7 @@ import {
     pathMoves,
     placeJob,
 } from "../src/mock/jobs.ts";
+import { MockBackend } from "../src/mock/backend.ts";
 import type { Group } from "../src/types.ts";
 
 const limits = { rRate: 1000, aRate: 1080, tolerance: 0.005 };
@@ -379,6 +380,31 @@ describe("building jobs", () => {
         expect(points((back.pads ?? []).map(([x, y]) => [[x, y]]))).toEqual(points((front.pads ?? []).map(([x, y]) => [[x, y]]), -1));
         expect(points(asDrawn.copper)).toEqual(points(front.copper));
         expect(() => buildJob("0002", "board-B_Cu.gbr", "G04*", { mirror: "z" as "x" }, limits)).toThrow("mirror must be one of none, x, y");
+    });
+
+    test("on a mill the outline is cut the bit's radius off the board, as the backend cuts it", async () => {
+        const box = (paths: [number, number][][]): number[] => {
+            const xs = paths.flat().map(([x]) => x);
+            const ys = paths.flat().map(([, y]) => y);
+            return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        };
+        const grown = (paths: [number, number][][], radius: number): number[] => box(paths).map((v, i) => (i < 2 ? v - radius : v + radius));
+        const outline = (groups: Group[], label = "outline") => groups.find((group) => group.label === label)!.paths;
+        const drawn = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", { spot: 1 }, limits).job;
+        expect(outline(drawn.groups)).toEqual(drawn.outline);
+        const milled = buildJob("0002", "board-F_Cu.gbr", "G04 nothing*", { spot: 1 }, limits, true).job;
+        box(outline(milled.groups)).forEach((v, i) => expect(v).toBeCloseTo(grown(milled.outline, 0.5)[i]!, 6));
+        const silk = buildJob("0004", "board.kicad_pcb", "", { mode: "lines", layer: "F.SilkS", spot: 0.2 }, limits, true).job;
+        box(outline(silk.groups, "board outline pass 1")).forEach((v, i) => expect(v).toBeCloseTo(grown(silk.outline, 0.1)[i]!, 6));
+        // The lines of Edge.Cuts are cut where they are drawn, on any machine.
+        const edge = buildJob("0004", "board.kicad_pcb", "", { mode: "lines", layer: "Edge.Cuts", spot: 1 }, limits, true).job;
+        expect(edge.groups[0]!.paths).toEqual(edge.outline);
+        // The mock backend imports for the machine it has.
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        const uploaded = await backend.uploadJob(new File(["G04*"], "board-F_Cu.gbr"), { spot: 1 });
+        expect(outline(uploaded.groups)).toEqual(outline(milled.groups));
     });
 
     test("json is taken as a job", () => {

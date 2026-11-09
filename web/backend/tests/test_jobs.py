@@ -242,6 +242,69 @@ def test_without_clearing_a_board_has_only_loops_and_outline():
     assert not any("clearing" in group.label for group in job.groups)
 
 
+def edge_strokes(strokes) -> str:
+    """An Edge.Cuts gerber with every stroke drawn on its own, the way
+    KiCad plots the lines of a board's outline."""
+    lines = ["%FSLAX46Y46*%", "%MOMM*%", "%LPD*%", "G01*", "%ADD10C,0.050000*%", "D10*"]
+    for (xa, ya), (xb, yb) in strokes:
+        lines.append(f"X{round(xa * 1e6)}Y{round(ya * 1e6)}D02*")
+        lines.append(f"X{round(xb * 1e6)}Y{round(yb * 1e6)}D01*")
+    return "\n".join(lines + ["M02*"]) + "\n"
+
+
+def sides(x0: float, y0: float, x1: float, y1: float) -> list:
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    return [(corners[i], corners[(i + 1) % 4]) for i in range(4)]
+
+
+def board_with_edge(folder: Path, strokes) -> Path:
+    copper = folder / BOARD_COPPER.name
+    shutil.copy(BOARD_COPPER, copper)
+    (folder / "board-Edge_Cuts.gbr").write_text(edge_strokes(strokes), encoding="utf-8")
+    return copper
+
+
+def outline_paths(job: Job) -> list:
+    (group,) = [g for g in job.groups if g.label == "board outline pass 1"]
+    return group.paths
+
+
+def test_an_outline_drawn_as_lines_is_joined_and_its_cutout_cut_first(tmp_path):
+    # The board's edge and a 2 mm cutout inside it, every side a stroke.
+    copper = board_with_edge(tmp_path, sides(156.0, -112.0, 175.0, -100.0) + sides(160.0, -104.0, 162.0, -102.0))
+    cut = outline_paths(jobs.from_board(copper, "board", ImportOptions(spot=0.1)))
+    assert len(cut) == 2 and all(path[0] == path[-1] for path in cut)
+    inner, outer = bbox(cut[:1]), bbox(cut[1:])
+    assert (inner[2] - inner[0], inner[3] - inner[1]) == pytest.approx((2.0, 2.0))
+    assert (outer[2] - outer[0], outer[3] - outer[1]) == pytest.approx((19.0, 12.0))
+
+
+def test_a_mill_cuts_the_board_outline_outside_the_board(tmp_path):
+    drawn = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=1.0))
+    milled = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=1.0), milled=True)
+    # A beam cuts on the line; a bit's middle runs its radius outside it.
+    assert outline_paths(drawn) == drawn.outline
+    x0, y0, x1, y1 = bbox(milled.outline)
+    assert bbox(outline_paths(milled)) == pytest.approx((x0 - 0.5, y0 - 0.5, x1 + 0.5, y1 + 0.5), abs=1e-3)
+    # A machine with a spindle imports it that way.
+    spindle = Streamer(spindle=kinematics.Spindle(spinup=0.0))
+    via = import_file(BOARD_COPPER, "board", ImportOptions(spot=1.0), spindle)
+    assert outline_paths(via) == outline_paths(milled)
+    # Inside a cutout the bit's middle runs its radius in; a cutout it
+    # cannot go round is left out of the cut and kept, switched off, on its
+    # line, so the preview shows it.
+    copper = board_with_edge(tmp_path, sides(156.0, -112.0, 175.0, -100.0) + sides(160.0, -104.0, 162.0, -102.0) + sides(165.0, -104.0, 165.8, -103.2))
+    job = jobs.from_board(copper, "board", ImportOptions(spot=1.0), milled=True)
+    inner, outer = (bbox([path]) for path in outline_paths(job))
+    assert (inner[2] - inner[0], inner[3] - inner[1]) == pytest.approx((1.0, 1.0), abs=1e-3)
+    assert (outer[2] - outer[0], outer[3] - outer[1]) == pytest.approx((20.0, 13.0), abs=1e-3)
+    narrow = job.groups[-1]
+    assert narrow.label == "board outline cutouts narrower than the bit, on their line" and narrow.enabled is False
+    (loop,) = narrow.paths
+    box = bbox([loop])
+    assert (box[2] - box[0], box[3] - box[1]) == pytest.approx((0.8, 0.8))
+
+
 def test_a_spoke_goes_out_as_one_radial_cut():
     job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1, clear="radial"))
     spokes = [

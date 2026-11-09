@@ -81,7 +81,9 @@ describe("the mock's CAM profiles", () => {
         expect(written.text).toContain("G1 Z-1.800 F50.000");
         expect(written.text.endsWith("M5\nG0 X0.000 Y0.000\nG0 Z20.000\nM5\nM2\n")).toBe(true);
         expect(written.report.extents["Z"]).toEqual([-1.8, 20]);
-        expect(written.report.warnings).toEqual([]);
+        // The end mill runs half a millimeter outside the board's lower left
+        // corner, where the shipped profile's travel starts.
+        expect(written.report.warnings).toEqual(["X reaches -0.500, under its min 0", "Y reaches -0.500, under its min 0"]);
     });
 });
 

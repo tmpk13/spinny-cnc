@@ -151,7 +151,10 @@ def test_a_job_is_written_as_gcode_for_the_profile(client):
     assert text.startswith("(board-F_Cu: 4 operations through 3 axis mill)") and "M3 S12000" in text and "G1 Z-0.100 F60.000" in text
     assert "G1 Z-1.800 F50.000" in text and text.endswith("M5\nM2\n")
     report = written["report"]
-    assert report["extents"]["Z"][0] == -1.8 and report["lines"] > 100 and report["warnings"] == []
+    assert report["extents"]["Z"][0] == -1.8 and report["lines"] > 100
+    # The end mill's middle runs half a millimeter outside the board's edge,
+    # past the lower left corner the shipped profile's travel starts at.
+    assert report["warnings"] == ["X reaches -0.400, under its min 0", "Y reaches -0.400, under its min 0"]
     assert client.post("/api/cam/mill-3axis/gcode", json={"job": "nope"}).status_code == 404
     # The laser profile has no depth axis for a milled job.
     refused = client.post("/api/cam/cartesian-laser/gcode", json={"job": job["id"]})

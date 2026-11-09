@@ -18,6 +18,7 @@ from pathlib import Path
 from . import board, cam, carve
 from . import clear as copper_clearing
 from . import deposit as copper_deposition
+from . import outline as board_outline
 from .order import inner_first
 
 Point = tuple[float, float]
@@ -583,7 +584,16 @@ def _operation_groups(
         if not board.outline:
             notes.append(f"{prefix}: {design.name} has no outline")
             return []
-        return [_group(operation, tool, f"{prefix}: board outline", inner_first([list(p) for p in board.outline]))]
+        # A beam cuts on the line; a bit's middle runs its radius off the
+        # board, so the part comes out the size it is drawn.
+        made = board_outline.cut(board.outline, width / 2.0 if tool.kind == cam.SPINDLE else 0.0)
+        if made.loose:
+            notes.append(f"{prefix}: {made.loose} pieces of the outline join no loop, so the bit cuts them on their line")
+        if made.narrow:
+            notes.append(f"{prefix}: {len(made.narrow)} cutouts are narrower than the {width:g} mm bit and are not cut")
+        if not made.paths:
+            return []
+        return [_group(operation, tool, f"{prefix}: board outline", made.paths)]
     if source == cam.DRILLS:
         if not board.holes:
             notes.append(f"{prefix}: {design.name} has no drill file")

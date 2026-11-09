@@ -32,7 +32,7 @@ import type {
     Point,
     Tool,
 } from "../types.ts";
-import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
 import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
@@ -1155,9 +1155,13 @@ export function buildCamJob(id: string, profile: CamProfile, name: string, fileN
                 });
                 break;
             }
-            case "outline":
-                groups.push(groupOf(operation, tool, `${prefix}: board outline`, innerFirst(geometry.outline)));
+            case "outline": {
+                // A beam cuts on the line; a bit's middle runs its radius
+                // off the board, so the board comes out the size drawn.
+                const radius = tool.kind === "spindle" ? operation.cutting["width"]! / 2 : 0;
+                groups.push(groupOf(operation, tool, `${prefix}: board outline`, innerFirst(outlineCut(geometry.outline, radius))));
                 break;
+            }
             case "drills":
                 if (tool.kind === "laser") {
                     groups.push(groupOf(operation, tool, `${prefix}: ${geometry.drills.length} holes marked as ${String(operation.settings["marks"] ?? "circle")}`, geometry.drills));

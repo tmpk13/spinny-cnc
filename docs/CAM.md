@@ -34,7 +34,10 @@ the page and press *New*, which saves the text shown under that id.
 1. Zero the work coordinates with the bit touching the copper at the
    board's lower left corner. The profile's `[placement]` is `corner`, so
    board X 0, Y 0 is there and the surface is Z 0; the depth axis'
-   `offset` can hold another Z for the surface.
+   `offset` can hold another Z for the surface. The outline is milled
+   outside the board's edge, so the end mill goes about its radius past
+   X 0 and Y 0 (the shipped axes' `min = 0` warns of it): leave stock
+   there.
 2. Drop the KiCad board on the CAM tab, or the copper gerber together with
    its `Edge.Cuts` gerber and the drill file (one drop, several files).
    The notes under the drop say what was left out: no drill file, no
@@ -267,7 +270,7 @@ without `safe`, or a spindle depth that takes more than 100 passes.
 | --- | --- | --- |
 | `isolation` | one group per loop around every copper feature, the first half a tool width out | nothing, noted |
 | `clearing` | the copper left between the loops inside the outline, as strokes of the pattern a stepover apart (a laser: a spot apart), the tool's middle on or past the outermost loop; a tool wider than the isolation keeps its radius from the copper, and a gap narrower than it is left (noted) | nothing, noted |
-| `outline` | the Edge.Cuts profile, a cutout inside the board before the edge round it | nothing, noted |
+| `outline` | the Edge.Cuts profile, its pieces joined where their ends meet, a cutout inside the board before the edge round it; a laser cuts on the line, a mill's bit runs its radius outside the board's edge and inside each cutout, so the board comes out the size drawn (a cutout narrower than the bit is not cut, and a piece that joins no loop is cut on its line, both noted) | nothing, noted |
 | `drills` | a mill: a hole the bit's size is a path of one point, the bit put down at its center and lifted; a wider hole is milled round at `(hole - bit) / 2`; a slot along its middle, or as an inset loop; a laser marks each hole (`marks`) | nothing, noted |
 | `deposit` | the copper itself: edge loops in from its edge, the fill, the traces narrower than the tool along their middle | nothing, noted |
 | `paths` | nothing, noted | the design's paths whose label holds `match`: an SVG's strokes, a gcode file's runs at one S and F, a job's groups; within a group, whatever lies inside a closed shape is cut before the shape |
@@ -277,7 +280,9 @@ refuses to run a group made for the other tool than the machine has, so a
 job with laser and spindle operations is run twice, once on each machine
 file with the other operations switched off. The job's `spot` is the
 isolation tool's width, or the narrowest tool's. The placement is one
-for the whole board, around everything that will be cut.
+for the whole board, around the copper's loops, the holes and the drawn
+outline at that width; a mill's outline cut runs its bit's radius outside
+the drawn outline, past what the anchor places.
 
 ## How the gcode is written
 

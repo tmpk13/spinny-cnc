@@ -233,6 +233,87 @@ def test_a_clearing_bit_wider_than_the_isolation_keeps_its_edge_off_the_copper()
     assert not any(note.startswith("clearing") for note in burnt.notes)
 
 
+def bounds(paths) -> tuple[float, float, float, float]:
+    xs = [p[0] for path in paths for p in path]
+    ys = [p[1] for path in paths for p in path]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def sides(x0: float, y0: float, x1: float, y1: float) -> list:
+    """A rectangle as four strokes of two points, the way KiCad plots the
+    lines of Edge.Cuts."""
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    return [[corners[i], corners[(i + 1) % 4]] for i in range(4)]
+
+
+def outline_group(built: camjob.BuiltJob) -> camjob.BuiltGroup:
+    return next(g for g in built.groups if g.label == "outline: board outline")
+
+
+def test_a_mill_cuts_the_outline_outside_the_board_and_a_laser_on_its_line():
+    from laser_sweep import geom
+
+    from spinny_laser import clear
+
+    design = camjob.read_board(BOARD_COPPER, "F.Cu")
+    built = camjob.build(cam.load(SHIPPED / "mill-3axis.toml"), design)
+    x0, y0, x1, y1 = bounds(built.outline)
+    assert (x1 - x0, y1 - y0) == pytest.approx((19.0, 12.0))
+    # The 1 mm end mill's middle runs half a millimeter outside the drawn
+    # edge all round, so the part comes out 19 x 12 mm and no copper near
+    # the edge is in the bit's way.
+    (loop,) = outline_group(built).paths
+    assert loop[0] == loop[-1]
+    assert bounds([loop]) == pytest.approx((x0 - 0.5, y0 - 0.5, x1 + 0.5, y1 + 0.5), abs=1e-3)
+    board = [built.outline[0][:-1]]
+    assert clear.clip_open([loop], geom.offset(board, 0.5 - 0.005)) == []
+    assert clear.clip_open([loop], geom.offset(built.copper, 0.5)) == []
+    # A beam's kerf is narrow: a laser cuts on the drawn line, as before.
+    burnt = camjob.build(cam.load(SHIPPED / "polar-laser.toml"), design)
+    assert outline_group(burnt).paths == burnt.outline
+
+
+def test_an_outline_drawn_as_lines_is_joined_and_its_cutout_cut_first():
+    design = camjob.read_board(BOARD_COPPER, "F.Cu")
+    # The board's edge and a 2 mm cutout inside it, drawn as lines.
+    design.outline = sides(156.0, -112.0, 175.0, -100.0) + sides(160.0, -104.0, 162.0, -102.0)
+    burnt = camjob.build(cam.load(SHIPPED / "polar-laser.toml"), design)
+    cut = outline_group(burnt).paths
+    assert len(cut) == 2 and all(path[0] == path[-1] and len(path) == 5 for path in cut)
+    inner, outer = (bounds([path]) for path in cut)
+    assert (inner[2] - inner[0], inner[3] - inner[1]) == pytest.approx((2.0, 2.0))
+    assert (outer[2] - outer[0], outer[3] - outer[1]) == pytest.approx((19.0, 12.0))
+    # A bit goes round each loop once, inside the cutout and outside the edge.
+    milled = camjob.build(cam.load(SHIPPED / "mill-3axis.toml"), design)
+    cut = outline_group(milled).paths
+    assert len(cut) == 2
+    inner, outer = (bounds([path]) for path in cut)
+    assert (inner[2] - inner[0], inner[3] - inner[1]) == pytest.approx((1.0, 1.0), abs=1e-3)
+    assert (outer[2] - outer[0], outer[3] - outer[1]) == pytest.approx((20.0, 13.0), abs=1e-3)
+    assert not any(note.startswith("outline") for note in milled.notes)
+
+
+def test_a_cutout_too_narrow_for_the_bit_and_a_loose_piece_are_noted():
+    design = camjob.read_board(BOARD_COPPER, "F.Cu")
+    # A cutout 0.8 mm across, which the 1 mm end mill cannot go round, and
+    # a lone line, which has no inside for the bit to keep to.
+    design.outline = sides(156.0, -112.0, 175.0, -100.0) + sides(160.0, -104.0, 160.8, -103.2) + [[(165.0, -105.0), (168.0, -105.0)]]
+    milled = camjob.build(cam.load(SHIPPED / "mill-3axis.toml"), design)
+    cut = outline_group(milled).paths
+    assert len(cut) == 2 and len(cut[0]) == 2  # the line inside the board first, on its line
+    edge = bounds([cut[1]])
+    assert (edge[2] - edge[0], edge[3] - edge[1]) == pytest.approx((20.0, 13.0), abs=1e-3)
+    outline_notes = [note for note in milled.notes if note.startswith("outline")]
+    assert outline_notes == [
+        "outline: 1 pieces of the outline join no loop, so the bit cuts them on their line",
+        "outline: 1 cutouts are narrower than the 1 mm bit and are not cut",
+    ]
+    # On the line a beam cuts them all, and there is nothing to say.
+    burnt = camjob.build(cam.load(SHIPPED / "polar-laser.toml"), design)
+    assert len(outline_group(burnt).paths) == 3
+    assert not any(note.startswith("outline") for note in burnt.notes)
+
+
 def test_a_laser_profile_marks_the_drills_and_refuses_a_design_with_nothing_for_it():
     profile = parse(
         (SHIPPED / "polar-laser.toml").read_text(encoding="utf-8").replace('name = "drills"\nsource = "drills"\ntool = "uv"\nenabled = false', 'name = "drills"\nsource = "drills"\ntool = "uv"\nenabled = true'),

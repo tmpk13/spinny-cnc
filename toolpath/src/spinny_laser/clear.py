@@ -132,7 +132,7 @@ def perimeter(copper: Polygons, keep: float, spot: float, outline: list[Polyline
     """
     closed = [path[:-1] for path in chains(outline or []) if _closed(path)]
     if closed:
-        board = _even_odd(closed)
+        board = even_odd(closed)
         if board and _holds(board, copper):
             return geom.offset(board, -spot / 2.0)
     x0, y0, x1, y1 = geom.bounds(copper)
@@ -214,7 +214,7 @@ def _holds(board: Polygons, copper: Polygons) -> bool:
     return total <= 0.0 or geom.area(geom.intersection(solid, board)) >= HOLD_SHARE * total
 
 
-def _even_odd(contours: Polygons) -> Polygons:
+def even_odd(contours: Polygons) -> Polygons:
     """The area the contours enclose, a cutout inside a board being a hole."""
     engine = pyclipper.Pyclipper()
     engine.AddPaths(_up(contours), pyclipper.PT_SUBJECT, True)
