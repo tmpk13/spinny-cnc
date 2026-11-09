@@ -6,7 +6,7 @@
 import { askConfirm } from "../confirm.ts";
 import { button, el, replace, setLocked } from "../dom.ts";
 import type { AppState } from "../state.ts";
-import type { CamLogEntry, LoggedCamera } from "../types.ts";
+import type { CamLogEntry, CamLogState, LoggedCamera } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** How many of a camera's newest pictures its panel shows. */
@@ -81,12 +81,31 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     const link = (text: string, name: string | undefined): HTMLElement | null =>
         name ? el("a", { href: ctx.api.camLogFileUrl(name), target: "_blank", rel: "noopener" }, text) : null;
 
+    // This camera's own entries and count, asked for by camera: the log
+    // the page keeps holds the newest of both cameras, where a run of the
+    // other camera's looks can push every one of this camera's out.
+    let own: CamLogState | null = null;
+    let asking = 0;
+
+    async function refreshOwn(): Promise<void> {
+        const ask = ++asking;
+        const state = await ctx.call(ctx.api.camLog(camera));
+        if (state && ask === asking) {
+            own = state;
+            drawOwn();
+        }
+    }
+
     function render(state: AppState): void {
         const log = state.camlog;
         enabled.checked = log?.enabled ?? false;
-        const mine = (log?.entries ?? []).filter((entry) => entry.camera === camera);
-        count.textContent = mine.length === 0 ? "" : `${mine.length} kept of this camera`;
         setLocked(clear, (log?.entries.length ?? 0) === 0);
+        void refreshOwn();
+    }
+
+    function drawOwn(): void {
+        const mine = own?.entries ?? [];
+        count.textContent = (own?.count ?? 0) === 0 ? "" : `${own!.count} kept of this camera`;
         replace(gallery, ...mine.slice(0, SHOWN).map((entry) => el("li", { class: entry.spot && !entry.spot.found ? "camlog-entry missed" : "camlog-entry" },
             el("a", { href: ctx.api.camLogFileUrl(entry.files.overlay), target: "_blank", rel: "noopener", class: "camlog-thumb" },
                 el("img", { src: ctx.api.camLogFileUrl(entry.files.overlay), alt: `${entry.routine}: ${entry.step}`, loading: "lazy" })),

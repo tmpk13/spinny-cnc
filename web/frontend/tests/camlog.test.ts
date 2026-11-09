@@ -76,4 +76,23 @@ describe("the camera log", () => {
         expect(root.querySelectorAll(".camlog-entry").length).toBe(0);
         root.remove();
     });
+
+    test("a camera panel shows its own camera's pictures however many the other camera kept since", async () => {
+        const { store, ctx, root, api, backend } = setup();
+        await api.connect("/dev/ttyACM0");
+        const log = (backend as unknown as { cameraLog: MockCameraLog }).cameraLog;
+        const look = (camera: "head" | "up", step: string) => log.keep({ camera, routine: "find", step, note: "", width: 10, height: 10, spot: null }, "data:picture");
+        for (let i = 0; i < 5; i++) {
+            look("head", `head ${i}`);
+        }
+        for (let i = 0; i < 101; i++) {
+            look("up", `up ${i}`);
+        }
+        store.set({ camlog: await api.camLog() });
+        mountCameraLog(root, ctx, "head");
+        await settleMany();
+        expect(root.querySelectorAll(".camlog-entry").length).toBe(5);
+        expect(root.textContent).toContain("5 kept of this camera");
+        root.remove();
+    });
 });
