@@ -94,7 +94,7 @@ describe("the Auto tab", () => {
         root.remove();
     });
 
-    test("Stop ends the turn under way: the call it was making is marked stopped", async () => {
+    test("Stop ends the turn under way: the call it was making ends with what it did, as the backend waits for it", async () => {
         const { chat, input, backend, calls, root } = mount();
         await settleMany();
         input.value = "jobs?";
@@ -102,12 +102,13 @@ describe("the Auto tab", () => {
         await settleMany();
         backend.step(SCRIPT_SECONDS.call);
         await settleMany();
+        expect(chat.querySelector("details.auto-tool .auto-result")!.textContent).toBe("running");
         findButton(chat, "Stop").click();
         await settleMany();
         expect(calls.some((call) => call.name === "autoStop")).toBe(true);
         const call = chat.querySelector("details.auto-tool")!;
-        expect(call.classList.contains("failed")).toBe(true);
-        expect(call.querySelector(".auto-result")!.textContent).toBe("failed: stopped by the operator");
+        expect(call.classList.contains("failed")).toBe(false);
+        expect(call.querySelector(".auto-result")!.textContent).toMatch(/^\{"jobs":\[/);
         expect(kinds(chat)).toEqual(["auto-user", "auto-assistant", "auto-tool", "auto-notice"]);
         expect(chat.querySelector(".auto-notice")!.textContent).toBe("Stopped.");
         expect(findButton(chat, "Stop").disabled).toBe(true);

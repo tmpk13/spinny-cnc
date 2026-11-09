@@ -458,10 +458,12 @@ what is there ("which jobs are for the mill?"). The answer comes in as it
 is written; each tool call is a folded line with its name, its arguments
 and a short result, and unfolds to the whole. A job it makes or changes
 shows in the Jobs and Plot tabs at once. Enter sends, Shift+Enter starts
-a new line, *Stop* ends the turn under way (what it made so far stays),
-*New chat* forgets the conversation. A turn makes at most 25 tool calls,
-so a model that goes round in circles stops. What it can make, and what
-it cannot do, is the tools' own boundary, below.
+a new line, *Stop* ends the turn under way (what it made so far stays;
+a tool call already running finishes in the backend all the same, and
+its line shows what it did), *New chat* forgets the conversation. A turn
+makes at most 25 tool calls, so a model that goes round in circles
+stops. What it can make, and what it cannot do, is the tools' own
+boundary, below.
 
 The row above the conversation picks who answers, kept for the next
 visit:

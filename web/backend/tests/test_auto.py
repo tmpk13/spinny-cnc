@@ -10,6 +10,7 @@ import json
 import os
 import stat
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -19,8 +20,9 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
+from spinny_web import auto as auto_module
 from spinny_web.app import Backend, create_app
-from spinny_web.auto import SYSTEM_PROMPT, Agent, Call, ChatSession, Entry, ProviderError, Reply
+from spinny_web.auto import RAN_ON, SYSTEM_PROMPT, Agent, Call, ChatSession, Entry, ProviderError, Reply
 from spinny_web.auto_anthropic import AnthropicChat, echo
 from spinny_web.auto_claude import ClaudeCodeSession, command
 from spinny_web.auto_openai import OpenAIChat
@@ -180,7 +182,9 @@ def test_a_stop_ends_the_answer_being_written_and_the_next_message_goes_on(clien
     assert state["entries"][-1]["text"] == "Here again." and chat.users == ["first", "second"]
 
 
-def test_a_stop_during_a_tool_call_answers_every_call(client):
+def test_a_stop_during_a_tool_call_answers_every_call(client, monkeypatch):
+    monkeypatch.setattr(auto_module, "STOP_WAIT", 0.2)
+
     class Hanging:
         async def call(self, name, arguments):
             await asyncio.Event().wait()
@@ -195,9 +199,64 @@ def test_a_stop_during_a_tool_call_answers_every_call(client):
     wait_for(client, lambda state: any(entry["role"] == "tool" for entry in state["entries"]))
     state = client.post("/api/auto/stop").json()
     tool = state["entries"][1]
-    assert tool["done"] and tool["error"] and tool["result"] == "stopped by the operator"
+    assert tool["done"] and tool["error"] and tool["result"] == RAN_ON
     assert sorted(call.id for call, _, _ in chat.results[0]) == ["a", "b"]
     assert all(error and "stopped" in text for _, text, error in chat.results[0])
+
+
+def slow_imports(client, seconds: float) -> threading.Event:
+    """Makes every upload's import take `seconds` in its thread; the event
+    is set when one has begun."""
+    backend = client.app.state.backend
+    begun = threading.Event()
+    original = backend.import_upload
+
+    def slow(*args, **kwargs):
+        begun.set()
+        time.sleep(seconds)
+        return original(*args, **kwargs)
+
+    backend.import_upload = slow
+    return begun
+
+
+RING = '<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="20mm" viewBox="0 0 20 20"><circle cx="10" cy="10" r="5" stroke="#000" fill="none"/></svg>'
+
+
+def test_a_stop_while_a_call_runs_tells_what_came_of_it(client):
+    # The import goes on in its thread whatever the stop does: it is waited
+    # for, and the model and the page are told what it made.
+    begun = slow_imports(client, 0.5)
+    chat = FakeChat(Reply(text="", calls=[Call("c1", "make_job", {"filename": "ring.svg", "content": RING}), Call("c2", "list_jobs", {})], stop="tool_use"))
+    use(client.agent, chat)
+    client.post("/api/auto/messages", json={"text": "make a ring"})
+    assert begun.wait(5.0)
+    state = client.post("/api/auto/stop").json()
+    assert roles(state) == ["user", "tool", "notice"]
+    tool = state["entries"][1]
+    assert tool["done"] and not tool["error"] and tool["changed"] == ["jobs"] and json.loads(tool["result"])["name"] == "ring"
+    told = {call.id: (text, error) for call, text, error in chat.results[0]}
+    assert told["c1"] == (tool["result"], False)
+    assert told["c2"] == ("not run: the operator stopped the turn", True)
+    assert [job["name"] for job in client.get("/api/jobs").json()["jobs"]] == ["ring"]
+
+
+def test_a_call_running_on_past_the_stop_is_told_as_maybe_done_and_shown_when_it_ends(client, monkeypatch):
+    monkeypatch.setattr(auto_module, "STOP_WAIT", 0.2)
+    begun = slow_imports(client, 1.0)
+    chat = FakeChat(Reply(text="", calls=[Call("c1", "make_job", {"filename": "ring.svg", "content": RING})], stop="tool_use"))
+    use(client.agent, chat)
+    client.post("/api/auto/messages", json={"text": "make a ring"})
+    assert begun.wait(5.0)
+    state = client.post("/api/auto/stop").json()
+    tool = state["entries"][1]
+    # Maybe done: the page lists the jobs again, and the model looks first.
+    assert tool["done"] and tool["error"] and tool["result"] == RAN_ON and tool["changed"] == ["jobs"]
+    assert [(call.id, text) for call, text, _ in chat.results[0]] == [("c1", RAN_ON)]
+    state = wait_for(client, lambda state: state["entries"][1]["result"].startswith("after the stop: "))
+    tool = state["entries"][1]
+    assert not tool["error"] and tool["changed"] == ["jobs"] and json.loads(tool["result"][len("after the stop: ") :])["name"] == "ring"
+    assert [job["name"] for job in client.get("/api/jobs").json()["jobs"]] == ["ring"]
 
 
 def test_a_turn_that_fails_in_a_call_ends_the_call_and_says_why(client):
@@ -611,7 +670,7 @@ out({{"type": "stream_event", "event": {{"type": "content_block_delta", "index":
 out({{"type": "stream_event", "event": {{"type": "content_block_delta", "index": 0, "delta": {{"type": "text_delta", "text": "now."}}}}}})
 out({{"type": "assistant", "message": {{"content": [{{"type": "text", "text": "Looking now."}}]}}}})
 if os.environ.get("FAKE_CLAUDE_HANG"):
-    out({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "id": "slow", "name": "mcp__spinny__list_jobs", "input": {{}}}}]}}}})
+    out({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "id": "slow", "name": "mcp__spinny__make_job", "input": {{"filename": "a.svg"}}}}]}}}})
     time.sleep(60)
 for i in range(int(os.environ.get("FAKE_CLAUDE_CALLS", "1"))):
     out({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "id": f"t{{i}}", "name": "mcp__spinny__make_job", "input": {{"filename": "a.svg"}}}}]}}}})
@@ -697,7 +756,8 @@ def test_a_stop_ends_the_claude_command_and_the_conversation_goes_on(tmp_path, m
     took = asyncio.run(go())
     entries = agent.conversation()["entries"]
     assert [entry["role"] for entry in entries] == ["user", "assistant", "tool", "notice"] and entries[-1]["text"] == "Stopped."
-    assert entries[2]["done"] and entries[2]["error"] and entries[2]["result"] == "stopped by the operator"
+    # The tool may have run all the same: the page lists the jobs again.
+    assert entries[2]["done"] and entries[2]["error"] and entries[2]["result"] == RAN_ON and entries[2]["changed"] == ["jobs"]
     assert not agent.busy and took < 5.0
     pid = json.loads(log.read_text().splitlines()[0])["pid"]
     with pytest.raises(ProcessLookupError):

@@ -23,7 +23,7 @@ import re
 import shutil
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -31,11 +31,21 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from .log import log
-from .tools import GUIDE, TOOLS, Outcome, ToolBox, sendable, unfit
+from .tools import BY_NAME, GUIDE, TOOLS, Outcome, ToolBox, sendable, unfit
 
 # A turn's tool calls at most: past it the turn ends, and the model is told
 # why for the calls it asked for and did not get.
 MAX_TOOL_CALLS = 25
+# How long a stop waits for the tool call under way to end, s. A stop does
+# not end the call in the backend (a route's work goes on in a thread of its
+# own and keeps what it makes), so what came of it is told rather than that
+# it did not run.
+STOP_WAIT = 5.0
+# What a call still running after that wait is answered, and shown as.
+RAN_ON = (
+    "stopped while it ran: it may have taken effect all the same, so look"
+    " (list_jobs, list_markers, get_placement) before doing it again"
+)
 # The longest message the operator may send, characters.
 MAX_MESSAGE = 20000
 # Entries kept; the oldest go first.
@@ -194,30 +204,33 @@ class ChatSession:
                 return
             results: list[tuple[Call, str, bool]] = []
             capped = False
-            current: Call | None = None
-            why = "the operator stopped the turn"
+            current: tuple[Call, Entry] | None = None
+            why, under_way = "the operator stopped the turn", RAN_ON
             try:
                 for call in reply.calls:
                     if sink.calls >= self.max_calls:
                         results.append((call, f"not run: a turn makes at most {self.max_calls} tool calls", True))
                         capped = True
                         continue
-                    current = call
                     shown = call.arguments if call.arguments is not None else {"unreadable": call.raw}
                     entry = sink.tool_started(call.name, shown)
+                    current = (call, entry)
                     if call.arguments is None:
                         outcome = Outcome(json.dumps({"INVALID_JSON": call.raw}), True)
                     else:
-                        outcome = await sink.call(call.name, call.arguments)
+                        outcome = await sink.call(entry, call.name, call.arguments)
                     sink.tool_finished(entry, outcome)
                     results.append((call, outcome.text, outcome.error))
                     current = None
             except Exception as exc:
-                why = f"the turn failed: {exc!r}"
-                if current is not None:
-                    results.append((current, f"failed: {exc!r}", True))
+                why, under_way = f"the turn failed: {exc!r}", f"failed: {exc!r}"
                 raise
             finally:
+                if current is not None:
+                    # The call under way: what came of it when it ended in
+                    # the stop's wait, else that it may yet take effect.
+                    ongoing, line = current
+                    results.append((ongoing, line.result or "", line.error) if line.done else (ongoing, under_way, True))
                 answered = {id(call) for call, _, _ in results}
                 results += [(call, f"not run: {why}", True) for call in reply.calls if id(call) not in answered]
                 self.chat.add_results(results)
@@ -236,6 +249,9 @@ class Sink:
         self.calls = 0
         self._text: Entry | None = None
         self._toolbox: ToolBox | None = None
+        # The call under way when the turn was stopped that ran on past the
+        # wait: its line shows what came of it once it ends.
+        self._ran_on: tuple[Entry, asyncio.Future] | None = None
 
     def text(self, snapshot: str) -> None:
         """The answer being written, all of it so far."""
@@ -275,10 +291,22 @@ class Sink:
         entry.done = True
         self.agent._update(entry)
 
-    async def call(self, name: str, arguments: Any) -> Outcome:
+    async def call(self, entry: Entry, name: str, arguments: Any) -> Outcome:
+        """The call made in the backend, shown by `entry`. On a stop the
+        call is given STOP_WAIT to end, and its line ends with what it did;
+        one still running then is left to end on its own."""
         if self._toolbox is None:
             self._toolbox = self.agent.toolbox()
-        return await self._toolbox.call(name, arguments)
+        running = asyncio.ensure_future(self._toolbox.call(name, arguments))
+        try:
+            return await asyncio.shield(running)
+        except asyncio.CancelledError:
+            self._ran_on = (entry, running)
+            await asyncio.wait({running}, timeout=STOP_WAIT)
+            if running.done():
+                self._ran_on = None
+                self.tool_finished(entry, _outcome(running))
+            raise
 
     def notice(self, text: str) -> None:
         self.end_text()
@@ -288,9 +316,10 @@ class Sink:
         self.end_text()
         self.agent._add(Entry(role="error", text=text))
 
-    def _close(self, result: str) -> None:
+    def _close(self, result: str, changes: bool = False) -> None:
         """Whatever was under way is done: an answer with what it had
-        written, a call with `result`."""
+        written, a call with `result` and, with `changes`, as having
+        changed what its tool changes."""
         self._text = None
         for entry in self.agent.entries:
             if not entry.done:
@@ -298,11 +327,17 @@ class Sink:
                 if entry.role == "tool":
                     entry.result = result
                     entry.error = True
+                    tool = BY_NAME.get(entry.name or "") if changes else None
+                    if tool is not None:
+                        entry.changed = list(tool.changes)
                 self.agent._update(entry)
 
     def stopped(self) -> None:
-        """The operator stopped the turn: a call under way as stopped."""
-        self._close("stopped by the operator")
+        """The operator stopped the turn. A call under way may have taken
+        effect all the same, since the backend goes on with what it was
+        asked: it is shown so, and the page shows again what its tool
+        changes."""
+        self._close(RAN_ON, changes=True)
         self.agent._add(Entry(role="notice", text="Stopped."))
 
     def failed(self, text: str) -> None:
@@ -312,8 +347,36 @@ class Sink:
 
     async def close(self) -> None:
         toolbox, self._toolbox = self._toolbox, None
-        if toolbox is not None:
+        ran_on, self._ran_on = self._ran_on, None
+        if ran_on is not None:
+            # The call that ran on past the stop still uses the tool box.
+            self.agent._keep(self._settle(*ran_on, toolbox))
+        elif toolbox is not None:
             await toolbox.aclose()
+
+    async def _settle(self, entry: Entry, running: asyncio.Future, toolbox: ToolBox | None) -> None:
+        """Sees a call that ran on past a stop to its end, closes the tool
+        box it used, and shows what came of the call while the conversation
+        still holds its line."""
+        try:
+            await asyncio.wait({running})
+        except asyncio.CancelledError:
+            running.cancel()
+            raise
+        finally:
+            if toolbox is not None:
+                await toolbox.aclose()
+        if any(kept is entry for kept in self.agent.entries):
+            outcome = _outcome(running)
+            self.tool_finished(entry, Outcome(f"after the stop: {outcome.text}", outcome.error, outcome.changed))
+
+
+def _outcome(done: asyncio.Future) -> Outcome:
+    """What a call that has ended came to."""
+    if done.cancelled():
+        return Outcome("not run: the call was cancelled", True)
+    error = done.exception()
+    return done.result() if error is None else Outcome(f"failed: {error!r}", True)
 
 
 @dataclass(frozen=True)
@@ -400,6 +463,8 @@ class Agent:
         self._task: asyncio.Task | None = None
         self._session: Session | None = None
         self._session_key: tuple[str, str, str] | None = None
+        # Calls that ran on past a stop, each seen to its end.
+        self._settling: set[asyncio.Task] = set()
 
     # --- settings ---------------------------------------------------------------
 
@@ -573,5 +638,14 @@ class Agent:
         self._publish(None, cleared=True)
         return self.conversation()
 
+    def _keep(self, work: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.ensure_future(work)
+        self._settling.add(task)
+        task.add_done_callback(self._settling.discard)
+
     async def shutdown(self) -> None:
         await self.stop()
+        for task in list(self._settling):
+            task.cancel()
+        if self._settling:
+            await asyncio.wait(set(self._settling))

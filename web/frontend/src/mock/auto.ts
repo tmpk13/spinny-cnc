@@ -26,6 +26,10 @@ export const MOCK_PROVIDERS: AutoProvider[] = [
 /** When each step of the scripted turn comes, in seconds of the mock's clock after the message. */
 export const SCRIPT_SECONDS = { look: 0.3, call: 0.5, result: 1.0, write: 1.15, done: 1.3 };
 
+/** What the backend answers and shows for a call still running when a stop's wait for it ends. */
+export const RAN_ON =
+    "stopped while it ran: it may have taken effect all the same, so look (list_jobs, list_markers, get_placement) before doing it again";
+
 /** A value as the backend's tools write it for the model: JSON with one space of indent. */
 export function toolText(value: unknown): string {
     return JSON.stringify(value, null, 1);
@@ -181,12 +185,21 @@ export class MockAuto {
 
     stop(): AutoConversation {
         if (this.busy) {
+            const script = this.script;
             this.script = null;
+            // The backend waits a moment for the call under way, which it
+            // cannot stop, and shows what it did: listing the jobs is over
+            // long before that wait is.
+            if (script !== null && script.tool !== null && !script.tool.done) {
+                script.tool.result = toolText({ jobs: this.listJobs() });
+                script.tool.done = true;
+                this.publish(script.tool);
+            }
             for (const entry of this.entries) {
                 if (!entry.done) {
                     entry.done = true;
                     if (entry.role === "tool") {
-                        entry.result = "stopped by the operator";
+                        entry.result = RAN_ON;
                         entry.error = true;
                     }
                     this.publish(entry);
