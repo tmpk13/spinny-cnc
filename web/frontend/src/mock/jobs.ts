@@ -3,7 +3,7 @@
 
 import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
 import { innerFirst } from "./order.ts";
-import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
+import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, Move, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
 type Matrix = [number, number, number, number, number, number];
@@ -1174,8 +1174,42 @@ export function pathMoves(path: Path, from: Joint, tolerance: number): PlannedMo
     return out;
 }
 
-/** Length, time, radii and the table-limited share over the enabled groups. */
+/** What a model's job costs without a machine: every move at its feed, as the backend prices it. */
+export function modelStats(groups: Group[]): Stats {
+    let length = 0;
+    let seconds = 0;
+    let moves = 0;
+    for (const group of groups) {
+        if (!group.enabled) {
+            continue;
+        }
+        for (const path of group.moves ?? []) {
+            moves += path.length;
+            for (let i = 1; i < path.length; i++) {
+                const [x0, y0, z0] = path[i - 1]!;
+                const [x1, y1, z1, kind] = path[i]!;
+                if (kind === 0) {
+                    continue;
+                }
+                length += Math.hypot(x1 - x0, y1 - y0);
+                const rate = kind === 2 ? group.plunge ?? DEFAULT_PLUNGE : group.speed;
+                seconds += rate > 0 ? (Math.hypot(x1 - x0, y1 - y0, z1 - z0) / rate) * 60 : 0;
+            }
+        }
+    }
+    return { length_mm: length, seconds, max_radius: 0, min_radius: 0, limited_fraction: 0, moves };
+}
+
+/**
+ * Length, time, radii and the table-limited share over the enabled groups.
+ * A model's moves are no polar machine's to cut: a job with a group of them
+ * switched on is priced at their feeds, as the backend prices it when the
+ * machine cannot run it.
+ */
 export function computeStats(groups: Group[], limits: RateLimits): Stats {
+    if (groups.some((group) => group.enabled && (group.moves?.length ?? 0) > 0)) {
+        return modelStats(groups);
+    }
     let length = 0;
     let minutes = 0;
     let limited = 0;
@@ -1288,6 +1322,42 @@ function pathsOf(value: unknown, what: string): Path[] {
     });
 }
 
+/**
+ * A model's moves from JSON, each x, y and z over the stock's top and how
+ * the tool gets there, checked as the backend checks them: a kind of 0 (a
+ * rapid), 1 (a feed) or 2 (a plunge), x and y within the bound and z within
+ * twenty times the deepest cut.
+ */
+function movesOf(value: unknown, what: string): Move[][] {
+    if (value === undefined || value === null) {
+        return [];
+    }
+    if (!Array.isArray(value)) {
+        throw new Error(`not a job: ${what}: moves must be a list of paths of [x, y, z, kind]`);
+    }
+    return value.map((path: unknown): Move[] => {
+        if (!Array.isArray(path)) {
+            throw new Error(`not a job: ${what}: moves must be a list of paths of [x, y, z, kind]`);
+        }
+        return path.map((move: unknown): Move => {
+            if (!Array.isArray(move) || move.length !== 4) {
+                throw new Error(`not a job: ${what}: a move is [x, y, z, kind]`);
+            }
+            const x = finiteNumber(move[0], `${what}: a move's x`);
+            const y = finiteNumber(move[1], `${what}: a move's y`);
+            const z = finiteNumber(move[2], `${what}: a move's z`);
+            const kind = move[3];
+            if (kind !== 0 && kind !== 1 && kind !== 2) {
+                throw new Error(`${what}: a move's kind is 0 (rapid), 1 (feed) or 2 (plunge)`);
+            }
+            if (Math.abs(x) > MAX_VALUE || Math.abs(y) > MAX_VALUE || Math.abs(z) > MAX_DEPTH * 20) {
+                throw new Error(`${what}: a move is out of reach`);
+            }
+            return [x, y, z, kind];
+        });
+    });
+}
+
 /** A saved job read back, checked the way the backend checks one. */
 export function jobFromJson(id: string, stem: string, data: unknown, limits: RateLimits): Job {
     if (!isRecord(data) || !Array.isArray(data["groups"])) {
@@ -1337,9 +1407,16 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
             throw new Error(`${what}: areas must be a list of numbers`);
         }
         const paths = pathsOf(raw["paths"], what);
+        if (areas.length > 0 && areas.length !== paths.length) {
+            throw new Error(`${what}: areas must have one entry per path`);
+        }
         const joints = pathsOf(raw["joints"], what);
         if (joints.some((poly) => poly.length < 2)) {
             throw new Error("a joint-space path needs at least two points");
+        }
+        const moves = movesOf(raw["moves"], what);
+        if (moves.length > 0 && (paths.length > 0 || joints.length > 0)) {
+            throw new Error(`${what}: a model's moves come alone, without paths or joints`);
         }
         const group: Group = {
             label,
@@ -1361,6 +1438,9 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
         };
         if (joints.length > 0) {
             group.joints = joints;
+        }
+        if (moves.length > 0) {
+            group.moves = moves;
         }
         return group;
     });

@@ -550,6 +550,20 @@ describe("a job put back whole", () => {
         expect((await backend.replaceJob(named.id, { ...named, groups: [{ ...named.groups[0]!, label: "edges" }] })).recipe ?? null).toBeNull();
     });
 
+    test("takes a new job's default for what it leaves out, as the backend does", async () => {
+        const backend = new MockBackend({ timers: false });
+        const made = (await backend.makeMill({ ops: [line(0)] })).job;
+        const { recipe: _recipe, layer: _layer, ...body } = { ...made, layer: "F.Cu" };
+        const kept = await backend.replaceJob(made.id, body as Job);
+        expect(kept.recipe ?? null).toBeNull();
+        expect(kept.layer ?? null).toBeNull();
+        expect(kept.source).toBe(made.source);
+        expect(kept.name).toBe(made.name);
+        // Areas name one pad each.
+        const dots = { label: "dots", tool: "dispenser", paths: [[[1, 1]], [[2, 2]]], areas: [0.5] };
+        await expect(backend.replaceJob(made.id, { ...body, groups: [dots] } as unknown as Job)).rejects.toThrow("group 'dots': areas must have one entry per path");
+    });
+
     test("draws a joint-space group whose joints changed again, and keeps one's drawing whose joints did not", async () => {
         const backend = new MockBackend({ timers: false });
         const radii = (job: Job): number[] => [...new Set(job.groups[0]!.paths.flat().map(([x, y]) => Math.round(Math.hypot(x, y) * 1e6) / 1e6))];

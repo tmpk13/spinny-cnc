@@ -4,7 +4,7 @@ import modelText from "../../../cam/mill-3d.toml" with { type: "text" };
 import { MockBackend } from "../src/mock/backend.ts";
 import { buildModelJob, camGcode, chipLoad, parseProfile, stlBounds, summaryOf } from "../src/mock/cam.ts";
 import { cutRuns } from "../src/preview.ts";
-import type { Move } from "../src/types.ts";
+import type { Job, Move } from "../src/types.ts";
 
 /** A box's twelve triangles, x by y by z from the origin, as a binary STL. */
 function boxStl(x: number, y: number, z: number): Uint8Array<ArrayBuffer> {
@@ -135,6 +135,30 @@ describe("a model in the mock", () => {
         expect(answer.notes.some((note) => note.includes("need the real backend"))).toBe(true);
         const listed = await backend.jobs();
         expect(listed.some((job) => job.id === answer.job.id)).toBe(true);
+    });
+
+    test("the mock moves a model's moves with an offset and keeps them through a job put back whole", async () => {
+        const backend = new MockBackend({ timers: false });
+        const made = (await backend.camJob("mill-3d", [new File([boxStl(10, 8, 2)], "part.stl")])).job;
+        const first = made.groups[0]!.moves![0]![0]!;
+        await backend.patchJob(made.id, { offset: { x: made.offset.x + 5, y: made.offset.y } });
+        const moved = await backend.job(made.id);
+        expect(moved.groups[0]!.moves![0]![0]!).toEqual([first[0] + 5, first[1], first[2], first[3]]);
+        expect(moved.stats.length_mm).toBeCloseTo(made.stats.length_mm, 6);
+        // The job as GET gives it, without its id and price, as the JSON
+        // panel sends it.
+        const { id: _id, stats: _stats, ...body } = moved;
+        const kept = await backend.replaceJob(made.id, body as Job);
+        expect(kept.groups.map((group) => group.moves?.length ?? 0)).toEqual(moved.groups.map((group) => group.moves?.length ?? 0));
+        expect(kept.groups[0]!.moves).toEqual(moved.groups[0]!.moves!);
+        expect(kept.stats.length_mm).toBeGreaterThan(0);
+        expect(kept.stats.length_mm).toBeCloseTo(moved.stats.length_mm, 6);
+        // Checked as the backend checks them.
+        const bad = (moves: unknown, extra: Record<string, unknown> = {}): Promise<Job> => backend.replaceJob(made.id, { ...body, groups: [{ ...body.groups[0]!, moves, ...extra }] } as Job);
+        await expect(bad([[[0, 0, 0, 3]]])).rejects.toThrow("a move's kind is 0 (rapid), 1 (feed) or 2 (plunge)");
+        await expect(bad([[[0, 0, -1001, 1]]])).rejects.toThrow("a move is out of reach");
+        await expect(bad([[[0, 0, 0, 1]]], { paths: [[[0, 0], [1, 1]]] })).rejects.toThrow("a model's moves come alone, without paths or joints");
+        await expect(bad([[[0, 0, 0]]])).rejects.toThrow("not a job");
     });
 });
 

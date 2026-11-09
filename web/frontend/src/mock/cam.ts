@@ -32,7 +32,7 @@ import type {
     Point,
     Tool,
 } from "../types.ts";
-import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, formatG, isBottom, layerOf, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, formatG, isBottom, layerOf, modelStats, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
 import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
@@ -1304,32 +1304,6 @@ function turnedBox(min: [number, number, number], max: [number, number, number],
 /** A rectangle's loop, closed: the box from (x0, y0) to (x1, y1) at z. */
 function ring(x0: number, y0: number, x1: number, y1: number, z: number): Move[] {
     return [[x0, y0, z, 1], [x1, y0, z, 1], [x1, y1, z, 1], [x0, y1, z, 1], [x0, y0, z, 1]];
-}
-
-/** What a model's job costs without a machine: every move at its feed, as the backend prices it. */
-export function modelStats(groups: Group[]): Job["stats"] {
-    let length = 0;
-    let seconds = 0;
-    let moves = 0;
-    for (const group of groups) {
-        if (!group.enabled) {
-            continue;
-        }
-        for (const path of group.moves ?? []) {
-            moves += path.length;
-            for (let i = 1; i < path.length; i++) {
-                const [x0, y0, z0] = path[i - 1]!;
-                const [x1, y1, z1, kind] = path[i]!;
-                if (kind === 0) {
-                    continue;
-                }
-                length += Math.hypot(x1 - x0, y1 - y0);
-                const rate = kind === 2 ? group.plunge ?? DEFAULT_PLUNGE : group.speed;
-                seconds += rate > 0 ? (Math.hypot(x1 - x0, y1 - y0, z1 - z0) / rate) * 60 : 0;
-            }
-        }
-    }
-    return { length_mm: length, seconds, max_radius: 0, min_radius: 0, limited_fraction: 0, moves };
 }
 
 /**

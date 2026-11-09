@@ -3628,10 +3628,11 @@ export class MockBackend implements Api, EventFeed {
         } catch (error) {
             throw new ApiError(400, error instanceof Error ? error.message : String(error));
         }
-        // What a job file cannot say of itself stays the old job's.
+        // The source left out stays the old job's; anything else left out
+        // takes a new job's default, as the backend has it.
         made.source = typeof given["source"] === "string" ? given["source"] : old.source;
-        made.layer = given["layer"] === undefined ? old.layer ?? null : (given["layer"] as string | null);
-        made.recipe = given["recipe"] === undefined ? old.recipe ?? null : (given["recipe"] as Job["recipe"]);
+        made.layer = given["layer"] === undefined ? null : (given["layer"] as string | null);
+        made.recipe = given["recipe"] === undefined ? null : (given["recipe"] as Job["recipe"]);
         // A recipe makes the groups again as the file or operations make
         // them, carrying settings by label but for its numbers: it stays
         // only while the groups cut what the old job's did under those
@@ -4091,6 +4092,9 @@ export class MockBackend implements Api, EventFeed {
             const move = (paths: Job["outline"]): Job["outline"] => paths.map((path) => path.map(([x, y]) => [x + dx, y + dy]));
             for (const group of updated.groups) {
                 group.paths = move(group.paths);
+                if (group.moves) {
+                    group.moves = group.moves.map((path) => path.map(([x, y, z, kind]) => [x + dx, y + dy, z, kind]));
+                }
             }
             updated.outline = move(updated.outline);
             updated.copper = move(updated.copper);
