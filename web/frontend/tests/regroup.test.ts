@@ -192,4 +192,21 @@ describe("a job as JSON text", () => {
         expect(placeOf(stepsAt(broken, at + 3))).toEqual({ list: "groups", group: 1, path: 0, point: 1 });
         expect(lineColumn("ab\ncde", 4)).toEqual({ line: 2, column: 2 });
     });
+
+    test("a caret where a path or a point begins is in it, the first of a list as much as the others", () => {
+        const text = formatJson(sample);
+        const places: (string | number)[][] = [];
+        sample.groups.forEach((group, g) => group.paths.forEach((path, p) => {
+            places.push(["groups", g, "paths", p]);
+            path.forEach((_, n) => places.push(["groups", g, "paths", p, n]));
+        }));
+        sample.outline.forEach((path, p) => places.push(["outline", p], ...path.map((_, n) => ["outline", p, n])));
+        for (const steps of places) {
+            expect(stepsAt(text, offsetOf(text, steps)!)).toEqual(steps);
+        }
+        // Space before the first entry, or an empty list, is no entry.
+        const list = text.indexOf('"paths": [') + '"paths": ['.length;
+        expect(stepsAt(text, list)).toEqual(["groups", 0, "paths"]);
+        expect(stepsAt("[]", 1)).toEqual([]);
+    });
 });

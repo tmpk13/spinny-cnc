@@ -122,6 +122,12 @@ export function stepsAt(text: string, offset: number): JsonStep[] {
         }
         i += 1;
     }
+    // A later entry's index is set by the comma before it, the first's by
+    // its first character, which a caret on that character has not read:
+    // the entry begins there all the same, as `offsetOf` has it.
+    if (end < text.length && !" \n\r\t]".includes(text[end]!)) {
+        startEntry();
+    }
     const steps: JsonStep[] = [];
     for (const container of stack) {
         if (container.kind === "object") {

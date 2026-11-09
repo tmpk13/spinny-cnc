@@ -387,6 +387,9 @@ describe("the job as JSON", () => {
         // A path picked in the preview puts the caret on its line.
         store.set({ selection: { job: made.id, paths: [[1, 0]] } });
         expect(editor.value.slice(editor.selectionStart, editor.selectionStart + 9)).toBe("[[20, 0],");
+        // A group's first path is a place as much as its others.
+        expect(store.get().highlight).toEqual({ list: "groups", group: 1, path: 0, point: null, job: made.id });
+        expect(root.querySelector(".json-where")?.textContent).toBe("stroke #0000ff: path 1");
         // A text that is not a job is not kept.
         editor.value = "{";
         editor.dispatchEvent(new Event("input"));
