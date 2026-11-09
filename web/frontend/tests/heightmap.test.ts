@@ -457,7 +457,7 @@ describe("compensated runs", () => {
         expect(select.value).toBe("power");
         click(root, "Run");
         await settle();
-        expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "auto"], ["j1", "power"]]);
+        expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "auto", false], ["j1", "power", false]]);
     });
 
     test("a map whose offset was dropped is not followed by default, and the page asks for the offset again", async () => {
@@ -477,7 +477,7 @@ describe("compensated runs", () => {
         expect(note()).toContain("Focus here before a run follows it");
         click(root, "Run");
         await settle();
-        expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "off"]]);
+        expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "off", false]]);
         // A spindle is touched off instead.
         store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "spindle", h_axis: true, r_max: 60, z_max: 0 } } });
         expect(note()).toContain("Touch off here before a run follows it");

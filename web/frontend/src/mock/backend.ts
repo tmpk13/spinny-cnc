@@ -1365,6 +1365,18 @@ interface RunSession {
     compensate?: MapMode;
 }
 
+/** What a run was planned from, kept with its progress as the resume record. */
+interface RunPlan {
+    start: [number, number];
+    compensate: MapMode;
+    cartesian: boolean;
+    spindle: boolean;
+    /** The height a laser group's own focus counted from; null when no group had one. */
+    start_h: number | null;
+    /** The focus axis frame that height was read in. */
+    frame: string;
+}
+
 /** Points per side of a probe grid. */
 const GRID_MIN_POINTS = 2;
 const GRID_MAX_POINTS = 50;
@@ -1917,7 +1929,7 @@ export class MockBackend implements Api, EventFeed {
     /** Every line either way, as the backend's log would hold them. */
     private consoleLog: string[] = [];
     /** What the last run was planned from, kept with its progress as the resume record. */
-    private lastPlan: { start: [number, number]; compensate: MapMode; cartesian: boolean; spindle: boolean } | null = null;
+    private lastPlan: RunPlan | null = null;
     /** Board moves waiting for a free line slot, sent as the machine drains. */
     private outbox: { line: string; move: Move }[] = [];
     private eventListeners = new Set<(event: WsEvent) => void>();
@@ -4141,11 +4153,12 @@ export class MockBackend implements Api, EventFeed {
      * the focus height first so the beam does not light at another. With
      * a spindle the job is milled instead. A laser group's own focus raises
      * the map's focus height, or without a map the height the head stands
-     * at as the run begins: said on the group's first move (a lift of its
-     * own before a cut that starts where the head is), and the head goes
-     * back to that height after the last group.
+     * at as the run begins (`focusBase` when given, the height a run picked
+     * up began at): said on the group's first move (a lift of its own
+     * before a cut that starts where the head is), and the head goes back
+     * to that height after the last group.
      */
-    movesFor(job: Job, focus: HeightMap | null = null): Move[] {
+    movesFor(job: Job, focus: HeightMap | null = null, focusBase: number | null = null): Move[] {
         const machine = this.machine;
         const surface = focus ? (target: Joint, z: number): number => {
             const board = machine.headBoard(target, z);
@@ -4203,7 +4216,7 @@ export class MockBackend implements Api, EventFeed {
         const moves: Move[] = [];
         let joint = machine.endpoint();
         let z = machine.endpointZ();
-        const base = machine.endpointH();
+        const base = focusBase ?? machine.endpointH();
         // The height the plan last said, when a group's focus has it say any.
         let current: number | null = null;
         // Following the map: the own focus of the group whose height the
@@ -4472,7 +4485,7 @@ export class MockBackend implements Api, EventFeed {
         return { mode: resolved, map };
     }
 
-    async runJob(id: string, compensate: Compensate = "off"): Promise<void> {
+    async runJob(id: string, compensate: Compensate = "off", focusHere = false): Promise<void> {
         this.requireConnected();
         const job = this.requireJob(id);
         this.refuseWhileProbing();
@@ -4489,6 +4502,11 @@ export class MockBackend implements Api, EventFeed {
         if (this.machine.state !== "Idle" || this.outbox.length > 0) {
             throw new ApiError(409, "machine is not idle");
         }
+        // Without the map a laser group's own focus counts from where the
+        // head stands as the run begins.
+        if (!followed && !focusHere) {
+            this.checkFocusStart(job);
+        }
         let moves: Move[];
         try {
             refusePowerWithFocus(job, followed?.mode ?? "off");
@@ -4502,13 +4520,13 @@ export class MockBackend implements Api, EventFeed {
         this.jogTracked = false;
         this.session = { job, moves, next: 0, okSent: 0, state: "running", seconds: 0, group: 0, compensate: followed?.mode ?? "off" };
         this.lastProgress = null;
-        this.lastPlan = this.planOf(followed?.mode ?? "off");
+        this.lastPlan = this.planOf(followed?.mode ?? "off", this.focusStartOf(job, null));
         const following = followed ? `, following the board by ${followed.mode}` : "";
         this.message("info", `running ${job.name}: ${moves.length} moves${following}`);
         this.serviceRun(0);
     }
 
-    private planOf(compensate: MapMode): { start: [number, number]; compensate: MapMode; cartesian: boolean; spindle: boolean } {
+    private planOf(compensate: MapMode, startH: number | null): RunPlan {
         const machine = this.machine;
         const cartesian = machine.cartesian();
         return {
@@ -4516,11 +4534,68 @@ export class MockBackend implements Api, EventFeed {
             compensate,
             cartesian,
             spindle: machine.milling(),
+            start_h: startH,
+            frame: this.frameName(),
         };
     }
 
-    /** The moves of a job and where picking it up at `request.line` would start. */
-    private resumePlanOf(id: string, request: ResumeRequest): { job: Job; moves: Move[]; skip: number; line: number; compensate: MapMode } {
+    /** The focus axis frame in use, as the record keeps it beside a height. */
+    private frameName(): string {
+        return String(this.frame);
+    }
+
+    /** The height a laser group's own focus counts from in a run of `job`: `base`, or where the head stands; null when no group has one. */
+    private focusStartOf(job: Job, base: number | null): number | null {
+        const machine = this.machine;
+        if (machine.milling() || machine.dispensing() || !machine.hasFocusAxis() || groupFocus(job).size === 0) {
+            return null;
+        }
+        return base ?? machine.endpointH();
+    }
+
+    /**
+     * Refuses a run of `job` counting its groups' own focus from where the
+     * head is when the last run of the job stopped part way, as the backend
+     * does: that run leaves the head at the height of the group it was
+     * cutting, and in another frame nothing tells where it began.
+     */
+    private checkFocusStart(job: Job): void {
+        const here = this.focusStartOf(job, null);
+        const record = this.resumeRecordOf();
+        if (here === null || !record || record.job !== job.id || (record.state !== "stopped" && record.state !== "error")) {
+            return;
+        }
+        const began = record.start_h;
+        if (typeof began !== "number") {
+            return;
+        }
+        if (record.frame !== this.frameName()) {
+            throw new ApiError(
+                409,
+                `the last run of ${job.name} stopped part way, and the focus axis has been renumbered since it` +
+                    ` began at H${num(began, 4)} (a connect, a restart, a position set or a home), so nothing tells` +
+                    " where focus is: bring the head to focus and run with focus here",
+            );
+        }
+        if (Math.abs(here - began) >= 0.00005) {
+            throw new ApiError(
+                409,
+                `the last run of ${job.name} stopped with the focus axis at H${num(here, 4)}, not at H${num(began, 4)}` +
+                    ` where it began and its groups' focus counts from: send the head back (go H${num(began, 4)}) and` +
+                    " run, or if it was focused again where it is, run with focus here",
+            );
+        }
+    }
+
+    /**
+     * The moves of a job and where picking it up at `request.line` would
+     * start. A laser group's own focus counts from where the run picked up
+     * began, when the record is this job's and the focus axis frame is the
+     * one it began in, or from where the head stands on the operator's word
+     * (`focus_here`); in another frame the pickup is refused, as the
+     * backend's is.
+     */
+    private resumePlanOf(id: string, request: ResumeRequest): { job: Job; moves: Move[]; skip: number; line: number; compensate: MapMode; startH: number | null } {
         const job = this.requireJob(id);
         if (!Number.isInteger(request.line) || request.line < 0) {
             throw new ApiError(400, "the line to pick the job up at cannot be negative");
@@ -4532,10 +4607,23 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `compensate must be one of ${COMPENSATE_MODES.join(", ")}`);
         }
         const followed = this.compensation(compensate, job);
+        let base: number | null = null;
+        const began = theirs ? record.start_h : null;
+        if (groupFocus(job).size > 0 && !request.focus_here && typeof began === "number") {
+            if (!followed && record!.frame !== this.frameName()) {
+                throw new ApiError(
+                    409,
+                    `the focus axis has been renumbered since the run being picked up began at H${num(began, 4)}` +
+                        " (a connect, a restart, a position set or a home), so its groups' heights cannot be counted" +
+                        " from there: bring the head to focus and pick up with focus here",
+                );
+            }
+            base = began;
+        }
         let moves: Move[];
         try {
             refusePowerWithFocus(job, followed?.mode ?? "off");
-            moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null);
+            moves = this.movesFor(job, followed?.mode === "focus" ? followed.map : null, base);
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
@@ -4549,7 +4637,7 @@ export class MockBackend implements Api, EventFeed {
                 skip -= 1;
             }
         }
-        return { job, moves, skip, line, compensate: followed?.mode ?? "off" };
+        return { job, moves, skip, line, compensate: followed?.mode ?? "off", startH: this.focusStartOf(job, base) };
     }
 
     async planResume(id: string, request: ResumeRequest): Promise<ResumePlan> {
@@ -4575,7 +4663,7 @@ export class MockBackend implements Api, EventFeed {
         if (this.machine.milling() && !this.machine.hasFocusAxis()) {
             throw new ApiError(400, "a spindle needs the focus axis as its depth axis: set $h_axis=1");
         }
-        const { job, moves, skip, compensate } = this.resumePlanOf(id, request);
+        const { job, moves, skip, compensate, startH } = this.resumePlanOf(id, request);
         if (this.session) {
             throw new ApiError(409, "a job is already running");
         }
@@ -4588,7 +4676,7 @@ export class MockBackend implements Api, EventFeed {
         this.jogTracked = false;
         this.session = { job, moves, next: skip, okSent: skip, state: "running", seconds: 0, group: moves[skip]?.group ?? 0, resumedFrom: skip, compensate };
         this.lastProgress = null;
-        this.lastPlan = this.planOf(compensate);
+        this.lastPlan = this.planOf(compensate, startH);
         this.message("info", `picking ${job.name} up at line ${skip} of ${moves.length}`);
         this.serviceRun(0);
         const progress = this.progress();

@@ -138,6 +138,10 @@ export interface ResumeRecord extends Progress {
     start?: [number, number] | null;
     /** How the run followed the height map, an auto settled. */
     compensate?: MapMode;
+    /** The height a laser group's own focus counted from; null when no group had one. */
+    start_h?: number | null;
+    /** The focus axis frame `start_h` was read in: a pickup counts from it only in the same frame. */
+    frame?: string | null;
     cartesian?: boolean;
     angle?: number;
     spindle?: boolean;
@@ -156,6 +160,12 @@ export interface ResumeRequest {
     rewind?: boolean;
     /** Left out, the way the run being picked up followed the board. */
     compensate?: Compensate | null;
+    /**
+     * The operator's word that the head is at focus where it stands: a laser
+     * group's own focus counts from here, not from where the run picked up
+     * began, which the focus axis may no longer count the same.
+     */
+    focus_here?: boolean;
 }
 
 /** What picking a job up would do, without moving anything. */

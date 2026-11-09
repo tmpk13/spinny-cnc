@@ -175,6 +175,7 @@ class Runner:
         skip: int = 0,
         pieces: list[Piece] | None = None,
         plan_start: tuple[float, float] | None = None,
+        frame: str | None = None,
     ) -> dict:
         """Plans the run from where the machine is and starts streaming it.
 
@@ -189,6 +190,9 @@ class Runner:
         job goes on from there. The plan is then made from `plan_start`,
         where the run being picked up began, so its lines are the same
         ones, and `pieces`, when given, are those lines already made.
+
+        `frame` names the focus axis frame the run begins in, which the
+        resume record keeps beside the height a group's focus counts from.
         """
         with self._lock:
             if reserved:
@@ -232,8 +236,10 @@ class Runner:
                 progress = self.progress
                 self._plan = {
                     "start": [float(start[0]), float(start[1])],
-                    # The height a group's own focus counts from, when one has it.
+                    # The height a group's own focus counts from, when one has
+                    # it, and the focus axis frame that height was read in.
                     "start_h": streamer.focus_base,
+                    "frame": frame,
                     "compensate": compensation.mode if compensation is not None else "off",
                     "cartesian": streamer.cartesian,
                     "angle": float(getattr(streamer, "angle", 0.0)),

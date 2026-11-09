@@ -479,7 +479,7 @@ describe("Plot page", () => {
         expect(run.querySelector(".mill-run-job")?.textContent).toBe("drill 1 points");
         click(run, "Run");
         await settle();
-        expect(calls.find((call) => call.name === "runJob")?.args).toEqual([job.job.id, "off"]);
+        expect(calls.find((call) => call.name === "runJob")?.args).toEqual([job.job.id, "off", false]);
     });
 });
 

@@ -1658,6 +1658,65 @@ describe("the mock backend answers as the backend does", () => {
         await expect(backend.calibrateJob({ kind: "focus" })).rejects.toMatchObject({ status: 400 });
     });
 
+    test("after a stop a run counts a group's focus from where the last one began, or from here on the operator's word", async () => {
+        const { backend, consoleLines } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { h_axis: 1 } });
+        const made = await backend.calibrateJob({ kind: "focus", focuses: [-1, 1, 3], length: 30, gap: 1, x: -15, y: 20 });
+        const id = made.job.id;
+        const heights = async (focusHere: boolean): Promise<string[]> => {
+            const before = consoleLines().length;
+            const start = backend.machine.h;
+            await backend.runJob(id, "off", focusHere);
+            // Stopped once the head is at the first line's height, a
+            // millimetre under where the run began.
+            for (let waited = 0; waited < 60 && Math.abs(backend.machine.h - (start - 1)) > 1e-9; waited += 0.1) {
+                advance(backend, 0.1);
+            }
+            advance(backend, 0.3);
+            await backend.runStop();
+            advance(backend, 1);
+            return consoleLines().slice(before).filter((line) => line.startsWith("tx ") && / H-?\d/.test(line)).map((line) => line.split(" H")[1]!);
+        };
+        const refusal = async (attempt: Promise<unknown>): Promise<string> => {
+            try {
+                await attempt;
+            } catch (error) {
+                expect(error).toBeInstanceOf(ApiError);
+                expect((error as ApiError).status).toBe(409);
+                return (error as ApiError).message;
+            }
+            throw new Error("not refused");
+        };
+        expect((await heights(false))[0]).toBe("-1.0000");
+        // The stop left the head at the first line's height.
+        expect(backend.machine.h).toBeCloseTo(-1, 6);
+        expect(await refusal(backend.runJob(id))).toBe(
+            "the last run of focus ladder stopped with the focus axis at H-1, not at H0 where it began and its groups' focus counts from:" +
+                " send the head back (go H0) and run, or if it was focused again where it is, run with focus here",
+        );
+        // A pickup in the same frame counts from where that run began.
+        const record = await backend.resumeRecord();
+        expect(record?.start_h).toBe(0);
+        const plan = await backend.planResume(id, { line: record!.acked, rewind: false });
+        expect(plan.total).toBeGreaterThan(record!.acked);
+        // Focused again where the stop left it.
+        expect((await heights(true))[0]).toBe("-2.0000");
+        expect((await backend.resumeRecord())?.start_h).toBe(-1);
+        // Renumbered, nothing tells where the run began.
+        await backend.setPosition({ h: 5 });
+        expect(await refusal(backend.runJob(id))).toBe(
+            "the last run of focus ladder stopped part way, and the focus axis has been renumbered since it began at H-1" +
+                " (a connect, a restart, a position set or a home), so nothing tells where focus is: bring the head to focus and run with focus here",
+        );
+        expect(await refusal(backend.planResume(id, { line: 3 }))).toBe(
+            "the focus axis has been renumbered since the run being picked up began at H-1 (a connect, a restart, a position set" +
+                " or a home), so its groups' heights cannot be counted from there: bring the head to focus and pick up with focus here",
+        );
+        const here = await backend.planResume(id, { line: 3, rewind: false, focus_here: true });
+        expect(here.skip).toBe(3);
+    });
+
     test("probing refuses a grid past the soft limit before anything moves", async () => {
         const { backend } = backendWithLog();
         await backend.connect("/dev/ttyACM0");

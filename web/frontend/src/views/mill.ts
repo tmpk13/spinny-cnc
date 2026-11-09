@@ -25,6 +25,7 @@ import { movedDims, operationDims, operationSummary, sameOperation, type RectMod
 import { setPending, type AppState } from "../state.ts";
 import type { Compensate, HolePoint, Job, MillKind, MillOperation, MillShape, MillSide, Point } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
+import { withFocusHere } from "./focushere.ts";
 import { mapUsable } from "./heightmap.ts";
 import { progressText } from "./jobs.ts";
 import { headPosition, markerPicker } from "./markers.ts";
@@ -1068,7 +1069,7 @@ function mountMillRun(root: HTMLElement, ctx: Ctx): void {
         if (!job) {
             return;
         }
-        await ctx.call(ctx.api.runJob(job.id, compensate.value as Compensate));
+        await withFocusHere(ctx, (focusHere) => ctx.api.runJob(job.id, compensate.value as Compensate, focusHere), "Focused here: run");
         await ctx.refreshState();
     }
 

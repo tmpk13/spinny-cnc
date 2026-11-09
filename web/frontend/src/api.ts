@@ -167,8 +167,12 @@ export interface Api {
     deleteJob(id: string): Promise<void>;
     /** Removes every job but the one running; answers their ids. */
     deleteAllJobs(): Promise<string[]>;
-    /** `compensate` follows the height map; left out, the run does not. */
-    runJob(id: string, compensate?: Compensate): Promise<void>;
+    /**
+     * `compensate` follows the height map; left out, the run does not.
+     * `focusHere` is the operator's word that the head is at focus where it
+     * stands, for a laser group's own focus to count from.
+     */
+    runJob(id: string, compensate?: Compensate, focusHere?: boolean): Promise<void>;
     /** Picks the job up at a line: the lines before it count as done, the head is brought to where it begins. */
     resumeJob(id: string, request: ResumeRequest): Promise<Progress>;
     /** What `resumeJob` would do, without moving anything. */
@@ -619,8 +623,8 @@ export class HttpApi implements Api {
         return response.deleted ?? [];
     }
 
-    async runJob(id: string, compensate: Compensate = "off"): Promise<void> {
-        await this.request("POST", `/api/jobs/${encodeURIComponent(id)}/run`, { compensate });
+    async runJob(id: string, compensate: Compensate = "off", focusHere = false): Promise<void> {
+        await this.request("POST", `/api/jobs/${encodeURIComponent(id)}/run`, focusHere ? { compensate, focus_here: true } : { compensate });
     }
 
     resumeJob(id: string, request: ResumeRequest): Promise<Progress> {

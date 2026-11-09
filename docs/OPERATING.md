@@ -561,6 +561,11 @@ survives the host as well as the controller.
    pickup without the map is refused when a probe in this frame found the
    copper more than 1 mm from H 0, which is what a power cycle with the
    head raised looks like.
+   A laser job whose groups have a focus of their own, picked up without
+   the map, counts it from the height the stopped run began at while the
+   focus axis frame holds; after a connect, a restart, a position set or
+   a home that height means nothing, so focus the beam by eye and answer
+   *Focused here* when the pickup asks.
    When nothing moved the axes since the offset was set (the link dropped
    and came back to a board that did not restart: `diag` at the connect
    shows its `up` time still counting), the banner under the status bar
@@ -573,6 +578,11 @@ survives the host as well as the controller.
    gap in a trace. A spindle rises to the travel height, goes over the
    point, starts at the job's speed there, spins up and plunges before the
    first cut.
+
+*Run* again from the top after such a stop asks the same of a laser job
+with groups' own focus: the stop leaves the head at the height of the
+group it was cutting, not where the run began. Send it back with `go H`
+to the height the refusal names, or focus again and answer *Focused here*.
 
 A machine that stops answering is given up by the link after 3 s of
 silence: the state badge first shows the age of its last report, then the

@@ -17,6 +17,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
@@ -123,7 +124,7 @@ from .link import (
 from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as log_tail, wire_line, wire_note
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
 from .resume import PositionStore, ResumeStore
-from .runner import HOLD, RUNNING, Runner, RunnerError, halt
+from .runner import ERROR, HOLD, RUNNING, STOPPED, Runner, RunnerError, halt
 from .tools import ToolBox
 from .vision import VisionError
 
@@ -396,6 +397,10 @@ class RunBody(BaseModel):
     # How the run follows the board's height: off, auto (the focus axis
     # when one is fitted, else power), focus or power.
     compensate: str = OFF
+    # The operator's word that the head is at focus where it stands: a
+    # laser group's own focus counts from here even though the last run of
+    # the job stopped with the head somewhere else, or in another frame.
+    focus_here: bool = False
 
 
 class ResumeBody(BaseModel):
@@ -403,10 +408,14 @@ class ResumeBody(BaseModel):
     # progress reports it. With `rewind` the run starts over at the first
     # line of the path that line belongs to, so a count a line off cannot
     # leave a gap. `compensate` left out takes the way the run being
-    # picked up followed the board.
+    # picked up followed the board. `focus_here` is the operator's word
+    # that the head is at focus where it stands, so a laser group's own
+    # focus counts from here rather than from where the run picked up
+    # began, which the focus axis may no longer count the same.
     line: int
     rewind: bool = True
     compensate: str | None = None
+    focus_here: bool = False
 
 
 class FocusBody(Finite):
@@ -753,6 +762,9 @@ class Backend:
         # for heights probed in this frame, and only then does probing
         # again keep the offset.
         self._frame = 0
+        # Names this backend's frames apart from another session's, whose
+        # count started from 0 as well: see `focus_frame`.
+        self._frame_session = uuid.uuid4().hex[:12]
         self._heights_frame: int | None = None
         # The frame the focus offset was set in. Every frame change takes
         # the offset back as it happens, but probing writes its own copy of
@@ -1344,6 +1356,39 @@ class Backend:
             self.heightmaps.put(heightmap)
         self.publish_message("info", f"{reason}: focus here again before a run follows the height map")
         self.publish_heightmap()
+
+    def focus_frame(self) -> str:
+        """The focus axis frame in use, named apart from every other one,
+        an earlier session's included. A run's record keeps it with the
+        height its groups' focus counted from, which is only that height
+        again while the frame is the same."""
+        return f"{self._frame_session}:{self._frame}"
+
+    def _check_focus_start(self, job: Job, here: float | None) -> None:
+        """Refuses a run of `job` that would count its groups' own focus
+        from where the head is (`here`) when the last run of the job
+        stopped part way: that run leaves the head at the height of the
+        group it was cutting, not where it began, and nothing says whether
+        it was focused again since. The run goes when the head is back at
+        that run's start, or on the operator's word (`focus_here`)."""
+        record = self.resume_store.get()
+        if record is None or record.get("job") != job.id or record.get("state") not in (STOPPED, ERROR):
+            return
+        began = record.get("start_h")
+        if isinstance(began, bool) or not isinstance(began, (int, float)) or here is None:
+            return
+        if record.get("frame") != self.focus_frame():
+            raise RunnerError(
+                f"the last run of {job.name} stopped part way, and the focus axis has been renumbered since it"
+                f" began at H{num(began, 4)} (a connect, a restart, a position set or a home), so nothing tells"
+                " where focus is: bring the head to focus and run with focus here"
+            )
+        if abs(here - began) >= 0.5 * 10.0 ** -FOCUS_DECIMALS:
+            raise RunnerError(
+                f"the last run of {job.name} stopped with the focus axis at H{num(here, 4)}, not at H{num(began, 4)}"
+                f" where it began and its groups' focus counts from: send the head back (go H{num(began, 4)}) and"
+                " run, or if it was focused again where it is, run with focus here"
+            )
 
     def _publish_progress(self, progress: dict) -> None:
         self.broadcast.publish_threadsafe({"type": "progress", **progress})
@@ -2336,14 +2381,14 @@ class Backend:
         return made
 
     @editing_job
-    def run_job(self, job_id: str, compensate: str = OFF) -> dict:
+    def run_job(self, job_id: str, compensate: str = OFF, focus_here: bool = False) -> dict:
         # The check that nothing is being probed and the runner's claim are
         # one step: probing asked for at the same moment waits for this,
         # then finds the run under way.
         with self._owner_lock:
-            return self._run_job(job_id, compensate)
+            return self._run_job(job_id, compensate, focus_here)
 
-    def _run_job(self, job_id: str, compensate: str = OFF) -> dict:
+    def _run_job(self, job_id: str, compensate: str = OFF, focus_here: bool = False) -> dict:
         job = self.store.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="no such job")
@@ -2367,7 +2412,14 @@ class Backend:
             status = None
             if self.cartesian and self.link is not None and self.link.is_open:
                 status = self.link.status_now(1.0, routine=True)
-            return self.runner.start(job, self.link, self.streamer(status), compensation, restarts, reserved=True)
+            # Without the map a laser group's own focus counts from where
+            # the head stands as the run begins.
+            if compensation is None and not focus_here and not self.milling and not self.dispensing and group_focus(job):
+                if self.link is not None and self.link.is_open:
+                    self._check_focus_start(job, self.link.status_now(1.0, routine=True).h)
+            return self.runner.start(
+                job, self.link, self.streamer(status), compensation, restarts, reserved=True, frame=self.focus_frame()
+            )
         finally:
             self.runner.release()
 
@@ -2415,10 +2467,24 @@ class Backend:
                 if plan_start is None:
                     plan_start = streamer.start_of(status)
                 # A group's own focus counts from where the run picked up
-                # began, so its lines are the ones counted.
+                # began, so its lines are the ones counted; that height is
+                # a focus axis position, which means the same only in the
+                # frame it was read in. The operator's word that the head
+                # is at focus (`focus_here`) counts from where it stands.
+                # Following the map, the map's focus height is the base.
                 if group_focus(job):
-                    if theirs and record is not None and isinstance(record.get("start_h"), (int, float)):
-                        streamer.focus_base = float(record["start_h"])
+                    began = record.get("start_h") if theirs and record is not None else None
+                    if body.focus_here:
+                        streamer.focus_base = status.h
+                    elif isinstance(began, (int, float)) and not isinstance(began, bool):
+                        if compensation is None and record is not None and record.get("frame") != self.focus_frame():
+                            raise RunnerError(
+                                f"the focus axis has been renumbered since the run being picked up began at"
+                                f" H{num(began, 4)} (a connect, a restart, a position set or a home), so its groups'"
+                                " heights cannot be counted from there: bring the head to focus and pick up with"
+                                " focus here"
+                            )
+                        streamer.focus_base = float(began)
                     elif status.h is not None:
                         streamer.focus_base = status.h
                 pieces = list(streamer.job_pieces(job, plan_start, compensation))
@@ -2450,6 +2516,7 @@ class Backend:
                     skip=skip,
                     pieces=pieces,
                     plan_start=plan_start,
+                    frame=self.focus_frame(),
                 )
             finally:
                 self.runner.release()
@@ -4291,8 +4358,8 @@ def create_app(
 
     @app.post("/api/jobs/{job_id}/run")
     def run_job(job_id: str, body: RunBody | None = None):
-        compensate = body.compensate if body is not None else OFF
-        return guarded(lambda: backend.run_job(job_id, compensate))
+        body = body if body is not None else RunBody()
+        return guarded(lambda: backend.run_job(job_id, body.compensate, body.focus_here))
 
     @app.post("/api/jobs/{job_id}/resume")
     def resume_job(job_id: str, body: ResumeBody):

@@ -209,3 +209,115 @@ def test_a_groups_focus_needs_the_focus_axis(client, fake):
     client.patch(f"/api/jobs/{job['id']}", json={"groups": [{"index": 0, "focus": 0.5}]})
     response = client.post(f"/api/jobs/{job['id']}/run")
     assert response.status_code == 409 and "no focus axis" in response.text
+
+
+def heights_sent(lines: list[str]) -> list[float]:
+    return [words(line)["H"] for line in lines if line.split()[0] in ("go", "cut") and "H" in words(line)]
+
+
+def wait_idle(fake: FakeSerial, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while fake.state() != "Idle":
+        assert time.monotonic() < deadline, fake.state()
+        time.sleep(0.01)
+
+
+def run_and_stop(client, fake: FakeSerial, job_id: str, body: dict | None = None) -> list[float]:
+    """Runs the job, stops it a few lines in, and gives the heights sent."""
+    before = len(fake.received_lines)
+    response = client.post(f"/api/jobs/{job_id}/run", json=body or {})
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 10.0
+    while len(fake.received_lines) - before <= 3:
+        assert time.monotonic() < deadline
+        time.sleep(0.005)
+    client.post("/api/run/stop")
+    assert wait_done(client)["state"] in ("stopped", "error")
+    client.post("/api/unlock")
+    wait_idle(fake)
+    return heights_sent(fake.received_lines[before:])
+
+
+def test_a_run_again_after_a_stop_counts_focus_from_where_the_last_one_began(client, fake):
+    client.get("/api/settings")
+    fake.ok_delay = 0.01
+    fake.move_time = 0.03
+    made = client.post("/api/calibrate", json={"kind": "focus", "focuses": [-1, 1, 3], "length": 30, "gap": 1, "x": -15, "y": 20})
+    job_id = made.json()["job"]["id"]
+    assert run_and_stop(client, fake, job_id)[0] == pytest.approx(-1.0)
+    # The stop left the head at the first line's height, a millimetre low.
+    assert fake.h == pytest.approx(-1.0)
+    record = client.get("/api/resume").json()["resume"]
+    # A pickup in the same frame counts from where that run began.
+    plan = client.post(f"/api/jobs/{job_id}/resume/plan", json={"line": record["acked"]})
+    assert plan.status_code == 200, plan.text
+    said = heights_sent([*plan.json()["approach"], plan.json()["next"]])
+    assert said and said[-1] == pytest.approx(-1.0)
+    # Run again from there, every line would burn a millimetre low.
+    refused = client.post(f"/api/jobs/{job_id}/run")
+    assert refused.status_code == 409
+    assert "H-1" in refused.text and "go H0" in refused.text and "with focus here" in refused.text
+    # Sent back to where it began, the run counts from there.
+    assert client.post("/api/goto", json={"kind": "joint", "h": 0}).status_code == 200
+    wait_idle(fake)
+    assert run_and_stop(client, fake, job_id)[0] == pytest.approx(-1.0)
+    # Focused again where a stop left it, on the operator's word.
+    assert run_and_stop(client, fake, job_id, {"focus_here": True})[0] == pytest.approx(-2.0)
+    assert client.get("/api/resume").json()["resume"]["start_h"] == pytest.approx(-1.0)
+    # Once the focus axis is renumbered nothing tells where it began.
+    assert client.post("/api/position", json={"h": 5}).status_code == 200
+    refused = client.post(f"/api/jobs/{job_id}/run")
+    assert refused.status_code == 409
+    assert "renumbered" in refused.text and "with focus here" in refused.text
+    assert run_and_stop(client, fake, job_id, {"focus_here": True})[0] == pytest.approx(4.0)
+
+
+def test_a_pickup_after_the_focus_axis_was_renumbered_needs_the_head_at_focus(tmp_path):
+    # The ports the connects find, in order.
+    ports: list[FakeSerial] = []
+
+    def board(h: float, **kwargs) -> FakeSerial:
+        fake = FakeSerial(move_time=0.03, ok_delay=0.002, **kwargs)
+        fake.settings["h_axis"] = 1
+        fake.h = h
+        ports.append(fake)
+        return fake
+
+    backend = Backend(
+        root=tmp_path,
+        link_factory=lambda url: Link(url, open_port=fake_opener(ports.pop(0))),
+        jobs_dir=tmp_path / "jobs",
+        config_path=tmp_path / "config.json",
+    )
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        first = board(-12.0)
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        client.get("/api/settings")
+        paths = [[[-15.0, 20.0 + i * 0.5], [15.0, 20.0 + i * 0.5]] for i in range(6)]
+        upload = {"name": "up", "groups": [{"label": "up", "power": 300, "speed": 600, "paths": paths, "focus": 0.5}]}
+        job_id = client.post("/api/jobs", files={"file": ("up.json", json.dumps(upload), "application/json")}).json()["id"]
+        assert client.post(f"/api/jobs/{job_id}/run").status_code == 200
+        deadline = time.monotonic() + 10.0
+        while len(first.answered_lines) <= 30:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        # The board browns out mid-run.
+        first.vanish()
+        assert wait_done(client)["state"] == "error"
+        record = client.get("/api/resume").json()["resume"]
+        assert record["start_h"] == pytest.approx(-12.0) and record["frame"]
+        # Back from power on at H 0 wherever the head is, focused by eye and
+        # declared H 0 there.
+        board(0.0, boot="power on", up=time.monotonic())
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        client.get("/api/settings")
+        assert client.post("/api/position", json={"h": 0}).status_code == 200
+        pickup = {"line": record["acked"]}
+        refused = client.post(f"/api/jobs/{job_id}/resume/plan", json=pickup)
+        assert refused.status_code == 409
+        assert "renumbered" in refused.text and "H-12" in refused.text and "with focus here" in refused.text
+        assert client.post(f"/api/jobs/{job_id}/resume", json=pickup).status_code == 409
+        plan = client.post(f"/api/jobs/{job_id}/resume/plan", json={**pickup, "focus_here": True})
+        assert plan.status_code == 200, plan.text
+        said = heights_sent([*plan.json()["approach"], plan.json()["next"]])
+        assert said and said[-1] == pytest.approx(0.5)

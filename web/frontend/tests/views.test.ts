@@ -624,6 +624,53 @@ describe("jobs", () => {
         expect(root.querySelector(".progress-reason")?.textContent).toBe("");
     });
 
+    test("a run refused for want of the head at focus asks, and runs with focus here on the operator's word", async () => {
+        const { ctx, root, api, calls, backend } = setup();
+        await api.connect("/dev/ttyACM0");
+        await api.updateSettings({ values: { h_axis: 1 } });
+        const made = await api.calibrateJob({ kind: "focus", focuses: [-1, 1, 3], length: 30, gap: 1, x: -15, y: 20 });
+        // Stopped on its first line, the run left the head a millimetre low.
+        await api.runJob(made.job.id);
+        for (let waited = 0; waited < 60 && Math.abs(backend.machine.h + 1) > 1e-9; waited += 0.1) {
+            backend.step(0.1);
+        }
+        await api.runStop();
+        backend.step(1);
+        mountJobs(root, ctx);
+        await ctx.refreshState();
+        await ctx.refreshJobs();
+        await ctx.selectJob(made.job.id);
+        click(root, "Run");
+        await settle();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("The last run of focus ladder stopped with the focus axis at H-1, not at H0");
+        dialogButton("Focused here: run").click();
+        await settle();
+        await settle();
+        expect(calls.filter((c) => c.name === "runJob").at(-1)?.args).toEqual([made.job.id, "off", true]);
+        expect((await api.run())?.state).toBe("running");
+        await api.runStop();
+        backend.step(1);
+        // Renumbered since: a pickup needs the word too, and carries it to the resume.
+        await api.setPosition({ h: 0 });
+        await ctx.refreshState();
+        click(root, "Resume from line");
+        await settle();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("The focus axis has been renumbered since the run being picked up began at H-1");
+        dialogButton("Focused here: plan").click();
+        await settle();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Its groups' focus counts from where the head is now.");
+        dialogButton("Resume").click();
+        await settle();
+        await settle();
+        const resumed = calls.filter((c) => c.name === "resumeJob").at(-1)?.args[1] as { focus_here?: boolean } | undefined;
+        expect(resumed?.focus_here).toBe(true);
+        expect((await api.run())?.state).toBe("running");
+        await api.runStop();
+    });
+
     test("delete asks first, and a refused delete keeps the job selected with its controls", async () => {
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
