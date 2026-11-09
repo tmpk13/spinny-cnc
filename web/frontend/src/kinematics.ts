@@ -99,6 +99,26 @@ export function tableLimitedSpeed(speed: number, r: number, aRate: number): numb
 }
 
 /**
+ * Most steps a second the firmware's step generator produces at a step
+ * pulse of `stepUs` microseconds: one per 10 us tick, and fewer once the
+ * pulse, busy-waited inside the tick at about 1.5 times its setting, and
+ * the interrupt's own 3 us no longer fit in one.
+ */
+export function stepCeilingHz(stepUs: number): number {
+    const tickUs = Math.max(10, Math.floor((3 * Math.max(0, Math.trunc(stepUs)) + 1) / 2) + 3);
+    return 1e6 / tickUs;
+}
+
+/**
+ * An axis's rate as the firmware's planner holds it, per minute: `rate`,
+ * or the fastest the step generator pulses `steps` steps a unit at
+ * `stepUs`, whichever is lower; `steps` of 0 (not known) leaves the rate.
+ */
+export function cappedRate(rate: number, steps: number, stepUs: number): number {
+    return steps > 0 ? Math.min(rate, (stepCeilingHz(stepUs) * 60) / steps) : rate;
+}
+
+/**
  * Time in minutes for a joint move at surface speed `feed`, held back by the
  * axis rate limits; a move without board length runs at the max rates.
  */

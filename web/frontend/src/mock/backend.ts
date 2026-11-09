@@ -8,6 +8,7 @@ import { fromBoard, type FromBoard } from "../machinekeys.ts";
 import {
     AXIS_EPSILON,
     DEG,
+    cappedRate,
     cartesianSurfaceLength,
     distanceToSegment,
     headBoard,
@@ -942,14 +943,17 @@ export class MockMachine {
         const s = this.settings;
         const to = move.target;
         const length = this.boardLength(from, to, fromZ, toZ);
-        const hRate = s["h_rate"] ?? 600;
+        // Every rate, a jog's too, is held to what the step generator
+        // pulses at the axis's steps a unit.
+        const cap = (rate: number, axis: string): number => cappedRate(rate, s[`${axis}_steps`] ?? 0, s["step_us"] ?? 2);
+        const hRate = cap(s["h_rate"] ?? 600, "h");
         const headOnly = Math.abs(to.r - from.r) < 1e-9 && Math.abs(to.a - from.a) < 1e-9 && Math.abs(toZ - fromZ) < 1e-9;
-        let rates = [s["r_rate"] ?? 560, s["a_rate"] ?? 400, s["z_rate"] ?? 560];
+        let rates = [cap(s["r_rate"] ?? 560, "r"), cap(s["a_rate"] ?? 400, "a"), cap(s["z_rate"] ?? 560, "z")];
         let feed: number | null = null;
         let focusRate = hRate;
         if (move.kind === "jog" && move.feed === null) {
-            rates = [s["jog_r"] ?? 300, s["jog_a"] ?? 200, s["jog_z"] ?? 120];
-            focusRate = s["jog_h"] ?? 120;
+            rates = [cap(s["jog_r"] ?? 300, "r"), cap(s["jog_a"] ?? 200, "a"), cap(s["jog_z"] ?? 120, "z")];
+            focusRate = cap(s["jog_h"] ?? 120, "h");
         } else if (move.kind !== "go") {
             feed = move.feed;
             if (headOnly && feed !== null) {
@@ -3435,10 +3439,13 @@ export class MockBackend implements Api, EventFeed {
         this.message("info", "settings written to flash (mock)");
     }
 
+    /** The rates a job is priced at, held to what the step generator pulses as the backend's are. */
     private limits(): { rRate: number; aRate: number; tolerance: number } {
+        const s = this.machine.settings;
+        const stepUs = s["step_us"] ?? 2;
         return {
-            rRate: this.machine.settings["r_rate"] ?? 560,
-            aRate: this.machine.settings["a_rate"] ?? 400,
+            rRate: cappedRate(s["r_rate"] ?? 560, s["r_steps"] ?? 0, stepUs),
+            aRate: cappedRate(s["a_rate"] ?? 400, s["a_steps"] ?? 0, stepUs),
             tolerance: this.tolerance,
         };
     }

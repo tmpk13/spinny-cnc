@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { stepCeilingHz } from "../src/kinematics.ts";
 import { isCapped, SPEED_COLORS, speedBucket, speedMap, type SpeedLimits } from "../src/speed.ts";
 import type { Group, Job } from "../src/types.ts";
 import { scrubText, speedLimitsOf } from "../src/views/previewpanel.ts";
@@ -63,9 +64,34 @@ describe("the speed view", () => {
 
     test("the rates come from the settings read, with the cross slide's for a cartesian Y", () => {
         const state = initialState(true);
-        expect(speedLimitsOf(state)).toEqual({ kinematics: "polar", rRate: 560, aRate: 400, zRate: 600, tolerance: 0.005, assumed: true });
+        expect(speedLimitsOf(state)).toEqual({ kinematics: "polar", rRate: 560, aRate: 400, zRate: 560, tolerance: 0.005, assumed: true });
         state.settings = { values: { r_rate: 900, a_rate: 300, z_rate: 700 }, schema: [], host: { tolerance: 0.01 } } as unknown as typeof state.settings;
         expect(speedLimitsOf(state)).toEqual({ kinematics: "polar", rRate: 900, aRate: 300, zRate: 700, tolerance: 0.01, assumed: false });
+    });
+
+    test("a rate past what the step generator pulses is held to it, as the firmware's planner holds it", () => {
+        // One step every 10 us tick at a 2 us pulse; a 20 us pulse needs 30
+        // us busy-waited and 3 more of the interrupt's own.
+        expect(stepCeilingHz(2)).toBe(100_000);
+        expect(stepCeilingHz(5)).toBeCloseTo(1e6 / 11, 9);
+        expect(stepCeilingHz(20)).toBeCloseTo(1e6 / 33, 9);
+        const state = initialState(true);
+        state.settings = {
+            values: { r_rate: 560, a_rate: 600, z_rate: 560, r_steps: 10240, a_steps: 14222.222, z_steps: 12800, step_us: 2 },
+            schema: [],
+            host: { tolerance: 0.005 },
+        } as unknown as typeof state.settings;
+        const limits = speedLimitsOf(state);
+        expect(limits.rRate).toBe(560);
+        expect(limits.aRate).toBeCloseTo(421.875, 3);
+        expect(limits.zRate).toBeCloseTo(468.75, 9);
+        // A ring at 45 mm and 400 mm/min needs 509 deg/min of the table:
+        // under the 600 asked for, over the 421.9 the table reaches.
+        const ring = Array.from({ length: 65 }, (_, i) => [45 * Math.cos((i / 64) * 2 * Math.PI), 45 * Math.sin((i / 64) * 2 * Math.PI)] as [number, number]);
+        const map = speedMap(job([group("ring", [ring])]), limits);
+        expect(map.segments.length).toBeGreaterThan(60);
+        expect(map.segments.every(isCapped)).toBe(true);
+        expect(map.cappedLength).toBeCloseTo(map.length, 6);
     });
 });
 

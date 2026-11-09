@@ -42,6 +42,37 @@ describe("mock machine motion", () => {
         expect(machine.joint.r).toBeCloseTo(10, 9);
     });
 
+    test("a rate past what the step generator pulses is held to it, rapids and jogs alike", () => {
+        // 100000 steps a second at a 2 us pulse over 20480 steps/mm is
+        // 292.97 mm/min: under r_rate 560 and over jog_r 250.
+        const machine = new MockMachine({ r_steps: 20480, jog_r: 400 });
+        const ceiling = (100_000 * 60) / 20480;
+        machine.go(10, 0);
+        stepped(machine, (10 / ceiling) * 60 / 2);
+        expect(machine.joint.r).toBeCloseTo(5, 6);
+        stepped(machine, (10 / ceiling) * 60 / 2 + 0.01);
+        expect(machine.state).toBe("Idle");
+        machine.jog(-10, 0, null);
+        stepped(machine, (10 / ceiling) * 60 / 2);
+        expect(machine.joint.r).toBeCloseTo(5, 6);
+        // A 20 us pulse takes a 33 us tick: 88.8 mm/min.
+        const wide = new MockMachine({ step_us: 20 });
+        wide.go(1, 0);
+        stepped(wide, (1 / ((1e6 / 33) * 60 / 10240)) * 60 / 2);
+        expect(wide.joint.r).toBeCloseTo(0.5, 6);
+    });
+
+    test("a job's stats hold the table to what its step generator pulses", async () => {
+        // A ring at 45 mm and 400 mm/min needs 509 deg/min of the table:
+        // a_rate 600 asks for more, the step generator gives 421.9.
+        const backend = new MockBackend({ timers: false });
+        backend.machine.settings["a_rate"] = 600;
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" stroke="#f00" fill="none"/></svg>';
+        const job = await backend.uploadJob(new File([svg], "ring.svg"), { anchor: "center" });
+        expect(job.stats.max_radius).toBeCloseTo(45, 1);
+        expect(job.stats.limited_fraction).toBeCloseTo(1, 6);
+    });
+
     test("a rapid has both axes arrive together", () => {
         const machine = new MockMachine();
         machine.go(50, 180);

@@ -8,6 +8,7 @@
 // paths, which the Jobs panel moves between groups.
 
 import { button, el } from "../dom.ts";
+import { cappedRate } from "../kinematics.ts";
 import { Preview, type Dimension } from "../preview.ts";
 import type { SpeedLimits } from "../speed.ts";
 import { type PathRef, boxedAfter, pickedAfter } from "../regroup.ts";
@@ -22,18 +23,24 @@ export const GRID_LABEL = "Grid";
 export const BOX_LABEL = "Box select";
 export const SPEED_LABEL = "Speed";
 
-/** The rates the speed view works with: the settings read, else the firmware's defaults, marked as assumed. */
+/**
+ * The rates the speed view works with: the settings read, else the
+ * firmware's defaults, marked as assumed; each held to what the step
+ * generator pulses at the axis's steps, as the firmware's planner and the
+ * job's stats hold it.
+ */
 export function speedLimitsOf(state: AppState): SpeedLimits {
     const values = state.settings?.values;
-    const rate = (name: string, fallback: number): number => {
+    const number = (name: string, fallback: number): number => {
         const value = values?.[name];
         return typeof value === "number" && value > 0 ? value : fallback;
     };
+    const rate = (axis: string, fallback: number): number => cappedRate(number(`${axis}_rate`, fallback), number(`${axis}_steps`, 0), number("step_us", 2));
     return {
         kinematics: state.snapshot.profile?.kinematics ?? "polar",
-        rRate: rate("r_rate", 560),
-        aRate: rate("a_rate", 400),
-        zRate: rate("z_rate", 600),
+        rRate: rate("r", 560),
+        aRate: rate("a", 400),
+        zRate: rate("z", 560),
         tolerance: state.settings?.host?.tolerance ?? 0.005,
         assumed: !values,
     };

@@ -54,7 +54,8 @@ for its fastest, with a red halo under each move a machine rate holds
 below its group's speed (on the polar machine the table near the axis),
 and a key with the range and the share of the cut held back; it works
 from the machine's rates once its settings are read, else from the
-defaults and says so. The slider under the preview steps through the
+defaults and says so, each held to what the step generator pulses at the
+axis's steps a unit, as the firmware holds it. The slider under the preview steps through the
 job's paths in the order they are cut (*Back* and *On* a path at a time):
 the paths cut so far are drawn, the last of them marked, the rest faint;
 at its end the job is drawn whole. The run controls (Run,
