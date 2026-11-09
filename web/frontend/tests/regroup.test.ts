@@ -43,6 +43,16 @@ describe("regrouping paths", () => {
         expect(regroup(before, [[0, 1]], "new", "  slow  ").job.groups[1]!.label).toBe("slow");
     });
 
+    test("a new group is switched off when a group its paths come from is", () => {
+        const before = job([group("outline", [line(0), line(1)], { enabled: false, power: 300 }), group("cut", [line(2)])]);
+        const off = regroup(before, [[0, 0]], "new").job;
+        expect(off.groups.map((g) => [g.label, g.enabled, g.power])).toEqual([["outline", false, 300], ["group", false, 300], ["cut", true, 500]]);
+        // Taken with paths of a group that is on, still off: nothing that
+        // was off is cut by being moved.
+        expect(regroup(before, [[1, 0], [0, 1]], "new").job.groups.find((g) => g.label === "group")!.enabled).toBe(false);
+        expect(regroup(before, [[1, 0]], "new").job.groups.find((g) => g.label === "group")!.enabled).toBe(true);
+    });
+
     test("picked paths go to the end of a group the job has, which is kept even if it gave them", () => {
         const before = job([group("a", [line(0), line(1)]), group("b", [line(3)])]);
         const into = regroup(before, [[0, 0], [0, 1]], 1);

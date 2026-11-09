@@ -120,8 +120,10 @@ export interface Regrouped {
  * The job with the paths moved to the end of group `target`, or into a new
  * group named `label` placed after the last group they came from and made
  * with the settings of the first (power, speed, passes, focus and the
- * rest). A group the move leaves empty is dropped; the target never is.
- * Throws with the reason when `regroupRefusal` has one.
+ * rest), switched on only when every group they came from is: a path that
+ * was not to be cut is not cut for having been moved. A group the move
+ * leaves empty is dropped; the target never is. Throws with the reason
+ * when `regroupRefusal` has one.
  */
 export function regroup(job: Job, refs: PathRef[], target: number | "new", label?: string): Regrouped {
     const refusal = regroupRefusal(job, refs, target);
@@ -165,7 +167,7 @@ export function regroup(job: Job, refs: PathRef[], target: number | "new", label
                 min_power: first.min_power,
                 speed: first.speed,
                 passes: first.passes,
-                enabled: true,
+                enabled: [...sources].every((g) => job.groups[g]!.enabled),
                 paths: movedPaths,
             };
             for (const key of ["depth", "plunge", "thickness", "focus", "tool", "tool_id", "tool_name", "height"] as const) {

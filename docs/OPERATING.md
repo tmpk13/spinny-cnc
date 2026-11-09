@@ -29,7 +29,8 @@ A click on a path in the preview picks it (shift or ctrl adds one or takes
 it back, *Box select* picks every path inside a dragged box, a click on a
 group's name in the Jobs panel all of its paths); the Jobs panel then moves
 the picked paths into a group of their own, which takes the first one's
-settings and can be given its own power, speed, passes or focus, or into a
+settings (switched off if any group they come from is) and can be given
+its own power, speed, passes or focus, or into a
 group the job has, or deletes them. *Array* copies the picked paths: in a
 *Linear* row stepped by x and y, or *Circular* round a center (*Middle* of
 the picked paths, the *Origin*, or typed) through a sweep, a whole turn

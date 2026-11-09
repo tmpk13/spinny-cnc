@@ -680,7 +680,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
     const pickedTarget = el("select", { class: "field", "aria-label": "Move picked paths to" }) as HTMLSelectElement;
     const pickedLabel = el("input", { type: "text", class: "field", "aria-label": "New group name", placeholder: "new group's name", spellcheck: "false" }) as HTMLInputElement;
     const pickedMove = button("Move", () => movePicked(), "btn btn-small");
-    pickedMove.title = "move the picked paths into the group chosen; a new group takes the settings of the first group they come from";
+    pickedMove.title = "move the picked paths into the group chosen; a new group takes the settings of the first group they come from, and is off if any of those groups is";
     const pickedDelete = button("Delete paths", () => deletePicked(), "btn btn-quiet btn-small");
     const pickedClear = button("Clear", () => ctx.store.set({ selection: null }), "btn btn-quiet btn-small");
     const pickedArray = button("Array", () => toggleArray(), "btn btn-quiet btn-small btn-toggle");
@@ -848,7 +848,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
         pickedTarget.value = options.some((option) => option.value === chosen) ? chosen : "new";
         pickedLabel.classList.toggle("hidden", pickedTarget.value !== "new");
         const refusal = regroupRefusal(job, refs, pickedTarget.value === "new" ? "new" : Number(pickedTarget.value));
-        pickedMove.title = refusal || "move the picked paths into the group chosen; a new group takes the settings of the first group they come from";
+        pickedMove.title = refusal || "move the picked paths into the group chosen; a new group takes the settings of the first group they come from, and is off if any of those groups is";
         setLocked(pickedMove, refusal !== "");
     }
 
