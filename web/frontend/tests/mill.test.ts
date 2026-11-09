@@ -428,6 +428,28 @@ describe("Plot page", () => {
         expect(await send([{ ...profile, speed: 200 }, drill])).toEqual([["profile", false, 200, 0.5, 0.5], ["drill", true, 300, 1, null]]);
     });
 
+    test("a name typed for one job is not given to the next one selected", async () => {
+        const { root, store, backend, ctx } = mountPage();
+        const drill = (x: number): MillOperation => ({ ...defaultOperation("drill"), points: [[x, x]] });
+        const bracket = (await backend.makeMill({ ops: [drill(1), drill(2)], name: "bracket" })).job;
+        click(root, "Drill");
+        type(input(root, "Points"), "5, 5");
+        type(input(root, "Job name"), "plate");
+        click(root, "New job");
+        await wait(30);
+        expect(store.get().job!.name).toBe("plate");
+        // The name stays with the job it was typed for while that job is selected.
+        expect(input(root, "Job name").value).toBe("plate");
+        await ctx.refreshJobs();
+        await ctx.selectJob(bracket.id);
+        // Up touches no field: the job keeps its own name.
+        root.querySelectorAll<HTMLButtonElement>(".plot-op .button-row button")[2]!.click();
+        await wait(30);
+        expect((await backend.job(bracket.id)).name).toBe("bracket");
+        expect((await backend.jobs()).filter((job) => job.name === "plate").length).toBe(1);
+        expect(input(root, "Job name").value).toBe("");
+    });
+
     test("runs the selected job from its run panel", async () => {
         const { run, store, calls, backend } = mountPage();
         const job = await backend.makeMill({ ops: [{ ...defaultOperation("drill"), points: [[1, 1]] }] });

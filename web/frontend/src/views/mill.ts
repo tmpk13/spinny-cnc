@@ -1002,6 +1002,10 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         const job = plotJobOf(state);
         if (job?.id !== plotJob?.id) {
             editing = null;
+            // A name typed is for the job it was typed with: the next job
+            // selected keeps its own (a job just made is set as plotJob
+            // before it is selected, so it keeps the name it was made with).
+            name.value = "";
         }
         plotJob = job;
         ops = job ? recipeOps(job.recipe) : null;
