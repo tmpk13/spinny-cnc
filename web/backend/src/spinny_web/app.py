@@ -3890,13 +3890,19 @@ def create_app(
         # The names this server answers to. A page that has pointed its own
         # name at this address (DNS rebinding) arrives with that name as
         # the host, and is turned away by it.
-        from starlette.middleware.trustedhost import TrustedHostMiddleware
+        from urllib.parse import urlsplit
+
+        from starlette.middleware.trustedhost import TrustedHostMiddleware, parse_host_header
 
         # The loopback names are always taken: the backend's own tools come
-        # in under them (the Auto tab's in-process calls, the MCP server the
-        # Claude Code provider starts), and a page served from elsewhere
-        # cannot send them as its host, which is all the check is for.
-        hosts = list(dict.fromkeys([*allowed_hosts, "127.0.0.1", "localhost"]))
+        # in under them (the Auto tab's in-process calls), and a page served
+        # from elsewhere cannot send them as its host, which is all the
+        # check is for. So is the address handed to the MCP server the
+        # Claude Code provider starts, the bound one when that is not every
+        # address: a browser sends it as the host only for a page loaded
+        # from this server's own address, never for a rebound name.
+        own = parse_host_header(urlsplit(api_url or DEFAULT_API_URL).netloc)
+        hosts = list(dict.fromkeys([*allowed_hosts, "127.0.0.1", "localhost", *([own.host] if own else [])]))
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
     def guarded(call: Callable[[], Any]) -> Any:

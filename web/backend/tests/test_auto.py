@@ -683,3 +683,18 @@ def test_the_backend_hands_claude_code_its_own_address(tmp_path, monkeypatch):
     assert seen["app"].state.auto.api_url == "http://127.0.0.1:8123"
     app_module.main(["--host", "192.168.1.20", "--port", "8000", "--data", str(tmp_path)])
     assert seen["app"].state.auto.api_url == "http://192.168.1.20:8000"
+
+
+def test_the_address_handed_to_claude_code_passes_the_host_check(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from spinny_web.app import Backend, create_app
+
+    for url, host in (("http://192.168.1.20:8000", "192.168.1.20:8000"), ("http://[::1]:8000", "[::1]:8000")):
+        backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+        app = create_app(backend, frontend=tmp_path / "no-dist", allowed_hosts=["spinny.local"], api_url=url)
+        with TestClient(app) as client:
+            # The MCP server the Claude Code provider starts calls this address.
+            assert client.get("/api/jobs", headers={"host": host}).status_code == 200
+            assert client.get("/api/jobs", headers={"host": "spinny.local"}).status_code == 200
+            assert client.get("/api/jobs", headers={"host": "evil.example"}).status_code == 400
