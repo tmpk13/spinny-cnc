@@ -4592,14 +4592,14 @@ export class MockBackend implements Api, EventFeed {
 
     /**
      * Refuses a run of `job` counting its groups' own focus from where the
-     * head is when the last run of the job stopped part way, as the backend
+     * head is when the last run of the job did not finish, as the backend
      * does: that run leaves the head at the height of the group it was
      * cutting, and in another frame nothing tells where it began.
      */
     private checkFocusStart(job: Job): void {
         const here = this.focusStartOf(job, null);
         const record = this.resumeRecordOf();
-        if (here === null || !record || record.job !== job.id || (record.state !== "stopped" && record.state !== "error")) {
+        if (here === null || !record || record.job !== job.id || record.state === "done") {
             return;
         }
         const began = record.start_h;

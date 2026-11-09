@@ -125,7 +125,7 @@ from .link import (
 from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as log_tail, wire_line, wire_note
 from .prober import Prober, ProberError, ProbeSettings, reach_joint
 from .resume import PositionStore, ResumeStore
-from .runner import ERROR, HOLD, RUNNING, STOPPED, Runner, RunnerError, halt
+from .runner import DONE, HOLD, RUNNING, Runner, RunnerError, halt
 from .tools import ToolBox
 from .vision import VisionError
 
@@ -1370,13 +1370,15 @@ class Backend:
 
     def _check_focus_start(self, job: Job, here: float | None) -> None:
         """Refuses a run of `job` that would count its groups' own focus
-        from where the head is (`here`) when the last run of the job
-        stopped part way: that run leaves the head at the height of the
-        group it was cutting, not where it began, and nothing says whether
-        it was focused again since. The run goes when the head is back at
-        that run's start, or on the operator's word (`focus_here`)."""
+        from where the head is (`here`) when the last run of the job did
+        not finish (stopped, failed, or left running by a host that died;
+        a run under way has refused the start already): that run leaves
+        the head at the height of the group it was cutting, not where it
+        began, and nothing says whether it was focused again since. The
+        run goes when the head is back at that run's start, or on the
+        operator's word (`focus_here`)."""
         record = self.resume_store.get()
-        if record is None or record.get("job") != job.id or record.get("state") not in (STOPPED, ERROR):
+        if record is None or record.get("job") != job.id or record.get("state") == DONE:
             return
         began = record.get("start_h")
         if isinstance(began, bool) or not isinstance(began, (int, float)) or here is None:

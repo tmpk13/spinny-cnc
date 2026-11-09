@@ -272,7 +272,31 @@ def test_a_run_again_after_a_stop_counts_focus_from_where_the_last_one_began(cli
     assert run_and_stop(client, fake, job_id, {"focus_here": True})[0] == pytest.approx(4.0)
 
 
-def test_a_pickup_after_the_focus_axis_was_renumbered_needs_the_head_at_focus(tmp_path):
+def test_a_run_left_running_by_a_host_that_died_did_not_finish_either(tmp_path):
+    def make(h: float) -> Backend:
+        fake = FakeSerial(move_time=0.002)
+        fake.settings["h_axis"] = 1
+        fake.h = h
+        return Backend(
+            root=tmp_path,
+            link_factory=lambda url: Link(url, open_port=fake_opener(fake)),
+            jobs_dir=tmp_path / "jobs",
+            config_path=tmp_path / "config.json",
+        )
+
+    with TestClient(create_app(make(0.0), frontend=tmp_path / "no-dist")) as client:
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        made = client.post("/api/calibrate", json={"kind": "focus", "focuses": [-1, 1, 3], "length": 4, "gap": 1, "x": 3, "y": 0})
+        job_id = made.json()["job"]["id"]
+    # The record a host that died in the middle of the run left behind, and
+    # the head where that run had it.
+    record = {"job": job_id, "state": "running", "sent": 9, "acked": 5, "total": 40, "start": [0.0, 0.0], "start_h": 0.0, "frame": "gone:1"}
+    (tmp_path / "resume.json").write_text(json.dumps(record))
+    with TestClient(create_app(make(-1.0), frontend=tmp_path / "no-dist")) as client:
+        assert client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"}).status_code == 200
+        refused = client.post(f"/api/jobs/{job_id}/run")
+        assert refused.status_code == 409 and "renumbered" in refused.text
+
     # The ports the connects find, in order.
     ports: list[FakeSerial] = []
 
