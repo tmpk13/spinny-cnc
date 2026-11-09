@@ -552,9 +552,22 @@ def _operation_groups(
     if source == cam.CLEARING:
         pattern = str(operation.settings.get("pattern", "lines"))
         pitch = width * operation.cutting.get("stepover", 1.0) if tool.kind == cam.SPINDLE else width
+        # The tool's middle stays on or past the isolation's outermost loop,
+        # so its strokes end in that loop's trench; a tool whose radius is
+        # more than that loop's distance from the copper stays its radius
+        # off instead, or its edge would cut into the copper beside every
+        # stroke.
+        outermost = max(plan.offsets)
+        keep = max(outermost, width / 2.0)
+        if keep > outermost:
+            notes.append(
+                f"{prefix}: {tool.name} cuts {width:g} mm wide, so its middle keeps {keep:g} mm from the copper, past the"
+                f" isolation's outermost loop at {outermost:g} mm; copper in a gap narrower than the cut is left where the"
+                " isolation does not reach"
+            )
         strokes = copper_clearing.clear(
             plan.copper,
-            max(plan.offsets),
+            keep,
             width,
             pattern,
             outline=plan.outline,

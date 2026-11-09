@@ -203,7 +203,34 @@ def test_the_board_goes_through_the_mill_profile():
     xs = [p[0] for g in built.groups for path in g.paths for p in path]
     ys = [p[1] for g in built.groups for path in g.paths for p in path]
     assert min(xs) == pytest.approx(0.0, abs=0.6) and min(ys) == pytest.approx(0.0, abs=0.6)
-    assert built.spot == 0.2 and built.notes == []
+    # The switched-off clearing's end mill is wider than the V bit's trench.
+    assert built.spot == 0.2 and [note.split(",")[0] for note in built.notes] == ["clearing: 1 mm end mill cuts 1 mm wide"]
+
+
+def test_a_clearing_bit_wider_than_the_isolation_keeps_its_edge_off_the_copper():
+    from laser_sweep import geom
+
+    from spinny_laser import clear
+
+    design = camjob.read_board(BOARD_COPPER, "F.Cu")
+    text = set_value((SHIPPED / "mill-3axis.toml").read_text(encoding="utf-8"), ("operations", 1, "enabled"), True)
+    built = camjob.build(parse(text, "mill-3axis"), design)
+    clearing = next(g for g in built.groups if g.label.startswith("clearing"))
+    assert clearing.enabled and clearing.paths
+    # The isolation's V bit cuts 0.2 mm wide, its loop's middle 0.1 mm from
+    # the copper; the 1 mm end mill's middle stays its radius away, so its
+    # edge never reaches into a trace or a pad.
+    assert clear.clip_open(clearing.paths, geom.offset(built.copper, 0.5 - 0.001)) == []
+    assert clear.clip_open(clearing.paths, geom.offset(built.copper, 0.5 + 0.01)) != []
+    assert any(note.startswith("clearing: 1 mm end mill cuts 1 mm wide, so its middle keeps 0.5 mm from the copper") for note in built.notes), built.notes
+    # A laser clearing with the isolation's own spot keeps to the outermost
+    # loop, as it always has, and says nothing.
+    polar = set_value((SHIPPED / "polar-laser.toml").read_text(encoding="utf-8"), ("operations", 1, "enabled"), True)
+    burnt = camjob.build(parse(polar, "polar-laser"), design)
+    strokes = next(g for g in burnt.groups if g.label.startswith("clearing")).paths
+    expected = clear.clear(burnt.copper, 0.05, 0.1, "radial", outline=burnt.outline, pitch=0.1)
+    assert strokes == [list(map(tuple, s)) for s in expected]
+    assert not any(note.startswith("clearing") for note in burnt.notes)
 
 
 def test_a_laser_profile_marks_the_drills_and_refuses_a_design_with_nothing_for_it():

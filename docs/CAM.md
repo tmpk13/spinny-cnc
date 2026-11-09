@@ -266,7 +266,7 @@ without `safe`, or a spindle depth that takes more than 100 passes.
 | Source | From a board (KiCad, or a copper gerber with its siblings) | From an SVG, gcode or job file |
 | --- | --- | --- |
 | `isolation` | one group per loop around every copper feature, the first half a tool width out | nothing, noted |
-| `clearing` | the copper left between the loops inside the outline, as strokes of the pattern a stepover apart (a laser: a spot apart) | nothing, noted |
+| `clearing` | the copper left between the loops inside the outline, as strokes of the pattern a stepover apart (a laser: a spot apart), the tool's middle on or past the outermost loop; a tool wider than the isolation keeps its radius from the copper, and a gap narrower than it is left (noted) | nothing, noted |
 | `outline` | the Edge.Cuts profile, a cutout inside the board before the edge round it | nothing, noted |
 | `drills` | a mill: a hole the bit's size is a path of one point, the bit put down at its center and lifted; a wider hole is milled round at `(hole - bit) / 2`; a slot along its middle, or as an inset loop; a laser marks each hole (`marks`) | nothing, noted |
 | `deposit` | the copper itself: edge loops in from its edge, the fill, the traces narrower than the tool along their middle | nothing, noted |

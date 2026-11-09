@@ -115,7 +115,8 @@ def test_a_board_with_its_siblings_goes_through_the_mill_profile(client):
     ]
     assert job["groups"][4]["passes"] == 3 and job["groups"][4]["depth"] == 1.7 and job["groups"][2]["power"] == 8000
     assert job["outline"] and job["copper"] and job["stats"]["moves"] > 0
-    assert notes == []
+    # The switched-off clearing's end mill is wider than the V bit's trench.
+    assert [note.split(",")[0] for note in notes] == ["clearing: 1 mm end mill cuts 1 mm wide"]
     listed = client.get("/api/jobs").json()["jobs"]
     assert listed[0]["groups"][0]["tool"] == "spindle" and listed[0]["groups"][0]["paths"] == 32
     # The copper alone: no outline, no drills, and the notes say so.
