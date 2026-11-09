@@ -348,6 +348,24 @@ def test_the_unplated_holes_of_their_own_drill_file_are_drilled_too(tmp_path):
     assert len(camjob.read_board(tmp_path / "board-F_Cu.gbr").holes) == 4
 
 
+def test_a_back_layer_cut_as_drawn_is_noted(tmp_path):
+    back = tmp_path / "board-B_Cu.gbl"
+    shutil.copy(BOARD_COPPER, back)
+    design = camjob.read_board(back)
+    assert design.layer == "B.Cu"
+    text = (SHIPPED / "mill-3axis.toml").read_text(encoding="utf-8")
+    built = camjob.build(parse(text, "mill-3axis"), design)
+    said = [note for note in built.notes if "back layer" in note]
+    assert said == [
+        'board-B_Cu: B.Cu is a back layer and [placement] mirror is "none", so it is cut as drawn, which with the board'
+        ' turned over is the copper\'s mirror image; mirror = "x" flips it'
+    ]
+    flipped = camjob.build(parse(set_value(text, ("placement", "mirror"), "x"), "mill-3axis"), design)
+    assert not any("back layer" in note for note in flipped.notes)
+    # The front is cut as drawn and says nothing.
+    assert not any("back layer" in note for note in camjob.build(parse(text, "mill-3axis"), camjob.read_board(BOARD_COPPER)).notes)
+
+
 def test_a_laser_profile_marks_the_drills_and_refuses_a_design_with_nothing_for_it():
     profile = parse(
         (SHIPPED / "polar-laser.toml").read_text(encoding="utf-8").replace('name = "drills"\nsource = "drills"\ntool = "uv"\nenabled = false', 'name = "drills"\nsource = "drills"\ntool = "uv"\nenabled = true'),

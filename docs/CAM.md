@@ -256,7 +256,9 @@ anchor = "center"               # center | corner | keep: the middle on the orig
 offset = [0, 0]                 # mm, added after the anchor
 layer = "F.Cu"                  # the layer a KiCad board is read from: a copper layer, or
                                 # F.Paste with a deposit operation for a solder paste stencil
-mirror = "none"                 # none | x | y: flips the layer, for a bottom layer cut through
+mirror = "none"                 # none | x | y: flips the layer, for a bottom layer cut through;
+                                # a back layer (B.Cu) cut with none is noted, since with the board
+                                # turned over its copper as drawn lies mirrored (x flips it)
 ```
 
 A spindle operation's passes are `ceil(depth / step_down)`, each pass a

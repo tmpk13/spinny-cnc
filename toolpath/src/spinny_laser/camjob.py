@@ -19,6 +19,7 @@ from . import board, cam, carve
 from . import clear as copper_clearing
 from . import deposit as copper_deposition
 from . import outline as board_outline
+from .board import is_bottom
 from .order import inner_first
 
 Point = tuple[float, float]
@@ -250,6 +251,13 @@ def build(
     outline: list[Polyline] = []
     copper: list = []
     if design.board:
+        if is_bottom(design.layer) and place.mirror == "none":
+            # The back is cut with the board turned over, where its copper
+            # as drawn lies mirrored; the profile's own word is kept.
+            notes.append(
+                f'{design.name}: {design.layer} is a back layer and [placement] mirror is "none", so it is cut as drawn,'
+                ' which with the board turned over is the copper\'s mirror image; mirror = "x" flips it'
+            )
         # One placement for the whole board, around everything that will
         # be cut, at the isolation tool's width (or the narrowest tool's).
         config = isolate.IsoConfig(

@@ -32,7 +32,7 @@ import type {
     Point,
     Tool,
 } from "../types.ts";
-import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, isBottom, layerOf, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
 import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
@@ -1154,6 +1154,14 @@ export function buildCamJob(id: string, profile: CamProfile, name: string, fileN
     const notes: string[] = [];
     if (geometry.board) {
         notes.push("mock backend: copper geometry needs the real backend, showing a demo coupon");
+        // A KiCad board is read on the profile's layer, a gerber is the layer its name says.
+        const layer = /\.kicad_pcb$/i.test(fileName) ? profile.placement.layer : layerOf(fileName);
+        if (isBottom(layer) && profile.placement.mirror === "none") {
+            notes.push(
+                `${fileName.replace(/\.[^.]+$/, "")}: ${layer} is a back layer and [placement] mirror is "none", so it is cut as drawn,`
+                + ` which with the board turned over is the copper's mirror image; mirror = "x" flips it`,
+            );
+        }
     }
     const isolation = profile.operations.find((operation) => operation.source === "isolation");
     const toolOf = (operation: CamOperation): CamTool => profile.tools.find((tool) => tool.id === operation.tool)!;

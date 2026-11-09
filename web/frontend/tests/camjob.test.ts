@@ -85,4 +85,18 @@ depth = 0.2
         const mirrored = buildCamJob("0007", parseProfile(setValue(laser, ["placement", "mirror"], "x"), "l"), "art", "art.svg", svg, limits).job;
         expect(mirrored.groups.map((group) => group.paths)).toEqual(drawn.groups.map((group) => group.paths));
     });
+
+    test("a back layer cut as drawn is noted, as the backend notes it", () => {
+        const text = shipped("mill-3axis");
+        const said = (profileText: string, fileName: string): string[] =>
+            buildCamJob("0008", parseProfile(profileText, "m"), "coupon", fileName, "G04*", limits).notes.filter((note) => note.includes("back layer"));
+        expect(said(text, "board-B_Cu.gbl")).toEqual([
+            'board-B_Cu: B.Cu is a back layer and [placement] mirror is "none", so it is cut as drawn, which with the board'
+            + ` turned over is the copper's mirror image; mirror = "x" flips it`,
+        ]);
+        expect(said(setValue(text, ["placement", "mirror"], "x"), "board-B_Cu.gbl")).toEqual([]);
+        expect(said(text, "board-F_Cu.gbr")).toEqual([]);
+        // A KiCad board is read on the profile's layer.
+        expect(said(setValue(text, ["placement", "layer"], "B.Cu"), "board.kicad_pcb").length).toBe(1);
+    });
 });
