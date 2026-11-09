@@ -49,7 +49,8 @@ the page and press *New*, which saves the text shown under that id.
 4. *Export gcode*. The report gives the lines, the cut length, the time
    and what each axis reaches; a reach past an axis' `min` or `max` is a
    warning, and so is a feed over an axis' `rate`, which is written at the
-   rate, and every stop to change the bit. For an air cut first, raise
+   rate, and every stop to change the bit. A job with nothing switched
+   on to cut is refused, as a run refuses it. For an air cut first, raise
    the depth axis' `offset` by the height of the air and run the same
    program.
 5. Run the file on the mill's own sender. The program starts by rising to

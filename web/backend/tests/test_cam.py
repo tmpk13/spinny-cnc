@@ -324,6 +324,9 @@ def test_a_run_refuses_a_group_made_for_the_other_tool(client, fake):
     assert client.patch(f"/api/jobs/{job['id']}", json=patch).status_code == 200
     refused = client.post(f"/api/jobs/{job['id']}/run", json={})
     assert refused.status_code in (400, 409)
+    # Its gcode is refused the same way, not written as a program that only goes home.
+    refused = client.post("/api/cam/mill-3axis/gcode", json={"job": job["id"]})
+    assert refused.status_code == 400 and refused.json()["detail"] == "the job has nothing enabled to cut: switch on a group"
 
 
 def test_a_run_refuses_a_job_of_more_than_one_bit(client, fake):

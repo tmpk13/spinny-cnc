@@ -71,7 +71,11 @@ class Program:
 
 
 def post(job: BuiltJob, profile: cam.Profile) -> Program:
-    """The job as gcode for the profile's controller, with what it reaches."""
+    """The job as gcode for the profile's controller, with what it reaches.
+    A job with nothing switched on to cut is refused, as a run refuses it:
+    its program would only rise and go home."""
+    if not any(group.enabled and group.has_cuts for group in job.groups):
+        raise PostError("the job has nothing enabled to cut: switch on a group")
     if profile.kinematics == cam.POLAR:
         return _polar(job, profile)
     return _Cartesian(job, profile).write()
@@ -442,7 +446,7 @@ def _polar(job: BuiltJob, profile: cam.Profile) -> Program:
         raise PostError("the polar gcode writer puts the radius on X; name the radius axis X")
     groups: list[gcode.PathGroup] = []
     for group in job.groups:
-        if not group.enabled or not group.paths:
+        if not group.enabled or not group.has_cuts:
             continue
         if group.tool != cam.LASER:
             raise PostError(f"{group.label}: the polar gcode writer takes laser operations only; a spindle job runs through the web backend")

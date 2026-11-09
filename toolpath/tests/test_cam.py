@@ -565,6 +565,14 @@ def test_the_spindle_starts_at_the_safe_height_after_a_laser_group():
         assert lines[at + 1 : at + 5] == ["G0 Z3.000", "M5", "M3 S9000", "G4 P2"]
 
 
+def test_a_job_with_nothing_enabled_is_refused_as_a_run_refuses_it():
+    switched_off = built_of(milled("a", 0.0, "bit", enabled=False), burnt("b", 2.0, enabled=False), burnt("empty", 4.0))
+    switched_off.groups[2].paths = []
+    for profile in (parse(COMBINED, "bench"), cam.load(SHIPPED / "polar-laser.toml")):
+        with pytest.raises(post.PostError, match="^the job has nothing enabled to cut: switch on a group$"):
+            post.post(switched_off, profile)
+
+
 def test_a_line_break_in_a_name_or_a_label_stays_inside_its_comment():
     profile = parse(MINIMAL, "bench")
     built = camjob.BuiltJob(

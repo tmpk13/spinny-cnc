@@ -1478,6 +1478,11 @@ function commentLine(text: string): string {
 
 /** A job as gcode for a cartesian profile, the way the backend's post writes it. */
 export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
+    // A job with nothing switched on to cut is refused, as a run refuses it:
+    // its program would only rise and go home.
+    if (!job.groups.some((group) => group.enabled && (group.paths.length > 0 || (group.moves?.length ?? 0) > 0))) {
+        throw new Error("the job has nothing enabled to cut: switch on a group");
+    }
     const x = profile.axes.find((axis) => axis.role === "x");
     const y = profile.axes.find((axis) => axis.role === "y");
     const depth = profile.axes.find((axis) => axis.role === "depth");

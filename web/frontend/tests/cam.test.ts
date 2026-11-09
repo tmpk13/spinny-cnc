@@ -291,6 +291,18 @@ describe("the mock backend's CAM routes", () => {
         await expect(backend.camGcode("polar-laser", answer.job.id)).rejects.toThrow(/polar gcode writer/);
     });
 
+    test("refuses the gcode of a job with nothing enabled to cut, as the backend does", async () => {
+        const backend = new MockBackend({ timers: false });
+        const answer = await backend.camJob("mill-3axis", [new File(["G04 x*"], "board-F_Cu.gbr")]);
+        await backend.patchJob(answer.job.id, { groups: answer.job.groups.map((_, index) => ({ index, enabled: false })) });
+        for (const profile of ["mill-3axis", "polar-laser"]) {
+            await expect(backend.camGcode(profile, answer.job.id)).rejects.toMatchObject({
+                status: 400,
+                message: "the job has nothing enabled to cut: switch on a group",
+            });
+        }
+    });
+
     test("a run refuses a job of more than one bit, naming the groups to switch off", async () => {
         const backend = new MockBackend({ timers: false });
         const answer = await backend.camJob("mill-3axis", [new File(["G04 x*"], "board-F_Cu.gbr")]);
