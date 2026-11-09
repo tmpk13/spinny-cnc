@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from spinny_laser import cam, camcli, camjob, post
+from spinny_laser import cam, camcli, camjob, carve, post
 from spinny_laser.cam import CamError, load_all, parse, set_value
 
 REPO = Path(__file__).resolve().parents[2]
@@ -548,6 +548,21 @@ def test_only_another_known_bit_stops_the_program():
     stop = lines.index("M0")
     assert lines[stop - 1 : stop + 2] == ["(change the bit to two bit and zero Z with it as before, then resume)", "M0", "(b: 1 paths)"]
     assert program.report.warnings == ["b: the program stops (M0) to change the bit to two bit"]
+
+
+def test_the_spindle_starts_at_the_safe_height_after_a_laser_group():
+    model = camjob.BuiltGroup(
+        "model", "spindle", 9000.0, 0.0, 240.0, 1, 1.0, 60.0, [],
+        moves=[[(5.0, 0.0, 1.0, carve.RAPID), (5.0, 0.0, -0.5, carve.PLUNGE), (6.0, 0.0, -0.5, carve.FEED)]],
+        tool_id="bit",
+    )
+    # The laser is in focus at the surface, where its groups leave the depth axis.
+    built = built_of(burnt("marks", 0.0, height=0.0), milled("slot", 2.0, "bit"), burnt("more", 4.0, height=0.0), model)
+    lines = post.post(built, parse(COMBINED, "bench")).text.splitlines()
+    assert lines.count("G0 Z0.000") == 2
+    for label in ("(slot: 1 paths)", "(model: 1 paths)"):
+        at = lines.index(label)
+        assert lines[at + 1 : at + 5] == ["G0 Z3.000", "M5", "M3 S9000", "G4 P2"]
 
 
 def test_a_line_break_in_a_name_or_a_label_stays_inside_its_comment():

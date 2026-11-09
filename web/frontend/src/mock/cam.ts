@@ -1682,6 +1682,7 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
             if (!(group.power > 0)) {
                 throw new Error(`${group.label}: a spindle needs a speed above 0`);
             }
+            go([word(depth, safeZ())]);
             spindle(group.power);
             for (const path of moves) {
                 const first = path[0];
@@ -1713,6 +1714,9 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
             if (!(group.power > 0)) {
                 throw new Error(`${group.label}: a spindle needs a speed above 0`);
             }
+            // Up before the spindle starts: a laser group before this one may
+            // have left the tool at its focus height, on the work.
+            go([word(depth, safeZ())]);
             if (!output || output[0] !== "spindle" || output[1] !== group.power) {
                 if (output && output[0] !== "spindle") {
                     off();

@@ -201,6 +201,24 @@ describe("the mock's CAM profiles", () => {
         expect(heights(camGcode(profile, drawn).text).filter((line) => line.startsWith("G0"))).toEqual(["G0 Z30.000", "G0 Z2.000", "G0 Z30.000"]);
     });
 
+    test("the spindle starts at the safe height after a laser group, as the backend writes it", () => {
+        const profile = parseProfile(TWO_LASERS, "two-lasers");
+        const model: Group["moves"] = [[[5, 0, 1, 0], [5, 0, -0.5, 2], [6, 0, -0.5, 1]]];
+        // The laser is in focus at the surface, where its groups leave the depth axis.
+        const job = jobOf("mixed", [
+            { label: "marks", tool: "laser", tool_id: "diode", height: 0, power: 300, speed: 600, paths: [[[0, 0], [1, 0]]] },
+            { label: "slot", tool_id: "bit", paths: [[[2, 0], [3, 0]]] },
+            { label: "more", tool: "laser", tool_id: "diode", height: 0, power: 300, speed: 600, paths: [[[4, 0], [5, 0]]] },
+            { label: "model", tool_id: "bit", moves: model },
+        ]);
+        const lines = camGcode(profile, job).text.split("\n");
+        expect(lines.filter((line) => line === "G0 Z0.000").length).toBe(2);
+        for (const label of ["(slot: 1 paths)", "(model: 1 paths)"]) {
+            const at = lines.indexOf(label);
+            expect(lines.slice(at + 1, at + 5)).toEqual(["G0 Z30.000", "M5", "M3 S9000", "G4 P2"]);
+        }
+    });
+
     test("only another known bit stops the program, as the backend writes it", () => {
         const mill = parseProfile(millText, "mill-3axis");
         const job = jobOf("bits", [

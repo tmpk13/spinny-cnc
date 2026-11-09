@@ -363,6 +363,9 @@ class _Cartesian:
             raise PostError(f"{group.label}: a spindle operation needs a depth axis in the profile")
         if not group.power > 0:
             raise PostError(f"{group.label}: a spindle needs a speed above 0")
+        # Up before the spindle starts: a laser group before this one may
+        # have left the tool at its focus height, on the work.
+        self.go(z=self.safe())
         self.spindle(group.power)
         passes = max(1, group.passes)
         for k in range(1, passes + 1):
@@ -387,6 +390,7 @@ class _Cartesian:
             raise PostError(f"{group.label}: a model's paths are cut with a spindle")
         if not group.power > 0:
             raise PostError(f"{group.label}: a spindle needs a speed above 0")
+        self.go(z=self.safe())
         self.spindle(group.power)
         for path in group.moves:
             if not path:
