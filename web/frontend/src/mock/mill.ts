@@ -5,6 +5,7 @@
 // and the group settings a job made again keeps.
 
 import { turnPoint } from "../align.ts";
+import { sameOperation } from "../sketch.ts";
 import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point, Recipe } from "../types.ts";
 import { checkDepth, checkPower, checkSpeed, computeStats, DEFAULT_DEPTH, DEFAULT_PLUNGE, formatG, MAX_GROUP_PASSES, MAX_VALUE, MAX_VALUE_TEXT, type RateLimits } from "./jobs.ts";
 
@@ -576,6 +577,8 @@ export function labelStem(label: string): string {
 }
 
 const SETTINGS = ["power", "min_power", "speed", "passes", "enabled", "depth", "plunge", "thickness", "focus"] as const;
+/** The group settings no operation sets: the Jobs page's alone. */
+const PAGE_SETTINGS = ["enabled", "min_power", "thickness", "focus"] as const;
 
 /** Each old group's settings onto the new group made in its place, matched by label but for its numbers, in order. */
 export function carrySettings(old: Group[], made: Group[]): void {
@@ -751,6 +754,118 @@ export function unplaced(holes: HolePoint[], where: Job): HolePoint[] {
         const [bx, by] = turnPoint([x - where.offset.x, y - where.offset.y], -(where.rotation ?? 0));
         return [bx, by, d];
     });
+}
+
+/** How many groups the operation makes: one a hole size it takes for holes, one for every other kind; null for holes it does not carry. */
+function groupCount(op: MillOperation): number | null {
+    if (op.kind !== "holes") {
+        return 1;
+    }
+    if (!op.holes) {
+        return null;
+    }
+    const wanted = op.sizes ? new Set(op.sizes.map(sizeOf)) : null;
+    return new Set(op.holes.map(([, , d]) => sizeOf(d)).filter((size) => wanted === null || wanted.has(size))).size;
+}
+
+/** The groups split by the operation that made them, in order; null when they do not add up, the groups having been changed apart from the operations since. */
+function byOperation(ops: MillOperation[], groups: Group[]): Group[][] | null {
+    if (ops.length === 1) {
+        return [[...groups]];
+    }
+    const counts: number[] = [];
+    for (const op of ops) {
+        const count = groupCount(op);
+        if (count === null) {
+            return null;
+        }
+        counts.push(count);
+    }
+    if (counts.reduce((sum, count) => sum + count, 0) !== groups.length) {
+        return null;
+    }
+    let at = 0;
+    return counts.map((count) => {
+        at += count;
+        return groups.slice(at - count, at);
+    });
+}
+
+/** Each new operation's index with the index of the old one it takes the place of: an unchanged one with itself wherever it went (Add, Up, Remove), then the changed ones with the old ones left, in order (Apply). */
+function paired(oldOps: MillOperation[], newOps: MillOperation[]): [number, number][] {
+    const left = oldOps.map((_, index) => index);
+    const pairs: [number, number][] = [];
+    const changed: number[] = [];
+    newOps.forEach((op, index) => {
+        const at = left.findIndex((old) => sameOperation(oldOps[old]!, op));
+        if (at < 0) {
+            changed.push(index);
+        } else {
+            pairs.push([index, left.splice(at, 1)[0]!]);
+        }
+    });
+    changed.forEach((index, at) => {
+        if (at < left.length) {
+            pairs.push([index, left[at]!]);
+        }
+    });
+    return pairs;
+}
+
+/**
+ * Each old group's settings onto the new group of its label but for the
+ * numbers, in order, matched as carrySettings matches them. With `base`,
+ * the group the old operation's own numbers make, every setting the new
+ * numbers leave as they were; without, only the settings no operation sets.
+ */
+function carry(old: Group[], made: Group[], base: Group | null): void {
+    const byStem = new Map<string, Group[]>();
+    for (const g of old) {
+        const stem = labelStem(g.label);
+        byStem.set(stem, [...(byStem.get(stem) ?? []), g]);
+    }
+    const seen = new Map<string, number>();
+    for (const g of made) {
+        const stem = labelStem(g.label);
+        const index = seen.get(stem) ?? 0;
+        seen.set(stem, index + 1);
+        const source = byStem.get(stem)?.[index];
+        if (!source) {
+            continue;
+        }
+        const into = g as unknown as Record<string, unknown>;
+        for (const name of base ? SETTINGS : PAGE_SETTINGS) {
+            if (!base || into[name] === (base as unknown as Record<string, unknown>)[name]) {
+                into[name] = source[name];
+            }
+        }
+    }
+}
+
+/**
+ * The settings of a Plot page job's groups onto the groups its operations
+ * were made into again (Apply, Add, Up, Remove), operation by operation: a
+ * group keeps every setting its operation's numbers do not change, the
+ * ones only the Jobs page sets (turned off, a focus, a least power) and the
+ * ones changed there (a slower feed), and takes the operation's where
+ * those numbers changed. The groups of an operation new to the job are as
+ * it makes them.
+ */
+export function carryJobSettings(old: Job, made: Job): void {
+    const full = (op: MillOperation): MillOperation => ({ ...defaultOperation(op.kind), ...op });
+    const oldOps = recipeOps(old.recipe).map(full);
+    const newOps = recipeOps(made.recipe).map(full);
+    const oldSplit = byOperation(oldOps, old.groups);
+    const newSplit = byOperation(newOps, made.groups);
+    if (oldSplit === null || newSplit === null) {
+        // The job's groups were changed apart from its operations (paths
+        // moved between groups): what no operation sets, by label alone.
+        carry(old.groups, made.groups, null);
+        return;
+    }
+    for (const [index, at] of paired(oldOps, newOps)) {
+        carry(oldSplit[at]!, newSplit[index]!, group(oldOps[at]!, "", []));
+    }
 }
 
 /** A Plot page job made again for a bit `tool` mm across, where it is now, its groups' settings kept. */

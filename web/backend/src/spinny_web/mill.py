@@ -31,6 +31,7 @@ from .jobs import (
     LASER,
     MAX_GROUP_PASSES,
     MAX_VALUE,
+    SETTINGS,
     SPINDLE,
     Finite,
     Group,
@@ -41,6 +42,7 @@ from .jobs import (
     check_depth,
     check_power,
     check_speed,
+    label_stem,
 )
 from .kinematics import Streamer
 
@@ -420,6 +422,111 @@ def unplaced(holes: list[tuple[float, float, float]], where: Job) -> list[tuple[
         bx, by = alignment.turn((x - where.offset.x, y - where.offset.y), -where.rotation)
         out.append((bx, by, d))
     return out
+
+
+# The group settings no operation sets: the Jobs page's alone.
+PAGE_SETTINGS = ("enabled", "min_power", "thickness", "focus")
+
+
+def _group_count(op: MillOperation) -> int | None:
+    """How many groups the operation makes: one a hole size it takes for
+    holes, one for every other kind; None for holes it does not carry."""
+    if op.kind != HOLES:
+        return 1
+    if op.holes is None:
+        return None
+    wanted = _wanted(op)
+    return len({size for size in (size_of(d) for _, _, d in op.holes) if wanted is None or size in wanted})
+
+
+def _by_operation(op_list: list[MillOperation], groups: list[Group]) -> list[list[Group]] | None:
+    """The groups split by the operation that made them, in order; None
+    when they do not add up, the groups having been changed apart from the
+    operations since."""
+    if len(op_list) == 1:
+        return [list(groups)]
+    counts: list[int] = []
+    for op in op_list:
+        count = _group_count(op)
+        if count is None:
+            return None
+        counts.append(count)
+    if sum(counts) != len(groups):
+        return None
+    split: list[list[Group]] = []
+    at = 0
+    for count in counts:
+        split.append(groups[at : at + count])
+        at += count
+    return split
+
+
+def _cutting(op: MillOperation) -> dict:
+    """What decides what an operation cuts: all of it but its name and the
+    holes filled in when it was made."""
+    return op.model_dump(exclude={"name", "holes"})
+
+
+def _paired(old_ops: list[MillOperation], new_ops: list[MillOperation]) -> list[tuple[int, int]]:
+    """Each new operation's index with the index of the old one it takes
+    the place of: an unchanged one with itself wherever it went (Add, Up,
+    Remove), then the changed ones with the old ones left, in order
+    (Apply)."""
+    left = list(range(len(old_ops)))
+    pairs: list[tuple[int, int]] = []
+    changed: list[int] = []
+    for index, op in enumerate(new_ops):
+        same = next((at for at in left if _cutting(old_ops[at]) == _cutting(op)), None)
+        if same is None:
+            changed.append(index)
+        else:
+            left.remove(same)
+            pairs.append((index, same))
+    pairs.extend(zip(changed, left))
+    return pairs
+
+
+def _carry(old: list[Group], new: list[Group], base: Group | None) -> None:
+    """Each old group's settings onto the new group of its label but for
+    the numbers, in order, matched as carry_settings matches them. With
+    `base`, the group the old operation's own numbers make, every setting
+    the new numbers leave as they were; without, only the settings no
+    operation sets."""
+    by_stem: dict[str, list[Group]] = defaultdict(list)
+    for group in old:
+        by_stem[label_stem(group.label)].append(group)
+    seen: dict[str, int] = defaultdict(int)
+    for group in new:
+        stem = label_stem(group.label)
+        index = seen[stem]
+        seen[stem] += 1
+        if index >= len(by_stem[stem]):
+            continue
+        source = by_stem[stem][index]
+        for name in SETTINGS if base is not None else PAGE_SETTINGS:
+            if base is None or getattr(group, name) == getattr(base, name):
+                setattr(group, name, getattr(source, name))
+
+
+def carry_job_settings(old: Job, made: Job) -> None:
+    """The settings of a Plot page job's groups onto the groups its
+    operations were made into again (Apply, Add, Up, Remove), operation by
+    operation: a group keeps every setting its operation's numbers do not
+    change, the ones only the Jobs page sets (turned off, a focus, a least
+    power) and the ones changed there (a slower feed), and takes the
+    operation's where those numbers changed. The groups of an operation
+    new to the job are as it makes them."""
+    old_ops = [MillOperation.model_validate(data) for data in recipe_ops(old.recipe)]
+    new_ops = [MillOperation.model_validate(data) for data in recipe_ops(made.recipe)]
+    old_split = _by_operation(old_ops, old.groups)
+    new_split = _by_operation(new_ops, made.groups)
+    if old_split is None or new_split is None:
+        # The job's groups were changed apart from its operations (paths
+        # moved between groups): what no operation sets, by label alone.
+        _carry(old.groups, made.groups, None)
+        return
+    for index, at in _paired(old_ops, new_ops):
+        _carry(old_split[at], new_split[index], _group(old_ops[at], "", []))
 
 
 def remake(job: Job, tool: float, streamer: Streamer) -> Job:

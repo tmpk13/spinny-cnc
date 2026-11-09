@@ -177,10 +177,12 @@ Focus the beam instead of zeroing a depth.
    holes beside it and the outline round both. The job's operations are
    listed over the fields: a click puts one in the fields, *Apply* puts the
    fields back in its place, *Up* cuts one before the one above it and
-   *Remove* takes it out. The mark beside the job's name says whether the
-   fields are one of its operations as kept (*applied*), changed since
-   (*changed*, also counted on the tab), or not in it. All of a job's
-   operations cut with one bit or spot.
+   *Remove* takes it out. The groups keep what the Jobs page set on them
+   (turned off, a focus, a slower feed) unless the fields change that
+   number. The mark beside the job's name says whether the fields are one
+   of its operations as kept (*applied*), changed since (*changed*, also
+   counted on the tab), or not in it. All of a job's operations cut with
+   one bit or spot.
 6. *Run* in the panel beside it (or the Run panel on the Jobs page) cuts
    the selected job.
 

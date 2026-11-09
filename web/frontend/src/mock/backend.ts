@@ -46,7 +46,7 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, par
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbKey, thumbnail } from "./thumbs.ts";
-import { buildMillJob, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
+import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
 import { MockCameraLog } from "./camlog.ts";
@@ -3771,6 +3771,8 @@ export class MockBackend implements Api, EventFeed {
             throw error instanceof ApiError ? error : new ApiError(400, error instanceof Error ? error.message : String(error));
         }
         if (target) {
+            // The settings made on the Jobs page stay with the groups.
+            carryJobSettings(target, made.job);
             placed(made.job, target);
             made.job.stats = computeStats(made.job.groups, this.limits());
         }

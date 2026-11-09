@@ -2492,6 +2492,8 @@ class Backend:
         name = body.name if body.name is not None else (op_list[0].name if len(op_list) == 1 else None)
         job, notes = mill.build_job(op_list, holes_of, None, name)
         if target is not None:
+            # The settings made on the Jobs page stay with the groups.
+            mill.carry_job_settings(target, job)
             mill.placed(job, target)
         job.refresh_stats(self.streamer())
         if keep:

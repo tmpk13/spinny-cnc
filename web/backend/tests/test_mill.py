@@ -271,6 +271,65 @@ def test_holes_taken_from_a_board_job_land_on_its_holes_in_a_moved_job(client):
     assert answer.json()["job"]["recipe"]["ops"][1]["holes"] == [pytest.approx([10, 10, 0.8])]
 
 
+def test_changing_the_operations_keeps_the_settings_set_on_the_jobs_page(client):
+    profile = {"kind": "profile", "x0": -5, "y0": -5, "x1": 25, "y1": 15, "tool": 2, "side": "outside"}
+    made = client.post("/api/mill", json={"ops": [POCKET, profile], "name": "part"}).json()["job"]
+    # On the Jobs page: the cut-out off for a run of the pocket first, the
+    # pocket slower, and a focus on the cut-out.
+    client.patch(f"/api/jobs/{made['id']}", json={"groups": [{"index": 0, "speed": 120}, {"index": 1, "enabled": False, "focus": 0.5}]})
+
+    def settings(job):
+        return [(group["label"].split()[0], group["enabled"], group["speed"], group["depth"], group["focus"]) for group in job["groups"]]
+
+    def send(ops):
+        answer = client.post("/api/mill", json={"ops": ops, "name": "part", "job": made["id"]})
+        assert answer.status_code == 200, answer.text
+        return answer.json()["job"]
+
+    # Apply: the pocket deeper. What its fields did not change keeps the
+    # Jobs page's setting; the other operation keeps all of its own.
+    deeper = {**POCKET, "depth": 1.5}
+    job = send([deeper, profile])
+    assert settings(job) == [("pocket", True, 120, 1.5, None), ("profile", False, 300, 0.5, 0.5)]
+    # A planned change shows the same, and stores nothing.
+    planned = client.post("/api/mill/plan", json={"ops": [deeper, profile], "job": made["id"]}).json()["job"]
+    assert settings(planned) == settings(job)
+    # Add, Up and Remove: every group keeps its settings wherever it goes.
+    drill = {"kind": "drill", "points": [[30, 5]], "tool": 2, "depth": 1, "step_down": 0.5}
+    job = send([deeper, profile, drill])
+    assert settings(job) == [("pocket", True, 120, 1.5, None), ("profile", False, 300, 0.5, 0.5), ("drill", True, 300, 1, None)]
+    job = send([profile, deeper, drill])
+    assert settings(job) == [("profile", False, 300, 0.5, 0.5), ("pocket", True, 120, 1.5, None), ("drill", True, 300, 1, None)]
+    job = send([profile, drill])
+    assert settings(job) == [("profile", False, 300, 0.5, 0.5), ("drill", True, 300, 1, None)]
+    # A field changed on the Plot page wins over the Jobs page's setting.
+    job = send([{**profile, "speed": 200}, drill])
+    assert settings(job) == [("profile", False, 200, 0.5, 0.5), ("drill", True, 300, 1, None)]
+    # A holes group turned off for another bit stays off when the holes change depth.
+    holes = {"kind": "holes", "job": "board", "tool": 2, "holes": [[40, 0, 2.0], [44, 0, 4.0]]}
+    job = send([{**profile, "speed": 200}, holes])
+    client.patch(f"/api/jobs/{made['id']}", json={"groups": [{"index": 2, "enabled": False}]})
+    job = send([{**profile, "speed": 200}, {**holes, "depth": 0.8}])
+    assert [(group["label"], group["enabled"], group["depth"]) for group in job["groups"]] == [
+        ("profile outside 30 x 20 mm", False, 0.5),
+        ("drill 2.00 mm holes (1)", True, 0.8),
+        ("bore 4.00 mm holes (1)", False, 0.8),
+    ]
+
+
+def test_groups_changed_apart_from_the_operations_keep_only_what_no_operation_sets():
+    profile = mill.MillOperation(kind="profile", x0=-5, y0=-5, x1=25, y1=15, tool=2)
+    old, _ = mill.build_job([mill.MillOperation(**POCKET), profile])
+    # A path moved into a group of its own on the Jobs page: the groups no
+    # longer split by operation.
+    old.groups.append(Group(label="moved paths", paths=[old.groups[0].paths.pop()]))
+    old.groups[0].speed = 120
+    old.groups[1].enabled = False
+    made, _ = mill.build_job([mill.MillOperation(**{**POCKET, "depth": 1.5}), profile])
+    mill.carry_job_settings(old, made)
+    assert [(group.enabled, group.speed, group.depth) for group in made.groups] == [(True, 300, 1.5), (False, 300, 0.5)]
+
+
 def test_a_job_of_operations_is_made_again_for_another_bit_holes_and_all(client):
     board = Job(name="board", source="gerber", holes=[(10, 10, 3.0)], groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
     uploaded = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()

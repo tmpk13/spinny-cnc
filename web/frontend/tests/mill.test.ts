@@ -323,6 +323,29 @@ describe("Plot page", () => {
         expect(added.job.recipe?.ops?.[1]?.holes).toEqual([[10, 10, 0.8]]);
     });
 
+    test("changing a job's operations keeps the settings set on the Jobs page", async () => {
+        const { backend } = setup();
+        const pocket: MillOperation = { ...defaultOperation("pocket"), x1: 20, y1: 10, tool: 2, depth: 1, step_down: 0.3, stepover: 0.5 };
+        const profile: MillOperation = { ...defaultOperation("profile"), x0: -5, y0: -5, x1: 25, y1: 15, tool: 2 };
+        const made = (await backend.makeMill({ ops: [pocket, profile], name: "part" })).job;
+        await backend.patchJob(made.id, { groups: [{ index: 0, speed: 120 }, { index: 1, enabled: false, focus: 0.5 }] });
+        const send = async (ops: MillOperation[]): Promise<unknown[][]> => {
+            const job = (await backend.makeMill({ ops, name: "part", job: made.id })).job;
+            return job.groups.map((group) => [group.label.split(" ")[0], group.enabled, group.speed, group.depth, group.focus ?? null]);
+        };
+        // Apply: what the pocket's fields did not change keeps the Jobs
+        // page's setting; the other operation keeps all of its own.
+        const deeper = { ...pocket, depth: 1.5 };
+        expect(await send([deeper, profile])).toEqual([["pocket", true, 120, 1.5, null], ["profile", false, 300, 0.5, 0.5]]);
+        // Add, Up and Remove: every group keeps its settings wherever it goes.
+        const drill: MillOperation = { ...defaultOperation("drill"), points: [[30, 5]], tool: 2, depth: 1, step_down: 0.5 };
+        expect(await send([deeper, profile, drill])).toEqual([["pocket", true, 120, 1.5, null], ["profile", false, 300, 0.5, 0.5], ["drill", true, 300, 1, null]]);
+        expect(await send([profile, deeper, drill])).toEqual([["profile", false, 300, 0.5, 0.5], ["pocket", true, 120, 1.5, null], ["drill", true, 300, 1, null]]);
+        expect(await send([profile, drill])).toEqual([["profile", false, 300, 0.5, 0.5], ["drill", true, 300, 1, null]]);
+        // A field changed on the Plot page wins over the Jobs page's setting.
+        expect(await send([{ ...profile, speed: 200 }, drill])).toEqual([["profile", false, 200, 0.5, 0.5], ["drill", true, 300, 1, null]]);
+    });
+
     test("runs the selected job from its run panel", async () => {
         const { run, store, calls, backend } = mountPage();
         const job = await backend.makeMill({ ops: [{ ...defaultOperation("drill"), points: [[1, 1]] }] });
