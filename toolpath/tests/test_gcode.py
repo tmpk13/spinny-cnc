@@ -54,6 +54,15 @@ def test_header_and_footer_follow_the_dialect():
     assert tail[3].startswith("G0 X0.000 A")
 
 
+def test_a_line_break_in_a_label_or_a_header_stays_inside_its_comment():
+    group = PathGroup("ring\nG1 X40 A0 F5000\r\u2028x", [[(5.0, 0.0), (10.0, 0.0)]], power=300.0, speed=600.0)
+    text = gcode.generate([group], PolarOptions(controller=JOINT), ["job\nM3 S1000"]).text
+    lines = text.split("\n")[:-1]
+    assert text.splitlines() == lines
+    assert "G1 X40 A0 F5000" not in lines and "M3 S1000" not in lines
+    assert "; job M3 S1000" in lines and "; ring G1 X40 A0 F5000  x: 1 paths power=300 speed=600" in lines
+
+
 def test_every_inverse_cut_has_its_own_feed_and_first_has_power():
     job = emit([square(5.0, 5.0, 2.0)])
     cuts = cut_lines(job.text)

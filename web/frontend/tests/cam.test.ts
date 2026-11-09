@@ -7,6 +7,7 @@ import { createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { buildCamJob, camGcode, formatValue, parseProfile, setValue, summaryOf } from "../src/mock/cam.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
+import type { Group, Job } from "../src/types.ts";
 import { describeTool, mountCam, reportLines, sourceFields } from "../src/views/cam.ts";
 import { PAGES, mountTabs, readPage, showPage } from "../src/views/tabs.ts";
 
@@ -16,6 +17,21 @@ const SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" 
 </svg>`;
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** A job of the groups given, each a spindle's unless it says otherwise. */
+function jobOf(name: string, groups: Partial<Group>[]): Job {
+    return {
+        id: "t1",
+        name,
+        source: "json",
+        spot: 0.5,
+        offset: { x: 0, y: 0 },
+        groups: groups.map((group) => ({ label: "g", power: 9000, min_power: 0, speed: 240, passes: 1, enabled: true, depth: 0.5, plunge: 60, tool: "spindle", paths: [], ...group })),
+        outline: [],
+        copper: [],
+        stats: { length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 },
+    };
+}
 
 describe("the mock's CAM profiles", () => {
     test("the shipped mill profile reads as the backend reads it", () => {
@@ -84,6 +100,25 @@ describe("the mock's CAM profiles", () => {
         // The end mill runs half a millimeter outside the board's lower left
         // corner, where the shipped profile's travel starts.
         expect(written.report.warnings).toEqual(["X reaches -0.500, under its min 0", "Y reaches -0.500, under its min 0"]);
+    });
+
+    test("a line break in a name or a label stays inside its comment, as the backend writes it", () => {
+        const mill = parseProfile(millText, "mill-3axis");
+        const separator = String.fromCharCode(0x2028);
+        const job = jobOf("coupon\nM3 S24000 (a)", [
+            { label: "slot\nG1 Z-5 F2000\n", paths: [[[0, 0], [1, 0]]] },
+            { label: `a\r\nb${separator}c\x85d\x0be`, paths: [[[2, 0], [3, 0]]] },
+        ]);
+        const text = camGcode(mill, job).text;
+        const lines = text.split("\n").slice(0, -1);
+        expect(text.split(/\r\n|[\n\r\x0b\x0c\x1c-\x1e\x85]/).slice(0, -1)).toEqual(lines);
+        expect(text.includes(separator)).toBe(false);
+        expect(lines).not.toContain("G1 Z-5 F2000");
+        const comments = lines.filter((line) => line.startsWith("("));
+        expect(comments.every((line) => line.endsWith(")") && line.split("(").length === 2 && line.split(")").length === 2)).toBe(true);
+        expect(comments[0]).toBe("(coupon M3 S24000 [a]: 2 operations through 3 axis mill)");
+        expect(lines).toContain("(slot G1 Z-5 F2000 : 1 paths)");
+        expect(lines).toContain("(a  b c d e: 1 paths)");
     });
 });
 

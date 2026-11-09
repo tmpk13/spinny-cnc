@@ -1456,6 +1456,19 @@ export function buildModelJob(id: string, profile: CamProfile, name: string, fil
 
 // --- gcode ----------------------------------------------------------------------------
 
+/**
+ * What a comment must not carry: the control characters, which a controller
+ * or a sender may take for the end of the line, and the line and paragraph
+ * separators some senders split lines on. A name or a label holding one
+ * would otherwise put the text after it on a line of its own, where it runs.
+ */
+const LINE_BREAKING = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
+
+/** A comment line: every character that could end a line made a space, the parentheses square. */
+function commentLine(text: string): string {
+    return `(${text.replace(LINE_BREAKING, " ").replaceAll("(", "[").replaceAll(")", "]")})`;
+}
+
 /** A job as gcode for a cartesian profile, the way the backend's post writes it. */
 export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
     const x = profile.axes.find((axis) => axis.role === "x");
@@ -1616,8 +1629,8 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
     };
 
     const enabled = job.groups.filter((group) => group.enabled && (group.paths.length > 0 || (group.moves?.length ?? 0) > 0));
-    lines.push(`(${job.name}: ${enabled.length} operations through ${profile.name})`);
-    lines.push(`(board X/Y on ${profile.axes.map((axis) => `${axis.letter}=${axis.role}`).join(" ")})`);
+    lines.push(commentLine(`${job.name}: ${enabled.length} operations through ${profile.name}`));
+    lines.push(commentLine(`board X/Y on ${profile.axes.map((axis) => `${axis.letter}=${axis.role}`).join(" ")}`));
     lines.push(...post.header);
     if (depth) {
         go([word(depth, safeZ())]);
@@ -1628,7 +1641,7 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
     }
     for (const group of enabled) {
         const moves = group.moves ?? [];
-        lines.push(`(${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths)`);
+        lines.push(commentLine(`${group.label}: ${moves.length > 0 ? moves.length : group.paths.length} paths`));
         const kind: Tool = group.tool ?? profile.tools[0]!.kind;
         if (moves.length > 0) {
             // A model's paths: each from the safe height down to its first

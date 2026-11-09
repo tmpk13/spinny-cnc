@@ -24,6 +24,7 @@ dwell at full power on one point of the board.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 from laser_sweep.backlash import format_coord
@@ -45,6 +46,16 @@ EXIT_QUANTA = 2
 # Letters a controller reads as an axis. Under any other the angle would go
 # out as a power, a feed, a code or a line number.
 AXIS_LETTERS = frozenset("ABCUVWYZ")
+# What a comment must not carry: the control characters, which a controller
+# or a sender may take for the end of the line, and the line and paragraph
+# separators some senders split lines on. A name or a label holding one
+# would otherwise put the text after it on a line of its own, where it runs.
+LINE_BREAKING = re.compile("[\x00-\x1f\x7f-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+
+
+def one_line(text: str) -> str:
+    """The text with every character that could end a line made a space."""
+    return LINE_BREAKING.sub(" ", text)
 
 
 @dataclass(frozen=True)
@@ -168,7 +179,7 @@ class _Writer:
     # --- text ---------------------------------------------------------------
 
     def comment(self, text: str) -> None:
-        self.lines.append(f"; {text}" if text else ";")
+        self.lines.append(f"; {one_line(text)}" if text else ";")
 
     def blank(self) -> None:
         self.lines.append("")

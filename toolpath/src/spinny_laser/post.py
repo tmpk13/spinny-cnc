@@ -107,7 +107,7 @@ class _Cartesian:
         self.lines.append(line)
 
     def comment(self, text: str) -> None:
-        self.emit("(" + text.replace("(", "[").replace(")", "]") + ")")
+        self.emit("(" + gcode.one_line(text).replace("(", "[").replace(")", "]") + ")")
 
     def reach(self, axis: cam.Axis, value: float) -> None:
         self.report.reach(axis.letter, value)

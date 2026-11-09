@@ -463,6 +463,32 @@ def test_the_post_refuses_what_the_axes_cannot_do_and_warns_past_the_travel():
     assert any("power floor 100" in w for w in program.report.warnings)
 
 
+def test_a_line_break_in_a_name_or_a_label_stays_inside_its_comment():
+    profile = parse(MINIMAL, "bench")
+    built = camjob.BuiltJob(
+        name="coupon\nM3 S24000 (a)",
+        source="json",
+        spot=0.5,
+        offset=(0.0, 0.0),
+        groups=[
+            camjob.BuiltGroup("slot\nG1 Z-5 F2000\n", "spindle", 9000.0, 0.0, 240.0, 1, 0.5, 60.0, [[(0.0, 0.0), (1.0, 0.0)]]),
+            camjob.BuiltGroup("a\r\nb\u2028c\x85d\x0be", "spindle", 9000.0, 0.0, 240.0, 1, 0.5, 60.0, [[(2.0, 0.0), (3.0, 0.0)]]),
+        ],
+        outline=[],
+        copper=[],
+        notes=[],
+    )
+    text = post.post(built, profile).text
+    # Every splitter a sender may use sees the same lines.
+    lines = text.split("\n")[:-1]
+    assert text.splitlines() == lines
+    assert "G1 Z-5 F2000" not in lines and "M3 S24000" not in " ".join(line for line in lines if not line.startswith("("))
+    comments = [line for line in lines if line.startswith("(")]
+    assert all(line.endswith(")") and line.count("(") == 1 and line.count(")") == 1 for line in comments)
+    assert comments[0] == "(coupon M3 S24000 [a]: 2 operations through Bench)"
+    assert "(slot G1 Z-5 F2000 : 1 paths)" in lines and "(a  b c d e: 1 paths)" in lines
+
+
 def test_a_polar_profile_is_written_by_the_polar_writer():
     profile = cam.load(SHIPPED / "polar-laser.toml")
     built = camjob.BuiltJob(
