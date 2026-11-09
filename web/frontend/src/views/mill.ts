@@ -618,11 +618,15 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
                     skipped.add(size);
                 }
             }
-            if (source) {
+            if (source && !full.holes) {
+                // Made before operations kept their holes: the board job's.
                 holesSelect.value = source.id;
                 void loadHoles(source.id);
             } else {
-                holesSelect.value = "";
+                // Its own holes, where they were when it was made, as the
+                // job's other operations are: the board job's may have moved
+                // since. Picking a job in the select takes that job's again.
+                holesSelect.value = source ? source.id : "";
                 holesJob = null;
                 editingHoles = { job: full.job ?? null, holes: full.holes ?? [] };
                 renderSizes();

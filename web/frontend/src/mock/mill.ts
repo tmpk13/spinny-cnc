@@ -741,6 +741,18 @@ export function placed(made: Job, where: Job): Job {
     return made;
 }
 
+/**
+ * Holes where they are on the board (a board job's, as that job is now) in
+ * the frame `where`'s operations are typed in, from before it was turned
+ * and moved: placed() puts them back on the board's holes.
+ */
+export function unplaced(holes: HolePoint[], where: Job): HolePoint[] {
+    return holes.map(([x, y, d]): HolePoint => {
+        const [bx, by] = turnPoint([x - where.offset.x, y - where.offset.y], -(where.rotation ?? 0));
+        return [bx, by, d];
+    });
+}
+
 /** A Plot page job made again for a bit `tool` mm across, where it is now, its groups' settings kept. */
 export function remakeMill(job: Job, tool: number, limits: RateLimits): Job {
     const ops = recipeOps(job.recipe).map((op): MillOperation => ({ ...defaultOperation(), ...op, tool }));

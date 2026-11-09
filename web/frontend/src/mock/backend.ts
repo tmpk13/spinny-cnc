@@ -46,7 +46,7 @@ import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, par
 import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbKey, thumbnail } from "./thumbs.ts";
-import { buildMillJob, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill } from "./mill.ts";
+import { buildMillJob, carrySettings, cutMiddle, defaultOperation, MAX_OPERATIONS, moveJob, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import { DEVICE_CAMERA_WHERE, PNP_DEFAULTS, UP_TRUTH, checkPnpSettings, mockComponents, upFrameSvg, upInPicture, upPicturePoint } from "./pnp.ts";
 import { MockCameraLog } from "./camlog.ts";
@@ -3739,13 +3739,6 @@ export class MockBackend implements Api, EventFeed {
                 ops[0] = { ...only, name: `${source.name} holes` };
             }
         }
-        const holesOf = (op: MillOperation): HolePoint[] => {
-            const source = this.jobStore.get(op.job ?? "");
-            if (!source) {
-                throw new ApiError(404, `no job '${op.job ?? ""}' to take holes from`);
-            }
-            return [...(source.holes ?? [])];
-        };
         let target: Job | null = null;
         if (body.job) {
             target = this.jobStore.get(body.job) ?? null;
@@ -3759,6 +3752,17 @@ export class MockBackend implements Api, EventFeed {
                 throw new ApiError(409, "the job is running");
             }
         }
+        const where = target;
+        const holesOf = (op: MillOperation): HolePoint[] => {
+            const source = this.jobStore.get(op.job ?? "");
+            if (!source) {
+                throw new ApiError(404, `no job '${op.job ?? ""}' to take holes from`);
+            }
+            // The board job's holes are where it is now, on the board; the
+            // target's operations are typed from before its move, which
+            // placed() applies to everything built.
+            return where ? unplaced(source.holes ?? [], where) : [...(source.holes ?? [])];
+        };
         const name = body.name !== undefined && body.name !== null ? body.name : ops.length === 1 ? ops[0]!.name ?? null : null;
         let made: MillResponse;
         try {

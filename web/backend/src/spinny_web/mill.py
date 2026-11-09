@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Literal
 
 from pydantic import Field
+from spinny_laser import align as alignment
 from spinny_laser import mill as ops
 from spinny_laser import pads as board_pads
 
@@ -408,6 +409,17 @@ def placed(made: Job, where: Job) -> Job:
     made.offset = where.offset.model_copy()
     made.rotation = where.rotation
     return made
+
+
+def unplaced(holes: list[tuple[float, float, float]], where: Job) -> list[tuple[float, float, float]]:
+    """Holes where they are on the board (a board job's, as that job is
+    now) in the frame `where`'s operations are typed in, from before it was
+    turned and moved: placed() puts them back on the board's holes."""
+    out = []
+    for x, y, d in holes:
+        bx, by = alignment.turn((x - where.offset.x, y - where.offset.y), -where.rotation)
+        out.append((bx, by, d))
+    return out
 
 
 def remake(job: Job, tool: float, streamer: Streamer) -> Job:

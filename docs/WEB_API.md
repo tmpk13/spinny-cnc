@@ -227,7 +227,10 @@ true}` plus what the kind takes, every field optional but `kind`:
 around a part, with the spindle turning clockwise; false is conventional.
 A holes operation may carry `holes` (`[[x, y, diameter], ...]`) in place
 of looking them up in `job`; a made job keeps them there, so it is made
-again without the job they came from.
+again without the job they came from. Holes looked up in `job` are where
+that job is now; with `job` in the body naming a moved Plot page job they
+are taken into its frame from before the move, as its operations are
+typed, so they land on the board job's holes.
 
 `"cutter": "laser"` (default `spindle`) burns the same paths with a beam
 `tool` mm across: `power` (S, default 500) and `passes` (1 to 100, each

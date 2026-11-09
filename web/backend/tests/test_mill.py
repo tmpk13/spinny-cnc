@@ -243,6 +243,34 @@ def test_operations_are_applied_to_a_job_in_place_where_it_was_moved(client):
     assert client.post("/api/mill", json={"ops": []}).status_code == 422
 
 
+def test_holes_taken_from_a_board_job_land_on_its_holes_in_a_moved_job(client):
+    board = Job(name="board", source="gerber", holes=[(10, 10, 0.8)], groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
+    uploaded = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()
+    made = client.post("/api/mill", json={"kind": "holes", "job": uploaded["id"], "tool": 0.8}).json()["job"]
+    assert made["groups"][0]["paths"] == [[[10, 10]]]
+    # Both lined up with the stock by the same move: to x 5, then a quarter
+    # turn about the origin, which takes the hole to (-10, 15).
+    for job_id in (uploaded["id"], made["id"]):
+        moved = client.patch(f"/api/jobs/{job_id}", json={"offset": {"x": 5, "y": 0}, "turn": 90, "about": "origin"})
+        assert moved.status_code == 200, moved.text
+    ((hx, hy, _),) = client.get(f"/api/jobs/{uploaded['id']}").json()["holes"]
+    assert (hx, hy) == pytest.approx((-10, 15))
+    kept = client.get(f"/api/jobs/{made['id']}").json()["recipe"]["ops"][0]
+    # The board job's holes taken again beside the operation's own kept ones,
+    # planned and applied: both land on the board's hole.
+    body = {"ops": [kept, {"kind": "holes", "job": uploaded["id"], "tool": 0.8}], "job": made["id"]}
+    for route in ("/api/mill/plan", "/api/mill"):
+        answer = client.post(route, json=body)
+        assert answer.status_code == 200, answer.text
+        groups = answer.json()["job"]["groups"]
+        assert [group["label"] for group in groups] == ["drill 0.80 mm holes (1)", "drill 0.80 mm holes (1)"]
+        for group in groups:
+            ((point,),) = group["paths"]
+            assert point == pytest.approx([-10, 15])
+    # Kept in the job's frame from before its move, as its other operations are.
+    assert answer.json()["job"]["recipe"]["ops"][1]["holes"] == [pytest.approx([10, 10, 0.8])]
+
+
 def test_a_job_of_operations_is_made_again_for_another_bit_holes_and_all(client):
     board = Job(name="board", source="gerber", holes=[(10, 10, 3.0)], groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
     uploaded = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()

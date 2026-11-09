@@ -2470,12 +2470,6 @@ class Backend:
             if source is not None:
                 op_list[0] = op_list[0].model_copy(update={"name": f"{source.name} holes"})
 
-        def holes_of(op: mill.MillOperation) -> list[tuple[float, float, float]]:
-            source = self.store.get(op.job or "")
-            if source is None:
-                raise NotFound(f"no job {op.job!r} to take holes from")
-            return list(source.holes)
-
         target = None
         if body.job:
             target = self.store.get(body.job)
@@ -2485,6 +2479,16 @@ class Backend:
                 raise ValueError(f"{target.name} was not made on the Plot page: its operations cannot be changed there")
             if keep and self.runner.active and self.runner.progress.job == target.id:
                 raise RunnerError("the job is running")
+
+        def holes_of(op: mill.MillOperation) -> list[tuple[float, float, float]]:
+            source = self.store.get(op.job or "")
+            if source is None:
+                raise NotFound(f"no job {op.job!r} to take holes from")
+            # The board job's holes are where it is now, on the board; the
+            # target's operations are typed from before its move, which
+            # placed() applies to everything built.
+            return list(source.holes) if target is None else mill.unplaced(source.holes, target)
+
         name = body.name if body.name is not None else (op_list[0].name if len(op_list) == 1 else None)
         job, notes = mill.build_job(op_list, holes_of, None, name)
         if target is not None:

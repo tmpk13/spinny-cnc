@@ -186,7 +186,9 @@ Focus the beam instead of zeroing a depth.
 
 A job moved or turned on the Jobs page keeps its place when its
 operations change: they are typed where they were before the move, and
-the plan, the sizes and the job are put where the job now is.
+the plan, the sizes and the job are put where the job now is. A holes
+operation keeps the holes it was made with; a board job picked again in
+*Holes of* gives its holes where that job now is.
 
 *Holes* takes a job imported with its drill file: one group a hole size,
 smallest first, each checked size taken. A hole wider than the bit is

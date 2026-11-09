@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 
 import fixture from "../../backend/tests/data/mill-samples.json" with { type: "json" };
 import { parseEvent } from "../src/ws.ts";
-import { buildMill, buildMillJob, defaultOperation, labelStem, passesOf } from "../src/mock/mill.ts";
+import { buildMill, buildMillJob, defaultOperation, labelStem, passesOf, recipeOps } from "../src/mock/mill.ts";
 import { GRID_KEY, Preview, formatTick, gridLinesIn } from "../src/preview.ts";
 import type { HolePoint, Job, MillOperation, MillResponse, Path } from "../src/types.ts";
 import { PAGES } from "../src/views/tabs.ts";
@@ -285,6 +285,42 @@ describe("Plot page", () => {
         await wait(PLAN_DELAY_MS + 30);
         expect(store.get().millPlan?.groups.map((group) => group.label)).toEqual(["drill 0.80 mm holes (2)"]);
         expect(store.get().millPlan?.name).toBe(`${board.name} holes`);
+    });
+
+    test("a holes operation keeps its own holes when applied, and a board job's holes land on the board's in a moved job", async () => {
+        const { root, store, calls, backend, ctx } = mountPage();
+        const board: Job = await backend.job((await backend.jobs())[0]!.id);
+        board.holes = [[10, 10, 0.8]];
+        await store.set({ jobs: await backend.jobs() });
+        click(root, "Holes");
+        type(input(root, "Bit mm"), "0.8");
+        const select = input(root, "Job with holes") as unknown as HTMLSelectElement;
+        select.value = board.id;
+        select.dispatchEvent(new Event("change"));
+        await wait(30);
+        click(root, "New job");
+        await wait(30);
+        const plot = store.get().job!;
+        expect(plot.groups[0]!.paths).toEqual([[[10, 10]]]);
+        // Both lined up with the stock by the same move, 5 mm in x.
+        await backend.patchJob(board.id, { offset: { x: board.offset.x + 5, y: board.offset.y } });
+        await backend.patchJob(plot.id, { offset: { x: 5, y: 0 } });
+        await ctx.refreshJobs();
+        await ctx.reloadJob(plot.id);
+        findButton(root, "holes (1), 0.8 mm").click();
+        await wait(30);
+        expect(root.querySelector(".plot-state")?.getAttribute("data-state")).toBe("applied");
+        type(input(root, "Depth mm"), "0.8");
+        click(root, "Apply");
+        await wait(30);
+        const sent = calls.filter((call) => call.name === "makeMill").at(-1)!.args[0] as { ops: MillOperation[] };
+        expect(sent.ops[0]!.holes).toEqual([[10, 10, 0.8]]);
+        expect(store.get().job!.groups[0]!.paths).toEqual([[[15, 10]]]);
+        expect(store.get().job!.groups[0]!.depth).toBe(0.8);
+        // The board job's holes taken again beside them land on its hole too.
+        const added = await backend.makeMill({ ops: [...recipeOps(store.get().job!.recipe), { ...defaultOperation("holes"), job: board.id, tool: 0.8 }], job: plot.id });
+        expect(added.job.groups.map((group) => group.paths)).toEqual([[[[15, 10]]], [[[15, 10]]]]);
+        expect(added.job.recipe?.ops?.[1]?.holes).toEqual([[10, 10, 0.8]]);
     });
 
     test("runs the selected job from its run panel", async () => {
