@@ -1255,8 +1255,17 @@ class Backend:
             reason = event.data.get("reason", "")
             self.position_store.flush()
             wire_note(f"link closed: {reason}")
-            self._lost = None if reason == "disconnected" else (time.time(), reason)
-            self._loss_note = None
+            # A link that never heard the board (a bridge with no controller
+            # behind it, while the board is off) fails at every connect: the
+            # failure that took the board away stays the one named, with its
+            # time, until a link to the board fails again.
+            link = self.link
+            if reason == "disconnected":
+                self._lost = None
+                self._loss_note = None
+            elif self._lost is None or (link is not None and link.banner is not None):
+                self._lost = (time.time(), reason)
+                self._loss_note = None
             # A close the user asked for is news, not a fault.
             self.publish_message("info" if reason == "disconnected" else "error", f"link closed: {reason}")
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})

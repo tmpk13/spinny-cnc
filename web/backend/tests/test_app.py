@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import threading
 import time
@@ -490,6 +491,46 @@ def test_a_board_that_comes_back_from_power_on_after_a_lost_port_is_named_a_powe
         connect(client)
         assert wait_for(lambda: any(e["text"].startswith("diag up") for e in messages(queue)), 2.0)
         assert not any("lost power" in e["text"] or "stayed up" in e["text"] for e in messages(queue))
+        backend.broadcast.unsubscribe(queue)
+
+
+def test_a_connect_that_never_reached_the_board_keeps_when_and_why_the_link_failed(tmp_path):
+    # The ports the connects find, in order.
+    ports: list[FakeSerial] = []
+
+    def factory(url: str) -> Link:
+        return Link(url, open_port=fake_opener(ports.pop(0)))
+
+    def messages(queue) -> list[dict]:
+        return [e for e in list(queue._queue) if e["type"] == "message"]
+
+    backend = Backend(root=tmp_path, link_factory=factory, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        queue = backend.broadcast.subscribe()
+        board = FakeSerial(move_time=0.002, boot="power on", up=time.monotonic() - 100.0)
+        ports.append(board)
+        connect(client)
+        board.vanish()
+        assert wait_for(lambda: not client.get("/api/state").json()["connected"], 3.0)
+        # The board is off a while, and a bridge with nothing behind it takes
+        # the next connect, says so and closes it.
+        time.sleep(2.0)
+        bridge = FakeSerial(banner_at_open=False)
+        bridge.message("bridge no controller: no /dev/serial/by-id/usb-spinny_x")
+        threading.Timer(0.1, bridge.vanish).start()
+        ports.append(bridge)
+        refused = client.post("/api/connect", json={"url": "socket://127.0.0.1:9999"})
+        assert refused.status_code == 502 and "no controller" in refused.text
+        drain(queue)
+        ports.append(FakeSerial(move_time=0.002, boot="power on", up=time.monotonic()))
+        connect(client)
+        assert wait_for(lambda: any("lost power" in e["text"] for e in messages(queue)), 2.0)
+        note = next(e for e in messages(queue) if "lost power" in e["text"])["text"]
+        # The failure named is the board's, with the time it was off since.
+        assert "device reports readiness to read but returned no data" in note
+        assert "no controller" not in note
+        off = re.search(r"it was off about (\d+) s", note)
+        assert off is not None and int(off.group(1)) >= 2, note
         backend.broadcast.unsubscribe(queue)
 
 
