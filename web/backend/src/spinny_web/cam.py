@@ -185,6 +185,7 @@ def build_job(profile: Profile, folder: Path, name: str | None, streamer: Stream
                 tool=group.tool,
                 tool_id=group.tool_id,
                 tool_name=group.tool_name,
+                height=group.height,
                 paths=[[tuple(p) for p in path_] for path_ in group.paths],
                 moves=[[tuple(m) for m in path_] for path_ in group.moves],
             )
@@ -202,7 +203,10 @@ def build_job(profile: Profile, folder: Path, name: str | None, streamer: Stream
 
 def built_of(job: Job, profile: Profile) -> camjob.BuiltJob:
     """A stored job as the post takes it. A group that says no tool is
-    written for the profile's first tool's kind."""
+    written for the profile's first tool's kind. A laser group a profile
+    made keeps the height its operation gave it, or none; one made
+    otherwise (a drawing, a Plot job) takes the first laser tool's that
+    gives one."""
     default = profile.tools[0].kind
     groups = []
     for group in job.groups:
@@ -211,8 +215,10 @@ def built_of(job: Job, profile: Profile) -> camjob.BuiltJob:
         tool = group.tool or default
         height = None
         if tool == cam.LASER:
-            heights = [t.settings.get("height") for t in profile.tools if t.kind == cam.LASER and "height" in t.settings]
-            height = heights[0] if heights else None
+            height = group.height
+            if height is None and group.tool_id is None:
+                heights = [t.settings.get("height") for t in profile.tools if t.kind == cam.LASER and "height" in t.settings]
+                height = heights[0] if heights else None
         groups.append(
             camjob.BuiltGroup(
                 label=group.label,

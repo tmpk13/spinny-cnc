@@ -80,6 +80,9 @@ export const DEFAULT_THICKNESS = 0.12;
 /** Farthest a group may raise or lower the head from focus, mm, as the backend bounds it. */
 export const MAX_FOCUS = 50;
 
+/** Farthest a CAM laser group's height may be from the surface, mm, the bound a CAM profile holds it to. */
+const MAX_HEIGHT = 1000;
+
 /** A group's focus within bounds, as the backend checks it; none is no focus. */
 export function checkFocus(focus: number | null | undefined, what = "focus"): void {
     if (focus !== null && focus !== undefined && !(Number.isFinite(focus) && Math.abs(focus) <= MAX_FOCUS)) {
@@ -1325,6 +1328,10 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
         };
         const toolId = textOf("tool_id");
         const toolName = textOf("tool_name");
+        const height = raw["height"] === undefined || raw["height"] === null ? null : finiteNumber(raw["height"], `${what}: height`);
+        if (height !== null && !(Math.abs(height) <= MAX_HEIGHT)) {
+            throw new Error(`${what}: height must be within ${MAX_HEIGHT} mm of the surface`);
+        }
         const areas = raw["areas"] === undefined ? [] : raw["areas"];
         if (!Array.isArray(areas) || !areas.every((area) => typeof area === "number" && Number.isFinite(area) && area >= 0)) {
             throw new Error(`${what}: areas must be a list of numbers`);
@@ -1348,6 +1355,7 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
             tool: tool as Tool | null,
             ...(toolId !== null ? { tool_id: toolId } : {}),
             ...(toolName !== null ? { tool_name: toolName } : {}),
+            ...(height !== null ? { height } : {}),
             areas: areas as number[],
             paths: joints.length > 0 && paths.length === 0 ? joints.map((poly) => jointPreview(poly)) : paths,
         };

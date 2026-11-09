@@ -1149,6 +1149,7 @@ function groupOf(operation: CamOperation, tool: CamTool, label: string, paths: P
         tool: "laser",
         tool_id: tool.id,
         tool_name: tool.name,
+        height: cutting["height"] ?? null,
         paths,
     };
 }
@@ -1752,6 +1753,15 @@ export function camGcode(profile: CamProfile, job: Job): CamGcodeResponse {
                 lines.push(`${post.laser_on} S0`);
                 output = ["laser", 0];
                 power = 0;
+            }
+            // A laser group a profile made keeps its operation's height, or
+            // none; one made otherwise takes the first laser tool's that gives one.
+            let height = group.height ?? null;
+            if (height === null && (group.tool_id ?? null) === null) {
+                height = profile.tools.find((tool) => tool.kind === "laser" && tool.settings["height"] !== undefined)?.settings["height"] ?? null;
+            }
+            if (depth && height !== null) {
+                go([word(depth, depth.offset + height)]);
             }
             for (let pass = 0; pass < Math.max(1, group.passes); pass++) {
                 for (const path of group.paths) {

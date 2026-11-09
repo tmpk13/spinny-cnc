@@ -384,6 +384,8 @@ export interface Group {
     tool_id?: string | null;
     /** That tool's name, for the stop's comment and the refusal. */
     tool_name?: string | null;
+    /** A CAM laser group's height over the surface, mm, where the gcode holds a depth axis for focus; missing or null leaves it at the safe height. A run does not read it. */
+    height?: number | null;
     /** Dispensing: mm of paste over every pad of the group. */
     thickness?: number;
     /** A laser with a focus axis: mm the head is raised above focus for the group, negative lowers it; missing or null leaves it where the run puts it. */

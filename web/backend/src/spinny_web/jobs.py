@@ -51,6 +51,9 @@ MAX_DEPTH = 50.0
 # Farthest a laser group may raise or lower the head from focus, mm: past
 # any lens's useful range, and short of a number typed in the wrong unit.
 MAX_FOCUS = 50.0
+# Farthest a CAM laser group's height may be from the surface, mm, the
+# bound a CAM profile holds it to.
+MAX_HEIGHT = 1000.0
 # CSS pixels per millimeter at 96 dpi, which is what an SVG length without
 # a unit is; the parser's own rounded factor is used so a file in mm comes
 # back out in exact mm.
@@ -155,6 +158,11 @@ class Group(Finite):
     # made otherwise, which cuts with whatever is fitted.
     tool_id: str | None = None
     tool_name: str | None = None
+    # A CAM laser group's height over the surface, mm: its operation's, or
+    # its tool's, where the gcode for a controller with a depth axis holds
+    # the beam in focus; None leaves the depth axis at the safe height. A
+    # run on this machine does not read it (its focus is `focus`).
+    height: float | None = None
     paths: list[list[tuple[float, float]]] = Field(default_factory=list)
     # Dispensing: the area in mm^2 of the pad under each path, which is a
     # single point, in the paths' order; empty for every other group.
@@ -867,6 +875,8 @@ def checked(job: Job) -> Job:
             check_speed(group.plunge, f"group {group.label!r}: plunge")
             check_thickness(group.thickness)
             check_focus(group.focus, f"group {group.label!r}: focus")
+            if group.height is not None and not abs(group.height) <= MAX_HEIGHT:
+                raise JobImportError(f"group {group.label!r}: height must be within {MAX_HEIGHT:g} mm of the surface")
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
         if group.areas and len(group.areas) != len(group.paths):

@@ -364,7 +364,7 @@ Job:
   "groups": [
     {"label": "isolation loop 1", "power": 500, "min_power": 0, "speed": 400, "passes": 1, "enabled": true,
      "depth": 0.1, "plunge": 60, "thickness": 0.12, "focus": null, "tool": null, "tool_id": null, "tool_name": null,
-     "paths": [[[x, y], ...], ...], "areas": []},
+     "height": null, "paths": [[[x, y], ...], ...], "areas": []},
     {"label": "rail line through the axis", "power": 400, "min_power": 0, "speed": 200, "passes": 1, "enabled": true,
      "paths": [[[x, y], ...]], "joints": [[[r, a], ...]]},
     {"label": "rough: 3 mm end mill", "power": 12000, "speed": 288, "plunge": 86, "depth": 6.5, "tool": "spindle",
@@ -448,7 +448,10 @@ spindle. `tool_id` and `tool_name` are the CAM profile's tool a group was
 made with, null for a group made otherwise, which cuts with whatever is
 fitted: the gcode a profile exports stops to change the bit between two
 (`M0`), and a run on a spindle machine, which cannot, refuses a job whose
-enabled groups were made with more than one.
+enabled groups were made with more than one. `height` is a CAM laser
+group's over the surface (its operation's, else its tool's; within 1000
+mm), where the exported gcode holds a depth axis for focus, null for
+none; a run does not read it (a laser's own focus is `focus`).
 
 On a dispenser machine a job is dispensed: the head lifts to the travel
 height (`clearance` over H 0, or over the map's highest point when the

@@ -3,6 +3,7 @@ through one into a job; a job out as gcode; a run that refuses the other tool.""
 
 from __future__ import annotations
 
+import json
 import shutil
 import threading
 from pathlib import Path
@@ -11,7 +12,9 @@ import pytest
 from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
+from spinny_laser import cam, camjob, post
 from spinny_web.app import Backend, create_app
+from spinny_web.cam import read_design
 from spinny_web.jobs import Group
 from spinny_web.kinematics import Spindle, Streamer
 from spinny_web.link import Link
@@ -215,6 +218,99 @@ def test_a_job_is_written_as_gcode_for_the_profile(client):
     # The laser profile has no depth axis for a milled job.
     refused = client.post("/api/cam/cartesian-laser/gcode", json={"job": job["id"]})
     assert refused.status_code == 400 and "needs a depth axis" in refused.json()["detail"]
+
+
+TWO_LASERS = """
+name = "Two lasers"
+[[axes]]
+letter = "X"
+role = "x"
+[[axes]]
+letter = "Y"
+role = "y"
+[[axes]]
+letter = "Z"
+role = "depth"
+safe = 30
+[[tools]]
+id = "diode"
+kind = "laser"
+spot = 0.1
+power = 300
+speed = 600
+height = 2
+[[tools]]
+id = "co2"
+kind = "laser"
+spot = 0.2
+power = 900
+speed = 300
+height = 20
+[[tools]]
+id = "plain"
+kind = "laser"
+spot = 0.1
+power = 100
+speed = 600
+[[operations]]
+name = "engrave"
+source = "paths"
+tool = "diode"
+match = "#ff0000"
+height = 6
+[[operations]]
+name = "cut"
+source = "paths"
+tool = "co2"
+match = "#00ff00"
+[[operations]]
+name = "mark"
+source = "paths"
+tool = "plain"
+match = "#0000ff"
+"""
+
+
+def test_a_laser_group_is_written_at_its_own_operation_s_height(client, tmp_path):
+    assert client.put("/api/cam/two-lasers", json={"text": TWO_LASERS}).status_code == 200
+    svg = tmp_path / "coupon.svg"
+    svg.write_text(SVG.replace("</svg>", '<line x1="1" y1="1" x2="3" y2="1" stroke="#0000ff"/>\n</svg>'), encoding="utf-8")
+    job = upload(client, "two-lasers", [svg])["job"]
+    assert [(g["label"], g["height"]) for g in job["groups"]] == [
+        ("engrave: stroke #ff0000", 6.0),
+        ("cut: stroke #00ff00", 20.0),
+        ("mark: stroke #0000ff", None),
+    ]
+    written = client.post("/api/cam/two-lasers/gcode", json={"job": job["id"]}).json()["text"]
+    profile = cam.parse(TWO_LASERS, "two-lasers")
+    design = read_design(svg, profile, 0.005)
+    expected = post.post(camjob.build(profile, design, "coupon", tolerance=0.005), profile).text
+
+    def heights(text: str) -> list[str]:
+        return [line for line in text.splitlines() if line.startswith("(") or line.startswith("G0 Z")]
+
+    # Each group at its own height, a tool without one left where the safe height put it.
+    assert heights(written) == [
+        "(coupon: 3 operations through Two lasers)",
+        "(board X/Y on X=x Y=y Z=depth)",
+        "G0 Z30.000",
+        "(engrave: stroke #ff0000: 1 paths)",
+        "G0 Z6.000",
+        "(cut: stroke #00ff00: 1 paths)",
+        "G0 Z30.000",
+        "G0 Z20.000",
+        "(mark: stroke #0000ff: 1 paths)",
+        "G0 Z30.000",
+    ]
+    assert heights(written) == heights(expected)
+    # A group made otherwise than by the profile's operations takes the first laser tool's height.
+    drawn = client.post("/api/jobs", files={"file": ("drawn.svg", SVG.encode(), "image/svg+xml")}).json()
+    text = client.post("/api/cam/two-lasers/gcode", json={"job": drawn["id"]}).json()["text"]
+    assert [line for line in text.splitlines() if line.startswith("G0 Z")] == ["G0 Z30.000", "G0 Z2.000", "G0 Z30.000", "G0 Z2.000", "G0 Z30.000"]
+    # A job file's height is held to a profile's bound.
+    far = dict(job, groups=[dict(job["groups"][0], height=5000.0)])
+    refused = client.post("/api/jobs", files={"file": ("far.json", json.dumps(far).encode(), "application/json")})
+    assert refused.status_code == 400 and "height must be within 1000 mm of the surface" in refused.json()["detail"]
 
 
 def test_a_run_refuses_a_group_made_for_the_other_tool(client, fake):

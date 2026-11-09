@@ -310,14 +310,15 @@ stop: the spindle off (`M5`), the tool up, a comment naming the bit,
 `M0`, and a warning in the report. A spindle operation starts the
 spindle when its speed differs from the one running and dwells the
 spin-up; a laser operation turns the spindle off, writes `M4 S0` (or
-`M3`), moves the depth axis to the tool's `height` when it has one, and
-cuts with `S` on every line that changes it. Feeds and `S` are modal,
-written when they change. The end is the output off, the tool up, the
-X/Y homes, the depth home, and the footer. A laser's `min_power` has no
-gcode word and is left out with a warning. A polar profile goes through
-the grblHAL polar writer in `spinny_laser.gcode` (`controller = joint`:
-the radius on X, which the radius axis must be named, the angle on the
-rotary letter, inverse-time feed), laser operations only.
+`M3`), moves the depth axis to its `height` when it has one (the
+operation's, else the tool's), and cuts with `S` on every line that
+changes it. Feeds and `S` are modal, written when they change. The end
+is the output off, the tool up, the X/Y homes, the depth home, and the
+footer. A laser's `min_power` has no gcode word and is left out with a
+warning. A polar profile goes through the grblHAL polar writer in
+`spinny_laser.gcode` (`controller = joint`: the radius on X, which the
+radius axis must be named, the angle on the rotary letter, inverse-time
+feed), laser operations only.
 
 ## Editing
 

@@ -18,6 +18,59 @@ const SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" 
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+const LIMITS = { rRate: 560, aRate: 400, tolerance: 0.005 };
+
+/** Two lasers with their own focus heights and one without, on a depth axis; the engraving gives its own height. */
+const TWO_LASERS = `
+name = "Two lasers"
+[[axes]]
+letter = "X"
+role = "x"
+[[axes]]
+letter = "Y"
+role = "y"
+[[axes]]
+letter = "Z"
+role = "depth"
+safe = 30
+[[tools]]
+id = "diode"
+kind = "laser"
+spot = 0.1
+power = 300
+speed = 600
+height = 2
+[[tools]]
+id = "co2"
+kind = "laser"
+spot = 0.2
+power = 900
+speed = 300
+height = 20
+[[tools]]
+id = "plain"
+kind = "laser"
+spot = 0.1
+power = 100
+speed = 600
+[[operations]]
+name = "engrave"
+source = "paths"
+tool = "diode"
+match = "#ff0000"
+height = 6
+[[operations]]
+name = "cut"
+source = "paths"
+tool = "co2"
+match = "#00ff00"
+[[operations]]
+name = "mark"
+source = "paths"
+tool = "plain"
+match = "#0000ff"
+`;
+
 /** A job of the groups given, each a spindle's unless it says otherwise. */
 function jobOf(name: string, groups: Partial<Group>[]): Job {
     return {
@@ -118,6 +171,34 @@ describe("the mock's CAM profiles", () => {
             "X reaches -0.500, under its min 0",
             "Y reaches -0.500, under its min 0",
         ]);
+    });
+
+    test("a laser group is written at its own operation's height, as the backend writes it", () => {
+        const profile = parseProfile(TWO_LASERS, "two-lasers");
+        const svg = SVG.replace("</svg>", '<line x1="1" y1="1" x2="3" y2="1" stroke="#0000ff"/>\n</svg>');
+        const built = buildCamJob("j1", profile, "coupon", "coupon.svg", svg, LIMITS);
+        expect(built.job.groups.map((group) => [group.label, group.height])).toEqual([
+            ["engrave: stroke #ff0000", 6],
+            ["cut: stroke #00ff00", 20],
+            ["mark: stroke #0000ff", null],
+        ]);
+        const heights = (text: string): string[] => text.split("\n").filter((line) => line.startsWith("(") || line.startsWith("G0 Z"));
+        // Each group at its own height, a tool without one left where the safe height put it.
+        expect(heights(camGcode(profile, built.job).text)).toEqual([
+            "(coupon: 3 operations through Two lasers)",
+            "(board X/Y on X=x Y=y Z=depth)",
+            "G0 Z30.000",
+            "(engrave: stroke #ff0000: 1 paths)",
+            "G0 Z6.000",
+            "(cut: stroke #00ff00: 1 paths)",
+            "G0 Z30.000",
+            "G0 Z20.000",
+            "(mark: stroke #0000ff: 1 paths)",
+            "G0 Z30.000",
+        ]);
+        // A group made otherwise than by the profile's operations takes the first laser tool's height.
+        const drawn = jobOf("drawn", [{ label: "a", tool: null, paths: [[[0, 0], [1, 0]]] }]);
+        expect(heights(camGcode(profile, drawn).text).filter((line) => line.startsWith("G0"))).toEqual(["G0 Z30.000", "G0 Z2.000", "G0 Z30.000"]);
     });
 
     test("only another known bit stops the program, as the backend writes it", () => {
