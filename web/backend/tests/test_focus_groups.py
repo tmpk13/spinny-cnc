@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from spinny_web import calibration
 from spinny_web.app import Backend, create_app
 from spinny_web.jobs import Group, Job, JobImportError, JobPatch, apply_patch, from_json
-from spinny_web.kinematics import Spindle, Streamer
+from spinny_web.kinematics import CartesianStreamer, Spindle, Streamer
 from spinny_web.link import Link
 
 WORD = re.compile(r"([A-Z])(-?\d+(?:\.\d+)?)")
@@ -83,6 +83,24 @@ def test_on_the_map_a_groups_focus_adds_to_the_maps_focus_height():
     assert by_group == {0: {1.0}, 1: {1.5}, 2: {0.75}}
     with pytest.raises(ValueError, match="b asks for a focus height, and following the map by power holds the head still"):
         list(Streamer().job_pieces(three_groups(), (0.0, 0.0), FlatMap("power")))
+
+
+@pytest.mark.parametrize("streamer", [Streamer(), CartesianStreamer()], ids=["polar", "cartesian"])
+def test_on_the_map_a_group_that_starts_where_the_last_ended_goes_to_its_height_dark(streamer):
+    pieces = list(streamer.job_pieces(three_groups(), (0.0, 0.0), FlatMap("focus")))
+    # c starts where b ends: no rapid carries its height, so a lift does.
+    first_c = next(index for index, piece in enumerate(pieces) if piece.group == 2 and piece.kind == "cut")
+    lift = pieces[first_c - 1]
+    assert (lift.kind, lift.group, lift.line) == ("lift", 2, "go H0.7500")
+    assert lift.h == pytest.approx(0.75)
+    # On a flat board no cut moves the head: each starts at the height the
+    # line before it left, so the beam is never lit across a change.
+    said = None
+    for piece in pieces:
+        if piece.kind == "cut":
+            assert said is not None and piece.h == pytest.approx(said), piece
+        if piece.h is not None:
+            said = piece.h
 
 
 def test_a_focus_height_is_a_lasers_alone():

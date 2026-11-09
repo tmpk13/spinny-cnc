@@ -1597,6 +1597,44 @@ describe("the mock backend answers as the backend does", () => {
         expect(moves[1]?.kind).toBe("cut");
     });
 
+    test("following the map by focus, a group with its own focus goes to its height dark", async () => {
+        const { backend } = backendWithLog();
+        await backend.connect("/dev/ttyACM0");
+        // The surface reads 0 everywhere once the map is focused.
+        const map = flatMap(-10, 10, 10, 30, [[-1.5, -1.5], [-1.5, -1.5]]);
+        await putFocused(backend, map);
+        // b starts where a ends: no rapid carries its height.
+        const two = { groups: [
+            { label: "a", power: 300, speed: 600, paths: [[[0, 15], [2, 15]]] },
+            { label: "b", power: 300, speed: 600, focus: 0.5, paths: [[[2, 15], [4, 15]]] },
+        ] };
+        const job = await backend.uploadJob(new File([JSON.stringify(two)], "two.json"), {});
+        const focused = (await backend.heightMap()).map;
+        const moves = backend.movesFor(job, focused);
+        const firstB = moves.findIndex((move) => move.group === 1 && move.kind === "cut");
+        expect(moves[firstB - 1]).toMatchObject({ kind: "go", headOnly: true, h: 0.5, group: 1 });
+        // On a flat board no cut moves the head: each starts at the height
+        // the move before it left, so the beam is never lit across a change.
+        let said: number | undefined;
+        for (const move of moves) {
+            if (move.kind === "cut") {
+                expect(said).toBeDefined();
+                expect(move.h).toBeCloseTo(said!, 6);
+            }
+            if (move.h !== undefined) {
+                said = move.h;
+            }
+        }
+        // A first group with its own focus that starts where the head is
+        // gets its own height before the beam lights, as the backend's does.
+        await backend.goto({ kind: "board", x: 2, y: 15 });
+        advance(backend, 30);
+        const alone = await backend.uploadJob(new File([JSON.stringify({ groups: [two.groups[1]] })], "b.json"), {});
+        const placed = backend.movesFor(alone, focused);
+        expect(formatMove(placed[0]!)).toBe("go H0.5000");
+        expect(placed[1]?.kind).toBe("cut");
+    });
+
     test("a laser group's own focus moves the head for the group, from where the run begins, and back", async () => {
         const { backend } = backendWithLog();
         await backend.connect("/dev/ttyACM0");

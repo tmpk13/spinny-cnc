@@ -584,6 +584,9 @@ group by points along its moves, which sweep arcs on the board, not by its
 vertices alone). `focus` needs the
 focus axis: each line carries the focus height (map plus offset) at its
 end, and cuts are split to a quarter of the grid spacing, 0.25 to 2 mm.
+A cut that starts where the head already is, as the job's first line or
+in a group whose own focus differs from the line's before it, gets a dark
+`go H` to its height first, so the beam never lights across a change.
 `power` leaves the head where it is and raises each cut piece's `S` and
 `M` by `sqrt(1 + (dz / rayleigh)^2)`, `dz` the defocus there, up to
 `s_max`. `auto` is `focus` with a focus axis, else `power`.

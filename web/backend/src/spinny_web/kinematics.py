@@ -551,28 +551,42 @@ class Streamer:
         """
         focus = compensation.mode == "focus"
         offsets = offsets or {}
+        quantum = 0.5 * 10.0 ** -FOCUS_DECIMALS
+
+        def extra_of(piece: Piece) -> float:
+            return offsets.get(piece.group, 0.0) if piece.group is not None else 0.0
 
         def focus_at(piece: Piece, joint: Joint) -> float:
-            extra = offsets.get(piece.group, 0.0) if piece.group is not None else 0.0
-            return compensation.focus(self.board_of(joint)) + extra
+            return compensation.focus(self.board_of(joint)) + extra_of(piece)
         # Whether a line has set the focus height yet. A job whose first
         # line is a cut, the head already over its first point, would light
         # the beam with the head at whatever height it was left and bring
         # it to focus only along that first piece; a dark move to the focus
         # height goes first instead.
         placed = not focus
+        # The own focus of the group whose height the last line said, and
+        # the height that line left the head at. A cut of a group with
+        # another focus that starts where the last one ended has no rapid
+        # to carry its height: it gets a dark move of its own too, or its
+        # first piece would move the head by the difference with the beam on.
+        said: float | None = None
+        last_h = compensation.head_h
         for piece in pieces:
-            if not placed and piece.kind == "cut" and piece.start is not None:
-                h = focus_at(piece, piece.start)
-                yield Piece(
-                    line=f"go H{coord(h, FOCUS_DECIMALS)}",
-                    kind="lift",
-                    joint=piece.start,
-                    seconds=abs(h - compensation.head_h) / self.rates.h_rate * 60.0,
-                    group=piece.group,
-                    h=h,
-                )
+            if focus and piece.kind == "cut" and piece.start is not None:
+                if not placed or (said is not None and abs(extra_of(piece) - said) >= quantum):
+                    h = focus_at(piece, piece.start)
+                    yield Piece(
+                        line=f"go H{coord(h, FOCUS_DECIMALS)}",
+                        kind="lift",
+                        joint=piece.start,
+                        seconds=abs(h - last_h) / self.rates.h_rate * 60.0,
+                        group=piece.group,
+                        h=h,
+                    )
+                    last_h = h
             placed = True
+            if focus and piece.kind in ("go", "turn", "cut"):
+                said = extra_of(piece)
             if piece.kind == "cut" and piece.start is not None:
                 a, b = piece.start, piece.joint
                 parts = max(1, math.ceil(piece.length / compensation.step - 1e-9))
@@ -581,6 +595,7 @@ class Streamer:
                     joint = b if k == parts else _lerp_joint(a, b, k / parts)
                     if focus:
                         h = focus_at(piece, joint)
+                        last_h = h
                         power, floor = piece.power, piece.floor
                     else:
                         h = None
@@ -600,6 +615,7 @@ class Streamer:
                     previous = joint
             elif focus and piece.kind in ("go", "turn"):
                 h = focus_at(piece, piece.joint)
+                last_h = h
                 yield dataclasses.replace(piece, line=f"{piece.line} H{coord(h, FOCUS_DECIMALS)}", h=h)
             else:
                 yield piece

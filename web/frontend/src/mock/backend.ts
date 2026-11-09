@@ -4206,6 +4206,11 @@ export class MockBackend implements Api, EventFeed {
         const base = machine.endpointH();
         // The height the plan last said, when a group's focus has it say any.
         let current: number | null = null;
+        // Following the map: the own focus of the group whose height the
+        // last move said. A cut of a group with another focus that starts
+        // where the last move ended has no rapid to carry its height, so a
+        // dark move goes first, or the cut would move the head lit.
+        let said: number | null = null;
         let lastGroup = 0;
         job.groups.forEach((group, index) => {
             if (!group.enabled) {
@@ -4221,6 +4226,10 @@ export class MockBackend implements Api, EventFeed {
                     move.z = step.z;
                 }
                 if (surface) {
+                    if (move.kind === "cut" && said !== null && Math.abs(extra - said) >= 0.00005) {
+                        moves.push({ kind: "go", target: joint, ...(cartesian ? { z } : {}), h: round4(surface(joint, z) + extra), headOnly: true, feed: null, power: 0, group: index });
+                    }
+                    said = extra;
                     move.h = round4(surface(step.target, step.z) + extra);
                 } else if (offsets.size > 0) {
                     const want = round4(base + extra);
@@ -4246,7 +4255,8 @@ export class MockBackend implements Api, EventFeed {
         if (surface && first?.kind === "cut") {
             const start = machine.endpoint();
             const startZ = machine.endpointZ();
-            moves.unshift({ kind: "go", target: start, h: round4(surface(start, startZ)), headOnly: true, feed: null, power: 0, group: first.group });
+            const extra = offsets.get(first.group) ?? 0;
+            moves.unshift({ kind: "go", target: start, h: round4(surface(start, startZ) + extra), headOnly: true, feed: null, power: 0, group: first.group });
         }
         return moves;
     }
