@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { SHIPPED_PROFILES, buildCamJob, parseProfile } from "../src/mock/cam.ts";
+import { SHIPPED_PROFILES, buildCamJob, parseProfile, setValue } from "../src/mock/cam.ts";
 import type { Path } from "../src/types.ts";
 
 const limits = { rRate: 560, aRate: 400, tolerance: 0.005 };
@@ -27,5 +27,62 @@ describe("the mock's CAM jobs", () => {
         box(cut.paths).forEach((value, i) => expect(value).toBeCloseTo([x0 - 0.5, y0 - 0.5, x1 + 0.5, y1 + 0.5][i]!, 6));
         const burnt = buildCamJob("0002", parseProfile(shipped("polar-laser"), "polar-laser"), "coupon", "board-F_Cu.gbr", "G04*", limits).job;
         expect(burnt.groups.find((group) => group.label === "outline: board outline")!.paths).toEqual(burnt.outline);
+    });
+
+    test("a V bit cuts as wide as the operation's depth makes it, and the job's spot is the isolation's", () => {
+        const text = `
+[[axes]]
+letter = "X"
+role = "x"
+[[axes]]
+letter = "Y"
+role = "y"
+[[axes]]
+letter = "Z"
+role = "depth"
+safe = 5
+[[tools]]
+id = "v"
+kind = "mill"
+angle = 30
+tip = 0.05
+rpm = 12000
+feed = 300
+[[operations]]
+name = "iso"
+source = "isolation"
+tool = "v"
+depth = 0.2
+`;
+        const profile = parseProfile(text, "v");
+        const flank = 2 * Math.tan((15 * Math.PI) / 180);
+        // The tool's own width is at its default depth, 0.1 mm.
+        expect(profile.tools[0]!.width).toBeCloseTo(0.05 + 0.1 * flank, 9);
+        expect(profile.operations[0]!.cutting["width"]).toBeCloseTo(0.05 + 0.2 * flank, 9);
+        const job = buildCamJob("0003", profile, "coupon", "board-F_Cu.gbr", "G04*", limits).job;
+        expect(job.spot).toBeCloseTo(0.05 + 0.2 * flank, 9);
+        expect(job.groups[0]!.label).toBe(`iso: loop 1 at ${((0.05 + 0.2 * flank) / 2).toFixed(3)} mm`);
+        // A shank bounds the width however deep the cut.
+        const capped = parseProfile(text.replace("tip = 0.05\n", "tip = 0.05\ndiameter = 0.12\n"), "v");
+        expect(capped.operations[0]!.cutting["width"]).toBe(0.12);
+    });
+
+    test("a board is flipped as the placement's mirror says before it is placed", () => {
+        const text = shipped("mill-3axis");
+        const plain = buildCamJob("0004", parseProfile(text, "m"), "coupon", "board-F_Cu.gbr", "G04*", limits).job;
+        const flipped = buildCamJob("0005", parseProfile(setValue(text, ["placement", "mirror"], "x"), "m"), "coupon", "board-F_Cu.gbr", "G04*", limits).job;
+        // The coupon's track runs on one side of its middle pad, so turned
+        // over it is on the other; the corner anchor puts the box back.
+        const [x0, , x1] = box([...plain.copper, ...plain.outline]);
+        const points = (paths: Path[], flip: boolean): string[] =>
+            paths.flat().map(([x, y]) => `${(Math.round((flip ? x0 + x1 - x : x) * 1000) / 1000) + 0},${Math.round(y * 1000) / 1000}`).sort();
+        expect(points(flipped.copper, false)).not.toEqual(points(plain.copper, false));
+        expect(points(flipped.copper, false)).toEqual(points(plain.copper, true));
+        // A drawing's paths are placed as they are drawn.
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" viewBox="0 0 10 10"><path d="M1 1 L4 1 L4 3" stroke="red"/></svg>';
+        const laser = shipped("cartesian-laser");
+        const drawn = buildCamJob("0006", parseProfile(laser, "l"), "art", "art.svg", svg, limits).job;
+        const mirrored = buildCamJob("0007", parseProfile(setValue(laser, ["placement", "mirror"], "x"), "l"), "art", "art.svg", svg, limits).job;
+        expect(mirrored.groups.map((group) => group.paths)).toEqual(drawn.groups.map((group) => group.paths));
     });
 });

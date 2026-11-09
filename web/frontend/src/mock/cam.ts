@@ -345,8 +345,19 @@ export function resolveCutting(
         cutting["min_power"] ??= 0;
         cutting["passes"] ??= 1;
     }
-    cutting["width"] = tool.width;
+    // A V bit cuts as wide as the operation's depth makes it; the last
+    // pass, at the full depth, sets the trench.
+    cutting["width"] = tool.kind === "spindle" ? widthAt(tool, cutting["depth"]!) : tool.width;
     return cutting;
+}
+
+/** The width of a tool's cut at a depth: a straight bit's or a beam's is its own, a V bit's is its tip plus what its flanks add, up to its shank. */
+export function widthAt(tool: CamTool, depth: number): number {
+    if (tool.angle === undefined) {
+        return tool.width;
+    }
+    const wide = (tool.tip ?? 0) + 2 * Math.max(0, depth) * Math.tan(((tool.angle / 2) * Math.PI) / 180);
+    return tool.shank !== undefined ? Math.min(wide, tool.shank) : wide;
 }
 
 export function parseProfile(text: string, id: string): CamProfile {
@@ -1058,7 +1069,24 @@ function shift(paths: Path[], dx: number, dy: number): Path[] {
     return paths.map((path) => path.map(([x, y]) => [x + dx, y + dy] as Point));
 }
 
-function place(geometry: Geometry, placement: CamPlacement): Geometry {
+function flip(paths: Path[], fx: number, fy: number): Path[] {
+    return paths.map((path) => path.map(([x, y]) => [x * fx, y * fy] as Point));
+}
+
+/** The design placed by the anchor and the offset; a board's layer flipped first as the placement's mirror says, a drawing's paths not. */
+function place(design: Geometry, placement: CamPlacement): Geometry {
+    let geometry = design;
+    if (design.board && placement.mirror !== "none") {
+        const fx = placement.mirror === "x" ? -1 : 1;
+        const fy = placement.mirror === "y" ? -1 : 1;
+        geometry = {
+            ...design,
+            copper: flip(design.copper, fx, fy),
+            outline: flip(design.outline, fx, fy),
+            loops: design.loops.map((loop) => flip(loop, fx, fy)),
+            drills: flip(design.drills, fx, fy),
+        };
+    }
     const all: Path[] = [...geometry.copper, ...geometry.outline, ...geometry.drills, ...geometry.loops.flat(), ...geometry.sets.flatMap((set) => set.paths)];
     const points = all.flat();
     let [dx, dy] = placement.offset;
@@ -1129,7 +1157,8 @@ export function buildCamJob(id: string, profile: CamProfile, name: string, fileN
     }
     const isolation = profile.operations.find((operation) => operation.source === "isolation");
     const toolOf = (operation: CamOperation): CamTool => profile.tools.find((tool) => tool.id === operation.tool)!;
-    const spot = isolation ? toolOf(isolation).width : Math.min(...profile.tools.map((tool) => tool.width));
+    // The isolation's width at the depth it cuts (a V bit widens with it), else the narrowest tool's.
+    const spot = isolation ? isolation.cutting["width"] ?? toolOf(isolation).width : Math.min(...profile.tools.map((tool) => tool.width));
     const groups: Group[] = [];
     for (const operation of profile.operations) {
         const tool = toolOf(operation);
