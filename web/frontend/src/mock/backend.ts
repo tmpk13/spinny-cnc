@@ -3586,6 +3586,12 @@ export class MockBackend implements Api, EventFeed {
         if (tools.length > 1) {
             throw new ApiError(400, `the jobs cut with different tools (${tools.join(", ")}): a job runs on one machine`);
         }
+        // A group that names no tool is for a beam or a bit, which a
+        // dispenser does not have: its dots and such paths run on no one machine.
+        const cuts = (group: Job["groups"][number]): boolean => group.paths.length > 0 || (group.joints?.length ?? 0) > 0 || (group.moves?.length ?? 0) > 0;
+        if (tools.length === 1 && tools[0] === "dispenser" && jobs.some((job) => job.groups.some((group) => !group.tool && cuts(group)))) {
+            throw new ApiError(400, "the jobs mix a dispenser's dots with paths for a beam or a bit: a job runs on one machine");
+        }
         const names = jobs.map((job) => job.name);
         const layers = new Set(jobs.map((job) => job.layer ?? null));
         const groups = jobs.flatMap((job) => job.groups.map((group) => ({ ...structuredClone(group), label: `${job.name}: ${group.label}` })));

@@ -45,6 +45,17 @@ describe("combining jobs", () => {
         root.remove();
     });
 
+    test("dots for a dispenser and paths for a beam or a bit are not combined, as the backend refuses them", async () => {
+        const { api } = setup();
+        const paste = JSON.stringify({ name: "paste", groups: [{ label: "dots", tool: "dispenser", paths: [[[1, 1]], [[2, 2]]] }] });
+        const dots = await api.uploadJob(new File([paste], "paste.json"), { anchor: "keep" });
+        const lid = await api.uploadJob(new File([SVG("#f00", 0)], "lid.svg"), { anchor: "keep" });
+        await expect(api.combineJobs([dots.id, lid.id])).rejects.toMatchObject({
+            status: 400,
+            message: "the jobs mix a dispenser's dots with paths for a beam or a bit: a job runs on one machine",
+        });
+    });
+
     test("every job in the list carries a small drawing of itself", async () => {
         const { ctx, root, api } = setup();
         mountJobs(root, ctx);

@@ -775,6 +775,10 @@ def test_jobs_combine_into_one_cut_in_order_their_groups_named_by_job(tmp_path):
         mill_job = upload(Job(name="slot", groups=[Group(label="mill", tool="spindle", depth=0.5, paths=[[(0, 0), (1, 1)]])]))
         refused = client.post("/api/jobs/combine", json={"ids": [laser["id"], mill_job["id"]]})
         assert refused.status_code == 400 and "different tools (laser, spindle)" in refused.json()["detail"]
+        # Dots for a dispenser and paths for a beam or a bit run on no one machine.
+        dots = upload(Job(name="paste", groups=[Group(label="dots", tool="dispenser", paths=[[(1, 1)], [(2, 2)]])]))
+        mixed = client.post("/api/jobs/combine", json={"ids": [dots["id"], a["id"]]})
+        assert mixed.status_code == 400 and "mix a dispenser's dots with paths" in mixed.json()["detail"]
 
 
 def test_a_combined_name_stays_short():

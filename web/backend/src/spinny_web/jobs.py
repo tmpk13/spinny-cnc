@@ -790,6 +790,10 @@ def combined(jobs: list[Job], name: str | None = None) -> Job:
     tools = sorted({group.tool for job in jobs for group in job.groups if group.tool})
     if len(tools) > 1:
         raise JobImportError(f"the jobs cut with different tools ({', '.join(tools)}): a job runs on one machine")
+    # A group that names no tool is for a beam or a bit, which a dispenser
+    # does not have: its dots and such paths run on no one machine.
+    if tools == ["dispenser"] and any(group.tool is None and group.has_cuts for job in jobs for group in job.groups):
+        raise JobImportError("the jobs mix a dispenser's dots with paths for a beam or a bit: a job runs on one machine")
     groups: list[Group] = []
     for job in jobs:
         for group in job.groups:
