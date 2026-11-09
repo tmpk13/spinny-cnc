@@ -201,7 +201,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Design files" });
     const nameField = el("input", { type: "text", class: "field", placeholder: "job name (the file's)", "aria-label": "Job name", autocomplete: "off" });
     const drop = el("div", { class: "drop" },
-        el("p", {}, "Drop a design here (a board with its outline and drill file, svg, gcode, json, or an STL model) or"),
+        el("p", {}, "Drop a design here (a board with its outline and drill files, svg, gcode, json, or an STL model) or"),
         el("label", { class: "btn btn-quiet" }, "pick files", fileInput),
     );
     const notes = el("ul", { class: "cam-notes muted hidden" });

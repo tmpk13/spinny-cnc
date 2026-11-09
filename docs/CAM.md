@@ -39,9 +39,11 @@ the page and press *New*, which saves the text shown under that id.
    X 0 and Y 0 (the shipped axes' `min = 0` warns of it): leave stock
    there.
 2. Drop the KiCad board on the CAM tab, or the copper gerber together with
-   its `Edge.Cuts` gerber and the drill file (one drop, several files).
-   The notes under the drop say what was left out: no drill file, no
-   outline, holes narrower than the drill.
+   its `Edge.Cuts` gerber and its drill files, the plated and unplated
+   holes' (`-PTH.drl` and `-NPTH.drl`), or the one `.drl` (one drop,
+   several files). Every `.drl` whose name starts as the board's does is
+   read. The notes under the drop say what was left out: no drill file,
+   another board's drill file, no outline, holes narrower than the drill.
 3. Read the job in the preview, and in the *Jobs* panel switch off what
    should not run this time (the clearing is off in the shipped file).
 4. *Export gcode*. The report gives the lines, the cut length, the time

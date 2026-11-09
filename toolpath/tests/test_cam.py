@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import shutil
 from pathlib import Path
 
 import pytest
@@ -312,6 +313,39 @@ def test_a_cutout_too_narrow_for_the_bit_and_a_loose_piece_are_noted():
     burnt = camjob.build(cam.load(SHIPPED / "polar-laser.toml"), design)
     assert len(outline_group(burnt).paths) == 3
     assert not any(note.startswith("outline") for note in burnt.notes)
+
+
+# KiCad's drill file of the unplated holes, written beside the plated ones'.
+NPTH = """M48
+; DRILL file, unplated holes
+FMAT,2
+METRIC
+T1C3.200
+%
+G90
+G05
+T1
+X165.0Y-108.0
+T0
+M30
+"""
+
+
+def test_the_unplated_holes_of_their_own_drill_file_are_drilled_too(tmp_path):
+    for name in ("board-F_Cu.gbr", "board-Edge_Cuts.gbr", "board-PTH.drl"):
+        shutil.copy(DATA / name, tmp_path / name)
+    (tmp_path / "board-NPTH.drl").write_text(NPTH, encoding="utf-8")
+    # Another board's drill file in the same folder is not this board's.
+    (tmp_path / "panel-PTH.drl").write_text(NPTH.replace("X165.0", "X100.0"), encoding="utf-8")
+    design = camjob.read_board(tmp_path / "board-F_Cu.gbr")
+    assert sorted(diameter for _, diameter, _ in design.holes) == [0.8, 0.8, 1.0, 3.2]
+    built = camjob.build(cam.load(SHIPPED / "mill-3axis.toml"), design)
+    milled = next(g for g in built.groups if g.label.endswith("holes milled round"))
+    assert milled.label == "drills: 2 holes milled round" and len(milled.paths) == 2
+    assert "panel-PTH.drl is not read: board-F_Cu's drill files start with 'board'" in built.notes, built.notes
+    # The same holes in a second file are drilled once.
+    shutil.copy(tmp_path / "board-NPTH.drl", tmp_path / "board-NPTH-copy.drl")
+    assert len(camjob.read_board(tmp_path / "board-F_Cu.gbr").holes) == 4
 
 
 def test_a_laser_profile_marks_the_drills_and_refuses_a_design_with_nothing_for_it():

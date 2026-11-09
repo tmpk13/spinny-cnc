@@ -85,8 +85,9 @@ class ProfileStore:
 def pick_design(folder: Path, layer: str) -> tuple[Path, list[str]]:
     """Which of the uploaded files is the design: a KiCad board, else the
     copper gerber of the profile's layer (the other gerbers and the drill
-    file are its siblings, read beside it), else the one file that is not a
-    board layer. The rest are named in the notes."""
+    files are its siblings, read beside it, which names a drill file it
+    leaves out), else the one file that is not a board layer. The rest are
+    named in the notes."""
     files = sorted(p for p in folder.iterdir() if p.is_file())
     if not files:
         raise JobImportError("the upload holds no file")

@@ -797,7 +797,7 @@ def _tools() -> tuple[Tool, ...]:
         Tool(
             "make_cam_job",
             "Run design files you write through a CAM profile's operations into a stored job: a KiCad board"
-            " (or a copper gerber with its outline and drill file beside it), an SVG, X/Y G-code, a job, or an"
+            " (or a copper gerber with its outline and drill files beside it), an SVG, X/Y G-code, a job, or an"
             " STL model on a 3D profile. Call list_cam_profiles first.",
             obj(
                 {

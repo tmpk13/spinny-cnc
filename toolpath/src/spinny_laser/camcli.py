@@ -6,7 +6,7 @@
     spinny-cam cam/mill-3d.toml bracket.stl
 
 The board (a KiCad file, or a copper gerber with its Edge.Cuts and drill
-file beside it), an X/Y gcode file or an STL model goes through every
+files beside it), an X/Y gcode file or an STL model goes through every
 enabled operation of the profile, and the program is written with a
 markdown report beside it.
 """

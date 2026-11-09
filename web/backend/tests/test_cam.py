@@ -125,6 +125,19 @@ def test_a_board_with_its_siblings_goes_through_the_mill_profile(client):
     assert any("no drill file" in note for note in answer["notes"]) and any("no outline" in note for note in answer["notes"])
 
 
+def test_a_board_s_unplated_holes_in_their_own_drill_file_are_drilled(client, tmp_path):
+    # KiCad writes the mounting holes to a drill file of their own.
+    npth = tmp_path / "board-NPTH.drl"
+    npth.write_text("M48\nFMAT,2\nMETRIC\nT1C3.200\n%\nG90\nG05\nT1\nX165.0Y-108.0\nT0\nM30\n", encoding="utf-8")
+    answer = upload(client, "mill-3axis", BOARD_FILES + [npth])
+    (milled,) = [g for g in answer["job"]["groups"] if g["label"].endswith("holes milled round")]
+    assert milled["label"] == "drills: 2 holes milled round"
+    # The 1 mm hole and the 3.2 mm one, the 0.8 mm drill's middle round
+    # each at half the difference.
+    widths = sorted(round(max(x for x, _ in path) - min(x for x, _ in path), 2) for path in milled["paths"])
+    assert widths == [0.2, 2.4]
+
+
 def test_an_svg_goes_through_the_paths_operation_of_the_laser_profile(client, tmp_path):
     svg = tmp_path / "coupon.svg"
     svg.write_text(SVG, encoding="utf-8")

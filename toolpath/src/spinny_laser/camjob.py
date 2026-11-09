@@ -78,6 +78,8 @@ class Design:
     image: object | None = None
     # A 3D model's mesh file, which the kernel reads itself; None otherwise.
     model: Path | None = None
+    # What reading the design left out, one line each.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def board(self) -> bool:
@@ -172,7 +174,8 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
             outline_path: Path | None = board.find_layer(into, "Edge.Cuts")
         except board.LayerError:
             outline_path = None
-        drill_path = isocli.find_drill(into, path.stem.split("-")[0]) if into.is_dir() else None
+        stem = path.stem.split("-")[0]
+        drill_paths, others = _drill_files(into, stem) if into.is_dir() else ([], [])
         image = gerber.read(copper_path)
         copper = geom.copper(image)
         if not copper:
@@ -181,9 +184,12 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
         if outline_path is not None:
             outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
         holes: list[tuple[Point, float, Point | None]] = []
-        if drill_path is not None:
-            drills = excellon.read(drill_path)
-            holes = [(tuple(hole.at), float(hole.diameter), tuple(hole.end) if hole.end else None) for hole in drills.holes]
+        for drill_path in drill_paths:
+            for hole in excellon.read(drill_path).holes:
+                found = (tuple(hole.at), float(hole.diameter), tuple(hole.end) if hole.end else None)
+                # The same hole in two of the files is drilled once.
+                if found not in holes:
+                    holes.append(found)
         return Design(
             name=path.stem,
             source=source,
@@ -193,12 +199,27 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
             holes=holes,
             centers=copper_deposition.centerlines(image),
             image=image,
+            notes=[f"{other.name} is not read: {path.stem}'s drill files start with {stem!r}" for other in others],
         )
     except (isocli.SourceError, board.LayerError, gerber.GerberError, OSError) as exc:
         raise DesignError(str(exc)) from exc
     finally:
         if temporary is not None:
             temporary.cleanup()
+
+
+def _drill_files(directory: Path, stem: str) -> tuple[list[Path], list[Path]]:
+    """The board's drill files in the folder, and the others there.
+
+    KiCad writes the plated holes and the unplated ones (mounting holes)
+    to two files, <board>-PTH.drl and <board>-NPTH.drl, unless asked for
+    one <board>.drl, so every file whose name starts with the board's
+    stem is read; with none named so, every drill file is.
+    """
+    found = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".drl")
+    named = [p for p in found if p.name.startswith(stem)]
+    taken = named or found
+    return taken, [p for p in found if p not in taken]
 
 
 # --- building -----------------------------------------------------------------
@@ -222,7 +243,7 @@ def build(
 
     if design.model is not None:
         return _model_job(profile, design, name, tolerance)
-    notes: list[str] = []
+    notes: list[str] = list(design.notes)
     place = profile.placement
     spot = _isolation_width(profile)
     groups: list[BuiltGroup] = []
