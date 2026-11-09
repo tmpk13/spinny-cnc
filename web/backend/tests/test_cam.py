@@ -4,6 +4,7 @@ through one into a job; a job out as gcode; a run that refuses the other tool.""
 from __future__ import annotations
 
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,31 @@ def test_a_profile_is_saved_whole_patched_in_place_and_removed(client):
     assert client.delete("/api/cam/bench").json() == {"deleted": "bench"}
     assert client.delete("/api/cam/bench").status_code == 404
     assert client.put("/api/cam/bad id", json={"text": text}).status_code == 400
+
+
+def test_two_patches_of_one_profile_at_once_both_land(client):
+    store = client.backend.cam
+    failures: list[Exception] = []
+    for round_ in range(20):
+        barrier = threading.Barrier(2)
+
+        def patch(index: int, feed: float) -> None:
+            barrier.wait()
+            try:
+                store.patch("mill-3axis", ["operations", index, "feed"], feed)
+            except Exception as exc:
+                failures.append(exc)
+
+        feeds = (100.0 + round_, 200.0 + round_)
+        threads = [threading.Thread(target=patch, args=(0, feeds[0])), threading.Thread(target=patch, args=(3, feeds[1]))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        profile = store.get("mill-3axis")
+        assert (profile.operations[0].cutting["feed"], profile.operations[3].cutting["feed"]) == feeds, f"round {round_}"
+    assert failures == []
+    assert sorted(path.name for path in client.cam_dir.iterdir()) == ["broken.toml", "cartesian-laser.toml", "mill-3axis.toml"]
 
 
 def test_a_board_with_its_siblings_goes_through_the_mill_profile(client):

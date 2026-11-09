@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -185,6 +186,30 @@ def test_a_file_is_checked_saved_and_removed_through_the_api(client):
     assert not (client.machines_dir / "new-one.toml").exists()
     assert client.delete("/api/machines/new-one").status_code == 404
     assert client.get("/api/machines/new-one").status_code == 404
+
+
+def test_two_saves_of_one_file_at_once_both_succeed(client):
+    store = client.backend.machine_store
+    failures: list[Exception] = []
+    for round_ in range(20):
+        barrier = threading.Barrier(2)
+
+        def save(text: str) -> None:
+            barrier.wait()
+            try:
+                store.save("bare", text)
+            except Exception as exc:
+                failures.append(exc)
+
+        texts = (f'name = "A{round_}"\n', f'name = "B{round_}"\n')
+        threads = [threading.Thread(target=save, args=(text,)) for text in texts]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert (client.machines_dir / "bare.toml").read_text(encoding="utf-8") in texts
+    assert failures == []
+    assert sorted(path.name for path in client.machines_dir.iterdir()) == ["bare.toml", "broken.toml", "rig.toml"]
 
 
 def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(client, fake, tmp_path):

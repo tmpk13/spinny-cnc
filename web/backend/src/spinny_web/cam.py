@@ -5,6 +5,8 @@ gcode for the profile's controller."""
 from __future__ import annotations
 
 import os
+import secrets
+import threading
 from pathlib import Path
 
 from laser_sweep import isocli
@@ -18,12 +20,28 @@ SVG_SUFFIXES = (".svg",)
 GCODE_SUFFIXES = (".gcode", ".nc", ".ngc")
 
 
+def write_whole(path: Path, text: str) -> None:
+    """The text written as the file all at once: into a temporary of its
+    own beside it, then moved over it, so a reader never sees half a file
+    and two writers at once each move a whole one, the last one staying."""
+    temporary = path.with_name(f"{path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 class ProfileStore:
     """The profiles in one directory, read afresh on every call so an edit
     by hand shows at once; saved all or nothing after a parse."""
 
     def __init__(self, directory: Path) -> None:
         self.directory = Path(directory)
+        # Writes take turns: a patch reads the file, changes a line and
+        # writes it whole, and a write in between would be lost under it.
+        self._writing = threading.RLock()
 
     def list(self) -> dict:
         profiles, problems = cam.load_all(self.directory)
@@ -57,22 +75,23 @@ class ProfileStore:
         if not text.endswith("\n"):
             text += "\n"
         try:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(path.name + ".tmp")
-            temporary.write_text(text, encoding="utf-8")
-            os.replace(temporary, path)
+            with self._writing:
+                self.directory.mkdir(parents=True, exist_ok=True)
+                write_whole(path, text)
         except OSError as exc:
             raise CamError(f"cannot write {path}: {exc.strerror or exc}") from exc
         return {"document": profile.document(), "text": text}
 
     def patch(self, profile_id: str, path: list, value) -> dict:
-        changed = cam.set_value(self.text(profile_id), tuple(path), value)
-        return self.save(profile_id, changed)
+        with self._writing:
+            changed = cam.set_value(self.text(profile_id), tuple(path), value)
+            return self.save(profile_id, changed)
 
     def remove(self, profile_id: str) -> None:
         path = self.path(profile_id)
         try:
-            path.unlink()
+            with self._writing:
+                path.unlink()
         except FileNotFoundError:
             raise NotFound(f"no profile {profile_id!r}") from None
         except OSError as exc:

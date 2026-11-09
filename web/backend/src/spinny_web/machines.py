@@ -4,13 +4,12 @@ the directory around it."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from spinny_laser import machines as machine_files
 from spinny_laser.machines import Machine, MachineError
 
-from .cam import NotFound
+from .cam import NotFound, write_whole
 
 
 class MachineStore:
@@ -73,9 +72,7 @@ class MachineStore:
             text += "\n"
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(path.name + ".tmp")
-            temporary.write_text(text, encoding="utf-8")
-            os.replace(temporary, path)
+            write_whole(path, text)
         except OSError as exc:
             raise MachineError(f"cannot write {path}: {exc.strerror or exc}") from exc
         return {"document": machine.document(), "problems": [], "text": text}
