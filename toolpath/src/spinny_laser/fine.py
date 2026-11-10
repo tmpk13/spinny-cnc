@@ -47,7 +47,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import polar, preview
+from . import machine, polar, preview
 from .polar import Joint, Point
 
 # The near spiral is cut this much shorter at each end than the far one,
@@ -464,6 +464,35 @@ def notes_for(design: Design, spot: float, speed: float, groups: list[JointGroup
     return notes
 
 
+def summary(design: Design, groups: list[JointGroup], error: tuple[float, float] | None = None) -> list[str]:
+    """What the pattern is, a line each: its features, its gain, how far
+    the head goes and how much it cuts; with `error`, the radius zero error
+    along the rail and the cross slide error across it, how a machine out
+    by those burns it and what the coupon then reads."""
+    lines = [
+        f"pattern    fine: rail lines {design.reach:g} mm each way, arms crossing at"
+        f" {design.cross:g} mm, {design.angle:g} deg"
+        + (f", spirals at {design.spiral:g} mm" if design.spiral > 0 else "")
+        + (f", ring at {design.ring:g} mm" if design.ring > 0 else ""),
+        f"gain       {design.gain:.1f}: 0.01 mm of error moves a crossing"
+        f" {design.gain * 0.01:.2f} mm, the arm crossings {2 * design.gain * 0.01:.2f} mm apart",
+        f"head       to R {-design.far_reach:.1f}, past the axis",
+        f"cuts       {cut_length(groups):.1f} mm",
+    ]
+    if error is not None:
+        along, across = error
+        seen = readings(design, groups, along, across)
+        lines.append(
+            f"shown      as burnt with the radius zero {along:g} mm out and the rail"
+            f" {across:g} mm off the axis"
+        )
+        if "arms" in seen:
+            lines.append(f"           arm crossings {seen['arms']:.2f} mm apart")
+        if "spiral" in seen:
+            lines.append(f"           spiral crossing {seen['spiral']:.2f} mm from its line")
+    return lines
+
+
 def render_map(
     name: str, design: Design, groups: list[JointGroup], notes: list[str], power: float
 ) -> str:
@@ -540,29 +569,8 @@ def run(args, parser) -> int:
 
     out = args.output or Path("var", "out") / "center-fine.json"
     notes = notes_for(design, args.spot, args.speed, groups)
-    summary = [
-        f"pattern    fine: rail lines {design.reach:g} mm each way, arms crossing at"
-        f" {design.cross:g} mm, {design.angle:g} deg"
-        + (f", spirals at {design.spiral:g} mm" if design.spiral > 0 else "")
-        + (f", ring at {design.ring:g} mm" if design.ring > 0 else ""),
-        f"gain       {design.gain:.1f}: 0.01 mm of error moves a crossing"
-        f" {design.gain * 0.01:.2f} mm, the arm crossings {2 * design.gain * 0.01:.2f} mm apart",
-        f"head       to R {-design.far_reach:.1f}, past the axis",
-        f"cuts       {cut_length(groups):.1f} mm",
-    ]
-    shown = drawn(groups)
-    if error is not None:
-        along, across = error
-        shown = burnt(groups, along, across)
-        seen = readings(design, groups, along, across)
-        summary.append(
-            f"shown      as burnt with the radius zero {along:g} mm out and the rail"
-            f" {across:g} mm off the axis"
-        )
-        if "arms" in seen:
-            summary.append(f"           arm crossings {seen['arms']:.2f} mm apart")
-        if "spiral" in seen:
-            summary.append(f"           spiral crossing {seen['spiral']:.2f} mm from its line")
+    said = summary(design, groups, error)
+    shown = drawn(groups) if error is None else burnt(groups, *error)
 
     written: list[Path] = []
     if not args.dry_run:
@@ -582,13 +590,5 @@ def run(args, parser) -> int:
             preview_path.write_text(svg, encoding="ascii")
             written.append(preview_path)
 
-    print("\n".join(summary))
-    for path in written:
-        print(f"wrote      {path}")
-    if args.dry_run:
-        print("dry run, nothing written")
-    import sys
-
-    for note in notes:
-        print(f"note: {note}", file=sys.stderr)
+    machine.print_result(said, written, args.dry_run, notes, "note")
     return 0

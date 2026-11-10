@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import sys
 from pathlib import Path
 
 from . import __version__, fine, gcode, machine, preview
@@ -45,9 +44,6 @@ from .polar import Point
 # the chord is a tenth of a millimeter and its sagitta a thousandth of
 # one, so the ring is round well inside anything measurable on the board.
 RING_STEP_DEG = 1.0
-# Share of the table's rate the ring is paced at, so it is not riding on
-# the limit with nothing left for the ramp at either end.
-RING_HEADROOM = 0.95
 
 
 def spoke(angle_deg: float, outer: float) -> list[Point]:
@@ -83,18 +79,6 @@ def ring(radius: float) -> list[Point]:
     return points
 
 
-def ring_speed(radius: float, speed: float, rotary_max_rate: float | None) -> float:
-    """Surface speed the table can actually hold around a ring.
-
-    A ring is all rotation, so the table's own rate caps it: asking for
-    more only turns slower, and in constant power mode that is a heavier
-    burn than asked for, on the one feature whose width is being measured.
-    """
-    if not rotary_max_rate or radius <= 0:
-        return speed
-    return min(speed, RING_HEADROOM * math.radians(rotary_max_rate) * radius)
-
-
 def build(
     lines: int,
     reach: float,
@@ -115,7 +99,11 @@ def build(
             )
         )
     if ring_radius > 0:
-        around = ring_speed(ring_radius, speed, rotary_max_rate)
+        # A ring is all rotation, so the table's own rate caps it: asking
+        # for more only turns slower, and in constant power mode that is a
+        # heavier burn than asked for, on the one feature whose width is
+        # being measured.
+        around = fine.paced(ring_radius, speed, rotary_max_rate)
         groups.append(
             gcode.PathGroup(
                 label=f"reference ring at {ring_radius:g} mm",
@@ -230,7 +218,7 @@ def all_notes(
             f" so give it a coupon comfortably wider than {2 * ring_radius:g} mm"
             " or it will run off the edge before it has been measured."
         )
-    around = ring_speed(ring_radius, speed, rotary_max_rate)
+    around = fine.paced(ring_radius, speed, rotary_max_rate)
     if ring_radius > 0 and around < speed:
         notes.append(
             f"The ring runs at {around:.0f} mm/min, not {speed:g}: that is"
@@ -316,13 +304,7 @@ def main(argv: list[str] | None = None) -> int:
         sim = machine.sim_document(options, groups, [], [], args.spot)
         written = machine.write_outputs(args, job, out, "centering pattern", svg, sim, notes)
 
-    print("\n".join(summary))
-    for path in written:
-        print(f"wrote      {path}")
-    if args.dry_run:
-        print("dry run, nothing written")
-    for note in notes:
-        print(f"note: {note}", file=sys.stderr)
+    machine.print_result(summary, written, args.dry_run, notes, "note")
     return 0
 
 

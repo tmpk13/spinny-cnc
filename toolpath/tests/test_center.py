@@ -7,8 +7,8 @@ import math
 import pytest
 
 from polar_sim import replay_grblhal
-from spinny_laser import center
-from spinny_laser.center import build, main, ring, ring_speed, spokes
+from spinny_laser import fine
+from spinny_laser.center import build, main, ring, spokes
 
 
 def test_spokes_are_radial_and_start_on_the_axis():
@@ -41,12 +41,12 @@ def test_two_lines_is_the_fewest_that_bounds_anything():
 
 def test_the_ring_is_paced_by_the_table_not_by_the_feed():
     # A ring is all rotation, so the table's rate caps its surface speed.
-    assert ring_speed(8.0, 200.0, None) == 200.0
-    capped = ring_speed(8.0, 200.0, 400.0)
-    assert capped == pytest.approx(center.RING_HEADROOM * math.radians(400.0) * 8.0)
+    assert build(0, 6.0, 8.0, 400.0, 200.0, None)[0].speed == 200.0
+    capped = build(0, 6.0, 8.0, 400.0, 200.0, 400.0)[0].speed
+    assert capped == pytest.approx(fine.HEADROOM * math.radians(400.0) * 8.0)
     assert capped < 200.0
     # Far enough out, the table keeps up and the feed stands.
-    assert ring_speed(80.0, 200.0, 400.0) == 200.0
+    assert build(0, 6.0, 80.0, 400.0, 200.0, 400.0)[0].speed == 200.0
 
 
 def burn(groups, offset):

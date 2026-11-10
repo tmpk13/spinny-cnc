@@ -33,7 +33,7 @@ def test_the_default_is_the_coarse_pattern_of_the_command_line():
     assert all(math.isclose(math.hypot(*path[-1]), 6.0) for path in spokes.paths)
     ring = result.job.groups[1]
     # The ring is paced at what the table can turn at 8 mm.
-    assert ring.speed == pytest.approx(coarse_pattern.ring_speed(8.0, 200.0, 400.0))
+    assert ring.speed == pytest.approx(fine_pattern.paced(8.0, 200.0, 400.0))
     assert ring.speed < 200.0
     assert result.job.source == "center" and result.job.stats.length_mm > 0
     assert any("mm/min, not 200" in note for note in result.notes)

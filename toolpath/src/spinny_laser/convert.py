@@ -10,7 +10,6 @@ segments.
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -175,10 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.input.exists():
             raise ConvertError(f"{args.input} does not exist")
         options = machine.options_from(args)
-        parts = [part.strip() for part in args.offset.split(",")]
-        if len(parts) != 2:
-            raise ValueError(f"--offset expects X,Y, got {args.offset!r}")
-        offset = (float(parts[0]), float(parts[1]))
+        offset = machine.parse_offset(args.offset)
         paths = read_paths(args.input.read_text())
         if not paths:
             raise ConvertError(f"{args.input} has no cuts")
@@ -208,13 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         sim = machine.sim_document(options, groups, [], [], args.spot)
         written = machine.write_outputs(args, job, out, args.input.name, svg, sim, warnings)
 
-    print("\n".join(summary))
-    for path in written:
-        print(f"wrote      {path}")
-    if args.dry_run:
-        print("dry run, nothing written")
-    for warning in warnings:
-        print(f"warning: {warning}", file=sys.stderr)
+    machine.print_result(summary, written, args.dry_run, warnings)
     return 0
 
 

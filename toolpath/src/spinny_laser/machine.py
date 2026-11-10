@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from . import gcode, machines, report
@@ -129,6 +130,14 @@ def add_output_arguments(parser: argparse.ArgumentParser, default: str) -> None:
     )
 
 
+def parse_offset(text: str) -> tuple[float, float]:
+    """`--offset X,Y`: mm to shift the placed job by."""
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) != 2:
+        raise ValueError(f"--offset expects X,Y, got {text!r}")
+    return float(parts[0]), float(parts[1])
+
+
 def options_from(args) -> PolarOptions:
     return PolarOptions(
         controller=args.controller,
@@ -241,6 +250,18 @@ def sim_document(
         "copper": [[[round(x, 4), round(y, 4)] for x, y in contour] for contour in copper],
         "outline": [[[round(x, 4), round(y, 4)] for x, y in path] for path in outline],
     }
+
+
+def print_result(summary: list[str], written: list[Path], dry_run: bool, remarks: list[str], kind: str = "warning") -> None:
+    """What a command made: its summary and every file written on standard
+    output, then each remark on standard error as `<kind>: <remark>`."""
+    print("\n".join(summary))
+    for path in written:
+        print(f"wrote      {path}")
+    if dry_run:
+        print("dry run, nothing written")
+    for remark in remarks:
+        print(f"{kind}: {remark}", file=sys.stderr)
 
 
 def write_outputs(

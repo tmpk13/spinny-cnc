@@ -111,13 +111,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_offset(text: str) -> tuple[float, float]:
-    parts = [part.strip() for part in text.split(",")]
-    if len(parts) != 2:
-        raise ValueError(f"--offset expects X,Y, got {text!r}")
-    return float(parts[0]), float(parts[1])
-
-
 def read_outline(path: Path, offset: float) -> list:
     """The board profile as drawn, or a loop `offset` mm outside it.
 
@@ -181,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         copper_path, outline_path, drill_path = resolve_input(args, temporary)
         word = board.layer_word(args.layer if args.input.suffix.lower() == ".kicad_pcb" else board.layer_of(args.input))
-        offset = parse_offset(args.offset)
+        offset = machine.parse_offset(args.offset)
         config = IsoConfig(
             spot=args.spot,
             passes=args.passes,
@@ -320,13 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         sim = machine.sim_document(options, groups, plan.copper, plan.outline, args.spot)
         written = machine.write_outputs(args, job, out, copper_path.name, svg, sim, warnings)
 
-    print("\n".join(summary))
-    for path in written:
-        print(f"wrote      {path}")
-    if args.dry_run:
-        print("dry run, nothing written")
-    for warning in warnings:
-        print(f"warning: {warning}", file=sys.stderr)
+    machine.print_result(summary, written, args.dry_run, warnings)
     for holder in temporary:
         holder.cleanup()
     return 0
