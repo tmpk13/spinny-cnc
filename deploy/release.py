@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import tomllib
 import urllib.parse
 import urllib.request
@@ -160,19 +161,35 @@ def fresh(path: Path) -> Path:
     return path
 
 
+def fetch(url: str, path: Path, tries: int = 4) -> Path:
+    """The file at url saved to path unless it is there already. GitHub's
+    release downloads now and then answer 403 or drop the connection, so
+    a failed try is retried after a pause."""
+    if path.is_file():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"downloading {path.name}", flush=True)
+    partial = path.with_name(path.name + ".part")
+    for attempt in range(1, tries + 1):
+        try:
+            urllib.request.urlretrieve(url, partial)
+            break
+        except OSError as exc:
+            if attempt == tries:
+                raise SystemExit(f"{url}: {exc}") from exc
+            print(f"{path.name}: {exc}; trying again", file=sys.stderr, flush=True)
+            time.sleep(5 * attempt)
+    partial.rename(path)
+    return path
+
+
 def download(url: str) -> Path:
     """The file at url, from the cache when there, checked against the
-    SHA256SUMS published beside it."""
-    name = urllib.parse.unquote(url.rsplit("/", 1)[1])
-    path = CACHE / name
-    if not path.is_file():
-        CACHE.mkdir(parents=True, exist_ok=True)
-        print(f"downloading {name}", flush=True)
-        partial = path.with_suffix(".part")
-        urllib.request.urlretrieve(url, partial)
-        partial.rename(path)
-    with urllib.request.urlopen(url.rsplit("/", 1)[0] + "/SHA256SUMS") as answer:
-        sums = answer.read().decode()
+    SHA256SUMS published beside it (cached too, per release)."""
+    folder, _, quoted = url.rpartition("/")
+    name = urllib.parse.unquote(quoted)
+    path = fetch(url, CACHE / name)
+    sums = fetch(f"{folder}/SHA256SUMS", CACHE / f"SHA256SUMS-{folder.rsplit('/', 1)[1]}").read_text()
     expected = next((line.split()[0] for line in sums.splitlines() if line.split()[-1:] == [name]), None)
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     if expected != actual:
