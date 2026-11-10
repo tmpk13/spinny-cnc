@@ -274,11 +274,7 @@ impl Shared {
     }
 
     fn read_position(&self) -> [i32; AXES] {
-        let mut position = [0; AXES];
-        for i in 0..AXES {
-            position[i] = self.position[i].load(Ordering::Relaxed);
-        }
-        position
+        core::array::from_fn(|i| self.position[i].load(Ordering::Relaxed))
     }
 }
 
@@ -854,8 +850,8 @@ impl<'a> Front<'a> {
     /// Declares the executed position (a `set` command). Only while the
     /// interrupt is idle and the ring is empty, so no step is in flight.
     pub fn set_position(&mut self, steps: [i32; AXES]) {
-        for i in 0..AXES {
-            self.shared.position[i].store(steps[i], Ordering::Relaxed);
+        for (slot, steps) in self.shared.position.iter().zip(steps) {
+            slot.store(steps, Ordering::Relaxed);
         }
     }
 
@@ -1202,16 +1198,13 @@ mod tests {
 
         /// Metric length and acceleration of the block, recomputed from the steps.
         fn metric(&self, settings: &Settings) -> (f32, f32) {
-            let mut delta = [0f32; AXES];
-            for i in 0..AXES {
-                delta[i] = self.block.steps[i] as f32 / settings.steps[i];
-            }
+            let delta: [f32; AXES] = core::array::from_fn(|i| self.block.steps[i] as f32 / settings.steps[i]);
             let length = math::hypot(delta[0], delta[1]);
             let mut accel = f32::INFINITY;
-            for i in 0..AXES {
-                let u = delta[i] / length;
+            for (d, limit) in delta.iter().zip(&settings.accel) {
+                let u = d / length;
                 if u > 0.0 {
-                    accel = accel.min(settings.accel[i] / u);
+                    accel = accel.min(limit / u);
                 }
             }
             (length, accel)
@@ -1980,7 +1973,7 @@ mod tests {
             assert_eq!(load.segment.period_us, period);
             assert_eq!(load.segment.period_frac, cruise[0].segment.period_frac);
             let tick_rate = 1.0e6 / period as f32;
-            assert!(tick_rate >= AMASS_TARGET_HZ * 0.99 && tick_rate < 2.0 * AMASS_TARGET_HZ);
+            assert!((AMASS_TARGET_HZ * 0.99..2.0 * AMASS_TARGET_HZ).contains(&tick_rate));
         }
         let start = (seconds * 0.25e6) as u64 + rig.loads[0].at;
         let end = (seconds * 0.75e6) as u64 + rig.loads[0].at;

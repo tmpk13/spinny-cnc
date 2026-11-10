@@ -586,7 +586,7 @@ mod tests {
         assert!(refused("[rail]\nmicrosteps = 3\n").contains("tmc_r_micro"));
         assert!(refused("[probe]\nbrake_ms = 200\n").contains("probe_ms"));
         assert!(refused("[output]\ns_max = 1e9\n").contains("s_max"));
-        assert!(refused("[rail\n").len() > 0);
+        assert!(!refused("[rail\n").is_empty());
         // A refused value further down leaves the earlier ones unapplied.
         assert!(apply(&mut settings, "[rail]\nmax_rate = 900\n[probe]\nbrake_ms = 999\n").is_err());
         assert_eq!(settings, Settings::default());

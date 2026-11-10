@@ -346,8 +346,8 @@ impl StepPort for StepPins {
     fn stops(&mut self) -> u8 {
         let levels = SIO.gpio_in(0).read();
         let mut high = 0;
-        for joint in 0..AXES {
-            let pin = STOP_PINS[joint].load(Ordering::Relaxed);
+        for (joint, pin) in STOP_PINS.iter().enumerate() {
+            let pin = pin.load(Ordering::Relaxed);
             if pin == NO_PIN || levels & (1 << pin) != 0 {
                 high |= 1 << joint;
             }

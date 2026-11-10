@@ -10,7 +10,7 @@ pub const fn pwm_slice(gpio: u8) -> usize {
 
 /// Whether a pin drives channel A of its slice; channel B otherwise.
 pub const fn pwm_is_channel_a(gpio: u8) -> bool {
-    gpio % 2 == 0
+    gpio.is_multiple_of(2)
 }
 
 /// Divider and wrap value for one PWM frequency.

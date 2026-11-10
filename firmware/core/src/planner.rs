@@ -134,34 +134,32 @@ impl Default for Planner {
     }
 }
 
-/// Speed along a block with direction cosines `unit` at which the first
-/// axis reaches its rate in `rates` (units per minute).
 /// Rate limit per axis: the setting, or the fastest the step generator can
 /// pulse that many steps per unit, whichever is lower. At 256 microsteps
 /// on a 5 mm screw the second one binds well below the first.
 pub fn effective_max_rate(settings: &Settings) -> [f32; AXES] {
-    let mut rates = settings.max_rate;
-    let ceiling = max_event_rate_hz(settings.step_us);
-    for i in 0..AXES {
-        if settings.steps[i] > 0.0 {
-            rates[i] = rates[i].min(ceiling * 60.0 / settings.steps[i]);
-        }
-    }
-    rates
+    step_capped(settings.max_rate, settings)
 }
 
 /// The same ceiling for the jog rates.
 fn effective_jog_rate(settings: &Settings) -> [f32; AXES] {
-    let mut rates = settings.jog_rate;
+    step_capped(settings.jog_rate, settings)
+}
+
+/// `rates` (units per minute), each held to the fastest the step generator
+/// can pulse its axis.
+fn step_capped(mut rates: [f32; AXES], settings: &Settings) -> [f32; AXES] {
     let ceiling = max_event_rate_hz(settings.step_us);
-    for i in 0..AXES {
-        if settings.steps[i] > 0.0 {
-            rates[i] = rates[i].min(ceiling * 60.0 / settings.steps[i]);
+    for (rate, &steps) in rates.iter_mut().zip(&settings.steps) {
+        if steps > 0.0 {
+            *rate = rate.min(ceiling * 60.0 / steps);
         }
     }
     rates
 }
 
+/// Speed along a block with direction cosines `unit` at which the first
+/// axis reaches its rate in `rates` (units per minute).
 fn paced_speed(unit: &[f32; AXES], rates: &[f32; AXES]) -> f32 {
     let mut speed = f32::INFINITY;
     for i in 0..AXES {
@@ -297,10 +295,10 @@ impl Planner {
         }
         let nominal_speed = requested_speed.min(axis_limit);
         let mut acceleration = f32::INFINITY;
-        for i in 0..AXES {
-            let u = unit[i].abs();
+        for (u, accel) in unit.iter().zip(&settings.accel) {
+            let u = u.abs();
             if u > 0.0 {
-                acceleration = acceleration.min(settings.accel[i] / u);
+                acceleration = acceleration.min(accel / u);
             }
         }
 
@@ -310,10 +308,10 @@ impl Planner {
             None => 0.0,
             Some(prev) => {
                 let mut speed = f32::INFINITY;
-                for i in 0..AXES {
-                    let change = (prev.unit[i] - unit[i]).abs();
+                for ((before, now), jerk) in prev.unit.iter().zip(&unit).zip(&settings.jerk) {
+                    let change = (before - now).abs();
                     if change > 1.0e-6 {
-                        speed = speed.min(settings.jerk[i] / change);
+                        speed = speed.min(jerk / change);
                     }
                 }
                 speed.min(nominal_speed).min(prev.nominal_speed)
@@ -404,11 +402,7 @@ impl Planner {
 
     /// Planned end position in units, from the step position.
     pub fn position_units(&self, settings: &Settings) -> [f32; AXES] {
-        let mut units = [0f32; AXES];
-        for i in 0..AXES {
-            units[i] = math::steps_to_units(self.position[i], settings.steps[i]);
-        }
-        units
+        core::array::from_fn(|i| math::steps_to_units(self.position[i], settings.steps[i]))
     }
 
     /// Sets the planned position; only meaningful when the ring is empty.

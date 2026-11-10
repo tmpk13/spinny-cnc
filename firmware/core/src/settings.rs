@@ -1587,7 +1587,7 @@ mod tests {
 
     #[test]
     fn the_cross_slide_fields_fit_the_blob() {
-        assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET, "{FIELDS_LEN} bytes of fields");
+        const { assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET, "the fields run into the CRC") };
         let mut blob = [0u8; BLOB_LEN];
         Settings::default().to_blob(&mut blob);
         // Every field lands where the writer says it does: the stealth
@@ -1821,8 +1821,7 @@ mod tests {
 
     #[test]
     fn the_focus_axis_and_cross_slide_bits_trade_places() {
-        let mut settings = Settings::default();
-        settings.dir_invert = 0b0100;
+        let mut settings = Settings { dir_invert: 0b0100, ..Settings::default() };
         assert_eq!(settings.joint_dir_invert(), 1 << Z, "bit 2 is the cross slide");
         settings.dir_invert = 0b1011;
         assert_eq!(settings.joint_dir_invert(), 0b0111);

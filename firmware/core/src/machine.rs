@@ -582,8 +582,8 @@ impl<'a> Machine<'a> {
                 if value[H].is_some() && !self.settings.h_axis {
                     return Err(Error::BadWord);
                 }
-                for i in 0..AXES {
-                    if value[i].is_some_and(|units| !math::fits_steps(units, self.settings.steps[i])) {
+                for (value, &steps) in value.iter().zip(&self.settings.steps) {
+                    if value.is_some_and(|units| !math::fits_steps(units, steps)) {
                         return Err(Error::OutOfRange);
                     }
                 }
@@ -3228,8 +3228,7 @@ mod tests {
 
     #[test]
     fn mode_and_inversion_reach_the_laser() {
-        let mut settings = Settings::default();
-        settings.laser_invert = true;
+        let settings = Settings { laser_invert: true, ..Settings::default() };
         let mut rig = Rig::with(settings);
         rig.advance(POLL_US);
         assert_eq!(rig.laser.duty, 1000);
@@ -3358,8 +3357,7 @@ mod tests {
 
     #[test]
     fn the_stored_polarity_reaches_the_port_before_the_first_poll() {
-        let mut settings = Settings::default();
-        settings.laser_invert = true;
+        let settings = Settings { laser_invert: true, ..Settings::default() };
         let mut rig = Rig::with(settings);
         // The board claims the pin low, reads the stored settings and then
         // calls this; nothing has polled yet.
@@ -4393,7 +4391,7 @@ mod tests {
         assert_eq!(rig.state(), State::Alarm(4));
         // Halted within the debounce of the switch, not run to the end.
         let physical = rig.physical(R);
-        assert!(physical >= 5.0 && physical < 5.5, "halted at {physical}");
+        assert!((5.0..5.5).contains(&physical), "halted at {physical}");
         assert_eq!(rig.line("unlock"), "ok\n");
         assert_eq!(field(&rig.status_line(), "D:"), "");
     }
@@ -4430,7 +4428,7 @@ mod tests {
         assert_eq!(rig.state(), State::Alarm(4));
         assert!(rig.take_out().contains("[MSG:endstop Z]\nALARM:4"));
         let physical = rig.physical(Z);
-        assert!(physical >= 3.0 && physical < 3.5, "halted at {physical}");
+        assert!((3.0..3.5).contains(&physical), "halted at {physical}");
     }
 
     #[test]

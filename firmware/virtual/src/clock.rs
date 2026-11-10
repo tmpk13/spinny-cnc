@@ -24,10 +24,6 @@ impl Clock {
         Clock::Real { start: Instant::now() }
     }
 
-    pub fn is_fast(&self) -> bool {
-        matches!(self, Clock::Fast { .. })
-    }
-
     pub fn now(&self) -> u64 {
         match self {
             Clock::Fast { now } => *now,

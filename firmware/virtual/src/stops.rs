@@ -47,9 +47,9 @@ impl Stops {
     /// per joint.
     pub fn closed(&self, joint: [f32; AXES]) -> u8 {
         let mut mask = 0;
-        for i in 0..AXES {
-            let low = self.min[i].is_some_and(|at| joint[i] <= at);
-            let high = self.max[i].is_some_and(|at| joint[i] >= at);
+        for (i, &joint) in joint.iter().enumerate() {
+            let low = self.min[i].is_some_and(|at| joint <= at);
+            let high = self.max[i].is_some_and(|at| joint >= at);
             if low || high {
                 mask |= 1 << i;
             }

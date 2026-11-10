@@ -80,7 +80,7 @@ pub const TICK_OVERHEAD_US: u32 = 3;
 /// slips, and the move runs slower than its segment and laser duty were
 /// planned for.
 pub const fn min_tick_us(step_us: u32) -> u32 {
-    let needed = (3 * step_us + 1) / 2 + TICK_OVERHEAD_US;
+    let needed = (3 * step_us).div_ceil(2) + TICK_OVERHEAD_US;
     if needed > MIN_TICK_US {
         needed
     } else {

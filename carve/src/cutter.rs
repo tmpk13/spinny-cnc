@@ -370,9 +370,10 @@ mod tests {
     #[test]
     fn a_ball_on_a_slope_sits_where_the_sphere_meets_the_plane() {
         // A wedge rising 1 in 2 along x: z = x / 2 over 0..10.
-        let mut mesh = Mesh::default();
-        mesh.vertices = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [10.0, 10.0, 5.0], [0.0, 10.0, 0.0]];
-        mesh.triangles = vec![[0, 1, 2], [0, 2, 3]];
+        let mesh = Mesh {
+            vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [10.0, 10.0, 5.0], [0.0, 10.0, 0.0]],
+            triangles: vec![[0, 1, 2], [0, 2, 3]],
+        };
         let surface = Surface::new(&mesh, 2.0);
         let r = 1.0;
         let ball = Cutter::new(Shape::Ball, r);
@@ -386,9 +387,10 @@ mod tests {
 
     #[test]
     fn a_bull_nose_matches_a_ball_when_its_corner_is_its_radius() {
-        let mut mesh = Mesh::default();
-        mesh.vertices = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 3.0], [5.0, 8.0, 1.0]];
-        mesh.triangles = vec![[0, 1, 2]];
+        let mesh = Mesh {
+            vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 3.0], [5.0, 8.0, 1.0]],
+            triangles: vec![[0, 1, 2]],
+        };
         let surface = Surface::new(&mesh, 2.0);
         let ball = Cutter::new(Shape::Ball, 1.5);
         let bull = Cutter::new(Shape::Bull { corner: 1.5 }, 1.5);
@@ -400,9 +402,10 @@ mod tests {
 
     #[test]
     fn a_grown_ball_leaves_its_growth_on_a_slope() {
-        let mut mesh = Mesh::default();
-        mesh.vertices = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [10.0, 10.0, 5.0], [0.0, 10.0, 0.0]];
-        mesh.triangles = vec![[0, 1, 2], [0, 2, 3]];
+        let mesh = Mesh {
+            vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [10.0, 10.0, 5.0], [0.0, 10.0, 0.0]],
+            triangles: vec![[0, 1, 2], [0, 2, 3]],
+        };
         let surface = Surface::new(&mesh, 2.0);
         let ball = Cutter::new(Shape::Ball, 1.0);
         let leave = 0.3;

@@ -239,10 +239,7 @@ impl Sim {
         let settings = self.machine.settings();
         self.port.dir_invert = settings.joint_dir_invert();
         self.slide.invert = settings.dir_invert & 0b0100 != 0;
-        let mut physical = [0.0; AXES];
-        for i in 0..AXES {
-            physical[i] = self.port.physical[i] as f32 / settings.steps[i];
-        }
+        let mut physical: [f32; AXES] = core::array::from_fn(|i| self.port.physical[i] as f32 / settings.steps[i]);
         if !settings.cartesian {
             physical[Z] = self.slide.physical as f32 / settings.steps[Z];
         }
@@ -665,8 +662,7 @@ mod tests {
 
     #[test]
     fn the_trace_records_the_beam_not_the_pin_level() {
-        let mut settings = Settings::default();
-        settings.laser_invert = true;
+        let settings = Settings { laser_invert: true, ..Settings::default() };
         let mut sim = Sim::new(Setup {
             settings,
             store: FileStore::default(),
@@ -707,8 +703,7 @@ mod tests {
 
     #[test]
     fn a_probe_finds_the_board_under_its_tip() {
-        let mut settings = Settings::default();
-        settings.h_axis = true;
+        let settings = Settings { h_axis: true, ..Settings::default() };
         let mut sim = Sim::new(Setup {
             settings,
             store: FileStore::default(),

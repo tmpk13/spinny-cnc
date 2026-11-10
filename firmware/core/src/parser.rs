@@ -242,7 +242,7 @@ impl Words {
     }
 
     fn check_feed(&self) -> Result<(), Error> {
-        if self.f.is_some_and(|f| !(f >= MIN_FEED)) {
+        if self.f.is_some_and(|f| f.is_nan() || f < MIN_FEED) {
             return Err(Error::OutOfRange);
         }
         Ok(())
