@@ -555,6 +555,7 @@ export const HELP_LINES = [
     "home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop",
     "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]",
     "spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S",
+    "dispenser=1 (with cartesian): A is the plunger in mm, on go and cut too; no S or M on cut and dwell, no laser S",
     "enable | disable | unlock | version | status | help | diag",
     "$ | $name | $name=value | $save | $load | $defaults | $tmc",
     "realtime bytes: ? status, ! hold, ~ resume, 0x18 reset, 0x85 jog cancel",
@@ -1556,7 +1557,6 @@ function gridYs(grid: Grid): number[] {
     return Array.from({ length: grid.ny }, (_, j) => grid.y0 + ((grid.y1 - grid.y0) * j) / (grid.ny - 1));
 }
 
-/** The finer of the two point spacings, mm. */
 /** How far a touch that ties the map keeps from a cut, mm, over half the job's spot. */
 const TOUCH_CLEARANCE = 1.0;
 
@@ -1565,6 +1565,7 @@ function probeJointWords(joint: ProbeJoint, cartesian: boolean): string {
     return cartesian ? `R${coord(joint.r, 3)} Z${coord(joint.z ?? 0, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
 }
 
+/** The finer of the two point spacings, mm. */
 function gridSpacing(grid: Grid): number {
     return Math.min((grid.x1 - grid.x0) / (grid.nx - 1), (grid.y1 - grid.y0) / (grid.ny - 1));
 }
@@ -1890,7 +1891,6 @@ export interface MockOptions {
     timers?: boolean;
 }
 
-/** Fake API and event feed: `api` and `feed` in one object. */
 /** Each enabled group's own focus by its index, for the groups that have one and something to cut. */
 export function groupFocus(job: Job): Map<number, number> {
     const offsets = new Map<number, number>();
@@ -1911,6 +1911,7 @@ function refusePowerWithFocus(job: Job, mode: string): void {
     }
 }
 
+/** The fake backend: the Api and the EventFeed in one object. */
 export class MockBackend implements Api, EventFeed {
     readonly machine = new MockMachine(MOCK_MACHINE_SETTINGS);
     connected = false;

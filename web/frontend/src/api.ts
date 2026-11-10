@@ -125,7 +125,6 @@ export interface Api {
     /** Writes a machine file's every setting, and saves them to flash when asked; answers the settings as they are then. */
     applyMachine(id: string, save?: boolean): Promise<SettingsResponse>;
 
-    /** The CAM profiles in cam/, and the files that could not be read. */
     /** A machine file as written, with what it reads as or why it does not. */
     machineFile(id: string): Promise<MachineResponse>;
     /** Writes a text as the file once it reads as a machine; refused with what is wrong otherwise. */
@@ -135,6 +134,7 @@ export interface Api {
     /** The text with the connected board's values written into it, not saved. */
     machineFromBoard(id: string, text: string): Promise<MachineFromBoard>;
     deleteMachineFile(id: string): Promise<void>;
+    /** The CAM profiles in cam/, and the files that could not be read. */
     camProfiles(): Promise<CamProfilesResponse>;
     camProfile(id: string): Promise<CamProfileResponse>;
     /** Writes the text as the profile once it reads as one; creates the profile when it is new. */

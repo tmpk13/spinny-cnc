@@ -83,8 +83,9 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
         historyIndex = -1;
         input.value = "";
         await ctx.call(ctx.api.command(line));
-        // The settings panel, the preview's reach and the probe queue read
-        // the page's copy of the settings, which this line may have changed.
+        // The Settings list on the Config tab, the preview's reach and the
+        // probe queue read the page's copy of the settings, which this line
+        // may have changed.
         if (writesSettings(line) && ctx.store.get().snapshot.connected) {
             await ctx.refreshSettings();
         }

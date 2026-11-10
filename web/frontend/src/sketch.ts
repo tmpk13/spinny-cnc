@@ -5,6 +5,7 @@
 // whether two operations cut the same.
 
 import { turnPoint } from "./align.ts";
+import { countText } from "./format.ts";
 import type { MillOperation, Point } from "./types.ts";
 import type { Dimension } from "./preview.ts";
 
@@ -114,7 +115,7 @@ export function operationSummary(op: MillOperation): string {
     const circle = `D${sizeText(op.diameter)} at ${pointText([op.cx, op.cy])}`;
     switch (op.kind) {
         case "drill":
-            return `${op.cutter === "laser" ? "mark" : "drill"} ${op.points.length} point${op.points.length === 1 ? "" : "s"}`;
+            return `${op.cutter === "laser" ? "mark" : "drill"} ${countText(op.points.length, "point", "points")}`;
         case "holes":
             return `holes${op.holes ? ` (${op.holes.length})` : ""}${op.sizes ? `, ${op.sizes.map((size) => sizeText(size)).join(", ")} mm` : ""}`;
         case "line":

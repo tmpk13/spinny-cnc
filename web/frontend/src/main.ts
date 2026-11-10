@@ -180,8 +180,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "state": {
             const before = store.get().snapshot;
             store.set({ snapshot: event.data, progress: event.data.run });
-            // Only on a change: the settings panel is rebuilt from every
-            // fresh copy, which must not happen at the frame rate.
+            // Only on a change: the Settings list on the Config tab is
+            // redrawn from every fresh copy, which must not happen at the
+            // frame rate.
             if (settingsMayHaveChanged(before, event.data)) {
                 void ctx.refreshSettings();
             }

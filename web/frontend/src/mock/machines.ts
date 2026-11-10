@@ -13,7 +13,14 @@ import { defaultControls } from "../controls.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 import type { AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
 
-/** The shipped files by id, as the backend lists them. */
+/**
+ * Four of the shipped machine files, by id in the order the backend lists
+ * them: the polar laser with and without its focus axis, the cartesian
+ * laser and the cartesian mill, one file for each kind of machine the
+ * mock's tests read and load. The backend lists every file in machines/;
+ * the K40 and the dispenser are not bundled, so this list stays the one
+ * those tests expect.
+ */
 export const MOCK_MACHINE_TEXTS: { id: string; text: string }[] = [
     { id: "cartesian-laser", text: cartesianLaser },
     { id: "cartesian-mill", text: cartesianMill },
