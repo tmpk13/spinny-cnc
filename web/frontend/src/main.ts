@@ -12,7 +12,7 @@ import { mountFocusBanner } from "./views/banner.ts";
 import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
 import { mountConsole } from "./views/console.ts";
-import type { Ctx } from "./views/context.ts";
+import { into, type Ctx } from "./views/context.ts";
 import { mountDro } from "./views/dro.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobJson } from "./views/jobjson.ts";
@@ -62,10 +62,7 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
             }
         },
         async refreshPorts() {
-            const ports = await ctx.call(api.ports());
-            if (ports) {
-                store.set({ ports });
-            }
+            await into(ctx, "ports", api.ports());
         },
         async refreshJobs() {
             const ticket = ++listing;
@@ -79,46 +76,25 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
             }
         },
         async refreshSettings() {
-            const settings = await ctx.call(api.settings());
-            if (settings) {
-                store.set({ settings });
-            }
+            await into(ctx, "settings", api.settings());
         },
         async refreshHeightMap() {
-            const heightMap = await ctx.call(api.heightMap());
-            if (heightMap) {
-                store.set({ heightMap });
-            }
+            await into(ctx, "heightMap", api.heightMap());
         },
         async refreshCamera() {
-            const camera = await ctx.call(api.camera());
-            if (camera) {
-                store.set({ camera });
-            }
+            await into(ctx, "camera", api.camera());
         },
         async refreshAlign() {
-            const align = await ctx.call(api.align());
-            if (align) {
-                store.set({ align });
-            }
+            await into(ctx, "align", api.align());
         },
         async refreshPnp() {
-            const pnp = await ctx.call(api.pnp());
-            if (pnp) {
-                store.set({ pnp });
-            }
+            await into(ctx, "pnp", api.pnp());
         },
         async refreshDevice() {
-            const device = await ctx.call(api.deviceState());
-            if (device) {
-                store.set({ device });
-            }
+            await into(ctx, "device", api.deviceState());
         },
         async refreshMarkers() {
-            const markers = await ctx.call(api.markers());
-            if (markers) {
-                store.set({ markers });
-            }
+            await into(ctx, "markers", api.markers());
         },
         async refreshAuto() {
             const clears = autoClears();
