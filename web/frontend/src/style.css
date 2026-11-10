@@ -269,17 +269,15 @@ input[type="checkbox"] {
     background: color-mix(in oklab, var(--hold) 85%, var(--base03));
 }
 
-/* Where a panel says whether its edits are applied: typed and not sent,
-   sent and not saved to flash, or all applied. */
+/* A chip beside a panel's Apply counting its fields typed in and not
+   applied yet. */
 .apply-state {
     --tone: var(--jog);
 }
 
 .apply-state[data-apply="pending"] { --tone: var(--hold); }
-.apply-state[data-apply="unsaved"] { --tone: var(--orange); }
-.apply-state[data-apply="applied"] { --tone: var(--jog); background: transparent; }
 
-/* A host value or camera field typed in and not applied. */
+/* A camera or nozzle field typed in and not applied. */
 .labeled.edited > input,
 .labeled.edited > select {
     border-color: var(--hold);
@@ -335,13 +333,6 @@ table.settings-list td {
     padding-left: 1.2rem;
     font-size: 0.85rem;
     font-family: var(--mono, monospace);
-}
-
-table.settings .was {
-    margin-left: 0.4em;
-    font-size: 0.8em;
-    color: var(--muted);
-    white-space: nowrap;
 }
 
 .grid {
@@ -438,7 +429,8 @@ table.settings .was {
         grid-template-columns: minmax(0, 3fr) minmax(22rem, 2fr);
     }
 
-    /* The Config page: the machine file on the left, the live settings on the right. */
+    /* The Config page: the machine file on the left, the list of every key
+       a file can set on the right. */
     .config-grid {
         grid-template-columns: minmax(0, 3fr) minmax(24rem, 2fr);
     }
@@ -1441,11 +1433,11 @@ table.groups, table.settings {
     font-size: 0.9rem;
 }
 
-/* The settings' Apply, Save and Reload stay in view while the long table
-   scrolls under them: stuck under the status bar on the narrow layout,
-   where the page scrolls, and at the top of their column on the wide one,
-   where the column does. The panel's color behind them keeps the rows
-   from showing through. */
+/* The settings list's search stays in view while the long table scrolls
+   under it: stuck under the status bar on the narrow layout, where the
+   page scrolls, and at the top of its column on the wide one, where the
+   column does. The panel's color behind it keeps the rows from showing
+   through. */
 .settings-actions {
     position: sticky;
     top: var(--stuck-under, 0);
@@ -1774,36 +1766,8 @@ canvas.preview:active {
 
 /* Settings */
 
-table.settings td.help {
-    font-size: 0.8rem;
-}
-
 table.settings tbody tr:hover td {
     background: var(--panel-2);
-}
-
-table.settings tr.edited td {
-    background: color-mix(in oklab, var(--accent) 9%, var(--panel));
-}
-
-table.settings tr.edited td:first-child {
-    color: var(--accent);
-    font-weight: 600;
-    box-shadow: inset 0.2rem 0 0 var(--accent);
-}
-
-table.settings input {
-    width: 6.5rem;
-}
-
-@media (max-width: 40rem) {
-    table.settings td.help {
-        display: none;
-    }
-
-    table.settings th:last-child {
-        display: none;
-    }
 }
 
 /* Toasts */

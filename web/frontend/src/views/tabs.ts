@@ -29,7 +29,6 @@ const RENAMED: Record<string, PageId> = { machine: "jobs", mill: "plot" };
 
 /** The page of each panel that holds edits until they are applied. */
 export const PENDING_PAGES: Record<string, PageId> = {
-    settings: "config",
     "machine-file": "config",
     camera: "jobs",
     "job-json": "jobs",

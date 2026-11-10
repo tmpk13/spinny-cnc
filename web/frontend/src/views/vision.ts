@@ -139,7 +139,10 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const applySettings = button("Apply", () => apply(), "btn");
     const applyMeasured = button("Apply", () => apply(), "btn");
     // How many settings fields are typed in and not applied, beside each Apply.
-    const pendingChips = [el("span", { class: "badge apply-state hidden" }), el("span", { class: "badge apply-state hidden" })];
+    const pendingChips = [
+        el("span", { class: "badge apply-state hidden", "data-apply": "pending" }),
+        el("span", { class: "badge apply-state hidden", "data-apply": "pending" }),
+    ];
 
     const lookButton = button("Look for board", () => lookForBoard(), "btn");
     const unloadButton = button("Unload", () => act(ctx.api.cameraBoard(null)), "btn btn-quiet");
@@ -238,7 +241,6 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             chip.classList.toggle("hidden", count === 0);
             chip.textContent = `${count} not applied`;
             chip.title = "the marked fields are typed in and not sent: Apply sends them";
-            chip.setAttribute("data-apply", "pending");
         });
         setPending(ctx.store, "camera", counts[0]! + counts[1]!);
     };

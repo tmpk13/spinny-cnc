@@ -8,7 +8,6 @@
 import { el, replace } from "../dom.ts";
 import { MACHINE_KEYS, fuzzyScore, keyLine, sameValue, sectionFor, tomlValue, valueOf, type KeyValue, type MachineKey } from "../machinekeys.ts";
 import { profileOf } from "../profile.ts";
-import type { AppState } from "../state.ts";
 import type { MachineDocument, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
@@ -216,7 +215,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
     onlyDiffer.addEventListener("change", () => refresh());
     // The settings, not the snapshot: that comes ten times a second, and a
     // machine of another kind brings new settings with it.
-    ctx.store.subscribe((_state: AppState) => refresh(), ["settings"]);
+    ctx.store.subscribe(() => refresh(), ["settings"]);
     refresh();
     return { refresh };
 }

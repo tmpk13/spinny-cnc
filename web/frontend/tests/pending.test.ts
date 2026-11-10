@@ -9,15 +9,18 @@ import { click, connected, settle, setup } from "./harness.ts";
 describe("what the panels hold unapplied", () => {
     test("the counts are kept per panel and summed per page", () => {
         const { store } = setup();
-        setPending(store, "settings", 2);
         setPending(store, "machine-file", 1);
+        setPending(store, "cam-profile", 2);
         setPending(store, "camera", 3);
-        expect(pendingOn(store.get().pending, "config")).toBe(3);
-        expect(pendingOn(store.get().pending, "jobs")).toBe(3);
-        expect(pendingOn(store.get().pending, "cam")).toBe(0);
-        expect(pendingTotal(store.get().pending)).toBe(6);
-        setPending(store, "settings", 0);
-        expect(store.get().pending).toEqual({ "machine-file": 1, camera: 3 });
+        setPending(store, "job-json", 1);
+        expect(pendingOn(store.get().pending, "config")).toBe(1);
+        expect(pendingOn(store.get().pending, "cam")).toBe(2);
+        // Two panels of one page add up on its tab.
+        expect(pendingOn(store.get().pending, "jobs")).toBe(4);
+        expect(pendingOn(store.get().pending, "plot")).toBe(0);
+        expect(pendingTotal(store.get().pending)).toBe(7);
+        setPending(store, "cam-profile", 0);
+        expect(store.get().pending).toEqual({ "machine-file": 1, camera: 3, "job-json": 1 });
     });
 });
 

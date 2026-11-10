@@ -143,7 +143,7 @@ export interface AppState {
     millDims: Dimension[];
     /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
     mapChoice: Compensate;
-    /** Edits typed and not applied yet, counted by the panel that holds them (`pendingPages` puts them on a tab). */
+    /** Edits typed and not applied yet, counted by the panel that holds them (`PENDING_PAGES` and `pendingOn` put them on a tab). */
     pending: Record<string, number>;
     console: ConsoleLine[];
     /** Show the link's status polls in the console. */
