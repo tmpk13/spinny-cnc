@@ -19,7 +19,7 @@ from spinny_web.heightmap import (
     job_extent,
 )
 from spinny_web.jobs import Group, Job
-from spinny_web.kinematics import Streamer, board_of
+from spinny_web.kinematics import Streamer
 from spinny_web.link import parse_probe, parse_status
 from spinny_web.prober import ProbeSettings, probe_joint
 
@@ -200,7 +200,7 @@ def test_focus_mode_puts_the_focus_height_on_every_line_and_keeps_the_path():
     for piece in pieces:
         w = words(piece.line)
         assert "H" in w, piece.line
-        x, y = board_of(piece.joint)
+        x, y = polar.cartesian(piece.joint)
         assert w["H"] == pytest.approx(heightmap.focus_at(x, y), abs=6e-5)
         if piece.kind == "cut":
             # Split no longer than the step, and each piece on the joint
@@ -252,7 +252,7 @@ def test_power_mode_raises_the_power_for_the_defocus_and_caps_it():
     for piece in cuts:
         w = words(piece.line)
         assert "H" not in w
-        middle = board_of(((piece.start[0] + piece.joint[0]) / 2, (piece.start[1] + piece.joint[1]) / 2))
+        middle = polar.cartesian(((piece.start[0] + piece.joint[0]) / 2, (piece.start[1] + piece.joint[1]) / 2))
         base = 400 if piece.group == 0 else 500
         want = min(base * compensation.factor(middle), 1000)
         assert w["S"] == pytest.approx(want, abs=1e-3)

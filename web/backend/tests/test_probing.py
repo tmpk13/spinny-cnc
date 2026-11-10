@@ -954,8 +954,9 @@ def test_a_half_turn_before_the_first_point_is_waited_out_on_the_virtual_firmwar
 
 
 def test_probe_nearest_goes_to_a_probed_point_clear_of_the_cuts(client, fake):
+    from spinny_laser import polar
+
     from spinny_web.jobs import Group, Job
-    from spinny_web.kinematics import board_of
 
     probe(client)
     assert client.post("/api/heightmap/focus", json={"offset": 1.0}).status_code == 200
@@ -993,7 +994,7 @@ def test_probe_nearest_goes_to_a_probed_point_clear_of_the_cuts(client, fake):
     assert heightmap["focus_set"] is True
     assert heightmap["focus_offset"] == pytest.approx(1.2, abs=1e-3)
     # The head went over the point, probed, and is back at the travel height.
-    x, y = board_of((fake.joint[0], fake.joint[1]))
+    x, y = polar.cartesian((fake.joint[0], fake.joint[1]))
     assert (x, y) == (pytest.approx(0.0, abs=1e-3), pytest.approx(5.0, abs=1e-3))
     assert fake.h == pytest.approx(0.0, abs=1e-6)
 

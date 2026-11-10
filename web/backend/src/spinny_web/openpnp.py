@@ -36,10 +36,10 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from spinny_laser.align import Fit, fit_rigid
+from spinny_laser.align import Fit, fit_rigid, turn
 
 from .files import write_whole
-from .kinematics import num, turned
+from .kinematics import num
 
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 AXIS = re.compile(r"^[A-Z]$")
@@ -688,7 +688,7 @@ def tip_shift(runout: tuple[float, float], degrees: float) -> tuple[float, float
     """How far the head moves to keep the nozzle's tip on a point as the
     nozzle turns from 0 to `degrees`: the tip sits `runout` off the turning
     axis at 0, and that offset turns with the nozzle."""
-    swung = turned(runout, degrees)
+    swung = turn(runout, degrees)
     return (runout[0] - swung[0], runout[1] - swung[1])
 
 

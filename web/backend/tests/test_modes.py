@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from spinny_web.app import Backend, create_app, profile_of
 from spinny_web.heightmap import Compensation, Grid, HeightMap
 from spinny_web.jobs import Group, Job
-from spinny_web.kinematics import CartesianStreamer, Rates, Spindle, Streamer, head_board, turned
+from spinny_web.kinematics import CartesianStreamer, Rates, Spindle, Streamer, head_board
 from spinny_web.link import REALTIME_JOG_CANCEL, Link
 from spinny_web.prober import cartesian_probe_joint
 
@@ -71,7 +71,7 @@ def test_the_board_turns_with_the_table_angle():
     assert head_board(5.0, 90.0, 0.0, True) == pytest.approx((0.0, 5.0))
     # A polar machine leaves the slide out of the board position.
     assert head_board(5.0, 90.0, 3.0, False) == pytest.approx((0.0, 5.0))
-    assert turned((1.0, 0.0), 30.0) == pytest.approx((math.cos(math.radians(30)), math.sin(math.radians(30))))
+    assert streamer.joint_at((math.cos(math.radians(30)), math.sin(math.radians(30)))) == pytest.approx((0.5, -math.sqrt(3) / 2))
 
 
 def test_a_cartesian_machine_takes_no_joint_space_group():

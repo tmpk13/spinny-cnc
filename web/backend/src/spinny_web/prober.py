@@ -25,11 +25,12 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from spinny_laser import polar
+from spinny_laser.align import turn
 
 from .camera import DONE, ERROR, RUNNING, STOPPED
 from .heightmap import Grid, HeightMap, HeightMapStore, estimate_points_seconds
 from .jobs import Finite
-from .kinematics import FOCUS_DECIMALS, CartesianStreamer, Streamer, coord, num, turned
+from .kinematics import FOCUS_DECIMALS, CartesianStreamer, Streamer, coord, num
 from .link import Link, LinkError, idle_status, parse_probe, settle
 from .runner import JOIN_WAIT, halt
 
@@ -127,7 +128,7 @@ def cartesian_probe_joint(point: tuple[float, float], offset: tuple[float, float
     along the rail and across it, and the board is turned `angle` degrees
     from the machine, so the head goes to the point turned back less the
     offset. Every point is reachable; only the soft limits bound it."""
-    x, y = turned(point, -angle)
+    x, y = turn(point, -angle)
     return x - offset[0], y - offset[1]
 
 

@@ -16,7 +16,7 @@ from spinny_web.kinematics import (
     Streamer,
     coord,
     joint_min_radius,
-    joint_preview,
+    joint_previews,
     num,
     split_at_axis,
     turned_toward,
@@ -351,12 +351,12 @@ def test_joint_groups_are_priced_and_a_crossing_counts_as_radius_zero():
     assert joint_min_radius([(-3.0, 0.0), (-2.0, 10.0)]) == 2.0
 
 
-def test_joint_preview_draws_the_path_the_move_traces():
-    points = joint_preview([(-6.0, 0.0), (6.0, 0.0)])
+def test_joint_previews_draw_the_path_the_move_traces():
+    ((points, empty),) = joint_previews([[[(-6.0, 0.0), (6.0, 0.0)], []]])
     assert len(points) >= 121
     assert points[0] == pytest.approx((-6.0, 0.0)) and points[-1] == pytest.approx((6.0, 0.0))
     assert all(abs(y) < 1e-9 for _, y in points)
-    assert joint_preview([]) == []
+    assert empty == []
 
 
 def test_a_board_move_from_the_far_side_comes_back_through_the_axis():

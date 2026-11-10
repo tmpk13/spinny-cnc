@@ -32,6 +32,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable, Iterator
 
+from spinny_laser import align as alignment
 from spinny_laser import polar
 from spinny_laser.polar import Joint, Kinematics, Point
 
@@ -240,14 +241,6 @@ class Stats:
         }
 
 
-def board_of(joint: Joint) -> Point:
-    return polar.cartesian(joint)
-
-
-def joint_of(point: Point, previous_angle: float) -> Joint:
-    return polar.joint_of(point, previous_angle)
-
-
 # The smallest feed the firmware accepts; the host writes F with three
 # decimals, so anything under this would go out as `F0` and be refused.
 MIN_FEED = 0.001
@@ -331,13 +324,6 @@ def joint_min_radius(poly: list[Joint]) -> float:
     return min(abs(r) for r, _ in poly)
 
 
-def joint_preview(
-    poly: list[Joint], step_mm: float = 0.1, step_deg: float = 1.0, limit: int | None = polar.MAX_SAMPLES
-) -> list[Point]:
-    """Board points along a joint polyline, close enough to draw it."""
-    return polar.sample_joints([(float(r), float(a)) for r, a in poly], step_mm, step_deg, limit)
-
-
 # Most points the previews of one job's joint polylines add to their own.
 # Each polyline is bounded on its own as well, but an upload of many would
 # still come to millions of points.
@@ -345,15 +331,15 @@ PREVIEW_BUDGET = 100_000
 
 
 def joint_previews(groups: list[list[list[Joint]]], budget: int = PREVIEW_BUDGET) -> list[list[list[Point]]]:
-    """`joint_preview` of every polyline of every group, with one budget for
-    all of them: once it is spent, a polyline is drawn through its own
-    points only."""
+    """Board points along every polyline of every group, close enough to
+    draw it (`polar.sample_joints`), with one budget for all of them: once
+    it is spent, a polyline is drawn through its own points only."""
     out = []
     remaining = budget
     for polys in groups:
         drawn = []
         for poly in polys:
-            points = joint_preview(poly, limit=min(polar.MAX_SAMPLES, max(0, remaining)))
+            points = polar.sample_joints([(float(r), float(a)) for r, a in poly], limit=min(polar.MAX_SAMPLES, max(0, remaining)))
             remaining -= len(points) - len(poly)
             drawn.append(points)
         out.append(drawn)
@@ -412,11 +398,11 @@ class Streamer:
         return (status.r, status.a)
 
     def board_of(self, joint: Joint) -> Point:
-        return board_of(joint)
+        return polar.cartesian(joint)
 
     def _path_start(self, point: Point, joint: Joint) -> Joint:
         """The joint that puts the beam over the first point of a path."""
-        first = joint_of(point, joint[1])
+        first = polar.joint_of(point, joint[1])
         if first[0] < self.snap:
             # The word written is R0.000: the head is on the axis, and the
             # joint tracked must say so or the move away from it is cut as
@@ -1268,7 +1254,7 @@ class Streamer:
     def board_targets(self, start: Joint, target: Point) -> list[tuple[Joint, bool]]:
         """Joint targets on the way to a board point from a joint; True marks a turn."""
         out: list[tuple[Joint, bool]] = []
-        point = board_of(start)
+        point = polar.cartesian(start)
         joint = start
         if joint[0] < 0.0:
             # The head is past the axis, where lining it up leaves it. A
@@ -1364,21 +1350,14 @@ def _plunger_target(line: str, fallback: float) -> float:
     return fallback
 
 
-def turned(point: Point, degrees: float) -> Point:
-    """A point turned about the rotation axis, counterclockwise."""
-    theta = math.radians(degrees)
-    c, s = math.cos(theta), math.sin(theta)
-    return (point[0] * c - point[1] * s, point[0] * s + point[1] * c)
-
-
 def head_board(r: float, a: float, z: float, cartesian: bool) -> Point:
     """The board point under the beam. On a polar machine the cross slide
     is calibration that puts the rail over the axis, so it is left out, as
     everything polar leaves it out; on a cartesian machine the head is at
     R along the rail and Z across it, turned by the table angle."""
     if cartesian:
-        return turned((r, z), a)
-    return board_of((r, a))
+        return alignment.turn((r, z), a)
+    return polar.cartesian((r, a))
 
 
 class CartesianStreamer(Streamer):
@@ -1404,10 +1383,10 @@ class CartesianStreamer(Streamer):
         return (status.r, status.z)
 
     def board_of(self, joint: Joint) -> Point:
-        return turned(joint, self.angle)
+        return alignment.turn(joint, self.angle)
 
     def joint_at(self, point: Point) -> Joint:
-        return turned(point, -self.angle)
+        return alignment.turn(point, -self.angle)
 
     def _path_start(self, point: Point, joint: Joint) -> Joint:
         return self.joint_at(point)

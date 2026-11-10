@@ -38,10 +38,10 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from spinny_laser.align import Fit, fit_rigid
+from spinny_laser.align import Fit, fit_rigid, turn
 
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice, RunContext
-from .kinematics import num, turned
+from .kinematics import num
 from .openpnp import (
     Block,
     Device,
@@ -367,7 +367,7 @@ class Placement:
         before: float | None = None
         for look in range(LOOKS):
             self._doing(ctx, f"looking at {block.ref} over the up camera" + (f" again ({look + 1})" if look else ""))
-            swung = turned(runout, angle)
+            swung = turn(runout, angle)
             head = (axis[0] - swung[0], axis[1] - swung[1])
             try:
                 seen = self.setup.up.look_at_part(mover, place, None, angle=angle, head=head, size=block.size)
@@ -392,7 +392,7 @@ class Placement:
             if settled or look == LOOKS - 1:
                 final = angle - delta
                 # The part's center off the axis, turned on to the final angle.
-                arm = turned((off[0] + axis[0] - head[0], off[1] + axis[1] - head[1]), final - angle)
+                arm = turn((off[0] + axis[0] - head[0], off[1] + axis[1] - head[1]), final - angle)
                 target = (block.target[0] + runout[0] - arm[0], block.target[1] + runout[1] - arm[1])
                 return [safe_line(device), *place_lines(device, target, final, block.place_z)]
             before = delta

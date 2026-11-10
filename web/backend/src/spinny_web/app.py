@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from spinny_laser import home
+from spinny_laser.align import turn
 from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
@@ -112,7 +113,6 @@ from .kinematics import (
     head_board,
     num,
     plan_print,
-    turned,
 )
 from .kinematics import FOCUS_DECIMALS
 from .link import (
@@ -3887,7 +3887,7 @@ def _tip_point(status, offset: tuple[float, float], cartesian: bool, table_angle
     table's angle, which the caller gives (a dispenser's `A` is its
     plunger). On the polar machine the head sits on the rail (across 0),
     on a cartesian one at the cross slide's position."""
-    return turned((status.r + offset[0], (status.z if cartesian else 0.0) + offset[1]), table_angle)
+    return turn((status.r + offset[0], (status.z if cartesian else 0.0) + offset[1]), table_angle)
 
 
 def _by_id_names() -> dict[str, str]:
