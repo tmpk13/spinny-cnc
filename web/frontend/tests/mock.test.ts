@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import { ApiError } from "../src/api.ts";
 import { DEG } from "../src/kinematics.ts";
-import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, statusLine } from "../src/mock/backend.ts";
+import { MockBackend, MockMachine, PROBE_POINT_SECONDS, boardSurface, formatMove, heightAt, settingsValid, statusLine } from "../src/mock/backend.ts";
 import { outputDuty } from "../src/profile.ts";
 import { defaultControls } from "../src/controls.ts";
-import { DEFAULT_SETTINGS, settingsValid } from "../src/mock/backend.ts";
+import { DEFAULT_SETTINGS } from "../src/mock/machines.ts";
 import type { Compensate, GotoRequest, Grid, HeightMap, HeightMapState, Job, JogRequest, WsEvent } from "../src/types.ts";
 
 function stepped(machine: MockMachine, seconds: number, dt = 0.01): void {

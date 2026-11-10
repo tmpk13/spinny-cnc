@@ -528,9 +528,8 @@ export interface MockBlock {
     /** The vacuum read with the part held, and once it let go. */
     check: string[];
     release: string[];
-    /** The part's angle on the device, and the size the up camera should see. */
+    /** The part's angle on the device. */
     angle: number;
-    size: [number, number] | null;
 }
 
 /** A block's lines as the program text has them. */
@@ -626,18 +625,6 @@ export function placeLines(device: MockDevice, point: [number, number], turn: nu
     ];
 }
 
-/** The length and width the up camera should see of a part: its feeder's size, else its footprint's body, longer side first. */
-export function expectedSize(feeder: MockFeeder, part: Component): [number, number] | null {
-    if (feeder.size) {
-        return [Math.max(...feeder.size), Math.min(...feeder.size)];
-    }
-    const body = part.body;
-    if (body && body.length === 2 && body.every((value) => value > 0)) {
-        return [Math.max(...body), Math.min(...body)];
-    }
-    return null;
-}
-
 /** The placement program, as the backend makes it. */
 export function planDevice(
     device: MockDevice,
@@ -724,7 +711,6 @@ export function planDevice(
             check: checkLines(device, true),
             release: checkLines(device, false),
             angle,
-            size: expectedSize(feeder, part),
         });
     }
     const head = [`; ${title || "placement"} on ${device.name}: ${blocks.length} parts`, ...device.init];

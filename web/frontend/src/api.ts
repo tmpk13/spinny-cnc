@@ -180,7 +180,6 @@ export interface Api {
     planResume(id: string, request: ResumeRequest): Promise<ResumePlan>;
     /** The last run's record; null when none ran. */
     resumeRecord(): Promise<ResumeRecord | null>;
-    forgetResume(): Promise<void>;
     runHold(): Promise<void>;
     runResume(): Promise<void>;
     runStop(): Promise<void>;
@@ -659,10 +658,6 @@ export class HttpApi implements Api {
     async resumeRecord(): Promise<ResumeRecord | null> {
         const response = await this.request<{ resume: ResumeRecord | null }>("GET", "/api/resume");
         return response.resume ?? null;
-    }
-
-    async forgetResume(): Promise<void> {
-        await this.request("DELETE", "/api/resume");
     }
 
     async log(lines = 200, file: LogFile = "spinny"): Promise<string[]> {

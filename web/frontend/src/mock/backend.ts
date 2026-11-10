@@ -125,7 +125,6 @@ import type {
     PadProbePlan,
     PadProbeRequest,
     RoutineStep,
-    LogFile,
     Board,
     CamGcodeResponse,
     CamJobResponse,
@@ -213,8 +212,8 @@ export const MOCK_VERSION = "0.1.0-mock";
 const CLOCK_EPSILON = 1e-9;
 export const LINE_SLOTS = 16;
 export const PLANNER_BLOCKS = 32;
-
-export { DEFAULT_SETTINGS };
+/** Ms between the simulation's timer ticks. */
+const TICK_MS = 50;
 
 /**
  * What the demo machine starts with over the shipped defaults: the firmware
@@ -1889,10 +1888,6 @@ function probeReplies(machine: MockMachine, distance: number, feed: number | nul
 export interface MockOptions {
     /** Drive the simulation from a timer; off for tests, which call `step`. */
     timers?: boolean;
-    /** Ms between timer ticks. */
-    tickMs?: number;
-    /** Time source in ms. */
-    now?: () => number;
 }
 
 /** Fake API and event feed: `api` and `feed` in one object. */
@@ -2009,8 +2004,6 @@ export class MockBackend implements Api, EventFeed {
     private nextId = 1;
     private session: RunSession | null = null;
     private lastProgress: Progress | null = null;
-    /** Every line either way, as the backend's log would hold them. */
-    private consoleLog: string[] = [];
     /** What the last run was planned from, kept with its progress as the resume record. */
     private lastPlan: RunPlan | null = null;
     /** Where the last run's plan began, all of it, so a pickup plans the same moves. */
@@ -2020,8 +2013,6 @@ export class MockBackend implements Api, EventFeed {
     private eventListeners = new Set<(event: WsEvent) => void>();
     private statusListeners = new Set<(status: LinkStatus) => void>();
     private readonly useTimers: boolean;
-    private readonly tickMs: number;
-    private readonly now: () => number;
     private timer: ReturnType<typeof setInterval> | null = null;
     private lastTick = 0;
     private stateClock = 0;
@@ -2053,8 +2044,6 @@ export class MockBackend implements Api, EventFeed {
 
     constructor(options: MockOptions = {}) {
         this.useTimers = options.timers ?? true;
-        this.tickMs = options.tickMs ?? 50;
-        this.now = options.now ?? (() => (typeof performance !== "undefined" ? performance.now() : Date.now()));
         // The simulated probe sits where the probe settings say it is mounted.
         this.machine.probeOffset = [...this.probeConfig.offset];
         this.seedDemo();
@@ -2065,13 +2054,13 @@ export class MockBackend implements Api, EventFeed {
     start(): void {
         this.setStatus("open");
         if (this.useTimers && this.timer === null) {
-            this.lastTick = this.now();
+            this.lastTick = performance.now();
             this.timer = setInterval(() => {
-                const now = this.now();
+                const now = performance.now();
                 const dt = Math.min(0.5, Math.max(0, (now - this.lastTick) / 1000));
                 this.lastTick = now;
                 this.step(dt);
-            }, this.tickMs);
+            }, TICK_MS);
         }
         this.emit({ type: "state", data: this.snapshot() });
     }
@@ -4206,10 +4195,9 @@ export class MockBackend implements Api, EventFeed {
         return removed;
     }
 
-    async log(lines = 200, file: LogFile = "spinny"): Promise<string[]> {
-        // One file stands for both here: the mock has no wire of its own.
-        void file;
-        return this.consoleLog.slice(-lines);
+    /** The mock keeps no log: what it sends and hears goes out only as console events. */
+    async log(): Promise<string[]> {
+        return [];
     }
 
     /**
@@ -4768,7 +4756,8 @@ export class MockBackend implements Api, EventFeed {
         const line = Math.min(request.line, moves.length);
         let skip = line;
         if (request.rewind ?? true) {
-            while (skip > 0 && ["cut", "turn", "plunge"].includes(moves[skip - 1]!.kind)) {
+            // A plunge is a cut of the head alone here, so it is stepped back over too.
+            while (skip > 0 && moves[skip - 1]!.kind === "cut") {
                 skip -= 1;
             }
             if (skip > 0 && moves[skip - 1]!.kind === "go") {
@@ -4827,15 +4816,6 @@ export class MockBackend implements Api, EventFeed {
 
     async resumeRecord(): Promise<ResumeRecord | null> {
         return this.resumeRecordOf();
-    }
-
-    async forgetResume(): Promise<void> {
-        if (this.session) {
-            throw new ApiError(409, "a job is running");
-        }
-        this.lastProgress = null;
-        this.lastPlan = null;
-        this.lastStart = null;
     }
 
     async runHold(): Promise<void> {
@@ -5197,7 +5177,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `max_points must be a whole number from ${MAX_POINTS.low} to ${MAX_POINTS.high}`);
         }
         const pads = job.pads ?? [];
-        const skipped = selectPads(pads, minArea, maxPoints).skipped;
+        const { points, skipped } = selectPads(pads, minArea, maxPoints);
         if (request.resume) {
             const map = this.heightmap;
             if (!map || !map.points || !map.point_heights) {
@@ -5212,7 +5192,6 @@ export class MockBackend implements Api, EventFeed {
         if (pads.length === 0) {
             throw new ApiError(400, `${job.name} has no pads: a gerber or a KiCad board carries them`);
         }
-        const { points } = selectPads(pads, minArea, maxPoints);
         if (points.length === 0) {
             throw new ApiError(400, `no pad of ${job.name} is ${formatG(minArea)} mm^2 or more`);
         }
@@ -5941,20 +5920,19 @@ export class MockBackend implements Api, EventFeed {
         if (!this.cameraMarkPoint) {
             throw new ApiError(400, "there is no mark: make one with the tool, or record the tool's point over one");
         }
-        const stepMm = step ?? DEFAULT_FIND_STEP;
-        if (!(Number.isFinite(stepMm) && stepMm >= 0 && stepMm <= 20)) {
+        if (!(Number.isFinite(step) && step >= 0 && step <= 20)) {
             throw new ApiError(400, "step must be 0 to 20 mm");
         }
         this.notOwned();
         if (this.machine.state !== "Idle" || this.outbox.length > 0) {
             throw new ApiError(409, `the machine is ${statusLine(this.machine)}, not Idle`);
         }
-        const scale = stepMm > 0 || !(this.cameraConfig.mm_per_px > 0);
+        const scale = step > 0 || !(this.cameraConfig.mm_per_px > 0);
         const focus = this.machine.hasFocusAxis();
         const total = (focus ? 1 : 0) + 1 + (scale ? 1 : 0) + CENTERING_MOVES;
         const progress: CameraRoutine = { state: "running", step: focus ? "lifting" : "moving", done: 0, total, error: null, spot: null };
         this.routine = progress;
-        this.finding = { mark: { ...this.cameraMarkPoint }, step: scale ? (stepMm > 0 ? stepMm : DEFAULT_FIND_STEP) : 0, phase: progress.step, centered: 0, elapsed: 0, progress };
+        this.finding = { mark: { ...this.cameraMarkPoint }, step: scale ? (step > 0 ? step : DEFAULT_FIND_STEP) : 0, phase: progress.step, centered: 0, elapsed: 0, progress };
         this.jogTracked = false;
         this.emitCamera();
         return this.cameraStateOf();
@@ -6943,7 +6921,7 @@ export class MockBackend implements Api, EventFeed {
      * it: the fiducials found there become its references when two or more
      * were found, and what the run and the panel show of them is kept.
      */
-    private keepFiducials(job: string, device: MockDevice): string {
+    private keepFiducials(job: string): string {
         const parts = mockComponents(this.requireJob(job));
         const fiducials = parts.filter((entry) => entry.fiducial);
         const fit = this.deviceFitOf(job, parts);
@@ -6960,7 +6938,6 @@ export class MockBackend implements Api, EventFeed {
             this.deviceConfig.references.push({ job, ref: entry.ref, at: entry.at, by: "fiducial" });
         }
         this.topFiducials = { job, found, fit: { ...fit, marks: found.length } };
-        void device;
         return `${found.length} fiducials found: the board is turned ${fit.rotation >= 0 ? "+" : ""}${fit.rotation.toFixed(3)} degrees on the device (mock)`;
     }
 
@@ -6986,7 +6963,7 @@ export class MockBackend implements Api, EventFeed {
                 this.topConfig = { ...this.topConfig, offset: [ox, oy], mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll, mirror: TOP_TRUTH.mirror };
                 this.message("info", `the top camera looks from X ${ox >= 0 ? "+" : ""}${ox.toFixed(3)} Y ${oy >= 0 ? "+" : ""}${oy.toFixed(3)} mm off the nozzle (mock)`);
             } else if (session.job !== null) {
-                this.message("info", this.keepFiducials(session.job, session.device));
+                this.message("info", this.keepFiducials(session.job));
             }
         }
         this.emitDevice();
@@ -7073,9 +7050,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async saveDeviceFile(id: string, text: string): Promise<DeviceFile> {
-        if (!DEVICE_ID.test(id)) {
-            throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
-        }
+        // The text is read first, which refuses an id that is not a device's.
         let device: MockDevice;
         try {
             device = parseDevice(text, id);
@@ -7286,7 +7261,7 @@ export class MockBackend implements Api, EventFeed {
             }
             // The mock board lies where the references put it: the fiducials
             // are found there, and the plan is made on them.
-            this.message("info", this.keepFiducials(job, device));
+            this.message("info", this.keepFiducials(job));
             ({ device, plan } = this.devicePlanOf(job, refs ?? null));
         }
         const lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[] = [];
