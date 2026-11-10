@@ -48,6 +48,10 @@ BRIDGE_NOTICE_SECONDS = 2.0
 READER_BEHIND = 0.25
 READER_STUCK_STALLS = 3
 MOVING_STATES = ("Run", "Jog", "Hold", "Home")
+# How long a routine's move may take to come to rest beyond its own time
+# before the routine gives up on it, s, and how often it asks meanwhile.
+MOVE_TIMEOUT = 30.0
+SETTLE_POLL = 0.05
 MAX_LINE = 96
 # Longest run of bytes without a line end the reader keeps; the firmware
 # never sends a line a tenth as long, so more is not the firmware.
@@ -866,6 +870,59 @@ class Link:
                 callback(event)
             except Exception:
                 pass
+
+
+def idle_status(link: Link, error: type[Exception], wrap: bool = False) -> Status:
+    """A status report asked for now, refused with `error` unless the
+    machine is Idle. With `wrap`, a report that does not come is refused
+    with `error` as well; without, the link's own error goes on."""
+    try:
+        status = link.status_now(1.0, routine=True)
+    except LinkError as exc:
+        if not wrap:
+            raise
+        raise error(f"no status from the machine: {exc}") from exc
+    if status.state != "Idle":
+        raise error(f"the machine is {status.raw or status.state}, not Idle")
+    return status
+
+
+def settle(
+    link: Link,
+    seconds: float,
+    restarts: int,
+    stopped: Callable[[], bool],
+    error: type[Exception],
+    during: str,
+    allowance: float = MOVE_TIMEOUT,
+    poll: float = SETTLE_POLL,
+) -> Status:
+    """Waits for the head to come to rest after a move and returns the
+    report that shows it: the motion queued should take `seconds`, and
+    `allowance` more is allowed. A hold extends the wait, as it does a
+    line's. Fails with `error` once `stopped` says so, on an alarm, and
+    when the time runs out.
+
+    A machine that started over since `restarts` is at rest too, with its
+    motion gone and its axes renumbered: that is an error, the machine
+    reset during `during`, not the end of the move."""
+    allowed = seconds + allowance
+    deadline = time.monotonic() + allowed
+    while True:
+        if stopped():
+            raise error("stopped")
+        status = link.status_now(1.0, routine=True)
+        if link.restarts != restarts:
+            raise error(f"the machine reset during {during}")
+        if status.state == "Idle":
+            return status
+        if status.state == "Alarm":
+            raise error(f"the machine raised an alarm: {status.raw}")
+        if status.state == "Hold":
+            deadline = time.monotonic() + allowed
+        if time.monotonic() > deadline:
+            raise error(f"the head did not come to rest: {status.raw}")
+        time.sleep(poll)
 
 
 def boot_is_fault(body: str) -> bool:

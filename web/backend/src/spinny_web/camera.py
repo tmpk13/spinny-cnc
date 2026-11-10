@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict
 from spinny_laser import machines as machine_files
 
 from .kinematics import FOCUS_DECIMALS, coord
-from .link import Link, LinkError
+from .link import Link, LinkError, idle_status, settle
 from .log import log
 from .vision import VisionClient, VisionError
 
@@ -43,9 +43,6 @@ CENTER_TRIES = 3
 # none is asked for.
 DEFAULT_STEP = 2.0
 MAX_STEP = 20.0
-# How long a move may take beyond its own time before the routine gives up, s.
-MOVE_TIMEOUT = 30.0
-SETTLE_POLL = 0.05
 # The settings pcbv captures with: a running camera given others starts again.
 CAPTURE_KEYS = ("device", "size", "fps", "pcbv")
 
@@ -370,9 +367,7 @@ class Camera:
         try:
             head_point = access.head_point
             assert head_point is not None, "the find routine reads the tool's board point"
-            status = link.status_now(1.0, routine=True)
-            if status.state != "Idle":
-                raise CameraError(f"the machine is {status.raw or status.state}, not Idle")
+            status = idle_status(link, CameraError)
             # Up to the travel height, so the move to the mark clears the board.
             self._step(progress, "lifting", 0)
             if access.has_focus_axis and status.h is not None and status.h < access.lift - 1e-6:
@@ -473,32 +468,13 @@ class Camera:
     def _settle(self, link: Link, restarts: int, seconds: float):
         """Waits for the machine to come to rest after a move, as probing
         does; a hold extends the wait."""
-        allowed = seconds + MOVE_TIMEOUT
-        deadline = time.monotonic() + allowed
-        while True:
-            if self._abort.is_set():
-                raise CameraError("stopped")
-            status = link.status_now(1.0, routine=True)
-            if link.restarts != restarts:
-                raise CameraError("the machine reset during the routine")
-            if status.state == "Idle":
-                return status
-            if status.state == "Alarm":
-                raise CameraError(f"the machine raised an alarm: {status.raw}")
-            if status.state == "Hold":
-                deadline = time.monotonic() + allowed
-            if time.monotonic() > deadline:
-                raise CameraError(f"the head did not come to rest: {status.raw}")
-            time.sleep(SETTLE_POLL)
+        return settle(link, seconds, restarts, self._abort.is_set, CameraError, "the routine")
 
     def _halt(self, link: Link) -> None:
         from .runner import halt
 
-        try:
-            if link.is_open:
-                halt(link, self._message)
-        except LinkError:
-            pass
+        if link.is_open:
+            halt(link, self._message)
 
 
 def pose_summary(raw: dict) -> dict:

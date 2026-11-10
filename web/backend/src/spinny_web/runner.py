@@ -26,6 +26,7 @@ from .link import (
     LinkClosed,
     LinkError,
     Pending,
+    idle_status,
 )
 
 PUBLISH_INTERVAL = 0.2
@@ -292,7 +293,7 @@ class Runner:
         # The status and the estimate run outside the lock: the reader thread
         # takes it for every snapshot, and the status answer arrives on that
         # thread.
-        status = self._idle_status(link)
+        status = idle_status(link, RunnerError, wrap=True)
         if not any(group.enabled and group.has_cuts for group in job.groups):
             raise RunnerError("the job has nothing enabled to cut")
         # A laser group's own focus counts from where the head stands as
@@ -313,7 +314,7 @@ class Runner:
                 link.request_ok(f"set A{num(status.a % 360.0, 4)}")
             except LinkError as exc:
                 raise RunnerError(f"could not renumber the table angle: {exc}") from exc
-            status = self._idle_status(link)
+            status = idle_status(link, RunnerError, wrap=True)
         # A job picked up part way is planned from where the run it picks
         # up began, not from where the head is now: only then are its lines
         # the ones that were counted.
@@ -328,20 +329,10 @@ class Runner:
         # good from where the machine was when it was made: a typed line in
         # the meantime may have moved the head, or declared it elsewhere.
         # Every axis counts: a cartesian plan is made in the table's frame.
-        after = self._idle_status(link)
+        after = idle_status(link, RunnerError, wrap=True)
         if (after.r, after.a, after.z, after.h) != (status.r, status.a, status.z, status.h):
             raise RunnerError("the machine moved while the run was being prepared")
         return start, stats, restarts, pieces
-
-    @staticmethod
-    def _idle_status(link: Link):
-        try:
-            status = link.status_now(1.0, routine=True)
-        except LinkError as exc:
-            raise RunnerError(f"no status from the machine: {exc}") from exc
-        if status.state != "Idle":
-            raise RunnerError(f"the machine is {status.raw or status.state}, not Idle")
-        return status
 
     def cancel_start(self, reason: str) -> bool:
         """Keeps the run being prepared from starting; False when no run is

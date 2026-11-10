@@ -38,7 +38,7 @@ from spinny_laser import machines as machine_files
 
 from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, picture_to_machine
 from .kinematics import FOCUS_DECIMALS, coord
-from .link import LinkError
+from .link import LinkError, idle_status, settle
 from .log import log
 from .openpnp import SHADES
 from .vision import VisionClient, VisionError
@@ -62,8 +62,6 @@ CENTER_TOLERANCE = 0.02
 CENTER_TRIES = 4
 DEFAULT_STEP = 1.0
 MAX_STEP = 10.0
-MOVE_TIMEOUT = 30.0
-SETTLE_POLL = 0.05
 # The most a measured or typed value may be, mm.
 POSITION_LIMIT = 2000.0
 HEIGHT_LIMIT = 100.0
@@ -533,9 +531,7 @@ class MachineMover(Mover):
 
     def begin(self) -> None:
         link = self.access.link
-        status = link.status_now(1.0, routine=True)
-        if status.state != "Idle":
-            raise PnpError(f"the machine is {status.raw or status.state}, not Idle")
+        status = idle_status(link, PnpError)
         self._restarts = link.restarts
         self._status = status
 
@@ -575,11 +571,8 @@ class MachineMover(Mover):
         from .runner import halt
 
         link = self.access.link
-        try:
-            if link.is_open:
-                halt(link, self._message)
-        except LinkError:
-            pass
+        if link.is_open:
+            halt(link, self._message)
 
     def _line(self, line: str) -> None:
         if self._stopped():
@@ -588,24 +581,7 @@ class MachineMover(Mover):
 
     def _settle(self, seconds: float):
         """Waits for the machine to come to rest after a move; a hold extends the wait."""
-        link = self.access.link
-        allowed = seconds + MOVE_TIMEOUT
-        deadline = time.monotonic() + allowed
-        while True:
-            if self._stopped():
-                raise PnpError("stopped")
-            status = link.status_now(1.0, routine=True)
-            if link.restarts != self._restarts:
-                raise PnpError("the machine reset during the routine")
-            if status.state == "Idle":
-                return status
-            if status.state == "Alarm":
-                raise PnpError(f"the machine raised an alarm: {status.raw}")
-            if status.state == "Hold":
-                deadline = time.monotonic() + allowed
-            if time.monotonic() > deadline:
-                raise PnpError(f"the head did not come to rest: {status.raw}")
-            time.sleep(SETTLE_POLL)
+        return settle(self.access.link, seconds, self._restarts, self._stopped, PnpError, "the routine")
 
 
 class UpCamera:

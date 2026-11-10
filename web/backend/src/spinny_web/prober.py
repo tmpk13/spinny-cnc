@@ -28,7 +28,7 @@ from spinny_laser import polar
 
 from .heightmap import Finite, Grid, HeightMap, HeightMapStore, estimate_points_seconds
 from .kinematics import FOCUS_DECIMALS, Streamer, coord, num, turned
-from .link import Link, LinkError, parse_probe
+from .link import Link, LinkError, idle_status, parse_probe, settle
 from .runner import halt
 
 RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
@@ -37,8 +37,9 @@ RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
 LINE_TIMEOUT = 10.0
 PROBE_MARGIN = 10.0
 JOIN_WAIT = 2.0
-# Between status requests while waiting for the head to come to rest, s.
-SETTLE_POLL = 0.02
+# Between status requests while waiting for the head to come to rest, s:
+# more often than a routine asks, since every point waits on it.
+REST_POLL = 0.02
 
 
 class ProberError(Exception):
@@ -356,12 +357,7 @@ class Prober:
         box: tuple[float, float, float, float] | None = None,
         travel: float | None = None,
     ) -> dict:
-        try:
-            status = link.status_now(1.0, routine=True)
-        except LinkError as exc:
-            raise ProberError(f"no status from the machine: {exc}") from exc
-        if status.state != "Idle":
-            raise ProberError(f"the machine is {status.raw or status.state}, not Idle")
+        status = idle_status(link, ProberError, wrap=True)
         if status.h is None:
             raise ProberError("the machine has no focus axis: set $h_axis=1 to probe")
         if status.probe:
@@ -639,30 +635,10 @@ class Prober:
 
     def _settle(self, link: Link, seconds: float, restarts: int) -> None:
         """Waits for the head to come to rest: the motion queued should take
-        `seconds`, and LINE_TIMEOUT more is allowed. A hold extends the
-        wait, as it does a line's.
-
-        A machine that started over since `restarts` is at rest too, with
-        its motion gone and its focus axis renumbered: that is an error,
-        not the end of the move, whether a probe or the finished map
-        would come next."""
-        allowed = seconds + LINE_TIMEOUT
-        deadline = time.monotonic() + allowed
-        while True:
-            if self._abort.is_set():
-                raise LinkError("stopped")
-            status = link.status_now(1.0, routine=True)
-            if link.restarts != restarts:
-                raise LinkError("the machine reset during probing")
-            if status.state == "Idle":
-                return
-            if status.state == "Alarm":
-                raise LinkError(f"the machine raised an alarm: {status.raw}")
-            if status.state == "Hold":
-                deadline = time.monotonic() + allowed
-            if time.monotonic() > deadline:
-                raise LinkError(f"the head did not come to rest: {status.raw}")
-            time.sleep(SETTLE_POLL)
+        `seconds`, and LINE_TIMEOUT more is allowed. A machine that started
+        over since `restarts` has its focus axis renumbered, which is an
+        error whether a probe or the finished map would come next."""
+        settle(link, seconds, restarts, self._abort.is_set, LinkError, "probing", LINE_TIMEOUT, REST_POLL)
 
     def _touch(self, link: Link, feed: float, distance: float, h_rate: float) -> float:
         """One probe down from rest; the height at contact. The focus axis
