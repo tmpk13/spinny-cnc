@@ -11,6 +11,7 @@ import polarLaser from "../../../../machines/polar-laser.toml" with { type: "tex
 
 import { errorText } from "../api.ts";
 import { defaultControls } from "../controls.ts";
+import { AXES, ENDSTOPS, SOCKETS, TUNING_KEYS, closeTo } from "../machinekeys.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 import type { AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
 
@@ -126,29 +127,29 @@ const HEADERS: Record<number, string> = {
 };
 const KINEMATICS: Kinematics[] = ["polar", "cartesian"];
 const TOOLS: Tool[] = ["laser", "spindle", "dispenser"];
-const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
-const SOCKETS = ["X", "Y", "Z", "E"];
-/** Where an axis's endstops are, in the order of the <axis>_stop values. */
-const ENDSTOPS = ["none", "min", "max", "both"];
-const FLOAT_MAX = 1e7;
-const PROBE_MS_MAX = 160;
-const INT_MAX = 4294967295;
+/** The microsteps a TMC2209 takes. */
+export const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+/** Largest value a float setting takes, as the firmware bounds them. */
+export const FLOAT_MAX = 1e7;
+/** Most motion a probe keeps queued, ms: the firmware's segment ring. */
+export const PROBE_MS_MAX = 160;
+/** Largest whole number setting: the firmware keeps them as unsigned 32 bit integers. */
+export const INT_MAX = 4294967295;
 /**
- * The drivers' register fields a file sets under [drivers], each under its
- * setting's name less the `tmc_`, with the field's bounds (TMC2209 datasheet
- * Rev 1.09: CHOPCONF TOFF, TBL, HSTRT, HEND; IHOLD_IRUN IHOLDDELAY;
- * TPOWERDOWN; TPWMTHRS, 20 bits), as spinny_laser.machines.TUNING_KEYS. TOFF
- * 0 would switch the driver off.
+ * The bounds of the drivers' register fields a file sets under [drivers],
+ * by key (TMC2209 datasheet Rev 1.09: CHOPCONF TOFF, TBL, HSTRT, HEND;
+ * IHOLD_IRUN IHOLDDELAY; TPOWERDOWN; TPWMTHRS, 20 bits). TOFF 0 would
+ * switch the driver off.
  */
-const TUNING_BOUNDS: [string, number, number][] = [
-    ["toff", 1, 15],
-    ["tbl", 0, 3],
-    ["hstrt", 0, 7],
-    ["hend", 0, 15],
-    ["hold_delay", 0, 15],
-    ["tpowerdown", 0, 255],
-    ["tpwmthrs", 0, 2 ** 20 - 1],
-];
+export const TUNING_BOUNDS: Record<(typeof TUNING_KEYS)[number], [number, number]> = {
+    toff: [1, 15],
+    tbl: [0, 3],
+    hstrt: [0, 7],
+    hend: [0, 15],
+    hold_delay: [0, 15],
+    tpowerdown: [0, 255],
+    tpwmthrs: [0, 2 ** 20 - 1],
+};
 /**
  * What a machine file may say about the host's own settings: the bounds,
  * and whether the low one is allowed. The dispensing values are what a dot
@@ -191,19 +192,16 @@ const CANCEL_KEY = "Escape";
 const MAX_STEPS = 8;
 const STEP_MAX = 1e4;
 const LETTER_MAX = 3;
-/** Section, the firmware's axis letter, the key its scale goes by, and its bit in dir_invert. */
-const AXES: [string, string, string, number][] = [
-    ["rail", "r", "steps_per_mm", 0],
-    ["table", "a", "steps_per_deg", 1],
-    ["slide", "z", "steps_per_mm", 2],
-    ["focus", "h", "steps_per_mm", 3],
-];
 
 function pinName(pin: number): string {
     return pin in HEADERS ? `${pin} (${HEADERS[pin]})` : String(pin);
 }
 
-const isTable = (value: TomlValue | undefined): value is TomlTable => typeof value === "object" && value !== null && !Array.isArray(value);
+/** A TOML value that is a table. */
+export function isTable(value: TomlValue | undefined): value is TomlTable {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 const isNumber = (value: TomlValue | undefined): value is number => typeof value === "number" && Number.isFinite(value);
 
 /** Typed reads out of the parsed tables, each refusal naming the file and the key as the backend does. */
@@ -530,13 +528,14 @@ export function parseMachine(text: string, id: string): MachineDocument {
     }
     settings["tmc_stealth"] = reader.flag(drivers, "stealth", true, "drivers") ? 1 : 0;
     settings["tmc_intpol"] = reader.flag(drivers, "interpolate", true, "drivers") ? 1 : 0;
-    for (const [key, low, high] of TUNING_BOUNDS) {
+    for (const key of TUNING_KEYS) {
         if (key in drivers) {
+            const [low, high] = TUNING_BOUNDS[key];
             settings[`tmc_${key}`] = reader.integer(drivers, key, "drivers", low, high);
         }
     }
     checkTuning(where, settings);
-    reader.done(drivers, "drivers", ["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth", "interpolate", ...TUNING_BOUNDS.map(([key]) => key)]);
+    reader.done(drivers, "drivers", ["enable_invert", "idle_ms", "step_us", "hold_pct", "stealth", "interpolate", ...TUNING_KEYS]);
 
     const hostTable = reader.table(top, "host");
     const hostNumbers: Record<string, number> = {};
@@ -657,7 +656,7 @@ export function summaryOf(document: MachineDocument): MachineSummary {
 export function matches(document: MachineDocument, settings: Record<string, number>): boolean {
     return Object.entries(document.settings).every(([name, expected]) => {
         const value = settings[name];
-        return value !== undefined && Math.abs(value - expected) <= Math.max(5e-4, Math.abs(expected) * 1e-6);
+        return value !== undefined && closeTo(value, expected);
     });
 }
 

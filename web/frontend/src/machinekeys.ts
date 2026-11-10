@@ -20,12 +20,14 @@ export interface MachineKey {
 
 export type KeyValue = number | boolean | string | null;
 
-const ENDSTOPS = ["none", "min", "max", "both"];
-const SOCKETS = ["X", "Y", "Z", "E"];
+/** Where an axis's endstops are, in the order of the <axis>_stop values. */
+export const ENDSTOPS: readonly string[] = ["none", "min", "max", "both"];
+/** The driver sockets, in the order `sockets` numbers them from 1. */
+export const SOCKETS: readonly string[] = ["X", "Y", "Z", "E"];
 /** The `[drivers]` keys of the drivers' register fields, each its setting's name less the `tmc_`, as spinny_laser.machines.TUNING_KEYS. */
-const TUNING_KEYS = ["toff", "tbl", "hstrt", "hend", "hold_delay", "tpowerdown", "tpwmthrs"];
-/** Section, axis letter, the firmware's scale key and the axis's bit, as spinny_laser.machines.AXES. */
-const AXES: [string, string, string, number][] = [
+export const TUNING_KEYS = ["toff", "tbl", "hstrt", "hend", "hold_delay", "tpowerdown", "tpwmthrs"] as const;
+/** Section, axis letter, the firmware's scale key and the axis's bit (in dir_invert and the other masks), as spinny_laser.machines.AXES. */
+export const AXES: readonly [string, string, string, number][] = [
     ["rail", "r", "steps_per_mm", 0],
     ["table", "a", "steps_per_deg", 1],
     ["slide", "z", "steps_per_mm", 2],

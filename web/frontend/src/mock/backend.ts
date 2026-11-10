@@ -45,7 +45,22 @@ import {
     type PlannedMove,
 } from "./jobs.ts";
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
-import { CAMERA_DEFAULTS, DEFAULT_SETTINGS, MACHINE_ID_PATTERN, MOCK_MACHINE_TEXTS, RESERVED_PINS, PIN_MAX, matches, parseMachine, summaryOf as machineSummaryOf } from "./machines.ts";
+import {
+    CAMERA_DEFAULTS,
+    DEFAULT_SETTINGS,
+    FLOAT_MAX,
+    INT_MAX,
+    MACHINE_ID_PATTERN,
+    MICROSTEPS,
+    MOCK_MACHINE_TEXTS,
+    PIN_MAX,
+    PROBE_MS_MAX,
+    RESERVED_PINS,
+    TUNING_BOUNDS,
+    matches,
+    parseMachine,
+    summaryOf as machineSummaryOf,
+} from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbKey, thumbnail } from "./thumbs.ts";
 import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, labelStem, MAX_OPERATIONS, moveJob, movedAs, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
@@ -320,8 +335,6 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tmc_tpwmthrs", unit: "TSTEP", help: "TPWMTHRS 0 to 1048575: stealthChop while TSTEP is at least this, spreadCycle faster; TSTEP is the 12 MHz clocks between 1/256 microsteps, 46875 / full steps per second; 0 = stealthChop at every speed" },
 ];
 
-/** Largest value a float setting takes, as the firmware bounds them. */
-const FLOAT_MAX = 1e7;
 /** Settings the firmware holds as 0 or 1. */
 const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser", "tmc_intpol"]);
 /** Settings the firmware holds as unsigned 32-bit integers: decimal text is refused. */
@@ -365,12 +378,6 @@ const INT_SETTINGS = new Set([
 ]);
 /** The pin settings: a GPIO the driver sockets and the driver UART leave free. */
 const PIN_SETTINGS = ["laser_pin", "probe_pin", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin"];
-const U32_MAX = 4294967295;
-/** Most motion a probe keeps queued, ms: the firmware's segment ring. */
-const PROBE_MS_MAX = 160;
-/** Largest `tmc_tpwmthrs`: TPWMTHRS is a 20 bit field. */
-const TPWMTHRS_MAX = 1048575;
-const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 /** The wiring, which `$defaults` leaves as it is: an active-low laser taken back to active high would light. */
 const WIRING_SETTINGS = [
     "laser_invert", "en_invert", "probe_invert", "dir_invert", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert",
@@ -388,7 +395,7 @@ function reframes(text: string): boolean {
     return FRAME_SETTINGS.has((body.split("=")[0] ?? "").trim());
 }
 /** Largest whole number and other value the backend sends as a setting. */
-const INT_SETTING_MAX = U32_MAX;
+const INT_SETTING_MAX = INT_MAX;
 const SETTING_MAX = 1e7;
 /** Largest chord tolerance the backend takes, mm. */
 const MAX_TOLERANCE = 10;
@@ -410,7 +417,7 @@ export function settingsValid(settings: Record<string, number>): boolean {
         if (FLAG_SETTINGS.has(name) && v !== 0 && v !== 1) {
             return false;
         }
-        if (INT_SETTINGS.has(name) && !(Number.isInteger(v) && v >= 0 && v <= U32_MAX)) {
+        if (INT_SETTINGS.has(name) && !(Number.isInteger(v) && v >= 0 && v <= INT_MAX)) {
             return false;
         }
         if (/_(steps|rate|accel|jerk|home_pull|home_travel)$/.test(name) || name.startsWith("jog_")) {
@@ -445,13 +452,7 @@ export function settingsValid(settings: Record<string, number>): boolean {
         // The drivers' tuning, each register field within its width and
         // TOFF above 0, which would switch a driver off; the rules joining
         // two of them are the machine file's.
-        within("tmc_toff", 1, 15) &&
-        within("tmc_tbl", 0, 3) &&
-        within("tmc_hstrt", 0, 7) &&
-        within("tmc_hend", 0, 15) &&
-        within("tmc_hold_delay", 0, 15) &&
-        within("tmc_tpowerdown", 0, 255) &&
-        within("tmc_tpwmthrs", 0, TPWMTHRS_MAX) &&
+        Object.entries(TUNING_BOUNDS).every(([key, [low, high]]) => within(`tmc_${key}`, low, high)) &&
         value("s_max") > 0 &&
         value("s_max") <= FLOAT_MAX &&
         within("s_min", 0, value("s_max")) &&

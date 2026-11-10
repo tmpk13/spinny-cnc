@@ -34,6 +34,7 @@ import type {
     Tool,
 } from "../types.ts";
 import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, formatG, isBottom, layerOf, modelStats, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { isTable } from "./machines.ts";
 import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
@@ -210,10 +211,6 @@ class Reader {
             throw this.fail(section, unknown[0]!, `is not a key here; the keys are ${[...known].sort().join(", ")}`);
         }
     }
-}
-
-function isTable(value: TomlValue | undefined): value is TomlTable {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** A mill's full width: a V bit's shank, else its cut. */
