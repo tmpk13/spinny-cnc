@@ -111,7 +111,7 @@ export interface AppState {
     probeDraft: Grid | null;
     /** The camera on the head: its settings, picture, pose and find routine; null until read. */
     camera: CameraState | null;
-    /** The cameras attached, which either camera's device is picked from, and when they were listed (ms, the page's clock); null until listed. */
+    /** The cameras attached, which every camera's device is picked from, and when they were listed (ms, the page's clock); null until listed. */
     cameras: (CamerasResponse & { at: number }) | null;
     /** The alignment marks and their fit; null until read. */
     align: AlignState | null;

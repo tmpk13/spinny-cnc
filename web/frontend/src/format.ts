@@ -1,4 +1,5 @@
-// Number formatting for the DRO and the job panel.
+// Numbers as the readouts and panels write them, counts with their nouns,
+// and a number field's text read back as a number.
 
 import { evaluate } from "./calc.ts";
 

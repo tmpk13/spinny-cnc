@@ -1,42 +1,63 @@
 // Typed wrappers over the backend routes.
 
+import { thumbKey } from "./mock/thumbs.ts";
 import type {
     AlignFit,
-    CamLogEntry,
-    CamLogState,
-    LoggedCamera,
     AlignMarkRequest,
     AlignState,
-    CamerasResponse,
+    AutoConversation,
+    AutoSettings,
+    AutoSettingsUpdate,
+    CalibrateRequest,
+    CalibrateResponse,
+    CameraPose,
     CameraSettings,
+    CamerasResponse,
     CameraState,
     CamGcodeResponse,
     CamJobResponse,
+    CamLogEntry,
+    CamLogState,
     CamPath,
     CamProfileResponse,
     CamProfilesResponse,
     CamValue,
-    CalibrateRequest,
-    CalibrateResponse,
     CenterRequest,
     CenterResponse,
     CommandResponse,
     Compensate,
+    ComponentsResponse,
+    DeviceCheck,
+    DeviceFile,
+    DevicePlan,
+    DevicesResponse,
+    DeviceState,
     GotoRequest,
     HeightMap,
     HeightMapState,
     Job,
     JobPatch,
-    JobSummary,
     JobsResponse,
+    JobSummary,
     JogRequest,
     LogFile,
+    LoggedCamera,
     LogResponse,
+    MachineCheck,
+    MachineFromBoard,
+    MachineResponse,
     MachinesResponse,
+    Marker,
+    MarkersResponse,
     MarkRequest,
+    MillJobRequest,
+    MillResponse,
     Mode,
     PadProbePlan,
     PadProbeRequest,
+    PnpGotoRequest,
+    PnpSettings,
+    PnpState,
     Port,
     PortsResponse,
     PositionRequest,
@@ -48,11 +69,12 @@ import type {
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
-    TouchPlan,
-    TouchRequest,
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
+    TopSettings,
+    TouchPlan,
+    TouchRequest,
     UploadOptions,
 } from "./types.ts";
 
@@ -65,26 +87,6 @@ export class ApiError extends Error {
         this.status = status;
     }
 }
-
-import { thumbKey } from "./mock/thumbs.ts";
-import type { Marker, MarkersResponse, MillJobRequest, MillResponse } from "./types.ts";
-import type { AutoConversation, AutoSettings, AutoSettingsUpdate } from "./types.ts";
-import type {
-    CameraPose,
-    ComponentsResponse,
-    DeviceCheck,
-    DeviceFile,
-    DevicePlan,
-    DeviceState,
-    DevicesResponse,
-    MachineCheck,
-    MachineFromBoard,
-    MachineResponse,
-    PnpGotoRequest,
-    PnpSettings,
-    PnpState,
-    TopSettings,
-} from "./types.ts";
 
 export interface Api {
     /** Plot page operations as a job, not stored, to be seen before it is made; with `job`, placed where that job is. */
@@ -209,7 +211,7 @@ export interface Api {
     /** The points probing the pads would visit, how many pads were under the area and about how long, without moving anything. */
     planPads(request: PadProbeRequest): Promise<PadProbePlan>;
 
-    /** The cameras attached, for the camera's or the up camera's device to be picked from. */
+    /** The cameras attached, for the head camera's, the up camera's or the G-code device's top camera's device to be picked from. */
     cameras(): Promise<CamerasResponse>;
     /** The camera state: its settings, whether it runs, the board it looks for, the mark, the newest pose and the find routine. */
     camera(): Promise<CameraState>;
