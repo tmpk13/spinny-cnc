@@ -50,7 +50,7 @@ DEFAULT_TOLERANCE = 0.005
 # Largest value a power, a speed or a coordinate may take: far past any
 # machine, and short enough to keep every protocol line under its limit.
 MAX_VALUE = 1.0e6
-# The tools a group may be made for, and a machine cut with.
+# The tools a group may be made for, and that a machine cuts with.
 LASER, SPINDLE, DISPENSER = "laser", "spindle", "dispenser"
 
 
@@ -332,8 +332,8 @@ PREVIEW_BUDGET = 100_000
 
 def joint_previews(groups: list[list[list[Joint]]], budget: int = PREVIEW_BUDGET) -> list[list[list[Point]]]:
     """Board points along every polyline of every group, close enough to
-    draw it (`polar.sample_joints`), with one budget for all of them: once
-    it is spent, a polyline is drawn through its own points only."""
+    draw them (`polar.sample_joints`), with one budget for all of them:
+    once it is spent, a polyline is drawn through its own points only."""
     out = []
     remaining = budget
     for polys in groups:
