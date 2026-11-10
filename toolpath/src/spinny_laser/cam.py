@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import board
+from .machines import is_id
 
 LINEAR, ROTARY = "linear", "rotary"
 KINDS = (LINEAR, ROTARY)
@@ -74,9 +75,6 @@ DEFAULT_MARGIN = 2.0
 DEFAULT_DECIMALS = 3
 DEFAULT_HEADER = ("G21", "G90", "G94", "G17")
 DEFAULT_FOOTER = ("M5", "M2")
-# A profile's id is its file's stem, and it becomes a file name again when
-# the page saves it.
-ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # The cutting settings a tool of each kind gives the operations that use
 # it, and the bounds each is checked against: (low, high, low allowed).
@@ -449,7 +447,9 @@ class Profile:
 
 
 def check_id(profile_id: str) -> str:
-    if not ID_PATTERN.match(profile_id):
+    """A profile's id is its file's stem, and becomes a file name again
+    when the page saves it."""
+    if not is_id(profile_id):
         raise CamError(
             f"{profile_id!r} is not a profile id: lower case letters, digits, - and _, starting with a letter or digit, at most 64"
         )
@@ -491,7 +491,7 @@ def parse(text: str, profile_id: str, where: str = "profile") -> Profile:
     name = reader.text(data, None, "name", profile_id)
     description = reader.text(data, None, "description", "")
     machine = reader.text(data, None, "machine", "") or None
-    if machine is not None and not ID_PATTERN.match(machine):
+    if machine is not None and not is_id(machine):
         raise reader.fail(None, "machine", "must be the stem of a file in machines/")
     axes = tuple(reader.axis(table, index) for index, table in enumerate(reader.tables(data, "axes")))
     materials = tuple(reader.material(table, index) for index, table in enumerate(reader.tables(data, "materials")))
@@ -685,7 +685,7 @@ class _Reader:
         feed to it."""
         section = f"[[tools]] {index + 1}"
         tool_id = self.text(table, section, "id", "")
-        if not ID_PATTERN.match(tool_id):
+        if not is_id(tool_id):
             raise self.fail(section, "id", "is needed: lower case letters, digits, - and _")
         section = f"[[tools]] {tool_id}"
         kind = self.text(table, section, "kind", "")
@@ -762,7 +762,7 @@ class _Reader:
     def material(self, table: dict, index: int) -> Material:
         section = f"[[materials]] {index + 1}"
         material_id = self.text(table, section, "id", "")
-        if not ID_PATTERN.match(material_id):
+        if not is_id(material_id):
             raise self.fail(section, "id", "is needed: lower case letters, digits, - and _")
         section = f"[[materials]] {material_id}"
         name = self.text(table, section, "name", material_id)

@@ -168,6 +168,12 @@ power = 450
         parse(MINIMAL.replace("step_down = 0.5", "step_down = 0.001"), "p")
     with pytest.raises(CamError, match="not a profile id"):
         cam.check_id("Not This")
+    # The whole of it is the id: a line break after one is not a file name.
+    assert cam.check_id("mill-3axis") == "mill-3axis"
+    with pytest.raises(CamError, match="not a profile id"):
+        cam.check_id("mill-3axis\n")
+    with pytest.raises(CamError, match="machine must be the stem"):
+        parse('machine = "cartesian-mill\\n"\n' + MINIMAL, "p")
 
 
 def test_set_value_changes_one_value_and_keeps_the_rest():

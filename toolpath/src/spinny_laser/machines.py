@@ -97,7 +97,10 @@ HEADERS = {
     17: "FAN1", 18: "FAN2", 20: "FAN3", 21: "BED", 23: "HE", 29: "SERVO", 24: "RGB",
     4: "X-STOP", 3: "Y-STOP", 25: "Z-STOP", 16: "E-STOP", 22: "PROBE", 26: "THB", 27: "TH0",
 }
-ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# An id of a machine or a CAM profile, which is its file's name less
+# .toml, and of a profile's tools and materials: lower case letters,
+# digits, - and _, starting with a letter or digit, at most 64.
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 MICROSTEPS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 # The largest float the firmware holds, and the longest probe brake.
 FLOAT_MAX = 1.0e7
@@ -156,9 +159,15 @@ class MachineError(ValueError):
     """A machine file that cannot be taken: the message names the file and the key."""
 
 
+def is_id(text: str) -> bool:
+    """Whether the text is an id from its first character to its last, so
+    one with a line break after it is not."""
+    return ID_PATTERN.fullmatch(text) is not None
+
+
 def check_id(machine_id: str) -> str:
     """A machine id is a file name: lower case letters, digits, - and _."""
-    if not ID_PATTERN.fullmatch(machine_id):
+    if not is_id(machine_id):
         raise MachineError(f"{machine_id!r} is not a machine id: lower case letters, digits, - and _")
     return machine_id
 

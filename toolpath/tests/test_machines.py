@@ -559,7 +559,7 @@ def test_a_tool_output_pin_matters_only_when_it_is_fitted():
     moved = parse('[output]\npin = 17\n[enable]\nfitted = true\npin = 23\ninvert = true\n', "rig")
     assert (moved.settings["tool_out"], moved.settings["tool_pin"], moved.settings["tool_invert"]) == (1, 23, 1)
     assert machines.check_id("my-mill_2") == "my-mill_2"
-    for bad in ("My Mill", "", "a/b", "-x", "x" * 65):
+    for bad in ("My Mill", "", "a/b", "-x", "x" * 65, "my-mill\n"):
         with pytest.raises(MachineError):
             machines.check_id(bad)
 
