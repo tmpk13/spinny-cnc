@@ -6,6 +6,10 @@ frontend only talks to the backend; it never sees the serial port.
 
 Base URL: `http://<host>:8000`. Bodies and responses are JSON unless noted.
 
+Every refusal is `{"detail": "<text>"}`; a body or field that does not
+parse is 422 with `detail` as a list; a link fault (port gone, no answer)
+is 502.
+
 ## Connection
 
 | Method and path | Body | Returns |
@@ -77,6 +81,11 @@ active) are `null` on a machine without a focus axis (`$h_axis=0`).
 | `POST /api/goto` | `{"kind": "joint", "r": 0, "a": 0, "h": 0}` or `{"kind": "board", "x": 3, "y": 4, "feed": 500}` absolute; with a travel height set, a goto that moves across (a board one, or a joint one with `r`, `a` or, on a cartesian machine, `z`, and no `h`) is sent behind a `jogto H` to it when the head is lower or still moving, and `lines` names it (the polar machine's cross slide moves only at rest, on its own, and is not risen for); an axis left out keeps the coordinate the head will have once the jog in progress ends, and is refused with 400 while that end is not known; `{"kind": "joint", "z": 0}` sends the cross slide there, again not with `r`, `a` or `h` on the polar machine. On a cartesian machine a board jog or goto is planned in the table's frame from a fresh status, and answers 409 while the table may still be turning under a move in progress |
 | `POST /api/jog/cancel` | |
 | `POST /api/position` | `{"r": 0}`, `{"a": 0}`, `{"h": 0}` and/or `{"z": 0}`: declare the current position |
+| `POST /api/motors` | `{"enabled": false}`; turning them off answers 409 while a run or probing owns the machine: the drivers share one enable line, so `disable` (and `$idle_ms`) lets go of the focus axis too, and a head that is not self-locking sinks unseen |
+| `POST /api/unlock` | |
+| `POST /api/home` | `{"axes": "R A-"}`: the joints to home as letters R, A, H, Z, each with an optional `-` or `+` for the end to seek; `{"axes": ""}` or `{}` homes every axis with an endstop. Answers when the home ends, with the state; 409 while a run or probing owns the machine, 400 for an axis without a switch, a home the firmware refuses or one that failed (then the machine is in `Alarm`). Takes the height map's focus offset back, as a position declaration does. The machine's `homed` is the letters of the joints homed since the position was last lost, or null on a machine with no endstop |
+| `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out; while a run is still being prepared, `hold` and `reset` cancel its start (and still go out) |
+| `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a bare `status` returns its report in `lines` (asked for with the `?` byte); a typed `laser off` or `spindle off` during a run stops the run (hold, then reset) and returns `{"lines": []}`, and while a run is still being prepared cancels its start and goes out as typed; `set`, `disable`, `$<name>=<value>`, `$load`, `$defaults` and `spindle S` answer 409 while a run or probing owns the machine (`spindle S` only while probing); an accepted `set`, or a `$` line that may rescale or turn the axes, takes the height map's focus offset back |
 
 A jog, a goto or a position declaration answers 409 while a run owns the
 machine, from the moment the run is being planned, and while the board is
@@ -84,11 +93,6 @@ being probed. A board move whose
 lines would pass the firmware's `r_max` is refused whole with 400 before
 any of them goes out; a move within the limit chains from the end of the
 jog in progress. Move requests are served one at a time.
-| `POST /api/motors` | `{"enabled": false}`; turning them off answers 409 while a run or probing owns the machine: the drivers share one enable line, so `disable` (and `$idle_ms`) lets go of the focus axis too, and a head that is not self-locking sinks unseen |
-| `POST /api/unlock` | |
-| `POST /api/home` | `{"axes": "R A-"}`: the joints to home as letters R, A, H, Z, each with an optional `-` or `+` for the end to seek; `{"axes": ""}` or `{}` homes every axis with an endstop. Answers when the home ends, with the state; 409 while a run or probing owns the machine, 400 for an axis without a switch, a home the firmware refuses or one that failed (then the machine is in `Alarm`). Takes the height map's focus offset back, as a position declaration does. The machine's `homed` is the letters of the joints homed since the position was last lost, or null on a machine with no endstop |
-| `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out; while a run is still being prepared, `hold` and `reset` cancel its start (and still go out) |
-| `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a bare `status` returns its report in `lines` (asked for with the `?` byte); a typed `laser off` or `spindle off` during a run stops the run (hold, then reset) and returns `{"lines": []}`, and while a run is still being prepared cancels its start and goes out as typed; `set`, `disable`, `$<name>=<value>`, `$load`, `$defaults` and `spindle S` answer 409 while a run or probing owns the machine (`spindle S` only while probing); an accepted `set`, or a `$` line that may rescale or turn the axes, takes the height map's focus offset back |
 
 Board jogs and gotos are turned into joint moves on the host with the chord
 tolerance (`[host] tolerance`), so a board move through the axis becomes
@@ -120,6 +124,7 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 | --- | --- |
 | `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "travel": null, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}, "machine": "polar-laser", "unsaved": [], "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `unsaved` names the settings written (from the page, a machine file or the console) since the controller's were last saved to flash or loaded from it, `$defaults` for that command, as far as this backend has seen: a connect and a restart of the board start it empty; `controls` is what the page draws for jogging and the readout ([MACHINES.md](MACHINES.md), `[controls]`): that file's, or, for values that are no file's, those of the file last loaded from this host when it is this kind of machine (kinematics, tool, focus axis), else of the one file that is, else the defaults for what the values say the machine is; `controls_from` is the file the controls are, `null` for the defaults |
 | `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm, a travel height that is neither `null` nor within `[-100, 100]` mm, a spin-up outside `[0, 600]` s, a gap outside `(0, 10]` mm, a retract outside `[0, 50]` mm, an output outside `(0, 100000]` mm^3/mm, an extrude rate outside `(0, 10000]` mm/min or a dwell outside `[0, 60000]` ms answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
+| `POST /api/settings/save` | writes the firmware settings to flash |
 
 `clearance` and `spinup` are for milling: the tool travels `clearance` mm
 over the surface (H 0 without a height map, the map's highest point with
@@ -133,7 +138,6 @@ travel height between dots is `clearance`. `travel` is the H the head
 rises to before a goto across the board, probing (and *Probe nearest*)
 and the camera routines move it, when it is lower; `null` (the default)
 leaves the head at the height it has. Only the keys given change.
-| `POST /api/settings/save` | writes the firmware settings to flash |
 
 ## Machines
 
@@ -197,73 +201,6 @@ A job carries `recipe` (null, or `{"file", "options"}` for a board upload,
 `{"mill": operation}` for a Plot page job), and its summary `remake`,
 whether `POST /api/jobs/{id}/width` makes it again, and `holes`, the count
 of its drill holes.
-
-## Plot page
-
-Simple operations made into a job, cut on a spindle: every group is made
-for `spindle`, goes down in passes of `step_down` to `depth` under the
-surface, and a path of one point is a drill. A job holds one operation or
-several, cut in order, each its own groups.
-
-| Method and path | Body |
-| --- | --- |
-| `POST /api/mill/plan` | `{"ops": [operation, ...], "name": null, "job": null, "like": null}` (1 to 100 operations, below), or one operation alone; answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while an operation is typed; the notes are numbered `1: ...` by operation when there are several; with `job` the plan is placed where that job is (below); 400 with the reason for one that cannot be cut |
-| `POST /api/mill` | the same, the job stored with `source` `mill` and the operations as its `recipe` (`{"ops": [...]}`, each holes operation with its `holes` filled in); with `job` naming a Plot page job, the operations replace that job's in place: same id, turned and moved as the job has been since it was made (its `rotation` and `offset` kept), the groups made again from the operations, each keeping the settings its operation's numbers do not change as the job's group had them (`enabled`, `focus`, `min_power`, a feed changed on the Jobs page), matched to the operation it was made from (an unchanged one wherever it moved, a changed one in its place) and then by label but for its numbers; 400 for a job not made on this page, 404 for none, 409 while it runs. Without `job`, `like` naming a job makes the new one turned and moved as that job has been since it was made (its `rotation` and `offset` taken), the operations typed in its frame from before the move, as the page does with a Plot page job selected; 404 for none |
-
-Every operation of a job cuts with the same `cutter` and the same `tool`
-(nothing changes the bit or the spot halfway through a run): 400 names the
-first that does not. Without `name`, a job of one operation is named after
-it and one of several `<the first's name> and N more`. A job made before
-jobs held several operations keeps its one as `recipe.mill`, and is still
-made again for another width.
-
-The operation: `{"kind": "drill" \| "holes" \| "line" \| "face" \| "pocket"
-\| "profile", "name": null, "tool": 1, "depth": 0.5, "step_down": 0.5,
-"stepover": 0.4, "speed": 300, "plunge": 60, "spindle": 10000, "climb":
-true}` plus what the kind takes, every field optional but `kind`:
-
-| `kind` | Fields | Groups |
-| --- | --- | --- |
-| `drill` | `points` `[[x, y], ...]` | one: a one-point path a point, in the order given |
-| `holes` | `job` (a stored job's id), `sizes` (diameters to take, all when null; a hole and a size are told apart to 0.01 mm, a half rounded up, so 3.175 is 3.18), `bore` (default true) | one a hole size, smallest first, each a short tour on from the last: drilled, or bored out in rings with the bit when wider than the bit by over 0.05 mm and `bore` is on; 404 for no such job |
-| `line` | `points`, `closed` | one path through the points, back to the first when closed |
-| `face` | `x0`, `y0`, `x1`, `y1` | rows along X back and forth at most `stepover` bits apart; the bit's center runs over the whole rectangle |
-| `pocket` | `shape` `rect` with the corners and `corner` (the radius its corners are rounded to, default 0, at most half the shorter side), or `circle` with `cx`, `cy`, `diameter` | one path out from the middle, loops or rings at most `stepover` bits apart, the last on the walls; a rectangle's stepover is at most 0.85, past which its loops leave the corners between them; rounded loops share the wall's corner centers, so rounding only brings them closer |
-| `profile` | the shape (a rectangle with `corner` as for a pocket), and `side` `outside` (square corners rounded by the bit so the part keeps them sharp; rounded ones the bit's radius farther out), `inside` (a corner tighter than the bit gets the bit's radius) or `on` | one closed path; no tabs |
-
-`climb` runs counterclockwise inside a pocket or a hole and clockwise
-around a part, with the spindle turning clockwise; false is conventional.
-A holes operation may carry `holes` (`[[x, y, diameter], ...]`) in place
-of looking them up in `job`; a made job keeps them there, so it is made
-again without the job they came from. Holes looked up in `job` are where
-that job is now; with `job` or `like` in the body naming a moved job they
-are taken into its frame from before the move, as the operations are
-typed, so they land on the board job's holes.
-
-`"cutter": "laser"` (default `spindle`) burns the same paths with a beam
-`tool` mm across: `power` (S, default 500) and `passes` (1 to 100, each
-the whole path again, default 1) take the place of `depth`, `step_down`,
-`plunge` and `spindle`, which are ignored, and the groups are `laser`
-groups at that power. A beam drills nothing standing still, so a `drill`
-point is marked with a ring the spot across (`mark N points`), a hole no
-wider than the spot likewise (`mark ... holes`), and a wider hole is cut
-along its inside edge (`cut ... holes`) or with `bore` cleared in rings
-(`clear ... holes`). A pocket or an inside profile of a circle the spot
-fills, which a bit would drill, is refused (400): mark its middle with a
-drill point, or give a wider circle.
-
-## Markers
-
-Named positions on the board, kept in the backend's config for every page.
-
-| Method and path | Body |
-| --- | --- |
-| `GET /api/markers` | `{"markers": [{"name": "corner", "x": 1.5, "y": -2}]}` |
-| `PUT /api/markers` | the whole list, in place of the one kept: names 1 to 40 characters once each (trimmed), at most 200, coordinates within 1e6 mm; answers the list as kept, 400 with the reason |
-
-Every refusal is `{"detail": "<text>"}`; a body or field that does not
-parse is 422 with `detail` as a list; a link fault (port gone, no answer)
-is 502.
 
 Accepted uploads: `.svg` (paths, lines, polylines, polygons, rects,
 circles; curves flattened; mm from the viewBox; one group per stroke
@@ -483,6 +420,69 @@ every line was answered and the machine came to rest; a machine still busy
 an hour after the last answer, holds not counted, ends the run as `error`
 with a stop. `acked` counts lines the firmware answered; lines a stop
 flushed are not answered.
+
+## Plot page
+
+Simple operations made into a job, cut on a spindle: every group is made
+for `spindle`, goes down in passes of `step_down` to `depth` under the
+surface, and a path of one point is a drill. A job holds one operation or
+several, cut in order, each its own groups.
+
+| Method and path | Body |
+| --- | --- |
+| `POST /api/mill/plan` | `{"ops": [operation, ...], "name": null, "job": null, "like": null}` (1 to 100 operations, below), or one operation alone; answers `{"job": job, "notes": [...]}`, the job not stored (`id` empty), for the page to draw while an operation is typed; the notes are numbered `1: ...` by operation when there are several; with `job` the plan is placed where that job is (below); 400 with the reason for one that cannot be cut |
+| `POST /api/mill` | the same, the job stored with `source` `mill` and the operations as its `recipe` (`{"ops": [...]}`, each holes operation with its `holes` filled in); with `job` naming a Plot page job, the operations replace that job's in place: same id, turned and moved as the job has been since it was made (its `rotation` and `offset` kept), the groups made again from the operations, each keeping the settings its operation's numbers do not change as the job's group had them (`enabled`, `focus`, `min_power`, a feed changed on the Jobs page), matched to the operation it was made from (an unchanged one wherever it moved, a changed one in its place) and then by label but for its numbers; 400 for a job not made on this page, 404 for none, 409 while it runs. Without `job`, `like` naming a job makes the new one turned and moved as that job has been since it was made (its `rotation` and `offset` taken), the operations typed in its frame from before the move, as the page does with a Plot page job selected; 404 for none |
+
+Every operation of a job cuts with the same `cutter` and the same `tool`
+(nothing changes the bit or the spot halfway through a run): 400 names the
+first that does not. Without `name`, a job of one operation is named after
+it and one of several `<the first's name> and N more`. A job made before
+jobs held several operations keeps its one as `recipe.mill`, and is still
+made again for another width.
+
+The operation: `{"kind": "drill" \| "holes" \| "line" \| "face" \| "pocket"
+\| "profile", "name": null, "tool": 1, "depth": 0.5, "step_down": 0.5,
+"stepover": 0.4, "speed": 300, "plunge": 60, "spindle": 10000, "climb":
+true}` plus what the kind takes, every field optional but `kind`:
+
+| `kind` | Fields | Groups |
+| --- | --- | --- |
+| `drill` | `points` `[[x, y], ...]` | one: a one-point path a point, in the order given |
+| `holes` | `job` (a stored job's id), `sizes` (diameters to take, all when null; a hole and a size are told apart to 0.01 mm, a half rounded up, so 3.175 is 3.18), `bore` (default true) | one a hole size, smallest first, each a short tour on from the last: drilled, or bored out in rings with the bit when wider than the bit by over 0.05 mm and `bore` is on; 404 for no such job |
+| `line` | `points`, `closed` | one path through the points, back to the first when closed |
+| `face` | `x0`, `y0`, `x1`, `y1` | rows along X back and forth at most `stepover` bits apart; the bit's center runs over the whole rectangle |
+| `pocket` | `shape` `rect` with the corners and `corner` (the radius its corners are rounded to, default 0, at most half the shorter side), or `circle` with `cx`, `cy`, `diameter` | one path out from the middle, loops or rings at most `stepover` bits apart, the last on the walls; a rectangle's stepover is at most 0.85, past which its loops leave the corners between them; rounded loops share the wall's corner centers, so rounding only brings them closer |
+| `profile` | the shape (a rectangle with `corner` as for a pocket), and `side` `outside` (square corners rounded by the bit so the part keeps them sharp; rounded ones the bit's radius farther out), `inside` (a corner tighter than the bit gets the bit's radius) or `on` | one closed path; no tabs |
+
+`climb` runs counterclockwise inside a pocket or a hole and clockwise
+around a part, with the spindle turning clockwise; false is conventional.
+A holes operation may carry `holes` (`[[x, y, diameter], ...]`) in place
+of looking them up in `job`; a made job keeps them there, so it is made
+again without the job they came from. Holes looked up in `job` are where
+that job is now; with `job` or `like` in the body naming a moved job they
+are taken into its frame from before the move, as the operations are
+typed, so they land on the board job's holes.
+
+`"cutter": "laser"` (default `spindle`) burns the same paths with a beam
+`tool` mm across: `power` (S, default 500) and `passes` (1 to 100, each
+the whole path again, default 1) take the place of `depth`, `step_down`,
+`plunge` and `spindle`, which are ignored, and the groups are `laser`
+groups at that power. A beam drills nothing standing still, so a `drill`
+point is marked with a ring the spot across (`mark N points`), a hole no
+wider than the spot likewise (`mark ... holes`), and a wider hole is cut
+along its inside edge (`cut ... holes`) or with `bore` cleared in rings
+(`clear ... holes`). A pocket or an inside profile of a circle the spot
+fills, which a bit would drill, is refused (400): mark its middle with a
+drill point, or give a wider circle.
+
+## Markers
+
+Named positions on the board, kept in the backend's config for every page.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/markers` | `{"markers": [{"name": "corner", "x": 1.5, "y": -2}]}` |
+| `PUT /api/markers` | the whole list, in place of the one kept: names 1 to 40 characters once each (trimmed), at most 200, coordinates within 1e6 mm; answers the list as kept, 400 with the reason |
 
 ## Height map
 

@@ -1,12 +1,25 @@
 # Operating the machine
 
-From the first connection to a probed, compensated run. The wiring and the bring-up order are in `firmware/rp2040/README.md`; the page's panels are described in `web/frontend/README.md`.
+From the first connection to a probed, compensated run. The wiring and the bring-up order are in `firmware/rp2040/README.md`; the page's panels are described in `web/frontend/README.md`. The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
 
 ## Connecting and first moves
 
-| `web/frontend` | the page | `cd web/frontend && bun install && bun run build` |
+Open `http://localhost:8000`, connect to the board (or to
+`socket://127.0.0.1:2323` for the virtual firmware, or to
+`socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
+relay-pi -- user@host`), jog the beam over the
+axis with the radius buttons, press "Set R=0 here", then turn the table
+with the turn buttons: a positive turn must swing the point under the beam
+counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
+per unit at low speed before the first job. Every axis is a bar in the
+jog panel, with its step choices and a field for any other step; *Cancel*
+in the panel's head, or Escape, stops a move. The *Config* tab holds the
+machine files, where the pins are set too (the laser output, the probe
+and an optional tool output), and beside them the list of every key a
+file can set with the board's value next to the file's.
 
-The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
+### Jobs, the preview and the Run panel
+
 A board upload isolates its copper by default; with Board set to deposit,
 for a process that lays copper down, it burns the copper itself and
 nothing past its edge. With Board set to stencil it cuts a solder paste
@@ -25,6 +38,7 @@ dropped is not sent at once: its own layers are offered first, each with
 what is drawn on it, and picking a drawing (Edge.Cuts, a silk screen, a
 fab or user layer) sets Board to on the lines; Import sends it, Cancel or
 Escape leaves it. A gerber is its own layer.
+
 A click on a path in the preview picks it (shift or ctrl adds one or takes
 it back, *Box select* picks every path inside a dragged box, a click on a
 group's name in the Jobs panel all of its paths); the Jobs panel then moves
@@ -50,6 +64,7 @@ drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*. A path picked on an edit
 not yet applied is only found in the text: the Jobs panel moves, deletes
 and copies the paths of the job as it is kept.
+
 The preview's *Top view* looks straight down, the board square to the
 canvas, and *CCW 90* and *CW 90* turn it a quarter. *Speed* draws every
 cut by the speed it runs at, violet for the job's slowest through yellow
@@ -58,32 +73,16 @@ below its group's speed (on the polar machine the table near the axis),
 and a key with the range and the share of the cut held back; it works
 from the machine's rates once its settings are read, else from the
 defaults and says so, each held to what the step generator pulses at the
-axis's steps a unit, as the firmware holds it. The slider under the preview steps through the
-job's paths in the order they are cut (*Back* and *On* a path at a time):
-the paths cut so far are drawn, the last of them marked, the rest faint;
-at its end the job is drawn whole. The run controls (Run,
-the height map choice, Hold, Resume, Stop, the progress and the pickup of
-a stopped run) are the Run panel at the foot of the right column, kept in
-view while the jobs and their groups scroll under it. Every number field
-takes arithmetic (`25.4/2`, `1/8 in`; see the Plot page below).
-Both camera panels have the camera log: *log every look* keeps every
-picture the cameras' routines look at (finding the mark, centering the
-nozzle, looking at a part, a G-code device's run), each as it was and with
-what the finder found drawn on it, so a routine that went wrong can be
-followed look by look; *Photo* keeps one now with what the finder sees.
-Open `http://localhost:8000`, connect to the board (or to
-`socket://127.0.0.1:2323` for the virtual firmware, or to
-`socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
-relay-pi -- user@host`), jog the beam over the
-axis with the radius buttons, press "Set R=0 here", then turn the table
-with the turn buttons: a positive turn must swing the point under the beam
-counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
-per unit at low speed before the first job. Every axis is a bar in the
-jog panel, with its step choices and a field for any other step; *Cancel*
-in the panel's head, or Escape, stops a move. The *Config* tab holds the
-machine files, where the pins are set too (the laser output, the probe
-and an optional tool output), and beside them the list of every key a
-file can set with the board's value next to the file's.
+axis's steps a unit, as the firmware holds it. The slider under the
+preview steps through the job's paths in the order they are cut (*Back*
+and *On* a path at a time): the paths cut so far are drawn, the last of
+them marked, the rest faint; at its end the job is drawn whole.
+
+The run controls (Run, the height map choice, Hold, Resume, Stop, the
+progress and the pickup of a stopped run) are the Run panel at the foot
+of the right column, kept in view while the jobs and their groups scroll
+under it. Every number field takes arithmetic (`25.4/2`, `1/8 in`; see
+the Plot page below).
 
 ### Probing and the height map
 
@@ -382,6 +381,12 @@ The camera is useful once the machine knows where it looks from the tool:
    are saved in the camera settings; copy them into the machine file to
    keep them with it. A camera that is moved on the head, or a tool that
    is changed, wants the routine run again.
+
+Both camera panels have the camera log: *log every look* keeps every
+picture the cameras' routines look at (finding the mark, centering the
+nozzle, looking at a part, a G-code device's run), each as it was and with
+what the finder found drawn on it, so a routine that went wrong can be
+followed look by look; *Photo* keeps one now with what the finder sees.
 
 A camera plugged into a Pi that is a bridge is streamed from there:
 deploy with `mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
