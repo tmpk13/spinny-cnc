@@ -7,6 +7,7 @@ members = ["toolpath", "web/backend"]
 
 [tool.uv.sources]
 spinny-laser = { workspace = true }
+spinny-web = { workspace = true }
 laser-sweep = { path = "../kicad-to-gcode", editable = true }
 
 [tool.uv]
@@ -14,6 +15,9 @@ python-preference = "system"
 
 [dependency-groups]
 dev = [
+    # The backend with the parts a plain install leaves out, so a checkout
+    # runs the Auto tab and spinny-mcp and tests them.
+    "spinny-web[auto,mcp]",
     "pytest>=8",
     "pytest-timeout",
     "httpx",

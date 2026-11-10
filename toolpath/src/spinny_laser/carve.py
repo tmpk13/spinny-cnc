@@ -4,7 +4,8 @@ operations. It is run once per job with one JSON request on its input and
 answers one JSON document; this module finds it and runs it.
 
 The program is looked for as SPINNY_CARVE names it, then in the repository's
-`carve/target` (the build changed last, debug or release), then on PATH.
+`carve/target` (the build changed last, debug or release) when this runs
+from a checkout, then on PATH (a release's launchers put its bin/ there).
 """
 
 from __future__ import annotations
@@ -15,9 +16,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import home
+
 ENV = "SPINNY_CARVE"
 NAME = "spinny-carve"
-REPO = Path(__file__).resolve().parents[3]
+REPO = home.checkout()
 # A plan of a big mesh with fine passes takes a while; past this it is
 # taken as stuck.
 TIMEOUT = 900.0
@@ -35,7 +38,7 @@ def find() -> Path | None:
     if named:
         path = Path(named)
         return path if path.is_file() else None
-    built = [REPO / "carve" / "target" / profile / NAME for profile in ("debug", "release")]
+    built = [REPO / "carve" / "target" / profile / NAME for profile in ("debug", "release")] if REPO else []
     present = [path for path in built if path.is_file()]
     if present:
         return max(present, key=lambda path: path.stat().st_mtime)

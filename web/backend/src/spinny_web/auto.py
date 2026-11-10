@@ -17,6 +17,7 @@ environment; the settings say only whether each is there.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import re
@@ -83,6 +84,15 @@ class AutoBusy(Exception):
 
 class ProviderError(Exception):
     """What a provider could not do, in words for the operator."""
+
+
+def missing_package(package: str, extra: str) -> str:
+    """What to install for a part a plain install leaves out: `package`,
+    which the spinny-web extra `extra` brings in."""
+    return (
+        f"the {package} package is not installed (a plain install leaves it out): install spinny-web[{extra}],"
+        f" or in a release bundle run {sys.executable} -m pip install '{package}>=2'"
+    )
 
 
 class AutoSettingsBody(BaseModel):
@@ -447,7 +457,12 @@ SessionFactory = Callable[["Agent", Choice], Session]
 
 
 def _anthropic(agent: Agent, choice: Choice) -> Session:
-    from .auto_anthropic import AnthropicChat
+    try:
+        from .auto_anthropic import AnthropicChat
+    except ModuleNotFoundError as exc:
+        if exc.name != "anthropic" and not (exc.name or "").startswith("anthropic."):
+            raise
+        raise ProviderError(missing_package("anthropic", "auto")) from exc
 
     return ChatSession(AnthropicChat(choice.model_or_default, SYSTEM_PROMPT, TOOLS), agent.max_calls)
 
@@ -461,6 +476,10 @@ def _openai(agent: Agent, choice: Choice) -> Session:
 
 def _claude_code(agent: Agent, choice: Choice) -> Session:
     from .auto_claude import ClaudeCodeSession
+
+    # Claude Code reaches the tools through spinny-mcp, run with this Python.
+    if importlib.util.find_spec("mcp") is None:
+        raise ProviderError(missing_package("mcp", "mcp"))
 
     return ClaudeCodeSession(
         binary=agent.which("claude"),

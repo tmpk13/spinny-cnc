@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -1035,3 +1036,28 @@ def test_the_address_handed_to_claude_code_passes_the_host_check(tmp_path):
             assert client.get("/api/jobs", headers={"host": host}).status_code == 200
             assert client.get("/api/jobs", headers={"host": "spinny.local"}).status_code == 200
             assert client.get("/api/jobs", headers={"host": "evil.example"}).status_code == 400
+
+
+# --- parts a plain install leaves out -----------------------------------------------
+
+
+def test_the_anthropic_provider_without_its_package_names_the_extra(client, monkeypatch):
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    monkeypatch.delitem(sys.modules, "spinny_web.auto_anthropic")
+    with pytest.raises(ProviderError, match=r"spinny-web\[auto\]") as raised:
+        auto_module._anthropic(client.agent, auto_module.Choice("anthropic", "", ""))
+    assert f"{sys.executable} -m pip install 'anthropic>=2'" in str(raised.value)
+
+
+def test_the_claude_code_provider_without_mcp_names_the_extra(client, monkeypatch):
+    real = auto_module.importlib.util.find_spec
+    monkeypatch.setattr(auto_module.importlib.util, "find_spec", lambda name, *rest: None if name == "mcp" else real(name, *rest))
+    with pytest.raises(ProviderError, match=r"spinny-web\[mcp\]"):
+        auto_module._claude_code(client.agent, auto_module.Choice("claude-code", "", ""))
+
+
+def test_spinny_mcp_without_its_package_says_what_to_install():
+    hidden = "import sys, runpy; sys.modules['mcp'] = None; runpy.run_module('spinny_web.mcp_server', run_name='__main__')"
+    done = subprocess.run([sys.executable, "-c", hidden], capture_output=True, text=True)
+    assert done.returncode == 1 and "spinny-mcp: the mcp package is not installed" in done.stderr
+    assert "spinny-web[mcp]" in done.stderr and "Traceback" not in done.stderr

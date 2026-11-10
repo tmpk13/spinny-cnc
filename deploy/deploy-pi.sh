@@ -160,7 +160,7 @@ if ! command -v uv >/dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 uv python install 3.12
-(cd "$dir/spinny-laser-pcb" && uv sync --no-dev --python 3.12)
+(cd "$dir/spinny-laser-pcb" && uv sync --no-dev --all-packages --all-extras --python 3.12)
 
 # pcbv built here links against this machine's glibc, so a Pi with an
 # older one cannot run it: tried before it replaces the one installed.

@@ -17,12 +17,17 @@ import argparse
 from typing import Any
 
 import anyio
-import mcp_types as types
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
 
 from . import __version__
+from .auto import missing_package
 from .tools import GUIDE, TOOLS, Tool, ToolBox
+
+try:
+    import mcp_types as types
+    from mcp.server import Server
+    from mcp.server.stdio import stdio_server
+except ModuleNotFoundError as exc:
+    raise SystemExit(f"spinny-mcp: {missing_package('mcp', 'mcp')}") from exc
 
 DEFAULT_URL = "http://127.0.0.1:8000"
 

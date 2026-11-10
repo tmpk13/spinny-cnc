@@ -30,6 +30,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from spinny_laser import home
 from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
@@ -129,15 +130,20 @@ from .runner import DONE, HOLD, RUNNING, Runner, RunnerError, halt
 from .tools import ToolBox
 from .vision import VisionError
 
-# The repository's layout gives the defaults: the page's build beside this
-# package, and the runtime files (jobs, config, height map) in var/ at the
-# root, out of the source tree.
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DATA_DIR = REPO_ROOT / "var"
-MACHINES_DIR = REPO_ROOT / "machines"
-CAM_DIR = REPO_ROOT / "cam"
-PNP_DIR = REPO_ROOT / "pnp"
-FRONTEND_DIST = REPO_ROOT / "web" / "frontend" / "dist"
+# The runtime files (jobs, config, height map) and the machine, CAM and pick
+# and place files: the repository's var/, machines/, cam/ and pnp/ in a
+# checkout, else the same under the user's spinny home (spinny_laser.home).
+HOME = home.root()
+DATA_DIR = HOME / "var"
+MACHINES_DIR = HOME / "machines"
+CAM_DIR = HOME / "cam"
+PNP_DIR = HOME / "pnp"
+# A release puts the built page and the shipped machine, CAM and pick and
+# place files inside this package; a checkout has the page's build beside
+# it, and no shipped copies (its own directories are the files).
+PACKAGE_DIR = Path(__file__).resolve().parent
+SHIPPED_DIR = PACKAGE_DIR / "defaults"
+FRONTEND_DIST = PACKAGE_DIR / "page" if (PACKAGE_DIR / "page").is_dir() else PACKAGE_DIR.parents[2] / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
 # line is streamed as one joint line, which is an arc on the board.
@@ -5068,12 +5074,17 @@ def main(argv: list[str] | None = None) -> int:
         "--log-level",
         choices=LEVELS,
         default=os.environ.get("SPINNY_LOG_LEVEL", "info").lower(),
-        help="how much the backend writes to var/spinny.log and stderr (default: info, or SPINNY_LOG_LEVEL)",
+        help="how much the backend writes to spinny.log in --data and to stderr (default: info, or SPINNY_LOG_LEVEL)",
     )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     setup_log(args.data, level=args.log_level)
-    log.info("spinny-web %s starting on %s:%d", __version__, args.host, args.port)
+    log.info("spinny-web %s starting on %s:%d, files in %s", __version__, args.host, args.port, args.data)
+    # A release's first start: the machine, CAM and pick and place files it
+    # ships fill whichever of these directories does not exist yet.
+    for directory, name in ((args.machines, "machines"), (args.cam, "cam"), (args.pnp, "pnp")):
+        if home.seed(directory, SHIPPED_DIR / name):
+            log.info("%s: the shipped %s files copied in", directory, name)
     backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam, pnp_dir=args.pnp)
     backend.autoconnect = args.connect
     # Where this backend is reached from the same machine, for the MCP

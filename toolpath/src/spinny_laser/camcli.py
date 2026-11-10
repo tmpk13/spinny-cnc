@@ -17,10 +17,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, cam, camjob, post
+from . import __version__, cam, camjob, home, post
 from .camjob import BOARD_SUFFIXES
 
-OUT_DIR = Path(__file__).resolve().parents[3] / "var" / "out"
+# The repository's var/out in a checkout, else under the spinny home.
+OUT_DIR = home.root() / "var" / "out"
 
 
 def build_parser() -> argparse.ArgumentParser:

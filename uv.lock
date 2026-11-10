@@ -17,6 +17,7 @@ dev = [
     { name = "httpx" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-timeout" },
+    { name = "spinny-web", extras = ["auto", "mcp"], editable = "web/backend" },
 ]
 
 [[package]]
@@ -1035,12 +1036,10 @@ name = "spinny-web"
 version = "0.1.0"
 source = { editable = "web/backend" }
 dependencies = [
-    { name = "anthropic" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "laser-sweep" },
-    { name = "mcp" },
     { name = "pydantic" },
     { name = "pyserial" },
     { name = "python-multipart" },
@@ -1050,14 +1049,22 @@ dependencies = [
     { name = "websockets" },
 ]
 
+[package.optional-dependencies]
+auto = [
+    { name = "anthropic" },
+]
+mcp = [
+    { name = "mcp" },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=2" },
+    { name = "anthropic", marker = "extra == 'auto'", specifier = ">=2" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "laser-sweep", editable = "../kicad-to-gcode" },
-    { name = "mcp", specifier = ">=2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2" },
     { name = "pydantic" },
     { name = "pyserial" },
     { name = "python-multipart" },
@@ -1066,6 +1073,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"] },
     { name = "websockets" },
 ]
+provides-extras = ["auto", "mcp"]
 
 [[package]]
 name = "sse-starlette"
