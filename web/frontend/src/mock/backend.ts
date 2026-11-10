@@ -4,6 +4,7 @@
 import { fitRigid, turnPoint } from "../align.ts";
 import { ApiError, errorText, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
+import { formatFixed } from "../format.ts";
 import { fromBoard, type FromBoard } from "../machinekeys.ts";
 import {
     AXIS_EPSILON,
@@ -485,15 +486,6 @@ function settingValue(name: string, text: string): number | null {
 /** A plain decimal as the firmware reads a word: optional sign, digits, optional fraction, no exponent. */
 function decimal(text: string): number | null {
     return /^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(text) ? Number(text) : null;
-}
-
-/** A setting's value as the backend writes it on a line: a whole number as it is, others to six decimals. */
-function settingText(value: number): string {
-    if (Number.isInteger(value)) {
-        return String(value);
-    }
-    const text = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-    return text === "" || text === "-" || text === "-0" ? "0" : text;
 }
 
 export type MoveKind = "go" | "cut" | "jog" | "dwell" | "spindle";
@@ -1505,22 +1497,6 @@ export const PNP_STEP_SECONDS = 0.4;
 /** How fast the mock's G-code device takes a program's lines. */
 export const DEVICE_LINES_PER_SECOND = 40;
 
-/** A plain decimal with trailing zeros dropped and no negative zero. */
-function num(value: number, decimals = 3): string {
-    return String(Number(value.toFixed(decimals)));
-}
-
-/** A fixed-decimal word value without a negative zero. */
-function coord(value: number, decimals: number): string {
-    const text = value.toFixed(decimals);
-    return Number(text) === 0 ? text.replace(/^-/, "") : text;
-}
-
-/** Six significant digits, trailing zeros dropped: the backend's short number format. */
-function shortNumber(value: number): string {
-    return String(Number(value.toPrecision(6)));
-}
-
 function round4(value: number): number {
     return Math.round(value * 1e4) / 1e4;
 }
@@ -1558,7 +1534,7 @@ const TOUCH_CLEARANCE = 1.0;
 
 /** The words of a go to a probe joint: the rail and the table, or the rail and the cross slide on a cartesian machine. */
 function probeJointWords(joint: ProbeJoint, cartesian: boolean): string {
-    return cartesian ? `R${coord(joint.r, 3)} Z${coord(joint.z ?? 0, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
+    return cartesian ? `R${formatFixed(joint.r, 3)} Z${formatFixed(joint.z ?? 0, 3)}` : `R${formatFixed(joint.r, 3)} A${formatFixed(joint.a, 4)}`;
 }
 
 /** The finer of the two point spacings, mm. */
@@ -1677,7 +1653,7 @@ export function probeJoint(point: [number, number], offset: [number, number], pr
     if (rho < Math.abs(across)) {
         if (Math.abs(across) - rho > slack) {
             throw new Error(
-                `the probe cannot reach (${x.toFixed(2)}, ${y.toFixed(2)}): its tip is ${shortNumber(Math.abs(across))} mm off` +
+                `the probe cannot reach (${x.toFixed(2)}, ${y.toFixed(2)}): its tip is ${formatG(Math.abs(across))} mm off` +
                     " the rail, so it never comes nearer the axis than that; move the grid off the axis or" +
                     " mount the probe in line with the rail",
             );
@@ -2519,7 +2495,7 @@ export class MockBackend implements Api, EventFeed {
         if (this.machine.endpointH() >= travel - 1e-6) {
             return;
         }
-        this.exchange(`jogto H${num(travel, 4)}`, () => this.machine.jogTo(null, null, null, travel));
+        this.exchange(`jogto H${gnum(travel, 4)}`, () => this.machine.jogTo(null, null, null, travel));
     }
 
     /** A joint line through the API; the tracked end follows the backend's rule for it. */
@@ -2537,7 +2513,7 @@ export class MockBackend implements Api, EventFeed {
         this.requireMovable();
         const feed = request.feed ?? null;
         this.checkFeed(feed);
-        const feedWord = feed ? ` F${num(feed)}` : "";
+        const feedWord = feed ? ` F${gnum(feed)}` : "";
         const cartesian = this.machine.cartesian();
         if (request.kind === "joint") {
             const { dr, da, dh, dz } = request as { dr?: number; da?: number; dh?: number; dz?: number };
@@ -2548,15 +2524,15 @@ export class MockBackend implements Api, EventFeed {
                 if (dz === 0) {
                     throw new ApiError(400, "a cross slide jog needs a distance");
                 }
-                this.exchange(`jog Z${num(dz)}${feedWord}`, () => this.machine.slideJog(dz, feed));
+                this.exchange(`jog Z${gnum(dz)}${feedWord}`, () => this.machine.slideJog(dz, feed));
                 return;
             }
             // The backend's words: a relative jog leaves out an axis that does not move.
             const words = [
-                dr ? `R${num(dr)}` : "",
-                da ? `A${num(da, 4)}` : "",
-                dh ? `H${num(dh, 4)}` : "",
-                dz ? `Z${num(dz)}` : "",
+                dr ? `R${gnum(dr)}` : "",
+                da ? `A${gnum(da, 4)}` : "",
+                dh ? `H${gnum(dh, 4)}` : "",
+                dz ? `Z${gnum(dz)}` : "",
             ].filter((w) => w !== "");
             if (words.length === 0) {
                 throw new ApiError(400, "a joint move needs a radius, an angle, a focus height or a cross slide position");
@@ -2579,7 +2555,7 @@ export class MockBackend implements Api, EventFeed {
         this.requireMovable();
         const feed = request.feed ?? null;
         this.checkFeed(feed);
-        const feedWord = feed ? ` F${num(feed)}` : "";
+        const feedWord = feed ? ` F${gnum(feed)}` : "";
         const cartesian = this.machine.cartesian();
         this.travelRise(request);
         if (request.kind === "joint") {
@@ -2588,14 +2564,14 @@ export class MockBackend implements Api, EventFeed {
                 if (r !== undefined || a !== undefined || h !== undefined) {
                     throw new ApiError(400, "the cross slide moves on its own: z cannot be sent with r, a or h");
                 }
-                this.exchange(`jogto Z${num(z)}${feedWord}`, () => this.machine.slideTo(z, feed));
+                this.exchange(`jogto Z${gnum(z)}${feedWord}`, () => this.machine.slideTo(z, feed));
                 return;
             }
             const words = [
-                r !== undefined ? `R${num(r)}` : "",
-                a !== undefined ? `A${num(a, 4)}` : "",
-                h !== undefined ? `H${num(h, 4)}` : "",
-                z !== undefined ? `Z${num(z)}` : "",
+                r !== undefined ? `R${gnum(r)}` : "",
+                a !== undefined ? `A${gnum(a, 4)}` : "",
+                h !== undefined ? `H${gnum(h, 4)}` : "",
+                z !== undefined ? `Z${gnum(z)}` : "",
             ].filter((w) => w !== "");
             if (words.length === 0) {
                 throw new ApiError(400, "a joint move needs a radius, an angle, a focus height or a cross slide position");
@@ -2636,9 +2612,9 @@ export class MockBackend implements Api, EventFeed {
     async setPosition(request: PositionRequest): Promise<void> {
         this.requireMovable();
         const words = [
-            request.r !== undefined ? `R${num(request.r)}` : "",
-            request.a !== undefined ? `A${num(request.a, 4)}` : "",
-            request.h !== undefined ? `H${num(request.h, 4)}` : "",
+            request.r !== undefined ? `R${gnum(request.r)}` : "",
+            request.a !== undefined ? `A${gnum(request.a, 4)}` : "",
+            request.h !== undefined ? `H${gnum(request.h, 4)}` : "",
         ].filter((w) => w !== "");
         if (words.length === 0 && request.z === undefined) {
             throw new ApiError(400, "give r, a, h and/or z");
@@ -2652,7 +2628,7 @@ export class MockBackend implements Api, EventFeed {
             if (request.z !== undefined) {
                 // Z is declared on a line of its own, as the firmware wants it on a polar machine.
                 const z = request.z;
-                this.exchange(`set Z${num(z)}`, () => this.machine.setPosition({ z }));
+                this.exchange(`set Z${gnum(z)}`, () => this.machine.setPosition({ z }));
             }
         } finally {
             // H renumbered moves the frame the map's heights are in, and R,
@@ -3098,7 +3074,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "ms must be > 0");
         }
         const t = Math.trunc(ms);
-        this.exchange(`laser S${num(power)} T${t}`, () => this.machine.beam(power, t));
+        this.exchange(`laser S${gnum(power)} T${t}`, () => this.machine.beam(power, t));
     }
 
     /**
@@ -3114,7 +3090,7 @@ export class MockBackend implements Api, EventFeed {
         if (!(Number.isFinite(power) && power >= 0)) {
             throw new ApiError(400, "power must be >= 0");
         }
-        this.exchange(`spindle S${num(power)}`, () => this.machine.spin(power));
+        this.exchange(`spindle S${gnum(power)}`, () => this.machine.spin(power));
     }
 
     /** Stops the spindle, which on a laser machine is the beam. */
@@ -3422,7 +3398,8 @@ export class MockBackend implements Api, EventFeed {
             if (Math.abs(value) > (whole ? INT_SETTING_MAX : SETTING_MAX)) {
                 throw new ApiError(400, `${name} must be within ${whole ? String(INT_SETTING_MAX) : formatG(SETTING_MAX)}`);
             }
-            texts.push([name, settingText(value)]);
+            // As the backend writes a setting: a whole number as it is, others to six decimals.
+            texts.push([name, gnum(value, 6)]);
         }
         // The firmware checks s_min <= s_max on every line, so a write that
         // lowers s_max under the s_min in force sends its s_min first.
@@ -3450,7 +3427,7 @@ export class MockBackend implements Api, EventFeed {
             // be is skipped for the next.
             for (const [name, before] of [...applied].reverse()) {
                 try {
-                    this.exchange(`$${name}=${settingText(before)}`, () => this.machine.setSetting(name, before));
+                    this.exchange(`$${name}=${gnum(before, 6)}`, () => this.machine.setSetting(name, before));
                 } catch {
                     continue;
                 }
@@ -4679,15 +4656,15 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(
                 409,
                 `the last run of ${job.name} stopped part way, and the focus axis has been renumbered since it` +
-                    ` began at H${num(began, 4)} (a connect, a restart, a position set or a home), so nothing tells` +
+                    ` began at H${gnum(began, 4)} (a connect, a restart, a position set or a home), so nothing tells` +
                     " where focus is: bring the head to focus and run with focus here",
             );
         }
         if (Math.abs(here - began) >= 0.00005) {
             throw new ApiError(
                 409,
-                `the last run of ${job.name} stopped with the focus axis at H${num(here, 4)}, not at H${num(began, 4)}` +
-                    ` where it began and its groups' focus counts from: send the head back (go H${num(began, 4)}) and` +
+                `the last run of ${job.name} stopped with the focus axis at H${gnum(here, 4)}, not at H${gnum(began, 4)}` +
+                    ` where it began and its groups' focus counts from: send the head back (go H${gnum(began, 4)}) and` +
                     " run, or if it was focused again where it is, run with focus here",
             );
         }
@@ -4725,7 +4702,7 @@ export class MockBackend implements Api, EventFeed {
             if (!followed && record!.frame !== this.frameName()) {
                 throw new ApiError(
                     409,
-                    `the focus axis has been renumbered since the run being picked up began at H${num(began, 4)}` +
+                    `the focus axis has been renumbered since the run being picked up began at H${gnum(began, 4)}` +
                         " (a connect, a restart, a position set or a home), so its groups' heights cannot be counted" +
                         " from there: bring the head to focus and pick up with focus here",
                 );
@@ -4966,7 +4943,7 @@ export class MockBackend implements Api, EventFeed {
             this.line("rx", "ok");
         }
         const travel = machine.h;
-        const line = `probe H-${num(settings.depth, 4)} F${num(settings.feed)}`;
+        const line = `probe H-${gnum(settings.depth, 4)} F${gnum(settings.feed)}`;
         this.line("tx", line);
         const replies = probeReplies(machine, -settings.depth, settings.feed);
         for (const reply of replies) {
@@ -4974,15 +4951,15 @@ export class MockBackend implements Api, EventFeed {
         }
         const report = /^\[PRB:(-?[\d.]+):([01])\]$/.exec(replies[0] ?? "");
         if (!report || report[2] !== "1") {
-            this.message("error", `probing failed: the probe found nothing within ${shortNumber(settings.depth)} mm`);
-            throw new ApiError(409, `the probe found nothing within ${shortNumber(settings.depth)} mm`);
+            this.message("error", `probing failed: the probe found nothing within ${formatG(settings.depth)} mm`);
+            throw new ApiError(409, `the probe found nothing within ${formatG(settings.depth)} mm`);
         }
         const height = Number(report[1]);
-        this.line("tx", `go H${coord(travel, 4)}`);
+        this.line("tx", `go H${formatFixed(travel, 4)}`);
         machine.h = travel;
         this.line("rx", "ok");
         if (mode === "zero") {
-            this.line("tx", `set H${num(travel - height, 4)}`);
+            this.line("tx", `set H${gnum(travel - height, 4)}`);
             machine.h = travel - height;
             this.line("rx", "ok");
             this.frameChanged("the surface was probed");
@@ -5544,7 +5521,7 @@ export class MockBackend implements Api, EventFeed {
         session.progress.point = point ?? null;
         session.progress.pad = pad ?? null;
         this.emitHeightMap();
-        const words = joint.z !== undefined ? `R${coord(joint.r, 3)} Z${coord(joint.z, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
+        const words = joint.z !== undefined ? `R${formatFixed(joint.r, 3)} Z${formatFixed(joint.z, 3)}` : `R${formatFixed(joint.r, 3)} A${formatFixed(joint.a, 4)}`;
         this.probeRequest(session, `go ${words}`, () => this.probeGo(joint, null));
     }
 
@@ -5562,7 +5539,7 @@ export class MockBackend implements Api, EventFeed {
         }
         if (slow > 0) {
             const above = height + backoff;
-            if (!this.probeRequest(session, `go H${coord(above, 4)}`, () => this.probeGo(null, above))) {
+            if (!this.probeRequest(session, `go H${formatFixed(above, 4)}`, () => this.probeGo(null, above))) {
                 return;
             }
             height = this.probeTouch(session, slow, 2 * backoff);
@@ -5570,7 +5547,7 @@ export class MockBackend implements Api, EventFeed {
                 return;
             }
         }
-        if (!this.probeRequest(session, `go H${coord(session.travel, 4)}`, () => this.probeGo(null, session.travel))) {
+        if (!this.probeRequest(session, `go H${formatFixed(session.travel, 4)}`, () => this.probeGo(null, session.travel))) {
             return;
         }
         if (pad !== null && pad !== undefined && session.map.point_heights) {
@@ -5593,7 +5570,7 @@ export class MockBackend implements Api, EventFeed {
 
     /** One probe down; the height at contact, or null when the probing has failed. */
     private probeTouch(session: ProbeSession, feed: number, distance: number): number | null {
-        const replies = this.probeRequest(session, `probe H-${num(distance, 4)} F${num(feed)}`, () => probeReplies(this.machine, -distance, feed));
+        const replies = this.probeRequest(session, `probe H-${gnum(distance, 4)} F${gnum(feed)}`, () => probeReplies(this.machine, -distance, feed));
         if (replies === null) {
             return null;
         }
@@ -5603,7 +5580,7 @@ export class MockBackend implements Api, EventFeed {
             return null;
         }
         if (report[2] !== "1") {
-            this.probeFail(session, `the probe found nothing within ${shortNumber(distance)} mm`);
+            this.probeFail(session, `the probe found nothing within ${formatG(distance)} mm`);
             return null;
         }
         return Number(report[1]);
@@ -5853,7 +5830,7 @@ export class MockBackend implements Api, EventFeed {
             this.notOwned();
             const point = this.machine.headBoard();
             this.cameraMarkPoint = { x: round4(point.x), y: round4(point.y) };
-            this.message("info", `mark recorded at X ${num(point.x)} Y ${num(point.y)}`);
+            this.message("info", `mark recorded at X ${gnum(point.x)} Y ${gnum(point.y)}`);
             this.emitCamera();
             return this.cameraStateOf();
         }
@@ -5990,7 +5967,7 @@ export class MockBackend implements Api, EventFeed {
         const machine = this.machine;
         const over = this.jointOver(target, machine.joint);
         const joint: ProbeJoint = machine.cartesian() ? { r: over.r, a: machine.joint.a, z: over.z } : { r: over.r, a: over.a };
-        const words = joint.z !== undefined ? `R${coord(joint.r, 3)} Z${coord(joint.z, 3)}` : `R${coord(joint.r, 3)} A${coord(joint.a, 4)}`;
+        const words = joint.z !== undefined ? `R${formatFixed(joint.r, 3)} Z${formatFixed(joint.z, 3)}` : `R${formatFixed(joint.r, 3)} A${formatFixed(joint.a, 4)}`;
         return this.findRequest(session, `go ${words}`, () => {
             this.probeGo(joint, null);
         });
@@ -6021,7 +5998,7 @@ export class MockBackend implements Api, EventFeed {
         switch (session.phase) {
             case "lifting": {
                 const travel = round4(this.clearance);
-                if (!this.findRequest(session, `go H${coord(travel, 4)}`, () => {
+                if (!this.findRequest(session, `go H${formatFixed(travel, 4)}`, () => {
                     this.probeGo(null, travel);
                 })) {
                     return;
@@ -6095,12 +6072,12 @@ export class MockBackend implements Api, EventFeed {
                     config.offset = [round4(session.mark.x - tool.x), round4(session.mark.y - tool.y)];
                     progress.done = progress.total;
                     progress.step = "done";
-                    this.message("info", `camera offset measured: X ${num(config.offset[0])} Y ${num(config.offset[1])}, roll ${num(config.roll, 4)} deg, ${num(config.mm_per_px, 6)} mm/px`);
+                    this.message("info", `camera offset measured: X ${gnum(config.offset[0])} Y ${gnum(config.offset[1])}, roll ${gnum(config.roll, 4)} deg, ${gnum(config.mm_per_px, 6)} mm/px`);
                     this.findFinish(session, "done", null);
                     return;
                 }
                 if (session.centered >= CENTERING_MOVES) {
-                    this.findFail(session, `the spot is still ${num(spot.mm, 3)} mm from the center after ${CENTERING_MOVES} moves`);
+                    this.findFail(session, `the spot is still ${gnum(spot.mm, 3)} mm from the center after ${CENTERING_MOVES} moves`);
                     return;
                 }
                 if (!this.findMoveBy(session, boardVector(spot.dx, spot.dy, config.roll, config.mm_per_px))) {
@@ -6327,7 +6304,7 @@ export class MockBackend implements Api, EventFeed {
         this.jobStore.set(jobId, updated);
         this.alignMarks = [];
         this.alignFitLast = null;
-        this.message("info", `${job.name} aligned: turned ${num(fit.rotation, 4)} deg, moved X ${num(fit.shift[0])} Y ${num(fit.shift[1])}, rms ${num(fit.rms)} mm`);
+        this.message("info", `${job.name} aligned: turned ${gnum(fit.rotation, 4)} deg, moved X ${gnum(fit.shift[0])} Y ${gnum(fit.shift[1])}, rms ${gnum(fit.rms)} mm`);
         this.emitAlign();
         return { job: structuredClone(updated), fit };
     }
@@ -6563,13 +6540,13 @@ export class MockBackend implements Api, EventFeed {
             this.machine.jogTo(r, null, null, height, z);
             this.pnpConfig = { ...this.pnpConfig, position: [r, z], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, height };
             session.progress.spot = { dx: 0, dy: 0, mm: 0 };
-            this.message("info", `nozzle centered over the up camera at R ${num(r)} Z ${num(z)} (mock)`);
+            this.message("info", `nozzle centered over the up camera at R ${gnum(r)} Z ${gnum(z)} (mock)`);
         } else {
             const position = this.pnpConfig.position!;
             this.machine.jogTo(position[0], null, null, this.pnpConfig.height, position[1]);
             const [dx, dy] = UP_TRUTH.part;
             this.pnpPartOffset = { dx, dy, mm: round4(Math.hypot(dx, dy)), length: UP_TRUTH.partSize[0], width: UP_TRUTH.partSize[1] };
-            this.message("info", `the part sits X ${num(dx)} Y ${num(dy)} mm from the nozzle's center (mock)`);
+            this.message("info", `the part sits X ${gnum(dx)} Y ${gnum(dy)} mm from the nozzle's center (mock)`);
         }
         this.emitPnp();
     }
@@ -7021,7 +6998,7 @@ export class MockBackend implements Api, EventFeed {
             routine.progress.state = "done";
             routine.progress.spot = { dx: 0, dy: 0, mm: 0 };
             this.deviceRoutine = null;
-            this.message("info", `nozzle centered over the up camera at X ${num(x)} Y ${num(y)} (mock)`);
+            this.message("info", `nozzle centered over the up camera at X ${gnum(x)} Y ${gnum(y)} (mock)`);
             this.emitDevice();
         }
         this.emitPnp();
@@ -7404,26 +7381,26 @@ export class MockBackend implements Api, EventFeed {
 
 /** A move as the line that asks the firmware for it. */
 export function formatMove(move: Move): string {
-    const focus = move.h !== undefined ? `H${coord(move.h, 4)}` : "";
+    const focus = move.h !== undefined ? `H${formatFixed(move.h, 4)}` : "";
     // A cartesian machine's moves carry the cross slide and hold the table.
-    const joints = move.z !== undefined ? `R${coord(move.target.r, 3)} Z${coord(move.z, 3)}` : `R${coord(move.target.r, 3)} A${coord(move.target.a, 4)}`;
-    const words = move.headOnly ? focus : move.turn ? `A${coord(move.target.a, 4)}` : [joints, focus].filter((word) => word !== "").join(" ");
+    const joints = move.z !== undefined ? `R${formatFixed(move.target.r, 3)} Z${formatFixed(move.z, 3)}` : `R${formatFixed(move.target.r, 3)} A${formatFixed(move.target.a, 4)}`;
+    const words = move.headOnly ? focus : move.turn ? `A${formatFixed(move.target.a, 4)}` : [joints, focus].filter((word) => word !== "").join(" ");
     switch (move.kind) {
         case "go":
             return `go ${words}`;
         case "jog":
-            return move.feed !== null ? `jogto ${words} F${num(move.feed)}` : `jogto ${words}`;
+            return move.feed !== null ? `jogto ${words} F${gnum(move.feed)}` : `jogto ${words}`;
         case "cut": {
             if (move.milled) {
-                return `cut ${words} F${num(move.feed ?? 0)}`;
+                return `cut ${words} F${gnum(move.feed ?? 0)}`;
             }
-            const floor = (move.minPower ?? 0) > 0 ? ` M${num(Math.min(move.minPower ?? 0, move.power))}` : "";
-            return `cut ${words} F${num(move.feed ?? 0)} S${num(move.power)}${floor}`;
+            const floor = (move.minPower ?? 0) > 0 ? ` M${gnum(Math.min(move.minPower ?? 0, move.power))}` : "";
+            return `cut ${words} F${gnum(move.feed ?? 0)} S${gnum(move.power)}${floor}`;
         }
         case "dwell":
             return move.power > 0 ? `dwell T${move.ms ?? 0} S${move.power}` : `dwell T${move.ms ?? 0}`;
         case "spindle":
-            return move.off ? "spindle off" : `spindle S${num(move.power)}`;
+            return move.off ? "spindle off" : `spindle S${gnum(move.power)}`;
     }
 }
 
@@ -7432,11 +7409,11 @@ export function statusLine(machine: MockMachine): string {
     const free = machine.queueFree();
     const state = machine.state === "Alarm" ? `Alarm:${machine.alarm ?? 1}` : machine.state;
     // The focus axis fields are there only with the axis fitted.
-    const focus = machine.hasFocusAxis() ? `|H:${coord(machine.h, 3)}|P:${machine.probeActive() ? 1 : 0}` : "";
+    const focus = machine.hasFocusAxis() ? `|H:${formatFixed(machine.h, 3)}|P:${machine.probeActive() ? 1 : 0}` : "";
     const stops = machine.hasStops() ? `|D:${machine.homed}` : "";
-    const joint = `J:${coord(machine.joint.r, 3)},${coord(machine.joint.a, 4)}`;
+    const joint = `J:${formatFixed(machine.joint.r, 3)},${formatFixed(machine.joint.a, 4)}`;
     const duty = Math.round(machine.status().laser);
-    return `<${state}|${joint}|V:${coord(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${coord(machine.z, 3)}${focus}${stops}>`;
+    return `<${state}|${joint}|V:${formatFixed(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${formatFixed(machine.z, 3)}${focus}${stops}>`;
 }
 
 /**

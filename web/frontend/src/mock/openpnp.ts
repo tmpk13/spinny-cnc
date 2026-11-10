@@ -486,7 +486,8 @@ export function feederFor<T extends { match: string }>(feeders: T[], value: stri
 /** A plain decimal with the zeros after its point dropped, and no negative zero. */
 export function gnum(value: number, decimals = 3): string {
     let text = value.toFixed(decimals);
-    if (text.includes(".")) {
+    // From 1e21 up toFixed writes an exponent, whose zeros are not trailing ones.
+    if (text.includes(".") && !text.includes("e")) {
         text = text.replace(/0+$/, "").replace(/\.$/, "");
     }
     return text === "-0" || text === "" ? "0" : text;
