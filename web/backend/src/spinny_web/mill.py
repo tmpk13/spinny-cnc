@@ -261,9 +261,10 @@ def hole_groups(op: MillOperation, holes: list[tuple[float, float, float]]) -> t
     return groups, notes
 
 
-def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = None, streamer: Streamer | None = None) -> tuple[Job, list[str]]:
-    """The operation's job, not stored, and what to know about it; `holes`
-    are the board job's holes for a holes operation, x, y and diameter."""
+def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = None) -> tuple[Job, list[str]]:
+    """The operation's job, not stored and not priced, and what to know
+    about it; `holes` are the board job's holes for a holes operation, x, y
+    and diameter."""
     op.check()
     notes: list[str] = []
     outline: list[list[tuple[float, float]]] = []
@@ -339,8 +340,6 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
         holes=kept_holes,
         recipe=Recipe(mill=op.model_dump()),
     )
-    if streamer is not None:
-        job.refresh_stats(streamer)
     return job, notes
 
 
@@ -361,13 +360,13 @@ def _bit(op: MillOperation) -> str:
 def build_job(
     op_list: list[MillOperation],
     holes_of: Callable[[MillOperation], list[tuple[float, float, float]] | None] | None = None,
-    streamer: Streamer | None = None,
     name: str | None = None,
 ) -> tuple[Job, list[str]]:
-    """The job of several operations, not stored, and what to know about
-    it: each operation's groups in order, every outline and hole, the
-    notes numbered by operation when there are several. `holes_of` gives a
-    holes operation the board job's holes where it does not carry them."""
+    """The job of several operations, not stored and not priced, and what
+    to know about it: each operation's groups in order, every outline and
+    hole, the notes numbered by operation when there are several.
+    `holes_of` gives a holes operation the board job's holes where it does
+    not carry them."""
     if not op_list:
         raise JobImportError("a job needs at least one operation")
     first = op_list[0]
@@ -408,8 +407,6 @@ def build_job(
         holes=kept,
         recipe=Recipe(ops=kept_ops),
     )
-    if streamer is not None:
-        job.refresh_stats(streamer)
     return job, notes
 
 

@@ -2673,7 +2673,7 @@ class Backend:
             return list(source.holes) if frame is None else mill.unplaced(source.holes, frame)
 
         name = body.name if body.name is not None else (op_list[0].name if len(op_list) == 1 else None)
-        job, notes = mill.build_job(op_list, holes_of, None, name)
+        job, notes = mill.build_job(op_list, holes_of, name)
         if target is not None:
             # The settings made on the Jobs page stay with the groups.
             mill.carry_job_settings(target, job)
