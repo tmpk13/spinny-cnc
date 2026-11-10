@@ -17,7 +17,7 @@ value at a time without touching the rest of the text.
 | Web page | the *CAM* tab: pick a profile, read its axes, tools and operations, change a cutting setting in the table or the whole file in the editor, pick the block's material, drop a design or an STL model to make a job, *Export gcode* to download the program for the profile's controller |
 | Backend | `GET /api/cam`, `GET/PUT/PATCH/DELETE /api/cam/{id}`, `POST /api/cam/{id}/jobs`, `POST /api/cam/{id}/gcode` ([WEB_API.md](WEB_API.md)); `spinny-web --cam DIR` reads another directory |
 | Command line | `uv run spinny-cam cam/mill-3axis.toml board.kicad_pcb` writes `var/out/board.nc` and a report beside it; `uv run spinny-cam cam/mill-3d.toml part.stl` for a model; `mise run cam -- PROFILE DESIGN` |
-| Code | `spinny_laser.cam` (the schema and the text patch), `spinny_laser.camjob` (a design through the operations), `spinny_laser.post` (the gcode), `spinny_laser.carve` (runs the 3D kernel in `carve/`); the page's mock reads the same files with `web/frontend/src/mock/toml.ts` |
+| Code | `spinny_laser.cam` (the schema and the text patch), `spinny_laser.camjob` (a design through the operations), `spinny_laser.post` (the gcode), `spinny_laser.carve` (runs the 3D kernel in `carve/`); the page's mock reads the same files with `web/frontend/src/toml.ts` |
 
 The shipped files: `mill-3axis` (a standard X/Y/Z mill with a spindle,
 gcode for a grbl-style controller), `mill-3d` (parts out of a block after

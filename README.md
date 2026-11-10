@@ -7,7 +7,7 @@ firmware on a BTT SKR Pico and is driven from a browser; an optional focus
 axis `H` carries a touch probe, and the cross slide `Z` makes it an X/Y
 machine with a spindle on the laser output or a solder paste dispenser's
 plunger on the table's driver, while a camera on the head, read through
-the sibling [pcb-vision](../pcb-vision) repository, lines a job up with
+the sibling [pcb-vision](https://github.com/tmpk13/pcb-vision) repository, lines a job up with
 the board.
 
 - `mise run web`: build the page and serve it with the backend at `http://localhost:8000`
