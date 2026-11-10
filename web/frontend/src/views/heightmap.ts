@@ -2,7 +2,7 @@
 // a map of the board, and the focus offset a compensated run needs.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, downloadText, el, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
 import { formatDuration, formatFixed, parseNumber } from "../format.ts";
 import { isDispensing, isMilling, outputDuty, profileOf } from "../profile.ts";
 import { boardOfJoint, lerpJoint } from "../kinematics.ts";
@@ -621,9 +621,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     });
     const showQueue = (state: AppState): void => {
         const value = state.settings?.values["probe_ms"];
-        if (queueField !== document.activeElement) {
-            queueField.value = value === undefined ? "" : String(value);
-        }
+        setUnlessFocused(queueField, value === undefined ? "" : String(value), document.activeElement);
     };
 
     const probeButton = button("Probe", () => startProbe(), "btn btn-primary");
@@ -695,12 +693,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         return applyFocus(offset);
     }, "btn btn-quiet");
-    focusField.addEventListener("keydown", (event) => {
-        if ((event as KeyboardEvent).key === "Enter") {
-            event.preventDefault();
-            setFocus.click();
-        }
-    });
+    focusField.addEventListener("keydown", onEnter(setFocus));
     const focusHere = button("Focus here", () => applyFocus(null), "btn");
     const focusLabel = labeled("Focus offset mm", focusField, "labeled inline");
     const loadInput = el("input", { type: "file", accept: ".json,application/json", class: "hidden" }) as HTMLInputElement;
@@ -889,10 +882,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "there is no map to save");
             return;
         }
-        const blob = new Blob([JSON.stringify(map, null, 2)], { type: "application/json" });
-        const link = el("a", { href: URL.createObjectURL(blob), download: "heightmap.json" });
-        link.click();
-        URL.revokeObjectURL(link.href);
+        if (!downloadText("heightmap.json", JSON.stringify(map, null, 2), "application/json")) {
+            ctx.toast("error", "this browser cannot save a file from the page");
+        }
     }
 
     async function loadMap(file: File): Promise<void> {
@@ -924,11 +916,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const focused = document.activeElement;
-        const put = (field: HTMLInputElement, value: number): void => {
-            if (field !== focused) {
-                field.value = String(value);
-            }
-        };
+        const put = (field: HTMLInputElement, value: number): void => setUnlessFocused(field, String(value), focused);
         put(settingFields.depth, settings.depth);
         put(settingFields.feed, settings.feed);
         put(settingFields.slow, settings.slow);
@@ -1049,10 +1037,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         setLocked(focusHere, !connected || !heightMap?.map || !idle || probing);
         focusHere.textContent = touchOff ? "Touch off here" : "Focus here";
         focusHint.textContent = touchOff ? TOUCH_HINT : FOCUS_HINT;
-        const offsetText = focusLabel.querySelector(".labeled-text");
-        if (offsetText) {
-            offsetText.textContent = touchOff ? "Touch-off offset mm" : "Focus offset mm";
-        }
+        relabel(focusLabel, touchOff ? "Touch-off offset mm" : "Focus offset mm");
         setLocked(setFocus, !heightMap?.map || probing);
         setLocked(clearButton, !heightMap?.map || probing);
         setLocked(loadButton, probing);

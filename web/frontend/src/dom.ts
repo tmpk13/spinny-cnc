@@ -195,6 +195,53 @@ export function labeled(label: string, control: HTMLElement, className = "labele
     return el("label", { class: className }, el("span", { class: "labeled-text" }, label), control);
 }
 
+/** Gives a `labeled` control's label other words; a label that already says them is left alone. */
+export function relabel(label: HTMLLabelElement, text: string): void {
+    const span = label.querySelector(".labeled-text");
+    if (span && span.textContent !== text) {
+        span.textContent = text;
+    }
+}
+
+/** Puts `value` in a field unless it is `focused`, the element with the focus, whose text is being typed. */
+export function setUnlessFocused(input: HTMLInputElement, value: string, focused: Element | null): void {
+    if (input !== focused) {
+        input.value = value;
+    }
+}
+
+/** A keydown listener for a field that presses `target` on Enter. */
+export function onEnter(target: HTMLButtonElement): (event: Event) => void {
+    return (event) => {
+        if ((event as KeyboardEvent).key === "Enter") {
+            event.preventDefault();
+            target.click();
+        }
+    };
+}
+
+/**
+ * Makes Tab in a text area put four spaces in at the caret, as the files
+ * the page edits are indented, rather than leave the field. The field
+ * stays scrolled where it was, and an input event that bubbles tells its
+ * listeners of the edit.
+ */
+export function tabIndents(area: HTMLTextAreaElement): void {
+    area.addEventListener("keydown", (event) => {
+        if (event.key === "Tab" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+            event.preventDefault();
+            const { selectionStart: start, selectionEnd: end, scrollTop: top, scrollLeft: left, value } = area;
+            area.value = value.slice(0, start) + "    " + value.slice(end);
+            area.setSelectionRange(start + 4, start + 4);
+            // Putting a value in may scroll the field to its end and back
+            // to the caret; the line being typed stays where it was.
+            area.scrollTop = top;
+            area.scrollLeft = left;
+            area.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+    });
+}
+
 /** A field the state fills in: a text or number field, or a select. */
 export type TrackedField = HTMLInputElement | HTMLSelectElement;
 
@@ -298,6 +345,67 @@ export function writeStored(key: string, value: string): void {
     } catch {
         // Not remembered; the page works without it.
     }
+}
+
+/**
+ * Hands a text to the browser to save as a file called `filename`; false
+ * when this browser cannot save one from the page.
+ */
+export function downloadText(filename: string, text: string, type = "text/plain"): boolean {
+    if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+        return false;
+    }
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    // A link out of the document is not followed by every browser.
+    const link = el("a", { href: url, download: filename });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    // The browser reads the file from the address after the click returns.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+}
+
+/**
+ * A drop zone and its file field: the files dropped on `zone` or picked
+ * in `input` go to `take` a batch at a time, while `ready` says the zone
+ * takes any; a drop or a pick while a batch is under way is ignored. The
+ * zone is marked "over" while files are dragged over it and "busy" while
+ * a batch is taken, the field disabled meanwhile; after a batch the field
+ * is emptied, so the same file can be picked again, and enabled as `ready`
+ * says.
+ */
+export function fileDrop(zone: HTMLElement, input: HTMLInputElement, take: (files: File[]) => Promise<void>, ready: () => boolean = () => true): void {
+    let busy = false;
+    const run = async (files: FileList | null | undefined): Promise<void> => {
+        if (busy || !ready() || !files || files.length === 0) {
+            return;
+        }
+        busy = true;
+        zone.classList.add("busy");
+        input.disabled = true;
+        try {
+            await take(Array.from(files));
+        } finally {
+            busy = false;
+            zone.classList.remove("busy");
+            input.disabled = !ready();
+            input.value = "";
+        }
+    };
+    input.addEventListener("change", () => void run(input.files));
+    for (const type of ["dragenter", "dragover"]) {
+        zone.addEventListener(type, (event) => {
+            event.preventDefault();
+            zone.classList.add("over");
+        });
+    }
+    zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+    zone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        zone.classList.remove("over");
+        void run((event as DragEvent).dataTransfer?.files);
+    });
 }
 
 /**

@@ -11,7 +11,7 @@
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
-import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, replace, setLocked } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, onEnter, replace, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
@@ -151,13 +151,6 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
     const toggleMotors = async (): Promise<void> => {
         const enabled = ctx.store.get().snapshot.machine?.enabled ?? false;
         await ctx.call(ctx.api.motors(!enabled));
-    };
-
-    const onEnter = (target: HTMLButtonElement) => (event: Event): void => {
-        if ((event as KeyboardEvent).key === "Enter") {
-            event.preventDefault();
-            target.click();
-        }
     };
 
     /**

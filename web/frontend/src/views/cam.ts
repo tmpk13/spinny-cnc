@@ -5,7 +5,7 @@
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { button, downloadText, el, fileDrop, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatDuration, formatLength, parseNumber } from "../format.ts";
 import { setPending, type AppState } from "../state.ts";
 import type {
@@ -602,54 +602,24 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     }
 
     // --- making a job ---
-    let making = false;
-    async function makeJob(chosen: FileList | File[]): Promise<void> {
-        if (making || picked === null) {
+    // The design dropped or picked is made a job through the profile
+    // picked; with none picked the zone takes nothing.
+    async function makeJob(files: File[]): Promise<void> {
+        if (picked === null) {
             return;
         }
-        making = true;
-        drop.classList.add("busy");
-        fileInput.disabled = true;
-        try {
-            const list = Array.from(chosen);
-            const answer = await ctx.call(ctx.api.camJob(picked, list, nameField.value.trim() || undefined));
-            await ctx.refreshJobs();
-            if (answer) {
-                lastJob = answer.job.id;
-                await ctx.selectJob(answer.job.id);
-                renderJobs(ctx.store.get());
-                replace(notes, ...answer.notes.map((note) => el("li", {}, note)));
-                notes.classList.toggle("hidden", answer.notes.length === 0);
-                ctx.toast("info", `made ${answer.job.name}: ${answer.job.groups.filter((g) => g.enabled && (g.paths.length > 0 || (g.moves?.length ?? 0) > 0)).length} operations`);
-            }
-        } finally {
-            making = false;
-            drop.classList.remove("busy");
-            fileInput.disabled = picked === null;
-            fileInput.value = "";
+        const answer = await ctx.call(ctx.api.camJob(picked, files, nameField.value.trim() || undefined));
+        await ctx.refreshJobs();
+        if (answer) {
+            lastJob = answer.job.id;
+            await ctx.selectJob(answer.job.id);
+            renderJobs(ctx.store.get());
+            replace(notes, ...answer.notes.map((note) => el("li", {}, note)));
+            notes.classList.toggle("hidden", answer.notes.length === 0);
+            ctx.toast("info", `made ${answer.job.name}: ${answer.job.groups.filter((g) => g.enabled && (g.paths.length > 0 || (g.moves?.length ?? 0) > 0)).length} operations`);
         }
     }
-
-    fileInput.addEventListener("change", () => {
-        if (fileInput.files && fileInput.files.length > 0) {
-            void makeJob(fileInput.files);
-        }
-    });
-    for (const type of ["dragenter", "dragover"]) {
-        drop.addEventListener(type, (event) => {
-            event.preventDefault();
-            drop.classList.add("over");
-        });
-    }
-    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-    drop.addEventListener("drop", (event) => {
-        event.preventDefault();
-        drop.classList.remove("over");
-        const dropped = (event as DragEvent).dataTransfer?.files;
-        if (dropped && dropped.length > 0) {
-            void makeJob(dropped);
-        }
-    });
+    fileDrop(drop, fileInput, makeJob, () => picked !== null);
 
     // --- gcode ---
     function renderJobs(state: AppState): void {
@@ -677,21 +647,11 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             el("dl", {}, ...reportLines(written.report).flatMap(([term, value]) => [el("dt", {}, term), el("dd", {}, value)])),
             ...written.report.warnings.map((warning) => el("p", { class: "warning" }, warning)),
         );
-        download(written.filename, written.text);
-    }
-
-    function download(filename: string, text: string): void {
-        if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
-            ctx.toast("info", `${filename} is written; this browser cannot save it from here`);
-            return;
+        if (downloadText(written.filename, written.text)) {
+            ctx.toast("info", `saved ${written.filename}`);
+        } else {
+            ctx.toast("info", `${written.filename} is written; this browser cannot save it from here`);
         }
-        const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-        const link = el("a", { href: url, download: filename });
-        document.body.append(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        ctx.toast("info", `saved ${filename}`);
     }
 
     lockAll();

@@ -384,7 +384,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
                 labeled("Sharp at H mm", height),
                 labeled("mm per px", scale),
                 labeled("Roll deg", roll),
-                el("label", { class: "labeled" }, el("span", { class: "labeled-text" }, "Mirrored"), mirror),
+                labeled("Mirrored", mirror),
             ),
             el("div", { class: "button-row" }, nozzleApply, nozzleChip, forget),
             el("div", { class: "button-row" }, labeled("Step mm", step, "labeled inline"), centerButton, partButton, abortButton),

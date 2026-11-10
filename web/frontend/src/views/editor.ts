@@ -12,7 +12,7 @@
 // back the moment its size returns.
 
 import { errorText } from "../api.ts";
-import { el } from "../dom.ts";
+import { el, tabIndents } from "../dom.ts";
 import { highlightToml } from "../highlight.ts";
 import { TomlError, parseToml } from "../toml.ts";
 
@@ -181,20 +181,7 @@ export function codeEditor(label: string): CodeEditor {
         }
         remember();
     });
-    // Tab indents, as in the files, rather than leaving the field.
-    textarea.addEventListener("keydown", (event) => {
-        if (event.key === "Tab" && !event.ctrlKey && !event.altKey && !event.metaKey) {
-            event.preventDefault();
-            const { selectionStart: start, selectionEnd: end, scrollTop: top, scrollLeft: left, value } = textarea;
-            textarea.value = value.slice(0, start) + "    " + value.slice(end);
-            textarea.setSelectionRange(start + 4, start + 4);
-            // Putting a value in may scroll the field to its end and back
-            // to the caret; the line being typed stays where it was.
-            textarea.scrollTop = top;
-            textarea.scrollLeft = left;
-            textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-    });
+    tabIndents(textarea);
 
     // Not every browser fires selectionchange on the field itself.
     const documentSelection = (): void => {

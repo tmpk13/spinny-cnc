@@ -18,7 +18,7 @@
 import { turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { button, el, labeled, numberField, readStored, relabel, replace, setLocked, writeStored } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
 import { defaultOperation, recipeOps } from "../mock/mill.ts";
 import { profileOf } from "../profile.ts";
@@ -343,8 +343,6 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     labels["stepDown"]!.title = "how far each pass goes down: the passes are as many as it takes to the depth";
     labels["spot"]!.title = "the beam's width on the work, mm: paths are offset by half of it";
     labels["passes"]!.title = "how many times each path is burnt";
-    // On a laser the speed is the beam's along the cut, not a feed.
-    const speedText = labels["speed"]!.querySelector(".labeled-text");
 
     /**
      * A position on the board as the fields take it: in the selected Plot
@@ -418,7 +416,6 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const closedLabel = el("label", { class: "muted" }, closed, " back to the first point");
 
     const pointsLabel = labeled("Points, board mm", points);
-    const pointsLabelText = pointsLabel.querySelector(".labeled-text");
     const pointsBox = el("div", { class: "mill-section" },
         pointsLabel,
         el("div", { class: "button-row" }, addHere, addMarker, addAll, clearPoints, closedLabel),
@@ -708,9 +705,8 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         for (const key of ["spot", "power", "passes"]) {
             labels[key]!.classList.toggle("hidden", !laser);
         }
-        if (speedText) {
-            speedText.textContent = laser ? "Speed mm/min" : "Feed mm/min";
-        }
+        // On a laser the speed is the beam's along the cut, not a feed.
+        relabel(labels["speed"]!, laser ? "Speed mm/min" : "Feed mm/min");
         boreText.textContent = laser
             ? " clear a hole wider than the spot in rings, rather than cut along its edge"
             : " bore a hole wider than the bit out with it, in rings";
@@ -720,9 +716,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         const where = moved
             ? `positions are ${plotJob!.name}'s own, from before it was moved or turned on the Jobs page: Here and the markers are taken into them, and the plan and the job made are put where it now is`
             : "positions are board mm";
-        if (pointsLabelText) {
-            pointsLabelText.textContent = moved ? "Points, the job's mm" : "Points, board mm";
-        }
+        relabel(pointsLabel, moved ? "Points, the job's mm" : "Points, board mm");
         hint.textContent = laser
             ? `${where}; a point is marked with a ring the spot across, and each pass burns the whole path again; fields take arithmetic, such as 25.4/2 or 1/8 in`
             : `${where}; the depth is under the surface where the tool was zeroed; fields take arithmetic, such as 25.4/2 or 1/8 in`;

@@ -11,7 +11,7 @@
 // last lines either way show below.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, labeled, numberField, replace, setLocked, Tracked, type TrackedField } from "../dom.ts";
+import { activePage, button, el, labeled, numberField, onEnter, replace, setLocked, Tracked, type TrackedField } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { DevicePlan, DeviceReference, DeviceState, SpotPolarity, TopSettings, TopState } from "../types.ts";
@@ -419,12 +419,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("info", `${text}: ${reply.join(" | ") || "ok"}`);
         }
     }
-    line.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-            event.preventDefault();
-            void sendLine();
-        }
-    });
+    line.addEventListener("keydown", onEnter(send));
 
     async function reference(camera = false): Promise<void> {
         const state = ctx.store.get();

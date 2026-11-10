@@ -7,7 +7,7 @@
 // an upload is, and Revert takes the stored job again.
 
 import { errorText } from "../api.ts";
-import { button, el, setLocked } from "../dom.ts";
+import { button, el, setLocked, tabIndents } from "../dom.ts";
 import { type JobPlace, formatJson, offsetOf, placeOf, stepsAt } from "../jsontext.ts";
 import { jointPreview } from "../mock/jobs.ts";
 import { setPending } from "../state.ts";
@@ -263,18 +263,7 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         readTimer = setTimeout(read, READ_MS);
         follow();
     });
-    // Tab indents by four spaces rather than leaving the field.
-    editor.addEventListener("keydown", (event) => {
-        if (event.key !== "Tab" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
-            return;
-        }
-        event.preventDefault();
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        editor.value = `${editor.value.slice(0, start)}    ${editor.value.slice(end)}`;
-        editor.selectionStart = editor.selectionEnd = start + 4;
-        editor.dispatchEvent(new Event("input"));
-    });
+    tabIndents(editor);
 
     /** The caret's place, drawn on the preview and said under the editor. */
     function follow(): void {

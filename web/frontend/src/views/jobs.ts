@@ -2,7 +2,7 @@
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, downloadText, el, fileDrop, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
 import { isDispensing, isMilling, profileOf } from "../profile.ts";
@@ -194,19 +194,6 @@ export function jobLabels(milling: boolean): { power: string; speed: string; spo
         : { power: "Power S", speed: "Speed mm/min", spot: "Spot mm" };
 }
 
-function relabel(label: HTMLLabelElement, text: string): void {
-    const span = label.querySelector(".labeled-text");
-    if (span && span.textContent !== text) {
-        span.textContent = text;
-    }
-}
-
-function setUnlessFocused(input: HTMLInputElement, value: string, focused: Element | null): void {
-    if (input !== focused) {
-        input.value = value;
-    }
-}
-
 /**
  * The Jobs panel in `root`, and the run controls in `runRoot`: a panel of
  * their own at the foot of the column, so Run stays in reach however long
@@ -366,10 +353,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             return;
         }
         const name = job.name.replace(/[^A-Za-z0-9._-]+/g, "_") || "job";
-        const blob = new Blob([JSON.stringify(job, null, 2)], { type: "application/json" });
-        const link = el("a", { href: URL.createObjectURL(blob), download: `${name}.json` });
-        link.click();
-        URL.revokeObjectURL(link.href);
+        if (!downloadText(`${name}.json`, JSON.stringify(job, null, 2), "application/json")) {
+            ctx.toast("error", "this browser cannot save a file from the page");
+        }
     }
 
     async function removeAll(): Promise<void> {
@@ -525,59 +511,25 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         });
     }
 
-    // One upload batch at a time; a drop or pick while one runs is ignored.
-    let uploading = false;
-    async function upload(files: FileList | File[]): Promise<void> {
-        if (uploading) {
-            return;
-        }
-        uploading = true;
-        drop.classList.add("busy");
-        fileInput.disabled = true;
-        try {
-            for (const file of Array.from(files)) {
-                if (file.name.toLowerCase().endsWith(".kicad_pcb")) {
-                    const layer = await chooseLayer(file);
-                    if (layer === null) {
-                        continue;
-                    }
-                    if (layer !== undefined) {
-                        layerField.value = layer;
-                    }
+    // Each file of a drop or a pick is uploaded in turn, a board after its
+    // layer is chosen.
+    fileDrop(drop, fileInput, async (files) => {
+        for (const file of files) {
+            if (file.name.toLowerCase().endsWith(".kicad_pcb")) {
+                const layer = await chooseLayer(file);
+                if (layer === null) {
+                    continue;
                 }
-                const job = await ctx.call(ctx.api.uploadJob(file, uploadOptions()));
-                await ctx.refreshJobs();
-                if (job) {
-                    await ctx.selectJob(job.id);
-                    ctx.toast("info", `loaded ${job.name}`);
+                if (layer !== undefined) {
+                    layerField.value = layer;
                 }
             }
-        } finally {
-            uploading = false;
-            drop.classList.remove("busy");
-            fileInput.disabled = false;
-            fileInput.value = "";
-        }
-    }
-
-    fileInput.addEventListener("change", () => {
-        if (fileInput.files && fileInput.files.length > 0) {
-            void upload(fileInput.files);
-        }
-    });
-    for (const type of ["dragenter", "dragover"]) {
-        drop.addEventListener(type, (event) => {
-            event.preventDefault();
-            drop.classList.add("over");
-        });
-    }
-    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-    drop.addEventListener("drop", (event) => {
-        event.preventDefault();
-        drop.classList.remove("over");
-        const files = (event as DragEvent).dataTransfer?.files;
-        if (files && files.length > 0) {
-            void upload(files);
+            const job = await ctx.call(ctx.api.uploadJob(file, uploadOptions()));
+            await ctx.refreshJobs();
+            if (job) {
+                await ctx.selectJob(job.id);
+                ctx.toast("info", `loaded ${job.name}`);
+            }
         }
     });
 
@@ -1376,11 +1328,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 ? "make the job's paths again for this width from what it was made of, its groups' settings kept"
                 : "the drawn width and the margins of probing take it; the paths are the drawing's lines";
         }
-        field.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                void applyWidth();
-            }
-        });
+        field.addEventListener("keydown", onEnter(apply));
         const applyWidth = async (): Promise<void> => {
             const width = parseNumber(field.value);
             if (width === null || !(width > 0)) {
@@ -1426,11 +1374,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         jobMarginField = field;
         const apply = button("Re-cut", () => applyMargin(), "btn btn-quiet");
         apply.title = "cut the stencil again with every opening shrunk by this much on every side, where the job is now; its groups keep their settings";
-        field.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                apply.click();
-            }
-        });
+        field.addEventListener("keydown", onEnter(apply));
         const applyMargin = async (): Promise<void> => {
             const value = parseNumber(field.value);
             if (value === null || !(value >= 0 && value <= MAX_MARGIN)) {

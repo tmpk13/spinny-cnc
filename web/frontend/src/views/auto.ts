@@ -6,7 +6,7 @@
 // and the row that picks the provider and model the next turn uses. Keys
 // stay where the backend runs: the page is only told whether each is set.
 
-import { button, el, replace, setLocked } from "../dom.ts";
+import { button, el, labeled, replace, setLocked } from "../dom.ts";
 import { mergeAuto, type AppState } from "../state.ts";
 import type { AutoEntry, AutoProvider, AutoSettings } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
@@ -114,11 +114,11 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
     const provider = el("select", { class: "field", "aria-label": "Provider" }) as HTMLSelectElement;
     const model = el("input", { type: "text", class: "field", spellcheck: "false", autocomplete: "off", "aria-label": "Model" }) as HTMLInputElement;
     const baseUrl = el("input", { type: "url", class: "field", spellcheck: "false", autocomplete: "off", "aria-label": "Base URL", placeholder: "http://localhost:11434/v1" }) as HTMLInputElement;
-    const baseField = el("label", { class: "labeled auto-base" }, el("span", { class: "labeled-text" }, "Base URL"), baseUrl);
+    const baseField = labeled("Base URL", baseUrl, "labeled auto-base");
     const key = el("span", { class: "auto-key", "data-state": "warn" });
     const settingsRow = el("div", { class: "auto-settings" },
-        el("label", { class: "labeled" }, el("span", { class: "labeled-text" }, "Provider"), provider),
-        el("label", { class: "labeled auto-model" }, el("span", { class: "labeled-text" }, "Model"), model),
+        labeled("Provider", provider),
+        labeled("Model", model, "labeled auto-model"),
         baseField,
         key,
     );
