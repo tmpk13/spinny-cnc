@@ -343,7 +343,7 @@ the STL's path, `turn`, `scale`, the `stock` (margin, top, size, anchor,
 offset), the `tolerance`, the `travel` height and the `clearance`, and the
 operations (strategy, tool shape and size, step down, stepover in mm,
 leave, ramp, direction, band, below, flats, angle). It answers the model's
-size, flat faces, undercut area and open edges, the block, the model's
+size, flat faces and open edges, the block, the model's
 outline, and for each operation its levels, its paths of `[x, y, z,
 kind]` moves, their length and how deep any comes into the model, or
 `{"error": "..."}`. It is looked for as `SPINNY_CARVE` names it, then in

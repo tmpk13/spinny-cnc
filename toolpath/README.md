@@ -52,6 +52,7 @@ classDiagram
     class convert {
         main(argv)  spinny-polar
         read_paths(text)
+        runs(paths, key) runs of one power and speed
     }
     class jog {
         main(argv)  spinny-jog
@@ -60,7 +61,7 @@ classDiagram
     }
     class center {
         main(argv)  spinny-center
-        spokes(count, inner, outer)
+        spokes(count, outer)
         ring(radius)
     }
     class clear {
@@ -87,6 +88,7 @@ classDiagram
         burnt(groups, along, across)
         readings(design, groups, along, across)
         job_document(groups, name, spot)
+        summary(design, groups, error) the lines a run prints
     }
     class pads {
         pads_of(image) the layer's fills as pads: centroid and area
@@ -107,6 +109,7 @@ classDiagram
         ordered(lines, pace) joined where their ends meet, by travel, inside first
     }
     class outline {
+        read(path, offset) a board's outline
         cut(outline, radius) Cut  loops in cutting order, a bit's middle kept off the board
     }
     class order {
@@ -122,6 +125,7 @@ classDiagram
         matching(machines, values) the file the values are
         controls_file(machines, values, ...) the file whose controls the page draws
         cli_defaults(machine)
+        is_id(text) a file id, whole
     }
     class controls {
         default_controls(kinematics, tool, focus) the page's controls for a machine file that says nothing
@@ -148,11 +152,14 @@ classDiagram
         load / load_all(directory) / parse(text, id)
         _Feeds  a material's rpm and feed, held to the spindle and the axes
         resolve(tool, settings, defaults, source) cutting
+        place(paths, anchor, offset) centered, by a corner, or kept
         set_value(text, path, value) text, comments kept
     }
     class camjob {
+        read_design(path, placement) Design  a board, gcode or an STL
         read_board(path, layer) Design
-        read_gcode(text) / place_paths(sets, anchor, offset)
+        read_gcode(text, name) / place_paths(sets, anchor, offset)
+        isolation_passes(plan) each pass's offset and loops
         read_model(path) Design  an STL
         build(profile, design) BuiltJob  groups per operation, notes; a model's groups carry moves
         model_request(profile, design, operations) the kernel's request
@@ -173,11 +180,14 @@ classDiagram
         add_machine_arguments(parser)  --machine FILE
         parse_args(parser, argv)
         options_from(args)
+        parse_offset(text) --offset X,Y
         sim_document(...)
         write_outputs(...)
+        print_result(summary, written, dry_run, remarks)
     }
     class polar {
         joint_of(point, previous)
+        surface_length(a, b) a joint move's length as the firmware reckons it
         subdivide(start, end, joint, kin)
         unwrap(angle, previous)
         far_side(joint)
