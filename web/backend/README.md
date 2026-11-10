@@ -60,32 +60,23 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 
 ## Events
 
-`/ws` sends one JSON object per event with the payload flattened next to
-`type`: `{"type": "state", "connected": ..., "machine": ...}`,
-`{"type": "console", "dir": "rx", "text": "ok"}`,
-`{"type": "progress", "state": "running", ...}`,
-`{"type": "heightmap", "map": ..., "probe": ..., "settings": ...}`,
-`{"type": "message", "level": "info", "text": "..."}`,
-`{"type": "camera", ...the camera state...}`,
-`{"type": "pnp", ...the up camera state...}`,
-`{"type": "pnp_device", ...the G-code device state...}`,
-`{"type": "align", "job": ..., "marks": ..., "fit": ...}` and
-`{"type": "auto", "entry": ..., "busy": ..., "cleared": ...}`. Console events
-include the status polls and reports.
-
-`GET /api/run` answers `null` before any job has run, like the snapshot's
-`run`. A progress object also carries `error` with the reason when the
-state is `error`.
+`/ws` sends one JSON object per event, its payload flattened beside
+`type` (`{"type": "progress", "state": "running", ...}`); the events and
+what each carries are in [WEB_API.md](../../docs/WEB_API.md#events), and
+the console events include the status polls and reports.
 
 ## Files
 
 Runtime files go to `var/` at the repository root, or wherever `--data`
 points; none of them is tracked.
 
-- `config.json`: the host tolerance, the milling clearance and spin-up, the last url, the probe settings, the markers, and the Auto tab's provider, models and base URL (no key: those stay in the environment).
+- `config.json`: the host values (the chord tolerance, the milling clearance and spin-up, speed control, the travel height, the dispensing values), the last url and machine file, the probe settings, the markers, the head camera's and the up camera's settings, the G-code device's (its profile, references, feeder counts and cameras), whether the camera log is on, and the Auto tab's provider, models and base URL (no key: those stay in the environment).
 - `auto/claude-code/`: the empty directory the Auto tab's Claude Code provider runs `claude` in; Claude Code keeps the sessions under its name.
 - `heightmap.json`: the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
 - `jobs/*.json`: one file per imported job.
+- `resume.json`: how far the last run got and the plan it was made from, for picking it up again.
+- `position.json`: the machine's last reported position, kept across sessions.
+- `camlog/`: the camera log while logging is on: each look's picture, the same with what it found drawn over it, and an index.
 - `spinny.log`: the backend's log, rotated at 1 MB (`--log-level debug` for more): the link's opening and closing with what it last sent and heard, runs, probing, settings written, messages shown on the page and the machine's own messages, its boot reason and `diag` answer among them.
 - `wire.log`: every line sent and received with the time to the millisecond, the link's own status polls marked, rotated at 8 MB with four kept; the last lines before a machine went quiet.
 
@@ -242,8 +233,9 @@ classDiagram
         subdivide(start, end, joint, kin)
     }
     class spinny_laser_machines {
-        load_all(directory) the machine files
-        current(machines, values) which one is loaded
+        load(path) / parse(text, id) a machine file
+        matches(machine, values) whether the live settings are the file's
+        controls_file(machines, values, kinematics, tool, focus, loaded) whose controls the page draws
     }
     class cam {
         ProfileStore list / document / save / patch / remove
