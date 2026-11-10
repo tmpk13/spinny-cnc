@@ -9,8 +9,8 @@ coupons. They place the board on the axis, pre-split the
 toolpath where a controller's own segmentation would stray, handle cuts
 through the axis, estimate the time with the table's speed limit, and
 play the job back in 3D. The copper reading and the isolation loops come
-from the Cartesian tool in `../kicad-to-gcode`, pulled in as a path
-dependency. The package is `toolpath/` (`spinny_laser`).
+from the Cartesian tool of the sibling kicad-to-gcode repository (its
+`laser-sweep` package), pulled in as a path dependency. The package is `toolpath/` (`spinny_laser`).
 
 ## Usage
 

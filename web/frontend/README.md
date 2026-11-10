@@ -300,6 +300,21 @@ classDiagram
     class mock_order {
         innerFirst(paths) whatever lies inside a closed shape first
     }
+    class helpers {
+        calc  arithmetic typed into a number field
+        confirm  a confirm dialog that returns a promise
+        dom  elements, common controls, what the browser remembers
+        format  numbers for the DRO and the job panel
+        jsontext  a job as editable JSON, and where in the job a place in it is
+        kicad  a board file's layers, read before an import
+        machinekeys  where each setting is written in a machine file
+        regroup  a job's paths moved between its groups
+        sketch  the Plot operation's sizes drawn over the preview
+        speed  how fast every cut of a job goes, for the speed view
+        types  the backend's JSON, a type per body or answer
+        uploads  the files the backend reads, by suffix
+    }
+    views --> helpers
     views --> align
     mock_backend --> align
     mock_backend --> mock_vision

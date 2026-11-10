@@ -316,8 +316,8 @@ has one (the operation's, else the tool's), and cuts with `S` on every
 line that changes it. Feeds and `S` are modal, written when they change.
 The end is the output off, the tool up, the X/Y homes, the depth home,
 and the footer. A laser's `min_power` has no gcode word and is left out
-with a warning. A polar profile goes through the grblHAL polar writer in
-`spinny_laser.gcode` (`controller = joint`: the radius on X, which the
+with a warning. A polar profile goes through the polar writer in
+`spinny_laser.gcode` with its joint controller (`controller = joint`: the radius on X, which the
 radius axis must be named, the angle on the rotary letter, inverse-time
 feed), laser operations only; its footer comes last too, after the
 writer's own end (the output off, `G94` back, the return home).

@@ -74,7 +74,7 @@ the simulator does not show that closing the port stops anything.
 | `--trace PATH` | write the beam's marks and the command log as JSON |
 | `--machine PATH` | a machine file from `machines/` (`docs/MACHINES.md`): its axes, kinematics and tool applied to the settings at start |
 | `--settings K=V` | set a machine setting at start, repeatable; after `--machine` it overrides the file |
-| `--store PATH` | file standing in for the settings sector, so `$save` works |
+| `--store PATH` | file standing in for the settings sector, so `$save` works; a blob saved there stands over `--machine` and `--settings` at start, as flash does on the board |
 | `--stop L[MIN][,MAX]` | an endstop on joint `L` (`R`, `A`, `H` or `Z`), closed at or below `MIN` and at or above `MAX`; repeatable |
 | `--surface B[,SX,SY[,C]]` | a board under the probe, its top at focus height `B + SX*x + SY*y + C*(x^2 + y^2)`; without it a probe finds nothing |
 | `--probe-offset L,C` | the probe tip `L` mm along the rail and `C` mm across it from the beam; it adds no board of its own |

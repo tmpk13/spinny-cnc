@@ -253,8 +253,9 @@ $save
   measures, before running a job. The position no longer holds after a
   loss, the focus axis a height map's focus offset is tied to included,
   so center and focus again.
-- The cross slide has no limit switches. It is a setup axis with a short
-  travel, so drive it in small steps and watch it; a `jogto Z` to a
+- The cross slide has no limit switch unless `z_stop` gives it one (see
+  the pins above). It is a setup axis with a short travel, so drive it in
+  small steps and watch it; a `jogto Z` to a
   position declared before the slide was moved by hand will run into the
   end of its travel and stall. Set `$z_max` to its travel either side of
   `Z0` before using it as a cartesian Y axis: a cartesian job moves it

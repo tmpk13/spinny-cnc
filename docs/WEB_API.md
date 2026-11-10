@@ -10,6 +10,17 @@ Every refusal is `{"detail": "<text>"}`; a body or field that does not
 parse is 422 with `detail` as a list; a link fault (port gone, no answer)
 is 502.
 
+A `POST` from a page on another origin is refused with 403, and so is a
+websocket opened by one (browsers name the origin on both, and CORS alone
+would only stop the page reading the answer); only the server's own
+origin and any `--cors-origin` pass, such as the frontend's dev server
+(`--cors-origin http://localhost:3000`, repeatable). Requests without an
+`Origin` header (scripts, curl) are not a page's and pass: the backend is
+meant for a trusted network. `--allowed-host spinny.local` (repeatable)
+also pins the `Host` header, against a page that points its own name at
+this address; the loopback names `127.0.0.1` and `localhost` are always
+allowed, since the backend's own tools come in under them.
+
 ## Connection
 
 | Method and path | Body | Returns |
@@ -602,12 +613,6 @@ in a group whose own focus differs from the line's before it, gets a dark
 `power` leaves the head where it is and raises each cut piece's `S` and
 `M` by `sqrt(1 + (dz / rayleigh)^2)`, `dz` the defocus there, up to
 `s_max`. `auto` is `focus` with a focus axis, else `power`.
-
-A `POST` from a page on another origin is refused with 403, and so is a
-websocket opened by one; only the server's own origin and any
-`--cors-origin` pass. Requests without an `Origin` header (scripts, curl)
-are not a page's and pass. `--allowed-host` restricts the `Host` header as
-well.
 
 ## Camera
 

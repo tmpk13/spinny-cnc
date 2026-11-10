@@ -709,9 +709,8 @@ every few seconds. What to read, in order:
    says how long the link had been open, how many lines were sent and
    unanswered, when the machine was last heard and what it last said,
    and its last status report. `machine: boot ...` lines say why the
-   board started every time it was connected: a power-on, the reset pin,
-   the watchdog (the main loop stalled), a panic with its location, a hard
-   fault with its `pc`, or a forced reset after flashing. The board says
+   board started every time it was connected (the reasons are in
+   [PROTOCOL.md](PROTOCOL.md#diagnostics)). The board says
    it at every open of its port, so the same line at a later connect is
    logged as news; a fault is an error the first time only. After a link
    that failed on its own, the next connect compares the board's uptime

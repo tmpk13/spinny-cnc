@@ -13,15 +13,8 @@ uv run pytest web/backend/tests
 ```
 
 A page from another origin cannot drive the machine: its posts and
-websockets are refused (browsers name the origin on both, and CORS alone
-would only stop the page reading the answer). `--cors-origin
-http://localhost:3000` (repeatable) admits a page served from elsewhere,
-such as the frontend's dev server. `--allowed-host spinny.local`
-(repeatable) also pins the `Host` header, against a page that points its
-own name at this address. Anything without an `Origin` header, such as a
-script, is admitted; the backend is meant for a trusted network. The
-loopback names `127.0.0.1` and `localhost` are always allowed as the host,
-since the backend's own tools come in under them.
+websockets are refused, with `--cors-origin` and `--allowed-host` to admit
+or pin what a setup needs ([WEB_API.md](../../docs/WEB_API.md)).
 
 The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 `../frontend/dist` is served at `/` when it exists.
