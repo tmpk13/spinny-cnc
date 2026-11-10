@@ -45,10 +45,10 @@ def drawn_lines(image: Image) -> list[Polyline]:
     return lines
 
 
-def ordered(lines: list[Polyline], pace: float = clear.DEFAULT_PACE, start: Point = (0.0, 0.0)) -> list[Polyline]:
+def ordered(lines: list[Polyline], pace: float = clear.DEFAULT_PACE) -> list[Polyline]:
     """The lines joined where their ends meet, taken by the head's travel
-    from `start` (`pace` mm of rail to a degree of table, as a clearing's
+    from the axis (`pace` mm of rail to a degree of table, as a clearing's
     strokes are), with whatever lies inside a closed shape before it."""
     joined = clear.chains(lines)
-    travelled = clear.by_travel(joined, pace, start)
+    travelled = clear.by_travel(joined, pace)
     return cut_order.inner_first(travelled)

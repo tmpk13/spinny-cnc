@@ -12,7 +12,7 @@ from spinny_laser.center import build, main, ring, ring_speed, spokes
 
 
 def test_spokes_are_radial_and_start_on_the_axis():
-    paths = spokes(4, 0.0, 6.0)
+    paths = spokes(4, 6.0)
     assert len(paths) == 4
     for index, path in enumerate(paths):
         start, end = path
@@ -34,7 +34,7 @@ def test_a_ring_is_closed_and_every_point_is_the_same_distance_out():
 
 def test_two_lines_is_the_fewest_that_bounds_anything():
     with pytest.raises(ValueError):
-        spokes(1, 0.0, 6.0)
+        spokes(1, 6.0)
     with pytest.raises(ValueError):
         ring(0.0)
 
@@ -162,7 +162,7 @@ def test_the_ring_can_be_burnt_on_its_own():
     groups = build(lines=0, reach=6.0, ring_radius=5.0, power=400.0, speed=200.0)
     assert len(groups) == 1
     assert "ring" in groups[0].label
-    assert spokes(0, 0.0, 6.0) == []
+    assert spokes(0, 6.0) == []
 
 
 def test_a_ring_only_pattern_says_only_what_applies(tmp_path):

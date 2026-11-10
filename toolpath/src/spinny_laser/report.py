@@ -9,7 +9,6 @@ from .gcode import GRBLHAL_SEGMENT, INVERSE, Job
 
 def render(job: Job, gcode_name: str, source: str, notes: list[str] | None = None) -> str:
     options = job.options
-    assert options is not None
     lines = [
         f"# {gcode_name}",
         "",

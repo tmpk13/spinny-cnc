@@ -81,9 +81,9 @@ def arc(cx: float, cy: float, radius: float, start: float, sweep: float, toleran
     return [(cx + radius * math.cos(a0 + a1 * i / count), cy + radius * math.sin(a0 + a1 * i / count)) for i in range(count + 1)]
 
 
-def circle(cx: float, cy: float, radius: float, ccw: bool = True, start: float = 0.0, tolerance: float = DEFAULT_TOLERANCE) -> Path:
-    """A whole circle as a closed path from `start` degrees, its last point its first."""
-    path = arc(cx, cy, radius, start, 360.0 if ccw else -360.0, tolerance)
+def circle(cx: float, cy: float, radius: float, ccw: bool = True, tolerance: float = DEFAULT_TOLERANCE) -> Path:
+    """A whole circle as a closed path from 0 degrees, its last point its first."""
+    path = arc(cx, cy, radius, 0.0, 360.0 if ccw else -360.0, tolerance)
     if len(path) > 1:
         path[-1] = path[0]
     return path
@@ -188,7 +188,6 @@ def pocket_rect(
     stepover: float,
     climb: bool = True,
     corner: float = 0.0,
-    tolerance: float = DEFAULT_TOLERANCE,
 ) -> list[Path]:
     """The rectangle cleared to its walls as one path: from a line along
     its middle out loop by loop, at most `stepover` bits apart, to the
@@ -220,16 +219,14 @@ def pocket_rect(
     for t in insets:
         rho = corner - r - t
         if rho > EPSILON:
-            loop = _rounded_loop(a + t, c + t, b - t, d - t, rho, ccw=climb, near=path[-1], tolerance=tolerance)
+            loop = _rounded_loop(a + t, c + t, b - t, d - t, rho, ccw=climb, near=path[-1])
         else:
             loop = _rectangle(a + t, c + t, b - t, d - t, ccw=climb, near=path[-1])
         path.extend(loop)
     return line(path)
 
 
-def pocket_circle(
-    cx: float, cy: float, diameter: float, tool: float, stepover: float, climb: bool = True, tolerance: float = DEFAULT_TOLERANCE
-) -> list[Path]:
+def pocket_circle(cx: float, cy: float, diameter: float, tool: float, stepover: float, climb: bool = True) -> list[Path]:
     """The circle cleared to its wall as one path: down at the middle,
     then rings out, at most `stepover` bits apart, to the ring that
     finishes the wall. A circle as wide as the bit is a drill."""
@@ -249,7 +246,7 @@ def pocket_circle(
         rho -= stepover * tool
     path: Path = [(cx, cy)]
     for rho in reversed(radii):
-        path.extend(circle(cx, cy, rho, ccw=climb, tolerance=tolerance))
+        path.extend(circle(cx, cy, rho, ccw=climb))
     return line(path)
 
 
@@ -261,7 +258,6 @@ def profile_rect(
     tool: float,
     side: str = OUTSIDE,
     climb: bool = True,
-    tolerance: float = DEFAULT_TOLERANCE,
     corner: float = 0.0,
 ) -> list[Path]:
     """One closed path along the rectangle's edge: outside it, inside it or
@@ -284,33 +280,31 @@ def profile_rect(
             raise MillError(f"the rectangle is narrower than the bit: {xb - xa:.3f} by {yb - ya:.3f} mm for a {tool:g} mm bit")
         a, c, b, d = xa + r, ya + r, max(xa + r, xb - r), max(ya + r, yb - r)
         if corner - r > EPSILON:
-            return line(_rounded_loop(a, c, b, d, corner - r, ccw=climb, tolerance=tolerance))
+            return line(_rounded_loop(a, c, b, d, corner - r, ccw=climb))
         return line(_rectangle(a, c, b, d, ccw=climb))
     if side == ON:
         if corner > EPSILON:
-            return line(_rounded_loop(xa, ya, xb, yb, corner, ccw=not climb, tolerance=tolerance))
+            return line(_rounded_loop(xa, ya, xb, yb, corner, ccw=not climb))
         return line(_rectangle(xa, ya, xb, yb, ccw=not climb))
     # Outside, counterclockwise from under the low corner: each side, then
     # the quarter circle about the next corner's center, the bit's radius
     # farther out than the corner's own.
     k, rr = corner, r + corner
     path: Path = [(xa + k, ya - r), (xb - k, ya - r)]
-    path.extend(arc(xb - k, ya + k, rr, -90.0, 90.0, tolerance)[1:])
+    path.extend(arc(xb - k, ya + k, rr, -90.0, 90.0)[1:])
     path.append((xb + r, yb - k))
-    path.extend(arc(xb - k, yb - k, rr, 0.0, 90.0, tolerance)[1:])
+    path.extend(arc(xb - k, yb - k, rr, 0.0, 90.0)[1:])
     path.append((xa + k, yb + r))
-    path.extend(arc(xa + k, yb - k, rr, 90.0, 90.0, tolerance)[1:])
+    path.extend(arc(xa + k, yb - k, rr, 90.0, 90.0)[1:])
     path.append((xa - r, ya + k))
-    path.extend(arc(xa + k, ya + k, rr, 180.0, 90.0, tolerance)[1:])
+    path.extend(arc(xa + k, ya + k, rr, 180.0, 90.0)[1:])
     path[-1] = path[0]
     if climb:
         path.reverse()
     return line(path)
 
 
-def profile_circle(
-    cx: float, cy: float, diameter: float, tool: float, side: str = OUTSIDE, climb: bool = True, tolerance: float = DEFAULT_TOLERANCE
-) -> list[Path]:
+def profile_circle(cx: float, cy: float, diameter: float, tool: float, side: str = OUTSIDE, climb: bool = True) -> list[Path]:
     """One ring around the circle: outside it, inside it, or on the line."""
     check_tool(tool)
     if side not in SIDES:
@@ -326,4 +320,4 @@ def profile_circle(
     # Climb runs clockwise around a part (or along its line), counterclockwise
     # inside a hole.
     ccw = (side == INSIDE) == climb
-    return line(circle(cx, cy, radius, ccw=ccw, tolerance=tolerance))
+    return line(circle(cx, cy, radius, ccw=ccw))

@@ -122,7 +122,7 @@ def test_the_gain_is_two_over_the_tangent_of_the_angle():
     # The spirals are pitched so that they meet at that angle.
     near, far = spirals(d)
     assert d.pitch == pytest.approx(2.0 * math.pi * d.spiral * math.tan(math.radians(1.5)))
-    assert near[1][0] - near[0][0] == pytest.approx(d.pitch * (360.0 - 2 * d.trim) / 360.0)
+    assert near[1][0] - near[0][0] == pytest.approx(d.pitch * (360.0 - 2 * fine.TRIM_DEG) / 360.0)
     # The far spiral goes inward with the angle, on the far side.
     assert far[0][0] == pytest.approx(-(d.spiral + d.pitch / 2))
     assert far[1][0] == pytest.approx(-(d.spiral - d.pitch / 2))

@@ -16,7 +16,6 @@ def render(
     spot: float = 0.1,
     min_radius: float = 0.5,
     bridges: list | None = None,
-    ring_step: float | None = None,
 ) -> str:
     """Board coordinates are polar coordinates here: the axis is the origin."""
     reach = _reach(copper, groups, outline or [])
@@ -34,7 +33,7 @@ def render(
         ' fill="none" stroke-linecap="round" stroke-linejoin="round">',
     ]
 
-    step = ring_step or _ring_step(reach)
+    step = _ring_step(reach)
     parts.append('<g stroke="#d8d8d8" stroke-width="0.05">')
     ring = step
     while ring <= reach + 1e-9:

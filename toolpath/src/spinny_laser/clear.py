@@ -140,7 +140,7 @@ def perimeter(copper: Polygons, keep: float, spot: float, outline: list[Polyline
     return [[(x0, y0), (x1, y0), (x1, y1), (x0, y1)]]
 
 
-def chains(paths: list[Polyline], epsilon: float = JOIN_EPSILON) -> list[Polyline]:
+def chains(paths: list[Polyline]) -> list[Polyline]:
     """The paths joined end to end where their ends meet, reversed as needed.
 
     A path that closes on its own stays a path of its own. A closed path
@@ -152,13 +152,13 @@ def chains(paths: list[Polyline], epsilon: float = JOIN_EPSILON) -> list[Polylin
     for path in paths:
         if len(path) < 2:
             continue
-        if _closed(path, epsilon):
+        if _closed(path):
             out.append(_shut(list(path)))
         else:
             pieces.append(list(path))
 
     def cell(point: Point) -> tuple[int, int]:
-        return (math.floor(point[0] / epsilon), math.floor(point[1] / epsilon))
+        return (math.floor(point[0] / JOIN_EPSILON), math.floor(point[1] / JOIN_EPSILON))
 
     ends: dict[tuple[int, int], list[tuple[int, bool]]] = {}
     for index, piece in enumerate(pieces):
@@ -173,7 +173,7 @@ def chains(paths: list[Polyline], epsilon: float = JOIN_EPSILON) -> list[Polylin
             for dy in (-1, 0, 1):
                 for index, at_end in ends.get((cx + dx, cy + dy), ()):
                     piece = pieces[index]
-                    if used[index] or math.dist(point, piece[-1] if at_end else piece[0]) > epsilon:
+                    if used[index] or math.dist(point, piece[-1] if at_end else piece[0]) > JOIN_EPSILON:
                         continue
                     used[index] = True
                     return piece[::-1] if at_end else piece
@@ -184,22 +184,22 @@ def chains(paths: list[Polyline], epsilon: float = JOIN_EPSILON) -> list[Polylin
             continue
         used[index] = True
         chain = list(piece)
-        while not _closed(chain, epsilon):
+        while not _closed(chain):
             after = take(chain[-1])
             if after is None:
                 break
             chain.extend(after[1:])
-        while not _closed(chain, epsilon):
+        while not _closed(chain):
             before = take(chain[0])
             if before is None:
                 break
             chain[:0] = before[:0:-1]
-        out.append(_shut(chain) if _closed(chain, epsilon) else chain)
+        out.append(_shut(chain) if _closed(chain) else chain)
     return out
 
 
-def _closed(path: Polyline, epsilon: float = JOIN_EPSILON) -> bool:
-    return len(path) > 3 and math.dist(path[0], path[-1]) <= epsilon
+def _closed(path: Polyline) -> bool:
+    return len(path) > 3 and math.dist(path[0], path[-1]) <= JOIN_EPSILON
 
 
 def _shut(path: Polyline) -> Polyline:
@@ -452,19 +452,21 @@ def _move(a: tuple[float, float], b: tuple[float, float], pace: float) -> float:
     return max(abs(b[0] - a[0]), min(turn, 360.0 - turn) * pace)
 
 
-def travel(strokes: list[Polyline], pace: float, start: Point = (0.0, 0.0)) -> float:
-    """The time the head spends between strokes, in rail millimeters."""
+def travel(strokes: list[Polyline], pace: float) -> float:
+    """The time the head spends between strokes, from the axis, in rail
+    millimeters."""
     total = 0.0
-    at = _joint(start)
+    at = (0.0, 0.0)
     for stroke in strokes:
         total += _move(at, _joint(stroke[0]), pace)
         at = _joint(stroke[-1])
     return total
 
 
-def sweep(spokes: list[list[Polyline]], pace: float, start: Point = (0.0, 0.0)) -> list[Polyline]:
+def sweep(spokes: list[list[Polyline]], pace: float) -> list[Polyline]:
     """Spokes in the order given, their pieces out from the axis, each
-    spoke cut out or in as makes the least travel over the whole round."""
+    spoke cut out or in as makes the least travel over the whole round,
+    from the axis."""
     if not spokes:
         return []
 
@@ -477,7 +479,7 @@ def sweep(spokes: list[list[Polyline]], pace: float, start: Point = (0.0, 0.0)) 
     # For each way the last spoke went, the least travel so far, and for
     # each spoke after the first, the way the one before it went on that
     # path.
-    at = _joint(start)
+    at = (0.0, 0.0)
     best = [_move(at, ends(spokes[0], way)[0], pace) for way in (0, 1)]
     back: list[tuple[int, int]] = []
     for before, pieces in zip(spokes, spokes[1:]):
@@ -503,9 +505,10 @@ def sweep(spokes: list[list[Polyline]], pace: float, start: Point = (0.0, 0.0)) 
     return out
 
 
-def by_travel(strokes: list[Polyline], pace: float, start: Point = (0.0, 0.0)) -> list[Polyline]:
+def by_travel(strokes: list[Polyline], pace: float) -> list[Polyline]:
     """The strokes taken in turn by whichever end the head reaches soonest
-    from where the last one left it, each cut from that end.
+    from where the last one left it, the first from the axis, each cut from
+    that end.
 
     The head's time to a point is the longer of the rail's run and the
     table's turn, counted in rail millimeters at `pace` to the degree: a
@@ -524,7 +527,7 @@ def by_travel(strokes: list[Polyline], pace: float, start: Point = (0.0, 0.0)) -
         for side, point in ((0, stroke[0]), (1, stroke[-1])):
             end = _joint(point)
             buckets[wedge(end[1])][(index, side)] = end
-    at = _joint(start)
+    at = (0.0, 0.0)
     out = []
     for _ in range(len(strokes)):
         best: tuple[float, int, int] | None = None

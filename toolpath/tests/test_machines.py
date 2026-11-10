@@ -11,11 +11,16 @@ import pytest
 from spinny_laser import machine, machines
 from spinny_laser.controls import KINDS, default_controls_by_kind, kind_id
 from spinny_laser.controls import default_controls
-from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, controls_file, current, load, load_all, matches, matching, parse
+from spinny_laser.machines import FIRMWARE_DEFAULTS, Machine, MachineError, cli_defaults, controls_file, load, matches, matching, parse
 
 REPO = Path(__file__).resolve().parents[2]
 SHIPPED = REPO / "machines"
 FIXTURE = Path(__file__).parent / "data" / "default-controls.json"
+
+
+def shipped() -> list[Machine]:
+    """The machines/ files, by file name."""
+    return [load(path) for path in sorted(SHIPPED.glob("*.toml"))]
 
 
 def test_the_defaults_cover_every_setting_once():
@@ -81,8 +86,7 @@ def test_an_empty_file_is_the_firmware_at_its_defaults():
 
 
 def test_the_shipped_files_load_and_say_what_they_are():
-    found, problems = load_all(SHIPPED)
-    assert problems == []
+    found = shipped()
     assert [m.id for m in found] == ["cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "polar-laser-focus", "polar-laser"]
     by_id = {m.id: m for m in found}
     assert by_id["polar-laser"].settings == FIRMWARE_DEFAULTS
@@ -368,31 +372,28 @@ def test_a_dispenser_is_the_table_s_driver_in_millimeters():
     assert parse("[host]\ntravel = -1.5\n", "below").host == {"travel": -1.5}
 
 
-def test_a_bad_file_is_reported_beside_the_good_ones(tmp_path):
+def test_a_bad_or_missing_file_is_refused_by_its_name(tmp_path):
     (tmp_path / "good.toml").write_text("name = \"Good\"\n", encoding="utf-8")
     (tmp_path / "bad.toml").write_text("[rail]\nmax_rate = -1\n", encoding="utf-8")
-    (tmp_path / "notes.txt").write_text("not a machine", encoding="utf-8")
-    found, problems = load_all(tmp_path)
-    assert [m.id for m in found] == ["good"] and found[0].name == "Good"
-    assert len(problems) == 1 and "bad.toml" in problems[0] and "[rail] max_rate" in problems[0]
-    assert load_all(tmp_path / "missing") == ([], [])
+    good = load(tmp_path / "good.toml")
+    assert (good.id, good.name) == ("good", "Good")
+    with pytest.raises(MachineError, match=r"bad\.toml: \[rail\] max_rate"):
+        load(tmp_path / "bad.toml")
     with pytest.raises(MachineError):
         load(tmp_path / "missing.toml")
 
 
 def test_the_live_settings_name_their_machine():
-    found, _ = load_all(SHIPPED)
-    assert current(found, FIRMWARE_DEFAULTS) == "polar-laser"
+    found = shipped()
     assert matching(found, FIRMWARE_DEFAULTS).id == "polar-laser" and matching(found, {}) is None
     mill = next(m for m in found if m.id == "cartesian-mill")
-    assert current(found, mill.settings) == "cartesian-mill"
+    assert matching(found, mill.settings).id == "cartesian-mill"
     # As the firmware prints them: three decimals, ints for whole numbers.
     printed = {name: (round(value, 3) if isinstance(value, float) else value) for name, value in mill.settings.items()}
     printed["a_steps"] = 14222.222
     assert matches(mill, printed)
-    assert current(found, {**FIRMWARE_DEFAULTS, "r_rate": 561}) is None
-    assert current(found, {}) is None
-    assert current(found, {**FIRMWARE_DEFAULTS, "r_rate": "560"}) is None
+    assert matching(found, {**FIRMWARE_DEFAULTS, "r_rate": 561}) is None
+    assert matching(found, {**FIRMWARE_DEFAULTS, "r_rate": "560"}) is None
 
 
 def test_the_gcode_tools_take_their_defaults_from_a_file(tmp_path):
@@ -444,8 +445,7 @@ def test_the_controls_default_from_the_profile():
 def test_the_polar_laser_file_spells_out_the_default_controls():
     # The reference file, with a comment on each key; the other shipped
     # files say where they differ from the defaults for their kind.
-    found, _ = load_all(SHIPPED)
-    polar = next(m for m in found if m.id == "polar-laser")
+    polar = next(m for m in shipped() if m.id == "polar-laser")
     assert polar.controls == default_controls("polar", "laser", False)
     assert parse("", "bare").controls == default_controls("polar", "laser", False)
     assert parse("[controls]\n", "bare").controls == default_controls("polar", "laser", False)

@@ -50,17 +50,14 @@ RING_STEP_DEG = 1.0
 RING_HEADROOM = 0.95
 
 
-def spoke(angle_deg: float, inner: float, outer: float) -> list[Point]:
-    """One radial line, cut from `inner` out to `outer` at a table angle."""
+def spoke(angle_deg: float, outer: float) -> list[Point]:
+    """One radial line, cut from the axis out to `outer` at a table angle."""
     theta = math.radians(angle_deg)
     direction = (math.cos(theta), math.sin(theta))
-    return [
-        (inner * direction[0], inner * direction[1]),
-        (outer * direction[0], outer * direction[1]),
-    ]
+    return [(radius * direction[0], radius * direction[1]) for radius in (0.0, outer)]
 
 
-def spokes(count: int, inner: float, outer: float) -> list[list[Point]]:
+def spokes(count: int, outer: float) -> list[list[Point]]:
     """Radial lines spread evenly around the axis, starting at angle zero.
 
     None at all is allowed: the ring alone measures the radius zero error,
@@ -71,14 +68,14 @@ def spokes(count: int, inner: float, outer: float) -> list[list[Point]]:
         return []
     if count < 2:
         raise ValueError("a pattern needs at least two lines to bound anything")
-    return [spoke(360.0 * i / count, inner, outer) for i in range(count)]
+    return [spoke(360.0 * i / count, outer) for i in range(count)]
 
 
-def ring(radius: float, step_deg: float = RING_STEP_DEG) -> list[Point]:
+def ring(radius: float) -> list[Point]:
     """A closed circle about the axis, sampled finely enough to be round."""
     if radius <= 0:
         raise ValueError("the ring needs a radius")
-    steps = max(8, int(math.ceil(360.0 / step_deg)))
+    steps = max(8, int(math.ceil(360.0 / RING_STEP_DEG)))
     points = []
     for i in range(steps + 1):
         theta = 2.0 * math.pi * i / steps
@@ -107,7 +104,7 @@ def build(
     rotary_max_rate: float | None = None,
 ) -> list[gcode.PathGroup]:
     groups = []
-    drawn = spokes(lines, 0.0, reach)
+    drawn = spokes(lines, reach)
     if drawn:
         groups.append(
             gcode.PathGroup(

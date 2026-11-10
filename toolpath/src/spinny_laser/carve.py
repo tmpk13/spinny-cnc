@@ -46,16 +46,16 @@ def find() -> Path | None:
     return Path(found) if found else None
 
 
-def run(request: dict, timeout: float = TIMEOUT) -> dict:
+def run(request: dict) -> dict:
     """The kernel's answer to one request; a CarveError says what went
     wrong, the kernel's own words when it refused."""
     binary = find()
     if binary is None:
         raise CarveError(f"the 3D kernel {NAME} is not built: run `mise run build-carve` (cargo build in carve/), or name it with {ENV}")
     try:
-        done = subprocess.run([str(binary)], input=json.dumps(request), capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run([str(binary)], input=json.dumps(request), capture_output=True, text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
-        raise CarveError(f"the 3D kernel took more than {timeout:.0f} s; try a coarser tolerance or fewer operations") from None
+        raise CarveError(f"the 3D kernel took more than {TIMEOUT:.0f} s; try a coarser tolerance or fewer operations") from None
     except OSError as exc:
         raise CarveError(f"cannot run {binary}: {exc.strerror or exc}") from exc
     try:

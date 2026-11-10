@@ -213,22 +213,6 @@ def load(path: Path | str) -> Machine:
     return parse(text, path.stem, str(path))
 
 
-def load_all(directory: Path | str) -> tuple[list[Machine], list[str]]:
-    """Every `*.toml` in a directory, by id, with a message for each file
-    that could not be taken, so one bad file does not hide the others."""
-    directory = Path(directory)
-    machines: list[Machine] = []
-    problems: list[str] = []
-    if not directory.is_dir():
-        return machines, problems
-    for path in sorted(directory.glob("*.toml")):
-        try:
-            machines.append(load(path))
-        except MachineError as exc:
-            problems.append(str(exc))
-    return machines, problems
-
-
 def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     try:
         data = tomllib.loads(text)
@@ -588,13 +572,6 @@ def matching(machines: list[Machine], values: dict) -> Machine | None:
         if matches(machine, values):
             return machine
     return None
-
-
-def current(machines: list[Machine], values: dict) -> str | None:
-    """The id of the machine the live settings are, or None for a machine
-    that is no file's."""
-    found = matching(machines, values)
-    return found.id if found is not None else None
 
 
 def alike(machine: Machine, kinematics: str, tool: str, focus: bool) -> bool:

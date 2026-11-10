@@ -75,8 +75,6 @@ class Design:
     # The copper strokes' middles, for a deposit's narrow traces.
     centers: list[Polyline] = field(default_factory=list)
     paths: list[PathSet] = field(default_factory=list)
-    # The raw gerber image, for a deposit's centerlines; None for other designs.
-    image: object | None = None
     # A 3D model's mesh file, which the kernel reads itself; None otherwise.
     model: Path | None = None
     # What reading the design left out, one line each.
@@ -116,26 +114,6 @@ class BuiltGroup:
     @property
     def has_cuts(self) -> bool:
         return bool(self.paths) or bool(self.moves)
-
-    def document(self) -> dict:
-        out = {
-            "label": self.label,
-            "tool": self.tool,
-            "power": self.power,
-            "min_power": self.min_power,
-            "speed": self.speed,
-            "passes": self.passes,
-            "depth": self.depth,
-            "plunge": self.plunge,
-            "enabled": self.enabled,
-            "paths": [[list(p) for p in path] for path in self.paths],
-        }
-        if self.moves:
-            out["moves"] = [[list(m) for m in path] for path in self.moves]
-        if self.tool_id is not None:
-            out["tool_id"] = self.tool_id
-            out["tool_name"] = self.tool_name
-        return out
 
 
 @dataclass
@@ -207,7 +185,6 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
             outline=[list(map(tuple, p)) for p in outline],
             holes=holes,
             centers=copper_deposition.centerlines(image),
-            image=image,
             notes=[f"{other.name} is not read: {path.stem}'s drill files start with {stem!r}" for other in others],
         )
     except (isocli.SourceError, board.LayerError, gerber.GerberError, OSError) as exc:
@@ -275,8 +252,7 @@ def build(
             origin=place.offset,
             mirror=place.mirror,
         )
-        isolate.offsets_for(config)
-        drill_paths = [[hole[0]] for hole in design.holes]
+        drill_paths =[[hole[0]] for hole in design.holes]
         plan = isolate.build(design.copper, config, outline=design.outline, drills=drill_paths)
         shift = _shift_of(design, plan, config)
         copper = plan.copper
@@ -294,7 +270,7 @@ def build(
         if operation.source in cam.MODEL_SOURCES:
             notes.append(f"{operation.name}: {design.name} is not a 3D model, so there is nothing to {operation.source}")
             continue
-        made = _operation_groups(operation, tool, design, board, profile, notes)
+        made = _operation_groups(operation, tool, design, board, notes)
         groups.extend(made)
     if not any(group.paths for group in groups):
         raise DesignError(f"nothing in {design.name} for the operations of {profile.name}")
@@ -368,7 +344,7 @@ def _kernel_operation(operation: cam.Operation, tool: cam.Tool) -> dict:
             "angle": tool.angle or 0.0,
             "tip": tool.tip,
         },
-        "step_down": cutting.get("step_down", 0.0),
+        "step_down": cutting["step_down"],
         "stepover": cutting["stepover"] * diameter,
         "leave": cutting["leave"],
         "leave_floor": cutting["leave_floor"],
@@ -494,7 +470,7 @@ def _isolation_width(profile: cam.Profile) -> float:
     cuts (a V bit widens with it), else the narrowest tool's."""
     for operation in profile.operations:
         if operation.source == cam.ISOLATION:
-            return float(operation.cutting.get("width", profile.tool(operation.tool).width))
+            return float(operation.cutting["width"])
     return min(tool.width for tool in profile.tools)
 
 
@@ -564,14 +540,13 @@ def _operation_groups(
     tool: cam.Tool,
     design: Design,
     board: _Board | None,
-    profile: cam.Profile,
     notes: list[str],
 ) -> list[BuiltGroup]:
     source = operation.source
     prefix = operation.name
     # The width of this operation's cut: the tool's, or for a V bit what
     # the operation's depth makes it.
-    width = float(operation.cutting.get("width", tool.width))
+    width = float(operation.cutting["width"])
     if source == cam.PATHS:
         wanted = str(operation.settings.get("match", "")).lower()
         taken = [found for found in design.paths if wanted in found.label.lower()]
@@ -595,7 +570,7 @@ def _operation_groups(
         return groups
     if source == cam.CLEARING:
         pattern = str(operation.settings.get("pattern", "lines"))
-        pitch = width * operation.cutting.get("stepover", 1.0) if tool.kind == cam.SPINDLE else width
+        pitch = width * operation.cutting["stepover"] if tool.kind == cam.SPINDLE else width
         # The tool's middle stays on or past the isolation's outermost loop,
         # so its strokes end in that loop's trench; a tool whose radius is
         # more than that loop's distance from the copper stays its radius

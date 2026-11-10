@@ -1156,7 +1156,6 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             origin=options.offset,
             mirror=mirror,
         )
-        isolate.offsets_for(config)
         if options.mode == MODE_DISPENSE:
             if not pads:
                 raise JobImportError(f"{copper_path.name} has no pads to dispense on")

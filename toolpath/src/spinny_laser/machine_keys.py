@@ -112,12 +112,10 @@ def section_for(key: Key, tool: str) -> str | None:
     return "dispenser" if key.section == "table" and tool == "dispenser" else key.section
 
 
-def value_of(key: Key, settings: dict, host: dict | None = None) -> object:
+def value_of(key: Key, settings: dict) -> object:
     """The key's value as a file would say it, read from a full set of
-    settings (and the host's values for a host key); None when they do
-    not hold it."""
-    if key.kind == HOST:
-        return (host or {}).get(key.key)
+    firmware settings; None when they do not hold it, as for a [host] key,
+    whose value is the host's own."""
     if key.setting not in settings and key.kind not in (TOOL,):
         return None
     if key.kind == KINEMATICS:

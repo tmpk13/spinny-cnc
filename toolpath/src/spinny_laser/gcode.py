@@ -132,6 +132,7 @@ class PathGroup:
 @dataclass
 class Job:
     text: str
+    options: PolarOptions
     cut_length: float = 0.0
     cut_seconds: float = 0.0
     travel_seconds: float = 0.0
@@ -147,7 +148,6 @@ class Job:
     min_radius: float | None = None
     near_axis_paths: int = 0
     records: list[dict] = field(default_factory=list)
-    options: PolarOptions | None = None
 
     @property
     def seconds(self) -> float:

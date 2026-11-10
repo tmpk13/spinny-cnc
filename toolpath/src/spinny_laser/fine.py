@@ -85,7 +85,6 @@ class Design:
     spiral: float = 5.0
     # Reference ring radius; 0 leaves it out.
     ring: float = 0.0
-    trim: float = TRIM_DEG
 
     def __post_init__(self) -> None:
         if not 0.0 < self.angle <= 30.0:
@@ -106,8 +105,6 @@ class Design:
                 f"the spirals reach {self.spiral + self.pitch / 2.0:.2f} mm, past --reach:"
                 " a smaller --spiral or a larger --reach"
             )
-        if self.spiral > 0.0 and not 0.0 <= self.trim < 90.0:
-            raise ValueError("the trim must be between 0 and 90 degrees")
 
     @property
     def pitch(self) -> float:
@@ -198,7 +195,7 @@ def spirals(design: Design) -> tuple[list[Joint], list[Joint]]:
     Both start and end on the line across the axis at table angle 270 and
     would meet at 90, on the reference line, with the radius zero right.
     """
-    radius, pitch, trim = design.spiral, design.pitch, design.trim
+    radius, pitch, trim = design.spiral, design.pitch, TRIM_DEG
 
     def outward(angle: float) -> float:
         return radius + pitch * (angle - 90.0) / 360.0

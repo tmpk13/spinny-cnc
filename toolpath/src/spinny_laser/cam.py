@@ -680,7 +680,7 @@ class _Reader:
         self.done(table, section, {"letter", "kind", "role", "min", "max", "rate", "rapid", "offset", "home", "safe", "park"})
         return Axis(letter, kind, role, low, high, rate, rapid, offset, home, safe, park)
 
-    def tool(self, table: dict, index: int, material: bool = False) -> Tool:
+    def tool(self, table: dict, index: int, material: bool) -> Tool:
         """A tool; with a material in the stock a mill may leave its rpm and
         feed to it."""
         section = f"[[tools]] {index + 1}"
@@ -855,7 +855,7 @@ class _Reader:
             raise self.fail(section, key, f"must be [x, y, z], each {start} {low:g} and at most {high:g}")
         return (float(value[0]), float(value[1]), float(value[2]))
 
-    def operation(self, table: dict, index: int, tools: dict[str, Tool], feeds: "_Feeds | None" = None) -> Operation:
+    def operation(self, table: dict, index: int, tools: dict[str, Tool], feeds: "_Feeds") -> Operation:
         section = f"[[operations]] {index + 1}"
         name = self.text(table, section, "name", "")
         if not name.strip():
@@ -920,7 +920,7 @@ class _Reader:
                 raise self.fail(section, "angle", "is the direction of parallel lines; this operation is not parallel")
             settings["angle"] = self.bounded(table, section, "angle", -360.0, 360.0, True)
         self.done(table, section, OPERATION_KEYS | set(bounds))
-        defaults, note = feeds.defaults(tool, source) if feeds is not None else ({}, "")
+        defaults, note = feeds.defaults(tool, source)
         cutting = resolve(tool, settings, defaults, source)
         if tool.kind == SPINDLE and cutting["passes"] > MAX_PASSES:
             raise self.fail(section, "step_down", f"gives more than {MAX_PASSES} passes to the depth")
@@ -1032,7 +1032,7 @@ class _Feeds:
         return out, note
 
 
-def resolve(tool: Tool, settings: dict[str, Any], defaults: dict[str, float] | None = None, source: str | None = None) -> dict[str, float]:
+def resolve(tool: Tool, settings: dict[str, Any], defaults: dict[str, float], source: str) -> dict[str, float]:
     """The settings an operation cuts with: the tool's defaults, the
     operation's own over them, and the pass count. `defaults` are under
     the tool's: what a material works out for it. A model's operations
@@ -1049,7 +1049,7 @@ def resolve(tool: Tool, settings: dict[str, Any], defaults: dict[str, float] | N
             cutting[key] = float(settings[key])
         elif key in tool.settings:
             cutting[key] = float(tool.settings[key])
-        elif defaults and key in defaults:
+        elif key in defaults:
             cutting[key] = float(defaults[key])
     if tool.kind == SPINDLE and source in MODEL_SOURCES:
         diameter = tool.diameter

@@ -178,7 +178,6 @@ def header_lines(options: PolarOptions) -> list[str]:
 
 def summary_lines(job: Job) -> list[str]:
     options = job.options
-    assert options is not None
     lines = [
         f"paths      {job.path_count} in {job.segment_count} segments",
         f"cut        {job.cut_length:.1f} mm",
@@ -198,7 +197,6 @@ def summary_lines(job: Job) -> list[str]:
 
 def warnings_for(job: Job) -> list[str]:
     options = job.options
-    assert options is not None
     warnings = []
     if job.near_axis_paths:
         warnings.append(
