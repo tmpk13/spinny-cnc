@@ -212,6 +212,8 @@ import type {
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
+    TouchAt,
+    TouchMode,
     TouchPlan,
     TouchRequest,
     UploadOptions,
@@ -1533,9 +1535,9 @@ function gridYs(grid: Grid): number[] {
 /** How far a touch that ties the map keeps from a cut, mm, over half the job's spot. */
 const TOUCH_CLEARANCE = 1.0;
 
-/** The words of a go to a probe joint: the rail and the table, or the rail and the cross slide on a cartesian machine. */
-function probeJointWords(joint: ProbeJoint, cartesian: boolean): string {
-    return cartesian ? `R${formatFixed(joint.r, 3)} Z${formatFixed(joint.z ?? 0, 3)}` : `R${formatFixed(joint.r, 3)} A${formatFixed(joint.a, 4)}`;
+/** A joint line's words: the rail and the cross slide when `z` is given, as a cartesian machine's joints are, else the rail and the table. */
+function jointWords(r: number, a: number, z?: number): string {
+    return z !== undefined ? `R${formatFixed(r, 3)} Z${formatFixed(z, 3)}` : `R${formatFixed(r, 3)} A${formatFixed(a, 4)}`;
 }
 
 /** The finer of the two point spacings, mm. */
@@ -1857,6 +1859,27 @@ function probeReplies(machine: MockMachine, distance: number, feed: number | nul
         return [report, "ok"];
     }
     return [report, "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"];
+}
+
+/** The time now as the backend stamps a map it makes: to the second, in UTC as +00:00. */
+function createdNow(): string {
+    return new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+}
+
+/** A touch's mode and where it goes down, refused in the backend's words: a nearest point only ties the map. */
+function touchOf(request: TouchRequest): { mode: TouchMode; at: TouchAt } {
+    const mode = request.mode;
+    const at = request.at ?? "here";
+    if (mode !== "map" && mode !== "zero") {
+        throw new ApiError(400, "mode must be map or zero");
+    }
+    if (at !== "here" && at !== "nearest") {
+        throw new ApiError(400, "at must be here or nearest");
+    }
+    if (at === "nearest" && mode !== "map") {
+        throw new ApiError(400, "the nearest probed point is for tying the map: H 0 is set where the head is");
+    }
+    return { mode, at };
 }
 
 export interface MockOptions {
@@ -2602,12 +2625,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async jogCancel(): Promise<void> {
-        this.requireConnected();
-        this.outbox = [];
-        this.jogTracked = false;
-        this.line("tx", "<0x85>");
-        this.machine.jogCancel();
-        this.emit({ type: "state", data: this.snapshot() });
+        return this.realtime("cancel");
     }
 
     async setPosition(request: PositionRequest): Promise<void> {
@@ -4908,38 +4926,17 @@ export class MockBackend implements Api, EventFeed {
     async probeHere(request: TouchRequest): Promise<HeightMapState> {
         this.requireConnected();
         this.notOwned();
-        const mode = request.mode;
-        const at = request.at ?? "here";
-        if (mode !== "map" && mode !== "zero") {
-            throw new ApiError(400, "mode must be map or zero");
-        }
-        if (at !== "here" && at !== "nearest") {
-            throw new ApiError(400, "at must be here or nearest");
-        }
-        if (at === "nearest" && mode !== "map") {
-            throw new ApiError(400, "the nearest probed point is for tying the map: H 0 is set where the head is");
-        }
+        const { mode, at } = touchOf(request);
         const machine = this.machine;
         if (mode === "map" && !this.heightmap) {
             throw new ApiError(400, "there is no height map to tie: probe the board, or probe here for H 0");
         }
-        if (machine.state !== "Idle") {
-            throw new ApiError(409, `the machine is ${statusLine(machine)}, not Idle`);
-        }
-        if (!machine.hasFocusAxis()) {
-            throw new ApiError(409, "the machine has no focus axis: set $h_axis=1 to probe");
-        }
-        if (machine.probeActive()) {
-            throw new ApiError(409, "the probe is already touching: raise the head clear of the board first");
-        }
-        if (machine.milling() && machine.spindle > 0) {
-            throw new ApiError(409, "the spindle is turning: stop it before probing");
-        }
+        this.requireProbeReady();
         const settings = this.probeConfig;
         // The nearest clear point is picked, and the head sent over it, before the probe goes down.
         const nearest = at === "nearest" ? this.nearestClearTouch(request.job) : null;
         if (nearest) {
-            this.line("tx", `go ${probeJointWords(nearest.joint, machine.cartesian())}`);
+            this.line("tx", `go ${jointWords(nearest.joint.r, nearest.joint.a, nearest.joint.z)}`);
             this.probeGo(nearest.joint, null);
             this.line("rx", "ok");
         }
@@ -5026,7 +5023,6 @@ export class MockBackend implements Api, EventFeed {
         this.requireConnected();
         this.notOwned();
         const { grid, resume } = this.probeGridOf(request);
-        const machine = this.machine;
         this.requireProbeReady();
         const settings = structuredClone(this.probeConfig);
         // Every point is checked for reach before the first move, soft limits included.
@@ -5034,9 +5030,6 @@ export class MockBackend implements Api, EventFeed {
         const ys = gridYs(grid);
         const order = resume ? gridOrder(grid).filter(([ix, iy]) => resume.heights[iy]?.[ix] === null) : gridOrder(grid);
         const joints = this.jointsForPoints(order.map(([ix, iy]) => [xs[ix] ?? 0, ys[iy] ?? 0]), settings, gridSpacing(grid) / 2);
-        if (resume && this.heightsFrame !== this.frame) {
-            throw new ApiError(400, "the focus axis was renumbered since the map was probed: probe it anew");
-        }
         const map: HeightMap = resume ?? {
             grid: { x0: grid.x0, y0: grid.y0, x1: grid.x1, y1: grid.y1, nx: grid.nx, ny: grid.ny, mask: grid.mask ?? null },
             heights: Array.from({ length: grid.ny }, () => Array<number | null>(grid.nx).fill(null)),
@@ -5044,8 +5037,30 @@ export class MockBackend implements Api, EventFeed {
             focus_set: false,
             focus_known: false,
             probe_offset: [settings.offset[0], settings.offset[1]],
-            created: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
+            created: createdNow(),
         };
+        return this.startProbing({ map, resume: resume !== null, settings, joints, order, pads: null, total: gridPoints(grid) });
+    }
+
+    /**
+     * Starts probing `map` with the head going over each point in turn at
+     * `joints`: a grid's points in `order`, or a pad map's points by index
+     * in `pads`, `total` points in all. The map replaces the one before it.
+     */
+    private startProbing(start: {
+        map: HeightMap;
+        /** The map is the stored one, gone on with where its last probing stopped. */
+        resume: boolean;
+        settings: ProbeSettings;
+        joints: ProbeJoint[];
+        order: [number, number][];
+        pads: number[] | null;
+        total: number;
+    }): HeightMapState {
+        const { map, resume, settings, joints, order, pads, total } = start;
+        if (resume && this.heightsFrame !== this.frame) {
+            throw new ApiError(400, "the focus axis was renumbered since the map was probed: probe it anew");
+        }
         // A map probed before keeps its focus offset only if the probe has
         // not moved, the offset being contact to focus for that probe, and
         // its heights are in this focus axis frame.
@@ -5058,21 +5073,21 @@ export class MockBackend implements Api, EventFeed {
         }
         this.heightsFrame = this.frame;
         this.jogTracked = false;
-        // The new map replaces the old one from the start, so its grid fills in.
+        // The new map replaces the old one from the start, so its points fill in.
         this.heightmap = map;
-        const done = resume ? map.heights.flat().filter((value) => value !== null).length : 0;
         const progress: ProbeProgress = {
             state: "running",
-            done,
-            total: gridPoints(grid),
+            done: resume ? probedCount(map).probed : 0,
+            total,
             point: null,
+            ...(pads ? { pad: null } : {}),
             seconds: 0,
             error: null,
-            estimate: Math.round(order.length * PROBE_POINT_SECONDS * 10) / 10,
+            estimate: Math.round((pads ?? order).length * PROBE_POINT_SECONDS * 10) / 10,
             remaining: null,
         };
         this.probeProgress = progress;
-        const session: ProbeSession = { settings, order, joints, next: 0, pads: null, elapsed: 0, travel: this.probeTravel(machine.h), map, progress };
+        const session: ProbeSession = { settings, order, joints, next: 0, pads, elapsed: 0, travel: this.probeTravel(this.machine.h), map, progress };
         this.probing = session;
         this.emitHeightMap();
         this.probeBegin(session);
@@ -5179,7 +5194,7 @@ export class MockBackend implements Api, EventFeed {
             focus_set: false,
             focus_known: false,
             probe_offset: [settings.offset[0], settings.offset[1]],
-            created: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
+            created: createdNow(),
             points,
             point_heights: points.map(() => null),
         };
@@ -5204,64 +5219,22 @@ export class MockBackend implements Api, EventFeed {
         this.requireConnected();
         this.notOwned();
         const plan = this.padPlan(request);
-        const machine = this.machine;
         this.requireProbeReady();
         const settings = structuredClone(this.probeConfig);
         const joints = this.jointsForPoints(plan.order.map((index) => plan.map.points![index]!), settings, 0);
-        if (plan.resume && this.heightsFrame !== this.frame) {
-            throw new ApiError(400, "the focus axis was renumbered since the map was probed: probe it anew");
-        }
-        const map = plan.map;
-        const previous = this.heightmap;
-        const sameProbe = previous && previous.probe_offset[0] === settings.offset[0] && previous.probe_offset[1] === settings.offset[1];
-        if (!plan.resume && previous && sameProbe && this.heightsFrame === this.frame) {
-            map.focus_offset = previous.focus_offset;
-            map.focus_set = previous.focus_set;
-            map.focus_known = previous.focus_known ?? false;
-        }
-        this.heightsFrame = this.frame;
-        this.jogTracked = false;
-        this.heightmap = map;
-        const done = plan.resume ? (map.point_heights ?? []).filter((height) => height !== null).length : 0;
-        const progress: ProbeProgress = {
-            state: "running",
-            done,
-            total: map.points?.length ?? 0,
-            point: null,
-            pad: null,
-            seconds: 0,
-            error: null,
-            estimate: Math.round(plan.order.length * PROBE_POINT_SECONDS * 10) / 10,
-            remaining: null,
-        };
-        this.probeProgress = progress;
-        const session: ProbeSession = { settings, order: [], joints, next: 0, pads: plan.order, elapsed: 0, travel: this.probeTravel(machine.h), map, progress };
-        this.probing = session;
-        this.emitHeightMap();
-        this.probeBegin(session);
-        return this.heightMapState();
+        return this.startProbing({ map: plan.map, resume: plan.resume, settings, joints, order: [], pads: plan.order, total: plan.map.points?.length ?? 0 });
     }
 
     /** Where a touch would go down, and how the head gets there, without moving anything. */
     async planTouch(request: TouchRequest): Promise<TouchPlan> {
         this.requireConnected();
-        const at = request.at ?? "here";
-        if (request.mode !== "map" && request.mode !== "zero") {
-            throw new ApiError(400, "mode must be map or zero");
-        }
-        if (at !== "here" && at !== "nearest") {
-            throw new ApiError(400, "at must be here or nearest");
-        }
-        if (at === "nearest") {
-            if (request.mode !== "map") {
-                throw new ApiError(400, "the nearest probed point is for tying the map: H 0 is set where the head is");
-            }
+        if (touchOf(request).at === "nearest") {
             const found = this.nearestClearTouch(request.job);
             return {
                 point: [round4(found.x), round4(found.y)],
                 index: found.index,
                 distance: Math.round(found.distance * 1000) / 1000,
-                lines: [`go ${probeJointWords(found.joint, this.machine.cartesian())}`],
+                lines: [`go ${jointWords(found.joint.r, found.joint.a, found.joint.z)}`],
             };
         }
         const board = this.machine.headBoard();
@@ -5504,7 +5477,7 @@ export class MockBackend implements Api, EventFeed {
         session.progress.point = point ?? null;
         session.progress.pad = pad ?? null;
         this.emitHeightMap();
-        const words = joint.z !== undefined ? `R${formatFixed(joint.r, 3)} Z${formatFixed(joint.z, 3)}` : `R${formatFixed(joint.r, 3)} A${formatFixed(joint.a, 4)}`;
+        const words = jointWords(joint.r, joint.a, joint.z);
         this.probeRequest(session, `go ${words}`, () => this.probeGo(joint, null));
     }
 
@@ -5950,7 +5923,7 @@ export class MockBackend implements Api, EventFeed {
         const machine = this.machine;
         const over = this.jointOver(target, machine.joint);
         const joint: ProbeJoint = machine.cartesian() ? { r: over.r, a: machine.joint.a, z: over.z } : { r: over.r, a: over.a };
-        const words = joint.z !== undefined ? `R${formatFixed(joint.r, 3)} Z${formatFixed(joint.z, 3)}` : `R${formatFixed(joint.r, 3)} A${formatFixed(joint.a, 4)}`;
+        const words = jointWords(joint.r, joint.a, joint.z);
         return this.findRequest(session, `go ${words}`, () => {
             this.probeGo(joint, null);
         });
@@ -7366,7 +7339,7 @@ export class MockBackend implements Api, EventFeed {
 export function formatMove(move: Move): string {
     const focus = move.h !== undefined ? `H${formatFixed(move.h, 4)}` : "";
     // A cartesian machine's moves carry the cross slide and hold the table.
-    const joints = move.z !== undefined ? `R${formatFixed(move.target.r, 3)} Z${formatFixed(move.z, 3)}` : `R${formatFixed(move.target.r, 3)} A${formatFixed(move.target.a, 4)}`;
+    const joints = jointWords(move.target.r, move.target.a, move.z);
     const words = move.headOnly ? focus : move.turn ? `A${formatFixed(move.target.a, 4)}` : [joints, focus].filter((word) => word !== "").join(" ");
     switch (move.kind) {
         case "go":
