@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from . import board
+from .clear import PATTERNS
+from .deposit import FILLS
 from .machines import is_id
 
 LINEAR, ROTARY = "linear", "rotary"
@@ -48,8 +50,6 @@ MAX_FLUTES = 12
 # material asks for is held inside it.
 DEFAULT_RPM_MIN = 0.0
 DEFAULT_RPM_MAX = 24000.0
-PATTERNS = ("radial", "rings", "lines")
-FILLS = ("contour", "radial", "rings", "lines")
 MARKS = ("circle", "cross", "dot")
 CENTER, CORNER, KEEP = "center", "corner", "keep"
 ANCHORS = (CENTER, CORNER, KEEP)
@@ -1257,7 +1257,7 @@ def _same(read: Any, value: Any) -> bool:
     if isinstance(value, bool) or isinstance(read, bool):
         return read is value
     if isinstance(value, (int, float)) and isinstance(read, (int, float)):
-        return math.isclose(float(read), float(value), rel_tol=0.0, abs_tol=0.0) or read == value
+        return float(read) == float(value) or read == value
     if isinstance(value, (list, tuple)) and isinstance(read, list):
         return len(read) == len(value) and all(_same(a, b) for a, b in zip(read, value))
     return read == value

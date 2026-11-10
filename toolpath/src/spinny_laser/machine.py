@@ -141,7 +141,7 @@ def parse_offset(text: str) -> tuple[float, float]:
 def options_from(args) -> PolarOptions:
     return PolarOptions(
         controller=args.controller,
-        rotary_axis=args.rotary_axis.upper(),
+        rotary_axis=args.rotary_axis,
         invert_rotary=args.invert_rotary,
         axis_x=args.axis_x,
         feed_mode=args.feed_mode,

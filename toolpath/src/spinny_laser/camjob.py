@@ -15,6 +15,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from laser_sweep import isolate
+
 from . import board, cam, carve
 from . import clear as copper_clearing
 from . import deposit as copper_deposition
@@ -225,8 +227,6 @@ def build(
     `tolerance` is the chord tolerance the paths will be streamed at, which
     the clearing rings are drawn to; `pace` orders a radial clearing.
     """
-    from laser_sweep import isolate
-
     if design.model is not None:
         return _model_job(profile, design, name, tolerance)
     notes: list[str] = list(design.notes)
@@ -484,8 +484,6 @@ def _isolation_loops(profile: cam.Profile) -> int:
 def _shift_of(design: Design, plan, config) -> Point:
     """The shift the plan moved the copper by, read back from the result so
     the drills and the centerlines follow it exactly."""
-    from laser_sweep import isolate
-
     before = isolate.transform(design.copper, config, (0.0, 0.0))
     if not before or not plan.copper:
         return (0.0, 0.0)
@@ -495,8 +493,6 @@ def _shift_of(design: Design, plan, config) -> Point:
 
 
 def _moved(point: Point, config, shift: Point) -> Point:
-    from laser_sweep import isolate
-
     moved = isolate.transform([[point]], config, shift)
     return (float(moved[0][0][0]), float(moved[0][0][1]))
 
@@ -695,12 +691,7 @@ def _circle(center: Point, radius: float) -> Polyline:
     starting and ending at the same point."""
     if radius <= HOLE_TOLERANCE:
         return [center]
-    count = max(8, int(math.ceil(math.pi / math.acos(max(-1.0, 1.0 - HOLE_TOLERANCE / radius)))))
-    points = [
-        (center[0] + radius * math.cos(2.0 * math.pi * k / count), center[1] + radius * math.sin(2.0 * math.pi * k / count))
-        for k in range(count)
-    ]
-    return points + [points[0]]
+    return [(center[0] + x, center[1] + y) for x, y in copper_clearing.ring_points(radius, 2.0 * HOLE_TOLERANCE)]
 
 
 def _slot(start: Point, end: Point, diameter: float, width: float) -> Polyline:

@@ -90,9 +90,11 @@ class PolarOptions:
             raise ValueError(f"controller must be {GRBLHAL} or {JOINT}")
         if self.feed_mode not in (INVERSE, SCALED):
             raise ValueError(f"feed mode must be {INVERSE} or {SCALED}")
+        # Upper case first: a letter whose capital is two letters, as the
+        # German sharp s's is, is not one letter.
+        object.__setattr__(self, "rotary_axis", self.rotary_axis.upper())
         if len(self.rotary_axis) != 1 or not self.rotary_axis.isalpha():
             raise ValueError("rotary axis must be one letter")
-        object.__setattr__(self, "rotary_axis", self.rotary_axis.upper())
         if self.rotary_axis == "X":
             raise ValueError("X is the radius, the rotary axis needs another letter")
         if self.rotary_axis not in AXIS_LETTERS:

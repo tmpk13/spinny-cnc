@@ -27,7 +27,7 @@ The sections and keys, with the firmware setting each one sets:
     [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth, interpolate (tmc_intpol), and the drivers'
               register fields toff, tbl, hstrt, hend, hold_delay, tpowerdown, tpwmthrs (tmc_<key>)
-    [host]    tolerance, clearance, spinup, speed_control, and for dispensing gap, retract, output, extrude_rate,
+    [host]    tolerance, clearance, travel, spinup, speed_control, and for dispensing gap, retract, output, extrude_rate,
               dwell_ms: the host's own settings, not the firmware's
     [camera]  device, size, fps, pcbv, side, finish, offset, roll, mm_per_px: a camera on the head, the backend's
     [controls] the page's jog panel and readout (spinny_laser.controls); left out, drawn from the kinematics, tool and focus axis

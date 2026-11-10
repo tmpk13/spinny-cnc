@@ -52,9 +52,7 @@ def radial(start: Point, radius: float, angle: float | None = None) -> list[Poin
     """One move along the rail to `radius`, keeping the direction."""
     if radius < 0:
         raise JogError("a radius cannot be negative; turn the table instead")
-    theta = angle_at(start, 0.0 if angle is None else angle)
-    if angle is not None:
-        theta = angle
+    theta = angle_at(start) if angle is None else angle
     return [polar.cartesian((radius, theta))]
 
 
