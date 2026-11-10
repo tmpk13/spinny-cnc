@@ -110,7 +110,7 @@ class Runner:
         self._last_publish = 0.0
         self._error: str | None = None
         # What a run that ends with `_error` set is reported as: an error,
-        # unless `abort` asked for something milder.
+        # or stopped when `abort` ended it from outside.
         self._end_state = ERROR
         # A run is being prepared: the plan is made from where the machine
         # is, and nothing may move it before the first line goes out.
@@ -308,10 +308,7 @@ class Runner:
         start = plan_start if plan_start is not None else streamer.start_of(status)
         if pieces is None and plan_start is not None:
             pieces = list(streamer.job_pieces(job, start, compensation))
-        if pieces is not None:
-            stats = streamer.estimate(job, start, compensation, pieces=pieces)
-        else:
-            stats = streamer.estimate(job, start, compensation)
+        stats = streamer.estimate(job, start, compensation, pieces=pieces)
         # The estimate takes a while on a large job, and the plan is only
         # good from where the machine was when it was made: a typed line in
         # the meantime may have moved the head, or declared it elsewhere.
@@ -390,11 +387,11 @@ class Runner:
             thread.join(timeout=JOIN_WAIT)
         return self.progress.to_dict()
 
-    def abort(self, reason: str, state: str = STOPPED) -> None:
+    def abort(self, reason: str) -> None:
         """Ends the run from outside, before another line goes out.
 
         The streaming thread halts the machine and reports the run as
-        `state` with `reason`. A run still being prepared is not started.
+        stopped with `reason`. A run still being prepared is not started.
         Nothing happens when no run is active.
         """
         if self.cancel_start(reason):
@@ -402,12 +399,17 @@ class Runner:
         with self._lock:
             if self.progress.state not in (RUNNING, HOLD):
                 return
-            if self._error is None:
-                self._error = reason
-            self._end_state = state
-            # Set with the error, so the thread's closing snapshot sees
-            # both or neither.
-            self._abort.set()
+            # Set with the error under the lock, so the thread's closing
+            # snapshot sees both or neither.
+            self._end_state = STOPPED
+            self._end(reason)
+
+    def _end(self, reason: str) -> None:
+        """Ends the run with `reason`, unless something ended it first: the
+        streaming thread sees the flag, halts the machine and reports it."""
+        if self._error is None:
+            self._error = reason
+        self._abort.set()
 
     def _require(self, state: str) -> Link:
         with self._lock:
@@ -438,8 +440,8 @@ class Runner:
     ) -> None:
         # `restarts` is the count from before the plan was made, so a reset
         # between the plan and this thread is one under the run too.
-        on_ack = functools.partial(self._on_ack, progress)
-        on_approach = functools.partial(self._on_approach, progress)
+        on_ack = functools.partial(self._on_answer, progress, True)
+        on_approach = functools.partial(self._on_answer, progress, False)
         try:
             lines = iter(pieces) if pieces is not None else streamer.job_pieces(job, start, compensation)
             for index, piece in enumerate(lines):
@@ -485,9 +487,7 @@ class Runner:
         except Exception as exc:
             # A fault in the streamer itself: the run must not stay marked as
             # running with the machine still cutting what was queued.
-            if self._error is None:
-                self._error = f"streaming failed: {exc!r}"
-            self._abort.set()
+            self._end(f"streaming failed: {exc!r}")
         # One reading of the outcome: an abort landing between two separate
         # reads could leave neither branch taken and the run marked running
         # with no thread behind it. An error always ends the run here; an
@@ -511,24 +511,10 @@ class Runner:
         elif not aborted:
             self._finish(DONE, progress)
 
-    def _on_approach(self, progress: Progress, pending: Pending) -> None:
-        """An answer to a line that brought the head to the resume point:
-        nothing is counted, and a refusal ends the run as a job line's
-        would."""
-        if progress is not self.progress:
-            return
-        if not pending.answered:
-            if pending.response == "reset" and not self._abort.is_set():
-                if self._error is None:
-                    self._error = "the machine was reset during the run"
-                self._abort.set()
-            return
-        if not pending.ok:
-            if self._error is None:
-                self._error = f"{pending.line!r}: {pending.response}"
-            self._abort.set()
-
-    def _on_ack(self, progress: Progress, pending: Pending) -> None:
+    def _on_answer(self, progress: Progress, counted: bool, pending: Pending) -> None:
+        """An answer to a line of the run: a job line's is `counted` as
+        acked, one that brought the head to the resume point is not, and a
+        refusal of either ends the run."""
         if progress is not self.progress:
             # An answer to a line of a run that is over. Its bookkeeping is
             # gone and the flags belong to the run after it.
@@ -542,18 +528,16 @@ class Runner:
             # line into a machine that has just been emptied and would run
             # it. A lost port is reported by the thread.
             if pending.response == "reset" and not self._abort.is_set():
-                if self._error is None:
-                    self._error = "the machine was reset during the run"
-                self._abort.set()
+                self._end("the machine was reset during the run")
             return
-        with self._lock:
-            progress.acked += 1
+        if counted:
+            with self._lock:
+                progress.acked += 1
         if pending.ok:
-            self._emit()
+            if counted:
+                self._emit()
             return
-        if self._error is None:
-            self._error = f"{pending.line!r}: {pending.response}"
-        self._abort.set()
+        self._end(f"{pending.line!r}: {pending.response}")
 
     def _drain(self, link: Link, restarts: int, progress: Progress) -> None:
         """Wait for the last ack and for the machine to come to rest."""

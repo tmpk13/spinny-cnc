@@ -274,9 +274,9 @@ class Watching(Streamer):
         self.runner = runner
         self.locked: bool | None = None
 
-    def estimate(self, job, start=(0.0, 0.0), compensation=None):
+    def estimate(self, job, start=(0.0, 0.0), compensation=None, pieces=None):
         self.locked = self.runner._lock.locked()
-        return super().estimate(job, start, compensation)
+        return super().estimate(job, start, compensation, pieces)
 
 
 def test_start_does_not_hold_the_lock_while_asking_the_machine():
@@ -485,11 +485,11 @@ def test_a_run_being_prepared_counts_as_active_and_checks_the_start_again():
         seen = []
 
         class SlowStreamer(Streamer):
-            def estimate(self, job, start, compensation=None):
+            def estimate(self, job, start, compensation=None, pieces=None):
                 seen.append(runner.active)
                 # A typed line moves the head while the estimate runs.
                 link.request_ok("set R3 A0")
-                return super().estimate(job, start, compensation)
+                return super().estimate(job, start, compensation, pieces)
 
         with pytest.raises(RunnerError, match="moved"):
             start_run(runner, small_job(), link, SlowStreamer())
@@ -577,7 +577,7 @@ def test_a_run_stopped_while_it_is_being_prepared_never_starts(action):
     try:
 
         class SlowStreamer(Streamer):
-            def estimate(self, job, start, compensation=None):
+            def estimate(self, job, start, compensation=None, pieces=None):
                 if action == "stop":
                     runner.stop()
                 elif action == "hold":
@@ -589,7 +589,7 @@ def test_a_run_stopped_while_it_is_being_prepared_never_starts(action):
                 else:
                     # A reset nobody told the runner of but its banner.
                     link.reset()
-                return super().estimate(job, start, compensation)
+                return super().estimate(job, start, compensation, pieces)
 
         with pytest.raises(RunnerError, match="not started|reset while"):
             start_run(runner, small_job(), link, SlowStreamer())
@@ -689,12 +689,12 @@ def test_the_operators_stop_reaches_a_run_still_being_prepared(backend, monkeypa
     acted = threading.Event()
     estimate = Streamer.estimate
 
-    def slow(self, job, start=(0.0, 0.0), compensation=None):
+    def slow(self, job, start=(0.0, 0.0), compensation=None, pieces=None):
         # The runner's plan: held until the operator has acted.
         if backend.runner.active:
             planning.set()
             acted.wait(3.0)
-        return estimate(self, job, start, compensation)
+        return estimate(self, job, start, compensation, pieces)
 
     monkeypatch.setattr(Streamer, "estimate", slow)
     outcome: list = []
@@ -738,11 +738,11 @@ def test_a_hold_during_preparation_still_holds_a_moving_machine(backend, monkeyp
     acted = threading.Event()
     estimate = Streamer.estimate
 
-    def slow(self, job, start=(0.0, 0.0), compensation=None):
+    def slow(self, job, start=(0.0, 0.0), compensation=None, pieces=None):
         if backend.runner.active:
             planning.set()
             acted.wait(3.0)
-        return estimate(self, job, start, compensation)
+        return estimate(self, job, start, compensation, pieces)
 
     monkeypatch.setattr(Streamer, "estimate", slow)
     outcome: list = []
