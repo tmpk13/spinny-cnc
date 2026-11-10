@@ -20,7 +20,7 @@ classDiagram
         shape() flats, undercut, open edges
     }
     class slice {
-        Slicer  triangles by height band
+        Slicer  every triangle's height span
         section(z) what is strictly above z
         shadows(levels) everything above each level, overhangs included
         silhouette() the model seen from above

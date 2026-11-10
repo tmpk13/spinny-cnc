@@ -210,14 +210,14 @@ pub fn ring_pitch(s: &Levels, tolerance: f64) -> f64 {
     s.stepover.min((s.radius - 2.0 * tolerance).max(s.radius / 2.0))
 }
 
-pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>, Vec<Gap>) {
+/// A rough at `levels`, the heights `Part::levels` gives for `s`.
+pub fn rough(part: &Part, s: &Levels, levels: &[f64]) -> (Vec<Cut>, Vec<Piece>, Vec<Gap>) {
     let tolerance = part.tolerance;
     let pitch = ring_pitch(s, tolerance);
     // Past the block's edge only as far as the outer loop still takes a
     // pitch off it.
     let area = part.boundary(s.radius + s.leave + s.band, Some(s.radius - pitch));
-    let levels = part.levels(s.step_down, s.floor, s.flats, s.leave_floor);
-    let shadows = part.slicer.shadows(&levels);
+    let shadows = part.slicer.shadows(levels);
     let keep = s.radius + s.leave;
     let per_level: Vec<(Vec<Node>, Vec<Gap>)> = levels
         .par_iter()
@@ -325,13 +325,13 @@ pub fn rough(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>, Vec<Gap>) {
     (cuts, region::pieces(&area), gaps)
 }
 
-pub fn waterline(part: &Part, s: &Levels) -> (Vec<Cut>, Vec<Piece>) {
+/// A waterline at `levels`, the heights `Part::levels` gives for `s`.
+pub fn waterline(part: &Part, s: &Levels, levels: &[f64]) -> (Vec<Cut>, Vec<Piece>) {
     let tolerance = part.tolerance;
     // Every wall's loop is inside: a wall is finished wherever it stands.
     let area = part.boundary(s.radius + s.leave + s.band.max(4.0 * tolerance), None);
     let pieces = region::pieces(&area);
-    let levels = part.levels(s.step_down, s.floor, s.flats, s.leave_floor);
-    let shadows = part.slicer.shadows(&levels);
+    let shadows = part.slicer.shadows(levels);
     let keep = s.radius + s.leave;
     let per_level: Vec<Vec<(Vec<P2>, bool)>> = shadows
         .par_iter()

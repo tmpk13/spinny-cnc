@@ -138,7 +138,6 @@ pub struct ModelInfo {
     pub max: V3,
     /// Heights of the flat faces looking up, highest first.
     pub flats: Vec<f64>,
-    pub undercut: f64,
     pub open_edges: usize,
 }
 
@@ -151,7 +150,6 @@ pub struct Block {
 #[derive(Debug, Serialize)]
 pub struct OperationOut {
     pub name: String,
-    pub strategy: String,
     /// Every path's moves: x, y, z and how the tool gets there (0 a rapid,
     /// 1 a feed, 2 a plunge). The first point of a path is where the tool
     /// comes down to from the travel height, over the path's start.
@@ -223,11 +221,7 @@ pub fn cutter_of(tool: &Tool) -> Result<Cutter, String> {
 
 pub fn plan(request: &Request) -> Result<Response, String> {
     let mut mesh = Mesh::read_stl(Path::new(&request.model))?;
-    plan_mesh(&mut mesh, request)
-}
-
-pub fn plan_mesh(mesh: &mut Mesh, request: &Request) -> Result<Response, String> {
-    plan_with_stock(mesh, request).map(|(response, _)| response)
+    plan_with_stock(&mut mesh, request).map(|(response, _)| response)
 }
 
 /// The answer and the stock map as the last operation left it.
@@ -311,7 +305,6 @@ pub fn plan_with_stock(mesh: &mut Mesh, request: &Request) -> Result<(Response, 
             min: shape.min.map(round),
             max: shape.max.map(round),
             flats: shape.flats.iter().map(|f| round(f.0)).collect(),
-            undercut: round(shape.undercut),
             open_edges: shape.open_edges,
         },
         stock: Block { min: stock_min.map(round), max: stock_max.map(round) },
@@ -389,11 +382,11 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
                         op.stepover
                     ));
                 }
-                let (cuts, area, gaps) = ops::rough(part, &settings);
+                let (cuts, area, gaps) = ops::rough(part, &settings, &levels);
                 gap_notes(&gaps, &op.tool, &mut notes);
                 (cuts, area)
             } else {
-                ops::waterline(part, &settings)
+                ops::waterline(part, &settings, &levels)
             };
             // A link fed at depth keeps the leave, less two tolerances, and
             // never comes closer than the gouge check below allows.
@@ -435,7 +428,6 @@ fn operation(mesh: &Mesh, part: &Part, stock: &mut Stock, op: &Operation, reques
     }
     Ok(OperationOut {
         name: op.name.clone(),
-        strategy: op.strategy.clone(),
         paths: paths.into_iter().map(|path| path.into_iter().map(|m| [round(m[0]), round(m[1]), round(m[2]), m[3]]).collect()).collect(),
         levels: levels.into_iter().map(round).collect(),
         length: round(length),

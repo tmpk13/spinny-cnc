@@ -34,10 +34,6 @@ impl Stock {
         Stock { origin: min, cell, nx, ny, height: vec![top as f32; nx * ny] }
     }
 
-    pub fn cell(&self) -> f64 {
-        self.cell
-    }
-
     fn center(&self, ix: usize, iy: usize) -> P2 {
         [self.origin[0] + (ix as f64 + 0.5) * self.cell, self.origin[1] + (iy as f64 + 0.5) * self.cell]
     }

@@ -307,10 +307,6 @@ impl Surface {
         Surface { tris, origin, cell, nx, ny, cells, reach }
     }
 
-    pub fn reach(&self) -> f64 {
-        self.reach
-    }
-
     /// The lowest the tool's tip may be over `p`: minus infinity when no
     /// part of the mesh is under the tool.
     pub fn drop(&self, cutter: &Cutter, p: P2) -> f64 {
