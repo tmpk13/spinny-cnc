@@ -64,6 +64,12 @@ class Rates:
     z_rate: float = 560.0
     h_rate: float = 600.0
 
+    @property
+    def pace(self) -> float:
+        """The rail's rate over the table's, mm per degree: what a radial
+        clearing or fill orders its spokes by."""
+        return self.r_rate / self.a_rate
+
     @classmethod
     def from_settings(cls, values: dict) -> "Rates":
         rates = cls()
@@ -1104,7 +1110,7 @@ class Streamer:
                         line=f"go A{coord(plunger, FOCUS_DECIMALS)}",
                         kind="retract",
                         joint=joint,
-                        seconds=dispense.retract / a_rate * 60.0 if a_rate > 0 else 0.0,
+                        seconds=dispense.retract / a_rate * 60.0,
                         group=index,
                         h=h,
                     )

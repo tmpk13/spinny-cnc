@@ -60,6 +60,8 @@ MAX_HEIGHT = 1000.0
 DEFAULT_PPI = 96.0
 # Curves are bisected at most this deep when flattening.
 FLATTEN_DEPTH = 16
+# The color an SVG shape with no stroke is grouped under, and its label.
+NO_STROKE = "no stroke"
 
 GERBER_SUFFIXES = board.GERBER_SUFFIXES
 # Isolation passes around the copper; each is another offset of every loop.
@@ -451,9 +453,9 @@ def check_thickness(thickness: float) -> None:
         raise ValueError(f"thickness must be {MIN_THICKNESS:g} to {MAX_THICKNESS:g} mm")
 
 
-def check_depth(depth: float) -> None:
+def check_depth(depth: float, what: str = "depth") -> None:
     if not 0.0 < depth <= MAX_DEPTH:
-        raise ValueError(f"depth must be above 0 and at most {MAX_DEPTH:g} mm")
+        raise ValueError(f"{what} must be above 0 and at most {MAX_DEPTH:g} mm")
 
 
 def check_focus(focus: float | None, what: str = "focus") -> None:
@@ -576,6 +578,12 @@ SETTINGS = ("power", "min_power", "speed", "passes", "enabled", "depth", "plunge
 def check_width(width: float) -> None:
     if not (math.isfinite(width) and 0.0 < width <= MAX_WIDTH):
         raise ValueError(f"the width must be above 0 and at most {MAX_WIDTH:g} mm")
+
+
+def check_spot(spot: float) -> None:
+    """A job's spot, its width, as an import or an upload gives it."""
+    if not 0.0 < spot <= MAX_WIDTH:
+        raise JobImportError(f"spot must be above 0 and at most {MAX_WIDTH:g}")
 
 
 def width_refusal(job: Job) -> str | None:
@@ -739,16 +747,12 @@ class ImportOptions:
             raise JobImportError(f"mirror must be one of {', '.join(MIRRORS)}")
         try:
             check_thickness(self.thickness)
-        except ValueError as exc:
-            raise JobImportError(str(exc)) from exc
-        try:
             board.check_layer(self.layer)
             check_power(self.power)
             check_speed(self.speed)
         except ValueError as exc:
             raise JobImportError(str(exc)) from exc
-        if not 0.0 < self.spot <= 1000.0:
-            raise JobImportError("spot must be above 0 and at most 1000")
+        check_spot(self.spot)
         if not all(math.isfinite(v) and abs(v) <= MAX_VALUE for v in self.offset):
             raise JobImportError(f"offset must be within {MAX_VALUE:g} mm")
         if not (math.isfinite(self.tolerance) and self.tolerance > 0.0):
@@ -768,7 +772,7 @@ def import_file(path: Path, name: str, options: ImportOptions, streamer: Streame
     elif suffix in camjob.GCODE_SUFFIXES:
         job = from_gcode(path.read_text(encoding="utf-8", errors="replace"), name, options)
     elif suffix == ".kicad_pcb" or suffix in GERBER_SUFFIXES:
-        job = from_board(path, name, options, pace=streamer.rates.r_rate / streamer.rates.a_rate, milled=streamer.tool == SPINDLE)
+        job = from_board(path, name, options, pace=streamer.rates.pace, milled=streamer.tool == SPINDLE)
     else:
         raise JobImportError(f"cannot import {path.name}: unknown file type {suffix!r}")
     job.refresh_stats(streamer)
@@ -888,8 +892,7 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
 def checked(job: Job) -> Job:
     """The job with every group's numbers and paths checked as a run needs
     them, and its joint-space groups drawn when they come without paths."""
-    if not 0.0 < job.spot <= 1000.0:
-        raise JobImportError("spot must be above 0 and at most 1000")
+    check_spot(job.spot)
     for group in job.groups:
         # The firmware refuses a cut with F at or below zero, so a group
         # that carries one would end its run on the first line; a number
@@ -899,8 +902,7 @@ def checked(job: Job) -> Job:
             check_power(group.power, f"group {group.label!r}: power")
             check_power(group.min_power, f"group {group.label!r}: min power")
             check_passes(group.passes, f"group {group.label!r}: passes")
-            if not 0.0 < group.depth <= MAX_DEPTH:
-                raise JobImportError(f"group {group.label!r}: depth must be above 0 and at most {MAX_DEPTH:g} mm")
+            check_depth(group.depth, f"group {group.label!r}: depth")
             check_speed(group.plunge, f"group {group.label!r}: plunge")
             check_thickness(group.thickness)
             check_focus(group.focus, f"group {group.label!r}: focus")
@@ -959,7 +961,8 @@ def from_gcode(text: str, name: str, options: ImportOptions) -> Job:
 
 
 def svg_polylines(text: str, tolerance: float) -> list[tuple[str, Polyline]]:
-    """Every shape as (stroke color, points in mm, y up), curves flattened."""
+    """Every shape as (stroke color, points in mm, y up), curves flattened;
+    a shape with no stroke has NO_STROKE for its color."""
     from svgelements import SVG, Close, Line, Move, Path, Shape
 
     try:
@@ -1020,10 +1023,20 @@ def _px_per_mm() -> float:
     return float(Length("1mm").value(ppi=DEFAULT_PPI))
 
 
+def stroke_groups(shapes: list[tuple[str, Polyline]]) -> list[tuple[str, list[Polyline]]]:
+    """The shapes `svg_polylines` gives, a group a stroke color in the
+    order the colors first come, each with its label: NO_STROKE, or
+    "stroke" and the color."""
+    groups: dict[str, list[Polyline]] = {}
+    for color, points in shapes:
+        groups.setdefault(color, []).append(points)
+    return [(color if color == NO_STROKE else f"stroke {color}", paths) for color, paths in groups.items()]
+
+
 def _stroke_name(element) -> str:
     stroke = getattr(element, "stroke", None)
     if stroke is None or getattr(stroke, "value", None) is None:
-        return "no stroke"
+        return NO_STROKE
     try:
         return str(stroke.hex)
     except Exception:
@@ -1055,21 +1068,18 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
     if not shapes:
         raise JobImportError("the SVG has no shapes to cut")
     placed = place([points for _, points in shapes], options.anchor, options.offset)
-    groups: dict[str, Group] = {}
-    for (color, _), points in zip(shapes, placed):
-        if color not in groups:
-            label = "no stroke" if color == "no stroke" else f"stroke {color}"
-            groups[color] = Group(label=label, power=options.power, speed=options.speed)
-        groups[color].paths.append(points)
-    # A part's holes and marks before its outline, while the sheet holds it.
-    for group in groups.values():
-        group.paths = cut_order.inner_first(group.paths)
+    groups: list[Group] = []
+    for label, paths in stroke_groups([(color, points) for (color, _), points in zip(shapes, placed)]):
+        group = Group(label=label, power=options.power, speed=options.speed)
+        # A part's holes and marks before its outline, while the sheet holds it.
+        group.paths = cut_order.inner_first(paths)
+        groups.append(group)
     return Job(
         name=name,
         source="svg",
         spot=options.spot,
         offset=Offset(x=options.offset[0], y=options.offset[1]),
-        groups=list(groups.values()),
+        groups=groups,
     )
 
 

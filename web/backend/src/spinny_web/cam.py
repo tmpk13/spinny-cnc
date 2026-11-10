@@ -12,7 +12,7 @@ from spinny_laser import cam, camjob, post
 from spinny_laser.cam import CamError, Profile
 
 from .files import write_whole
-from .jobs import Group, Job, JobImportError, NotFound, Offset, from_json, svg_polylines
+from .jobs import Group, Job, JobImportError, NotFound, Offset, from_json, stroke_groups, svg_polylines
 from .kinematics import Streamer
 
 SVG_SUFFIXES = (".svg",)
@@ -122,11 +122,8 @@ def read_design(path: Path, profile: Profile, tolerance: float) -> camjob.Design
         shapes = svg_polylines(path.read_text(encoding="utf-8"), tolerance)
         if not shapes:
             raise JobImportError("the SVG has no shapes to cut")
-        sets: dict[str, camjob.PathSet] = {}
-        for color, points in shapes:
-            label = "no stroke" if color == "no stroke" else f"stroke {color}"
-            sets.setdefault(color, camjob.PathSet(label, [])).paths.append([tuple(p) for p in points])
-        design = camjob.Design(name=path.stem, source="svg", paths=list(sets.values()))
+        sets = [camjob.PathSet(label, [[tuple(p) for p in points] for points in paths]) for label, paths in stroke_groups(shapes)]
+        design = camjob.Design(name=path.stem, source="svg", paths=sets)
     elif suffix == ".json":
         job = from_json(path.read_text(encoding="utf-8"), path.stem)
         sets_ = [camjob.PathSet(group.label, [[tuple(p) for p in path_] for path_ in group.paths]) for group in job.groups if group.paths]
@@ -146,8 +143,7 @@ def build_job(profile: Profile, folder: Path, name: str | None, streamer: Stream
     path, notes = pick_design(folder, profile.placement.layer)
     try:
         design = read_design(path, profile, streamer.tolerance)
-        pace = streamer.rates.r_rate / streamer.rates.a_rate if streamer.rates.a_rate > 0 else camjob.copper_clearing.DEFAULT_PACE
-        built = camjob.build(profile, design, name or None, tolerance=streamer.tolerance, pace=pace)
+        built = camjob.build(profile, design, name or None, tolerance=streamer.tolerance, pace=streamer.rates.pace)
     except (camjob.DesignError, ValueError) as exc:
         raise JobImportError(str(exc)) from exc
     job = Job(
