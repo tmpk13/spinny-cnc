@@ -37,7 +37,6 @@ extent with a margin, filled in from the pads as they are probed.
 
 from __future__ import annotations
 
-import datetime
 import json
 import math
 import os
@@ -47,8 +46,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
-
+from .jobs import MAX_VALUE, Finite
+from .resume import now_iso
 
 # Points per side of the grid; a probe takes seconds per point, so a grid
 # of 2500 is already most of an hour.
@@ -64,8 +63,6 @@ COVER_MARGIN = 1.0
 # down to, mm.
 MAX_STEP = 2.0
 MIN_STEP = 0.25
-# Largest coordinate accepted, as for jobs.
-MAX_VALUE = 1.0e6
 # Seconds a probe point spends beyond its moves: coming to rest, the probe's
 # own answer, the lines' turnarounds.
 PROBE_OVERHEAD = 1.5
@@ -78,12 +75,6 @@ PAD_NEIGHBORS = 6
 
 FOCUS, POWER, OFF, AUTO = "focus", "power", "off", "auto"
 MODES = (OFF, AUTO, FOCUS, POWER)
-
-
-class Finite(BaseModel):
-    """A model whose numbers are numbers: NaN and infinity are refused."""
-
-    model_config = ConfigDict(allow_inf_nan=False)
 
 
 class Grid(Finite):
@@ -306,7 +297,7 @@ class HeightMap(Finite):
             grid=grid,
             heights=[[None] * grid.nx for _ in range(grid.ny)],
             probe_offset=probe_offset,
-            created=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            created=now_iso(),
         )
 
     @classmethod
@@ -327,7 +318,7 @@ class HeightMap(Finite):
             points=[(round(float(x), 4), round(float(y), 4)) for x, y in points],
             point_heights=[None] * len(points),
             probe_offset=probe_offset,
-            created=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            created=now_iso(),
         )
 
     @property

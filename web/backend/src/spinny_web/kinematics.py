@@ -46,6 +46,11 @@ FOCUS_DECIMALS = 4
 # How the tool gets to a model's move, the fourth number of each.
 MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE = 0, 1, 2
 DEFAULT_TOLERANCE = 0.005
+# Largest value a power, a speed or a coordinate may take: far past any
+# machine, and short enough to keep every protocol line under its limit.
+MAX_VALUE = 1.0e6
+# The tools a group may be made for, and a machine cut with.
+LASER, SPINDLE, DISPENSER = "laser", "spindle", "dispenser"
 
 
 @dataclass(frozen=True)
@@ -265,7 +270,7 @@ def num(value: float, decimals: int = 3) -> str:
 def _finite(*values: float | None) -> None:
     """Refuses a value that is not a number before it can become a word."""
     for value in values:
-        if value is not None and not (math.isfinite(value) and abs(value) <= 1.0e6):
+        if value is not None and not (math.isfinite(value) and abs(value) <= MAX_VALUE):
             raise ValueError("a move needs numbers within 1e6")
 
 
@@ -757,15 +762,15 @@ class Streamer:
     def tool(self) -> str:
         """What this streamer makes a job for: `laser`, `spindle` or `dispenser`."""
         if self.dispense is not None:
-            return "dispenser"
-        return "spindle" if self.spindle is not None else "laser"
+            return DISPENSER
+        return SPINDLE if self.spindle is not None else LASER
 
     def check_tools(self, job: "Job") -> None:
         mine = self.tool
         # A group that names no tool was drawn for a beam or a bit, which
         # follow its paths; a dispenser lays dots, so it takes only groups
         # made for it.
-        allowed = (mine,) if mine == "dispenser" else (None, mine)
+        allowed = (mine,) if mine == DISPENSER else (None, mine)
         for group in job.groups:
             if group.enabled and group.has_cuts and group.tool not in allowed:
                 if group.tool is None:
@@ -783,7 +788,7 @@ class Streamer:
         enabled groups a CAM profile made with more than one bit is refused,
         naming the groups to switch off to cut with the first bit alone. A
         group that names no bit cuts with whatever is fitted."""
-        if self.tool != "spindle":
+        if self.tool != SPINDLE:
             return
         cutting = [group for group in job.groups if group.enabled and group.has_cuts and group.tool_id is not None]
         bits: dict[str, str] = {}
@@ -801,11 +806,11 @@ class Streamer:
     def _check_focus(self, job: "Job") -> None:
         """A focus height is a laser's: a spindle's focus axis is its depth,
         a dispenser's the needle's height."""
-        if self.tool == "laser":
+        if self.tool == LASER:
             return
         for index in group_focus(job):
             group = job.groups[index]
-            verb = "mill" if self.tool == "spindle" else "dispense"
+            verb = "mill" if self.tool == SPINDLE else "dispense"
             raise ValueError(f"{group.label}: a focus height is for a laser's beam; clear it to {verb} the group")
 
     def _check_dots(self, job: "Job") -> None:
@@ -1339,7 +1344,7 @@ class Streamer:
 
 
 def _article(tool: str | None) -> str:
-    return {"spindle": "a spindle", "dispenser": "a dispenser"}.get(tool or "", "a laser")
+    return {SPINDLE: "a spindle", DISPENSER: "a dispenser"}.get(tool or "", "a laser")
 
 
 def _plunger_target(line: str, fallback: float) -> float:

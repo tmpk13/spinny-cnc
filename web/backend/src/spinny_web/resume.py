@@ -203,6 +203,11 @@ def _iso(epoch: float) -> str:
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat(timespec="seconds")
 
 
+def now_iso() -> str:
+    """The time now as the records write a time: ISO 8601 in UTC, to the second."""
+    return _iso(time.time())
+
+
 def _epoch(text) -> float | None:
     """The epoch seconds of an ISO time this module wrote; None for anything else."""
     if not isinstance(text, str):

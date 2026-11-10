@@ -9,7 +9,6 @@ holds the machine, waits for it to come to rest and resets it.
 
 from __future__ import annotations
 
-import datetime
 import functools
 import threading
 import time
@@ -18,7 +17,7 @@ from typing import Callable
 
 from .heightmap import Compensation
 from .jobs import Job
-from .kinematics import Piece, Streamer, group_focus, num
+from .kinematics import LASER, Piece, Streamer, group_focus, num
 from .link import (
     REALTIME_HOLD,
     REALTIME_RESUME,
@@ -28,6 +27,7 @@ from .link import (
     Pending,
     idle_status,
 )
+from .resume import now_iso
 
 PUBLISH_INTERVAL = 0.2
 # How often the resume record is written while a run goes on, so that a
@@ -241,7 +241,7 @@ class Runner:
                     "angle": float(getattr(streamer, "angle", 0.0)),
                     "spindle": streamer.spindle is not None,
                     "dispense": streamer.dispense is not None,
-                    "started": _now_iso(),
+                    "started": now_iso(),
                 }
                 self._link = link
                 self._error = None
@@ -285,7 +285,7 @@ class Runner:
             raise RunnerError("the job has nothing enabled to cut")
         # A laser group's own focus counts from where the head stands as
         # the run begins, unless the run picked up says where it began.
-        if streamer.tool == "laser" and group_focus(job):
+        if streamer.tool == LASER and group_focus(job):
             if status.h is None:
                 label = job.groups[next(iter(group_focus(job)))].label
                 raise RunnerError(f"{label} asks for a focus height and the machine has no focus axis ($h_axis=1)")
@@ -633,12 +633,8 @@ class Runner:
             **self.progress.to_dict(),
             **self._plan,
             "position": position,
-            "updated": _now_iso(),
+            "updated": now_iso(),
         }
-
-
-def _now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
 def _lines_waiting(link: Link, status) -> bool:

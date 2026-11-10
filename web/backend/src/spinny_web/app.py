@@ -70,7 +70,6 @@ from .heightmap import (
     nearest_clear_point,
 )
 from .jobs import (
-    DISPENSER,
     MODE_DISPENSE,
     MAX_COMBINED,
     MODE_STENCIL,
@@ -99,6 +98,9 @@ from . import thumbs
 from .machines import MachineStore
 from .kinematics import (
     DEFAULT_TOLERANCE,
+    DISPENSER,
+    LASER,
+    SPINDLE,
     CartesianStreamer,
     Dispense,
     Rates,
@@ -260,7 +262,6 @@ SETTINGS_SCHEMA = [
 HOME_TIMEOUT = 600.0
 
 POLAR, CARTESIAN = "polar", "cartesian"
-LASER, SPINDLE = "laser", "spindle"
 # What a dispensing run is made of when the config says nothing.
 DISPENSE_DEFAULTS = {"gap": 0.1, "retract": 0.2, "output": 100.0, "extrude_rate": 60.0, "dwell_ms": 200}
 # The travel height's bounds, mm: an H, so it may be below H 0 when the

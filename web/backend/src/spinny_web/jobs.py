@@ -34,7 +34,7 @@ from spinny_laser import stencil as paste_stencil
 from spinny_laser.cam import CENTER, KEEP, place
 
 from . import kinematics
-from .kinematics import Streamer
+from .kinematics import DISPENSER, MAX_VALUE, SPINDLE, Streamer
 
 DEFAULT_POWER = 500.0
 DEFAULT_SPEED = 400.0
@@ -61,9 +61,6 @@ DEFAULT_PPI = 96.0
 FLATTEN_DEPTH = 16
 
 GERBER_SUFFIXES = board.GERBER_SUFFIXES
-# Largest value a power, a speed or a coordinate may take: far past any
-# machine, and short enough to keep every protocol line under its limit.
-MAX_VALUE = 1.0e6
 # Isolation passes around the copper; each is another offset of every loop.
 MAX_PASSES = 50
 # Times a group burns over its own paths, the whole group again each time.
@@ -95,8 +92,6 @@ MIRRORS = ("none", "x", "y")
 # is the dot's volume. A stencil's foil is about this thick.
 DEFAULT_THICKNESS = 0.12
 MIN_THICKNESS, MAX_THICKNESS = 0.01, 5.0
-# The tools a group may be made for.
-LASER, SPINDLE, DISPENSER = "laser", "spindle", "dispenser"
 # How the tool gets to a model's move: the fourth number of each.
 MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE = kinematics.MOVE_RAPID, kinematics.MOVE_FEED, kinematics.MOVE_PLUNGE
 MOVE_KINDS = (MOVE_RAPID, MOVE_FEED, MOVE_PLUNGE)
@@ -819,7 +814,7 @@ def combined(jobs: list[Job], name: str | None = None) -> Job:
         raise JobImportError(f"the jobs cut with different tools ({', '.join(tools)}): a job runs on one machine")
     # A group that names no tool is for a beam or a bit, which a dispenser
     # does not have: its dots and such paths run on no one machine.
-    if tools == ["dispenser"] and any(group.tool is None and group.has_cuts for job in jobs for group in job.groups):
+    if tools == [DISPENSER] and any(group.tool is None and group.has_cuts for job in jobs for group in job.groups):
         raise JobImportError("the jobs mix a dispenser's dots with paths for a beam or a bit: a job runs on one machine")
     groups: list[Group] = []
     for job in jobs:
@@ -1119,7 +1114,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         mirror = options.mirror if options.mirror is not None else ("x" if board.is_bottom(layer) else "none")
         flip = (-1.0 if mirror == "x" else 1.0, -1.0 if mirror == "y" else 1.0)
         try:
-            outline_path: Path | None = board.find_layer(into, "Edge.Cuts")
+            outline_path: Path | None = board.find_layer(into, OUTLINE_LAYER)
         except board.LayerError:
             outline_path = None
         image = gerber.read(copper_path)

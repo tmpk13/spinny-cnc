@@ -27,16 +27,16 @@ from typing import Callable
 from spinny_laser import polar
 
 from .camera import DONE, ERROR, RUNNING, STOPPED
-from .heightmap import Finite, Grid, HeightMap, HeightMapStore, estimate_points_seconds
+from .heightmap import Grid, HeightMap, HeightMapStore, estimate_points_seconds
+from .jobs import Finite
 from .kinematics import FOCUS_DECIMALS, CartesianStreamer, Streamer, coord, num, turned
 from .link import Link, LinkError, idle_status, parse_probe, settle
-from .runner import halt
+from .runner import JOIN_WAIT, halt
 
 # Answer time allowed for a positioning line, on top of the time a move
 # should take to come to rest, and on top of a probe's own travel time.
 LINE_TIMEOUT = 10.0
 PROBE_MARGIN = 10.0
-JOIN_WAIT = 2.0
 # Between status requests while waiting for the head to come to rest, s:
 # more often than a routine asks, since every point waits on it.
 REST_POLL = 0.02

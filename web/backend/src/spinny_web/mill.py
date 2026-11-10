@@ -28,11 +28,9 @@ from spinny_laser import mill as ops
 from spinny_laser import pads as board_pads
 
 from .jobs import (
-    LASER,
     MAX_GROUP_PASSES,
     MAX_VALUE,
     SETTINGS,
-    SPINDLE,
     Finite,
     Group,
     Job,
@@ -44,7 +42,7 @@ from .jobs import (
     check_speed,
     matched,
 )
-from .kinematics import Streamer
+from .kinematics import LASER, SPINDLE, Streamer
 
 DRILL, HOLES, LINE, FACE, POCKET, PROFILE = "drill", "holes", "line", "face", "pocket", "profile"
 RECT, CIRCLE = "rect", "circle"
