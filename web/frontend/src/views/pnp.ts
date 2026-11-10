@@ -5,7 +5,7 @@
 // where a part sits on it, and a goto that takes it over a part's place.
 // Its own setup steps lead through all of it.
 
-import { activePage, button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { activePage, button, el, labeled, numberField, readStored, replace, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -15,6 +15,7 @@ import { mountCameraLog } from "./camlog.ts";
 import type { Ctx } from "./context.ts";
 import { DEVICE_SETUP, mountDevice } from "./device.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
+import { FRAME_INTERVAL_MS, FRAME_WIDTH } from "./vision.ts";
 
 const TARGET_KEY = "spinny.pnp.target";
 
@@ -23,9 +24,7 @@ export function readTarget(): "machine" | "device" {
     return readStored(TARGET_KEY) === "device" ? "device" : "machine";
 }
 
-/** How often the picture is asked for while it shows, ms, and the width it is asked at. */
-export const PNP_FRAME_MS = 250;
-export const PNP_FRAME_WIDTH = 640;
+/** How often the up camera's state is asked for while the page shows, ms. */
 const POLL_MS = 500;
 
 /** The parts that match a filter (ref, value or footprint, any case) on a side. */
@@ -233,44 +232,8 @@ export const PNP_SETUP: Setup = {
     },
 };
 
-type Field = HTMLInputElement | HTMLSelectElement;
-
-/** Fields that follow the state until typed in, counted while they hold an edit. */
-class Tracked {
-    private shown = new Map<Field, string>();
-
-    constructor(readonly fields: Field[], onChange: () => void) {
-        for (const field of fields) {
-            field.addEventListener("input", onChange);
-            field.addEventListener("change", onChange);
-        }
-    }
-
-    follow(field: Field, value: string): void {
-        const untouched = !this.shown.has(field) || field.value === this.shown.get(field);
-        if (untouched && field !== document.activeElement) {
-            field.value = value;
-        }
-        this.shown.set(field, value);
-    }
-
-    /** Marks the fields typed in; how many there are. */
-    edited(): number {
-        let count = 0;
-        for (const field of this.fields) {
-            const edited = this.shown.has(field) && field.value !== this.shown.get(field);
-            field.closest(".labeled")?.classList.toggle("edited", edited);
-            count += edited ? 1 : 0;
-        }
-        return count;
-    }
-
-    changed(field: Field): boolean {
-        return this.shown.has(field) && field.value !== this.shown.get(field);
-    }
-}
-
-function polaritySelect(label: string): HTMLSelectElement {
+/** A pick of what a finder looks for: a spot dark or bright against what is around it. */
+export function polaritySelect(label: string): HTMLSelectElement {
     return el("select", { class: "field", "aria-label": label }, el("option", { value: "dark" }, "dark"), el("option", { value: "bright" }, "bright")) as HTMLSelectElement;
 }
 
@@ -719,7 +682,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     }
 
     function visible(): boolean {
-        return activePage() === "pnp" && (typeof document.visibilityState !== "string" || document.visibilityState !== "hidden");
+        return activePage() === "pnp" && document.visibilityState !== "hidden";
     }
 
     let lastFrame = 0;
@@ -728,15 +691,15 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             return;
         }
         const now = Date.now();
-        if (!force && now - lastFrame < PNP_FRAME_MS - 10) {
+        if (!force && now - lastFrame < FRAME_INTERVAL_MS - 10) {
             return;
         }
         lastFrame = now;
-        picture.src = ctx.api.pnpFrameUrl(PNP_FRAME_WIDTH, overlayOn);
+        picture.src = ctx.api.pnpFrameUrl(FRAME_WIDTH, overlayOn);
     }
     // The state is polled while the page shows, for the picture's age and a
     // routine's steps; the event feed carries the rest.
-    const frameTimer = setInterval(() => refreshFrame(), PNP_FRAME_MS);
+    const frameTimer = setInterval(() => refreshFrame(), FRAME_INTERVAL_MS);
     const pollTimer = setInterval(() => {
         if (visible()) {
             ctx.api.pnp().then((state) => ctx.store.set({ pnp: state }), () => undefined);

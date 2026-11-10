@@ -7,7 +7,7 @@
 // is the 3D preview's camera.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, foldPanel, labeled, numberField, setLocked } from "../dom.ts";
+import { activePage, button, el, foldPanel, labeled, numberField, setLocked, Tracked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -16,11 +16,15 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import type { Ctx } from "./context.ts";
 
-/** How often the picture is asked for while it shows, and the state polled. */
+/**
+ * How often a camera's picture is asked for while it shows, ms, and the
+ * width it is asked at, pixels: the head camera's here, and the up and top
+ * cameras' on the PNP page.
+ */
 export const FRAME_INTERVAL_MS = 250;
-export const POLL_INTERVAL_MS = 333;
-/** The width the picture is asked at, pixels. */
 export const FRAME_WIDTH = 640;
+/** How often this panel asks for the camera's state while it shows, ms. */
+export const POLL_INTERVAL_MS = 333;
 
 /** One line on the pose: the camera's state, where the picture's center is, the board's angle, the fit and the rate. */
 export function poseText(state: CameraState | null): string {
@@ -187,29 +191,12 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => refreshFrame(true));
     root.append(fold);
 
-    // The settings fields follow the state until typed in; what each was
-    // last given is kept so a field still showing it follows the next.
-    const shown = new Map<HTMLInputElement | HTMLSelectElement, string>();
-    const follow = (field: HTMLInputElement | HTMLSelectElement, value: string): void => {
-        const untouched = !shown.has(field) || field.value === shown.get(field);
-        if (untouched && field !== document.activeElement) {
-            field.value = value;
-        }
-        shown.set(field, value);
-    };
-    const settingsFields: (HTMLInputElement | HTMLSelectElement)[] = [device, size, fps, side, finish];
-    const measuredFields: (HTMLInputElement | HTMLSelectElement)[] = [offsetX, offsetY, roll, scale];
+    // The settings fields follow the state until typed in.
+    const settingsFields = new Tracked([device, size, fps, side, finish], () => showPending());
+    const measuredFields = new Tracked([offsetX, offsetY, roll, scale], () => showPending());
     /** Marks the fields typed in and not applied, and counts them for the chips and the page's tab. */
     const showPending = (): void => {
-        const counts = [settingsFields, measuredFields].map((fields) => {
-            let count = 0;
-            for (const field of fields) {
-                const edited = shown.has(field) && field.value !== shown.get(field);
-                field.closest(".labeled")?.classList.toggle("edited", edited);
-                count += edited ? 1 : 0;
-            }
-            return count;
-        });
+        const counts = [settingsFields.edited(), measuredFields.edited()];
         counts.forEach((count, index) => {
             const chip = pendingChips[index]!;
             chip.classList.toggle("hidden", count === 0);
@@ -218,10 +205,6 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         });
         setPending(ctx.store, "camera", counts[0]! + counts[1]!);
     };
-    for (const field of [...settingsFields, ...measuredFields]) {
-        field.addEventListener("input", showPending);
-        field.addEventListener("change", showPending);
-    }
 
     /** A camera request; its answer is the state, which goes into the store. */
     async function act(promise: Promise<CameraState>): Promise<void> {
@@ -328,7 +311,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
 
     /** The panel is in view: the machine's page is up, the fold open and the tab shown. */
     function visible(): boolean {
-        return fold.open && activePage() === "jobs" && (typeof document.visibilityState !== "string" || document.visibilityState !== "hidden");
+        return fold.open && activePage() === "jobs" && document.visibilityState !== "hidden";
     }
 
     let lastFrame = 0;
@@ -379,15 +362,15 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         setLocked(start, running);
         setLocked(stop, !running || finding);
         if (camera) {
-            follow(device, camera.device);
-            follow(size, camera.size);
-            follow(fps, String(camera.fps));
-            follow(side, camera.side);
-            follow(finish, camera.finish);
-            follow(offsetX, String(camera.offset[0]));
-            follow(offsetY, String(camera.offset[1]));
-            follow(roll, String(camera.roll));
-            follow(scale, String(camera.mm_per_px));
+            settingsFields.follow(device, camera.device);
+            settingsFields.follow(size, camera.size);
+            settingsFields.follow(fps, String(camera.fps));
+            settingsFields.follow(side, camera.side);
+            settingsFields.follow(finish, camera.finish);
+            measuredFields.follow(offsetX, String(camera.offset[0]));
+            measuredFields.follow(offsetY, String(camera.offset[1]));
+            measuredFields.follow(roll, String(camera.roll));
+            measuredFields.follow(scale, String(camera.mm_per_px));
         }
         pick.render();
         showPending();

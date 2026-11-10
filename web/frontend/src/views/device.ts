@@ -11,7 +11,7 @@
 // last lines either way show below.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { activePage, button, el, labeled, numberField, replace, setLocked, Tracked, type TrackedField } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { DevicePlan, DeviceReference, DeviceState, SpotPolarity, TopSettings, TopState } from "../types.ts";
@@ -19,12 +19,9 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
-import { pnpRoutineText } from "./pnp.ts";
+import { pnpRoutineText, polaritySelect } from "./pnp.ts";
 import type { Setup } from "./steps.ts";
-
-/** How often the top camera's picture is asked for while it shows, ms, and how wide. */
-const TOP_FRAME_MS = 250;
-const TOP_FRAME_WIDTH = 640;
+import { FRAME_INTERVAL_MS, FRAME_WIDTH } from "./vision.ts";
 
 /** The references of one job. */
 export function referencesOf(device: DeviceState | null, jobId: string | null): DeviceReference[] {
@@ -136,10 +133,6 @@ export function fiducialText(top: TopState | null | undefined, jobId: string | n
     return `Fiducials ${found.found.map((entry) => entry.ref).join(", ")} found: the board turned ${formatFixed(found.fit.rotation, 3)} deg${rms}.`;
 }
 
-function shadeSelect(label: string): HTMLSelectElement {
-    return el("select", { class: "field", "aria-label": label }, el("option", { value: "dark" }, "dark"), el("option", { value: "bright" }, "bright")) as HTMLSelectElement;
-}
-
 /** The PNP page's setup when a G-code device places the parts. */
 export const DEVICE_SETUP: Setup = {
     id: "pnp-device",
@@ -216,7 +209,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const topSize = el("input", { type: "text", class: "field", "aria-label": "Top camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
     const topFps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
     topFps.setAttribute("aria-label", "Top camera fps");
-    const markSpot = shadeSelect("Mark spot");
+    const markSpot = polaritySelect("Mark spot");
     const topPick = mountCameraPick(ctx, {
         device: topDevice,
         size: topSize,
@@ -458,8 +451,8 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     }
 
     // The top camera's fields: filled from the state unless edited since.
-    const topShown = new Map<HTMLInputElement | HTMLSelectElement, string>();
-    const topFields = (): [HTMLInputElement | HTMLSelectElement, keyof TopSettings][] => [[topDevice, "device"], [topSize, "size"], [topFps, "fps"], [markSpot, "mark_spot"]];
+    const topFields: [TrackedField, keyof TopSettings][] = [[topDevice, "device"], [topSize, "size"], [topFps, "fps"], [markSpot, "mark_spot"]];
+    const topTracked = new Tracked(topFields.map(([field]) => field));
     function topPatch(): Partial<TopSettings> {
         const top = ctx.store.get().device?.top;
         const patch: Partial<TopSettings> = {};
@@ -485,7 +478,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         }
         const state = await ctx.call(ctx.api.topSettings(patch));
         if (state) {
-            topShown.clear();
+            topTracked.reset();
             take(state);
         }
         return state !== undefined;
@@ -506,13 +499,13 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
 
     function visible(): boolean {
         return activePage() === "pnp" && ctx.store.get().pnpTarget === "device"
-            && (typeof document.visibilityState !== "string" || document.visibilityState !== "hidden");
+            && document.visibilityState !== "hidden";
     }
     const topTimer = setInterval(() => {
         if (visible() && ctx.store.get().device?.top?.running) {
-            topPicture.src = ctx.api.topFrameUrl(TOP_FRAME_WIDTH, true);
+            topPicture.src = ctx.api.topFrameUrl(FRAME_WIDTH, true);
         }
-    }, TOP_FRAME_MS);
+    }, FRAME_INTERVAL_MS);
     globalThis.addEventListener?.("pagehide", () => {
         clearInterval(topTimer);
         topPick.stop();
@@ -640,12 +633,8 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         cameraLine.textContent = deviceCameraText(device);
         routineLine.textContent = routine?.target === "device" ? pnpRoutineText(state.pnp) : "";
         // The top camera.
-        for (const [field, key] of topFields()) {
-            const value = top ? String(top[key] ?? "") : "";
-            if (field !== document.activeElement && (!topShown.has(field) || field.value === topShown.get(field))) {
-                field.value = value;
-            }
-            topShown.set(field, value);
+        for (const [field, key] of topFields) {
+            topTracked.follow(field, top ? String(top[key] ?? "") : "");
         }
         topPictureBox.classList.toggle("hidden", top?.running !== true);
         setLocked(topStart, top?.running === true || topBusy);

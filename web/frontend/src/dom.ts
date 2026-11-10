@@ -195,6 +195,58 @@ export function labeled(label: string, control: HTMLElement, className = "labele
     return el("label", { class: className }, el("span", { class: "labeled-text" }, label), control);
 }
 
+/** A field the state fills in: a text or number field, or a select. */
+export type TrackedField = HTMLInputElement | HTMLSelectElement;
+
+/**
+ * Fields that follow the state until typed in. Each value the state gives
+ * a field goes into it while the field still shows the value before, so
+ * one typed in keeps what was typed, and the field with the focus is not
+ * written. `onChange`, when given, hears every input and change of them.
+ */
+export class Tracked {
+    private shown = new Map<TrackedField, string>();
+
+    constructor(readonly fields: TrackedField[], onChange?: () => void) {
+        if (onChange) {
+            for (const field of fields) {
+                field.addEventListener("input", onChange);
+                field.addEventListener("change", onChange);
+            }
+        }
+    }
+
+    /** Gives `field` the state's `value`, which it shows unless it holds an edit or has the focus. */
+    follow(field: TrackedField, value: string): void {
+        const untouched = !this.shown.has(field) || field.value === this.shown.get(field);
+        if (untouched && field !== document.activeElement) {
+            field.value = value;
+        }
+        this.shown.set(field, value);
+    }
+
+    /** Whether `field` holds an edit: a text other than the value the state last gave it. */
+    changed(field: TrackedField): boolean {
+        return this.shown.has(field) && field.value !== this.shown.get(field);
+    }
+
+    /** Marks the fields that hold an edit (`edited` on the `.labeled` around each) and counts them. */
+    edited(): number {
+        let count = 0;
+        for (const field of this.fields) {
+            const edited = this.changed(field);
+            field.closest(".labeled")?.classList.toggle("edited", edited);
+            count += edited ? 1 : 0;
+        }
+        return count;
+    }
+
+    /** Forgets the values given, so each field takes the next one whatever it holds, unless it has the focus. */
+    reset(): void {
+        this.shown.clear();
+    }
+}
+
 /** Inputs that do nothing with the arrow keys: a checkbox and the button kinds. */
 const KEYLESS_INPUTS = new Set(["checkbox", "button", "submit", "reset", "image", "file"]);
 
