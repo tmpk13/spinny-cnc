@@ -49,10 +49,6 @@
     --on-fill: var(--base3);
     --ring: color-mix(in oklab, var(--blue) 40%, transparent);
 
-    /* Aliases the views and older rules use. */
-    --accent-text: var(--on-fill);
-    --danger-text: var(--on-fill);
-
     --idle: var(--base00);
     --run: var(--blue);
     --jog: var(--green);
@@ -1070,10 +1066,6 @@ input.num.field.invalid {
     gap: 0.5rem 1rem;
     align-items: end;
     margin-bottom: 0.75rem;
-}
-
-.steps .choice-row {
-    margin: 0;
 }
 
 .steps .labeled input {
