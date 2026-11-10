@@ -217,10 +217,12 @@ class Placement:
         if feeder.marks and feeder.id not in self.feeder_fits:
             self._find_marks(ctx, mover, feeder)
         reason = ""
+        emptied = False
         for tries in range(1, device.pick_tries + 1):
             index = self.taken.get(feeder.id, 0)
             if feeder.count > 0 and index >= feeder.count:
                 reason = f"feeder {feeder.id} is empty"
+                emptied = True
                 break
             point = self._pocket(feeder, index)
             if feeder.pocket is not None:
@@ -255,6 +257,10 @@ class Placement:
             return
         ctx.progress.failed.append({"ref": block.ref, "reason": reason})
         self._doing(ctx, None)
+        # A feeder that ran out is no sign of a wrong setup: the parts of
+        # the other feeders still go.
+        if emptied:
+            return
         self._failed_in_a_row += 1
         if self._failed_in_a_row >= FAILED_IN_A_ROW:
             raise DeviceLinkError(f"{FAILED_IN_A_ROW} parts in a row were left out, the last as {reason}: check the setup before going on")

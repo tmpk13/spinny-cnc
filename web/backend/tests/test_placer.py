@@ -276,6 +276,18 @@ def test_a_part_still_on_the_nozzle_after_a_discard_stops_the_run(client):
     assert "after a part was put back in its pocket" in state["progress"]["error"] and "may still be on the nozzle" in state["progress"]["error"]
 
 
+def test_parts_of_a_feeder_that_ran_out_are_left_out_and_the_run_goes_on(client):
+    # A strip of two: the first pick fails, the second places R1, and R2
+    # finds the strip empty, which is no setup fault.
+    job_id = rig(client, profile(rest=VACUUM).replace("count = 10", "count = 2"))
+    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.fake.readings = [20.0, 5.0, 80.0, 5.0]
+    state = run(client, {"job": job_id})
+    progress = state["progress"]
+    assert progress["state"] == "done" and progress["placed"] == ["R1"]
+    assert progress["failed"] == [{"ref": "R2", "reason": "feeder res is empty"}]
+
+
 def test_two_parts_in_a_row_left_out_stop_the_run(client):
     job_id = rig(client, profile(rest=VACUUM))
     client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
