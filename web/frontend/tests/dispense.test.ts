@@ -238,4 +238,22 @@ describe("a dispenser machine", () => {
         const hosts = settingRows(null, "", store.get().settings, { tool: "dispenser", h_axis: true }).filter((row) => row.entry.kind === "host").map((row) => row.name);
         expect(hosts).toEqual(["tolerance", "travel", "clearance", "gap", "retract", "output", "extrude_rate", "dwell_ms"]);
     });
+
+    test("a touch at the map's nearest clear point goes over it as probing would, the plunger turning no board", async () => {
+        const { backend } = await dispenser();
+        // The plunger stands at 30 mm, which would turn the board 30 degrees on a table.
+        backend.machine.joint = { r: 0, a: 30 };
+        await backend.putHeightMap({
+            grid: { x0: 60, y0: 60, x1: 70, y1: 70, nx: 2, ny: 2 },
+            heights: [[0, 0], [0, 0]],
+            focus_offset: 0,
+            focus_set: false,
+            probe_offset: [0, 0],
+            created: "",
+        });
+        const demo = (await backend.jobs())[0]!.id;
+        const plan = await backend.planTouch({ mode: "map", at: "nearest", job: demo });
+        expect(plan.point).toEqual([60, 60]);
+        expect(plan.lines).toEqual(["go R60.000 Z60.000"]);
+    });
 });

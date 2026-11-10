@@ -5332,26 +5332,8 @@ export class MockBackend implements Api, EventFeed {
         if (!best) {
             throw new ApiError(400, `no probed point of the map is ${formatG(clearance)} mm clear of the job's cuts: jog the tip over copper the map covers and probe here`);
         }
-        const where = `the probe cannot reach (${best.x.toFixed(2)}, ${best.y.toFixed(2)}): the head would go to`;
-        const rMax = machine.settings["r_max"] ?? 0;
-        const zMax = machine.settings["z_max"] ?? 0;
-        let joint: ProbeJoint;
-        if (machine.cartesian()) {
-            const head = turned({ x: best.x, y: best.y }, -machine.joint.a);
-            joint = { r: head.x - settings.offset[0], a: machine.joint.a, z: head.y - settings.offset[1] };
-            if (zMax > 0 && Math.abs(joint.z ?? 0) > zMax + 1e-9) {
-                throw new ApiError(409, `${where} Z${(joint.z ?? 0).toFixed(3)}, past the soft limit z_max=${formatG(zMax)}`);
-            }
-        } else {
-            try {
-                joint = probeJoint([best.x, best.y], settings.offset, machine.joint.a);
-            } catch (error) {
-                throw new ApiError(409, errorText(error));
-            }
-        }
-        if (rMax > 0 && Math.abs(joint.r) > rMax + 1e-9) {
-            throw new ApiError(409, `${where} R${joint.r.toFixed(3)}, past the soft limit r_max=${formatG(rMax)}`);
-        }
+        // Reached as a probing reaches its points, soft limits included.
+        const joint = this.jointsForPoints([[best.x, best.y]], settings, 0)[0]!;
         return { ...best, joint };
     }
 
