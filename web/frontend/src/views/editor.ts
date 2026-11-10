@@ -35,10 +35,15 @@ export interface CodeEditor {
      * Tells the editor its page was hidden (false) or is back (true). Back,
      * the field is scrolled to where it was, the layer put in step, and the
      * focus and selection given back when it had them. The editor sees
-     * this itself from its size; the method is for a page that knows sooner.
+     * this itself from its size, so no page calls it; it is a hook for the
+     * tests, which hide and show an editor without a size changing.
      */
     setShown(shown: boolean): void;
-    /** Lets go of the page-wide listeners, for an editor taken off the page. */
+    /**
+     * Lets go of the page-wide listeners, for an editor taken off the page.
+     * The page keeps its editors, so no page calls it; it is a hook for the
+     * tests, which make an editor and leave it.
+     */
     dispose(): void;
 }
 

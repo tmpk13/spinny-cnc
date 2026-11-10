@@ -25,8 +25,6 @@ export interface HeightStats {
     min: number;
     max: number;
     mean: number;
-    probed: number;
-    total: number;
 }
 
 /** Lowest, highest and mean of the heights probed so far; null before the first. */
@@ -40,8 +38,6 @@ export function heightStats(map: HeightMap): HeightStats | null {
         min: Math.min(...values),
         max: Math.max(...values),
         mean: sum / values.length,
-        probed: values.length,
-        total: map.grid.nx * map.grid.ny,
     };
 }
 

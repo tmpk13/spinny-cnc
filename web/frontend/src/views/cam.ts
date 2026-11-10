@@ -183,7 +183,8 @@ function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): void {
+/** The CAM panel in `root`, and the profile's file to edit whole in `fileRoot`. */
+export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): void {
     // --- the profile ---
     const pick = el("select", { class: "field", "aria-label": "CAM profile" });
     const newId = el("input", { type: "text", class: "field", placeholder: "new id", "aria-label": "New profile id", autocomplete: "off" });
@@ -238,7 +239,6 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
 
     // --- the file ---
     const fileEditor = codeEditor("Profile file");
-    const textArea = fileEditor.textarea;
     const save = button("Save", () => saveText(), "btn btn-primary");
     const revert = button("Revert", () => revertText(), "btn btn-quiet");
     const fileStatus = el("span", { class: "muted cam-status" });
@@ -247,7 +247,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         fileEditor.root,
         el("p", { class: "muted hint" }, "the file is the profile: every axis, tool and operation is here, with a comment on each key; Save checks it whole and keeps nothing of a text that does not read"),
     );
-    (fileRoot ?? root).append(el("div", { class: "panel-head" }, el("h2", {}, "Profile file")), editor);
+    fileRoot.append(el("div", { class: "panel-head" }, el("h2", {}, "Profile file")), editor);
 
     let files: CamSummary[] = [];
     let shown: CamProfileResponse | null = null;
@@ -551,7 +551,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
         }
         const id = picked;
         try {
-            const response = await ctx.api.saveCamProfile(id, textArea.value);
+            const response = await ctx.api.saveCamProfile(id, fileEditor.getText());
             if (picked === id) {
                 setDirty(false);
                 show(response);
@@ -586,7 +586,8 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot?: HTMLElement): v
             ctx.toast("error", "type an id for the new profile: letters, digits, - and _");
             return;
         }
-        const text = textArea.value.trim() === "" ? `name = ${JSON.stringify(id)}\n` : textArea.value;
+        const typed = fileEditor.getText();
+        const text = typed.trim() === "" ? `name = ${JSON.stringify(id)}\n` : typed;
         try {
             const response = await ctx.api.saveCamProfile(id, text);
             newId.value = "";

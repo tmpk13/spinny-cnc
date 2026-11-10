@@ -208,7 +208,6 @@ export function partOffsetText(state: PnpState | null): string {
 export const PNP_SETUP: Setup = {
     id: "pnp",
     label: "Place parts",
-    fits: () => true,
     steps: (state: AppState) => {
         const pnp = state.pnp;
         const parts = state.components !== null && state.components.job === state.job?.id ? state.components.components.length : 0;
@@ -297,7 +296,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     let asked: string | null = null;
 
     // The steps follow the machine the parts are placed with.
-    mountSteps(roots.steps, ctx, [PNP_SETUP, DEVICE_SETUP], "spinny.steps.pnp", (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP]);
+    mountSteps(roots.steps, ctx, (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP], "spinny.steps.pnp");
     if (roots.device) {
         mountDevice(roots.device, ctx);
     }

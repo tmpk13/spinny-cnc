@@ -8,7 +8,7 @@ import { isDispensing, isMilling, profileOf } from "../profile.ts";
 import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest, UploadOptions } from "../types.ts";
+import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Group, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest, UploadOptions } from "../types.ts";
 import { calibrationTest } from "./calibrate.ts";
 import { centerTest } from "./center.ts";
 import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
@@ -142,8 +142,8 @@ export const DEFAULT_PLUNGE = 60;
 export const DEFAULT_THICKNESS = 0.12;
 
 /** A group of dots: every path one point, as a dispense import makes them. */
-export function isDots(group: { paths: number | unknown[] }): boolean {
-    return Array.isArray(group.paths) && group.paths.length > 0 && group.paths.every((path) => Array.isArray(path) && path.length === 1);
+export function isDots(group: Group): boolean {
+    return group.paths.length > 0 && group.paths.every((path) => path.length === 1);
 }
 
 /**
@@ -546,9 +546,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
                 }
                 const job = await ctx.call(ctx.api.uploadJob(file, uploadOptions()));
                 await ctx.refreshJobs();
-                if (job && typeof job === "object" && "id" in job) {
+                if (job) {
                     await ctx.selectJob(job.id);
-                    ctx.toast("info", `loaded ${job.name ?? file.name}`);
+                    ctx.toast("info", `loaded ${job.name}`);
                 }
             }
         } finally {

@@ -24,8 +24,8 @@ export interface Step {
 export interface Setup {
     id: string;
     label: string;
-    /** Whether this machine has what the setup needs: probing needs a focus axis. */
-    fits(state: AppState): boolean;
+    /** Whether this machine has what the setup needs: probing needs a focus axis. Left out, the setup fits every machine. */
+    fits?(state: AppState): boolean;
     steps(state: AppState): Step[];
 }
 
@@ -117,7 +117,6 @@ export const SETUPS: Setup[] = [
     {
         id: "camera",
         label: "Measure the camera offset",
-        fits: () => true,
         steps: (state) => {
             const camera = state.camera;
             return [
@@ -189,17 +188,17 @@ export function setupsFor(setups: Setup[], state: AppState): Setup[] {
     if (!state.snapshot.connected) {
         return setups;
     }
-    const fitting = setups.filter((setup) => setup.fits(state));
+    const fitting = setups.filter((setup) => setup.fits?.(state) ?? true);
     return fitting.length > 0 ? fitting : setups.slice(0, 1);
 }
 
 /**
- * Mounts a steps panel for `setups` in `root`; `key` names what is
- * remembered of it (the setup picked, the fold), so another page can have
- * a panel of its own, and `offer`, when given, picks the setups offered
- * instead of what the connected machine fits.
+ * Mounts a steps panel in `root` offering `setups`: of a list, the ones the
+ * connected machine fits; a function picks the setups offered from the
+ * state itself. `key` names what is remembered of the panel (the setup
+ * picked, the fold), so another page can have a panel of its own.
  */
-export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS, key = "spinny.steps", offer?: (state: AppState) => Setup[]): void {
+export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] | ((state: AppState) => Setup[]) = SETUPS, key = "spinny.steps"): void {
     const pick = el("select", { class: "field", "aria-label": "Setup" }) as HTMLSelectElement;
     const list = el("ol", { class: "roadmap" });
     const next = el("p", { class: "muted hint roadmap-next" });
@@ -223,7 +222,7 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] = SETUPS
     });
 
     function render(state: AppState): void {
-        const fitting = offer ? offer(state) : setupsFor(setups, state);
+        const fitting = typeof setups === "function" ? setups(state) : setupsFor(setups, state);
         const ids = fitting.map((setup) => setup.id).join(" ");
         if (ids !== offered) {
             offered = ids;

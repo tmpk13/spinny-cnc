@@ -144,7 +144,6 @@ function shadeSelect(label: string): HTMLSelectElement {
 export const DEVICE_SETUP: Setup = {
     id: "pnp-device",
     label: "Place parts with a G-code device",
-    fits: () => true,
     steps: (state: AppState) => {
         const device = state.device;
         const jobId = state.job?.id ?? null;

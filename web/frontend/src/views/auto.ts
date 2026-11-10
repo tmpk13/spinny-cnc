@@ -67,7 +67,6 @@ const WHO: Record<AutoEntry["role"], string> = { user: "You", assistant: "Model"
 
 interface Shown {
     node: HTMLElement;
-    role: AutoEntry["role"];
     update(entry: AutoEntry): void;
 }
 
@@ -95,7 +94,7 @@ function entryNode(entry: AutoEntry): Shown {
             node.classList.toggle("failed", next.done && next.error === true);
         };
         update(entry);
-        return { node, role: entry.role, update };
+        return { node, update };
     }
     const text = el("div", { class: "auto-text" });
     const node = el("div", { class: `auto-entry auto-${entry.role}`, "data-id": entry.id, "aria-label": WHO[entry.role] }, text);
@@ -104,7 +103,7 @@ function entryNode(entry: AutoEntry): Shown {
         node.classList.toggle("writing", !next.done);
     };
     update(entry);
-    return { node, role: entry.role, update };
+    return { node, update };
 }
 
 export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx: Ctx): void {

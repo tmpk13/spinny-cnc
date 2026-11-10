@@ -135,7 +135,7 @@ describe("height map math", () => {
     test("statistics skip what is not probed", () => {
         expect(heightStats(heightMap([[null, null], [null, null]]))).toBeNull();
         const stats = heightStats(heightMap([[-1, null, -2], [0, -1, null]]))!;
-        expect(stats).toEqual({ min: -2, max: 0, mean: -1, probed: 4, total: 6 });
+        expect(stats).toEqual({ min: -2, max: 0, mean: -1 });
     });
 
     test("cells are gray at the mean, red above and blue below, up to the cap", () => {
@@ -183,7 +183,7 @@ describe("height map math", () => {
 
     test("the legend's ends are the colors cells get, which a skewed map does not reach on its short side", () => {
         // Mean 0, lowest -0.1, highest 1: the scale reaches 1 on both sides.
-        const stats = { min: -0.1, max: 1, mean: 0, probed: 3, total: 3 };
+        const stats = { min: -0.1, max: 1, mean: 0 };
         expect(legendEnds(stats)).toEqual({ low: "-1.000", high: "+1.000" });
         expect(cellColor(-0.1, stats)).toBe(`color-mix(in oklab, var(--hm-low) ${Math.round(0.1 * MAX_TINT)}%, var(--hm-mid))`);
     });
