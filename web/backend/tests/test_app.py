@@ -365,10 +365,11 @@ def test_broadcast_drops_for_slow_clients():
     queue = broadcast.subscribe()
     for i in range(300):
         broadcast.publish({"type": "console", "n": i})
-    assert queue.qsize() == 256 and broadcast.dropped == 44
+    # The queue keeps the first events; those that found it full are gone.
+    assert [queue.get_nowait()["n"] for _ in range(queue.qsize())] == list(range(256))
     broadcast.unsubscribe(queue)
     broadcast.publish({"type": "x"})
-    assert broadcast.clients == 0
+    assert queue.empty()
     broadcast.publish_threadsafe({"type": "x"})
 
 

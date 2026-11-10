@@ -15,6 +15,7 @@ from pydantic import Field
 from spinny_laser import center as coarse_pattern
 from spinny_laser import fine as fine_pattern
 
+from .calibration import CalibrateResult
 from .jobs import Finite, Group, Job, JobImportError, check_power, check_speed, from_json
 from .kinematics import Streamer
 
@@ -44,18 +45,12 @@ class CenterRequest(Finite):
     speed: float = 200.0
 
 
-class CenterResult(Finite):
-    job: Job
-    summary: list[str]
-    notes: list[str]
-
-
 def build(
     request: CenterRequest,
     streamer: Streamer,
     rotary_max_rate: float | None,
     s_max: float | None = None,
-) -> CenterResult:
+) -> CalibrateResult:
     """The pattern as a job with its stats, or JobImportError for options it cannot take."""
     try:
         check_power(request.power)
@@ -76,7 +71,7 @@ def build(
     return result
 
 
-def _coarse(request: CenterRequest, rotary_max_rate: float | None) -> CenterResult:
+def _coarse(request: CenterRequest, rotary_max_rate: float | None) -> CalibrateResult:
     reach = 6.0 if request.reach is None else request.reach
     ring = 8.0 if request.ring is None else request.ring
     if request.lines == 0 and ring <= 0:
@@ -98,10 +93,10 @@ def _coarse(request: CenterRequest, rotary_max_rate: float | None) -> CenterResu
         + (f", ring at {ring:g} mm" if ring > 0 else ""),
     ]
     notes = coarse_pattern.all_notes(request.lines, ring, request.speed, rotary_max_rate)
-    return CenterResult(job=job, summary=summary, notes=notes)
+    return CalibrateResult(job=job, summary=summary, notes=notes)
 
 
-def _fine(request: CenterRequest, tolerance: float, rotary_max_rate: float | None) -> CenterResult:
+def _fine(request: CenterRequest, tolerance: float, rotary_max_rate: float | None) -> CalibrateResult:
     design = fine_pattern.Design(
         reach=fine_pattern.Design.reach if request.reach is None else request.reach,
         angle=request.angle,
@@ -138,4 +133,4 @@ def _fine(request: CenterRequest, tolerance: float, rotary_max_rate: float | Non
         if "spiral" in seen:
             summary.append(f"           spiral crossing {seen['spiral']:.2f} mm from its line")
     notes = fine_pattern.notes_for(design, request.spot, request.speed, groups)
-    return CenterResult(job=job, summary=summary, notes=notes)
+    return CalibrateResult(job=job, summary=summary, notes=notes)

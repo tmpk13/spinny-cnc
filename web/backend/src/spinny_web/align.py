@@ -18,7 +18,6 @@ from spinny_laser import pads as board_pads
 
 Point = tuple[float, float]
 TOOL, CAMERA = "tool", "camera"
-KINDS = ("pad", "hole", "point", "center")
 
 
 @dataclass
@@ -54,22 +53,30 @@ class Alignment:
 
     def state(self) -> dict:
         with self._lock:
-            fit = self._fit() if self.marks else None
+            fit = self._fit()
             return {"job": self.job, "marks": [mark.to_dict() for mark in self.marks], "fit": fit.to_dict() if fit else None}
 
-    def _fit(self) -> fitting.Fit | None:
-        if not self.marks:
-            return None
-        angle = None
-        if len(self.marks) == 1 and self.marks[0].angle is not None:
-            angle = self.marks[0].angle
-        try:
-            fit = fitting.fit_rigid([(mark.design, mark.machine) for mark in self.marks], angle=angle)
-        except ValueError:
-            return None
+    def _solve(self) -> fitting.Fit:
+        """The fit of the marks, each mark's residual kept: a turn and a
+        shift, or from one mark a shift, with the board turned by the angle
+        the camera saw when that mark is the camera's; ValueError when they
+        fit nothing. The caller holds the lock and has marks."""
+        fit = fitting.fit_rigid(
+            [(mark.design, mark.machine) for mark in self.marks],
+            angle=self.marks[0].angle if len(self.marks) == 1 else None,
+        )
         for mark, residual in zip(self.marks, fit.residuals):
             mark.residual = residual
         return fit
+
+    def _fit(self) -> fitting.Fit | None:
+        """The fit of the marks, or None for none or marks that fit nothing."""
+        if not self.marks:
+            return None
+        try:
+            return self._solve()
+        except ValueError:
+            return None
 
     def _for(self, job_id: str) -> None:
         if self.job != job_id:
@@ -137,13 +144,7 @@ class Alignment:
         with self._lock:
             if self.job != job_id or not self.marks:
                 raise ValueError("no marks for this job: mark a pad or a hole, or capture the camera's pose, first")
-            fit = fitting.fit_rigid(
-                [(mark.design, mark.machine) for mark in self.marks],
-                angle=self.marks[0].angle if len(self.marks) == 1 else None,
-            )
-            for mark, residual in zip(self.marks, fit.residuals):
-                mark.residual = residual
-            return fit
+            return self._solve()
 
     def apply(self, job) -> tuple[object, fitting.Fit]:
         """The job turned and shifted by the fit, as a new object; the

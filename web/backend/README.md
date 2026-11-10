@@ -138,7 +138,7 @@ classDiagram
     }
     class center {
         CenterRequest
-        build(request, streamer, rate) CenterResult
+        build(request, streamer, rate) CalibrateResult, as the calibration tests
     }
     class runner {
         Runner.start(job, link, streamer, compensation, skip, pieces, plan_start)

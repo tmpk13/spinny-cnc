@@ -44,16 +44,7 @@ class ResumeStore:
     def put(self, record: dict) -> None:
         self._loaded = True
         self._record = dict(record)
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self._record, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-            tmp.replace(self.path)
-        except (OSError, ValueError):
-            # The record is in force for this process; a host that cannot
-            # write its runtime directory has bigger problems, reported
-            # where the config is saved.
-            pass
+        _write_json(self.path, self._record)
 
     def clear(self) -> None:
         self._loaded = True
@@ -115,18 +106,11 @@ class PositionStore:
             record = self._pending or self._record
             return dict(record) if record is not None else None
 
-    @property
-    def held_since(self) -> float | None:
-        """When the position was held (epoch s); None while reports are taken."""
-        with self._lock:
-            self._load()
-            return self._held
-
-    def note(self, status, now: float | None = None) -> None:
+    def note(self, status) -> None:
         """A status report: kept at once, written when a second has passed
         since the last write. Not taken while the position is held."""
-        now = time.monotonic() if now is None else now
-        record = {"r": status.r, "a": status.a, "z": status.z, "h": status.h, "state": status.state, "at": _now_iso()}
+        now = time.monotonic()
+        record = {"r": status.r, "a": status.a, "z": status.z, "h": status.h, "state": status.state, "at": _iso(time.time())}
         with self._lock:
             self._load()
             if self._held is not None:
@@ -198,17 +182,21 @@ class PositionStore:
             self._write()
 
     def _write(self) -> None:
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(self._record, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-            tmp.replace(self.path)
-        except (OSError, ValueError):
-            pass
+        _write_json(self.path, self._record)
 
 
-def _now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+def _write_json(path: Path, record: dict | None) -> None:
+    """Writes a record through a file beside it, so the file is always
+    whole. A failure is let go: the record is in force for this process,
+    and a host that cannot write its runtime directory has bigger
+    problems, reported where the config is saved."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(record, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, ValueError):
+        pass
 
 
 def _iso(epoch: float) -> str:

@@ -17,7 +17,7 @@ from spinny_laser import calibrate
 from .jobs import DEFAULT_DEPTH, DEFAULT_PLUNGE, Finite, Group, Job, Offset, check_depth, check_focus, check_power, check_speed
 from .kinematics import Streamer
 
-MATERIAL, DEPTH, FOCUS = "material", "depth", "focus"
+MATERIAL, FOCUS = "material", "focus"
 
 
 class CalibrateRequest(Finite):
@@ -48,6 +48,9 @@ class CalibrateRequest(Finite):
 
 
 class CalibrateResult(Finite):
+    """A test burn built as a job (a calibration test, or the centering
+    test), with the lines that sum it up and notes on reading it."""
+
     job: Job
     summary: list[str]
     notes: list[str]

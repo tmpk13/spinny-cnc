@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from spinny_web import prober as prober_module
-from spinny_web.app import Backend, create_app
+from spinny_web.app import Backend, ProbeBody, create_app
 from spinny_web.heightmap import Grid, HeightMapStore
 from spinny_web.kinematics import Streamer
 from spinny_web.link import Link, LinkTimeout
@@ -392,14 +392,14 @@ def test_a_run_and_probing_asked_for_together_do_not_both_start(client, fake, mo
     job = client.post("/api/center", json={}).json()["job"]
     # Each start reads the settings between its check and its claim: made
     # slow, the two requests are both in that gap at once.
-    read = backend.read_settings
+    read = backend._values
 
     def slow_read(force: bool = False) -> dict:
         time.sleep(0.2)
         return read(force)
 
-    monkeypatch.setattr(backend, "read_settings", slow_read)
-    grid = Grid(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
+    monkeypatch.setattr(backend, "_values", slow_read)
+    grid = ProbeBody(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
     barrier = threading.Barrier(2)
     outcomes: dict[str, str] = {}
 
@@ -527,7 +527,7 @@ def test_console_lines_that_change_the_machine_wait_for_probing_and_move_the_fra
 
 def test_a_stop_or_a_reset_while_a_start_reads_the_settings_keeps_it_from_starting(client, fake, monkeypatch):
     backend = client.backend
-    read = backend.read_settings
+    read = backend._values
     inside = threading.Event()
 
     def slow_read(force: bool = False) -> dict:
@@ -538,9 +538,9 @@ def test_a_stop_or_a_reset_while_a_start_reads_the_settings_keeps_it_from_starti
             time.sleep(0.3)
         return read(force)
 
-    monkeypatch.setattr(backend, "read_settings", slow_read)
+    monkeypatch.setattr(backend, "_values", slow_read)
     job = client.post("/api/center", json={}).json()["job"]
-    grid = Grid(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
+    grid = ProbeBody(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
     for start, interrupt in (
         (lambda: backend.run_job(job["id"]), lambda: backend.runner.stop()),
         (lambda: backend.run_job(job["id"]), lambda: backend.realtime("hold")),
@@ -635,7 +635,7 @@ def test_the_offset_is_taken_back_when_a_scaling_setting_may_have_gone_through_u
 def test_motors_off_or_a_setting_asked_for_as_probing_starts_waits_and_is_refused(client, fake, monkeypatch):
     fake.move_time = 0.05
     backend = client.backend
-    read = backend.read_settings
+    read = backend._values
     inside = threading.Event()
 
     def slow_read(force: bool = False) -> dict:
@@ -646,8 +646,8 @@ def test_motors_off_or_a_setting_asked_for_as_probing_starts_waits_and_is_refuse
             time.sleep(0.3)
         return read(force)
 
-    monkeypatch.setattr(backend, "read_settings", slow_read)
-    grid = Grid(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
+    monkeypatch.setattr(backend, "_values", slow_read)
+    grid = ProbeBody(x0=-10, y0=-5, x1=10, y1=5, nx=3, ny=2)
     starter = threading.Thread(target=backend.start_probe, args=(grid,), name="probe-start")
     starter.start()
     assert inside.wait(5.0)

@@ -774,14 +774,14 @@ def test_a_reset_while_the_run_reads_the_settings_keeps_it_from_starting(backend
     # count the start is checked against was taken before the settings.
     fake = backend.fake
     job_id = stored(backend, small_job())
-    read_settings = Backend.read_settings
+    read = Backend._values
 
     def and_reset(self, force: bool = False) -> dict:
-        values = read_settings(self, force)
+        values = read(self, force)
         assert self.link.reset(timeout=1.0)
         return values
 
-    monkeypatch.setattr(Backend, "read_settings", and_reset)
+    monkeypatch.setattr(Backend, "_values", and_reset)
     with pytest.raises(RunnerError, match="reset while"):
         backend.run_job(job_id)
     assert not backend.runner.active

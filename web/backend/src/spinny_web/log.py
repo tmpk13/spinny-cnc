@@ -42,37 +42,35 @@ def setup(root: Path, to_stderr: bool = True, level: str = "info") -> Path:
     """Logs to `root/spinny.log` (and stderr) and the wire to
     `root/wire.log`, once per process. Returns the log file's path."""
     path = root / LOG_FILE
-    logger = logging.getLogger(LOGGER)
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-    logger.propagate = False
-    wire_logger = logging.getLogger(WIRE_LOGGER)
-    wire_logger.setLevel(logging.INFO)
+    log.setLevel(getattr(logging, level.upper(), logging.INFO))
+    log.propagate = False
+    wire.setLevel(logging.INFO)
     # Its lines are the wire's, not the log's: they stay in their own file.
-    wire_logger.propagate = False
-    if getattr(logger, "_spinny_path", None) == path:
+    wire.propagate = False
+    if getattr(log, "_spinny_path", None) == path:
         return path
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
-    for handler in list(wire_logger.handlers):
-        wire_logger.removeHandler(handler)
+    for handler in list(log.handlers):
+        log.removeHandler(handler)
+    for handler in list(wire.handlers):
+        wire.removeHandler(handler)
     formatter = logging.Formatter(FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
     try:
         root.mkdir(parents=True, exist_ok=True)
         file_handler = logging.handlers.RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8")
         file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        log.addHandler(file_handler)
         wire_handler = logging.handlers.RotatingFileHandler(
             root / WIRE_FILE, maxBytes=WIRE_MAX_BYTES, backupCount=WIRE_BACKUPS, encoding="utf-8"
         )
         wire_handler.setFormatter(logging.Formatter(WIRE_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
-        wire_logger.addHandler(wire_handler)
+        wire.addHandler(wire_handler)
     except OSError:
         pass
     if to_stderr:
         stream = logging.StreamHandler()
         stream.setFormatter(formatter)
-        logger.addHandler(stream)
-    logger._spinny_path = path  # type: ignore[attr-defined]
+        log.addHandler(stream)
+    log._spinny_path = path  # type: ignore[attr-defined]
     return path
 
 
