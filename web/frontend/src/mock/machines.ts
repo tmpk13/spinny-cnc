@@ -9,6 +9,7 @@ import cartesianMill from "../../../../machines/cartesian-mill.toml" with { type
 import polarLaserFocus from "../../../../machines/polar-laser-focus.toml" with { type: "text" };
 import polarLaser from "../../../../machines/polar-laser.toml" with { type: "text" };
 
+import { errorText } from "../api.ts";
 import { defaultControls } from "../controls.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 import type { AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
@@ -315,7 +316,7 @@ export function parseMachine(text: string, id: string): MachineDocument {
     try {
         top = parseToml(text);
     } catch (error) {
-        throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`${where}: ${errorText(error)}`);
     }
     const reader = new Reader(where);
     const settings: Record<string, number> = { ...DEFAULT_SETTINGS };

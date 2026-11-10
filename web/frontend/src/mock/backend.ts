@@ -2,7 +2,7 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { fitRigid, turnPoint } from "../align.ts";
-import { ApiError, type Api } from "../api.ts";
+import { ApiError, errorText, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
 import { fromBoard, type FromBoard } from "../machinekeys.ts";
 import {
@@ -1529,10 +1529,6 @@ function clamp(value: number, low: number, high: number): number {
     return value < low ? low : value > high ? high : value;
 }
 
-function errorText(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 function checkGrid(grid: Grid): void {
     for (const value of [grid.x0, grid.y0, grid.x1, grid.y1]) {
         if (!(Math.abs(value) <= MAX_VALUE)) {
@@ -2156,7 +2152,7 @@ export class MockBackend implements Api, EventFeed {
                 this.exchange(next.line, () => this.machine.push(next.move));
             } catch (error) {
                 this.outbox = [];
-                this.message("error", error instanceof Error ? error.message : String(error));
+                this.message("error", errorText(error));
                 break;
             }
         }
@@ -2227,7 +2223,7 @@ export class MockBackend implements Api, EventFeed {
                     machine.push(move);
                 } catch (error) {
                     session.state = "error";
-                    this.message("error", error instanceof Error ? error.message : String(error));
+                    this.message("error", errorText(error));
                     break;
                 }
                 session.next += 1;
@@ -3208,7 +3204,7 @@ export class MockBackend implements Api, EventFeed {
             try {
                 documents.push(parseMachine(text, id));
             } catch (error) {
-                problems.push({ id, problem: error instanceof Error ? error.message : String(error) });
+                problems.push({ id, problem: errorText(error) });
             }
         }
         return { documents, problems };
@@ -3256,7 +3252,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             return { document: parseMachine(text, id), problems: [] };
         } catch (error) {
-            return { document: null, problems: [error instanceof Error ? error.message : String(error)] };
+            return { document: null, problems: [errorText(error)] };
         }
     }
 
@@ -3283,7 +3279,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             read = fromBoard(text, { ...this.machine.settings }, { ...this.hostSettings() }, (given) => parseMachine(given, id), `${id}.toml`);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         return { ...this.machineRead(id, read.text), text: read.text, changes: read.changes, left: read.left };
     }
@@ -3531,7 +3527,7 @@ export class MockBackend implements Api, EventFeed {
             try {
                 profiles.push(summaryOf(parseProfile(text, id)));
             } catch (error) {
-                problems.push(error instanceof Error ? error.message : String(error));
+                problems.push(errorText(error));
             }
         }
         return { profiles, problems };
@@ -3552,7 +3548,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             return { document: parseProfile(text, id), text };
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
     }
 
@@ -3577,7 +3573,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             changed = setValue(text, path, value);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         return this.saveCamProfile(id, changed);
     }
@@ -3601,7 +3597,7 @@ export class MockBackend implements Api, EventFeed {
                 ? buildModelJob(this.newId(), profile, jobName, design.name, new Uint8Array(await design.arrayBuffer()))
                 : buildCamJob(this.newId(), profile, jobName, design.name, await design.text(), this.limits());
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         this.jobStore.set(built.job.id, built.job);
         this.order.push(built.job.id);
@@ -3615,7 +3611,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             return camGcode(profile, job);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
     }
 
@@ -3625,7 +3621,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             built = buildJob(this.newId(), file.name, text, options, this.limits(), this.machine.milling());
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         this.jobStore.set(built.job.id, built.job);
         this.order.push(built.job.id);
@@ -3664,7 +3660,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             made = jobFromJson(id, old.name, body, this.limits());
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         // The source left out stays the old job's; anything else left out
         // takes a new job's default, as the backend has it.
@@ -3776,7 +3772,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             made = this.remadeUpload(job, { margin });
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         if (!made) {
             throw new ApiError(400, `the file ${job.name} was imported from is no longer kept: import it again with the new margin`);
@@ -3797,7 +3793,7 @@ export class MockBackend implements Api, EventFeed {
                 return made;
             }
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         if (job.recipe?.file) {
             throw new ApiError(400, `the file ${job.name} was imported from is no longer kept: import it again with the new width`);
@@ -3894,7 +3890,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             made = buildMillJob("", ops, holesOf, this.limits(), name);
         } catch (error) {
-            throw error instanceof ApiError ? error : new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw error instanceof ApiError ? error : new ApiError(400, errorText(error));
         }
         if (target) {
             // The settings made on the Jobs page stay with the groups.
@@ -3955,7 +3951,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             built = centerJob(this.newId(), request, this.limits(), sMax > 0 ? sMax : null);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         this.jobStore.set(built.job.id, built.job);
         this.order.push(built.job.id);
@@ -3967,7 +3963,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             built = calibrateJob(this.newId(), request, this.machine.milling(), this.limits(), this.machine.hasFocusAxis());
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         this.jobStore.set(built.job.id, built.job);
         this.order.push(built.job.id);
@@ -4083,7 +4079,7 @@ export class MockBackend implements Api, EventFeed {
                 }
             }
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         const updated = structuredClone(job);
         for (const change of patch.groups ?? []) {
@@ -6372,7 +6368,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             checkPnpSettings(next);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         const restart = this.pnpRunning && CAPTURE_KEYS.some((key) => next[key] !== this.pnpConfig[key]);
         if (restart && this.pnpSession) {
@@ -6623,7 +6619,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             return parseDevice(text, id);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
     }
 
@@ -6814,7 +6810,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             checkTopSettings(next);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         const restart = this.topRunning && CAPTURE_KEYS.some((key) => next[key] !== this.topConfig[key]);
         if (restart && this.topSession) {
@@ -7039,7 +7035,7 @@ export class MockBackend implements Api, EventFeed {
                 const device = parseDevice(text, id);
                 devices.push({ id, name: device.name, description: device.description, url: device.url, feeders: device.feeders.length });
             } catch (error) {
-                problems.push({ id, problem: error instanceof Error ? error.message : String(error) });
+                problems.push({ id, problem: errorText(error) });
             }
         }
         return { devices, problems };
@@ -7056,7 +7052,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             device = parseDevice(text, id);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
         const kept = text.endsWith("\n") ? text : `${text}\n`;
         this.deviceTexts.set(id, kept);
@@ -7068,7 +7064,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             return { document: deviceDocument(parseDevice(text, id)), problems: [] };
         } catch (error) {
-            return { document: null, problems: [error instanceof Error ? error.message : String(error)] };
+            return { document: null, problems: [errorText(error)] };
         }
     }
 
@@ -7200,7 +7196,7 @@ export class MockBackend implements Api, EventFeed {
         try {
             return deviceFit(pairs, this.deviceConfig.angle);
         } catch (error) {
-            throw new ApiError(400, error instanceof Error ? error.message : String(error));
+            throw new ApiError(400, errorText(error));
         }
     }
 

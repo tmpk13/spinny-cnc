@@ -1,6 +1,7 @@
 // Job geometry for the in-page mock backend: SVG and gcode readers, a demo
 // coupon for the formats only the real backend can read, placement and stats.
 
+import { errorText } from "../api.ts";
 import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
 import { innerFirst } from "./order.ts";
 import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, Move, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
@@ -1633,7 +1634,7 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         try {
             data = JSON.parse(text);
         } catch (error) {
-            throw new Error(`not a job: ${error instanceof Error ? error.message : String(error)}`);
+            throw new Error(`not a job: ${errorText(error)}`);
         }
         return { job: jobFromJson(id, name.replace(/\.json$/i, ""), data, limits), note: null };
     }

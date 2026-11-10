@@ -6,6 +6,7 @@
 // made up for, the rotation axis's sign).
 
 import { fitRigid, turnPoint } from "../align.ts";
+import { errorText } from "../api.ts";
 import { parseToml, TomlError, type TomlTable, type TomlValue } from "../toml.ts";
 import type { AlignFit, Component, DeviceDocument, DevicePlan, SpotPolarity } from "../types.ts";
 
@@ -307,7 +308,7 @@ export function parseDevice(text: string, id: string): MockDevice {
         try {
             groups = new RegExp(`${jsPattern(pattern)}|`).exec("")!.length - 1;
         } catch (error) {
-            throw read.fail("vacuum", "pattern", `is not a regular expression: ${error instanceof Error ? error.message : String(error)}`);
+            throw read.fail("vacuum", "pattern", `is not a regular expression: ${errorText(error)}`);
         }
         if (groups < 1) {
             throw read.fail("vacuum", "pattern", "must hold a group, ( ), around the reading");

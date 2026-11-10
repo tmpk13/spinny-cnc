@@ -9,6 +9,7 @@ import modelText from "../../../../cam/mill-3d.toml" with { type: "text" };
 import millText from "../../../../cam/mill-3axis.toml" with { type: "text" };
 import polarText from "../../../../cam/polar-laser.toml" with { type: "text" };
 
+import { errorText } from "../api.ts";
 import type {
     CamAxis,
     CamGcodeReport,
@@ -366,7 +367,7 @@ export function parseProfile(text: string, id: string): CamProfile {
     try {
         data = parseToml(text);
     } catch (error) {
-        throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`${where}: ${errorText(error)}`);
     }
     const reader = new Reader(where);
     const name = reader.text(data, null, "name", id);
@@ -990,7 +991,7 @@ export function setValue(text: string, path: CamPath, value: CamValue): string {
     try {
         data = parseToml(changed);
     } catch (error) {
-        throw new Error(`the change does not read as TOML: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`the change does not read as TOML: ${errorText(error)}`);
     }
     const read = lookup(data, path);
     if (value === null ? read !== undefined : JSON.stringify(read) !== JSON.stringify(value)) {
@@ -1033,7 +1034,7 @@ function readGeometry(fileName: string, text: string): Geometry {
             try {
                 data = JSON.parse(text);
             } catch (error) {
-                throw new Error(`not a job: ${error instanceof Error ? error.message : String(error)}`);
+                throw new Error(`not a job: ${errorText(error)}`);
             }
             const job = data as Partial<Job>;
             const groups = Array.isArray(job.groups) ? job.groups : [];
@@ -1331,7 +1332,7 @@ export function buildModelJob(id: string, profile: CamProfile, name: string, fil
     try {
         read = stlBounds(bytes);
     } catch (error) {
-        throw new Error(`${fileName}: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`${fileName}: ${errorText(error)}`);
     }
     const setup = profile.model_setup ?? { turn: [0, 0, 0] as [number, number, number], scale: 1 };
     const box = turnedBox(read.min, read.max, setup.turn, setup.scale);
