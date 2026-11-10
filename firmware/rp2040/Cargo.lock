@@ -1324,7 +1324,6 @@ dependencies = [
  "embassy-time",
  "embassy-usb",
  "embedded-io-async 0.7.0",
- "heapless 0.9.3",
  "portable-atomic",
  "spinny-core",
  "spinny-fw-logic",

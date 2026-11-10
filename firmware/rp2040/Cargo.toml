@@ -18,8 +18,9 @@ embassy-futures = { version = "0.1" }
 cortex-m = { version = "0.7.6", features = ["inline-asm"] }
 cortex-m-rt = "0.7"
 critical-section = "1.1"
-heapless = "0.9"
 static_cell = "2.1"
+# Not used directly: its critical-section feature gives static_cell and
+# usb-device the atomics the M0+ lacks (no compare-and-swap on thumbv6m).
 portable-atomic = { version = "1.13", features = ["critical-section"] }
 tmc2209 = { version = "0.3", default-features = false }
 embedded-io-async = "0.7"
