@@ -49,7 +49,10 @@ export interface EventSocketOptions {
     stale?: number;
 }
 
-type DataOf<K extends WsEvent["type"]> = Extract<WsEvent, { type: K }>["data"];
+/** The event types the page reads; a frame of any other type is passed over. */
+const EVENT_TYPES = new Set<string>([
+    "state", "console", "progress", "heightmap", "message", "camera", "align", "pnp", "pnp_device", "markers", "camlog", "auto",
+] satisfies WsEvent["type"][]);
 
 /** Reads an event frame; `data`, `payload` or the flattened fields carry the payload. */
 export function parseEvent(raw: unknown): WsEvent | null {
@@ -76,37 +79,10 @@ export function parseEvent(raw: unknown): WsEvent | null {
         delete rest["type"];
         data = rest;
     }
-    if (!data || typeof data !== "object") {
+    if (!data || typeof data !== "object" || !EVENT_TYPES.has(type)) {
         return null;
     }
-    switch (type) {
-        case "state":
-            return { type, data: data as DataOf<"state"> };
-        case "console":
-            return { type, data: data as DataOf<"console"> };
-        case "progress":
-            return { type, data: data as DataOf<"progress"> };
-        case "heightmap":
-            return { type, data: data as DataOf<"heightmap"> };
-        case "message":
-            return { type, data: data as DataOf<"message"> };
-        case "camera":
-            return { type, data: data as DataOf<"camera"> };
-        case "align":
-            return { type, data: data as DataOf<"align"> };
-        case "pnp":
-            return { type, data: data as DataOf<"pnp"> };
-        case "pnp_device":
-            return { type, data: data as DataOf<"pnp_device"> };
-        case "markers":
-            return { type, data: data as DataOf<"markers"> };
-        case "camlog":
-            return { type, data: data as DataOf<"camlog"> };
-        case "auto":
-            return { type, data: data as DataOf<"auto"> };
-        default:
-            return null;
-    }
+    return { type, data } as WsEvent;
 }
 
 export class EventSocket implements EventFeed {

@@ -132,17 +132,10 @@ export function operationSummary(op: MillOperation): string {
 /** The fields of an operation that decide what it cuts: everything but its name and the holes filled in when it was made. */
 function cutting(op: MillOperation): Record<string, unknown> {
     const { name: _name, holes: _holes, ...rest } = op;
-    const out: Record<string, unknown> = { ...rest, corner: op.corner ?? 0 };
-    for (const key of Object.keys(out).sort()) {
-        const value = out[key];
-        if (value === undefined) {
-            delete out[key];
-        }
-    }
-    return out;
+    return { ...rest, corner: op.corner ?? 0 };
 }
 
-/** Whether two operations cut the same: what decides the applied mark on the Plot page. */
+/** Whether two operations cut the same, a field left out counting as one set to null: what decides the applied mark on the Plot page. */
 export function sameOperation(a: MillOperation, b: MillOperation): boolean {
     const x = cutting(a);
     const y = cutting(b);
