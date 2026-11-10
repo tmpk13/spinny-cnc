@@ -79,7 +79,7 @@ describe("center panel", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const panel = root.querySelector(".center-test")!;
         const inputs = Array.from(panel.querySelectorAll("input"));
         const fine = inputs[0]!;
@@ -108,7 +108,7 @@ describe("center panel", () => {
         const store = new Store<AppState>(initialState(true));
         const ctx = createContext(new MockBackend({ timers: false }), store);
         const root = document.createElement("section");
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const panel = root.querySelector(".center-test")!;
         expect(panel.classList.contains("hidden")).toBe(false);
         const snapshot = store.get().snapshot;

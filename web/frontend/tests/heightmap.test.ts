@@ -443,7 +443,7 @@ describe("compensated runs", () => {
     test("the run goes out with the choice, auto once the map is usable", async () => {
         const map = heightMap([[0, 0.1], [0.2, 0.3]], { focus_set: true });
         const { store, ctx, root, calls } = setup({ map, probe: null, settings: SETTINGS });
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         store.set({ snapshot: connected(), job: job(), heightMap: { map: null, probe: null, settings: SETTINGS } });
         const select = root.querySelector('select[aria-label="Height map"]') as HTMLSelectElement;
         expect(select.value).toBe("off");
@@ -463,7 +463,7 @@ describe("compensated runs", () => {
     test("a map whose offset was dropped is not followed by default, and the page asks for the offset again", async () => {
         const map = heightMap([[0, 0.1], [0.2, 0.3]], { focus_set: true });
         const { store, ctx, root, calls } = setup({ map, probe: null, settings: SETTINGS });
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         store.set({ snapshot: connected(), job: job(), heightMap: { map, probe: null, settings: SETTINGS } });
         const select = root.querySelector('select[aria-label="Height map"]') as HTMLSelectElement;
         const note = (): string => (root.querySelector(".run-row + p") as HTMLElement).textContent ?? "";
@@ -538,7 +538,7 @@ describe("whether a run follows the map", () => {
         const panel = document.createElement("section");
         const bar = document.createElement("header");
         document.body.append(panel, bar);
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         mountHeightMap(panel, ctx);
         mountStatusBar(bar, ctx);
         store.set({ snapshot: { ...connected(), profile: laser }, job: job(), heightMap: { map: ready, probe: null, settings: SETTINGS } });

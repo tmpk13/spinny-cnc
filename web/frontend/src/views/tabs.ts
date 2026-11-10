@@ -92,7 +92,7 @@ export function showPage(id: PageId): void {
     }
 }
 
-export function mountTabs(root: HTMLElement, store?: Store<AppState>): void {
+export function mountTabs(root: HTMLElement, store: Store<AppState>): void {
     root.setAttribute("role", "tablist");
     const tabs = PAGES.map((page) => {
         const tab = el("button", { type: "button", class: "tab", role: "tab", "data-page": page.id, onclick: () => showPage(page.id) }, page.label);
@@ -102,7 +102,7 @@ export function mountTabs(root: HTMLElement, store?: Store<AppState>): void {
     showPage(readPage());
     // The count is drawn by the stylesheet from an attribute, so the tab's
     // text stays its name.
-    store?.subscribe((state) => {
+    store.subscribe((state) => {
         for (const { page, tab } of tabs) {
             const count = pendingOn(state.pending, page);
             if (count > 0) {

@@ -521,7 +521,7 @@ describe("the tabs", () => {
         nav.className = "tabs";
         app.append(nav);
         document.body.append(app);
-        mountTabs(nav);
+        mountTabs(nav, new Store<AppState>(initialState(true)));
         expect(Array.from(nav.querySelectorAll(".tab")).map((tab) => tab.textContent)).toEqual(PAGES.map((page) => page.label));
         expect(activePage()).toBe("jobs");
         click(nav, "CAM");

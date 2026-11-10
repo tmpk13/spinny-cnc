@@ -581,7 +581,7 @@ describe("another width for a job", () => {
 
     test("the job details make it again with a confirm", async () => {
         const harness = setup();
-        mountJobs(harness.root, harness.ctx);
+        mountJobs(harness.root, harness.ctx, harness.root);
         const made = (await harness.backend.makeMill({ ops: [{ ...defaultOperation("drill"), points: [[1, 1]], tool: 0.8 }] })).job;
         await harness.ctx.refreshJobs();
         await harness.ctx.selectJob(made.id);

@@ -156,7 +156,7 @@ describe("spindle", () => {
     test("a milling machine's group table has depth and plunge in place of the floor", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         store.set({ snapshot: snapshot({ tool: "spindle" }) });
         await ctx.refreshJobs();
         const jobs = await api.jobs();

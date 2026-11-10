@@ -107,7 +107,7 @@ describe("picking paths in the preview", () => {
         const { store, ctx, root, api } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         mountJobJson(root, ctx);
         const preview = mountPreviewPanel(root, ctx);
         const canvasEl = root.querySelector("canvas.preview") as HTMLCanvasElement;
@@ -181,7 +181,7 @@ describe("moving picked paths between groups", () => {
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const made = await api.uploadJob(new File([SVG], "lines.svg"), { anchor: "keep" });
         await ctx.refreshJobs();
         await ctx.selectJob(made.id);
@@ -229,7 +229,7 @@ describe("moving picked paths between groups", () => {
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const line = (y: number): MillOperation => ({ ...defaultOperation("line"), depth: 0.3, step_down: 0.3, points: [[0, y], [10, y]] });
         const made = (await api.makeMill({ ops: [line(0), line(5), line(10)] })).job;
         await ctx.refreshJobs();
@@ -269,7 +269,7 @@ describe("moving picked paths between groups", () => {
 describe("arrays of picked paths", () => {
     test("the copies are drawn as the fields change, kept with Make array, and stay picked", async () => {
         const { store, ctx, root, api, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const made = await api.uploadJob(new File([SVG], "lines.svg"), { anchor: "keep" });
         await ctx.refreshJobs();
         await ctx.selectJob(made.id);

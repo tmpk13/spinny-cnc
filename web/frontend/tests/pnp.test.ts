@@ -150,6 +150,7 @@ describe("the pnp page", () => {
             board: document.createElement("section"),
             camera: document.createElement("section"),
             nozzle: document.createElement("section"),
+            device: document.createElement("section"),
         };
         for (const root of Object.values(roots)) {
             document.body.append(root);
@@ -207,6 +208,7 @@ describe("the pnp page", () => {
             board: document.createElement("section"),
             camera: document.createElement("section"),
             nozzle: document.createElement("section"),
+            device: document.createElement("section"),
         };
         mountPnp(roots, ctx);
         await ctx.refreshPnp();

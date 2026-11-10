@@ -209,9 +209,9 @@ function setUnlessFocused(input: HTMLInputElement, value: string, focused: Eleme
 /**
  * The Jobs panel in `root`, and the run controls in `runRoot`: a panel of
  * their own at the foot of the column, so Run stays in reach however long
- * the list and the groups grow. Without one they go at the panel's end.
+ * the list and the groups grow.
  */
-export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): void {
+export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): void {
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Job file" });
     const powerField = numberField({ value: 500, min: 0, step: 1 });
     const speedField = numberField({ value: 400, min: 1, step: 1 });
@@ -973,18 +973,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot?: HTMLElement): v
     // The run controls: the selected job's name over them, since the
     // panel they sit in may be far from the list it was picked in.
     const runTitle = el("span", { class: "muted run-job" });
-    const runParts = [
+    runRoot.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Run"), runTitle),
         runRow,
         compensateNote,
         progressBox,
         pickupBox,
-    ];
-    if (runRoot) {
-        runRoot.append(...runParts);
-    } else {
-        root.append(el("div", { class: "run-section" }, ...runParts));
-    }
+    );
 
     async function run(): Promise<void> {
         const job = ctx.store.get().job;

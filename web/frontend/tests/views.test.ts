@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Api } from "../src/api.ts";
+import { defaultControls } from "../src/controls.ts";
 import { applyEvent, createContext, settingsMayHaveChanged } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { button, numberField, setLocked } from "../src/dom.ts";
+import { POLAR_LASER } from "../src/profile.ts";
 import { Store, appendConsole, initialState, pushToast, type AppState } from "../src/state.ts";
 import type { Controls, Job, JobSummary, Machine, SettingsResponse, Snapshot, WsEvent } from "../src/types.ts";
 import { mountConsole, writesSettings } from "../src/views/console.ts";
@@ -302,10 +304,11 @@ describe("job selection", () => {
 
 describe("jog", () => {
     test("keys map to board jogs and cancel", () => {
-        expect(keyAction("ArrowLeft")).toEqual({ dx: -1, dy: 0 });
-        expect(keyAction("ArrowUp")).toEqual({ dx: 0, dy: 1 });
-        expect(keyAction("Escape")).toBe("cancel");
-        expect(keyAction("a")).toBeNull();
+        const pad = defaultControls(POLAR_LASER);
+        expect(keyAction("ArrowLeft", pad)).toEqual({ dx: -1, dy: 0 });
+        expect(keyAction("ArrowUp", pad)).toEqual({ dx: 0, dy: 1 });
+        expect(keyAction("Escape", pad)).toBe("cancel");
+        expect(keyAction("a", pad)).toBeNull();
     });
 
     test("pad and axis buttons send the right requests", async () => {
@@ -614,7 +617,7 @@ describe("jobs", () => {
 
     test("the reason a run ended stays on the panel", async () => {
         const { store, ctx, root, api } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshJobs();
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
@@ -636,7 +639,7 @@ describe("jobs", () => {
         }
         await api.runStop();
         backend.step(1);
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshState();
         await ctx.refreshJobs();
         await ctx.selectJob(made.job.id);
@@ -685,7 +688,7 @@ describe("jobs", () => {
         const changed = structuredClone(await api.job(job.id));
         changed.groups[0]!.paths = changed.groups[0]!.paths.slice(1);
         await api.replaceJob(job.id, changed);
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshState();
         await ctx.refreshJobs();
         await ctx.selectJob(job.id);
@@ -715,7 +718,7 @@ describe("jobs", () => {
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshJobs();
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
@@ -744,7 +747,7 @@ describe("jobs", () => {
 
     test("a patch of the same job updates the table in place and keeps the field being typed in", async () => {
         const { ctx, root, api } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshJobs();
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
@@ -790,7 +793,7 @@ describe("jobs", () => {
 
     test("the clear choice goes with an upload, and off sends none", async () => {
         const { ctx, root, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const clear = root.querySelector('select[aria-label="Clear copper"]') as HTMLSelectElement;
         const drop = root.querySelector(".drop") as HTMLElement;
         const send = async (): Promise<void> => {
@@ -810,7 +813,7 @@ describe("jobs", () => {
 
     test("a deposit sends its fill in place of the clear choice, which it hides", async () => {
         const { ctx, root, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const mode = root.querySelector('select[aria-label="Board mode"]') as HTMLSelectElement;
         const clear = root.querySelector('select[aria-label="Clear copper"]') as HTMLSelectElement;
         const fill = root.querySelector('select[aria-label="Fill copper"]') as HTMLSelectElement;
@@ -846,7 +849,7 @@ describe("jobs", () => {
 
     test("the layer goes with an upload, trimmed, and an empty one sends none", async () => {
         const { ctx, root, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const layer = root.querySelector('input[aria-label="Board layer"]') as HTMLInputElement;
         expect(layer.value).toBe("F.Cu");
         const offered = Array.from(root.querySelectorAll("datalist#board-layers option")).map((option) => (option as HTMLOptionElement).value);
@@ -873,7 +876,7 @@ describe("jobs", () => {
 
     test("a KiCad board's own layers are offered before it is sent, a drawing cut on its lines", async () => {
         const { ctx, root, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const text = await Bun.file(new URL("../../../toolpath/tests/data/board.kicad_pcb", import.meta.url)).text();
         const mode = root.querySelector('select[aria-label="Board mode"]') as HTMLSelectElement;
         const layer = root.querySelector('input[aria-label="Board layer"]') as HTMLInputElement;
@@ -939,7 +942,7 @@ describe("jobs", () => {
 
     test("a stencil sends its margin in place of clear and fill, and takes the paste for a copper layer", async () => {
         const { ctx, root, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const mode = root.querySelector('select[aria-label="Board mode"]') as HTMLSelectElement;
         const layer = root.querySelector('input[aria-label="Board layer"]') as HTMLInputElement;
         const margin = root.querySelector('input[aria-label="Stencil margin"]') as HTMLInputElement;
@@ -979,7 +982,7 @@ describe("jobs", () => {
 
     test("a stencil's margin row cuts it again for another margin, where it lies", async () => {
         const { store, ctx, root, api, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const job = await api.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), { mode: "stencil", margin: 0 });
         await ctx.refreshJobs();
         await ctx.selectJob(job.id);
@@ -1020,7 +1023,7 @@ describe("jobs", () => {
 
     test("list and groups of the selected job", async () => {
         const { store, ctx, root, api } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshJobs();
         expect(root.querySelectorAll("li").length).toBe(1);
         const jobs = await api.jobs();
@@ -1118,7 +1121,7 @@ describe("machine files", () => {
         const { store, ctx, root, api, calls } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountConfig(root, ctx);
+        mountConfig(root, ctx, document.createElement("section"));
         await settle();
         const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
         expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]);
@@ -1232,7 +1235,7 @@ describe("machine files", () => {
         const { store, ctx, root, api } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
-        mountConfig(root, ctx);
+        mountConfig(root, ctx, document.createElement("section"));
         await settle();
         const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
         pick.value = "polar-laser";

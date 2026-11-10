@@ -33,7 +33,7 @@ describe("calibration test", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const panel = root.querySelector(".calibrate-test")!;
         expect(panel.classList.contains("hidden")).toBe(false);
         const steps = panel.querySelector('input[aria-label="power steps"]') as HTMLInputElement;
@@ -76,7 +76,7 @@ describe("calibration test", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const panel = root.querySelector(".calibrate-test")!;
         const which = panel.querySelector('select[aria-label="Test"]') as HTMLSelectElement;
         const shown = (element: Element): boolean => !element.classList.contains("hidden");

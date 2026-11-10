@@ -80,7 +80,8 @@ export function boardText(connected: boolean, picked: string | null, current: st
 // with the backend, for the list's file values.
 const CHECK_AFTER_MS = 400;
 
-export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement | null = null): void {
+/** The machine file panel in `root`, and the list of every key a file can set in `listRoot`. */
+export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement): void {
     const pick = el("select", { class: "field", "aria-label": "Machine file" });
     const newId = el("input", { type: "text", class: "field", placeholder: "new id", "aria-label": "New machine id", autocomplete: "off" });
     newId.style.width = "8rem";
@@ -131,13 +132,11 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
     let checked: MachineDocument | null = null;
     let checkTimer: ReturnType<typeof setTimeout> | null = null;
     let dirty = false;
-    const list = listRoot
-        ? mountSettingsList(listRoot, ctx, {
-            document: () => checked ?? shown?.document ?? null,
-            text: () => editor.getText(),
-            reveal: (section, name, value) => reveal(section, name, value),
-        })
-        : null;
+    const list = mountSettingsList(listRoot, ctx, {
+        document: () => checked ?? shown?.document ?? null,
+        text: () => editor.getText(),
+        reveal: (section, name, value) => reveal(section, name, value),
+    });
     // An edit not saved is counted on the page's tab.
     const setDirty = (value: boolean): void => {
         dirty = value;
@@ -165,7 +164,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
             void ctx.api.checkMachineFile(id, text).then((result) => {
                 if (picked === id && editor.getText() === text && result.document) {
                     checked = result.document;
-                    list?.refresh();
+                    list.refresh();
                 }
             }, () => undefined);
         }, CHECK_AFTER_MS);
@@ -316,7 +315,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
         editor.setText(response.text);
         showProblems(response.problems);
         showNotes([]);
-        list?.refresh();
+        list.refresh();
         note.textContent = response.document ? describeMachine(response.document) : "the file does not read; mend it and Save";
         setStatus(response.document ? "" : "does not read", response.document === null);
         lockAll();
@@ -344,7 +343,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
         showProblems(result.problems);
         if (result.document) {
             checked = result.document;
-            list?.refresh();
+            list.refresh();
             setStatus(`reads as ${describeMachine(result.document)}${dirty ? "; not saved" : ""}`, false);
         } else {
             setStatus("does not read", true);
@@ -378,7 +377,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
         if (shown) {
             editor.setText(shown.text);
             checked = null;
-            list?.refresh();
+            list.refresh();
             showNotes([]);
             setDirty(false);
             showProblems(shown.problems);
@@ -488,7 +487,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement |
         const left = result.left.length > 0 ? [`no key can give ${result.left.join(", ")} the board's value`] : [];
         showNotes([...result.changes, ...left]);
         setStatus(`${result.changes.length} values read from the board, not saved: Save keeps them`, false);
-        list?.refresh();
+        list.refresh();
     }
 
     async function saveFlash(): Promise<void> {

@@ -284,8 +284,8 @@ export interface PnpRoots {
     board: HTMLElement;
     camera: HTMLElement;
     nozzle: HTMLElement;
-    /** The G-code device's panel; left out, the page has none. */
-    device?: HTMLElement;
+    /** The G-code device's panel. */
+    device: HTMLElement;
 }
 
 export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
@@ -297,9 +297,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     // The steps follow the machine the parts are placed with.
     mountSteps(roots.steps, ctx, (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP], "spinny.steps.pnp");
-    if (roots.device) {
-        mountDevice(roots.device, ctx);
-    }
+    mountDevice(roots.device, ctx);
     const target = el("select", { class: "field", "aria-label": "Place with" },
         el("option", { value: "machine" }, "this machine"),
         el("option", { value: "device" }, "a G-code device (OpenPnP compatible)"),
@@ -775,7 +773,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         target.value = state.pnpTarget;
         // The up camera's picture serves either machine; the nozzle panel is this machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        roots.device?.classList.toggle("hidden", !onDevice);
+        roots.device.classList.toggle("hidden", !onDevice);
         renderActions(state);
     };
     ctx.store.subscribe(showTarget, ["pnpTarget", "device"]);

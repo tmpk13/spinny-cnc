@@ -25,14 +25,14 @@ export type BarId = "x" | "y" | JointAxis;
 
 /**
  * Maps a key to a board jog in step units, a joint jog by its step, or a
- * cancel; null when the key is not bound. Without controls the pad's arrow
- * keys are assumed.
+ * cancel; null when the key is not bound. The arrow keys jog the board
+ * when the controls have the pad.
  */
-export function keyAction(key: string, controls?: Controls): KeyAction {
+export function keyAction(key: string, controls: Controls): KeyAction {
     if (key === "Escape") {
         return "cancel";
     }
-    if (controls === undefined || controls.pad) {
+    if (controls.pad) {
         switch (key) {
             case "ArrowLeft":
                 return { dx: -1, dy: 0 };
@@ -44,7 +44,7 @@ export function keyAction(key: string, controls?: Controls): KeyAction {
                 return { dx: 0, dy: -1 };
         }
     }
-    for (const axis of controls?.axes ?? []) {
+    for (const axis of controls.axes) {
         const at = axis.keys.indexOf(key);
         if (at === 0) {
             return { axis: axis.axis, sign: -1 };

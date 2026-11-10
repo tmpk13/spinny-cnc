@@ -191,7 +191,7 @@ describe("a dispenser machine", () => {
         await backend.updateSettings({ values: { cartesian: 1, dispenser: 1, h_axis: 1 } });
         await ctx.refreshState();
         await ctx.refreshSettings();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await ctx.refreshJobs();
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);

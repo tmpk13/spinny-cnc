@@ -16,7 +16,7 @@ async function settleMany(times = 6): Promise<void> {
 describe("combining jobs", () => {
     test("the jobs checked become one job, cut in the order they were checked", async () => {
         const { store, ctx, root, api, calls } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         const lid = await api.uploadJob(new File([SVG("#f00", 0)], "lid.svg"), { anchor: "keep" });
         const base = await api.uploadJob(new File([SVG("#00f", 5)], "base.svg"), { anchor: "keep" });
         await ctx.refreshJobs();
@@ -58,7 +58,7 @@ describe("combining jobs", () => {
 
     test("every job in the list carries a small drawing of itself", async () => {
         const { ctx, root, api } = setup();
-        mountJobs(root, ctx);
+        mountJobs(root, ctx, root);
         await api.uploadJob(new File([SVG("#f00", 0)], "lid.svg"), { anchor: "keep" });
         await ctx.refreshJobs();
         const img = root.querySelector("img.job-thumb") as HTMLImageElement;
