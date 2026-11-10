@@ -85,19 +85,6 @@ export function headBoard(joint: Joint, z: number, cartesian: boolean): Board {
     return cartesian ? turned({ x: joint.r, y: z }, joint.a) : boardOfJoint(joint);
 }
 
-/** Table rate in deg/min needed for a tangential cut at `speed` mm/min and radius `r`. */
-export function tableRateFor(speed: number, r: number): number {
-    if (r < AXIS_EPSILON) {
-        return Infinity;
-    }
-    return speed / (r * DEG);
-}
-
-/** Surface speed a tangential cut can reach at radius `r` under a table limit of `aRate` deg/min. */
-export function tableLimitedSpeed(speed: number, r: number, aRate: number): number {
-    return Math.min(speed, r * aRate * DEG);
-}
-
 /**
  * Most steps a second the firmware's step generator produces at a step
  * pulse of `stepUs` microseconds: one per 10 us tick, and fewer once the

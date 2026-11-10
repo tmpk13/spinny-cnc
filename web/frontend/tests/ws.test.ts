@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { EventSocket, STALE_MS, backoffDelay, backoffSchedule, parseEvent, wsUrl, type SocketLike } from "../src/ws.ts";
+import { EventSocket, STALE_MS, backoffDelay, parseEvent, wsUrl, type SocketLike } from "../src/ws.ts";
 import type { WsEvent } from "../src/types.ts";
 
 class FakeSocket implements SocketLike {
@@ -40,11 +40,12 @@ function harness() {
 
 describe("backoff", () => {
     test("doubles from the base up to the cap", () => {
-        expect(backoffSchedule(7)).toEqual([500, 1000, 2000, 4000, 8000, 15000, 15000]);
+        const schedule = Array.from({ length: 7 }, (_, attempt) => backoffDelay(attempt));
+        expect(schedule).toEqual([500, 1000, 2000, 4000, 8000, 15000, 15000]);
     });
 
     test("custom base and cap", () => {
-        expect(backoffSchedule(4, 100, 350)).toEqual([100, 200, 350, 350]);
+        expect(Array.from({ length: 4 }, (_, attempt) => backoffDelay(attempt, 100, 350))).toEqual([100, 200, 350, 350]);
         expect(backoffDelay(-1, 100, 1000)).toBe(100);
         expect(backoffDelay(2.7, 100, 1000)).toBe(400);
     });

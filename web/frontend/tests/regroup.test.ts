@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { formatJson, lineColumn, offsetOf, placeOf, stepsAt } from "../src/jsontext.ts";
+import { formatJson, offsetOf, placeOf, stepsAt } from "../src/jsontext.ts";
 import { arrayPaths, arrayPlace, arrayRefusal, arrayStep, freshLabel, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../src/regroup.ts";
 import type { Group, Job } from "../src/types.ts";
 
@@ -200,7 +200,6 @@ describe("a job as JSON text", () => {
         // Text being typed, broken past the caret, still answers.
         const broken = `${text.slice(0, at + 3)} ,,,`;
         expect(placeOf(stepsAt(broken, at + 3))).toEqual({ list: "groups", group: 1, path: 0, point: 1 });
-        expect(lineColumn("ab\ncde", 4)).toEqual({ line: 2, column: 2 });
     });
 
     test("a caret where a path or a point begins is in it, the first of a list as much as the others", () => {

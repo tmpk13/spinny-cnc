@@ -267,10 +267,3 @@ export function placeOf(steps: JsonStep[]): JobPlace | null {
     }
     return null;
 }
-
-/** The line and column (both from 1) of an offset, for a parse error's place. */
-export function lineColumn(text: string, offset: number): { line: number; column: number } {
-    const before = text.slice(0, Math.max(0, offset));
-    const lines = before.split("\n");
-    return { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
-}

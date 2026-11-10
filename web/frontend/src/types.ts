@@ -221,11 +221,6 @@ export interface CommandResponse {
     lines: string[];
 }
 
-export interface LaserRequest {
-    power: number;
-    ms: number;
-}
-
 export interface SettingSchema {
     name: string;
     unit: string;

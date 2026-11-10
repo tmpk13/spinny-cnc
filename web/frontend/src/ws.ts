@@ -22,15 +22,6 @@ export function backoffDelay(attempt: number, base = BACKOFF_BASE_MS, max = BACK
     return Math.min(max, base * 2 ** n);
 }
 
-/** The first `count` retry delays. */
-export function backoffSchedule(count: number, base = BACKOFF_BASE_MS, max = BACKOFF_MAX_MS): number[] {
-    const out: number[] = [];
-    for (let attempt = 0; attempt < count; attempt++) {
-        out.push(backoffDelay(attempt, base, max));
-    }
-    return out;
-}
-
 export interface EventFeed {
     start(): void;
     stop(): void;

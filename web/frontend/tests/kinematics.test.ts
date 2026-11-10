@@ -13,8 +13,6 @@ import {
     moveMinutes,
     segmentBoardMove,
     surfaceLength,
-    tableLimitedSpeed,
-    tableRateFor,
     unwrap,
 } from "../src/kinematics.ts";
 import type { Joint, Point } from "../src/types.ts";
@@ -84,13 +82,6 @@ describe("lengths and rates", () => {
     test("surface length of a turn is the arc at the mean radius", () => {
         expect(surfaceLength({ r: 10, a: 0 }, { r: 10, a: 90 })).toBeCloseTo(10 * Math.PI / 2, 9);
         expect(surfaceLength({ r: 0, a: 0 }, { r: 10, a: 0 })).toBeCloseTo(10, 9);
-    });
-
-    test("table rate needed and the speed it allows", () => {
-        expect(tableRateFor(400, 21.2)).toBeCloseTo(400 / (21.2 * DEG), 6);
-        expect(tableLimitedSpeed(400, 10, 1080)).toBeCloseTo(10 * 1080 * DEG, 9);
-        expect(tableLimitedSpeed(400, 30, 1080)).toBe(400);
-        expect(tableRateFor(400, 0)).toBe(Infinity);
     });
 
     test("move time is held back by the slower axis", () => {
