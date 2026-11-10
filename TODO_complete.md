@@ -642,3 +642,9 @@
   part angle and size over the up camera, a top camera with its offset,
   fiducials, feeder marks and pocket looks, a vacuum sensor's reads with
   failed picks retried from the next pocket.
+- Cleanup pass (2026-11-10): code only tests reached removed with its
+  tests, repeated helpers given one home each across the backend, the
+  toolpath library, the page and its mock, stale comments and docs brought
+  up to date with each fact in one document, clippy and ruff clean with a
+  `mise run lint` task, pyclipper declared, Pyright pointed at the uv
+  environment; about 1000 lines lighter, every suite green.
