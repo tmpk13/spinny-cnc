@@ -1,14 +1,15 @@
-"""A serial bridge for a Raspberry Pi the controller is plugged into: the
-backend runs elsewhere and connects to `socket://<pi>:2324`, and this
-serves the controller's port over TCP, one client at a time.
+"""A serial bridge for a Raspberry Pi the controller is plugged into: this
+serves the controller's port over TCP, one client at a time, on the Pi's
+loopback by default (port 2324). A backend on the Pi connects to
+`socket://127.0.0.1:2324`; one elsewhere reaches it the same way through
+the ssh tunnel relay-pi forwards, so only the ssh login reaches the
+machine.
 
-socat did this before and had to be restarted whenever the board stopped
-taking bytes: its child blocked in a write to the tty, outlived its
-client, and the next client was accepted but never served, so the backend
-saw a port that answered nothing. Here the device is written only when it
-is ready, a device that takes nothing for a few seconds is given up with
-the client told why, a client that stops reading is dropped the same way,
-and a new client takes over from one that has gone quiet.
+The device is written only when it is ready, so a device that stops
+taking bytes never leaves a write blocked: one that takes nothing for a
+few seconds is given up with the client told why, a client that stops
+reading is dropped the same way, and a new client takes over from one
+that has gone quiet.
 
 The device is opened when a client connects and closed when it leaves, so
 the host's DTR line follows the client: the firmware greets the opener

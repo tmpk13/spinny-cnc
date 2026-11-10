@@ -1,11 +1,13 @@
 """Probes a grid of board points with the touch probe on the focus axis.
 
-The head travels between points at the height it had when probing began,
-which the operator has chosen to clear the board. At each point it goes
-there, lowers the probe until it touches (`probe`, answered once the head
-has stopped), and, with a second speed set, backs off and touches again
-slower for the height that is recorded. It then rises back to the travel
-height before moving on, so the probe never drags across the board.
+The head travels between points at the travel height: the highest of
+where it stood when probing began (which the operator chose to clear the
+board), the travel height of a map gone on with, and the host's travel
+height when one is set. At each point it goes there, lowers the probe
+until it touches (`probe`, answered once the head has stopped), and, with
+a second speed set, backs off and touches again slower for the height
+that is recorded. It then rises back to the travel height before moving
+on, so the probe never drags across the board.
 
 Every line is sent and answered before the next, so a failed probe stops
 the routine before anything else moves: a miss raises the firmware's

@@ -52,7 +52,8 @@ class CameraError(Exception):
 
 
 class CameraSettings(BaseModel):
-    """What the backend keeps of the camera, the machine file's `[camera]`."""
+    """What the backend keeps of the camera, in config.json's `camera`: a
+    machine file's `[camera]` is laid over it when that file is loaded."""
 
     model_config = ConfigDict(extra="forbid")
 

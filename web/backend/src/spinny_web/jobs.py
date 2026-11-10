@@ -54,9 +54,7 @@ MAX_FOCUS = 50.0
 # Farthest a CAM laser group's height may be from the surface, mm, the
 # bound a CAM profile holds it to.
 MAX_HEIGHT = 1000.0
-# CSS pixels per millimeter at 96 dpi, which is what an SVG length without
-# a unit is; the parser's own rounded factor is used so a file in mm comes
-# back out in exact mm.
+# CSS pixels per inch, which an SVG length without a unit is counted in.
 DEFAULT_PPI = 96.0
 # Curves are bisected at most this deep when flattening.
 FLATTEN_DEPTH = 16
@@ -145,9 +143,10 @@ class Group(Finite):
     # test.
     focus: float | None = None
     # What the group was made for, `laser`, `spindle` or `dispenser`, when
-    # a CAM profile or a dispense import said; None runs on a laser or a
-    # spindle. A run refuses a group made for another tool, since its
-    # numbers mean something else there.
+    # what made it said: a CAM profile, a dispense import, a Plot page
+    # operation or the camera's mark; None runs on a laser or a spindle. A
+    # run refuses a group made for another tool, since its numbers mean
+    # something else there.
     tool: str | None = None
     # The CAM profile's tool the group was made with, its id and its name:
     # the gcode stops to change the bit between groups of two bits, and a
@@ -265,7 +264,8 @@ class Job(Finite):
     spot: float = DEFAULT_SPOT
     offset: Offset = Field(default_factory=Offset)
     # Degrees the job has been turned counterclockwise about the origin
-    # since import, by alignment; applied already, like the offset.
+    # since import, by alignment or the page's Turn buttons; applied
+    # already, like the offset.
     rotation: float = 0.0
     groups: list[Group] = Field(default_factory=list)
     outline: list[list[tuple[float, float]]] = Field(default_factory=list)
@@ -695,9 +695,10 @@ class ImportOptions:
     offset: Point = (0.0, 0.0)
     tolerance: float = kinematics.DEFAULT_TOLERANCE
     passes: int = 1
-    # The layer a KiCad board is read from: a copper layer, or F.Paste,
-    # whose openings a stencil cuts out of a film. A gerber is its own
-    # layer.
+    # The layer a KiCad board is read from: a copper layer to isolate or
+    # deposit, a paste layer whose openings a stencil cuts out of a film
+    # or on whose pads a dispense lays dots, or any layer whose lines
+    # `lines` cuts on. A gerber is its own layer.
     layer: str = board.DEFAULT_LAYER
     # Only a board has copper to isolate, clear or deposit, or paste to cut
     # a stencil for; other files ignore all of these.
@@ -1018,6 +1019,8 @@ def svg_polylines(text: str, tolerance: float) -> list[tuple[str, Polyline]]:
 
 
 def _px_per_mm() -> float:
+    """CSS pixels per millimeter at DEFAULT_PPI, as the parser rounds the
+    factor itself, so a file drawn in mm comes back out in exact mm."""
     from svgelements import Length
 
     return float(Length("1mm").value(ppi=DEFAULT_PPI))
@@ -1084,15 +1087,18 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
 
 
 def from_board(path: Path, name: str, options: ImportOptions, pace: float = copper_clearing.DEFAULT_PACE, milled: bool = False) -> Job:
-    """Isolation loops for a gerber or a KiCad board, with the outline when found,
-    or with `mode` deposit the copper itself burnt, or with `mode` stencil
-    every opening cut round its inside edge, the outline switched off for
-    both.
+    """Isolation loops for a gerber or a KiCad board, with the outline when
+    found; or with `mode` deposit the copper itself burnt, with `mode`
+    stencil every opening cut round its inside edge, with `mode` lines the
+    layer's lines cut where they lie, the outline switched off for those
+    three; or with `mode` dispense a dot of paste on every pad, with no
+    outline.
 
     A KiCad board is read on `options.layer`: a copper layer, the paste
-    layer, which a stencil is cut for, or any layer whose lines `mode` lines
-    cuts on (Edge.Cuts, a silk screen, a user layer). A gerber is the layer
-    it is, and the groups are named for what the layer draws.
+    layer, which a stencil is cut for and a dispense lays dots on, or any
+    layer whose lines `mode` lines cuts on (Edge.Cuts, a silk screen, a
+    user layer). A gerber is the layer it is, and the groups are named for
+    what the layer draws.
 
     `pace` is the machine's rail rate in mm/min over its table rate in
     deg/min, which a radial clearing or fill orders its spokes by. `milled`
