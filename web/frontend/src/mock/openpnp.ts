@@ -7,7 +7,7 @@
 
 import { fitRigid, turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
-import { parseToml, TomlError, type TomlTable, type TomlValue } from "../toml.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 import type { AlignFit, Component, DeviceDocument, DevicePlan, SpotPolarity } from "../types.ts";
 
 export const DEVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -230,7 +230,8 @@ export function parseDevice(text: string, id: string): MockDevice {
     try {
         top = parseToml(text);
     } catch (error) {
-        throw new Error(`${where}: ${error instanceof TomlError ? `line ${error.line}: ${error.message}` : String(error)}`);
+        // A TomlError already says its line.
+        throw new Error(`${where}: ${errorText(error)}`);
     }
     const read = new Reader(where);
     const port = read.table(top, "port");

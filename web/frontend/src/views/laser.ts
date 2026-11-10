@@ -75,7 +75,10 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
     ctx.store.subscribe((state) => {
         body.disabled = !state.snapshot.connected;
         const milling = isMilling(state.snapshot);
-        title.textContent = milling ? "Spindle" : "Laser";
+        // The panel is named for screen readers as its title reads.
+        const name = milling ? "Spindle" : "Laser";
+        title.textContent = name;
+        root.setAttribute("aria-label", name);
         laserBody.classList.toggle("hidden", milling);
         spindleBody.classList.toggle("hidden", !milling);
         const mode = state.snapshot.machine?.mode;
