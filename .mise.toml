@@ -1,6 +1,7 @@
 [tools]
 python = "3.12"
 uv = "latest"
+ruff = "0.14.14"
 
 [tasks.web]
 description = "Build the page and serve it with the backend on port 8000"
@@ -98,6 +99,17 @@ run = "cd web/frontend && bun run --silent check && bun test"
 [tasks.test-sim]
 description = "Gcode simulator"
 run = "cd sim && cargo test -q"
+
+[tasks.lint]
+description = "Linters: ruff on the Python, clippy on every Rust crate with warnings as errors, and the page's type check"
+run = """
+ruff check toolpath web/backend deploy
+(cd firmware && cargo clippy -q --all-targets -- -D warnings)
+(cd firmware/rp2040 && cargo clippy -q -- -D warnings)
+(cd carve && cargo clippy -q --all-targets -- -D warnings)
+(cd sim && cargo clippy -q --all-targets -- -D warnings)
+(cd web/frontend && bun run --silent check)
+"""
 
 [tasks.test]
 description = "Every suite"
