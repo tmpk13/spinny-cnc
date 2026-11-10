@@ -638,3 +638,7 @@
   Claude Code CLI, keys from the backend's environment; at most 25 tool
   calls a turn, Stop and New chat.
 - Integrated chat tab (2026-11-08): the Auto tab is it.
+- G-code device placing by its cameras and vacuum (2026-11-09): runout,
+  part angle and size over the up camera, a top camera with its offset,
+  fiducials, feeder marks and pocket looks, a vacuum sensor's reads with
+  failed picks retried from the next pocket.

@@ -5,7 +5,7 @@
 // a board job stands for. Picture coordinates are pixels from the
 // picture's center, x right and y down.
 
-import type { Component, Job, PnpSettings, SpotPolarity } from "../types.ts";
+import type { Component, Job, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
 import { CAMERA_SIZE } from "./machines.ts";
 import { parseSize } from "./vision.ts";
 
@@ -25,6 +25,73 @@ export const UP_TRUTH: UpTruth = { where: [60, 20], roll: 2.5, mirror: true, mmP
 
 /** Where the up camera really sits on the mock's G-code device, its X and Y, when it is mounted there. */
 export const DEVICE_CAMERA_WHERE: [number, number] = [150, 30];
+
+/** How far the mock device's nozzle tip really runs off its turning axis at 0, mm. */
+export const DEVICE_RUNOUT: [number, number] = [0.03, -0.012];
+
+/** The mock device's top camera as it really is: its picture's center from the nozzle's tip, its scale and roll. */
+export const TOP_TRUTH = { offset: [35, -10] as [number, number], mmPerPx: 0.02, roll: 1.5, mirror: false };
+
+/** The top camera's settings before any are kept. */
+export const TOP_DEFAULTS: TopSettings = {
+    device: "/dev/video4",
+    size: "1280x720",
+    fps: 30,
+    pcbv: "pcbv",
+    mark_spot: "dark",
+    mark_at: null,
+    offset: null,
+    mm_per_px: 0,
+    roll: 0,
+    mirror: false,
+};
+
+/** The top camera settings checked as the backend checks a PUT; throws with its words. */
+export function checkTopSettings(settings: TopSettings): void {
+    if (typeof settings.device !== "string" || settings.device.trim() === "") {
+        throw new Error("the top camera device must be named");
+    }
+    if (!CAMERA_SIZE.test(settings.size)) {
+        throw new Error("the top camera size must be WIDTHxHEIGHT");
+    }
+    if (!(Number.isInteger(settings.fps) && settings.fps >= 1 && settings.fps <= 120)) {
+        throw new Error("the top camera fps must be 1 to 120");
+    }
+    if (!POLARITIES.includes(settings.mark_spot)) {
+        throw new Error("the mark spot is dark or bright");
+    }
+    for (const [name, value] of [["mark place", settings.mark_at], ["offset", settings.offset]] as const) {
+        if (value !== null && !value.every((v) => Number.isFinite(v) && Math.abs(v) <= 10000)) {
+            throw new Error(`the top camera's ${name} must be two numbers within 10000 mm`);
+        }
+    }
+    if (!(Number.isFinite(settings.mm_per_px) && settings.mm_per_px >= 0 && settings.mm_per_px <= 1)) {
+        throw new Error("mm_per_px must be 0 to 1");
+    }
+    if (!(Number.isFinite(settings.roll) && Math.abs(settings.roll) <= 360)) {
+        throw new Error("the top camera roll must be within 360 degrees");
+    }
+}
+
+/** The top camera's picture as an SVG data URL, `width` pixels wide: a stretch of board with a fiducial at its middle and the crosshair. */
+export function topFrameSvg(size: string, width: number, overlay: boolean): string {
+    const [w, h] = parseSize(size);
+    const height = Math.round((width * h) / w);
+    const n = (value: number): string => value.toFixed(1);
+    const dot = (0.5 / TOP_TRUTH.mmPerPx) * (width / w);
+    const parts = [
+        `<rect width="${width}" height="${height}" fill="#2f4f2f"/>`,
+        `<circle cx="${n(width / 2 + dot * 3)}" cy="${n(height / 2 - dot * 2)}" r="${n(dot * 2)}" fill="#1f3a1f"/>`,
+        `<circle cx="${n(width / 2 + dot * 3)}" cy="${n(height / 2 - dot * 2)}" r="${n(dot)}" fill="#d9b382"/>`,
+        `<line x1="0" y1="${n(height / 2)}" x2="${width}" y2="${n(height / 2)}" stroke="#dc322f" stroke-width="1"/>`,
+        `<line x1="${n(width / 2)}" y1="0" x2="${n(width / 2)}" y2="${height}" stroke="#dc322f" stroke-width="1"/>`,
+    ];
+    if (overlay) {
+        parts.push(`<text x="6" y="16" font-family="monospace" font-size="12" fill="#fdf6e3">top</text>`);
+    }
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join("")}</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
 
 export const PNP_DEFAULTS: PnpSettings = {
     device: "/dev/video1",
@@ -131,22 +198,50 @@ export function upInPicture(mm: [number, number], truth: UpTruth, size: string):
 
 /**
  * The parts a board job stands for: the mock reads no board file, so each
- * pad is a one-pad part where it lies, turned with the job.
+ * pad is a one-pad part where it lies, turned with the job, and two
+ * fiducials sit 2 mm off the pads' corners.
  */
 export function mockComponents(job: Job): Component[] {
     if (!job.design?.board) {
         return [];
     }
-    return (job.pads ?? []).map(([x, y, area], index) => ({
+    const pads = job.pads ?? [];
+    const rotation = ((job.rotation ?? 0) % 360 + 360) % 360;
+    const round = (value: number): number => Math.round(value * 1e4) / 1e4;
+    const parts: Component[] = pads.map(([x, y, area], index) => ({
         ref: `TP${index + 1}`,
         value: `${Math.round(area * 10) / 10} mm^2`,
         footprint: "TestPoint:TestPoint_Pad",
         side: "front",
-        x: Math.round(x * 1e4) / 1e4,
-        y: Math.round(y * 1e4) / 1e4,
-        rotation: ((job.rotation ?? 0) % 360 + 360) % 360,
+        x: round(x),
+        y: round(y),
+        rotation,
         pads: 1,
         smd: true,
         dnp: false,
+        fiducial: false,
+        body: null,
+        diameter: null,
     }));
+    if (pads.length > 0) {
+        const xs = pads.map(([x]) => x);
+        const ys = pads.map(([, y]) => y);
+        const corners: [number, number][] = [[Math.min(...xs) - 2, Math.min(...ys) - 2], [Math.max(...xs) + 2, Math.max(...ys) + 2]];
+        corners.forEach(([x, y], index) => parts.push({
+            ref: `FID${index + 1}`,
+            value: "Fiducial",
+            footprint: "Fiducial:Fiducial_1mm_Mask2mm",
+            side: "front",
+            x: round(x),
+            y: round(y),
+            rotation: 0,
+            pads: 1,
+            smd: true,
+            dnp: false,
+            fiducial: true,
+            body: null,
+            diameter: 1,
+        }));
+    }
+    return parts;
 }

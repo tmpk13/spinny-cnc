@@ -440,13 +440,40 @@ GcodeDriver sends. Its setup steps:
 Feeders can be tape strips, trays (`columns`, `row_pitch`) or feeders
 told to advance (`feed`, one line or several). With the up camera fixed
 to the device, start it in the Up camera panel, jog the nozzle over it
-and press *Center nozzle* under *Up camera on the device*; then parts of
-a feeder marked `vision = true` are looked at over it after the pick and
-placed where their center lands.
+and press *Center nozzle* under *Up camera on the device*, then *Measure
+runout*: the tip is found at six turns of the nozzle, its runout made up
+for at every look and place, and a nozzle that turns the other way for
+the profile's `rotation_cw` says so. Parts of a feeder marked
+`vision = true` are looked at over the camera turned to the angle they go
+down at: their offset, size and angle are checked, the angle corrected,
+and they are placed where their center lands.
+
+The top camera (on the device's head, looking down, `[top_camera]` in the
+profile) is set up under *Top camera on the device*: pick it and Start,
+jog the nozzle's tip onto a mark it can see (a dot on paper, a hole) and
+press *Nozzle on mark*, then *Measure offset*: the head moves so the
+camera should see the mark (by the profile's `offset` guess, or from
+where it stands when there is none), measures the picture and centers
+the mark. Then *Camera here* takes a reference under its crosshair, and
+*Find fiducials* (or *find the fiducials first* on a run) fits the board
+on its fiducials, footprints FID* or named Fiducial, from where the
+references put them. A feeder with `pocket` has each pocket looked at
+before its pick (an empty one is passed over), one with `marks` has its
+marks found once a run and its places moved to follow them.
+
+With a `[vacuum]` sensor in the profile, a pick that holds nothing, a
+part not on the nozzle over the up camera, one off by too much or of the
+wrong size is let go at `[motion] discard` (or back in its pocket) and
+the next pocket tried, up to `pick_tries`; the part is then left out and
+listed under the program, and *Run the rest* places what the last run did
+not. A part still on the nozzle after its place stops the run, and so do
+two parts left out one after another.
 
 Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the vacuum line
-disconnected and the nozzle well above the board.
+disconnected and the nozzle well above the board. The part's angle needs
+pcb-vision at b4d1299 or later (the spot's smallest rectangle); an older
+pcbv places without correcting it and says so.
 
 ### The Auto tab
 

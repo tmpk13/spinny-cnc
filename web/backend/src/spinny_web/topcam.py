@@ -62,7 +62,7 @@ class TopCameraSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    device: str = "/dev/video2"
+    device: str = "/dev/video4"
     size: str = "1280x720"
     fps: int = 30
     pcbv: str = "pcbv"

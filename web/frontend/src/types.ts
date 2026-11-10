@@ -996,8 +996,8 @@ export interface AutoSettingsUpdate {
 
 // --- The camera log ------------------------------------------------------------
 
-/** Which camera a log entry is from: the one on the head, or the up camera. */
-export type LoggedCamera = "head" | "up";
+/** Which camera a log entry is from: the one on the head, the up camera, or the G-code device's top camera. */
+export type LoggedCamera = "head" | "up" | "top";
 
 /** A spot finder's answer, as pcbv gives it. */
 export interface SpotReply {
@@ -1009,7 +1009,11 @@ export interface SpotReply {
     area?: number;
     major?: number;
     minor?: number;
+    /** The equivalent ellipse's major axis, degrees from the picture's +x toward its +y (down). */
+    angle?: number;
     contrast?: number;
+    /** The smallest rectangle around the spot's pixels: its sides, px, and its long side's direction as `angle`. */
+    rect?: { length: number; width: number; angle: number };
 }
 
 /** One picture a camera's routine looked at, or a photo taken by hand. */
@@ -1063,11 +1067,11 @@ export interface PnpSettings {
     mirror: boolean;
 }
 
-export type PnpStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "looking" | "done";
+export type PnpStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "looking" | "turning" | "done";
 
-/** The nozzle routine (center the nozzle over the camera) or the part routine (see where a part sits on it). */
+/** The nozzle routine (center the nozzle over the camera), the part routine (see where a part sits on it), or the runout routine (the tip at six turns of the nozzle). */
 export interface PnpRoutine {
-    kind: "nozzle" | "part";
+    kind: "nozzle" | "part" | "runout";
     /** The machine it moves: this one, or the G-code device. */
     target?: "machine" | "device";
     state: RoutineState;
@@ -1079,13 +1083,14 @@ export interface PnpRoutine {
     seconds?: number;
 }
 
-/** Where the last part looked at sits against the nozzle's center, mm in the machine's frame, and how big it looked. */
+/** Where the last part looked at sits against the nozzle's center, mm in the machine's frame, how big it looked, and its long side's direction in the machine's frame, degrees (null when the picture gave none). */
 export interface PartOffset {
     dx: number;
     dy: number;
     mm: number;
     length: number;
     width: number;
+    angle?: number | null;
 }
 
 export interface PnpState extends PnpSettings {
@@ -1107,6 +1112,12 @@ export interface Component {
     pads: number;
     smd: boolean;
     dnp: boolean;
+    /** A fiducial (reference FID*, or a footprint named for one): the top camera finds it, nothing places it. */
+    fiducial?: boolean;
+    /** Its footprint's F.Fab extent, longer side first, mm; null without one. */
+    body?: [number, number] | null;
+    /** A fiducial's largest pad, mm. */
+    diameter?: number | null;
 }
 
 export interface ComponentsResponse {
@@ -1147,6 +1158,29 @@ export interface FeederSummary {
     rotation: number;
     /** Each part is looked at over the up camera before it is placed. */
     vision: boolean;
+    /** The part's length and width as the cameras see it; null takes the footprint's body. */
+    size: [number, number] | null;
+    /** The shade of a part in its pocket to the top camera, which then looks before each pick; null picks at the place. */
+    pocket: SpotPolarity | null;
+    /** Marks on the feeder the top camera finds once a run; its places follow them. */
+    marks: [number, number][];
+    mark: SpotPolarity;
+}
+
+/** The vacuum sensor: the line that reads it, the pattern whose group is the reading, the readings with a part held and empty. */
+export interface DeviceVacuum {
+    read: string;
+    pattern: string;
+    part_on: [number, number];
+    part_off: [number, number] | null;
+}
+
+/** The camera on the device's head looking down, as the profile has it. */
+export interface DeviceTopProfile {
+    z: number | null;
+    offset: [number, number] | null;
+    fiducial: SpotPolarity;
+    within: number;
 }
 
 export interface DeviceDocument {
@@ -1158,10 +1192,20 @@ export interface DeviceDocument {
     wait_ms: number;
     timeout: number;
     axes: string[];
+    /** A positive rotation turns the nozzle clockwise seen from above. */
+    rotation_cw: boolean;
     safe_z: number;
     place_z: number;
+    /** Where a part that failed a check is let go; null puts it back in its pocket. */
+    discard: [number, number, number] | null;
+    pick_tries: number;
     /** The height the nozzle is seen sharp at over the up camera, when it sits on this device. */
     camera_z: number | null;
+    max_offset: number;
+    max_turn: number;
+    size_tolerance: number;
+    vacuum: DeviceVacuum | null;
+    top: DeviceTopProfile | null;
     feeders: FeederSummary[];
 }
 
@@ -1180,11 +1224,12 @@ export interface DeviceCheck {
     problems: string[];
 }
 
-/** A part's place in the job paired with where it is on the device. */
+/** A part's place in the job paired with where it is on the device, and how it was taken: the nozzle over it, the top camera over it, or a fiducial the top camera found. */
 export interface DeviceReference {
     job: string;
     ref: string;
     at: [number, number];
+    by?: "nozzle" | "camera" | "fiducial";
 }
 
 export interface DeviceRun {
@@ -1193,8 +1238,53 @@ export interface DeviceRun {
     total: number;
     part: string | null;
     placed: string[];
+    /** Parts left out under way, with why. */
+    failed: { ref: string; reason: string }[];
+    /** What the run is doing now, in words. */
+    doing: string | null;
+    /** The board job the run places. */
+    job: string | null;
     error: string | null;
     seconds: number;
+}
+
+/** The top camera's settings: the capture, the mark the offset is measured from, and what it measured. */
+export interface TopSettings {
+    device: string;
+    size: string;
+    fps: number;
+    pcbv: string;
+    mark_spot: SpotPolarity;
+    /** The head's place with the nozzle's tip over the mark. */
+    mark_at: [number, number] | null;
+    /** Where the picture's center is from the nozzle's tip, mm; null until measured. */
+    offset: [number, number] | null;
+    mm_per_px: number;
+    roll: number;
+    mirror: boolean;
+}
+
+export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "fitting" | "done" | string;
+
+/** The top camera's routine: its offset measured, or the board's fiducials found (a step per fiducial). */
+export interface TopRoutine {
+    kind: "offset" | "fiducials";
+    target?: "machine" | "device";
+    state: RoutineState;
+    step: TopStep;
+    done: number;
+    total: number;
+    error: string | null;
+    spot: RoutineSpot | null;
+    seconds?: number;
+}
+
+export interface TopState extends TopSettings {
+    running: boolean;
+    frame: { width: number; height: number; age_ms: number | null; fps: number | null } | null;
+    routine: TopRoutine | null;
+    /** The fiducials last found: the job, where each is on the device, and the fit made of them. */
+    fiducials: { job: string; found: { ref: string; at: [number, number] }[]; fit: AlignFit } | null;
 }
 
 export interface DeviceState {
@@ -1205,8 +1295,10 @@ export interface DeviceState {
     references: DeviceReference[];
     /** How many parts each feeder has given. */
     taken: Record<string, number>;
-    /** Where the up camera sits on the device and how its picture lies, as centering the nozzle over it measured. */
-    camera: { position: [number, number] | null; height: number | null; mm_per_px: number; roll: number; mirror: boolean };
+    /** Where the up camera sits on the device and how its picture lies, as centering the nozzle over it measured, and the nozzle tip's runout off its turning axis at 0, mm. */
+    camera: { position: [number, number] | null; height: number | null; mm_per_px: number; roll: number; mirror: boolean; runout?: [number, number] | null };
+    /** The top camera on the device's head. */
+    top?: TopState;
     connected: boolean;
     url: string | null;
     /** Why the link was lost, or null. */

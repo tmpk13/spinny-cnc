@@ -83,6 +83,7 @@ import type {
     PnpGotoRequest,
     PnpSettings,
     PnpState,
+    TopSettings,
 } from "./types.ts";
 
 export interface Api {
@@ -286,18 +287,34 @@ export interface Api {
     deviceHome(): Promise<DeviceState>;
     devicePosition(): Promise<DeviceState>;
     /** A reference for a part: where it is on the device, read off it when `at` is left out. */
-    deviceReference(request: { job: string; ref: string; at?: [number, number] }): Promise<DeviceState>;
+    deviceReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<DeviceState>;
     deviceDropReferences(job: string, ref?: string): Promise<DeviceState>;
     devicePlan(job: string, refs?: string[]): Promise<DevicePlan>;
     /** Where the program's G-code downloads from. */
     deviceProgramUrl(job: string, refs?: string[]): string;
-    deviceRun(job: string, refs?: string[]): Promise<DevicePlan & DeviceState>;
+    /** Places the parts; with `fiducials` the top camera finds the board's fiducials first. */
+    deviceRun(job: string, refs?: string[], fiducials?: boolean): Promise<DevicePlan & DeviceState>;
     deviceStop(): Promise<DeviceState>;
     deviceGoto(job: string, ref: string): Promise<DeviceState>;
     /** Counts a feeder (or every one) from its first part again. */
     deviceResetFeeders(feeder?: string): Promise<DeviceState>;
     /** Centers the device's nozzle over the up camera, measuring where the camera is on the device; `step` 0 keeps the scale. */
     deviceNozzle(step: number): Promise<DeviceState>;
+    /** Measures how far the device's nozzle tip runs off its turning axis, over the up camera. */
+    deviceRunout(): Promise<DeviceState>;
+    /** The top camera finds the job's fiducials where the references put them, and keeps them as its references. */
+    deviceFiducials(job: string): Promise<DeviceState>;
+    /** Keeps the top camera's settings; `clear` takes the mark's place or the offset back to none. */
+    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<DeviceState>;
+    topStart(): Promise<DeviceState>;
+    topStop(): Promise<DeviceState>;
+    /** The top camera's picture. */
+    topFrameUrl(width: number, overlay: boolean): string;
+    /** The nozzle's tip is over a mark: the device's place is kept for Measure offset. */
+    topMark(): Promise<DeviceState>;
+    /** Measures where the top camera looks from the nozzle, from the mark; `step` 0 keeps the scale. */
+    topOffset(step: number): Promise<DeviceState>;
+    topAbort(): Promise<DeviceState>;
 
     /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
     autoSettings(): Promise<AutoSettings>;
@@ -884,7 +901,7 @@ export class HttpApi implements Api {
         return this.request<DeviceState>("POST", "/api/pnp/device/position");
     }
 
-    deviceReference(request: { job: string; ref: string; at?: [number, number] }): Promise<DeviceState> {
+    deviceReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<DeviceState> {
         return this.request<DeviceState>("POST", "/api/pnp/device/references", request);
     }
 
@@ -902,8 +919,8 @@ export class HttpApi implements Api {
         return `${this.base}/api/pnp/device/program.gcode?${query}`;
     }
 
-    deviceRun(job: string, refs?: string[]): Promise<DevicePlan & DeviceState> {
-        return this.request<DevicePlan & DeviceState>("POST", "/api/pnp/device/run", refs !== undefined ? { job, refs } : { job });
+    deviceRun(job: string, refs?: string[], fiducials = false): Promise<DevicePlan & DeviceState> {
+        return this.request<DevicePlan & DeviceState>("POST", "/api/pnp/device/run", { job, ...(refs !== undefined ? { refs } : {}), fiducials });
     }
 
     deviceStop(): Promise<DeviceState> {
@@ -920,6 +937,43 @@ export class HttpApi implements Api {
 
     deviceNozzle(step: number): Promise<DeviceState> {
         return this.request<DeviceState>("POST", "/api/pnp/device/nozzle", { step });
+    }
+
+    deviceRunout(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/runout");
+    }
+
+    deviceFiducials(job: string): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/fiducials", { job });
+    }
+
+    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<DeviceState> {
+        return this.request<DeviceState>("PUT", "/api/pnp/device/top", patch);
+    }
+
+    topStart(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/top/start");
+    }
+
+    topStop(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/top/stop");
+    }
+
+    topFrameUrl(width: number, overlay: boolean): string {
+        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        return `${this.base}/api/pnp/device/top/frame.jpg?width=${size}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+    }
+
+    topMark(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/top/mark");
+    }
+
+    topOffset(step: number): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/top/offset", { step });
+    }
+
+    topAbort(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/top/abort");
     }
 
     autoSettings(): Promise<AutoSettings> {

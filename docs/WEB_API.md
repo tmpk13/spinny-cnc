@@ -842,7 +842,7 @@ Device state:
  "references": [{"job": "a1b2", "ref": "FID1", "at": [100.0, 50.0], "by": "fiducial"}],
  "taken": {"r-10k-0603": 2},
  "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "runout": [0.04, -0.01]},
- "top": {"running": true, "device": "/dev/video2", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "mark_spot": "dark",
+ "top": {"running": true, "device": "/dev/video4", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "mark_spot": "dark",
          "mark_at": [120.0, 80.0], "offset": [35.0, -10.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": false,
          "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 15.0}, "routine": null,
          "fiducials": {"job": "a1b2", "found": [{"ref": "FID1", "at": [100.0, 50.0]}], "fit": {"rotation": 0.6, "rms": 0.01}}},

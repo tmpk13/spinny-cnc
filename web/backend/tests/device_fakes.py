@@ -195,7 +195,7 @@ class DeviceTopCamera:
         self.mirror = mirror
         self.scale = scale
         self.running = True
-        self.device = "/dev/video2"
+        self.device = "/dev/video4"
 
     def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
         center = (self.fake.position[0] + self.offset[0], self.fake.position[1] + self.offset[1])

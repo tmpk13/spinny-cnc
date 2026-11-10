@@ -1,5 +1,5 @@
 // The camera log in a camera's panel: logging every look on or off (one
-// switch for both cameras), a photo taken now with this camera, and the
+// switch for every camera), a photo taken now with this camera, and the
 // newest pictures it kept, each as it was and with what its finder found
 // drawn on it, so a routine that went wrong can be seen look by look.
 
@@ -34,7 +34,7 @@ function timeOf(entry: CamLogEntry): string {
 export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera): void {
     const enabled = el("input", { type: "checkbox", "aria-label": "Log every look" }) as HTMLInputElement;
     const toggle = el("label", { class: "muted camlog-toggle", title: "keep every picture the cameras' routines look at, as it was and with what the finder found drawn on it" },
-        enabled, " log every look (both cameras)");
+        enabled, " log every look (every camera)");
     const photo = button("Photo", () => take(), "btn btn-small");
     photo.title = "keep a picture now, as it is and with what the finder sees drawn on it";
     const clear = button("Clear log", () => clearAll(), "btn btn-quiet btn-small");
@@ -66,7 +66,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     }
 
     async function clearAll(): Promise<void> {
-        if (!(await askConfirm("Forget every picture the camera log kept, of both cameras?", "Clear log"))) {
+        if (!(await askConfirm("Forget every picture the camera log kept, of every camera?", "Clear log"))) {
             return;
         }
         const removed = await ctx.call(ctx.api.clearCamLog());
@@ -82,8 +82,8 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
         name ? el("a", { href: ctx.api.camLogFileUrl(name), target: "_blank", rel: "noopener" }, text) : null;
 
     // This camera's own entries and count, asked for by camera: the log
-    // the page keeps holds the newest of both cameras, where a run of the
-    // other camera's looks can push every one of this camera's out.
+    // the page keeps holds the newest of every camera, where a run of
+    // another camera's looks can push every one of this camera's out.
     let own: CamLogState | null = null;
     let asking = 0;
 

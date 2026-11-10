@@ -2768,6 +2768,11 @@ table.pnp-parts tr.dnp td {
     margin: 0.15rem 0;
 }
 
+/* Parts a run left out, with why. */
+.device-failed li {
+    color: var(--danger);
+}
+
 .device-program,
 .device-console {
     margin: 0.5rem 0 0;

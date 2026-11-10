@@ -18,8 +18,10 @@ nozzle and sees where a part sits on it, and a board job's parts are read
 from its KiCad file. The parts can also be placed by another machine, one
 whose controller takes the G-code OpenPnP's GcodeDriver sends (Marlin,
 Smoothieware, RepRapFirmware, Grbl): a device profile in `pnp/` says how
-to talk to it, and the backend plans the placement program and sends it a
-line at a time.
+to talk to it, and the backend places a line at a time, each next line
+made from what the up camera, a third camera on that machine's head
+looking down (fiducials, feeder marks, parts in their pockets) and its
+vacuum sensor say.
 
 | Part | What | Build, test, run |
 | --- | --- | --- |
@@ -32,7 +34,7 @@ line at a time.
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, materials, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |
-| `pnp` | device profiles in TOML for a pick and place machine driven with OpenPnP's G-code: port, dialect, heights, feeders | `docs/WEB_API.md`, the PNP tab |
+| `pnp` | device profiles in TOML for a pick and place machine driven with OpenPnP's G-code: port, dialect, heights, vacuum sensor, cameras, feeders | `docs/WEB_API.md`, the PNP tab |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
 | `../pcb-vision` | `pcbv`: the camera's capture and the localizer that finds a KiCad board in its picture, served to the backend over JSON lines | `mise run build-pcbv`; its own `mise run test` |
 
@@ -62,13 +64,17 @@ flowchart LR
         EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP
         MCP --> TOOLS2[tools, over HTTP]
         TOOLS2 -->|HTTP| BE
-        BE --> PNP[pick and place: a board's parts from its KiCad file, the nozzle centered over the up camera, a part's offset on it]
-        PNP --> OPNP[openpnp: a device profile, the board fitted from references, a placement program]
-        DF[pnp/*.toml: port, G-code dialect, heights, feeders] --> OPNP
-        OPNP --> GD[gcode_device: a line at a time, each answered ok]
+        BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, the nozzle centered over the up camera, its runout, a part's offset, size and angle on it]
+        PNP --> OPNP[openpnp: a device profile, the board fitted from references, the program as planned]
+        DF[pnp/*.toml: port, G-code dialect, heights, vacuum sensor, cameras, feeders] --> OPNP
+        OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
+        PNP --> PLC
+        TOPC[topcam: the device's top camera, its offset from a mark, fiducials, feeder marks, pockets] --> PLC
+        PLC --> GD[gcode_device: a line at a time, each answered ok]
         GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl]
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
-        BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot]
+        BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot with its smallest rectangle]
+        TOPC <-->|a third pcbv serve| PV3[pcb-vision pcbv serve: the top camera's frame and spot]
         PV --> VID[/dev/videoN on the head]
         PV -->|JPEG snapshots over HTTP, forwarded by relay-pi| UST[ustreamer on a bridge Pi: spinny-camera unit]
         UST --> VIDPI[/dev/v4l/by-id camera on the Pi]

@@ -90,6 +90,16 @@ describe("HttpApi G-code device routes", () => {
         await api.deviceResetFeeders("tape");
         await api.deviceResetFeeders();
         await api.deviceNozzle(0.5);
+        await api.deviceRun("a1", ["R1"], true);
+        await api.deviceReference({ job: "a1", ref: "FID1", camera: true });
+        await api.deviceRunout();
+        await api.deviceFiducials("a1");
+        await api.topSettings({ device: "/dev/video2", clear: ["offset"] });
+        await api.topStart();
+        await api.topStop();
+        await api.topMark();
+        await api.topOffset(1.5);
+        await api.topAbort();
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["GET", "/api/pnp/devices", null],
             ["GET", "/api/pnp/devices/marlin", null],
@@ -107,14 +117,25 @@ describe("HttpApi G-code device routes", () => {
             ["DELETE", "/api/pnp/device/references?job=a1", null],
             ["POST", "/api/pnp/device/plan", { job: "a1" }],
             ["POST", "/api/pnp/device/plan", { job: "a1", refs: ["R1", "C2"] }],
-            ["POST", "/api/pnp/device/run", { job: "a1" }],
+            ["POST", "/api/pnp/device/run", { job: "a1", fiducials: false }],
             ["POST", "/api/pnp/device/stop", null],
             ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1" }],
             ["POST", "/api/pnp/device/feeders/reset", { feeder: "tape" }],
             ["POST", "/api/pnp/device/feeders/reset", {}],
             ["POST", "/api/pnp/device/nozzle", { step: 0.5 }],
+            ["POST", "/api/pnp/device/run", { job: "a1", refs: ["R1"], fiducials: true }],
+            ["POST", "/api/pnp/device/references", { job: "a1", ref: "FID1", camera: true }],
+            ["POST", "/api/pnp/device/runout", null],
+            ["POST", "/api/pnp/device/fiducials", { job: "a1" }],
+            ["PUT", "/api/pnp/device/top", { device: "/dev/video2", clear: ["offset"] }],
+            ["POST", "/api/pnp/device/top/start", null],
+            ["POST", "/api/pnp/device/top/stop", null],
+            ["POST", "/api/pnp/device/top/mark", null],
+            ["POST", "/api/pnp/device/top/offset", { step: 1.5 }],
+            ["POST", "/api/pnp/device/top/abort", null],
         ]);
         expect(api.deviceProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/device/program.gcode?job=a1&refs=R1%2CC2");
+        expect(api.topFrameUrl(640, true)).toMatch(/^http:\/\/host\/api\/pnp\/device\/top\/frame\.jpg\?width=640&overlay=1&t=\d+$/);
     });
 });
 

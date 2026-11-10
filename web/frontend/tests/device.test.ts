@@ -153,7 +153,7 @@ describe("the G-code device in the mock", () => {
         await expect(backend.devicePlan(job.id)).rejects.toMatchObject({ status: 400 });
         await backend.deviceCommand("G0 X40 Y30");
         const referenced = await backend.deviceReference({ job: job.id, ref: components[0]!.ref });
-        expect(referenced.references).toEqual([{ job: job.id, ref: components[0]!.ref, at: [40, 30] }]);
+        expect(referenced.references).toEqual([{ job: job.id, ref: components[0]!.ref, at: [40, 30], by: "nozzle" }]);
         const plan = await backend.devicePlan(job.id);
         // Three test points, a strip of two.
         expect(plan.parts.length).toBe(2);

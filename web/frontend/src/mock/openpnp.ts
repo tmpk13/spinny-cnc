@@ -1,11 +1,13 @@
 // The in-page mock's twin of the backend's G-code pick and place machine:
 // a device profile read and checked with the backend's words, the board's
 // fit from reference parts, and the placement program, line for line what
-// the backend makes for the same profile and parts.
+// the backend makes for the same profile and parts (the plan before a run:
+// the vacuum reads, the notes where a camera looks, the nozzle's runout
+// made up for, the rotation axis's sign).
 
 import { fitRigid, turnPoint } from "../align.ts";
 import { parseToml, TomlError, type TomlTable, type TomlValue } from "../toml.ts";
-import type { AlignFit, Component, DeviceDocument, DevicePlan } from "../types.ts";
+import type { AlignFit, Component, DeviceDocument, DevicePlan, SpotPolarity } from "../types.ts";
 
 export const DEVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const AXIS = /^[A-Z]$/;
@@ -13,6 +15,11 @@ const LINE = /^[\x20-\x7e]*$/;
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 500000, 921600, 1000000, 2000000];
 const COORD_LIMIT = 10000;
 const FEED_LIMIT = 100000;
+const SHADES = ["dark", "bright"];
+/** Marlin's answer to M105 carries a sensor read through a thermistor input as `T:12.34`. */
+export const DEFAULT_VACUUM_PATTERN = "T:\\s*(-?[0-9]+(?:\\.[0-9]+)?)";
+/** OpenPnP's patterns name their group the Java way, (?<Value>...); the backend keeps them as Python's (?P<Value>...). */
+const JAVA_GROUP = /\(\?<(?![=!])/g;
 
 export interface MockFeeder {
     id: string;
@@ -29,6 +36,28 @@ export interface MockFeeder {
     feed: string[];
     /** Each part is looked at over the up camera before it is placed. */
     vision: boolean;
+    /** The part's length and width as the cameras see it; null takes the footprint's body. */
+    size: [number, number] | null;
+    /** The shade of a part in its pocket to the top camera, which then looks before each pick. */
+    pocket: SpotPolarity | null;
+    /** Marks on the feeder the top camera finds once a run. */
+    marks: [number, number][];
+    mark: SpotPolarity;
+}
+
+export interface MockVacuum {
+    read: string;
+    /** As the backend keeps it: Python's (?P<name>...) for a named group. */
+    pattern: string;
+    part_on: [number, number];
+    part_off: [number, number] | null;
+}
+
+export interface MockTopProfile {
+    z: number | null;
+    offset: [number, number] | null;
+    fiducial: SpotPolarity;
+    within: number;
 }
 
 export interface MockDevice {
@@ -59,6 +88,15 @@ export interface MockDevice {
     feeders: MockFeeder[];
     /** The height the nozzle is seen sharp at over the up camera; null keeps the safe height. */
     camera_z: number | null;
+    /** A positive rotation turns the nozzle clockwise: every angle goes out negated. */
+    rotation_cw: boolean;
+    discard: [number, number, number] | null;
+    pick_tries: number;
+    vacuum: MockVacuum | null;
+    max_offset: number;
+    max_turn: number;
+    size_tolerance: number;
+    top: MockTopProfile | null;
 }
 
 class Reader {
@@ -76,15 +114,46 @@ class Reader {
         return value;
     }
 
-    text(table: TomlTable, key: string, section: string | null, fallback: string): string {
+    text(table: TomlTable, key: string, section: string | null, fallback: string, line = true): string {
         const value = table[key] ?? fallback;
         if (typeof value !== "string") {
             throw this.fail(section, key, "must be a string");
         }
-        if (!LINE.test(value)) {
+        if (line && !LINE.test(value)) {
             throw this.fail(section, key, "must be one line of printable ASCII");
         }
         return value.trim();
+    }
+
+    shade(table: TomlTable, key: string, section: string, fallback: SpotPolarity): SpotPolarity {
+        const value = table[key] ?? fallback;
+        if (typeof value !== "string" || !SHADES.includes(value)) {
+            throw this.fail(section, key, "must be dark or bright");
+        }
+        return value as SpotPolarity;
+    }
+
+    /** Two numbers, the low one first, or null when left out. */
+    span(table: TomlTable, key: string, section: string): [number, number] | null {
+        if (!(key in table)) {
+            return null;
+        }
+        const [low, high] = this.point(table, key, section, 2, null) as [number, number];
+        if (low > high) {
+            throw this.fail(section, key, "must be the low reading, then the high one");
+        }
+        return [low, high];
+    }
+
+    places(table: TomlTable, key: string, section: string, most: number): [number, number][] {
+        const value = (table[key] ?? []) as TomlValue;
+        const fine = Array.isArray(value)
+            && value.length <= most
+            && value.every((item) => Array.isArray(item) && item.length === 2 && item.every((v) => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= COORD_LIMIT));
+        if (!fine) {
+            throw this.fail(section, key, `must be a list of at most ${most} places, each [X, Y]`);
+        }
+        return (value as number[][]).map((item) => [item[0]!, item[1]!]);
     }
 
     lines(table: TomlTable, key: string, section: string, fallback: string[], one = false): string[] {
@@ -214,7 +283,8 @@ export function parseDevice(text: string, id: string): MockDevice {
     device.home = read.text(gcode, "home", "gcode", "G28");
     device.position = read.text(gcode, "position", "gcode", "M114");
     device.stop = read.text(gcode, "stop", "gcode", "M410");
-    read.done(gcode, "gcode", ["init", "end", "move", "x", "y", "z", "rotation", "wait", "pick", "place", "dwell", "home", "position", "stop"]);
+    device.rotation_cw = read.flag(gcode, "rotation_cw", "gcode", false);
+    read.done(gcode, "gcode", ["init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop"]);
     const motion = read.table(top, "motion");
     device.feed_xy = read.number(motion, "feed_xy", "motion", 6000, 1, FEED_LIMIT);
     device.feed_z = read.number(motion, "feed_z", "motion", 1200, 1, FEED_LIMIT);
@@ -222,7 +292,44 @@ export function parseDevice(text: string, id: string): MockDevice {
     device.place_z = read.number(motion, "place_z", "motion", null);
     device.pick_dwell_ms = read.integer(motion, "pick_dwell_ms", "motion", 200, 0, 60000);
     device.place_dwell_ms = read.integer(motion, "place_dwell_ms", "motion", 150, 0, 60000);
-    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms"]);
+    device.discard = "discard" in motion ? (read.point(motion, "discard", "motion", 3, null) as [number, number, number]) : null;
+    device.pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20);
+    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries"]);
+    device.vacuum = null;
+    const sensor = read.table(top, "vacuum");
+    if (Object.keys(sensor).length > 0) {
+        const readLine = read.text(sensor, "read", "vacuum", "");
+        if (!readLine) {
+            throw read.fail("vacuum", "read", "must name the line that reads the vacuum sensor");
+        }
+        const pattern = read.text(sensor, "pattern", "vacuum", DEFAULT_VACUUM_PATTERN, false).replace(JAVA_GROUP, "(?P<");
+        let groups: number;
+        try {
+            groups = new RegExp(`${jsPattern(pattern)}|`).exec("")!.length - 1;
+        } catch (error) {
+            throw read.fail("vacuum", "pattern", `is not a regular expression: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (groups < 1) {
+            throw read.fail("vacuum", "pattern", "must hold a group, ( ), around the reading");
+        }
+        const partOn = read.span(sensor, "part_on", "vacuum");
+        if (partOn === null) {
+            throw read.fail("vacuum", "part_on", "is needed: the low and high reading with a part held");
+        }
+        device.vacuum = { read: readLine, pattern, part_on: partOn, part_off: read.span(sensor, "part_off", "vacuum") };
+        read.done(sensor, "vacuum", ["read", "pattern", "part_on", "part_off"]);
+    }
+    device.top = null;
+    const looking = read.table(top, "top_camera");
+    if (Object.keys(looking).length > 0) {
+        device.top = {
+            z: "z" in looking ? read.number(looking, "z", "top_camera", null) : null,
+            offset: "offset" in looking ? (read.point(looking, "offset", "top_camera", 2, null) as [number, number]) : null,
+            fiducial: read.shade(looking, "fiducial", "top_camera", "bright"),
+            within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
+        };
+        read.done(looking, "top_camera", ["z", "offset", "fiducial", "within"]);
+    }
     const tables = top["feeder"] ?? [];
     if (!Array.isArray(tables) || !tables.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
         throw read.fail(null, "feeder", "must be an array of tables ([[feeder]])");
@@ -250,6 +357,18 @@ export function parseDevice(text: string, id: string): MockDevice {
         if ("row_pitch" in table && columns === 0) {
             throw read.fail(section, "row_pitch", "is for a tray: give its columns too");
         }
+        let size: [number, number] | null = null;
+        if ("size" in table) {
+            size = read.point(table, "size", section, 2, null) as [number, number];
+            if (!size.every((value) => value > 0 && value <= 200)) {
+                throw read.fail(section, "size", "must be a length and a width over 0, at most 200 mm");
+            }
+        }
+        const pocket = "pocket" in table ? read.shade(table, "pocket", section, "dark") : null;
+        const marks = read.places(table, "marks", section, 2);
+        if ((pocket !== null || marks.length > 0) && device.top === null) {
+            throw read.fail(section, pocket !== null ? "pocket" : "marks", "looks with the top camera: add a [top_camera] section");
+        }
         feeders.push({
             id: feederId,
             match,
@@ -262,15 +381,44 @@ export function parseDevice(text: string, id: string): MockDevice {
             place_z: placeZ,
             feed: read.lines(table, "feed", section, [], true),
             vision: read.flag(table, "vision", section, false),
+            size,
+            pocket,
+            marks,
+            mark: read.shade(table, "mark", section, "dark"),
         });
-        read.done(table, section, ["id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision"]);
+        read.done(table, section, ["id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark"]);
     });
     device.feeders = feeders;
     const camera = read.table(top, "camera");
     device.camera_z = "z" in camera ? read.number(camera, "z", "camera", null) : null;
-    read.done(camera, "camera", ["z"]);
-    read.done(top, null, ["name", "description", "port", "gcode", "motion", "feeder", "camera"]);
+    device.max_offset = read.number(camera, "max_offset", "camera", 1, 0.01, 20);
+    device.max_turn = read.number(camera, "max_turn", "camera", 15, 0.1, 45);
+    device.size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0, 1);
+    read.done(camera, "camera", ["z", "max_offset", "max_turn", "size_tolerance"]);
+    read.done(top, null, ["name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera"]);
     return device as MockDevice;
+}
+
+/** A pattern as the backend keeps it (Python's named groups) as JavaScript takes it. */
+export function jsPattern(pattern: string): string {
+    return pattern.replace(/\(\?P</g, "(?<");
+}
+
+/** The reading in an answer to the vacuum's read line: its group named Value (any case), else its first; null for none. */
+export function vacuumReading(vacuum: MockVacuum, reply: string[]): number | null {
+    const regex = new RegExp(jsPattern(vacuum.pattern));
+    for (const line of reply) {
+        const found = regex.exec(line);
+        if (!found) {
+            continue;
+        }
+        const named = found.groups ? Object.entries(found.groups).find(([key]) => key.toLowerCase() === "value")?.[1] : undefined;
+        const value = Number(named ?? found[1]);
+        if (Number.isFinite(value)) {
+            return value;
+        }
+    }
+    return null;
 }
 
 /** What the backend sends of a profile. */
@@ -284,10 +432,33 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
         wait_ms: device.wait_ms,
         timeout: device.timeout,
         axes: [...device.axes],
+        rotation_cw: device.rotation_cw,
         safe_z: device.safe_z,
         place_z: device.place_z,
+        discard: device.discard ? [...device.discard] : null,
+        pick_tries: device.pick_tries,
         camera_z: device.camera_z,
-        feeders: device.feeders.map((f) => ({ id: f.id, match: f.match, at: [...f.at], pitch: [...f.pitch], count: f.count, columns: f.columns, rotation: f.rotation, vision: f.vision })),
+        max_offset: device.max_offset,
+        max_turn: device.max_turn,
+        size_tolerance: device.size_tolerance,
+        vacuum: device.vacuum
+            ? { read: device.vacuum.read, pattern: device.vacuum.pattern, part_on: [...device.vacuum.part_on], part_off: device.vacuum.part_off ? [...device.vacuum.part_off] : null }
+            : null,
+        top: device.top ? { z: device.top.z, offset: device.top.offset ? [...device.top.offset] : null, fiducial: device.top.fiducial, within: device.top.within } : null,
+        feeders: device.feeders.map((f) => ({
+            id: f.id,
+            match: f.match,
+            at: [...f.at],
+            pitch: [...f.pitch],
+            count: f.count,
+            columns: f.columns,
+            rotation: f.rotation,
+            vision: f.vision,
+            size: f.size ? [...f.size] : null,
+            pocket: f.pocket,
+            marks: f.marks.map((mark) => [mark[0], mark[1]]),
+            mark: f.mark,
+        })),
     };
 }
 
@@ -341,6 +512,8 @@ export function deviceFit(pairs: [[number, number], [number, number]][], angle: 
 }
 
 export const VISION_NOTE = "; looked at over the up camera: placed where its center lands";
+export const POCKET_NOTE = "; the top camera looks at the pocket first: picked where the part is";
+export const MARKS_NOTE = "; the feeder's marks are found with the top camera first: its places follow them";
 
 export interface MockBlock {
     ref: string;
@@ -352,11 +525,17 @@ export interface MockBlock {
     turn: number;
     place_z: number;
     vision: boolean;
+    /** The vacuum read with the part held, and once it let go. */
+    check: string[];
+    release: string[];
+    /** The part's angle on the device, and the size the up camera should see. */
+    angle: number;
+    size: [number, number] | null;
 }
 
 /** A block's lines as the program text has them. */
 export function blockLines(block: MockBlock): string[] {
-    return [...block.pick, ...(block.vision ? [VISION_NOTE] : []), ...block.place];
+    return [...block.pick, ...block.check, ...(block.vision ? [VISION_NOTE] : []), ...block.place, ...block.release];
 }
 
 export interface MockPlan {
@@ -393,17 +572,70 @@ function dwellLines(device: MockDevice, ms: number): string[] {
     return ms <= 0 || !device.dwell ? [] : [device.dwell.replace("{ms}", String(ms)).replace("{s}", gnum(ms / 1000))];
 }
 
+/** An angle of the nozzle, counterclockwise from above, as the rotation axis's word: negated for an axis that turns clockwise. */
+export function angleWord(device: MockDevice, degrees: number): string {
+    return `${device.axes[3]}${gnum(device.rotation_cw ? -degrees : degrees)}`;
+}
+
+export function safeLine(device: MockDevice): string {
+    return `${device.move} ${device.axes[2]}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`;
+}
+
+/** How far the head moves to keep the nozzle's tip on a point as the nozzle turns from 0 to `degrees`, the tip `runout` off the axis at 0. */
+export function tipShift(runout: [number, number], degrees: number): [number, number] {
+    const [sx, sy] = turnPoint(runout, degrees);
+    return [runout[0] - sx, runout[1] - sy];
+}
+
+/** The lines that take a part from its pocket: which, the feeder's own lines, up, over it turned to 0, down, the vacuum on, and back up. */
+export function pickLines(device: MockDevice, feeder: MockFeeder, label: string, point: [number, number, number]): string[] {
+    const [x, y, z] = device.axes;
+    return [
+        `; ${label}`.trimEnd(),
+        ...feeder.feed,
+        safeLine(device),
+        `${device.move} ${x}${gnum(point[0])} ${y}${gnum(point[1])} ${angleWord(device, 0)} F${gnum(device.feed_xy, 0)}`,
+        `${device.move} ${z}${gnum(point[2])} F${gnum(device.feed_z, 0)}`,
+        ...(device.wait ? [device.wait] : []),
+        device.pick,
+        ...dwellLines(device, device.pick_dwell_ms),
+        safeLine(device),
+    ];
+}
+
+/** The vacuum read with the head at rest: a part held after a pick, the nozzle empty after a place (when the profile says what empty reads). */
+export function checkLines(device: MockDevice, held: boolean): string[] {
+    const vacuum = device.vacuum;
+    const span = vacuum === null ? null : held ? vacuum.part_on : vacuum.part_off;
+    if (vacuum === null || span === null) {
+        return [];
+    }
+    return [...(device.wait ? [device.wait] : []), `${vacuum.read} ; vacuum: ${held ? "a part held" : "an empty nozzle"} reads ${gnum(span[0])} to ${gnum(span[1])}`];
+}
+
 /** The lines that put a held part down: across at the safe height, turned to its angle, down, the vacuum off, and back up. */
 export function placeLines(device: MockDevice, point: [number, number], turn: number, placeZ: number): string[] {
-    const [x, y, z, a] = device.axes;
+    const [x, y, z] = device.axes;
     return [
-        `${device.move} ${x}${gnum(point[0])} ${y}${gnum(point[1])} ${a}${gnum(turn)} F${gnum(device.feed_xy, 0)}`,
+        `${device.move} ${x}${gnum(point[0])} ${y}${gnum(point[1])} ${angleWord(device, turn)} F${gnum(device.feed_xy, 0)}`,
         `${device.move} ${z}${gnum(placeZ)} F${gnum(device.feed_z, 0)}`,
         ...(device.wait ? [device.wait] : []),
         device.place,
         ...dwellLines(device, device.place_dwell_ms),
         `${device.move} ${z}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`,
     ];
+}
+
+/** The length and width the up camera should see of a part: its feeder's size, else its footprint's body, longer side first. */
+export function expectedSize(feeder: MockFeeder, part: Component): [number, number] | null {
+    if (feeder.size) {
+        return [Math.max(...feeder.size), Math.min(...feeder.size)];
+    }
+    const body = part.body;
+    if (body && body.length === 2 && body.every((value) => value > 0)) {
+        return [Math.max(...body), Math.min(...body)];
+    }
+    return null;
 }
 
 /** The placement program, as the backend makes it. */
@@ -415,12 +647,12 @@ export function planDevice(
     refs: string[] | null,
     title: string,
     visionReady = false,
+    runout: [number, number] = [0, 0],
 ): MockPlan {
-    const [x, y, z, a] = device.axes;
-    const move = device.move;
     const given: Record<string, number> = { ...taken };
     const blocks: MockBlock[] = [];
     const skipped: { ref: string; reason: string }[] = [];
+    const marked = new Set<string>();
     const wanted = refs !== null ? new Set(refs) : null;
     if (wanted !== null) {
         const known = new Set(parts.map((part) => part.ref));
@@ -432,10 +664,14 @@ export function planDevice(
         const [tx, ty] = turnPoint(point, fit.rotation);
         return [tx + fit.shift[0], ty + fit.shift[1]];
     };
-    const waits = device.wait ? [device.wait] : [];
-    const safe = `${move} ${z}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`;
     for (const part of parts) {
         if (wanted !== null && !wanted.has(part.ref)) {
+            continue;
+        }
+        if (part.fiducial) {
+            if (wanted !== null) {
+                skipped.push({ ref: part.ref, reason: "a fiducial, not a part" });
+            }
             continue;
         }
         if (part.dnp) {
@@ -461,34 +697,38 @@ export function planDevice(
             continue;
         }
         given[feeder.id] = index + 1;
-        const [px, py, pz] = feederPlace(feeder, feeder.count > 0 ? index : 0);
         const [qx, qy] = apply([part.x, part.y]);
-        const turn = wrapAngle(part.rotation + fit.rotation - feeder.rotation);
+        const angle = wrapAngle(part.rotation + fit.rotation);
+        const turn = wrapAngle(angle - feeder.rotation);
         const placeZ = feeder.place_z ?? device.place_z;
-        const pick = [`; ${part.ref} ${part.value} from ${feeder.id} #${index + 1}`.trimEnd(), ...feeder.feed];
-        pick.push(
-            safe,
-            `${move} ${x}${gnum(px)} ${y}${gnum(py)} ${a}0 F${gnum(device.feed_xy, 0)}`,
-            `${move} ${z}${gnum(pz)} F${gnum(device.feed_z, 0)}`,
-            ...waits,
-            device.pick,
-            ...dwellLines(device, device.pick_dwell_ms),
-            safe,
-        );
+        const pick = pickLines(device, feeder, `${part.ref} ${part.value} from ${feeder.id} #${index + 1}`, feederPlace(feeder, feeder.count > 0 ? index : 0));
+        const notes: string[] = [];
+        if (feeder.marks.length > 0 && !marked.has(feeder.id)) {
+            marked.add(feeder.id);
+            notes.push(MARKS_NOTE);
+        }
+        if (feeder.pocket !== null) {
+            notes.push(POCKET_NOTE);
+        }
+        const [sx, sy] = tipShift(runout, turn);
         blocks.push({
             ref: part.ref,
             feeder: feeder.id,
             index,
-            pick,
-            place: placeLines(device, [qx, qy], turn, placeZ),
+            pick: [pick[0]!, ...notes, ...pick.slice(1)],
+            place: placeLines(device, [qx + sx, qy + sy], turn, placeZ),
             target: [qx, qy],
             turn,
             place_z: placeZ,
             vision: feeder.vision,
+            check: checkLines(device, true),
+            release: checkLines(device, false),
+            angle,
+            size: expectedSize(feeder, part),
         });
     }
     const head = [`; ${title || "placement"} on ${device.name}: ${blocks.length} parts`, ...device.init];
-    return { head, blocks, tail: [...waits, ...device.end], skipped, fit };
+    return { head, blocks, tail: [...(device.wait ? [device.wait] : []), ...device.end], skipped, fit };
 }
 
 /** The nozzle up to the safe height and over a part's place on the device. */
