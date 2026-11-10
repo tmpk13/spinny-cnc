@@ -1,0 +1,5 @@
+{
+    "venvPath": ".",
+    "venv": ".venv",
+    "extraPaths": ["web/backend/tests", "toolpath/tests"]
+}
