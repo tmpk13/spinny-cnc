@@ -32,7 +32,7 @@ from typing import Any, Callable
 
 import serial
 
-from .link import BAUD
+from .link import BAUD, open_unflushed
 from .log import LEVELS
 
 log = logging.getLogger("spinny_bridge")
@@ -79,13 +79,11 @@ def open_device(path: str) -> Any:
     """The device, raw, for one program at a time, and never blocking: its
     writes are driven by readiness, so a device that takes nothing shows
     as bytes left waiting rather than as a process stuck in the kernel.
-    pyserial's flush at open is disabled: the firmware answers the DTR
-    raised by the open with its banner, which the flush could discard."""
+    Opened without pyserial's flush, which could discard the banner the
+    firmware answers the open with."""
     port = serial.Serial(port=None, baudrate=BAUD, timeout=0, write_timeout=0, exclusive=True)
     port.port = path
-    port.reset_input_buffer = lambda: None  # type: ignore[method-assign]
-    port._reset_input_buffer = lambda: None  # type: ignore[attr-defined]
-    port.open()
+    open_unflushed(port)
     os.set_blocking(port.fileno(), False)
     return port
 

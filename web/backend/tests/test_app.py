@@ -1062,7 +1062,7 @@ def test_a_boot_the_firmware_did_not_mean_is_logged_as_an_error(tmp_path, log_re
         assert _logged(log_records, f"machine: boot {boot}")
         record = next(r for r in log_records.records if r.getMessage() == f"machine: boot {boot}")
         assert record.levelno == logging.ERROR
-        assert backend.link is not None and backend.link.boot == boot
+        assert backend._boot_reported == f"boot {boot}"
         # The board says it again at the next open of its port: the same
         # life, so news now, not the fault a second time.
         client.post("/api/disconnect")

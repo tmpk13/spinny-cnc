@@ -72,7 +72,7 @@ def test_the_cross_slide_field_is_read_and_optional():
     # A firmware without the field reads as a machine with the slide at zero.
     older = parse_status("<Idle|J:1.000,2.0000|V:0|L:0|Q:32,16|M:dyn|E:1>")
     assert older is not None and older.z == 0.0
-    assert older.joint == (1.0, 2.0)
+    assert (older.r, older.a) == (1.0, 2.0)
     assert parse_status("<Idle|J:1.000,2.0000|Z:sideways>") is None
 
 
@@ -163,7 +163,7 @@ def test_request_returns_content_lines_and_errors():
             lk.request_ok("$nope=1")
         fake.settings["r_max"] = 50
         pending = lk.send("go R60")
-        assert pending.wait(2.0) and pending.failed and pending.response.startswith("error:4")
+        assert pending.wait(2.0) and not pending.ok and pending.response.startswith("error:4")
         assert pending.answered
     finally:
         lk.close()
@@ -197,7 +197,7 @@ def test_reset_drops_outstanding_and_the_new_banner_is_read():
         lk.realtime(REALTIME_RESET)
         assert all(p.wait(1.0) for p in pendings)
         assert all(p.response == "reset" for p in pendings)
-        assert not any(p.answered for p in pendings) and all(p.failed for p in pendings)
+        assert not any(p.answered or p.ok for p in pendings)
         assert 0x18 in fake.realtime_bytes
         assert lk.outstanding == 0
         assert lk.request("$r_rate")[-1] == "ok"
@@ -655,8 +655,7 @@ def test_a_boot_message_is_kept_and_a_fault_is_an_error():
     lk = Link("fake://", open_port=fake_opener(fake), poll=False)
     lk.subscribe(events)
     lk.open()
-    assert wait_for(lambda: lk.boot is not None, 2.0)
-    assert lk.boot == boot
+    assert wait_for(lambda: events.of("message"), 2.0)
     message = events.of("message")[0]
     assert message["level"] == "error"
     assert message["text"] == f"boot {boot}"
@@ -675,8 +674,8 @@ def test_a_quiet_boot_message_is_news():
     lk = Link("fake://", open_port=fake_opener(fake), poll=False)
     lk.subscribe(events)
     lk.open()
-    assert wait_for(lambda: lk.boot == "power on", 2.0)
-    assert events.of("message")[0]["level"] == "info"
+    assert wait_for(lambda: events.of("message"), 2.0)
+    assert events.of("message")[0] == {"level": "info", "text": "boot power on"}
     lk.close()
 
 

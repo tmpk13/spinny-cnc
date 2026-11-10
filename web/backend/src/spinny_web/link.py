@@ -122,10 +122,6 @@ class Status:
     def moving(self) -> bool:
         return self.state in MOVING_STATES
 
-    @property
-    def joint(self) -> tuple[float, float]:
-        return (self.r, self.a)
-
 
 @dataclass
 class Banner:
@@ -155,11 +151,6 @@ class Pending:
     @property
     def ok(self) -> bool:
         return self.response == "ok"
-
-    @property
-    def failed(self) -> bool:
-        """Answered with an error, or never answered because the link went."""
-        return self.response is not None and self.response != "ok"
 
     @property
     def answered(self) -> bool:
@@ -284,13 +275,20 @@ def open_serial(url: str):
         exclusive=True,
         do_not_open=True,
     )
-    # pyserial's open() discards whatever the port already holds, which is
-    # where a banner sent at connect would be; nothing the firmware sends
-    # is stale, so the flush is disabled on this instance before opening.
+    open_unflushed(port)
+    return port
+
+
+def open_unflushed(port: Any) -> None:
+    """Opens a pyserial port made unopened, keeping what it already holds.
+
+    pyserial's open() discards whatever the port holds, which is where a
+    banner sent at connect would be (the firmware answers the DTR the open
+    raises with it); nothing the firmware sends is stale, so the flush is
+    disabled on this instance before opening."""
     port.reset_input_buffer = lambda: None
     port._reset_input_buffer = lambda: None
     port.open()
-    return port
 
 
 class Link:
@@ -300,15 +298,15 @@ class Link:
         self,
         url: str,
         open_port: Callable[[str], Any] | None = None,
-        credits: int = DEFAULT_CREDITS,
         poll: bool = True,
-        stall: float | None = STALL_SECONDS,
+        stall: float = STALL_SECONDS,
     ) -> None:
         self.url = url
-        self.credits = credits
+        # Lines the firmware keeps waiting, until its banner says.
+        self.credits = DEFAULT_CREDITS
         self.poll = poll
         # Seconds of silence with polls unanswered before the link gives
-        # the machine up; None keeps waiting for ever.
+        # the machine up.
         self.stall = stall
         # When the last line arrived, so a snapshot can say how old what it
         # shows is, and the poller can tell a machine that has gone quiet.
@@ -356,14 +354,12 @@ class Link:
         self.last_sent = ""
         self.last_heard_text = ""
         self.opened_at = time.monotonic()
-        # The firmware's `[MSG:boot ...]`: why it started, once it has said.
-        self.boot: str | None = None
         # The last `[MSG:bridge ...]` and when it came.
         self._bridge_notice: tuple[str, float] | None = None
 
     # --- lifecycle ------------------------------------------------------
 
-    def open(self, banner_timeout: float = 1.0) -> None:
+    def open(self) -> None:
         try:
             self._port = self._open_port(self.url)
         except (serial.SerialException, OSError, ValueError) as exc:
@@ -383,7 +379,7 @@ class Link:
             time.sleep(0.02)
         if self.banner is None:
             try:
-                self.request("version", timeout=banner_timeout)
+                self.request("version", timeout=1.0)
             except LinkError:
                 pass
         if self._closed.is_set():
@@ -449,8 +445,7 @@ class Link:
         so a machine that went quiet is described without a page open."""
         with self._status_cond:
             unanswered = self._polls_out
-        with self._credit:
-            outstanding = len(self._pending)
+        outstanding = self.outstanding
         status = self.status
         level = logging.INFO if reason in ("closed", "disconnected") else logging.ERROR
         log.log(
@@ -572,14 +567,13 @@ class Link:
             raise CommandError(line, lines[-1])
         return lines[:-1]
 
-    def realtime(self, byte: bytes | int, routine: bool = False) -> None:
+    def realtime(self, data: bytes, routine: bool = False) -> None:
         """One realtime byte, outside the credits.
 
         `routine` marks the status poll this link sends on its own, so a
         console can tell the machine's heartbeat from what an operator or a
         job asked for.
         """
-        data = bytes([byte]) if isinstance(byte, int) else bytes(byte)
         if len(data) != 1:
             raise ValueError("a realtime command is one byte")
         if data == REALTIME_RESET:
@@ -649,7 +643,7 @@ class Link:
                 self._port.write(data)
         except PORT_ERRORS as exc:
             log.error("write to %s failed: %r", self.url, exc)
-            self._fail(f"write failed: {exc}")
+            self.close(f"write failed: {exc}")
             raise LinkClosed(str(exc)) from exc
 
     # --- receiving ------------------------------------------------------
@@ -697,7 +691,7 @@ class Link:
                     # A fault in the handling must not end this thread in
                     # silence with the link still open: nothing would ever
                     # be answered again.
-                    self._fail(f"reader failed: {exc!r}")
+                    self.close(f"reader failed: {exc!r}")
                     return
             if failure is not None:
                 if not self._closed.is_set():
@@ -706,7 +700,7 @@ class Link:
                     if notice is not None and time.monotonic() - notice[1] < BRIDGE_NOTICE_SECONDS:
                         reason = f"{reason} (bridge: {notice[0]})"
                     log.error("port %s failed: %s", self.url, reason)
-                    self._fail(reason)
+                    self.close(reason)
                 return
 
     def _handle_line(self, text: str) -> None:
@@ -758,9 +752,7 @@ class Link:
             # A message that says the position may be off is a fault, not
             # news; so is a start the firmware did not mean.
             level = "error" if body.endswith("position may be off") or boot_is_fault(body) else "info"
-            if body.startswith("boot "):
-                self.boot = body[5:]
-            elif body.startswith("bridge ") and not body.startswith("bridge opened "):
+            if body.startswith("bridge ") and not body.startswith("bridge opened "):
                 # Every notice but the greeting says why the socket closes.
                 self._bridge_notice = (body[7:], time.monotonic())
             self._publish(Event("message", {"level": level, "text": body}))
@@ -840,30 +832,25 @@ class Link:
             with self._credit:
                 self._credit.notify_all()
 
-    def _fail(self, reason: str) -> None:
-        self.close(reason)
-
     # --- polling --------------------------------------------------------
 
     def _poll_loop(self) -> None:
         while not self._closed.wait(self._poll_interval()):
-            if self.stall is not None:
-                with self._status_cond:
-                    unanswered = self._polls_out
-                age = self.age
-                behind = time.monotonic() - self._reader_seen
-                if unanswered > 0 and age > self.stall and behind <= READER_BEHIND:
-                    # Nothing has come back for a while, polls included,
-                    # and the reader has been looking: the machine, or the
-                    # path to it, has stopped. Every line waiting on it is
-                    # failed with this reason, and a run learns of it
-                    # instead of waiting for a credit that would never
-                    # come free.
-                    self._fail(f"no answer from the machine for {age:.0f} s")
-                    return
-                if unanswered > 0 and behind > READER_STUCK_STALLS * self.stall:
-                    self._fail(f"the port's reader has not run for {behind:.0f} s")
-                    return
+            with self._status_cond:
+                unanswered = self._polls_out
+            age = self.age
+            behind = time.monotonic() - self._reader_seen
+            if unanswered > 0 and age > self.stall and behind <= READER_BEHIND:
+                # Nothing has come back for a while, polls included, and
+                # the reader has been looking: the machine, or the path to
+                # it, has stopped. Every line waiting on it is failed with
+                # this reason, and a run learns of it instead of waiting
+                # for a credit that would never come free.
+                self.close(f"no answer from the machine for {age:.0f} s")
+                return
+            if unanswered > 0 and behind > READER_STUCK_STALLS * self.stall:
+                self.close(f"the port's reader has not run for {behind:.0f} s")
+                return
             try:
                 self.realtime(REALTIME_STATUS, routine=True)
             except LinkError:

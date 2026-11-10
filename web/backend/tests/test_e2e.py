@@ -286,7 +286,7 @@ def test_a_reset_during_a_held_run_ends_it_without_another_line(firmware):
         assert status.state == "Idle", status.raw
         time.sleep(0.3)
         again = link.status_now(1.0)
-        assert again.state == "Idle" and again.joint == status.joint, again.raw
+        assert again.state == "Idle" and (again.r, again.a) == (status.r, status.a), again.raw
     finally:
         link.close()
 
@@ -317,7 +317,7 @@ def test_a_stop_from_motion_holds_first_and_resets_at_rest(firmware):
         assert not [text for text in seen if "ALARM" in text], seen
         time.sleep(0.3)
         again = link.status_now(1.0)
-        assert again.state == "Idle" and again.joint == status.joint, again.raw
+        assert again.state == "Idle" and (again.r, again.a) == (status.r, status.a), again.raw
     finally:
         link.close()
 
