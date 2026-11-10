@@ -30,3 +30,6 @@ web/frontend/dist/
 
 # Agent worktrees
 .claude/
+
+# Release archives and their build (mise run release)
+dist/

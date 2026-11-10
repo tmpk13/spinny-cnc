@@ -36,6 +36,7 @@ vacuum sensor say.
 | `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |
 | `pnp` | device profiles in TOML for a pick and place machine driven with OpenPnP's G-code: port, dialect, heights, vacuum sensor, cameras, feeders | `docs/WEB_API.md`, the PNP tab |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
+| `deploy` | the Pi's services and `deploy-pi.sh`; `release.py`, the archives that run with nothing installed: a standalone Python with the locked packages, the page and the shipped machine, CAM and pick and place files, the Rust programs linked for glibc 2.28, the firmware | `mise run deploy-pi`, `mise run release` ([RELEASE.md](RELEASE.md)) |
 | `../pcb-vision` | `pcbv`: the camera's capture and the localizer that finds a KiCad board in its picture, served to the backend over JSON lines | `mise run build-pcbv`; its own `mise run test` |
 
 The line protocol is [PROTOCOL.md](PROTOCOL.md), the web API
@@ -162,6 +163,14 @@ the page stays open, and a controller that is replugged, or goes quiet and
 is given up, is taken up again by itself. The Pi needs no bun, and
 `firmware/` and `sim/` stay behind. Jobs, the height map and the resume
 record are the Pi's own.
+
+**Or a release.** The `aarch64-linux` archive from `mise run release`
+unpacked on the Pi runs the same backend with nothing else installed
+(`bin/spinny-web --connect auto`), its files under
+`~/.local/share/spinny`; [RELEASE.md](RELEASE.md). The installed
+backend finds its files through `spinny_laser.home`: the repository's
+directories in a checkout, else that home, filled on the first start from
+the copies the release ships inside `spinny_web`.
 
 **Cameras on the Pi.** With the Pi as a bridge it only streams them: each
 `--camera DEV[@WxH[@FPS]]` given to deploy-pi gets a `spinny-camera-<port>`

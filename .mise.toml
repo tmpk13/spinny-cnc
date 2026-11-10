@@ -139,3 +139,7 @@ run = "uv run python -m spinny_web.cam > web/backend/tests/data/cam-post-samples
 description = "Build the uf2 and write it onto a board held in BOOTSEL, here or on a Pi over ssh, through the /mnt/pico automount from relay/pico-udev-setup.sh: mise run load-uf2 -- pi@spinny.local"
 depends = ["uf2"]
 run = "relay/load-uf2.sh"
+
+[tasks.release]
+description = "Build the release archives in dist/, one per platform, that run with nothing installed (docs/RELEASE.md): mise run release -- --target aarch64-unknown-linux-gnu --extras auto,mcp"
+run = "python3 deploy/release.py"

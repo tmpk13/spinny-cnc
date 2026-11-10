@@ -18,9 +18,11 @@ the board.
 - `mise run cam -- cam/mill-3axis.toml board.kicad_pcb`: a design through a CAM profile, gcode in `var/out/`
 - `mise run mcp`: the backend's tools for Claude Code or another MCP client, none of which moves the machine (`claude mcp add spinny -- uv run --directory <repository> spinny-mcp`)
 - `mise run test`: every suite
+- `mise run release`: archives in `dist/` that run with nothing installed, one per platform ([using one](docs/RELEASE.md))
 
 `mise tasks` lists the rest. Components: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Reference: [operating](docs/OPERATING.md), [machine files](docs/MACHINES.md),
 [CAM](docs/CAM.md), [calibration](docs/CALIBRATION.md),
 [protocol](docs/PROTOCOL.md), [web API](docs/WEB_API.md),
-[gcode toolchain](docs/GCODE.md), [M2 Nano assessment](docs/M2_NANO.md).
+[gcode toolchain](docs/GCODE.md), [M2 Nano assessment](docs/M2_NANO.md),
+[releases](docs/RELEASE.md).

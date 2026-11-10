@@ -17,8 +17,10 @@ REPO = Path(__file__).resolve().parents[3]
 def _tree(tmp_path: Path, cargo_ok: bool, strip: bool) -> tuple[Path, Path, dict]:
     repo = tmp_path / "spinny-laser-pcb"
     (repo / "deploy").mkdir(parents=True)
+    # Files only: loading release.py in its tests leaves a __pycache__ here.
     for file in (REPO / "deploy").iterdir():
-        shutil.copy(file, repo / "deploy" / file.name)
+        if file.is_file():
+            shutil.copy(file, repo / "deploy" / file.name)
     (repo / "web" / "frontend" / "dist").mkdir(parents=True)
     (repo / "web" / "frontend" / "dist" / "index.html").write_text("<html></html>")
     (tmp_path / "kicad-to-gcode").mkdir()
