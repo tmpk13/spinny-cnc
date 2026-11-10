@@ -256,33 +256,29 @@ the console is not checked against the others.
 
 The laser (or spindle) PWM output, the probe input and the tool output
 are on whichever GPIOs `[output] pin`, `[probe] pin` and `[enable] pin`
-name: any of the board's but the driver sockets' STEP, DIR and EN pins
-and the driver UART (GP2, GP5 to GP15, GP19 and GP28). The headers are
-FAN1 GP17, FAN2 GP18, FAN3 GP20, HE GP23, BED GP21, SERVO GP29 and RGB
-GP24 for outputs, and X-STOP GP4, Y-STOP GP3, Z-STOP GP25, E-STOP GP16
-and PROBE GP22 for inputs; the laser's slice of the PWM block follows
-from its pin. The firmware takes the pins one setting at a time, so a
-pin named twice is refused here, where the whole file is seen: the probe
-may not share the output's pin, and a fitted tool output may share
+name, and an axis's switch on its `endstop_pin`: any GPIO but the driver
+sockets' and the UART's, which
+[firmware/rp2040/README.md](../firmware/rp2040/README.md#pins) lists
+with the headers' GPIOs. The firmware takes the pins one setting at a time,
+so a pin named twice is refused here, where the whole file is seen: the
+probe may not share the output's pin, and a fitted tool output may share
 neither. An axis's `endstop_pin` is an input like the probe's: two axes
 may share one, and an axis may share the probe's, but a fitted endstop
 (`endstop` other than `none`) may not sit on the output's or the tool
-output's pin. The pins and `[enable] fitted` are read from flash at boot,
-so a write that changes one takes effect after a restart of the board
-(*Write to board* has saved it already); the page says so after such a
-write. The endstop pins are claimed
-at boot whether or not the axis has a switch yet, so `endstop` itself
-applies at once.
+output's pin. The pins and `[enable] fitted` are read at boot, so a write
+that changes one takes effect after a restart of the board (*Write to
+board* has saved it already); the page says so after such a write.
+`endstop` itself applies at once.
 
 The endstops: `endstop` says which ends of the axis have a switch, on the
-one input when both do (normally closed in series, normally open in
-parallel). `home` seeks it, and `endstop_halt` makes it halt a move that
-closes it (`ALARM:4`, the position lost). `home_pos` is what the axis
-reads at the switch, the negative one of two, and `home_travel` the
-distance between its ends: the seek goes a tenth further before giving
-up, and the positive switch of a two-ended axis reads `home_pos +
-home_travel`. The page's jog panel shows *Home* on a machine with a
-switch, and the readout what is homed.
+one input when both do. `home` seeks it, and `endstop_halt` makes it halt
+a move that closes it. `home_pos` is what the axis reads at the switch,
+the negative one of two, the positive switch of a two-ended axis reading
+`home_pos + home_travel`; `home_travel` is the distance between its ends,
+which bounds the seek, and `home_pull` how far a home backs off the
+switch. The cycle and the halt are in
+[PROTOCOL.md](PROTOCOL.md#endstops-and-homing), the page's *Home* and
+*Homed* in [OPERATING.md](OPERATING.md#endstops-and-homing).
 
 `[enable]` is an output that follows the tool: driven while a job runs, a
 beam is lit, a dwell burns or the spindle turns, for a laser supply
@@ -291,13 +287,15 @@ low; off (`fitted = false`) it rests at its inactive level whatever the
 tool does.
 
 Every `invert` is checked the same way, by what the machine does, not by
-how it is wired: an axis's `invert` is wrong when a positive jog moves it
-the other way than its `[controls]` buttons say (the page's X+ must move
-the head toward board +X, Y+ toward +Y, Z+ or H+ up, and a positive turn
-counterclockwise seen from above); `[probe] invert` is wrong when the
-readout says *down* with the tip free and *up* when it touches; `[output]
-invert` is wrong when the beam or the spindle is on with nothing asked for
-(and dangerous, so it is the first thing to check at power on); `[enable]
+how it is wired. With the head clear of the board, jog each axis one
+step: its `invert` is wrong when a positive jog moves it the other way
+than its `[controls]` buttons say (the page's X+ must move the head
+toward board +X, Y+ toward +Y, Z+ or H+ up, and a positive turn
+counterclockwise seen from above). `[probe] invert` is wrong when the
+readout says *down* with the tip free and *up* when it touches, and left
+so the first probe drives the head into the board; `[output] invert` is
+wrong when the beam or the spindle is on with nothing asked for (and
+dangerous, so it is the first thing to check at power on); `[enable]
 invert` when the relay is on while the machine is idle. Flip the one that
 is wrong in the file, load it again and check again.
 
@@ -308,22 +306,19 @@ stepper drives. The machine is the X/Y machine with the focus axis as the
 needle's height, and the plunger takes the table's place: `tool =
 "dispenser"` sets `$dispenser=1` (and needs `kinematics = "cartesian"`),
 and `[dispenser]` describes the plunger on the table's settings in
-millimeters: `full_steps_per_mm` for the screw behind it (200 steps on
-a 2 mm lead is 100, 1600 at 16 microsteps), `max_rate` for the retract and the
+millimeters: `full_steps_per_mm` for the screw behind it (200 steps on a 2
+mm lead is 100, 1600 at 16 microsteps), `max_rate` for the retract and the
 ceiling of a plunger jog, `jog_rate` for the page's *Extrude* and
 *Retract* buttons. `[table]` and `[dispenser]` do not go in one file. The
 page's readout and jog panel show the plunger as `E` in mm (the defaults;
-`[controls]` may say otherwise), and a board imported with mode
-`dispense` lays a dot of paste on every pad of a layer
-([WEB_API.md](WEB_API.md)). What a dot is made of is the host's, under
-`[host]`: the head travels `clearance` over the surface, the needle stands
-`gap` over the pad (over the height map when the run follows one, else
-over H 0), the plunger pushes out the dot's volume, the pad's area times
-the job's paste thickness, over `output`, plus the `retract` it took back
-after the last dot, at `extrude_rate`, waits `dwell_ms`, pulls back
-`retract` at `max_rate`, and the head lifts for the move to the next pad.
-The shipped `cartesian-dispenser` has the plunger on the E socket beside
-the mill's rail, slide and depth axis.
+`[controls]` may say otherwise), and a board imported with mode `dispense`
+lays a dot of paste on every pad of a layer. What a dot is made of is the
+host's, under `[host]`: `gap`, `retract`, `output`, `extrude_rate` and
+`dwell_ms` (the schema above says what each is), with `clearance` as the
+travel height between dots and the retract at `[dispenser] max_rate`; the
+run that lays the dots is in [WEB_API.md](WEB_API.md#jobs). The shipped
+`cartesian-dispenser` has the plunger on the E socket beside the mill's
+rail, slide and depth axis.
 
 ## Camera
 

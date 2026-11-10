@@ -2,30 +2,22 @@
 
 Before the machine ran its own firmware it was driven by grblHAL with
 polar kinematics, which takes board X/Y gcode and does the transform
-itself. The commands below are that toolchain, kept because their output
-is also what the web interface imports and because `spinny-center` writes
-the centering coupons. They place the board on the axis, pre-split the
+itself. The commands listed in [toolpath/README.md](../toolpath/README.md)
+are that toolchain, kept because their output is also what the web
+interface imports and because `spinny-center` writes the centering
+coupons. They place the board on the axis, pre-split the
 toolpath where a controller's own segmentation would stray, handle cuts
 through the axis, estimate the time with the table's speed limit, and
 play the job back in 3D. The copper reading and the isolation loops come
 from the Cartesian tool in `../kicad-to-gcode`, pulled in as a path
 dependency. The package is `toolpath/` (`spinny_laser`).
 
-| Command | Job |
-| --- | --- |
-| `spinny-iso` | KiCad board or gerber to isolation gcode placed on the axis |
-| `spinny-polar` | re-place and pre-split an existing X/Y laser job |
-| `spinny-jog` | MDI rapids for setup: move radially or turn the table |
-| `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
-| `spinny-sim` | play a job back on a model of the machine |
-| `spinny-cam` | a board or an X/Y gcode design through a CAM profile in `cam/`, gcode for that profile's controller ([CAM.md](CAM.md)) |
-
 ## Usage
 
 ```sh
 uv run spinny-iso board.kicad_pcb --spot 0.1 --power 500 --speed 400 --outline auto
 uv run spinny-iso board-F_Cu.gbr --offset 0,14 --rotary-max-rate 1080
-uv run spinny-polar ../kicad-to-gcode/out/sweep.gcode
+uv run spinny-polar sweep.gcode
 cargo run --manifest-path sim/Cargo.toml -- var/out/board.gcode
 ```
 

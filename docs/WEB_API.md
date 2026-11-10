@@ -122,7 +122,7 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "travel": null, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}, "machine": "polar-laser", "unsaved": [], "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `unsaved` names the settings written (from the page, a machine file or the console) since the controller's were last saved to flash or loaded from it, `$defaults` for that command, as far as this backend has seen: a connect and a restart of the board start it empty; `controls` is what the page draws for jogging and the readout ([MACHINES.md](MACHINES.md), `[controls]`): that file's, or, for values that are no file's, those of the file last loaded from this host when it is this kind of machine (kinematics, tool, focus axis), else of the one file that is, else the defaults for what the values say the machine is; `controls_from` is the file the controls are, `null` for the defaults |
+| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "travel": null, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}, "machine": "polar-laser", "unsaved": [], "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `unsaved` names the settings written (from the page, a machine file or the console) since the controller's were last saved to flash or loaded from it, `$defaults` for that command, as far as this backend has seen: a connect and a restart of the board start it empty; `controls` is what the page draws for jogging and the readout, a machine file's `[controls]` picked as [MACHINES.md](MACHINES.md#the-controls) says; `controls_from` is the file the controls are, `null` for the defaults |
 | `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm, a travel height that is neither `null` nor within `[-100, 100]` mm, a spin-up outside `[0, 600]` s, a gap outside `(0, 10]` mm, a retract outside `[0, 50]` mm, an output outside `(0, 100000]` mm^3/mm, an extrude rate outside `(0, 10000]` mm/min or a dwell outside `[0, 60000]` ms answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
 | `POST /api/settings/save` | writes the firmware settings to flash |
 
@@ -402,13 +402,14 @@ mm), where the exported gcode holds a depth axis for focus, null for
 none; a run does not read it (a laser's own focus is `focus`).
 
 On a dispenser machine a job is dispensed: the head lifts to the travel
-height (`clearance` over H 0, or over the map's highest point when the
-run follows one), and for every dot goes over the pad, lowers the needle
-to `gap` over the surface there (the map's height plus the focus offset,
-or H 0), pushes the plunger out by the dot's volume over `output` plus the
-last `retract`, at `extrude_rate`, waits `dwell_ms`, pulls the plunger
-back by `retract` and lifts. The plunger's position `A` only ever grows by
-the dots' volumes, so a run may be picked up at a line like any other.
+height (`clearance` over H 0, or over the map's highest point when the run
+follows one), and for every dot goes over the pad, lowers the needle to
+`gap` over the surface there (the map's height plus the focus offset, or H
+0), pushes the plunger out by the dot's volume over `output` plus the last
+`retract`, at `extrude_rate`, waits `dwell_ms`, pulls the plunger back by
+`retract` at the plunger's rate (`a_rate`, a machine file's `[dispenser]
+max_rate`) and lifts. The plunger's position `A` only ever grows by the
+dots' volumes, so a run may be picked up at a line like any other.
 
 `group` is `null` until the first line has gone out. `state` is `running`, `hold`, `done`, `stopped`, or `error`; `error` carries
 the reason when it is `error`, why a run was stopped from outside (a reset

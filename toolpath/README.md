@@ -29,7 +29,7 @@ grblHAL controller (`gcode`, `machine`, `report`, `preview`).
 | `spinny-polar` | re-place and pre-split an existing X/Y laser job |
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
 | `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
-| `spinny-sim` | play a job back on a model of the machine |
+| `spinny-sim` | play a job back on a model of the machine: the `sim/` crate, run with `cargo run` there rather than `uv run` |
 | `spinny-cam` | a board, an X/Y gcode design or an STL model through a CAM profile in `cam/`, gcode for that profile's controller |
 
 Usage, the grblHAL setup and what the files contain are in
@@ -104,7 +104,7 @@ classDiagram
     }
     class lines {
         drawn_lines(image) a stroke's centerline, a fill's outline
-        ordered(lines, pace, start) joined where their ends meet, by travel, inside first
+        ordered(lines, pace) joined where their ends meet, by travel, inside first
     }
     class outline {
         cut(outline, radius) Cut  loops in cutting order, a bit's middle kept off the board
@@ -118,9 +118,9 @@ classDiagram
         depth(depths, ...) a mill's row of slots
     }
     class machines {
-        load(path) Machine
-        load_all(directory) machines, problems
-        current(machines, values) id
+        load(path) / parse(text, id) Machine
+        matching(machines, values) the file the values are
+        controls_file(machines, values, ...) the file whose controls the page draws
         cli_defaults(machine)
     }
     class controls {
@@ -129,7 +129,7 @@ classDiagram
     }
     class machine_keys {
         KEYS  the section and key of every firmware setting
-        value_of(key, settings, host)
+        value_of(key, settings)
         from_board(text, live, host, where) the keys whose values differ written into the text
     }
     class home {

@@ -29,13 +29,18 @@ in mm; no pin changes.
 
 The pin settings are read from flash at boot, so a change takes effect
 after `$save` and a restart; the `$` listing shows the stored value
-meanwhile. Any GPIO but the driver sockets' and the UART's may be named:
-the headers are FAN1 GP17, FAN2 GP18, FAN3 GP20, HE GP23, BED GP21, SERVO
-GP29 and RGB GP24 for outputs, and X-STOP GP4, Y-STOP GP3, Z-STOP GP25,
-E-STOP GP16 and PROBE GP22 for inputs. The laser's slice of the PWM block
-follows from its pin, so any of them carries the PWM. A pin named twice
-is the machine file's to refuse; the board itself keeps the laser on its
-pin and drops the probe or the tool output from a pin the laser has.
+meanwhile. `$tool_out` claims its pin at boot only when it is set then; on
+a board that claimed it, a change applies at once. The endstop pins are
+claimed at boot whether or not the axis has a switch yet, so
+`$<axis>_stop` itself applies at once. Any GPIO but the driver sockets'
+and the UART's (GP2, GP5 to GP15, GP19 and GP28) may be named: the headers
+are FAN1 GP17, FAN2 GP18, FAN3 GP20, HE GP23, BED GP21, SERVO GP29 and RGB
+GP24 for outputs, and X-STOP GP4, Y-STOP GP3, Z-STOP GP25, E-STOP GP16 and
+PROBE GP22 for inputs. The laser's slice of the PWM block follows from its
+pin, so any of them carries the PWM. A pin named twice is the machine
+file's to refuse ([docs/MACHINES.md](../../docs/MACHINES.md#pins)); the
+board itself keeps the laser on its pin and drops the probe or the tool
+output from a pin the laser has.
 
 The cross slide goes in the **Z** socket and the focus axis in the **E**
 socket. The four enable pins are driven together, so an empty E socket
@@ -43,15 +48,16 @@ sees its enable line with the others, which does no harm; its driver is
 only configured over UART with `$h_axis=1`.
 
 A plain switch or a pin that touches grounded copper goes between the
-Z-STOP signal and GND. The four STOP headers (X, Y, Z, E) carry 5 V on
-pin 3 for a powered sensor and reach the RP2040 through a 74LVC2G34
-buffer powered at 3.3 V, whose inputs take up to 5.5 V (SKR Pico V1.0
-schematic), so a 5 V output is safe on them. No other header is behind
-that buffer: the PROBE header reaches GP22 directly through the P21
+Z-STOP signal and GND. On each of the four STOP headers (X, Y, Z, E) pin 1
+is the signal, pulled up to 3.3 V through 10K, pin 2 is GND and pin 3
+carries 5 V for a powered sensor; the signal reaches the RP2040 through a
+74LVC2G34 buffer powered at 3.3 V, whose inputs take up to 5.5 V (SKR Pico
+V1.0 schematic), so a 5 V output is safe on them. No other header is
+behind that buffer: the PROBE header reaches GP22 directly through the P21
 jumper. Treat any other header as 3.3 V only, so a probe moved to one
-needs an open drain (or open collector) output, or a level shifter.
-Check the header's pinout on the board before wiring it, and check the
-level with `?` (`P:1` while touching) before the first `probe`.
+needs an open drain (or open collector) output, or a level shifter. Check
+the header's pinout on the board before wiring it, and check the level
+with `?` (`P:1` while touching) before the first `probe`.
 
 USB: VID 0x2E8A PID 0x000A, product "spinny laser controller", serial from
 the flash unique id.
@@ -92,26 +98,11 @@ the E socket without `$h_axis=1`, is still asked and marked `unused`.
 
 ## Diagnostics
 
-The board says why it started right after its banner, as `[MSG:boot ...]`:
-a power-on, the reset pin, a forced reset (the bootloader after flashing),
-the watchdog (the main loop stalled for 1.5 s), a panic or a hard fault.
-For anything but a power-on it adds what the last life left in RAM, which
-no reset short of a power cycle clears: the phase the main loop was in,
-how long it had run, how many lines it had taken, its longest pass and
-its longest wait between passes; for a panic the location and message,
-for a hard fault the `pc` and `lr`. `diag` prints the same and this
-life's counters (USB state changes, the host's DTR and RTS, bytes each
-way, how long the writer has waited for the host, output dropped, motor
-power losses); the formats are in `docs/PROTOCOL.md`. The backend asks it
-at every connect and logs the answer, so `var/spinny.log` holds every
-boot reason the board has reported.
-
-A panic or a hard fault no longer spins until the watchdog fires: the
-handler disables interrupts, writes the record and resets the chip at
-once (`rp2040/src/diag.rs`), so the laser pin is an input, held by the
-board's pull resistor, within microseconds. A board that went quiet is
-best brought back with its RESET button, not a power cycle: the record
-survives the one and not the other.
+The board says why it started, with what its last life left in RAM,
+right after its banner, and `diag` prints that with this life's counters,
+both as [docs/PROTOCOL.md](../../docs/PROTOCOL.md#diagnostics) has them;
+the record and the panic and hard fault handlers that write it are
+`rp2040/src/diag.rs`.
 
 `mise run symbolize -- 0x10001234` turns a hard fault's `pc` or `lr`
 into a source line against the last release build in
@@ -314,12 +305,9 @@ $save
   pulled up and reads closed when pulled low, or the other way round with
   its bit of `$stop_invert`. Switches at both
   ends of an axis go to the one header, normally closed in series or
-  normally open in parallel. Before the first `home`, close each switch by
-  hand and watch `?`: a `home` seeks a switch it reads open, and a switch
-  wired the wrong way round would be read closed at rest, backed off and
-  refused (`error:12`), or never seen (`ALARM:5`) with the axis driven into
-  its end. Set `$<axis>_home_travel` to the axis's real travel, since the
-  seek goes a tenth past it before giving up.
+  normally open in parallel. Check each switch before the first `home`
+  ([docs/OPERATING.md](../../docs/OPERATING.md#endstops-and-homing)); the
+  home cycle is in [docs/PROTOCOL.md](../../docs/PROTOCOL.md#endstops-and-homing).
 - GP20 is an input from power-on until the firmware starts, again after
   a watchdog reset, and in BOOTSEL. The pad's own pull-down holds the
   MOSFET off, so a laser on FAN3 must be dark while FAN3 is off, and

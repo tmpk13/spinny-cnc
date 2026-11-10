@@ -1,6 +1,6 @@
 # Operating the machine
 
-From the first connection to a probed, compensated run. The wiring and the bring-up order are in `firmware/rp2040/README.md`; the page's panels are described in `web/frontend/README.md`. The line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
+From the first connection to a probed, compensated run. The wiring and the bring-up order are in `firmware/rp2040/README.md`; the line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
 
 ## Connecting and first moves
 
@@ -97,15 +97,26 @@ board sits out of focus.
    in the Jog panel: probing travels at the higher of the two, and the
    probe's depth counts down from there. Set the probe's offset from the
    beam under *Probe*.
-2. *Fit to job* (the preview shows the grid), then *Probe*.
+2. *Fit to job* (the preview shows the grid), then *Probe*. The panel
+   shows the heights as a map of the board seen from above, blue below the
+   mean and red above it, the points left out hatched.
 3. Jog the beam over the board, focus it by eye with the focus axis, and
-   press *Focus here*.
-4. Run with *height map: auto*. The chip beside the choice says what Run
-   will do with the map before it is pressed (*map on: focus axis*, *map
-   off*, or why the run would be refused, such as *focus not set* or *map
-   short of job*); the Height map panel's head says the same for the
-   selected job, and while a run lasts the status bar shows what it
-   follows.
+   press *Focus here*; or type the offset into *Focus offset mm*, where it
+   holds until *Set*.
+4. Run with *height map: auto*, which the choice turns to by itself while
+   a map is usable and back to off when none is, until it is changed by
+   hand. The chip beside the choice says what Run will do with the map
+   before it is pressed (*map on: focus axis*, *map off*, or why the run
+   would be refused, such as *focus not set* or *map short of job*); the
+   Height map panel's head says the same for the selected job, and while a
+   run lasts the status bar shows what it follows.
+
+The focus offset is dropped whenever the focus axis may count from other
+numbers (Set H=0, a connect, the firmware restarting, a map loaded;
+[WEB_API.md](WEB_API.md#height-map) has every case): the panel then asks
+for *Focus here* (*Touch off here* on a mill) again before a run follows
+the map, and a tie ([below](#probing-less-around-the-cuts-and-one-point))
+sets it again from one probe.
 
 Wiring and bring-up are in `firmware/rp2040/README.md`.
 
@@ -143,6 +154,9 @@ the spin-up, the machine file's `[host] clearance` and `spinup`
    copper, tip offsets 0), jog the tool down until it touches the copper,
    press *Touch off here*, and run with *height map: auto*: the cuts then
    follow the board.
+
+Since the tool may be the probe, the page locks probing while the spindle
+turns, and the spindle's start while probing.
 
 FAN3 is a low side switch on the fan rail, not a logic output: see the
 spindle note in `firmware/rp2040/README.md` before connecting one.
@@ -247,20 +261,21 @@ for priming the needle and checking the flow.
 
 1. Upload the board with mode *dispense*: a dot on every pad of its paste
    layer (`F.Paste`; a copper layer's pads are its flashes), the paste
-   thickness over a pad (0.12 mm by default) in the upload form and in
-   the group's *thickness* afterwards. A dot's volume is the pad's area
-   times the thickness, and the plunger pushes it out over `output`, mm^3
-   of paste per mm of plunger, which depends on the syringe and is worth
-   measuring once by weight. It and the rest of what a dot is made of
-   (`gap`, `retract`, `extrude_rate`, `dwell_ms`) are `[host]` keys of the
-   machine file ([MACHINES.md](MACHINES.md#schema)).
+   thickness over a pad (0.12 mm by default) in the upload form and in the
+   group's *thickness* afterwards; the preview draws each dot the size of
+   its pad. A dot's volume is the pad's area times the thickness, and the
+   plunger pushes it out over `output`, mm^3 of paste per mm of plunger,
+   which depends on the syringe and is worth measuring once by weight. It
+   and the rest of what a dot is made of (`gap`, `retract`,
+   `extrude_rate`, `dwell_ms`) are `[host]` keys of the machine file
+   ([MACHINES.md](MACHINES.md#dispenser)).
 2. Line the job up with the board ([below](#lining-a-job-up-with-the-board)).
 3. Touch the needle to a pad and press *Set H=0 here*, or probe the pads
    ([below](#probing-the-pads)) and run with *height map: auto* so the
    needle keeps its gap over every pad of a warped board.
-4. Run. The head travels at the clearance, lowers the needle to the gap
-   over each pad, pushes the dot out plus the last retract, waits, pulls
-   the plunger back, and lifts; the plunger ends every dot retracted. A
+4. Run: the head lays the dots pad by pad, the plunger ending each one
+   retracted ([WEB_API.md](WEB_API.md#jobs) has the sequence). A dispenser
+   lays dots only, so the Run panel says why it refuses a job of paths. A
    run picks up at a line like any other, the plunger declared where the
    plan had it.
 
@@ -325,15 +340,16 @@ copper or a conductive tip, finds nothing on the bare board between the
 pads. *Probe pads* in the Height map panel probes the selected job's pads
 instead of a grid: every pad of at least the least area given (half a
 square millimeter by default, so a tip has room), and when the board has
-more pads than the most points asked for, the most spread out of them,
-in a short tour. *Plan* says how many and about how long. The map is then
-a pad map: its heights sit at the pads, exact there, and between pads the
+more pads than the most points asked for, the most spread out of them, in
+a short tour. *Plan* says how many and about how long. The map is then a
+pad map: its heights sit at the pads, exact there, and between pads the
 surface is a plane through every probed pad plus the nearest pads'
 deviations from it, so a warp shows where it is measured and fades
-between. A run follows a pad map as it follows a grid, *Tie map* ties it
-the same way, and *Continue* goes on with the pads it still lacks. A board
-job carries its pads from the layer it was imported from; a drawing or a
-gcode file has none to probe.
+between. The map fills in as the pads are probed, and the preview draws
+the pads, each filled once probed. A run follows a pad map as it follows a
+grid, *Tie map* ties it the same way, and *Continue* goes on with the pads
+it still lacks. A board job carries its pads from the layer it was
+imported from; a drawing or a gcode file has none to probe.
 
 ### The camera and its offset
 
@@ -388,20 +404,20 @@ nozzle, looking at a part, a G-code device's run), each as it was and with
 what the finder found drawn on it, so a routine that went wrong can be
 followed look by look; *Photo* keeps one now with what the finder sees.
 
-A camera plugged into a Pi that is a bridge is streamed from there:
-deploy with `mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
+A camera plugged into a Pi that is a bridge is streamed from there
+([ARCHITECTURE.md](ARCHITECTURE.md#controller-on-a-raspberry-pi) says
+how, and why a picture at a time): deploy with
+`mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
 (the deploy lists the names it finds, the `video-index0` one is the
 picture; `<name>@640x480@15` picks another mode than 1280x720 at 30 fps;
 a second `--camera`, the up camera, gets the next port), keep
 `mise run relay-pi -- user@host` running, and pick `stream on port 2325`
-in the Camera list, which is `http://127.0.0.1:2325/snapshot` (the second
-one 2326; the backend looks at the ports relay-pi forwards, the ones in
-`SPINNY_CAMERA_PORTS` when that is set where the backend runs). The size
-is the one deployed; the fps in the settings is how often a picture is
-asked for: 10 leaves a Pi Zero's WiFi room for the controller's lines, and
-`<name>@640x480` a quarter of the bytes per picture. (`/stream` instead
-pushes every frame and falls seconds behind on a slow link.) While the
-camera is unplugged the picture is ustreamer's NO SIGNAL card.
+in the Camera list (the backend looks at the ports relay-pi forwards, the
+ones in `SPINNY_CAMERA_PORTS` when that is set where the backend runs).
+The size is the one deployed. An fps of 10 in the camera settings leaves
+a Pi Zero's WiFi room for the controller's lines, and `<name>@640x480`
+sends a quarter of the bytes per picture. While the camera is unplugged
+the picture is ustreamer's NO SIGNAL card.
 `mise run pi-logs -- user@host` shows the camera units' journals.
 
 ### Pick and place
@@ -419,7 +435,8 @@ Setup panel leads through it:
    nozzle. The head's R and Z there are the camera's place, kept for the
    next time, when the routine goes there by itself.
 3. Pick a board job uploaded as a `.kicad_pcb`: its footprints are listed
-   and drawn on the board; a press on a row or a dot picks one.
+   and drawn on the board with the head and the up camera; a press on a
+   row or a dot picks one.
 4. With a part on the nozzle, *Look at part* reads where its center sits
    against the nozzle's. *Go to part* takes the nozzle over the picked
    part's place at the travel height, or, ticked, the part's center.
@@ -487,20 +504,20 @@ pcbv places without correcting it and says so.
 
 ### The Auto tab
 
-The *Auto* tab is a conversation with a language model that works
-through the backend's own tools. Ask for a job ("a 20 mm square with a
-5 mm hole in the middle, three passes at 300"), a Plot operation (drill
-these points, face this rectangle), markers, a placement plan, or about
-what is there ("which jobs are for the mill?"). The answer comes in as it
-is written; each tool call is a folded line with its name, its arguments
-and a short result, and unfolds to the whole. A job it makes or changes
-shows in the Jobs and Plot tabs at once. Enter sends, Shift+Enter starts
-a new line, *Stop* ends the turn under way (what it made so far stays;
-a tool call already running finishes in the backend all the same, and
-its line shows what it did), *New chat* forgets the conversation. A turn
-makes at most 25 tool calls, so a model that goes round in circles
-stops. What it can make, and what it cannot do, is the tools' own
-boundary, below.
+The *Auto* tab is a conversation with a language model that works through
+the backend's own tools. Ask for a job ("a 20 mm square with a 5 mm hole
+in the middle, three passes at 300"), a Plot operation (drill these
+points, face this rectangle), markers, a placement plan, or about what is
+there ("which jobs are for the mill?"). The answer comes in as it is
+written; each tool call is a folded line with its name, its arguments and
+a short result (*running* until the call is done), and unfolds to the
+whole. A job it makes or changes shows in the Jobs and Plot tabs at once.
+Enter sends, Shift+Enter starts a new line, and *Send* is locked while a
+turn runs; *Stop* ends the turn under way (what it made so far stays; a
+tool call already running finishes in the backend all the same, and its
+line shows what it did), *New chat* forgets the conversation. A turn makes
+at most 25 tool calls, so a model that goes round in circles stops. What
+it can make, and what it cannot do, is the tools' own boundary, below.
 
 The row above the conversation picks who answers, kept for the next
 visit:
@@ -654,36 +671,29 @@ focus offset.
 
 ### Checking the directions and the probe
 
-Every `invert` in the machine file is checked by what the machine does.
-With the head clear of the board, jog each axis one step: X+ must move the
-head toward board +X, Y+ toward +Y, Z+ or H+ up, and a positive turn must
-swing the point under the beam counterclockwise seen from above; an axis
-that goes the other way wants `invert = true` in its section
-(`$dir_invert`). Then watch the *Probe* readout: it must say *up* with the
-tip free and *down* while the tip touches; the other way round wants
-`invert = true` under `[probe]` (`$probe_invert`), or the first probe
-drives the head into the board. Load the file again after a change.
+Before the first job, check every `invert` in the machine file, each
+axis's and the probe's first, by what the machine does:
+[MACHINES.md](MACHINES.md#pins) says how.
 
 ### Endstops and homing
 
 An axis with a switch at one end or both (`endstop` under its section in
-the machine file, with `endstop_pin`) can be homed: *Home* in the jog
-panel, or `home`, `home R` or `home R+` in the console, seeks each switch
-at the jog rate, backs off, finds it again slowly and declares the axis
-to read `home_pos` there, ending the pull-off (`home_pull`) from it. The
-readout's *Homed* field names the joints homed since the position was
-last lost; a position set, a reset while moving, a lost motor supply or
-an endstop halt unhome them.
+the machine file, with `endstop_pin`; [MACHINES.md](MACHINES.md#pins))
+can be homed: *Home* in the jog panel, or `home`, `home R` or `home R+`
+in the console, finds the switch and declares the axis to read
+`home_pos` there. The cycle, and the halt `endstop_halt` asks for, are
+in [PROTOCOL.md](PROTOCOL.md#endstops-and-homing). The readout's *Homed*
+field names the joints homed since the position was last lost; a
+position set, a reset while moving, a lost motor supply or an endstop
+halt unhome them.
 
 Before the first home, check each switch as the probe is checked: close
 it by hand and watch the console's `?` line, which has no field for the
-switches but refuses a `home` that starts on a closed one. Set
-`home_travel` to the axis's real travel: a home that finds no switch
-within a tenth more than that stops with `ALARM:5` after driving the axis
-into its end. With `endstop_halt = true` the switch also halts any move
-that closes it, with `ALARM:4` and the position lost, so a job that runs
-into an end stops short of the hard stop; a switch an axis sits on at
-rest does not halt the move that takes it off.
+switches but refuses a `home` that starts on a closed one. A switch
+wired the wrong way round reads closed at rest, so a home backs off it
+and is refused (`error:12`), or never sees it (`ALARM:5`) and drives the
+axis into its end. Set `home_travel` to the axis's real travel, since it
+bounds how far a home seeks.
 
 A home renumbers the axis, so the height map's focus offset is taken
 back as it is by a position set: tie the map again (*Probe here* or
@@ -737,6 +747,7 @@ needs `mise run usb-reset -- user@host` (or with no host, here), which
 brings it back without a reset of the board.
 
 Bring a board that stopped answering back with its RESET button rather
-than a power cycle when you can: the record of its last life survives
-the one and not the other, and the next connect logs it. `diag` typed at
-the console prints the boot reason and the counters at any time.
+than a power cycle when you can: the next connect then logs the record
+of its last life, which a power cycle loses. The record, and `diag`,
+which prints it with the counters at any time, are in
+[PROTOCOL.md](PROTOCOL.md#diagnostics).
