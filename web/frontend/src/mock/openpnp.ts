@@ -578,8 +578,20 @@ export function angleWord(device: MockDevice, degrees: number): string {
     return `${device.axes[3]}${gnum(device.rotation_cw ? -degrees : degrees)}`;
 }
 
+/** The nozzle's height axis moved to `z`, at its feed. */
+export function zLine(device: MockDevice, z: number): string {
+    return `${device.move} ${device.axes[2]}${gnum(z)} F${gnum(device.feed_z, 0)}`;
+}
+
+/** The head moved across to `x`, `y`, the nozzle turned to `turn` on the way when one is given, at the feed across. */
+export function xyLine(device: MockDevice, x: number, y: number, turn?: number): string {
+    const angle = turn === undefined ? "" : ` ${angleWord(device, turn)}`;
+    return `${device.move} ${device.axes[0]}${gnum(x)} ${device.axes[1]}${gnum(y)}${angle} F${gnum(device.feed_xy, 0)}`;
+}
+
+/** The nozzle up to the safe height. */
 export function safeLine(device: MockDevice): string {
-    return `${device.move} ${device.axes[2]}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`;
+    return zLine(device, device.safe_z);
 }
 
 /** How far the head moves to keep the nozzle's tip on a point as the nozzle turns from 0 to `degrees`, the tip `runout` off the axis at 0. */
@@ -590,13 +602,12 @@ export function tipShift(runout: [number, number], degrees: number): [number, nu
 
 /** The lines that take a part from its pocket: which, the feeder's own lines, up, over it turned to 0, down, the vacuum on, and back up. */
 export function pickLines(device: MockDevice, feeder: MockFeeder, label: string, point: [number, number, number]): string[] {
-    const [x, y, z] = device.axes;
     return [
         `; ${label}`.trimEnd(),
         ...feeder.feed,
         safeLine(device),
-        `${device.move} ${x}${gnum(point[0])} ${y}${gnum(point[1])} ${angleWord(device, 0)} F${gnum(device.feed_xy, 0)}`,
-        `${device.move} ${z}${gnum(point[2])} F${gnum(device.feed_z, 0)}`,
+        xyLine(device, point[0], point[1], 0),
+        zLine(device, point[2]),
         ...(device.wait ? [device.wait] : []),
         device.pick,
         ...dwellLines(device, device.pick_dwell_ms),
@@ -616,14 +627,13 @@ export function checkLines(device: MockDevice, held: boolean): string[] {
 
 /** The lines that put a held part down: across at the safe height, turned to its angle, down, the vacuum off, and back up. */
 export function placeLines(device: MockDevice, point: [number, number], turn: number, placeZ: number): string[] {
-    const [x, y, z] = device.axes;
     return [
-        `${device.move} ${x}${gnum(point[0])} ${y}${gnum(point[1])} ${angleWord(device, turn)} F${gnum(device.feed_xy, 0)}`,
-        `${device.move} ${z}${gnum(placeZ)} F${gnum(device.feed_z, 0)}`,
+        xyLine(device, point[0], point[1], turn),
+        zLine(device, placeZ),
         ...(device.wait ? [device.wait] : []),
         device.place,
         ...dwellLines(device, device.place_dwell_ms),
-        `${device.move} ${z}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`,
+        safeLine(device),
     ];
 }
 
@@ -721,10 +731,9 @@ export function planDevice(
 
 /** The nozzle up to the safe height and over a part's place on the device. */
 export function deviceGotoLines(device: MockDevice, fit: AlignFit, part: Component): string[] {
-    const [x, y, z] = device.axes;
     const [tx, ty] = turnPoint([part.x, part.y], fit.rotation);
     return [
-        `${device.move} ${z}${gnum(device.safe_z)} F${gnum(device.feed_z, 0)}`,
-        `${device.move} ${x}${gnum(tx + fit.shift[0])} ${y}${gnum(ty + fit.shift[1])} F${gnum(device.feed_xy, 0)}`,
+        safeLine(device),
+        xyLine(device, tx + fit.shift[0], ty + fit.shift[1]),
     ];
 }

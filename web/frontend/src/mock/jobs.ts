@@ -986,8 +986,14 @@ function bounds(paths: Path[]): { minX: number; minY: number; maxX: number; maxY
     return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
 }
 
-function shift(paths: Path[], dx: number, dy: number): Path[] {
+/** The paths moved by `dx`, `dy`. */
+export function shiftPaths(paths: Path[], dx: number, dy: number): Path[] {
     return paths.map((path) => path.map(([x, y]) => [x + dx, y + dy]));
+}
+
+/** The paths with X scaled by `fx` and Y by `fy`: -1 mirrors that axis. */
+export function flipPaths(paths: Path[], fx: number, fy: number): Path[] {
+    return paths.map((path) => path.map(([x, y]) => [x * fx, y * fy]));
 }
 
 /** Places the geometry: `center` puts the middle of everything on the axis, then the offset applies; `shift` says how far it all moved. */
@@ -1010,9 +1016,9 @@ export function placeJob(
         }
     }
     return {
-        groups: geometry.groups.map((group) => ({ label: group.label, paths: shift(group.paths, dx, dy) })),
-        copper: shift(geometry.copper ?? [], dx, dy),
-        outline: shift(geometry.outline ?? [], dx, dy),
+        groups: geometry.groups.map((group) => ({ label: group.label, paths: shiftPaths(group.paths, dx, dy) })),
+        copper: shiftPaths(geometry.copper ?? [], dx, dy),
+        outline: shiftPaths(geometry.outline ?? [], dx, dy),
         pads: (geometry.pads ?? []).map(([x, y, area]) => [x + dx, y + dy, area] as PadPoint),
         holes: (geometry.holes ?? []).map(([x, y, diameter]) => [x + dx, y + dy, diameter] as HolePoint),
         shift: [dx, dy],
@@ -1510,7 +1516,13 @@ const MAX_LAYER_LENGTH = 32;
 /** The layer a gerber's name ends with, the way kicad-cli names them: board-F_Paste.gtp. */
 const NAMED_LAYER = /(?:^|-)((?:F|B|In[0-9]+)_(?:Cu|Paste|Mask|SilkS|Adhes|Fab|CrtYd)|(?:Dwgs|Cmts|Eco[12])_User|Edge_Cuts|User_[0-9]+|Margin)$/;
 /** The gerber extensions the backend takes: KiCad's own and the Protel ones kicad-cli gives the layers. */
-const GERBER_EXTENSIONS = ["gbr", "gtl", "gbl", "gts", "gbs", "gtp", "gbp", "gto", "gbo", "gm1"];
+export const GERBER_EXTENSIONS = ["gbr", "gtl", "gbl", "gts", "gbs", "gtp", "gbp", "gto", "gbo", "gm1"];
+
+/** A file name's extension, lower case and without its dot; empty for a name with none. */
+export function extensionOf(name: string): string {
+    const lower = name.toLowerCase();
+    return lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
+}
 
 /** The layer a gerber's name says it is, or null when the name does not say. */
 export function layerOf(name: string): string | null {
@@ -1547,12 +1559,11 @@ function flipped<T extends { groups: { label: string; paths: Path[] }[]; copper?
     }
     const fx = mirror === "x" ? -1 : 1;
     const fy = mirror === "y" ? -1 : 1;
-    const paths = (list: Path[]): Path[] => list.map((path) => path.map(([x, y]) => [x * fx, y * fy] as Point));
     return {
         ...geometry,
-        groups: geometry.groups.map((group) => ({ ...group, paths: paths(group.paths) })),
-        copper: geometry.copper && paths(geometry.copper),
-        outline: geometry.outline && paths(geometry.outline),
+        groups: geometry.groups.map((group) => ({ ...group, paths: flipPaths(group.paths, fx, fy) })),
+        copper: geometry.copper && flipPaths(geometry.copper, fx, fy),
+        outline: geometry.outline && flipPaths(geometry.outline, fx, fy),
         pads: geometry.pads?.map(([x, y, area]) => [x * fx, y * fy, area] as PadPoint),
         holes: geometry.holes?.map(([x, y, d]) => [x * fx, y * fy, d] as HolePoint),
     };
@@ -1565,8 +1576,7 @@ const FILL_CHOICES: string[] = ["contour", "radial", "rings", "lines"];
  * bit, the spot wide, runs round a board's outline off the board.
  */
 export function buildJob(id: string, name: string, text: string, options: UploadOptions, limits: RateLimits, milling = false): BuiltJob {
-    const lower = name.toLowerCase();
-    const extension = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
+    const extension = extensionOf(name);
     const power = options.power ?? DEFAULT_POWER;
     const speed = options.speed ?? DEFAULT_SPEED;
     const spot = options.spot ?? DEFAULT_SPOT;

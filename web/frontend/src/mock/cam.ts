@@ -33,7 +33,7 @@ import type {
     Point,
     Tool,
 } from "../types.ts";
-import { DEFAULT_DEPTH, DEFAULT_PLUNGE, computeStats, demoCoupon, formatG, isBottom, layerOf, modelStats, outlineCut, parseGcode, parseSvg, type RateLimits } from "./jobs.ts";
+import { DEFAULT_DEPTH, DEFAULT_PLUNGE, GERBER_EXTENSIONS, computeStats, demoCoupon, extensionOf, flipPaths, formatG, isBottom, layerOf, modelStats, outlineCut, parseGcode, parseSvg, shiftPaths, type RateLimits } from "./jobs.ts";
 import { isTable } from "./machines.ts";
 import { innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
@@ -1012,8 +1012,19 @@ interface Geometry {
 }
 
 function readGeometry(fileName: string, text: string): Geometry {
-    const lower = fileName.toLowerCase();
-    const extension = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "";
+    const extension = extensionOf(fileName);
+    if (extension === "kicad_pcb" || GERBER_EXTENSIONS.includes(extension)) {
+        const coupon = demoCoupon();
+        return {
+            source: extension === "kicad_pcb" ? "kicad" : "gerber",
+            board: true,
+            sets: [],
+            copper: coupon.copper,
+            outline: coupon.outline,
+            loops: coupon.groups.filter((group) => group.label.startsWith("isolation loop")).map((group) => group.paths),
+            drills: coupon.groups.find((group) => group.label === "drill marks")?.paths ?? [],
+        };
+    }
     const empty: Geometry = { source: extension, board: false, sets: [], copper: [], outline: [], loops: [], drills: [] };
     switch (extension) {
         case "svg": {
@@ -1042,39 +1053,9 @@ function readGeometry(fileName: string, text: string): Geometry {
                 outline: Array.isArray(job.outline) ? job.outline : [],
             };
         }
-        case "gbr":
-        case "gtl":
-        case "gbl":
-        case "gts":
-        case "gbs":
-        case "gtp":
-        case "gbp":
-        case "gto":
-        case "gbo":
-        case "gm1":
-        case "kicad_pcb": {
-            const coupon = demoCoupon();
-            return {
-                source: extension === "kicad_pcb" ? "kicad" : "gerber",
-                board: true,
-                sets: [],
-                copper: coupon.copper,
-                outline: coupon.outline,
-                loops: coupon.groups.filter((group) => group.label.startsWith("isolation loop")).map((group) => group.paths),
-                drills: coupon.groups.find((group) => group.label === "drill marks")?.paths ?? [],
-            };
-        }
         default:
             throw new Error(`cannot read ${fileName}: unknown file type '.${extension}'`);
     }
-}
-
-function shift(paths: Path[], dx: number, dy: number): Path[] {
-    return paths.map((path) => path.map(([x, y]) => [x + dx, y + dy] as Point));
-}
-
-function flip(paths: Path[], fx: number, fy: number): Path[] {
-    return paths.map((path) => path.map(([x, y]) => [x * fx, y * fy] as Point));
 }
 
 /** The design placed by the anchor and the offset; a board's layer flipped first as the placement's mirror says, a drawing's paths not. */
@@ -1085,10 +1066,10 @@ function place(design: Geometry, placement: CamPlacement): Geometry {
         const fy = placement.mirror === "y" ? -1 : 1;
         geometry = {
             ...design,
-            copper: flip(design.copper, fx, fy),
-            outline: flip(design.outline, fx, fy),
-            loops: design.loops.map((loop) => flip(loop, fx, fy)),
-            drills: flip(design.drills, fx, fy),
+            copper: flipPaths(design.copper, fx, fy),
+            outline: flipPaths(design.outline, fx, fy),
+            loops: design.loops.map((loop) => flipPaths(loop, fx, fy)),
+            drills: flipPaths(design.drills, fx, fy),
         };
     }
     const all: Path[] = [...geometry.copper, ...geometry.outline, ...geometry.drills, ...geometry.loops.flat(), ...geometry.sets.flatMap((set) => set.paths)];
@@ -1109,11 +1090,11 @@ function place(design: Geometry, placement: CamPlacement): Geometry {
     }
     return {
         ...geometry,
-        sets: geometry.sets.map((set) => ({ label: set.label, paths: shift(set.paths, dx, dy) })),
-        copper: shift(geometry.copper, dx, dy),
-        outline: shift(geometry.outline, dx, dy),
-        loops: geometry.loops.map((loop) => shift(loop, dx, dy)),
-        drills: shift(geometry.drills, dx, dy),
+        sets: geometry.sets.map((set) => ({ label: set.label, paths: shiftPaths(set.paths, dx, dy) })),
+        copper: shiftPaths(geometry.copper, dx, dy),
+        outline: shiftPaths(geometry.outline, dx, dy),
+        loops: geometry.loops.map((loop) => shiftPaths(loop, dx, dy)),
+        drills: shiftPaths(geometry.drills, dx, dy),
     };
 }
 

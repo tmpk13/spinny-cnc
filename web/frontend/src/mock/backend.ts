@@ -42,6 +42,7 @@ import {
     checkThickness,
     checkFocus,
     DEFAULT_THICKNESS,
+    shiftPaths,
     type PlannedMove,
 } from "./jobs.ts";
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
@@ -80,7 +81,7 @@ import {
     upInPicture,
     upPicturePoint,
 } from "./pnp.ts";
-import { MockCameraLog } from "./camlog.ts";
+import { MockCameraLog, svgUrl } from "./camlog.ts";
 import { MockAuto } from "./auto.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import {
@@ -97,6 +98,8 @@ import {
     planSummary,
     planText,
     safeLine,
+    xyLine,
+    zLine,
     type MockBlock,
     type MockDevice,
 } from "./openpnp.ts";
@@ -1882,6 +1885,27 @@ function touchOf(request: TouchRequest): { mode: TouchMode; at: TouchAt } {
     return { mode, at };
 }
 
+/** Refuses an id no machine file may have, in the backend's words. */
+function checkMachineId(id: string): void {
+    if (!MACHINE_ID_PATTERN.test(id)) {
+        throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
+    }
+}
+
+/** Refuses an id no CAM profile may have, in the backend's words. */
+function checkProfileId(id: string): void {
+    if (!ID_PATTERN.test(id)) {
+        throw new ApiError(400, `'${id}' is not a profile id: lower case letters, digits, - and _`);
+    }
+}
+
+/** Refuses an id no device profile may have, in the backend's words. */
+function checkDeviceId(id: string): void {
+    if (!DEVICE_ID.test(id)) {
+        throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
+    }
+}
+
 export interface MockOptions {
     /** Drive the simulation from a timer; off for tests, which call `step`. */
     timers?: boolean;
@@ -3233,9 +3257,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     private machineText(id: string): string {
-        if (!MACHINE_ID_PATTERN.test(id)) {
-            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
-        }
+        checkMachineId(id);
         const text = this.machineTexts.get(id);
         if (text === undefined) {
             throw new ApiError(404, `no machine file '${id}'`);
@@ -3258,17 +3280,13 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async checkMachineFile(id: string, text: string): Promise<MachineCheck> {
-        if (!MACHINE_ID_PATTERN.test(id)) {
-            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
-        }
+        checkMachineId(id);
         return this.machineRead(id, text);
     }
 
     /** The text with the board's values written into it, not saved, as the backend reads it. */
     async machineFromBoard(id: string, text: string): Promise<MachineFromBoard> {
-        if (!MACHINE_ID_PATTERN.test(id)) {
-            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
-        }
+        checkMachineId(id);
         this.requireConnected();
         let read: FromBoard;
         try {
@@ -3281,9 +3299,7 @@ export class MockBackend implements Api, EventFeed {
 
     /** Kept once it reads as a machine, as the backend writes the file. */
     async saveMachineFile(id: string, text: string): Promise<MachineResponse> {
-        if (!MACHINE_ID_PATTERN.test(id)) {
-            throw new ApiError(400, `'${id}' is not a machine id: lower case letters, digits, - and _`);
-        }
+        checkMachineId(id);
         const kept = text.endsWith("\n") ? text : text + "\n";
         const read = this.machineRead(id, kept);
         if (!read.document) {
@@ -3530,9 +3546,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     private camText(id: string): string {
-        if (!ID_PATTERN.test(id)) {
-            throw new ApiError(400, `'${id}' is not a profile id: lower case letters, digits, - and _`);
-        }
+        checkProfileId(id);
         const text = this.camTexts.get(id);
         if (text === undefined) {
             throw new ApiError(404, `no profile '${id}'`);
@@ -3554,9 +3568,7 @@ export class MockBackend implements Api, EventFeed {
 
     /** Kept once it reads as a profile, as the backend writes the file. */
     async saveCamProfile(id: string, text: string): Promise<CamProfileResponse> {
-        if (!ID_PATTERN.test(id)) {
-            throw new ApiError(400, `'${id}' is not a profile id: lower case letters, digits, - and _`);
-        }
+        checkProfileId(id);
         const kept = text.endsWith("\n") ? text : text + "\n";
         const response = this.camDocument(id, kept);
         this.camTexts.set(id, kept);
@@ -3734,7 +3746,7 @@ export class MockBackend implements Api, EventFeed {
             return kept.url;
         }
         const job = this.jobStore.get(summary.id);
-        const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(job ? thumbnail(job) : "<svg xmlns=\"http://www.w3.org/2000/svg\"/>")}`;
+        const url = svgUrl(job ? thumbnail(job) : "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
         this.thumbs.set(summary.id, { key, url });
         return url;
     }
@@ -4119,15 +4131,14 @@ export class MockBackend implements Api, EventFeed {
         if (patch.offset) {
             const dx = patch.offset.x - updated.offset.x;
             const dy = patch.offset.y - updated.offset.y;
-            const move = (paths: Job["outline"]): Job["outline"] => paths.map((path) => path.map(([x, y]) => [x + dx, y + dy]));
             for (const group of updated.groups) {
-                group.paths = move(group.paths);
+                group.paths = shiftPaths(group.paths, dx, dy);
                 if (group.moves) {
                     group.moves = group.moves.map((path) => path.map(([x, y, z, kind]) => [x + dx, y + dy, z, kind]));
                 }
             }
-            updated.outline = move(updated.outline);
-            updated.copper = move(updated.copper);
+            updated.outline = shiftPaths(updated.outline, dx, dy);
+            updated.copper = shiftPaths(updated.copper, dx, dy);
             updated.pads = (updated.pads ?? []).map(([x, y, area]) => [x + dx, y + dy, area]);
             updated.holes = (updated.holes ?? []).map(([x, y, diameter]) => [x + dx, y + dy, diameter]);
             if (updated.design) {
@@ -6542,9 +6553,7 @@ export class MockBackend implements Api, EventFeed {
     // --- a G-code pick and place machine -------------------------------------------
 
     private deviceOf(id: string): MockDevice {
-        if (!DEVICE_ID.test(id)) {
-            throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
-        }
+        checkDeviceId(id);
         const text = this.deviceTexts.get(id);
         if (text === undefined) {
             throw new ApiError(404, `no device profile '${id}'`);
@@ -6889,7 +6898,7 @@ export class MockBackend implements Api, EventFeed {
             if (session.kind === "offset") {
                 const mark = this.topConfig.mark_at ?? [0, 0];
                 const [ox, oy] = TOP_TRUTH.offset;
-                this.deviceLine(session.device, `${session.device.move} ${session.device.axes[0]}${gnum(mark[0] - ox)} ${session.device.axes[1]}${gnum(mark[1] - oy)} F${gnum(session.device.feed_xy, 0)}`);
+                this.deviceLine(session.device, xyLine(session.device, mark[0] - ox, mark[1] - oy));
                 this.topConfig = { ...this.topConfig, offset: [ox, oy], mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll, mirror: TOP_TRUTH.mirror };
                 this.message("info", `the top camera looks from X ${ox >= 0 ? "+" : ""}${ox.toFixed(3)} Y ${oy >= 0 ? "+" : ""}${oy.toFixed(3)} mm off the nozzle (mock)`);
             } else if (session.job !== null) {
@@ -6947,8 +6956,8 @@ export class MockBackend implements Api, EventFeed {
         } else if (index === steps.length - 1) {
             const [x, y] = DEVICE_CAMERA_WHERE;
             const z = routine.device.camera_z ?? routine.device.safe_z;
-            this.deviceLine(routine.device, `${routine.device.move} ${routine.device.axes[0]}${gnum(x)} ${routine.device.axes[1]}${gnum(y)} F${gnum(routine.device.feed_xy, 0)}`);
-            this.deviceLine(routine.device, `${routine.device.move} ${routine.device.axes[2]}${gnum(z)} F${gnum(routine.device.feed_z, 0)}`);
+            this.deviceLine(routine.device, xyLine(routine.device, x, y));
+            this.deviceLine(routine.device, zLine(routine.device, z));
             // The runout is the nozzle's own and outlasts a new center.
             this.deviceCamera = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, runout: this.deviceCamera.runout };
             routine.progress.state = "done";
@@ -7271,7 +7280,6 @@ export class MockBackend implements Api, EventFeed {
      * sit true to their angle, so one look does.
      */
     private deviceLook(device: MockDevice, block: MockBlock): { code: string; block: MockBlock | null }[] {
-        const [x, y, z] = device.axes;
         const camera = this.deviceCamera.position ?? DEVICE_CAMERA_WHERE;
         const runout = this.deviceCamera.runout ?? [0, 0];
         const axis: [number, number] = [camera[0] + runout[0], camera[1] + runout[1]];
@@ -7282,9 +7290,9 @@ export class MockBackend implements Api, EventFeed {
             safeLine(device),
             `${device.move} ${angleWord(device, block.turn)} F${gnum(device.feed_xy, 0)}`,
             ...waits,
-            `${device.move} ${x}${gnum(head[0])} ${y}${gnum(head[1])} F${gnum(device.feed_xy, 0)}`,
+            xyLine(device, head[0], head[1]),
             ...waits,
-            ...(device.camera_z !== null ? [`${device.move} ${z}${gnum(device.camera_z)} F${gnum(device.feed_z, 0)}`, ...waits] : []),
+            ...(device.camera_z !== null ? [zLine(device, device.camera_z), ...waits] : []),
         ];
         const [dx, dy] = turnPoint(UP_TRUTH.part, block.turn);
         this.pnpPartOffset = { dx: round4(dx), dy: round4(dy), mm: round4(Math.hypot(dx, dy)), length: UP_TRUTH.partSize[0], width: UP_TRUTH.partSize[1], angle: block.angle };

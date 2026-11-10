@@ -7,6 +7,7 @@
 
 import { turned } from "../kinematics.ts";
 import type { Board, CameraPose, CameraSettings, DetectedCamera, Job, Path } from "../types.ts";
+import { svgUrl } from "./camlog.ts";
 import { CAMERA_FINISHES, CAMERA_SIDES, CAMERA_SIZE } from "./machines.ts";
 
 /** How the camera really sits: the picture's center from the tool, its roll and its scale at the board. */
@@ -278,5 +279,5 @@ export function frameSvg(scene: PictureScene, width: number, overlay: boolean): 
         parts.push(`<text x="6" y="16" font-family="monospace" font-size="12" fill="#fdf6e3">${words}</text>`);
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join("")}</svg>`;
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return svgUrl(svg);
 }

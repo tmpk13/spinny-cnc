@@ -586,23 +586,36 @@ const SETTINGS = ["power", "min_power", "speed", "passes", "enabled", "depth", "
 /** The group settings no operation sets: the Jobs page's alone. */
 const PAGE_SETTINGS = ["enabled", "min_power", "thickness", "focus"] as const;
 
-/** Each old group's settings onto the new group made in its place, matched by label but for its numbers, in order. */
-export function carrySettings(old: Group[], made: Group[]): void {
+/**
+ * Each new group with the old group made in its place: matched by label
+ * but for its numbers, in order, so the second new group of a label pairs
+ * with the second old one. A new group with no old one is left out.
+ */
+function stemPairs(old: Group[], made: Group[]): [Group, Group][] {
     const byStem = new Map<string, Group[]>();
     for (const g of old) {
         const stem = labelStem(g.label);
         byStem.set(stem, [...(byStem.get(stem) ?? []), g]);
     }
     const seen = new Map<string, number>();
+    const pairs: [Group, Group][] = [];
     for (const g of made) {
         const stem = labelStem(g.label);
         const index = seen.get(stem) ?? 0;
         seen.set(stem, index + 1);
         const source = byStem.get(stem)?.[index];
         if (source) {
-            for (const name of SETTINGS) {
-                (g as unknown as Record<string, unknown>)[name] = source[name];
-            }
+            pairs.push([g, source]);
+        }
+    }
+    return pairs;
+}
+
+/** Each old group's settings onto the new group made in its place, matched by label but for its numbers, in order. */
+export function carrySettings(old: Group[], made: Group[]): void {
+    for (const [g, source] of stemPairs(old, made)) {
+        for (const name of SETTINGS) {
+            (g as unknown as Record<string, unknown>)[name] = source[name];
         }
     }
 }
@@ -831,20 +844,7 @@ function paired(oldOps: MillOperation[], newOps: MillOperation[]): [number, numb
  * numbers leave as they were; without, only the settings no operation sets.
  */
 function carry(old: Group[], made: Group[], base: Group | null): void {
-    const byStem = new Map<string, Group[]>();
-    for (const g of old) {
-        const stem = labelStem(g.label);
-        byStem.set(stem, [...(byStem.get(stem) ?? []), g]);
-    }
-    const seen = new Map<string, number>();
-    for (const g of made) {
-        const stem = labelStem(g.label);
-        const index = seen.get(stem) ?? 0;
-        seen.set(stem, index + 1);
-        const source = byStem.get(stem)?.[index];
-        if (!source) {
-            continue;
-        }
+    for (const [g, source] of stemPairs(old, made)) {
         const into = g as unknown as Record<string, unknown>;
         for (const name of base ? SETTINGS : PAGE_SETTINGS) {
             if (!base || into[name] === (base as unknown as Record<string, unknown>)[name]) {

@@ -6,6 +6,7 @@
 // picture's center, x right and y down.
 
 import type { Component, Job, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
+import { svgUrl } from "./camlog.ts";
 import { CAMERA_SIZE } from "./machines.ts";
 import { parseSize } from "./vision.ts";
 
@@ -90,7 +91,7 @@ export function topFrameSvg(size: string, width: number, overlay: boolean): stri
         parts.push(`<text x="6" y="16" font-family="monospace" font-size="12" fill="#fdf6e3">top</text>`);
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join("")}</svg>`;
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return svgUrl(svg);
 }
 
 export const PNP_DEFAULTS: PnpSettings = {
@@ -186,7 +187,7 @@ export function upFrameSvg(scene: UpScene, width: number, overlay: boolean): str
         parts.push(`<text x="6" y="16" font-family="monospace" font-size="12" fill="#fdf6e3">${scene.holding ? "part" : "nozzle"}</text>`);
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join("")}</svg>`;
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return svgUrl(svg);
 }
 
 /** Whether the nozzle (or its part) is in the picture at all, `mm` from the camera's center place. */
