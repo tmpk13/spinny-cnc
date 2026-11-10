@@ -1387,22 +1387,21 @@ def stencil_groups(cut: paste_stencil.Stencil, options: ImportOptions, word: str
 class JobStore:
     """Jobs in memory, mirrored as one JSON file each so a restart keeps them."""
 
-    def __init__(self, directory: Path | None = None) -> None:
+    def __init__(self, directory: Path) -> None:
         self.directory = directory
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         # One per job, held from a writer's read of a job to its save, so
         # two writers take turns and a delete waits for a write under way.
         self._editing: dict[str, threading.RLock] = {}
-        if directory is not None:
-            directory.mkdir(parents=True, exist_ok=True)
-            for file in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime):
-                try:
-                    job = Job.model_validate_json(file.read_text(encoding="utf-8"))
-                except (ValueError, OSError):
-                    continue
-                if job.id:
-                    self._jobs[job.id] = job
+        directory.mkdir(parents=True, exist_ok=True)
+        for file in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime):
+            try:
+                job = Job.model_validate_json(file.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                continue
+            if job.id:
+                self._jobs[job.id] = job
 
     def new_id(self) -> str:
         while True:
@@ -1450,21 +1449,18 @@ class JobStore:
             job = self._jobs.pop(job_id, None)
             if job is None:
                 return False
-            if self.directory is not None:
-                kept = [self.directory / f"{job_id}.json", self.directory / f"{job_id}.kicad_pcb"]
-                kept.extend(self.directory.glob(f"{job_id}.upload*"))
-                for path in kept:
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
+            kept = [self.directory / f"{job_id}.json", self.directory / f"{job_id}.kicad_pcb"]
+            kept.extend(self.directory.glob(f"{job_id}.upload*"))
+            for path in kept:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
         return True
 
     def keep_board(self, job_id: str, data: bytes) -> bool:
         """Keeps the KiCad board a job was imported from beside it, so the
-        camera can look for it; False when there is nowhere to keep it."""
-        if self.directory is None:
-            return False
+        camera can look for it; False when the file cannot be written."""
         try:
             target = self.directory / f"{job_id}.kicad_pcb"
             temp = target.with_suffix(".kicad_pcb.tmp")
@@ -1477,12 +1473,10 @@ class JobStore:
     def keep_upload(self, job_id: str, name: str, data: bytes) -> bool:
         """Keeps the file a board job was imported from beside it, so it can
         be imported again for another width; a KiCad board is the one kept
-        for the camera. False when there is nowhere to keep it."""
+        for the camera. False when the file cannot be written."""
         suffix = Path(name).suffix.lower()
         if suffix == ".kicad_pcb":
             return self.keep_board(job_id, data)
-        if self.directory is None:
-            return False
         try:
             target = self.directory / f"{job_id}.upload{suffix}"
             temp = target.with_name(target.name + ".tmp")
@@ -1497,21 +1491,15 @@ class JobStore:
         suffix = Path(name).suffix.lower()
         if suffix == ".kicad_pcb":
             return self.board_path(job_id)
-        if self.directory is None:
-            return None
         path = self.directory / f"{job_id}.upload{suffix}"
         return path if path.is_file() else None
 
     def board_path(self, job_id: str) -> Path | None:
         """The board file kept for a job, when there is one."""
-        if self.directory is None:
-            return None
         path = self.directory / f"{job_id}.kicad_pcb"
         return path if path.is_file() else None
 
     def _write(self, job: Job) -> None:
-        if self.directory is None:
-            return
         target = self.directory / f"{job.id}.json"
         temp = target.with_suffix(".json.tmp")
         temp.write_text(job.model_dump_json(), encoding="utf-8")
