@@ -42,7 +42,7 @@ QUALITY = 90
 INDEX = "entries.jsonl"
 # A file the log may hand out: an entry's picture, never a path.
 FILE_NAME = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9]{3}(-pose)?\.(jpg|svg)$")
-CAMERAS = ("head", "up")
+CAMERAS = ("head", "up", "top")
 
 # Colors of the marks, Solarized: the center cyan, the search circle and the
 # line base1, a spot found magenta, a spot missed red.

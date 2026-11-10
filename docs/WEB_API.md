@@ -663,8 +663,10 @@ The pose is read from pcbv when the state is asked for; the page polls
 
 With logging on, every look a camera routine takes keeps the picture the
 finder looked at: the head camera finding its mark, the up camera centering
-the nozzle and looking at a part, and a G-code device's run looking at each
-part it picked. A look that found nothing is kept as well. A photo can be
+the nozzle, measuring its runout and looking at a part, the G-code
+device's top camera measuring its offset and finding fiducials, a
+feeder's marks and parts in their pockets, and a G-code device's run
+looking at each part it picked. A look that found nothing is kept as well. A photo can be
 taken by hand at any time, logging on or not. Each entry keeps the picture
 as it was (JPEG), the same picture with what the finder found drawn over it
 (an SVG holding the JPEG: the picture's center, the circle searched, the
@@ -675,9 +677,9 @@ entry; the oldest go past 300 entries.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/camlog?limit=100&camera=up` | `{"enabled": false, "count": n, "entries": [entry, ...]}`, the newest first, of one camera (`head` or `up`) when named; 400 for another name |
+| `GET /api/camlog?limit=100&camera=up` | `{"enabled": false, "count": n, "entries": [entry, ...]}`, the newest first, of one camera (`head`, `up` or `top`, the G-code device's) when named; 400 for another name |
 | `PUT /api/camlog` | `{"enabled": true}`: logging on or off, kept across restarts; answers as `GET` |
-| `POST /api/camlog/photo` | `{"camera": "head", "find": true}`: a photo now, kept whatever the switch says; with `find` the camera's finder looks first (the head camera for a dark mark, the up camera for a part of its polarity) and what it found is drawn; answers the entry; 409 while the camera is not running |
+| `POST /api/camlog/photo` | `{"camera": "head", "find": true}`: a photo now, kept whatever the switch says; with `find` the camera's finder looks first (the head camera for a dark mark, the up camera for a part of its polarity, the top camera for its mark's shade) and what it found is drawn; answers the entry; 409 while the camera is not running |
 | `GET /api/camlog/{name}` | a kept picture by its file name (`<id>.jpg`, `<id>.svg`, `<id>-pose.jpg`); 404 for any other name |
 | `DELETE /api/camlog` | forgets every entry and its pictures: `{"deleted": n}` |
 
@@ -742,26 +744,67 @@ three times it); `[gcode]` `init` and `end` (lines), `move` (the move
 word), `x`, `y`, `z`, `rotation` (axis letters), `wait` (answered once
 the moves queued have run, sent before every vacuum switch), `pick` and
 `place` (vacuum on and off), `dwell` (`{ms}` or `{s}` for the time),
-`home`, `position`, `stop` (a quickstop, sent ahead of its turn);
+`home`, `position`, `stop` (a quickstop, sent ahead of its turn),
+`rotation_cw` (true when a positive rotation turns the nozzle clockwise
+seen from above: every angle goes out negated);
 `[motion]` `feed_xy`, `feed_z`, `safe_z`, `place_z`, `pick_dwell_ms`,
-`place_dwell_ms`; `[camera]` `z` (the height the nozzle is sharp at over
-the up camera, when it is fixed to this machine); and `[[feeder]]`
+`place_dwell_ms`, `discard` (X Y Z where a part that failed a check is
+let go; left out, it goes back into its pocket), `pick_tries` (pockets
+tried for one part, default 3); `[vacuum]` `read` (the line whose answer
+carries the sensor's reading), `pattern` (a regular expression whose
+group is the reading; default Marlin's `T:` of M105; OpenPnP's
+`(?<Value>...)` reads too), `part_on` (low and high reading with a part
+held, read after each pick), `part_off` (with the nozzle empty, read
+after each place); `[camera]` `z` (the height the nozzle is sharp at over
+the up camera, when it is fixed to this machine), `max_offset` (mm a
+part's center may sit off the nozzle's, default 1), `max_turn` (degrees a
+part may sit off its angle, default 15), `size_tolerance` (fraction a
+part's length or width may differ from the one expected, default 0.3; 0
+checks no size); `[top_camera]` (a camera on the head looking down) `z`
+(the height the head looks from), `offset` (its picture's center from the
+nozzle as designed, a first guess), `fiducial` (dark or bright), `within`
+(mm from where it is expected that a fiducial, mark or part is looked
+for, default 2); and `[[feeder]]`
 tables: `id`, `match` (words a part's value and footprint must all hold),
 `at` (the first part's X Y Z), `pitch` (X Y from one part to the next, or
 from column to column of a tray), `count` (0 for a feeder that presents
 every part at `at`), `columns` and `row_pitch` (a tray, taken row by
 row), `rotation` (the parts' angle in it), `place_z`, `feed` (a line or a
 list of lines sent before each pick), `vision` (each part is looked at
-over the up camera between its pick and its place: the nozzle goes over
-the camera at `[camera] z`, the part's spot gives its center's offset
-from the nozzle's, and the place moves by that offset turned with the
-nozzle; a part of such a feeder is skipped until the nozzle has been
-centered over the camera on the device, and a run needs the camera
-running). The board's place on the
+over the up camera between its pick and its place, turned to the angle it
+goes down at; its offset, angle and size are checked, the angle corrected
+and looked at again, and it is placed where its center lands; a part of
+such a feeder is skipped until the nozzle has been centered over the
+camera on the device, and a run needs the camera running), `size` (the
+part's length and width as the cameras see it; left out, the extent of
+its footprint's F.Fab drawing), `pocket` (dark or bright: the top camera
+looks at each pocket before its pick and picks where the part is; an
+empty pocket is passed over), `marks` (one or two places of marks on the
+feeder, found with the top camera before its first pick in a run; its
+places follow them) and `mark` (their shade). The board's place on the
 device is fitted from references, a part of the job paired with where it
 is on the device: one gives a shift, turned by the typed `angle`; two or
-more a turn and a shift. The backend keeps the profile picked, the
-references, the angle and how many parts each feeder has given.
+more a turn and a shift. Two or more fiducials the top camera found
+(`"by": "fiducial"`) outdo references given by hand (`"nozzle"`, or
+`"camera"` for Camera here). A fiducial is a footprint whose reference
+starts with FID or whose name holds "fiducial", kept whatever its
+position-file flags; the components list marks it (`fiducial`, with its
+largest pad as `diameter`) and gives every part's `body` (its F.Fab
+extent, longer side first, or null). The backend keeps the profile
+picked, the references, the angle, how many parts each feeder has given,
+the up camera's place and runout on the device, and the top camera.
+
+A run (placer.py) sends the init lines; with `fiducials` it finds the
+board's fiducials where the references put them and fits the board on
+them; then per part: the feeder's marks once, the pocket look, the pick,
+the vacuum read, the up camera's look, the place and the vacuum read once
+it let go. A pick that will not do (no part held, nothing on the nozzle,
+too far off, turned too far, the wrong size) is let go at `discard` or in
+its pocket and the next pocket tried, up to `pick_tries`; then the part
+is left out and listed in `failed`. A part still on the nozzle after its
+place stops the run, and so do two parts left out one after another. The
+program from *plan* is the plan before the run; the run changes it where
+a camera or the vacuum says otherwise.
 
 | Route | Does |
 | --- | --- |
@@ -774,26 +817,40 @@ references, the angle and how many parts each feeder has given.
 | `POST /api/pnp/device/connect`, `.../disconnect` | opens the profile's port, waits `wait_ms`, and sends `init`; 502 when the port does not open or a line is refused; a disconnect is 409 while a program is sent |
 | `POST /api/pnp/device/command` | `{"line": "M114"}`: one line and its answer, `{"reply": [...], ...state}`; 400 for anything but one printable line, 502 for a refusal or no answer |
 | `POST /api/pnp/device/home`, `.../position` | the profile's home (the state's `homed` then true), or its position command, read into `position` (`x`, `y`, `z`, `rotation` by the profile's letters) |
-| `POST /api/pnp/device/references` | `{"job", "ref", "at": [x, y]}`: the part's place on the device; `at` left out reads the device's position |
+| `POST /api/pnp/device/references` | `{"job", "ref", "at": [x, y], "camera": false}`: the part's place on the device; `at` left out reads the device's position, plus the top camera's offset with `camera` (the place is under the picture's center) |
 | `DELETE /api/pnp/device/references?job=ID&ref=R1` | drops a reference, or every one of the job without `ref` |
 | `POST /api/pnp/device/plan` | `{"job", "refs": ["R1"]}` (`refs` left out: every part that can be): `{"parts": [{"ref", "feeder", "index", "vision"}], "skipped": [{"ref", "reason"}], "fit": {...}, "lines": 42, "text": "..."}`; a part on the back, one not to be fitted, one no feeder holds and one whose feeder is empty are skipped, with why; 400 without a reference |
 | `GET /api/pnp/device/program.gcode?job=ID&refs=R1,C2` | the program as a file |
-| `POST /api/pnp/device/run` | plans and sends the program on its own thread; each part counts against its feeder once its last line is answered; 409 while one is sent |
+| `POST /api/pnp/device/run` | `{"job", "refs", "fiducials": false}`: places the parts on its own thread as above; each pick counts against its feeder once answered; 409 while one is sent, 400 when a camera it looks with is not running |
 | `POST /api/pnp/device/stop` | sends the profile's `stop` at once and nothing after the line in flight |
 | `POST /api/pnp/device/goto` | `{"job", "ref"}`: the nozzle to `safe_z` and over the part's place |
 | `POST /api/pnp/device/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
-| `POST /api/pnp/device/nozzle` | `{"step": 1.0}`: the up camera's nozzle routine (as `POST /api/pnp/nozzle`) on the device: its moves are the profile's move word and wait command, its place read with the position command; what it measures is kept as the state's `camera`. The routine shows in the up camera state with `"target": "device"`, and other device lines are 409 meanwhile |
+| `POST /api/pnp/device/nozzle` | `{"step": 1.0}`: the up camera's nozzle routine (as `POST /api/pnp/nozzle`) on the device, the nozzle turned to 0: its moves are the profile's move word and wait command, its place read with the position command; what it measures is kept as the state's `camera`. The routine shows in the up camera state with `"target": "device"`, and other device lines are 409 meanwhile |
+| `POST /api/pnp/device/runout` | over the up camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the up camera's routine |
+| `POST /api/pnp/device/fiducials` | `{"job"}`: the top camera finds the board's fiducials where the references put them; two or more replace the hand references (`by: fiducial`); fails when one is not within `within`, or they disagree with their fit by over 0.25 mm. Kind `fiducials` in `top.routine` |
+| `PUT /api/pnp/device/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again |
+| `POST /api/pnp/device/top/start`, `.../stop` | starts or stops its pcbv |
+| `GET /api/pnp/device/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
+| `POST /api/pnp/device/top/mark` | the nozzle's tip is over a mark: the device's position is kept as `mark_at` |
+| `POST /api/pnp/device/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the profile's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
+| `POST /api/pnp/device/top/abort` | ends the top camera's routine and sends the stop command |
 
 Device state:
 
 ```json
 {"profile": "openpnp-marlin", "angle": null,
- "references": [{"job": "a1b2", "ref": "R1", "at": [100.0, 50.0]}],
+ "references": [{"job": "a1b2", "ref": "FID1", "at": [100.0, 50.0], "by": "fiducial"}],
  "taken": {"r-10k-0603": 2},
- "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true},
+ "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "runout": [0.04, -0.01]},
+ "top": {"running": true, "device": "/dev/video2", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "mark_spot": "dark",
+         "mark_at": [120.0, 80.0], "offset": [35.0, -10.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": false,
+         "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 15.0}, "routine": null,
+         "fiducials": {"job": "a1b2", "found": [{"ref": "FID1", "at": [100.0, 50.0]}], "fit": {"rotation": 0.6, "rms": 0.01}}},
  "connected": true, "url": "/dev/ttyACM1", "lost": null, "running": false, "homed": true,
  "position": {"x": 100.0, "y": 50.0, "z": 0.0},
- "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"], "error": null, "seconds": 12.3},
+ "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"],
+              "failed": [{"ref": "C3", "reason": "the vacuum read 20 with no part held (40 to 100 with one)"}],
+              "doing": null, "job": "a1b2", "error": null, "seconds": 12.3},
  "log": [{"dir": "tx", "text": "M114"}, {"dir": "rx", "text": "ok"}]}
 ```
 

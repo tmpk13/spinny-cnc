@@ -10,8 +10,13 @@ nobody asked for (a boot banner, `echo:`, `wait`) go to the log only, and
 any left over are cleared before the next line goes out, so a late `ok`
 can never be taken for the next line's.
 
-`DeviceMover` lets the up camera's routines move the device's head: a
-move, then the wait command, so a picture is read with the head at rest.
+`DeviceMover` lets the cameras' routines move the device's head: a move,
+then the wait command, so a picture is read with the head at rest.
+
+A run sends a job on its own thread: a fixed program (`run`), or a
+placement that decides each next line from what the cameras and the
+vacuum sensor say (`run_job`, see placer.py). Every line it sends is
+counted, and a stop ends it after the line in flight.
 """
 
 from __future__ import annotations
@@ -61,6 +66,12 @@ class RunProgress:
     part: str | None = None
     placed: list[str] = field(default_factory=list)
     error: str | None = None
+    # Parts left out under way, with why: no part came in their tries.
+    failed: list[dict] = field(default_factory=list)
+    # What the run is doing now, in words (finding the fiducials, a retry).
+    doing: str | None = None
+    # The job placed, when the run places one.
+    job: str | None = None
     started: float = field(default_factory=time.monotonic, repr=False)
     finished: float | None = field(default=None, repr=False)
 
@@ -69,12 +80,42 @@ class RunProgress:
         return {
             "state": self.state,
             "sent": self.sent,
-            "total": self.total,
+            "total": max(self.total, self.sent),
             "part": self.part,
             "placed": list(self.placed),
+            "failed": [dict(entry) for entry in self.failed],
+            "doing": self.doing,
+            "job": self.job,
             "error": self.error,
             "seconds": round(end - self.started, 1),
         }
+
+
+class RunContext:
+    """What a job sent on the run thread has of the link: `send` a line
+    (counted, refused once the run is told to stop), its progress, and
+    `publish` to show it."""
+
+    def __init__(self, link: "GcodeDevice", timeout: float, progress: RunProgress) -> None:
+        self.link = link
+        self.timeout = timeout
+        self.progress = progress
+
+    def stopped(self) -> bool:
+        return self.link._stop.is_set()
+
+    def send(self, line: str) -> list[str]:
+        if self.link._stop.is_set():
+            raise DeviceLinkError("stopped")
+        code = code_of(line)
+        if not code:
+            return []
+        reply = self.link.command(code, self.timeout)
+        self.progress.sent += 1
+        return reply
+
+    def publish(self) -> None:
+        self.link._publish()
 
 
 class GcodeDevice:
@@ -254,68 +295,61 @@ class GcodeDevice:
 
     # --- a program ---------------------------------------------------------------
 
-    def run(
+    def run(self, plan: Plan, timeout: float, on_pick: Callable[[Block], None], on_end: Callable[[RunProgress], None] | None = None) -> None:
+        """Sends a fixed program on its own thread, every line as planned;
+        `on_pick` hears of every part once its pick lines are answered, so a
+        stop or a failure after a pick leaves the feeders counted by what
+        was taken from them."""
+        if not plan.blocks:
+            raise DeviceLinkError("the program places no part")
+
+        def job(ctx: RunContext) -> None:
+            for line in plan.head:
+                ctx.send(line)
+            for block in plan.blocks:
+                ctx.progress.part = block.ref
+                ctx.publish()
+                for line in block.pick:
+                    ctx.send(line)
+                on_pick(block)
+                for line in [*block.check, *block.place, *block.release]:
+                    ctx.send(line)
+                ctx.progress.placed.append(block.ref)
+                ctx.publish()
+            for line in plan.tail:
+                ctx.send(line)
+
+        self.run_job(job, sum(1 for line in plan.text().splitlines() if code_of(line)), timeout, on_end)
+
+    def run_job(
         self,
-        plan: Plan,
+        job: Callable[[RunContext], None],
+        total: int,
         timeout: float,
-        on_pick: Callable[[Block], None],
         on_end: Callable[[RunProgress], None] | None = None,
-        look: Callable[[Block], list[str]] | None = None,
+        job_id: str | None = None,
     ) -> None:
-        """Sends a program on its own thread; `on_pick` hears of every part
-        once its pick lines are answered, so a stop or a failure after a pick
-        leaves the feeders counted by what was taken from them. `look`, for
-        a part marked for the up camera, is called between its pick and its
-        place and answers the place lines to send instead, made from where
-        the part was seen."""
+        """Sends a job on its own thread: `job` sends its lines through the
+        context it is given, `total` is how many it means to send, as far
+        as it can tell, and `job_id` the board job it places, if any. A job
+        raises DeviceLinkError to end in an error."""
         if not self.connected:
             raise DeviceLinkError(self._lost or "the device is not connected")
         if self.running:
             raise DeviceLinkError("a program is already being sent")
-        if not plan.blocks:
-            raise DeviceLinkError("the program places no part")
-        lines = [code_of(line) for line in plan.head] + [code_of(line) for block in plan.blocks for line in block.lines] + [code_of(line) for line in plan.tail]
         self._stop.clear()
-        self.progress = RunProgress(total=sum(1 for line in lines if line))
+        self.progress = RunProgress(total=total, job=job_id)
         progress = self.progress
-        self._thread = threading.Thread(target=self._run, args=(plan, timeout, progress, on_pick, on_end, look), name="gcode-device-run", daemon=True)
+        self._thread = threading.Thread(target=self._run_job, args=(job, timeout, progress, on_end), name="gcode-device-run", daemon=True)
         self._thread.start()
         self._publish()
 
-    def _send(self, line: str, timeout: float, progress: RunProgress) -> None:
-        if self._stop.is_set():
-            raise DeviceLinkError("stopped")
-        code = code_of(line)
-        if not code:
-            return
-        self.command(code, timeout)
-        progress.sent += 1
-
-    def _run(self, plan: Plan, timeout: float, progress: RunProgress, on_pick, on_end, look) -> None:
+    def _run_job(self, job: Callable[[RunContext], None], timeout: float, progress: RunProgress, on_end) -> None:
         try:
-            for line in plan.head:
-                self._send(line, timeout, progress)
-            for block in plan.blocks:
-                progress.part = block.ref
-                self._publish()
-                for line in block.pick:
-                    self._send(line, timeout, progress)
-                on_pick(block)
-                place = block.place
-                if block.vision and look is not None:
-                    if self._stop.is_set():
-                        raise DeviceLinkError("stopped")
-                    place = look(block)
-                    # The look's lines take the planned place lines' room.
-                    progress.total += sum(1 for line in place if code_of(line)) - sum(1 for line in block.place if code_of(line))
-                    self._publish()
-                for line in place:
-                    self._send(line, timeout, progress)
-                progress.placed.append(block.ref)
-                self._publish()
-            for line in plan.tail:
-                self._send(line, timeout, progress)
+            job(RunContext(self, timeout, progress))
             progress.part = None
+            progress.doing = None
+            progress.total = progress.sent
             progress.state = DONE
         except DeviceLinkError as exc:
             if self._stop.is_set():
@@ -328,6 +362,7 @@ class GcodeDevice:
         except Exception as exc:
             progress.state = ERROR
             progress.error = repr(exc)
+            log.exception("gcode device run")
         finally:
             progress.finished = time.monotonic()
             if on_end is not None:
@@ -370,12 +405,22 @@ class DeviceMover(Mover):
 
     name = "device"
     letters = ("X", "Y")
+    can_turn = True
 
-    def __init__(self, link: GcodeDevice, device: Device, in_run: bool = False, aborted: Callable[[], bool] | None = None) -> None:
+    def __init__(
+        self,
+        link: GcodeDevice,
+        device: Device,
+        in_run: bool = False,
+        aborted: Callable[[], bool] | None = None,
+        send: Callable[[str], list[str]] | None = None,
+    ) -> None:
         self.link = link
         self.device = device
         self.in_run = in_run
         self._aborted = aborted or (lambda: False)
+        # A run's own sender, which counts the lines it sends.
+        self._send = send
         self._at: list[float | None] = [0.0, 0.0, None]
 
     def check(self) -> None:
@@ -419,6 +464,10 @@ class DeviceMover(Mover):
         if not self.in_run:
             self.link.stop(self.device.stop)
 
+    def turn(self, degrees: float) -> None:
+        self._command(f"{self.device.move} {self.device.angle_word(degrees)} F{num(self.device.feed_xy, 0)}")
+        self._wait()
+
     def _z(self, height: float) -> None:
         self._command(f"{self.device.move} {self.device.axes[2]}{num(height)} F{num(self.device.feed_z, 0)}")
         self._wait()
@@ -432,6 +481,8 @@ class DeviceMover(Mover):
         if self.stopped():
             raise PnpError("stopped")
         try:
+            if self._send is not None:
+                return self._send(line)
             return self.link.command(line, self.device.timeout)
         except DeviceLinkError as exc:
             raise PnpError(str(exc)) from exc

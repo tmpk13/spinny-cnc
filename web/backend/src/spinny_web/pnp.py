@@ -46,6 +46,16 @@ Point = tuple[float, float]
 RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
 NOZZLE_STEPS = ("lifting", "moving", "lowering", "scale", "centering", "done")
 PART_STEPS = ("lifting", "moving", "lowering", "looking", "done")
+RUNOUT_STEPS = ("lifting", "moving", "lowering", "turning", "done")
+# The nozzle's angles the runout routine looks at its tip from, degrees.
+RUNOUT_ANGLES = (0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
+# A runout smaller than this many pixels of the picture, or than this many
+# mm, tells nothing of which way the nozzle turned.
+RUNOUT_VISIBLE_PX = 2.0
+RUNOUT_VISIBLE_MM = 0.01
+# A part whose long side is not this much longer than its short one gives
+# no angle from its equivalent ellipse.
+ELONGATED = 1.3
 POLARITIES = ("dark", "bright")
 # The head is moved until the nozzle is this close to the picture's
 # center, mm, at most this many times.
@@ -62,6 +72,10 @@ HEIGHT_LIMIT = 100.0
 
 class PnpError(Exception):
     """The up camera, or its routine, is in the wrong state for the request."""
+
+
+class NoSpot(PnpError):
+    """The picture shows nothing of the shade looked for where it should."""
 
 
 # --- the parts of a board -------------------------------------------------------
@@ -109,7 +123,9 @@ def _number(value, default: float = 0.0) -> float:
 @dataclass
 class Footprint:
     """A footprint as the board file has it: KiCad's board frame, mm with y
-    down, and its angle in degrees, counterclockwise as drawn."""
+    down, and its angle in degrees, counterclockwise as drawn. `body` is
+    the extent of its fabrication drawing in its own frame, longer side
+    first, when it has one; `diameter` a fiducial's largest pad."""
 
     ref: str
     value: str
@@ -121,13 +137,78 @@ class Footprint:
     pads: int
     smd: bool
     dnp: bool
+    fiducial: bool = False
+    body: tuple[float, float] | None = None
+    diameter: float | None = None
+
+
+FAB_LAYERS = ("F.Fab", "B.Fab")
+
+
+def is_fiducial(ref: str, footprint: str) -> bool:
+    """A fiducial by KiCad's habits: a reference starting FID, or a
+    footprint named for one (Fiducial_1mm_Mask2mm)."""
+    return ref.upper().startswith("FID") or "fiducial" in footprint.lower()
+
+
+def _points_of(item: list) -> list[tuple[float, float]]:
+    """The points a footprint's drawing item reaches: a line's or a
+    rectangle's ends, a polygon's corners, an arc's ends and middle, and a
+    circle's box."""
+    points: list[tuple[float, float]] = []
+    for key in ("start", "end", "mid"):
+        found = _child(item, key)
+        if found is not None and len(found) >= 3:
+            points.append((_number(found[1]), _number(found[2])))
+    center = _child(item, "center")
+    if center is not None and len(center) >= 3 and item[0] == "fp_circle":
+        cx, cy = _number(center[1]), _number(center[2])
+        radius = math.dist((cx, cy), points[-1]) if points else 0.0
+        points = [(cx - radius, cy - radius), (cx + radius, cy + radius)]
+    pts = _child(item, "pts")
+    if pts is not None:
+        for xy in pts[1:]:
+            if isinstance(xy, list) and len(xy) >= 3 and xy[0] == "xy":
+                points.append((_number(xy[1]), _number(xy[2])))
+    return points
+
+
+def body_of(node: list) -> tuple[float, float] | None:
+    """The extent of a footprint's fabrication drawing (F.Fab, or B.Fab on
+    the back), in its own frame, longer side first; None without one."""
+    points: list[tuple[float, float]] = []
+    for item in node:
+        if not (isinstance(item, list) and item and item[0] in ("fp_line", "fp_rect", "fp_poly", "fp_circle", "fp_arc")):
+            continue
+        layer = _child(item, "layer")
+        if layer is None or len(layer) < 2 or layer[1] not in FAB_LAYERS:
+            continue
+        points.extend(_points_of(item))
+    if len(points) < 2:
+        return None
+    width = max(x for x, _ in points) - min(x for x, _ in points)
+    height = max(y for _, y in points) - min(y for _, y in points)
+    if width <= 0.0 or height <= 0.0:
+        return None
+    return (round(max(width, height), 4), round(min(width, height), 4))
+
+
+def largest_pad(node: list) -> float | None:
+    sizes = []
+    for item in node:
+        if isinstance(item, list) and item and item[0] == "pad":
+            size = _child(item, "size")
+            if size is not None and len(size) >= 3:
+                sizes.append(max(_number(size[1]), _number(size[2])))
+    return max(sizes) if sizes else None
 
 
 def footprints_of(text: str) -> list[Footprint]:
     """The footprints of a .kicad_pcb text, KiCad 5 (`module`, `fp_text`)
     to 10 (`footprint`, `property`), in file order. A footprint kept out of
-    the position files or on the board only (a logo, a fiducial drawn as
-    one) is not a part, and neither is one with no reference."""
+    the position files or on the board only (a logo) is not a part, and
+    neither is one with no reference; a fiducial is kept whatever its
+    flags, marked as one, for the top camera to find."""
     tree = parse_sexp(text)
     root = tree[0] if tree and isinstance(tree[0], list) else tree
     found: list[Footprint] = []
@@ -145,7 +226,9 @@ def footprints_of(text: str) -> list[Footprint]:
                 value = item[2]
         attr = _child(node, "attr") or []
         flags = {word for word in attr[1:] if isinstance(word, str)}
-        if not ref or "*" in ref or "exclude_from_pos_files" in flags or "board_only" in flags:
+        name = node[1] if len(node) > 1 and isinstance(node[1], str) else ""
+        fiducial = bool(ref) and is_fiducial(ref, name)
+        if not ref or "*" in ref or (("exclude_from_pos_files" in flags or "board_only" in flags) and not fiducial):
             continue
         at = _child(node, "at") or ["at", "0", "0"]
         layer = _child(node, "layer")
@@ -155,7 +238,7 @@ def footprints_of(text: str) -> list[Footprint]:
             Footprint(
                 ref=ref,
                 value=value,
-                footprint=node[1] if len(node) > 1 and isinstance(node[1], str) else "",
+                footprint=name,
                 side=side,
                 x=_number(at[1] if len(at) > 1 else 0),
                 y=_number(at[2] if len(at) > 2 else 0),
@@ -163,6 +246,9 @@ def footprints_of(text: str) -> list[Footprint]:
                 pads=pads,
                 smd="smd" in flags,
                 dnp="dnp" in flags,
+                fiducial=fiducial,
+                body=body_of(node),
+                diameter=largest_pad(node) if fiducial else None,
             )
         )
     return found
@@ -207,6 +293,9 @@ def job_components(job, path: Path) -> list[dict]:
                 "pads": footprint.pads,
                 "smd": footprint.smd,
                 "dnp": footprint.dnp,
+                "fiducial": footprint.fiducial,
+                "body": list(footprint.body) if footprint.body is not None else None,
+                "diameter": footprint.diameter,
             }
         )
     return parts
@@ -224,6 +313,48 @@ def picture_to_machine(dx: float, dy: float, mm_per_px: float, roll: float, mirr
     radians = math.radians(roll)
     c, s = math.cos(radians), math.sin(radians)
     return (mm_per_px * (u * c - v * s), mm_per_px * (u * s + v * c))
+
+
+def picture_angle_to_machine(degrees: float, roll: float, mirror: bool) -> float:
+    """A direction seen in the picture (degrees from its +x toward its +y,
+    which points down) as a direction in the machine's frame, degrees
+    counterclockwise from +X."""
+    radians = math.radians(degrees)
+    mx, my = picture_to_machine(math.cos(radians), math.sin(radians), 1.0, roll, mirror)
+    return math.degrees(math.atan2(my, mx))
+
+
+def fit_circle(points: list[Point]) -> tuple[Point, float, float]:
+    """The circle through points by least squares on its equation (Kasa's
+    fit): its center, its radius and the points' rms distance from it."""
+    n = len(points)
+    if n < 3:
+        raise ValueError("a circle needs three points")
+    mx = sum(x for x, _ in points) / n
+    my = sum(y for _, y in points) / n
+    # Centered, the equation x^2 + y^2 = 2 a x + 2 b y + c is a 2 x 2 solve.
+    suu = suv = svv = suuu = svvv = suvv = svuu = 0.0
+    for x, y in points:
+        u, v = x - mx, y - my
+        suu += u * u
+        suv += u * v
+        svv += v * v
+        suuu += u * u * u
+        svvv += v * v * v
+        suvv += u * v * v
+        svuu += v * u * u
+    det = suu * svv - suv * suv
+    if abs(det) < 1e-18:
+        # Every point at one place: a circle of no size there.
+        return (mx, my), 0.0, 0.0
+    rhs_u = 0.5 * (suuu + suvv)
+    rhs_v = 0.5 * (svvv + svuu)
+    uc = (rhs_u * svv - rhs_v * suv) / det
+    vc = (rhs_v * suu - rhs_u * suv) / det
+    center = (uc + mx, vc + my)
+    radius = math.sqrt(uc * uc + vc * vc + (suu + svv) / n)
+    rms = math.sqrt(sum((math.dist(center, point) - radius) ** 2 for point in points) / n)
+    return center, radius, rms
 
 
 def calibrate(moved_x: Point, moved_y: Point, step: float) -> tuple[float, float, bool]:
@@ -349,6 +480,10 @@ class CameraPlace:
     mm_per_px: float = 0.0
     roll: float = 0.0
     mirror: bool = True
+    # Where the nozzle's tip sits off its turning axis with the nozzle
+    # turned to 0, mm in the machine's frame; None until measured. The
+    # position above is the head's with the tip at 0 over the center.
+    runout: Point | None = None
 
     @property
     def measured(self) -> bool:
@@ -361,6 +496,7 @@ class CameraPlace:
             "mm_per_px": self.mm_per_px,
             "roll": self.roll,
             "mirror": self.mirror,
+            "runout": list(self.runout) if self.runout is not None else None,
         }
 
 
@@ -372,6 +508,8 @@ class Mover:
 
     name = "machine"
     letters = ("R", "Z")
+    # Whether the nozzle turns: only then are `turn` and the runout routine there.
+    can_turn = False
 
     def check(self) -> None:
         """Refuses, at once, a machine the routine cannot run on."""
@@ -402,6 +540,10 @@ class Mover:
 
     def halt(self) -> None:
         raise NotImplementedError
+
+    def turn(self, degrees: float) -> None:
+        """Turns the nozzle to `degrees`, counterclockwise from above."""
+        raise PnpError("this machine does not turn its nozzle")
 
     def describe(self, point: Point) -> str:
         return f"{self.letters[0]} {point[0]:.3f} {self.letters[1]} {point[1]:.3f}"
@@ -674,7 +816,7 @@ class UpCamera:
         self._publish()
 
     def _run(self, mover: Mover, progress: RoutineProgress, body: Callable[[RoutineProgress], None]) -> None:
-        what = "centering the nozzle" if progress.kind == "nozzle" else "looking at the part"
+        what = {"nozzle": "centering the nozzle", "runout": "measuring the runout"}.get(progress.kind, "looking at the part")
         try:
             body(progress)
             self._step(progress, "done")
@@ -695,15 +837,19 @@ class UpCamera:
         finally:
             self._publish()
 
-    def _over_camera(self, mover: Mover, progress: RoutineProgress | None, place: CameraPlace) -> None:
-        """Up to the travel height, over the camera when its place is known,
-        and down to the height the nozzle is sharp at."""
+    def _over_camera(self, mover: Mover, progress: RoutineProgress | None, place: CameraPlace, angle: float = 0.0, head: Point | None = None) -> None:
+        """Up to the travel height, the nozzle turned to `angle` where it
+        turns, over the camera (at `head`, else its place, when known), and
+        down to the height the nozzle is sharp at."""
         mover.begin()
         self._step(progress, "lifting")
         mover.lift()
+        if mover.can_turn:
+            mover.turn(angle)
         self._step(progress, "moving")
-        if place.position is not None:
-            mover.go(place.position)
+        where = head if head is not None else place.position
+        if where is not None:
+            mover.go(where)
         self._step(progress, "lowering")
         if place.height is not None:
             mover.lower(place.height)
@@ -712,7 +858,8 @@ class UpCamera:
         settings = self.settings()
         self._over_camera(mover, progress, place)
         polarity = settings.nozzle_spot
-        seen = CameraPlace(place.position, place.height, place.mm_per_px, place.roll, place.mirror)
+        # The runout is the nozzle's own and outlasts a new center.
+        seen = CameraPlace(place.position, place.height, place.mm_per_px, place.roll, place.mirror, place.runout)
         spot = self._spot(mover, progress, polarity, seen, "no nozzle in the picture: jog it over the up camera and center again")
         if step > 0.0 or seen.mm_per_px <= 0.0:
             self._step(progress, "scale")
@@ -746,31 +893,118 @@ class UpCamera:
             f" {seen.mm_per_px * 1000.0:.1f} um per pixel, roll {seen.roll:+.2f} degrees{', mirrored' if seen.mirror else ''}",
         )
 
-    def look_at_part(self, mover: Mover, place: CameraPlace, progress: RoutineProgress | None = None) -> dict:
-        """Over the camera with the part the nozzle holds: where its center
-        sits against the nozzle's, mm in the machine's frame, and how big it
-        looks. Also what a G-code device's program calls between a pick and
-        its place."""
+    def look_at_part(
+        self,
+        mover: Mover,
+        place: CameraPlace,
+        progress: RoutineProgress | None = None,
+        angle: float = 0.0,
+        head: Point | None = None,
+        size: tuple[float, float] | None = None,
+    ) -> dict:
+        """Over the camera with the part the nozzle holds, the nozzle turned
+        to `angle` where it turns and the head at `head` (the camera's place
+        by default): where the part's center sits against the picture's
+        center, mm in the machine's frame (`dx`, `dy`), how big it looks,
+        and the direction of its long side in the machine's frame, degrees
+        (`angle`; None when the picture tells none). `size`, the length and
+        width expected, keeps the finder to spots of about that area. Also
+        what a G-code device's run calls between a pick and its place."""
         settings = self.settings()
-        self._over_camera(mover, progress, place)
+        self._over_camera(mover, progress, place, angle, head)
         self._step(progress, "looking")
         if mover.stopped():
             raise PnpError("stopped")
-        reply = self.client.spot(polarity=settings.part_spot)
+        limits: dict = {}
+        if size is not None and place.mm_per_px > 0.0:
+            area = size[0] * size[1] / (place.mm_per_px * place.mm_per_px)
+            limits = {"min_area": area * 0.25, "max_area": area * 4.0}
+        reply = self.client.spot(polarity=settings.part_spot, **limits)
         self._log_look("looking at the part" if progress is not None else "placing: looking at the part", "looking", reply, settings.part_spot)
         if not reply.get("found"):
-            raise PnpError("no part in the picture: is one on the nozzle, and is the part spot the right polarity?")
+            raise NoSpot("no part in the picture: is one on the nozzle, and is the part spot the right polarity?")
+        return self._part_seen(reply, place, progress)
+
+    def _part_seen(self, reply: dict, place: CameraPlace, progress: RoutineProgress | None) -> dict:
         dx, dy = float(reply.get("dx", 0.0)), float(reply.get("dy", 0.0))
         off = picture_to_machine(dx, dy, place.mm_per_px, place.roll, place.mirror)
         if progress is not None:
             progress.spot = Spot(dx=dx, dy=dy, mm=math.hypot(*off))
+        rect = reply.get("rect")
+        direction = None
+        if isinstance(rect, dict) and all(isinstance(rect.get(key), (int, float)) for key in ("length", "width", "angle")):
+            length, width = float(rect["length"]), float(rect["width"])
+            direction = picture_angle_to_machine(float(rect["angle"]), place.roll, place.mirror)
+        else:
+            length, width = float(reply.get("major", 0.0)), float(reply.get("minor", 0.0))
+            # An older pcbv sends no rectangle: a clearly long part still
+            # points along its ellipse's axis.
+            if isinstance(reply.get("angle"), (int, float)) and width > 0.0 and length / width >= ELONGATED:
+                direction = picture_angle_to_machine(float(reply["angle"]), place.roll, place.mirror)
         return {
             "dx": round(off[0], 4),
             "dy": round(off[1], 4),
             "mm": round(math.hypot(*off), 4),
-            "length": round(float(reply.get("major", 0.0)) * place.mm_per_px, 3),
-            "width": round(float(reply.get("minor", 0.0)) * place.mm_per_px, 3),
+            "length": round(length * place.mm_per_px, 3),
+            "width": round(width * place.mm_per_px, 3),
+            "angle": round(direction, 3) if direction is not None else None,
         }
+
+    def measure_runout(self, mover: Mover, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool = False) -> None:
+        """Starts the runout routine on its own thread: the nozzle over the
+        camera, its tip found at six angles, and the circle they lie on
+        gives how far the tip sits off the turning axis. `rotation_cw` is
+        what the profile says of the axis, checked against the turn seen."""
+        if not mover.can_turn:
+            raise ValueError("this machine does not turn its nozzle: the runout is measured on a G-code device")
+        if not place.measured:
+            raise ValueError("the nozzle is not centered over the up camera yet: center it first")
+        self._begin("runout", RUNOUT_STEPS, mover, lambda progress: self._runout(mover, progress, place, keep, rotation_cw))
+
+    def _runout(self, mover: Mover, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool) -> None:
+        settings = self.settings()
+        self._over_camera(mover, progress, place, 0.0)
+        self._step(progress, "turning")
+        here = mover.here()
+        seen: list[Point] = []
+        try:
+            for angle in RUNOUT_ANGLES:
+                mover.turn(angle)
+                spot = self._spot(mover, progress, settings.nozzle_spot, place, f"the nozzle's tip left the picture at {angle:g} degrees")
+                seen.append(picture_to_machine(spot.dx, spot.dy, place.mm_per_px, place.roll, place.mirror))
+        finally:
+            if not mover.stopped():
+                mover.turn(0.0)
+        center, radius, rms = fit_circle(seen)
+        # The tip at 0 less the axis: how far off true the tip runs.
+        runout = (seen[0][0] - center[0], seen[0][1] - center[1])
+        if radius >= max(RUNOUT_VISIBLE_MM, RUNOUT_VISIBLE_PX * place.mm_per_px):
+            steps = []
+            for a, b in zip(seen, seen[1:]):
+                before = math.atan2(a[1] - center[1], a[0] - center[0])
+                after = math.atan2(b[1] - center[1], b[0] - center[0])
+                steps.append(math.degrees(math.atan2(math.sin(after - before), math.cos(after - before))))
+            mean = sum(steps) / len(steps)
+            if mean < 0.0:
+                fix = "false" if rotation_cw else "true"
+                raise PnpError(
+                    f"the tip went round clockwise as the nozzle was turned counterclockwise ({mean:+.0f} degrees a step):"
+                    f" the rotation axis turns the other way; set [gcode] rotation_cw = {fix} in the profile and measure again"
+                )
+            turns = "turns counterclockwise as the profile says"
+        else:
+            turns = "too small to show which way the nozzle turns"
+        kept = CameraPlace(
+            position=(round(here[0] - seen[0][0], 4), round(here[1] - seen[0][1], 4)),
+            height=place.height,
+            mm_per_px=place.mm_per_px,
+            roll=place.roll,
+            mirror=place.mirror,
+            runout=(round(runout[0], 4), round(runout[1], 4)),
+        )
+        keep(kept)
+        fit = f", the tips {rms * 1000.0:.0f} um rms off the circle" if rms > 0.0 else ""
+        self._message("info", f"nozzle runout {radius * 1000.0:.0f} um ({turns}){fit}")
 
     def _measure(self, mover: Mover, progress: RoutineProgress, place: CameraPlace) -> None:
         self.part_offset = self.look_at_part(mover, place, progress)
@@ -794,7 +1028,8 @@ class UpCamera:
         if mover.stopped():
             raise PnpError("stopped")
         reply = self.client.spot(polarity=polarity)
-        self._log_look("centering the nozzle" if progress.kind == "nozzle" else "looking at the part", progress.step, reply, polarity)
+        routine = {"nozzle": "centering the nozzle", "runout": "measuring the runout"}.get(progress.kind, "looking at the part")
+        self._log_look(routine, progress.step, reply, polarity)
         if not reply.get("found"):
             raise PnpError(missing)
         spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))

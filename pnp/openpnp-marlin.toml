@@ -20,6 +20,7 @@ x = "X"
 y = "Y"
 z = "Z"                  # grows upward
 rotation = "A"           # the nozzle's turn, degrees, absolute
+rotation_cw = false      # true when a positive A turns the nozzle clockwise seen from above
 wait = "M400"            # answered once every move queued has run
 pick = "M106"            # vacuum on
 place = "M107"           # vacuum off
@@ -35,12 +36,37 @@ safe_z = 0               # the height moves go across at
 place_z = -20            # the nozzle tip with a part on it at the board's top
 pick_dwell_ms = 200
 place_dwell_ms = 150
+pick_tries = 3           # pockets tried for one part before it is left out
+# discard = [10.0, 10.0, -15.0]  # where a part that failed a check is let go; left out, back in its pocket
+
+# A vacuum sensor: read after each pick (a part held, else the pick failed
+# and the next pocket is tried) and after each place (the nozzle empty,
+# else the run stops). The pattern's group is the reading; OpenPnP's
+# (?<Value>...) reads too.
+# [vacuum]
+# read = "M105"
+# pattern = "T:\\s*(-?[0-9]+(?:\\.[0-9]+)?)"
+# part_on = [40.0, 100.0]
+# part_off = [0.0, 10.0]
 
 # The up camera (the PNP tab's), when it is fixed to this machine: Center
-# nozzle on the device measures where it is; parts of a feeder marked
-# `vision` are looked at over it and placed where their center lands.
+# nozzle on the device measures where it is and Measure runout how far the
+# tip runs off true as it turns; parts of a feeder marked `vision` are
+# looked at over it turned to their angle, and placed where their center
+# lands, their angle corrected.
 # [camera]
 # z = -15                 # the height the nozzle tip is seen sharp at over it
+# max_offset = 1.0        # mm a part's center may sit off the nozzle's
+# max_turn = 15           # degrees a part may sit off its angle
+# size_tolerance = 0.3    # a part this fraction off its size is put back; 0 checks no size
+
+# The top camera on the head, looking down: it finds the board's fiducials
+# (footprints FID* or named Fiducial), a feeder's marks and a part in its pocket.
+# [top_camera]
+# z = 0                   # the height the head looks from; left out, the safe height
+# offset = [40.0, 0.0]    # its picture's center from the nozzle, as designed; Measure offset finds it
+# fiducial = "bright"     # how a fiducial looks to it
+# within = 2.0            # mm from where it is expected that a fiducial, mark or part is looked for
 
 # One table per feeder; a part is picked from the first one whose words its
 # value and footprint all hold.
@@ -62,4 +88,17 @@ rotation = 0               # the parts' angle as they sit in it, degrees
 # row_pitch = [0.0, 12.0]    # from row to row
 # count = 16
 # vision = true
+# size = [7.0, 7.0]          # the part as the cameras see it; left out, the footprint's F.Fab outline
 # feed = ["M400"]            # lines sent before each pick, for a feeder told to advance
+
+# A strip the top camera checks: its marks once a run (the strip's places
+# follow them), and each pocket before its pick (an empty one is passed over).
+# [[feeder]]
+# id = "c-100n-0402"
+# match = "100n 0402"
+# at = [100.0, 70.0, -22.0]
+# pitch = [2.0, 0.0]
+# count = 40
+# pocket = "bright"          # how a part in its pocket looks to the top camera
+# marks = [[98.0, 68.25], [178.0, 68.25]]  # sprocket holes or dots, one or two
+# mark = "dark"

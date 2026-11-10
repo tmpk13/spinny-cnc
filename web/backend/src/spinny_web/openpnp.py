@@ -14,10 +14,18 @@ its value and footprint all hold, at the feeder's next place (along a
 strip, or row by row in a tray), and puts it on its place on the
 machine, turned from the feeder's angle to its own. `ok` after a move
 means queued, so the wait command goes out before every vacuum switch,
-which must happen with the head at rest. A part from a feeder marked for
-the up camera is looked at over it between its pick and its place, which
-moves to where the part's center lands on its place: the offset seen
-turns with the nozzle as the part is turned to its angle.
+which must happen with the head at rest. With a vacuum sensor the
+reading after each pick says whether a part came along, and after each
+place whether it let go. A part from a feeder marked for the up camera
+is looked at over it between its pick and its place, turned to the angle
+it is placed at, and placed where its center lands, its angle corrected.
+A nozzle whose tip runs out of true as it turns is placed where its tip
+is at that angle.
+
+Every place on the device is a place of the nozzle's tip turned to 0:
+the head's X and Y with the tip over that point. The program here is the
+plan as it stands before the run; the run (`placer.py`) changes it where
+a camera or the vacuum sensor says otherwise.
 """
 
 from __future__ import annotations
@@ -39,6 +47,12 @@ LINE = re.compile(r"^[\x20-\x7e]*$")
 BAUDS = (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 500000, 921600, 1000000, 2000000)
 COORD_LIMIT = 10000.0
 FEED_LIMIT = 100000.0
+SHADES = ("dark", "bright")
+# Marlin's answer to M105 carries a sensor read through a thermistor
+# input as `T:12.34`.
+DEFAULT_VACUUM_PATTERN = r"T:\s*(-?[0-9]+(?:\.[0-9]+)?)"
+# OpenPnP's regular expressions name their group the Java way, (?<Value>...).
+JAVA_GROUP = re.compile(r"\(\?<(?![=!])")
 
 
 class DeviceError(ValueError):
@@ -76,6 +90,17 @@ class Feeder:
     feed: tuple[str, ...] = ()
     # Each part is looked at over the up camera before it is placed.
     vision: bool = False
+    # The part's length and width as the cameras see it, mm; None takes
+    # its footprint's body from the board file.
+    size: tuple[float, float] | None = None
+    # The shade of a part in its pocket to the top camera, which then
+    # looks at each pocket before its pick; None picks at the place.
+    pocket: str | None = None
+    # Marks on the feeder (a hole, a dot) where the profile puts them,
+    # found with the top camera before the first pick from it in a run:
+    # its places follow them, shifted by one and turned as well by two.
+    marks: tuple[tuple[float, float], ...] = ()
+    mark: str = "dark"
 
     def holds(self, value: str, footprint: str) -> bool:
         hay = f"{value} {footprint}".lower()
@@ -90,6 +115,52 @@ class Feeder:
                 self.at[2],
             )
         return (self.at[0] + index * self.pitch[0], self.at[1] + index * self.pitch[1], self.at[2])
+
+
+@dataclass(frozen=True)
+class Vacuum:
+    """The vacuum sensor: the line that reads it, the pattern whose group
+    is the reading in the answer, and the readings with a part held and
+    with the nozzle empty."""
+
+    read: str
+    pattern: str
+    part_on: tuple[float, float]
+    part_off: tuple[float, float] | None = None
+
+    def reading(self, reply: list[str]) -> float | None:
+        """The reading in an answer to the read line, or None."""
+        regex = re.compile(self.pattern)
+        for line in reply:
+            found = regex.search(line)
+            if found is None:
+                continue
+            named = found.groupdict()
+            text = next((value for key, value in named.items() if key.lower() == "value"), None) if named else None
+            if text is None:
+                text = found.group(1)
+            try:
+                value = float(text)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                return value
+        return None
+
+
+@dataclass(frozen=True)
+class TopCameraProfile:
+    """The camera on the device's head looking down: the height the head
+    stands at for it to see the board sharp (None keeps the safe height),
+    where its picture's center is from the nozzle's tip as the head's
+    design has it (a first guess; the measured one wins), the shade of a
+    fiducial, and how far from where it is expected a fiducial, mark or
+    part in a pocket is looked for, mm."""
+
+    z: float | None = None
+    offset: tuple[float, float] | None = None
+    fiducial: str = "bright"
+    within: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -126,20 +197,67 @@ class Device:
     # The height the nozzle tip is seen sharp at over the up camera, when
     # the camera sits on this machine; None keeps the safe height.
     camera_z: float | None = None
+    # A positive turn of the rotation axis turns the nozzle clockwise seen
+    # from above, so every angle goes out with its sign changed.
+    rotation_cw: bool = False
+    # Where a part that failed a check is let go, X Y Z; None puts it back
+    # in the pocket it came from.
+    discard: tuple[float, float, float] | None = None
+    # Pockets tried for one part (an empty one, a pick the vacuum or the up
+    # camera found wanting) before the part is left out.
+    pick_tries: int = 3
+    vacuum: Vacuum | None = None
+    # What the up camera lets by: a part's center this far from the
+    # nozzle's, mm, its angle this far from the one expected, degrees, and
+    # its length and width this fraction off the ones expected (0 checks
+    # no size).
+    max_offset: float = 1.0
+    max_turn: float = 15.0
+    size_tolerance: float = 0.3
+    top: TopCameraProfile | None = None
 
     def summary(self) -> dict:
         return {"id": self.id, "name": self.name, "description": self.description, "url": self.url, "feeders": len(self.feeders)}
 
+    def angle_word(self, degrees: float) -> str:
+        """An angle of the nozzle, counterclockwise from above, as the
+        rotation axis's value: the sign changed for an axis that turns
+        clockwise."""
+        return f"{self.axes[3]}{num(-degrees if self.rotation_cw else degrees)}"
+
     def document(self) -> dict:
+        vacuum = self.vacuum
+        top = self.top
         return {
             **self.summary(),
             "baud": self.baud,
             "wait_ms": self.wait_ms,
             "timeout": self.timeout,
             "axes": list(self.axes),
+            "rotation_cw": self.rotation_cw,
             "safe_z": self.safe_z,
             "place_z": self.place_z,
+            "discard": list(self.discard) if self.discard is not None else None,
+            "pick_tries": self.pick_tries,
             "camera_z": self.camera_z,
+            "max_offset": self.max_offset,
+            "max_turn": self.max_turn,
+            "size_tolerance": self.size_tolerance,
+            "vacuum": (
+                {
+                    "read": vacuum.read,
+                    "pattern": vacuum.pattern,
+                    "part_on": list(vacuum.part_on),
+                    "part_off": list(vacuum.part_off) if vacuum.part_off is not None else None,
+                }
+                if vacuum is not None
+                else None
+            ),
+            "top": (
+                {"z": top.z, "offset": list(top.offset) if top.offset is not None else None, "fiducial": top.fiducial, "within": top.within}
+                if top is not None
+                else None
+            ),
             "feeders": [
                 {
                     "id": f.id,
@@ -150,6 +268,10 @@ class Device:
                     "columns": f.columns,
                     "rotation": f.rotation,
                     "vision": f.vision,
+                    "size": list(f.size) if f.size is not None else None,
+                    "pocket": f.pocket,
+                    "marks": [list(mark) for mark in f.marks],
+                    "mark": f.mark,
                 }
                 for f in self.feeders
             ],
@@ -224,6 +346,39 @@ class _Reader:
             raise self.fail(section, key, "must be true or false")
         return value
 
+    def shade(self, table: dict, key: str, section: str, default: str) -> str:
+        value = table.get(key, default)
+        if value not in SHADES:
+            raise self.fail(section, key, "must be dark or bright")
+        return value
+
+    def optional_shade(self, table: dict, key: str, section: str) -> str | None:
+        return self.shade(table, key, section, "dark") if key in table else None
+
+    def span(self, table: dict, key: str, section: str) -> tuple[float, float] | None:
+        """Two numbers, the low one first, or None when left out."""
+        if key not in table:
+            return None
+        low, high = self.point(table, key, section, 2, None)
+        if low > high:
+            raise self.fail(section, key, "must be the low reading, then the high one")
+        return (low, high)
+
+    def places(self, table: dict, key: str, section: str, most: int) -> tuple[tuple[float, float], ...]:
+        value = table.get(key, [])
+        if (
+            not isinstance(value, list)
+            or len(value) > most
+            or not all(
+                isinstance(item, list)
+                and len(item) == 2
+                and all(not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v) and abs(v) <= COORD_LIMIT for v in item)
+                for item in value
+            )
+        ):
+            raise self.fail(section, key, f"must be a list of at most {most} places, each [X, Y]")
+        return tuple((float(item[0]), float(item[1])) for item in value)
+
     def done(self, table: dict, section: str | None, known: set[str]) -> None:
         unknown = sorted(set(table) - known)
         if unknown:
@@ -278,7 +433,10 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     home = read.text(gcode, "home", "gcode", "G28")
     position = read.text(gcode, "position", "gcode", "M114")
     stop = read.text(gcode, "stop", "gcode", "M410")
-    read.done(gcode, "gcode", {"init", "end", "move", "x", "y", "z", "rotation", "wait", "pick", "place", "dwell", "home", "position", "stop"})
+    rotation_cw = read.flag(gcode, "rotation_cw", "gcode", False)
+    read.done(
+        gcode, "gcode", {"init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop"}
+    )
 
     motion = read.table(top, "motion")
     feed_xy = read.number(motion, "feed_xy", "motion", 6000.0, 1.0, FEED_LIMIT)
@@ -287,7 +445,40 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     place_z = read.number(motion, "place_z", "motion", None)
     pick_dwell_ms = read.integer(motion, "pick_dwell_ms", "motion", 200, 0, 60000)
     place_dwell_ms = read.integer(motion, "place_dwell_ms", "motion", 150, 0, 60000)
-    read.done(motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms"})
+    discard = read.point(motion, "discard", "motion", 3, None) if "discard" in motion else None
+    pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20)
+    read.done(motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries"})
+
+    vacuum = None
+    sensor = read.table(top, "vacuum")
+    if sensor:
+        read_line = read.text(sensor, "read", "vacuum", "")
+        if not read_line:
+            raise read.fail("vacuum", "read", "must name the line that reads the vacuum sensor")
+        pattern = read.text(sensor, "pattern", "vacuum", DEFAULT_VACUUM_PATTERN, line=False)
+        pattern = JAVA_GROUP.sub("(?P<", pattern)
+        try:
+            groups = re.compile(pattern).groups
+        except re.error as exc:
+            raise read.fail("vacuum", "pattern", f"is not a regular expression: {exc}") from None
+        if groups < 1:
+            raise read.fail("vacuum", "pattern", "must hold a group, ( ), around the reading")
+        part_on = read.span(sensor, "part_on", "vacuum")
+        if part_on is None:
+            raise read.fail("vacuum", "part_on", "is needed: the low and high reading with a part held")
+        vacuum = Vacuum(read=read_line, pattern=pattern, part_on=part_on, part_off=read.span(sensor, "part_off", "vacuum"))
+        read.done(sensor, "vacuum", {"read", "pattern", "part_on", "part_off"})
+
+    top_camera = None
+    looking = read.table(top, "top_camera")
+    if looking:
+        top_camera = TopCameraProfile(
+            z=read.number(looking, "z", "top_camera", None) if "z" in looking else None,
+            offset=read.point(looking, "offset", "top_camera", 2, None) if "offset" in looking else None,
+            fiducial=read.shade(looking, "fiducial", "top_camera", "bright"),
+            within=read.number(looking, "within", "top_camera", 2.0, 0.1, 50.0),
+        )
+        read.done(looking, "top_camera", {"z", "offset", "fiducial", "within"})
 
     tables = top.get("feeder", [])
     if not isinstance(tables, list) or not all(isinstance(item, dict) for item in tables):
@@ -310,6 +501,15 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
             raise read.fail(section, "columns", "makes a tray, which needs its count of parts")
         if "row_pitch" in table and columns == 0:
             raise read.fail(section, "row_pitch", "is for a tray: give its columns too")
+        size = None
+        if "size" in table:
+            size = read.point(table, "size", section, 2, None)
+            if not all(0.0 < value <= 200.0 for value in size):
+                raise read.fail(section, "size", "must be a length and a width over 0, at most 200 mm")
+        pocket = read.optional_shade(table, "pocket", section)
+        marks = read.places(table, "marks", section, 2)
+        if (pocket is not None or marks) and top_camera is None:
+            raise read.fail(section, "pocket" if pocket is not None else "marks", "looks with the top camera: add a [top_camera] section")
         feeders.append(
             Feeder(
                 id=feeder_id,
@@ -323,13 +523,24 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
                 place_z=place_z_of,
                 feed=read.lines(table, "feed", section, (), one=True),
                 vision=read.flag(table, "vision", section, False),
+                size=size,
+                pocket=pocket,
+                marks=marks,
+                mark=read.shade(table, "mark", section, "dark"),
             )
         )
-        read.done(table, section, {"id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision"})
+        read.done(
+            table,
+            section,
+            {"id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark"},
+        )
     camera = read.table(top, "camera")
     camera_z = read.number(camera, "z", "camera", None) if "z" in camera else None
-    read.done(camera, "camera", {"z"})
-    read.done(top, None, {"name", "description", "port", "gcode", "motion", "feeder", "camera"})
+    max_offset = read.number(camera, "max_offset", "camera", 1.0, 0.01, 20.0)
+    max_turn = read.number(camera, "max_turn", "camera", 15.0, 0.1, 45.0)
+    size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0.0, 1.0)
+    read.done(camera, "camera", {"z", "max_offset", "max_turn", "size_tolerance"})
+    read.done(top, None, {"name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera"})
     return Device(
         id=device_id,
         name=name or device_id,
@@ -357,6 +568,14 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         place_dwell_ms=place_dwell_ms,
         feeders=tuple(feeders),
         camera_z=camera_z,
+        rotation_cw=rotation_cw,
+        discard=discard,
+        pick_tries=pick_tries,
+        vacuum=vacuum,
+        max_offset=max_offset,
+        max_turn=max_turn,
+        size_tolerance=size_tolerance,
+        top=top_camera,
     )
 
 
@@ -465,14 +684,35 @@ def board_fit(references: list[tuple[tuple[float, float], tuple[float, float]]],
 
 
 VISION_NOTE = "; looked at over the up camera: placed where its center lands"
+POCKET_NOTE = "; the top camera looks at the pocket first: picked where the part is"
+MARKS_NOTE = "; the feeder's marks are found with the top camera first: its places follow them"
+
+
+def turned(point: tuple[float, float], degrees: float) -> tuple[float, float]:
+    """A vector turned counterclockwise by `degrees`."""
+    radians = math.radians(degrees)
+    c, s = math.cos(radians), math.sin(radians)
+    return (point[0] * c - point[1] * s, point[0] * s + point[1] * c)
+
+
+def tip_shift(runout: tuple[float, float], degrees: float) -> tuple[float, float]:
+    """How far the head moves to keep the nozzle's tip on a point as the
+    nozzle turns from 0 to `degrees`: the tip sits `runout` off the turning
+    axis at 0, and that offset turns with the nozzle."""
+    swung = turned(runout, degrees)
+    return (runout[0] - swung[0], runout[1] - swung[1])
 
 
 @dataclass
 class Block:
     """One part: the feeder it comes from and which of its parts, the lines
-    that pick it and the ones that place it, and what the place lines are
-    made from, so a look at the part can make them again where its
-    center lands."""
+    that pick it, read the vacuum with it held, place it and read the
+    vacuum once it let go, and what the place lines are made from, so a
+    look at the part can make them again where its center lands. `target`
+    is the place with the tip turned to 0 over it, `angle` the part's angle
+    on the device there, `turn` the nozzle's turn from the feeder's angle
+    to it, and `size` the length and width the up camera should see, when
+    known."""
 
     ref: str
     feeder: str
@@ -483,10 +723,14 @@ class Block:
     turn: float = 0.0
     place_z: float = 0.0
     vision: bool = False
+    check: list[str] = field(default_factory=list)
+    release: list[str] = field(default_factory=list)
+    angle: float = 0.0
+    size: tuple[float, float] | None = None
 
     @property
     def lines(self) -> list[str]:
-        return [*self.pick, *([VISION_NOTE] if self.vision else []), *self.place]
+        return [*self.pick, *self.check, *([VISION_NOTE] if self.vision else []), *self.place, *self.release]
 
 
 @dataclass
@@ -525,19 +769,71 @@ def dwell_line(device: Device, ms: int) -> list[str]:
     return [device.dwell.replace("{ms}", str(ms)).replace("{s}", num(ms / 1000.0))]
 
 
+def safe_line(device: Device) -> str:
+    return f"{device.move} {device.axes[2]}{num(device.safe_z)} F{num(device.feed_z, 0)}"
+
+
+def pick_lines(device: Device, feeder: Feeder, label: str, point: tuple[float, float, float]) -> list[str]:
+    """The lines that take a part from its pocket: a comment saying which,
+    the feeder's own lines, up to the safe height, over the pocket with the
+    nozzle turned to 0, down, the vacuum on, and back up."""
+    x, y, z, _ = device.axes
+    move = device.move
+    return [
+        f"; {label}".rstrip(),
+        *feeder.feed,
+        safe_line(device),
+        f"{move} {x}{num(point[0])} {y}{num(point[1])} {device.angle_word(0.0)} F{num(device.feed_xy, 0)}",
+        f"{move} {z}{num(point[2])} F{num(device.feed_z, 0)}",
+        *([device.wait] if device.wait else []),
+        device.pick,
+        *dwell_line(device, device.pick_dwell_ms),
+        safe_line(device),
+    ]
+
+
+def check_lines(device: Device, held: bool) -> list[str]:
+    """The vacuum sensor read with the head at rest: after a pick, a part
+    should be held; after a place, the nozzle should be empty (read only
+    when the profile says what empty reads)."""
+    vacuum = device.vacuum
+    if vacuum is None:
+        return []
+    span = vacuum.part_on if held else vacuum.part_off
+    if span is None:
+        return []
+    what = "a part held" if held else "an empty nozzle"
+    return [*([device.wait] if device.wait else []), f"{vacuum.read} ; vacuum: {what} reads {num(span[0])} to {num(span[1])}"]
+
+
 def place_lines(device: Device, point: tuple[float, float], turn: float, place_z: float) -> list[str]:
     """The lines that put a held part down: across at the safe height,
     turned to its angle, down, the vacuum off, and back up."""
-    x, y, z, a = device.axes
+    x, y, z, _ = device.axes
     move = device.move
     return [
-        f"{move} {x}{num(point[0])} {y}{num(point[1])} {a}{num(turn)} F{num(device.feed_xy, 0)}",
+        f"{move} {x}{num(point[0])} {y}{num(point[1])} {device.angle_word(turn)} F{num(device.feed_xy, 0)}",
         f"{move} {z}{num(place_z)} F{num(device.feed_z, 0)}",
         *([device.wait] if device.wait else []),
         device.place,
         *dwell_line(device, device.place_dwell_ms),
         f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
     ]
+
+
+def feeder_for(device: Device, part: dict) -> Feeder | None:
+    return next((f for f in device.feeders if f.holds(str(part.get("value", "")), str(part.get("footprint", "")))), None)
+
+
+def expected_size(feeder: Feeder, part: dict) -> tuple[float, float] | None:
+    """The length and width the up camera should see of a part: the
+    feeder's size, else its footprint's body, longer side first."""
+    if feeder.size is not None:
+        return (max(feeder.size), min(feeder.size))
+    body = part.get("body")
+    if isinstance(body, (list, tuple)) and len(body) == 2 and all(isinstance(v, (int, float)) and v > 0 for v in body):
+        return (float(max(body)), float(min(body)))
+    return None
 
 
 def plan(
@@ -548,6 +844,7 @@ def plan(
     refs: list[str] | None = None,
     title: str = "",
     vision_ready: bool = False,
+    runout: tuple[float, float] = (0.0, 0.0),
 ) -> Plan:
     """The placement program for a board job's parts on the device.
 
@@ -556,12 +853,14 @@ def plan(
     `refs` the parts to place, every one that can be by default. A part on
     the back, one not to be fitted, one no feeder holds (or whose feeder is
     empty), and one whose feeder wants the up camera while the nozzle has
-    not been centered over it (`vision_ready`) is skipped, with why."""
-    x, y, z, a = device.axes
-    move = device.move
+    not been centered over it (`vision_ready`) is skipped, with why; a
+    fiducial is not a part, and is named only when asked for. `runout` is
+    the nozzle's tip off its turning axis at 0, the head moving to keep
+    the tip on each place at the part's angle."""
     given = dict(taken)
     blocks: list[Block] = []
     skipped: list[dict] = []
+    marked: set[str] = set()
     wanted = set(refs) if refs is not None else None
     if wanted is not None:
         for missing in sorted(wanted - {part["ref"] for part in parts}):
@@ -570,13 +869,17 @@ def plan(
         ref = part["ref"]
         if wanted is not None and ref not in wanted:
             continue
+        if part.get("fiducial"):
+            if wanted is not None:
+                skipped.append({"ref": ref, "reason": "a fiducial, not a part"})
+            continue
         if part.get("dnp"):
             skipped.append({"ref": ref, "reason": "not to be fitted (dnp)"})
             continue
         if part.get("side") == "back":
             skipped.append({"ref": ref, "reason": "on the back"})
             continue
-        feeder = next((f for f in device.feeders if f.holds(str(part.get("value", "")), str(part.get("footprint", "")))), None)
+        feeder = feeder_for(device, part)
         if feeder is None:
             skipped.append({"ref": ref, "reason": "no feeder holds it"})
             continue
@@ -588,32 +891,33 @@ def plan(
             skipped.append({"ref": ref, "reason": f"feeder {feeder.id} is empty"})
             continue
         given[feeder.id] = index + 1
-        px, py, pz = feeder.place_of(index if feeder.count > 0 else 0)
         qx, qy = fit.apply((float(part["x"]), float(part["y"])))
-        turn = wrap(float(part.get("rotation", 0.0)) + fit.rotation - feeder.rotation)
+        angle = wrap(float(part.get("rotation", 0.0)) + fit.rotation)
+        turn = wrap(angle - feeder.rotation)
         place_z = feeder.place_z if feeder.place_z is not None else device.place_z
-        pick = [f"; {ref} {part.get('value', '')} from {feeder.id} #{index + 1}".rstrip()]
-        pick += list(feeder.feed)
-        pick += [
-            f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
-            f"{move} {x}{num(px)} {y}{num(py)} {a}0 F{num(device.feed_xy, 0)}",
-            f"{move} {z}{num(pz)} F{num(device.feed_z, 0)}",
-            *([device.wait] if device.wait else []),
-            device.pick,
-            *dwell_line(device, device.pick_dwell_ms),
-            f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
-        ]
+        pick = pick_lines(device, feeder, f"{ref} {part.get('value', '')} from {feeder.id} #{index + 1}", feeder.place_of(index if feeder.count > 0 else 0))
+        notes = []
+        if feeder.marks and feeder.id not in marked:
+            marked.add(feeder.id)
+            notes.append(MARKS_NOTE)
+        if feeder.pocket is not None:
+            notes.append(POCKET_NOTE)
+        shift = tip_shift(runout, turn)
         blocks.append(
             Block(
                 ref=ref,
                 feeder=feeder.id,
                 index=index,
-                pick=pick,
-                place=place_lines(device, (qx, qy), turn, place_z),
+                pick=[pick[0], *notes, *pick[1:]],
+                place=place_lines(device, (qx + shift[0], qy + shift[1]), turn, place_z),
                 target=(qx, qy),
                 turn=turn,
                 place_z=place_z,
                 vision=feeder.vision,
+                check=check_lines(device, held=True),
+                release=check_lines(device, held=False),
+                angle=angle,
+                size=expected_size(feeder, part),
             )
         )
     head = [f"; {title or 'placement'} on {device.name}: {len(blocks)} parts", *device.init]

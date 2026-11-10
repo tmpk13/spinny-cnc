@@ -33,7 +33,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
-from spinny_laser.align import turn
 from spinny_laser.cam import CamError
 
 from . import __version__, calibration, center
@@ -45,11 +44,12 @@ from .camlog import CAMERAS, CameraLog
 from .cameras import detect as detect_cameras
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import Device, DeviceStore, board_fit, board_goto, place_lines, plan, read_position
-from .openpnp import num as gnum
+from .openpnp import Device, DeviceStore, board_fit, board_goto, plan, read_position
 from .openpnp import NotFound as DeviceNotFound
 from .pnp import MachineAccess as PnpAccess
+from .placer import Placement, PlaceSetup
 from .pnp import CameraPlace, MachineMover, PnpError, UpCamera, job_components
+from .topcam import Found, TopCamera
 from .heightmap import (
     AUTO,
     FOCUS,
@@ -562,12 +562,41 @@ class DeviceReferenceBody(Finite):
     ref: str
     # Where the part's place is on the device; left out, the device is asked.
     at: tuple[float, float] | None = None
+    # The place is under the top camera's picture's center, not the nozzle.
+    camera: bool = False
 
 
 class DevicePlanBody(BaseModel):
     job: str
     # The parts to place; left out, every one that can be.
     refs: list[str] | None = None
+    # A run finds the board's fiducials with the top camera first.
+    fiducials: bool = False
+
+
+class DeviceFiducialsBody(BaseModel):
+    job: str
+
+
+class TopSettingsBody(Finite):
+    device: str | None = None
+    size: str | None = None
+    fps: int | None = None
+    pcbv: str | None = None
+    mark_spot: str | None = None
+    mark_at: tuple[float, float] | None = None
+    offset: tuple[float, float] | None = None
+    mm_per_px: float | None = None
+    roll: float | None = None
+    mirror: bool | None = None
+    # The settings to take back to none: mark_at, offset.
+    clear: list[str] = Field(default_factory=list)
+
+
+class TopOffsetBody(Finite):
+    # How far the head moves along X and Y to measure the picture; 0 keeps
+    # the scale, roll and mirror measured before.
+    step: float = 2.0
 
 
 class DeviceGotoBody(BaseModel):
@@ -707,6 +736,7 @@ class Backend:
         # job up with the board.
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
+        self.top = TopCamera(self._device_config, self._save_config, self.publish_pnp_device, self.publish_message)
         # The pictures the cameras' routines looked at, kept while logging
         # is on, and photos taken by hand.
         self.camlog = CameraLog(
@@ -716,6 +746,7 @@ class Backend:
         )
         self.camera.camlog = self.camlog
         self.pnp.camlog = self.camlog
+        self.top.camlog = self.camlog
         self.pnp_device = GcodeDevice(self.publish_pnp_device)
         self.alignment = Alignment()
         self.rates = Rates()
@@ -1095,6 +1126,7 @@ class Backend:
     def shutdown(self) -> None:
         self.camera.shutdown()
         self.pnp.shutdown()
+        self.top.shutdown()
         self.pnp_device.disconnect()
         self.disconnect()
 
@@ -2346,6 +2378,9 @@ class Backend:
         elif camera == "up":
             client, running, pose = self.pnp.client, self.pnp.client.running, False
             polarity = self.pnp.settings().part_spot
+        elif camera == "top":
+            client, running, pose = self.top.client, self.top.client.running, False
+            polarity = self.top.settings().mark_spot
         else:
             raise ValueError(f"camera must be one of {', '.join(CAMERAS)}")
         if not running:
@@ -3080,7 +3115,7 @@ class Backend:
 
     def cameras(self) -> dict:
         """The cameras attached, for either camera's device to be picked from."""
-        held = tuple(client.device for client in (self.camera.client, self.pnp.client) if client.running and client.device)
+        held = tuple(client.device for client in (self.camera.client, self.pnp.client, self.top.client) if client.running and client.device)
         return detect_cameras(self.camera.settings().pcbv, held)
 
     def camera_settings(self, body: CameraSettingsBody) -> dict:
@@ -3279,6 +3314,7 @@ class Backend:
             "references": [dict(entry) for entry in config.get("references", [])],
             "taken": dict(config.get("taken", {})),
             "camera": camera.to_dict(),
+            "top": self.top.state(),
             **self.pnp_device.state(),
         }
 
@@ -3289,6 +3325,7 @@ class Backend:
         kept = self._device_config().get("camera")
         kept = kept if isinstance(kept, dict) else {}
         position = kept.get("position")
+        runout = kept.get("runout")
         try:
             return CameraPlace(
                 position=(float(position[0]), float(position[1])) if isinstance(position, list) and len(position) == 2 else None,
@@ -3296,6 +3333,7 @@ class Backend:
                 mm_per_px=float(kept.get("mm_per_px", 0.0)),
                 roll=float(kept.get("roll", 0.0)),
                 mirror=bool(kept.get("mirror", True)),
+                runout=(float(runout[0]), float(runout[1])) if isinstance(runout, list) and len(runout) == 2 else None,
             )
         except (TypeError, ValueError):
             return CameraPlace(height=device.camera_z if device is not None else None)
@@ -3306,6 +3344,7 @@ class Backend:
             "mm_per_px": place.mm_per_px,
             "roll": place.roll,
             "mirror": place.mirror,
+            "runout": [place.runout[0], place.runout[1]] if place.runout is not None else None,
         }
         self._save_config()
         self.publish_pnp_device()
@@ -3318,6 +3357,111 @@ class Backend:
         mover = DeviceMover(self.pnp_device, device, aborted=self.pnp.aborting)
         self.pnp.center_nozzle(mover, step, place=self._device_camera_place(device), keep=self._keep_device_camera)
         return self.device_state()
+
+    def device_runout(self) -> dict:
+        """Measures how far the device's nozzle tip runs off its turning
+        axis, over the up camera; on the up camera's routine thread."""
+        device = self._device_idle()
+        mover = DeviceMover(self.pnp_device, device, aborted=self.pnp.aborting)
+        self.pnp.measure_runout(mover, self._device_camera_place(device), self._keep_device_camera, device.rotation_cw)
+        return self.device_state()
+
+    # --- the device's top camera ---
+
+    def top_settings(self, body: TopSettingsBody) -> dict:
+        patch = {key: value for key, value in body.model_dump(exclude={"clear"}).items() if value is not None}
+        try:
+            self.top.update(patch, tuple(body.clear))
+        finally:
+            self.publish_pnp_device()
+        return self.device_state()
+
+    def top_start(self) -> dict:
+        try:
+            self.top.start()
+        finally:
+            self.publish_pnp_device()
+        return self.device_state()
+
+    def top_stop(self) -> dict:
+        self.top.stop()
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def top_frame(self, width: int, overlay: bool) -> bytes:
+        if not (FRAME_MIN_WIDTH <= width <= FRAME_MAX_WIDTH):
+            raise ValueError(f"width must be {FRAME_MIN_WIDTH} to {FRAME_MAX_WIDTH}")
+        return self.top.frame(width, overlay)
+
+    def top_mark(self) -> dict:
+        """The nozzle's tip is over the mark the offset is measured from: its place is kept."""
+        self.device_position()
+        position = self.pnp_device.position or {}
+        self.top.update({"mark_at": (float(position["x"]), float(position["y"]))})
+        self.publish_pnp_device()
+        return self.device_state()
+
+    def top_offset(self, step: float) -> dict:
+        device = self._device_idle()
+        mover = DeviceMover(self.pnp_device, device, aborted=self.top.aborting)
+        profile = device.top
+        self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
+        return self.device_state()
+
+    def top_abort(self) -> dict:
+        self.top.abort()
+        # The routine waits on a move and its wait command: the device is
+        # told to stop at once.
+        try:
+            line = self.device_profile().stop
+        except (ValueError, DeviceNotFound):
+            line = ""
+        self.pnp_device.stop(line)
+        return self.device_state()
+
+    def device_fiducials(self, body: DeviceFiducialsBody) -> dict:
+        """Finds the board's fiducials with the top camera where the
+        references put them and keeps them as the job's references; on the
+        top camera's routine thread."""
+        device = self._device_idle()
+        if device.top is None:
+            raise ValueError("the device profile has no [top_camera] section")
+        top = device.top
+        parts = self.job_parts(body.job)["components"]
+        fiducials = [part for part in parts if part.get("fiducial")]
+        guess = self._device_fit(body.job, parts)
+        mover = DeviceMover(self.pnp_device, device, aborted=self.top.aborting)
+
+        def done(found: list[Found]) -> str:
+            from .placer import fiducial_fit
+
+            fit = fiducial_fit(found, guess.rotation)
+            self._keep_fiducials(body.job, found, fit)
+            rms = f", {fit.rms * 1000.0:.0f} um rms" if len(found) > 1 else ""
+            return f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the device{rms}"
+
+        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done)
+        return self.device_state()
+
+    def _keep_fiducials(self, job_id: str, found: list[Found], fit) -> None:
+        """The fiducials found become the job's references: with two or
+        more, the ones given by hand give way to them."""
+        with self._config_lock:
+            config = self._device_config()
+            refs = {entry.ref for entry in found}
+            kept = [
+                entry for entry in config.get("references", [])
+                if not (entry.get("job") == job_id and (entry.get("ref") in refs or (len(found) > 1 and entry.get("by") != "fiducial")))
+            ]
+            kept.extend({"job": job_id, "ref": entry.ref, "at": [entry.seen[0], entry.seen[1]], "by": "fiducial"} for entry in found)
+            config["references"] = kept
+        self.top.fiducials = {
+            "job": job_id,
+            "found": [{"ref": entry.ref, "at": [entry.seen[0], entry.seen[1]]} for entry in found],
+            "fit": fit.to_dict(),
+        }
+        self._save_config()
+        self.publish_pnp_device()
 
     def device_select(self, body: DeviceSelectBody) -> dict:
         config = self._device_config()
@@ -3341,6 +3485,8 @@ class Backend:
             raise HTTPException(status_code=409, detail="a program is being sent to the device")
         if self.pnp.routine_active and self.pnp.target == "device":
             raise HTTPException(status_code=409, detail="the up camera routine is moving the device")
+        if self.top.routine_active:
+            raise HTTPException(status_code=409, detail="the top camera routine is moving the device")
         return self.device_profile()
 
     def device_connect(self) -> dict:
@@ -3395,16 +3541,22 @@ class Backend:
         the device, read off it when not given."""
         self._part(body.job, body.ref)
         if body.at is None:
+            offset = (0.0, 0.0)
+            if body.camera:
+                top = self.top.settings()
+                if not top.measured or top.offset is None:
+                    raise ValueError("the top camera's offset is not measured: put the nozzle on a mark, then Measure offset")
+                offset = top.offset
             self.device_position()
             position = self.pnp_device.position or {}
-            at = (float(position["x"]), float(position["y"]))
+            at = (float(position["x"]) + offset[0], float(position["y"]) + offset[1])
         else:
             if any(abs(value) > 10000.0 for value in body.at):
                 raise ValueError("a reference's place must be within 10000 mm")
             at = (float(body.at[0]), float(body.at[1]))
         config = self._device_config()
         kept = [entry for entry in config.get("references", []) if not (entry.get("job") == body.job and entry.get("ref") == body.ref)]
-        kept.append({"job": body.job, "ref": body.ref, "at": [round(at[0], 4), round(at[1], 4)]})
+        kept.append({"job": body.job, "ref": body.ref, "at": [round(at[0], 4), round(at[1], 4)], "by": "camera" if body.camera else "nozzle"})
         config["references"] = kept
         self._save_config()
         self.publish_pnp_device()
@@ -3422,11 +3574,13 @@ class Backend:
 
     def _device_fit(self, job_id: str, parts: list[dict]):
         by_ref = {part["ref"]: part for part in parts}
+        entries = [entry for entry in self._device_config().get("references", []) if entry.get("job") == job_id and entry.get("ref") in by_ref]
+        # Two fiducials or more the top camera found outdo places given by hand.
+        found = [entry for entry in entries if entry.get("by") == "fiducial"]
         pairs = []
-        for entry in self._device_config().get("references", []):
-            part = by_ref.get(entry.get("ref"))
-            if entry.get("job") == job_id and part is not None:
-                pairs.append(((float(part["x"]), float(part["y"])), (float(entry["at"][0]), float(entry["at"][1]))))
+        for entry in found if len(found) > 1 else entries:
+            part = by_ref[entry["ref"]]
+            pairs.append(((float(part["x"]), float(part["y"])), (float(entry["at"][0]), float(entry["at"][1]))))
         angle = self._device_config().get("angle")
         return board_fit(pairs, float(angle) if isinstance(angle, (int, float)) and not isinstance(angle, bool) else None)
 
@@ -3438,8 +3592,11 @@ class Backend:
             raise ValueError(listing["note"] or "the job's board has no parts")
         job = self.store.get(job_id)
         taken = {key: int(value) for key, value in self._device_config().get("taken", {}).items()}
-        ready = self._device_camera_place(device).measured
-        return device, plan(device, parts, self._device_fit(job_id, parts), taken, refs, title=job.name if job else job_id, vision_ready=ready)
+        place = self._device_camera_place(device)
+        return device, plan(
+            device, parts, self._device_fit(job_id, parts), taken, refs,
+            title=job.name if job else job_id, vision_ready=place.measured, runout=place.runout or (0.0, 0.0),
+        )
 
     def device_plan(self, body: DevicePlanBody) -> dict:
         _, program = self._device_plan(body.job, body.refs)
@@ -3450,41 +3607,56 @@ class Backend:
         return program.text()
 
     def device_run(self, body: DevicePlanBody) -> dict:
+        """Places the job's parts on the device on its own thread: each pick
+        from where a camera finds it, read by the vacuum, looked at and
+        corrected over the up camera, as the profile asks (placer.py)."""
         if self.pnp_device.running:
             raise HTTPException(status_code=409, detail="a program is already being sent to the device")
-        self._device_idle()
-        device, program = self._device_plan(body.job, body.refs)
+        device = self._device_idle()
+        listing = self.job_parts(body.job)
+        parts = listing["components"]
+        if not parts:
+            raise ValueError(listing["note"] or "the job's board has no parts")
+        job = self.store.get(body.job)
         config = self._device_config()
-        place = self._device_camera_place(device)
+        taken = {key: int(value) for key, value in config.get("taken", {}).items()}
+
+        def on_taken(feeder: str, count: int) -> None:
+            with self._config_lock:
+                counts = config.setdefault("taken", {})
+                counts[feeder] = max(int(counts.get(feeder, 0)), count)
+            self._save_config()
+
+        setup = PlaceSetup(
+            up=self.pnp,
+            up_place=self._device_camera_place(device),
+            top=self.top,
+            on_taken=on_taken,
+            on_fiducials=lambda found, fit: self._keep_fiducials(body.job, found, fit),
+            message=self.publish_message,
+            publish_up=self.publish_pnp,
+        )
+        placement = Placement(
+            device, self.pnp_device, parts, self._device_fit(body.job, parts), taken, body.refs,
+            job.name if job else body.job, setup, fiducials=body.fiducials,
+        )
+        program = placement.program
+        if not program.blocks:
+            raise DeviceLinkError("the program places no part")
         if any(block.vision for block in program.blocks) and not self.pnp.running:
             raise ValueError("the up camera is not running: start it, since some parts are to be looked at over it")
-
-        def look(block) -> list[str]:
-            """Over the up camera with the part just picked; the place lines
-            that put its center, not the nozzle's, on the place. The offset
-            seen turns with the nozzle as the part is turned to its angle."""
-            mover = DeviceMover(self.pnp_device, device, in_run=True)
-            try:
-                seen = self.pnp.look_at_part(mover, place)
-            except (PnpError, VisionError) as exc:
-                raise DeviceLinkError(f"looking at {block.ref} over the up camera: {exc}") from exc
-            self.pnp.part_offset = seen
-            self.publish_pnp()
-            ox, oy = turn((seen["dx"], seen["dy"]), block.turn)
-            rise = f"{device.move} {device.axes[2]}{gnum(device.safe_z)} F{gnum(device.feed_z, 0)}"
-            return [rise, *place_lines(device, (block.target[0] - ox, block.target[1] - oy), block.turn, block.place_z)]
-
-        def picked(block) -> None:
-            with self._config_lock:
-                taken = config.setdefault("taken", {})
-                taken[block.feeder] = max(int(taken.get(block.feeder, 0)), block.index + 1)
-            self._save_config()
+        used = {block.feeder for block in program.blocks}
+        looks = body.fiducials or any(feeder.pocket is not None or feeder.marks for feeder in device.feeders if feeder.id in used)
+        if looks and not self.top.running:
+            raise ValueError("the top camera is not running: start it, since the run looks with it")
 
         def ended(progress) -> None:
             level = "info" if progress.state == "done" else "error"
-            self.publish_message(level, f"placing on {device.name} {progress.state}: {len(progress.placed)} parts placed{f', {progress.error}' if progress.error and progress.state == 'error' else ''}")
+            failed = f", {len(progress.failed)} left out" if progress.failed else ""
+            why = f", {progress.error}" if progress.error and progress.state == "error" else ""
+            self.publish_message(level, f"placing on {device.name} {progress.state}: {len(progress.placed)} parts placed{failed}{why}")
 
-        self.pnp_device.run(program, device.timeout, picked, ended, look)
+        self.pnp_device.run_job(placement, placement.total(), device.timeout, ended, job_id=body.job)
         return {**program.summary(), **self.device_state()}
 
     def device_stop(self) -> dict:
@@ -4696,6 +4868,52 @@ def create_app(
     @app.post("/api/pnp/device/feeders/reset")
     def device_reset_feeders(body: DeviceFeederBody | None = None):
         return guarded(lambda: backend.device_reset_feeders(body or DeviceFeederBody()))
+
+    @app.post("/api/pnp/device/runout")
+    def device_runout():
+        return guarded(backend.device_runout)
+
+    @app.post("/api/pnp/device/fiducials")
+    def device_fiducials(body: DeviceFiducialsBody):
+        return guarded(lambda: backend.device_fiducials(body))
+
+    @app.put("/api/pnp/device/top")
+    def top_settings(body: TopSettingsBody):
+        return guarded(lambda: backend.top_settings(body))
+
+    @app.post("/api/pnp/device/top/start")
+    def top_start():
+        return guarded(backend.top_start)
+
+    @app.post("/api/pnp/device/top/stop")
+    def top_stop():
+        return guarded(backend.top_stop)
+
+    @app.get("/api/pnp/device/top/frame.jpg")
+    def top_frame(width: int = FRAME_DEFAULT_WIDTH, overlay: int = 1):
+        try:
+            data = backend.top_frame(width, bool(overlay))
+        except PnpError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except VisionError as exc:
+            if "no frame" in str(exc):
+                raise HTTPException(status_code=404, detail="no picture yet") from exc
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/pnp/device/top/mark")
+    def top_mark():
+        return guarded(backend.top_mark)
+
+    @app.post("/api/pnp/device/top/offset")
+    def top_offset(body: TopOffsetBody | None = None):
+        return guarded(lambda: backend.top_offset(body.step if body is not None else 2.0))
+
+    @app.post("/api/pnp/device/top/abort")
+    def top_abort():
+        return guarded(backend.top_abort)
 
     # --- alignment ---
 

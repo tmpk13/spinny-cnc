@@ -294,10 +294,16 @@ class VisionClient:
         reply["bytes"] = len(data)
         return reply, data
 
-    def spot(self, radius: float | None = None, polarity: str = "dark") -> dict:
+    def spot(self, radius: float | None = None, polarity: str = "dark", min_area: float | None = None, max_area: float | None = None) -> dict:
+        """The spot of that shade nearest the picture's center, within
+        `radius` px, of `min_area` to `max_area` px when given."""
         fields: dict = {"polarity": polarity}
         if radius is not None:
             fields["radius"] = float(radius)
+        if min_area is not None:
+            fields["min_area"] = float(min_area)
+        if max_area is not None:
+            fields["max_area"] = float(max_area)
         return self.request("spot", **fields)
 
     def reset(self) -> dict:
