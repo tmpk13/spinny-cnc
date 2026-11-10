@@ -28,12 +28,6 @@ describe("store", () => {
         expect(bCalls).toBe(1);
     });
 
-    test("update takes a function", () => {
-        const store = new Store({ n: 1 });
-        store.update((state) => ({ n: state.n + 1 }));
-        expect(store.get().n).toBe(2);
-    });
-
     test("listeners get the previous state", () => {
         const store = new Store({ n: 1 });
         let previousSeen = 0;

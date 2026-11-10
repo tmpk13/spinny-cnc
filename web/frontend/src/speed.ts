@@ -134,7 +134,8 @@ export function speedMap(job: Job, limits: SpeedLimits): SpeedMap {
 export const SPEED_COLORS = ["#6c71c4", "#268bd2", "#2aa198", "#859900", "#b58900"];
 
 /** Which of the colors a speed takes between the job's slowest and fastest. */
-export function speedBucket(speed: number, slowest: number, fastest: number, buckets = SPEED_COLORS.length): number {
+export function speedBucket(speed: number, slowest: number, fastest: number): number {
+    const buckets = SPEED_COLORS.length;
     if (!(fastest > slowest)) {
         return buckets - 1;
     }

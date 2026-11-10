@@ -288,7 +288,7 @@ describe("Preview", () => {
         preview.setJob(job);
         preview.setHead({ r: 5, a: 90 });
         preview.setHead({ r: 5, a: 100 });
-        preview.setRMax(40);
+        preview.setLimits({ kinematics: "polar", r_max: 40, z_max: 0 });
         preview.draw();
         expect(counts["stroke"]).toBeGreaterThan(5);
         expect(counts["fill"]).toBeGreaterThan(0);
@@ -498,7 +498,7 @@ describe("Preview", () => {
             const { canvas, counts } = sizedCanvas(W, H);
             const preview = new Preview(canvas);
             preview.setJob(job);
-            preview.setRMax(40);
+            preview.setLimits({ kinematics: "polar", r_max: 40, z_max: 0 });
             preview.setHead({ r: 5, a: 90 });
             preview.draw();
             const built = offscreen["stroke"] ?? 0;
@@ -732,8 +732,8 @@ describe("soft limits", () => {
         preview.resetView();
         expect(preview.getCamera().distance).toBeCloseTo(overview(Math.hypot(50, 20), 400, 300).distance, 9);
         preview.draw();
-        // The radius alone keeps the machine as it was set.
-        preview.setRMax(10);
+        // A narrower box is fitted closer.
+        preview.setLimits({ kinematics: "cartesian", r_max: 10, z_max: 20 });
         preview.resetView();
         expect(preview.getCamera().distance).toBeCloseTo(overview(jobReach(null, Math.hypot(10, 20)), 400, 300).distance, 9);
         preview.dispose();

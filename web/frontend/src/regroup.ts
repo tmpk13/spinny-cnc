@@ -97,15 +97,15 @@ export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"
     return "";
 }
 
-/** A label no group of the job has: `base`, else `base 2`, `base 3` and on. */
-export function freshLabel(job: Job, base = "group"): string {
+/** A label no group of the job has: `group`, else `group 2`, `group 3` and on. */
+export function freshLabel(job: Job): string {
     const taken = new Set(job.groups.map((group) => group.label));
-    if (!taken.has(base)) {
-        return base;
+    if (!taken.has("group")) {
+        return "group";
     }
     for (let n = 2; ; n++) {
-        if (!taken.has(`${base} ${n}`)) {
-            return `${base} ${n}`;
+        if (!taken.has(`group ${n}`)) {
+            return `group ${n}`;
         }
     }
 }

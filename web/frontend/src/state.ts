@@ -63,10 +63,6 @@ export class Store<T extends object> {
         }
     }
 
-    update(fn: (state: T) => Partial<T>): void {
-        this.set(fn(this.state));
-    }
-
     /** With `keys`, the listener runs only when one of them changed. */
     subscribe(fn: Listener<T>, keys?: (keyof T)[]): () => void {
         const entry = { fn, keys: keys ?? null };

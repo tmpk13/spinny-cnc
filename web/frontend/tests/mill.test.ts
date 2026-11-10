@@ -531,7 +531,8 @@ describe("the preview's grid", () => {
         expect(preview.showGrid).toBe(false);
         preview.setLimits({ kinematics: "cartesian", r_max: 50, z_max: 20 });
         expect(preview.showGrid).toBe(true);
-        expect(preview.toggleGrid()).toBe(false);
+        preview.setShowGrid(false);
+        expect(preview.showGrid).toBe(false);
         expect(localStorage.getItem(GRID_KEY)).toBe("0");
         expect(new Preview(document.createElement("canvas")).showGrid).toBe(false);
         preview.setShowGrid(true);

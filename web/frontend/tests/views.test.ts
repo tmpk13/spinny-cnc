@@ -219,7 +219,7 @@ describe("settings follow the machine", () => {
     test("the preview's reach follows the profile of every frame", () => {
         const { store, ctx, root } = setup();
         const preview = mountPreviewPanel(root, ctx);
-        const reach = (): number => (preview as unknown as { rMax: number }).rMax;
+        const reach = (): number => preview.getLimits().r_max;
         store.set({ settings: { values: { r_max: 60 }, schema: [], host: { tolerance: 0.005 } } });
         expect(reach()).toBe(60);
         store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "laser", h_axis: false, r_max: 40, z_max: 0 } } });

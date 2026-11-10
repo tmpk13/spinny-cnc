@@ -255,14 +255,14 @@ export function coarserStep(step: number): number {
 
 /**
  * The step of the grid and the rings at `scale` CSS px per mm: the finest
- * of a 1-2-5 series whose lines land at least `gap` px apart, so zooming
- * in brings finer lines in and zooming out thins them.
+ * of a 1-2-5 series whose lines land at least `GRID_GAP_PX` apart, so
+ * zooming in brings finer lines in and zooming out thins them.
  */
-export function gridStep(scale: number, gap = GRID_GAP_PX): number {
+export function gridStep(scale: number): number {
     if (!(scale > 0) || !Number.isFinite(scale)) {
         return MAX_GRID_STEP;
     }
-    const least = Math.max(MIN_GRID_STEP, gap / scale);
+    const least = Math.max(MIN_GRID_STEP, GRID_GAP_PX / scale);
     let step = tidyStep(10 ** Math.floor(Math.log10(least)));
     while (step < least * (1 - 1e-9) && step < MAX_GRID_STEP) {
         step = coarserStep(step);
@@ -895,24 +895,9 @@ export class Preview {
         }
     }
 
-    toggleGrid(): boolean {
-        this.setShowGrid(!this.showGrid);
-        return this.showGrid;
-    }
-
-    /** The radius limit drawn, mm; 0 is none. */
-    get rMax(): number {
-        return this.limits.r_max;
-    }
-
     /** What bounds the head as drawn. */
     getLimits(): Limits {
         return { ...this.limits };
-    }
-
-    /** The radius limit alone, the machine otherwise as it was set. */
-    setRMax(mm: number): void {
-        this.setLimits({ ...this.limits, r_max: mm });
     }
 
     /** What bounds the head: the machine's kinematics and its soft limits, as its profile gives them. */
@@ -1782,10 +1767,6 @@ export class Preview {
         }
         this.dims = dims;
         this.requestDraw();
-    }
-
-    get dimensions(): Dimension[] {
-        return this.dims;
     }
 
     /** The sketch dimensions over everything, in screen space, each text on a patch of the background so it reads over the paths. */
