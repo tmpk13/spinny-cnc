@@ -30,7 +30,7 @@ export function canCapture(camera: CameraState | null, job: Job | null): boolean
     return camera !== null && job !== null && camera.running && camera.board === job.id && camera.pose?.state === "locked";
 }
 
-/** What a mark's design point was: the kind, and the point. */
+/** A mark's cells as the table shows them: its design point, the machine's, how far the tool was from the pad or hole picked, and its residual. */
 export function markWords(mark: AlignMark): { design: string; machine: string; distance: string; residual: string } {
     const point = ([x, y]: [number, number]): string => `${formatFixed(x, 3)}, ${formatFixed(y, 3)}`;
     return {

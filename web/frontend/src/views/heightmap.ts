@@ -285,7 +285,7 @@ export function probingText(probe: { done: number; total: number; pad?: number |
     return `Probing ${which}, ${formatFixed(probe.seconds, 0)} s${left ? `, ${left} left` : ""}`;
 }
 
-/** "about 4 min" for a time in seconds; empty for none. */
+/** "about 4:00" for a time in seconds; empty for none. */
 export function aboutTime(seconds: number | null | undefined): string {
     if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
         return "";
@@ -1038,7 +1038,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         setLocked(saveButton, !heightMap?.map);
         const probe = heightMap?.probe ?? null;
         if (connected && machine && !focusAxis) {
-            probeNote.textContent = "No focus axis: set h_axis to 1 in the settings to probe.";
+            probeNote.textContent = "No focus axis: set fitted = true under [focus] in the machine file and Write to board, or $h_axis=1 at the console, to probe.";
         } else if (probe?.state === "error" || probe?.state === "stopped") {
             probeNote.textContent = `Probing ${probe.state}${probe.error ? `: ${probe.error}` : ""}`;
         } else if (probing && probe && probe.done >= probe.total) {

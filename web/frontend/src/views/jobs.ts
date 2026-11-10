@@ -1297,7 +1297,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         );
     }
 
-    /** The turn alignment gave the job; read only, as the alignment panel is what changes it. */
+    /** The turn the job has been given since import, by Turn and by alignment; read only here, as those are what change it. */
     function rotationText(job: Job): string {
         return `turned ${formatFixed(job.rotation ?? 0, 4)} deg`;
     }

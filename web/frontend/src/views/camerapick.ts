@@ -92,8 +92,9 @@ function rate(fps: number): string {
     return String(Math.round(fps * 100) / 100);
 }
 
-// A listing under way, and when one was last asked for, per store: the two
-// panels share one list.
+// A listing under way, and when one was last asked for, per store: the
+// three camera panels (the head camera's, the up camera's and the G-code
+// device's top camera's) share one list.
 const listing = new WeakSet<object>();
 const tried = new WeakMap<object, number>();
 
@@ -133,7 +134,7 @@ export interface CameraPick {
     note: HTMLElement;
     /** Draws the list again if the device set or the listing changed. */
     render(): void;
-    /** Stops looking at the view; for tests, which mount and leave. */
+    /** Stops looking at the view: when the page goes (pagehide), and in tests, which mount and leave. */
     stop(): void;
 }
 

@@ -211,7 +211,7 @@ export const PNP_SETUP: Setup = {
             {
                 label: "X/Y machine",
                 done: state.snapshot.connected && isCartesian(state.snapshot),
-                hint: "The up camera needs an X/Y machine: load one from the Config page ($cartesian=1).",
+                hint: "The up camera needs an X/Y machine: pick one on the Config page and Write to board ($cartesian=1).",
                 panel: "machine-file",
             },
             { label: "Up camera on", done: pnp?.running === true, hint: "In the Up camera panel pick the camera (Detect lists the ones attached) or type its device, then press Start.", panel: "pnp-camera" },
@@ -249,7 +249,6 @@ export interface PnpRoots {
 
 export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     let selected: string | null = null;
-    // The job the parts were asked for, so a reply for another is dropped.
     // The job, and where it lay, the parts were asked for: a reply for
     // another is dropped, and a job moved, turned or aligned is asked again.
     let asked: string | null = null;

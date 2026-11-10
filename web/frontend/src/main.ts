@@ -319,7 +319,7 @@ function main(): void {
     mountPreviewPanel(panel("mill-preview"), ctx, (state) => state.millPlan ?? state.job, (state) => state.millDims);
     mountMill({ operation: panel("mill-operation"), run: panel("mill-run") }, ctx);
     // The CAM page has a preview of its own, since the panels of the
-    // machine's page are not shown beside it.
+    // Jobs page are not shown beside it.
     mountCam(panel("cam"), ctx, panel("cam-file"));
     mountPreviewPanel(panel("cam-preview"), ctx);
     // The PNP page: the parts, the board, the up camera and the nozzle.

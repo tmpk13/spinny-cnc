@@ -20,7 +20,7 @@ import { mountSettingsList } from "./settingslist.ts";
 /** Settings the firmware reads at boot: a change takes effect after a save to flash and a restart. */
 export const BOOT_SETTINGS = ["laser_pin", "probe_pin", "tool_out", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin"];
 
-/** The boot-time settings a load changed, so the operator is told to save and restart. */
+/** The boot-time settings a Write to board changed: it saves them to flash, so the operator is told to restart. */
 export function changedBootSettings(before: Record<string, number> | undefined, after: Record<string, number>): string[] {
     if (!before) {
         return [];
@@ -221,7 +221,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         pick.value = picked ?? "";
     }
 
-    /** What is loaded on the board, and whether Load has anything to do. */
+    /** What the board runs, and whether Write to board, Read from board and Save to flash have anything to do. */
     function showLoaded(): void {
         const state = ctx.store.get();
         const connected = state.snapshot.connected;

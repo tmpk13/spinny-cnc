@@ -301,7 +301,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         await into(ctx, "camera", ctx.api.cameraFind(s));
     }
 
-    /** The panel is in view: the machine's page is up, the fold open and the tab shown. */
+    /** The panel is in view: the Jobs page is up, the fold open and the tab shown. */
     function visible(): boolean {
         return fold.open && activePage() === "jobs" && document.visibilityState !== "hidden";
     }

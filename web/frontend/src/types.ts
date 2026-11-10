@@ -460,7 +460,7 @@ export interface Job {
     layer?: string | null;
     spot: number;
     offset: Board;
-    /** Degrees the job has been turned counterclockwise about the origin by alignment; missing from a backend that predates it. */
+    /** Degrees the job has been turned counterclockwise since import, by Turn and by alignment; missing from a backend that predates it. */
     rotation?: number;
     /** The centroid and area (mm^2) of every pad of the layer, in the job's frame; empty for a drawing or a gcode file. */
     pads?: PadPoint[];
