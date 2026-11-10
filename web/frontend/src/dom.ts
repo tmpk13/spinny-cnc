@@ -369,7 +369,7 @@ export function downloadText(filename: string, text: string, type = "text/plain"
 /**
  * A drop zone and its file field: the files dropped on `zone` or picked
  * in `input` go to `take` a batch at a time, while `ready` says the zone
- * takes any; a drop or a pick while a batch is under way is ignored. The
+ * takes files; a drop or a pick while a batch is under way is ignored. The
  * zone is marked "over" while files are dragged over it and "busy" while
  * a batch is taken, the field disabled meanwhile; after a batch the field
  * is emptied, so the same file can be picked again, and enabled as `ready`
