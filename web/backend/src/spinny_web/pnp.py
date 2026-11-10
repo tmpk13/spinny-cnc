@@ -36,14 +36,14 @@ from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
 
-from .camera import CAPTURE_KEYS
+from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, picture_to_machine
 from .kinematics import FOCUS_DECIMALS, coord
-from .link import Link, LinkError
+from .link import LinkError
 from .log import log
+from .openpnp import SHADES
 from .vision import VisionClient, VisionError
 
 Point = tuple[float, float]
-RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
 NOZZLE_STEPS = ("lifting", "moving", "lowering", "scale", "centering", "done")
 PART_STEPS = ("lifting", "moving", "lowering", "looking", "done")
 RUNOUT_STEPS = ("lifting", "moving", "lowering", "turning", "done")
@@ -56,7 +56,6 @@ RUNOUT_VISIBLE_MM = 0.01
 # A part whose long side is not this much longer than its short one gives
 # no angle from its equivalent ellipse.
 ELONGATED = 1.3
-POLARITIES = ("dark", "bright")
 # The head is moved until the nozzle is this close to the picture's
 # center, mm, at most this many times.
 CENTER_TOLERANCE = 0.02
@@ -304,17 +303,6 @@ def job_components(job, path: Path) -> list[dict]:
 # --- the picture ---------------------------------------------------------------
 
 
-def picture_to_machine(dx: float, dy: float, mm_per_px: float, roll: float, mirror: bool) -> Point:
-    """A point seen `dx`, `dy` px from the picture's center (right and down
-    positive) as a displacement in the machine's frame from the point seen
-    at the center, mm: the picture's y turned over, its x as well when the
-    picture is mirrored, then turned by the roll and scaled."""
-    u, v = (-dx if mirror else dx), -dy
-    radians = math.radians(roll)
-    c, s = math.cos(radians), math.sin(radians)
-    return (mm_per_px * (u * c - v * s), mm_per_px * (u * s + v * c))
-
-
 def picture_angle_to_machine(degrees: float, roll: float, mirror: bool) -> float:
     """A direction seen in the picture (degrees from its +x toward its +y,
     which points down) as a direction in the machine's frame, degrees
@@ -380,7 +368,7 @@ def calibrate(moved_x: Point, moved_y: Point, step: float) -> tuple[float, float
 
 
 class UpCameraSettings(BaseModel):
-    """What the backend keeps of the up camera, the machine file's `[pnp]`."""
+    """What the backend keeps of the up camera, `pnp` in its config.json."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -410,7 +398,7 @@ class UpCameraSettings(BaseModel):
             raise ValueError("the up camera fps must be 1 to 120")
         if not self.pcbv.strip():
             raise ValueError("the pcbv program must be named")
-        if self.nozzle_spot not in POLARITIES or self.part_spot not in POLARITIES:
+        if self.nozzle_spot not in SHADES or self.part_spot not in SHADES:
             raise ValueError("the nozzle and part spots are dark or bright")
         if self.position is not None and any(not math.isfinite(v) or abs(v) > POSITION_LIMIT for v in self.position):
             raise ValueError(f"the up camera position must be two numbers within {POSITION_LIMIT:g} mm")
@@ -420,16 +408,6 @@ class UpCameraSettings(BaseModel):
             raise ValueError("mm_per_px must be 0 to 1")
         if not (math.isfinite(self.roll) and abs(self.roll) <= 360.0):
             raise ValueError("the up camera roll must be within 360 degrees")
-
-
-@dataclass
-class Spot:
-    dx: float
-    dy: float
-    mm: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {"dx": round(self.dx, 2), "dy": round(self.dy, 2), "mm": round(self.mm, 4)}
 
 
 @dataclass
@@ -456,17 +434,6 @@ class RoutineProgress:
             "spot": self.spot.to_dict() if self.spot is not None else None,
             "seconds": round(time.monotonic() - self.started, 1),
         }
-
-
-@dataclass
-class MachineAccess:
-    """What the routines need of the machine: the link, the streamer for its
-    joints, the height to travel at and whether there is a focus axis."""
-
-    link: Link
-    streamer: object
-    lift: float
-    has_focus_axis: bool
 
 
 @dataclass
@@ -660,8 +627,6 @@ class UpCamera:
         # Where the last part looked at sat against the nozzle's center, mm
         # in the machine's frame, and how big it looked.
         self.part_offset: dict | None = None
-        # The machine the routine under way (or the last one) moves.
-        self.target = "machine"
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
         self._lock = threading.Lock()
@@ -727,6 +692,12 @@ class UpCamera:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
+    @property
+    def target(self) -> str:
+        """The machine the routine under way, or the last one, moves."""
+        progress = self.progress
+        return progress.target if progress is not None else "machine"
+
     def aborting(self) -> bool:
         return self._abort.is_set()
 
@@ -788,8 +759,10 @@ class UpCamera:
         start = place if place is not None else self.place()
         self._begin("nozzle", NOZZLE_STEPS, mover, lambda progress: self._center(mover, step, progress, start, keep or self._keep_place))
 
-    def measure_part(self, mover: Mover, place: CameraPlace | None = None) -> None:
-        start = place if place is not None else self.place()
+    def measure_part(self, mover: Mover) -> None:
+        """Starts the part routine on its own thread, over the camera as
+        this machine's calibration places it."""
+        start = self.place()
         if not start.measured:
             raise ValueError("the nozzle is not centered over the up camera yet: center it first")
         self._begin("part", PART_STEPS, mover, lambda progress: self._measure(mover, progress, start))
@@ -808,7 +781,6 @@ class UpCamera:
                 raise PnpError("an up camera routine is already under way")
             self._abort.clear()
             self._looks = 0
-            self.target = mover.name
             self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name)
             progress = self.progress
             self._thread = threading.Thread(target=self._run, args=(mover, progress, body), name=f"pnp-{kind}", daemon=True)

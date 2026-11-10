@@ -48,7 +48,6 @@ from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
 from .openpnp import Device, DeviceStore, board_fit, board_goto, plan, read_position
 from .openpnp import NotFound as DeviceNotFound
-from .pnp import MachineAccess as PnpAccess
 from .placer import Placement, PlaceSetup
 from .pnp import CameraPlace, MachineMover, PnpError, UpCamera, job_components
 from .topcam import Found, TopCamera
@@ -3224,9 +3223,9 @@ class Backend:
             access = MachineAccess(
                 link=link,
                 streamer=streamer,
-                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
-                clearance=self.lift_height(),
+                lift=self.lift_height(),
                 has_focus_axis=bool(values.get("h_axis")),
+                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
             )
             self.camera.find(access, step)
         return self.camera_state()
@@ -3264,7 +3263,7 @@ class Backend:
     def _pnp_mover(self, link: Link) -> MachineMover:
         values = self.read_settings(force=True)["values"]
         status = link.status_now(1.0, routine=True)
-        access = PnpAccess(link=link, streamer=self.streamer(status), lift=self.lift_height(), has_focus_axis=bool(values.get("h_axis")))
+        access = MachineAccess(link=link, streamer=self.streamer(status), lift=self.lift_height(), has_focus_axis=bool(values.get("h_axis")))
         return MachineMover(access, self.pnp.aborting, self.publish_message)
 
     def pnp_nozzle(self, step: float) -> dict:

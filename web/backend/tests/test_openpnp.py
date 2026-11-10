@@ -13,9 +13,9 @@ from fastapi.testclient import TestClient
 from device_fakes import DeviceUpCamera, FakeMarlin, wait_for
 
 from spinny_web.app import Backend, create_app
-from spinny_web.gcode_device import DeviceLinkError, GcodeDevice
+from spinny_web.gcode_device import DeviceLinkError, GcodeDevice, RunContext
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import VISION_NOTE, DeviceError, board_fit, parse, plan, read_position, wrap
+from spinny_web.openpnp import VISION_NOTE, DeviceError, board_fit, count_code, parse, plan, read_position, wrap
 
 REPO = Path(__file__).resolve().parents[3]
 SHIPPED = REPO / "pnp" / "openpnp-marlin.toml"
@@ -193,45 +193,41 @@ def test_a_line_and_its_answer_and_a_refusal_that_does_not_answer_the_next_line(
     assert fake.closed and not link.connected
 
 
-def test_a_program_is_sent_a_line_at_a_time_and_counts_the_parts():
-    fake = FakeMarlin()
-    link = connected(fake)
-    fit = board_fit([((0.0, 0.0), (100.0, 50.0))], None)
-    program = plan(device(), [part("R1", "10k", "R_0603", 1.0, 2.0), part("C1", "100n", "C_0402", 5.0, 6.0)], fit, {})
-    picked = []
-    ended = threading.Event()
-    link.run(program, 2.0, lambda block: picked.append(block.ref), lambda progress: ended.set())
-    assert ended.wait(5.0)
-    assert link.progress.state == "done" and link.progress.placed == ["R1", "C1"] and picked == ["R1", "C1"]
-    sent = fake.lines[2:]
-    assert sent[:2] == ["G21", "G90"] and "M106" in sent and sent[-1] == "G0 Z5"
-    assert all(";" not in line for line in sent)
-    assert link.progress.sent == link.progress.total == len(sent)
-
-
 def test_a_stop_ends_the_program_after_the_line_in_flight_and_sends_the_quickstop():
     fake = FakeMarlin()
     link = connected(fake)
     fit = board_fit([((0.0, 0.0), (100.0, 50.0))], None)
     parts = [part(f"R{i}", "10k", "R_0603", float(i), 0.0) for i in range(1, 3)] + [part(f"C{i}", "100n", "C", float(i), 1.0) for i in range(1, 9)]
     program = plan(device(), parts, fit, {})
+
+    def job(ctx: RunContext) -> None:
+        for block in program.blocks:
+            for line in block.lines:
+                ctx.send(line)
+            ctx.progress.placed.append(block.ref)
+
     gate = threading.Event()
+    inside = threading.Event()
     real = fake.write
 
     def slow(data: bytes) -> int:
+        inside.set()
         gate.wait(2.0)
         return real(data)
 
     fake.write = slow
     ended = threading.Event()
-    link.run(program, 2.0, lambda block: None, lambda progress: ended.set())
-    time.sleep(0.05)
+    link.run_job(job, count_code(program.text().splitlines()), 2.0, lambda progress: ended.set())
+    # The first line is on its way when the stop comes.
+    assert inside.wait(2.0)
     fake.write = real
     link.stop("M410")
     gate.set()
     assert ended.wait(5.0)
     assert link.progress.state == "stopped" and "M410" in fake.lines
-    assert len(link.progress.placed) < len(program.blocks)
+    # That line was answered; nothing went after it.
+    assert link.progress.sent == 1 and link.progress.placed == []
+    assert [line for line in fake.lines[2:] if line != "M410"] == ["G0 Z5 F600"]
 
 
 # --- the routes -------------------------------------------------------------------------

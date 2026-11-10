@@ -41,20 +41,20 @@ from typing import Callable
 from spinny_laser.align import Fit, fit_rigid
 
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice, RunContext
+from .kinematics import num, turned
 from .openpnp import (
     Block,
     Device,
     Feeder,
     Plan,
     check_lines,
-    code_of,
-    dwell_line,
-    num,
+    count_code,
+    pick_label,
     pick_lines,
     place_lines,
     plan,
     safe_line,
-    turned,
+    wrap,
 )
 from .pnp import CameraPlace, NoSpot, PnpError, UpCamera
 from .topcam import Found, TopCamera
@@ -75,16 +75,6 @@ FAILED_IN_A_ROW = 2
 
 class Rejected(Exception):
     """A pick that will not do: the part goes back and the next pocket is tried."""
-
-
-def wrap90(degrees: float) -> float:
-    """An angle in (-45, 45]: a rectangle's turn, which a quarter turn leaves as it was."""
-    turned_ = math.fmod(degrees, 90.0)
-    if turned_ <= -45.0:
-        turned_ += 90.0
-    elif turned_ > 45.0:
-        turned_ -= 90.0
-    return turned_
 
 
 def fiducial_fit(found: list[Found], angle: float) -> Fit:
@@ -161,30 +151,27 @@ class Placement:
         )
 
     def total(self) -> int:
-        return sum(1 for line in self.program.text().splitlines() if code_of(line))
+        return count_code(self.program.text().splitlines())
 
     # --- the run -----------------------------------------------------------------
 
     def __call__(self, ctx: RunContext) -> None:
         device = self.device
-        mover = DeviceMover(self.link, device, in_run=True, send=ctx.send)
+        mover = DeviceMover(self.link, device, send=ctx.send)
         for line in self.program.head:
             ctx.send(line)
         if self.fiducials:
             self._find_fiducials(ctx, mover)
         blocks = self.program.blocks
         for number, block in enumerate(blocks):
-            ctx.progress.total = ctx.progress.sent + self._lines(blocks[number:]) + self._lines_of(self.program.tail)
+            ctx.progress.total = ctx.progress.sent + self._lines(blocks[number:]) + count_code(self.program.tail)
             self._place(ctx, mover, block)
         for line in self.program.tail:
             ctx.send(line)
 
     @staticmethod
-    def _lines_of(lines: list[str]) -> int:
-        return sum(1 for line in lines if code_of(line))
-
-    def _lines(self, blocks: list[Block]) -> int:
-        return sum(self._lines_of(block.lines) for block in blocks)
+    def _lines(blocks: list[Block]) -> int:
+        return sum(count_code(block.lines) for block in blocks)
 
     def _doing(self, ctx: RunContext, what: str | None) -> None:
         ctx.progress.doing = what
@@ -233,10 +220,9 @@ class Placement:
                     self.setup.message("warning", f"{block.ref}: {reason}, passed over")
                     continue
                 point = (seen[0], seen[1], point[2])
-            label = f"{block.ref} {part.get('value', '')} from {feeder.id} #{index + 1}"
             if tries > 1:
                 self._doing(ctx, f"try {tries} of {device.pick_tries}")
-            for line in pick_lines(device, feeder, label, point):
+            for line in pick_lines(device, feeder, pick_label(part, feeder, index), point):
                 ctx.send(line)
             self._take(feeder, index)
             try:
@@ -358,18 +344,9 @@ class Placement:
         """Lets a held part go at the discard place, or back in its pocket;
         what was done, in words."""
         device = self.device
-        x, y, z, _ = device.axes
         target, where = (device.discard, "let go at the discard place") if device.discard is not None else (pocket, "put back in its pocket")
-        lines = [
-            safe_line(device),
-            f"{device.move} {x}{num(target[0])} {y}{num(target[1])} {device.angle_word(0.0)} F{num(device.feed_xy, 0)}",
-            f"{device.move} {z}{num(target[2])} F{num(device.feed_z, 0)}",
-            *([device.wait] if device.wait else []),
-            device.place,
-            *dwell_line(device, device.place_dwell_ms),
-            safe_line(device),
-        ]
-        for line in lines:
+        # Put down as a place is, with the nozzle turned back to 0.
+        for line in [safe_line(device), *place_lines(device, (target[0], target[1]), 0.0, target[2])]:
             ctx.send(line)
         self._check_released(ctx, f"a part was {where}")
         return where
@@ -442,16 +419,16 @@ class Placement:
                 self._no_angle_said = True
                 self.setup.message("warning", "the up camera tells no part's angle (pcb-vision before b4d1299): turns are not corrected")
             return 0.0
-        delta = wrap90(float(direction) - block.angle)
+        delta = wrap(float(direction) - block.angle, 90.0)
         limit = self.device.max_turn
         if abs(delta) > limit:
             # Had the axis turned the other way, the part would sit at its
             # feeder's angle less the turn; the two can be told apart unless
             # twice the turn is about a quarter turn's multiple.
-            wrong_way = wrap90(float(direction) - (feeder.rotation - angle))
+            wrong_way = wrap(float(direction) - (feeder.rotation - angle), 90.0)
             hint = (
                 "; it sits as if the nozzle had turned the other way: check [gcode] rotation_cw"
-                if abs(wrap90(2.0 * angle)) > limit and abs(wrong_way) <= limit
+                if abs(wrap(2.0 * angle, 90.0)) > limit and abs(wrong_way) <= limit
                 else ""
             )
             raise Rejected(f"it sits {delta:+.1f} degrees off its angle (at most {limit:g}){hint}")

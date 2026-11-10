@@ -1,5 +1,8 @@
 """A camera on the head: its settings, its picture and pose through
-pcb-vision, and the routine that measures where it looks from the tool.
+pcb-vision, and the routine that measures where it looks from the tool;
+and what every camera's routines share: a routine's states, a spot seen,
+a point in the picture taken to the machine, and the machine's part in a
+routine.
 
 The camera sees the board a fixed way off from the tool: `offset` is the
 board point under the picture's center less the tool's, `roll` the turn of
@@ -86,14 +89,6 @@ class CameraSettings(BaseModel):
         if not (math.isfinite(self.mm_per_px) and self.mm_per_px >= 0.0):
             raise ValueError("mm_per_px must be 0 or more")
 
-    @property
-    def width(self) -> int:
-        return int(self.size.split("x")[0])
-
-    @property
-    def height(self) -> int:
-        return int(self.size.split("x")[1])
-
 
 @dataclass
 class Spot:
@@ -127,13 +122,16 @@ class RoutineProgress:
         }
 
 
-def pixel_to_board(dx: float, dy: float, mm_per_px: float, roll: float) -> Point:
-    """A displacement in the picture (right and down positive, px) as a
-    displacement on the board, mm: the picture's y points down, so it is
-    turned over, then by the camera's roll, then scaled."""
+def picture_to_machine(dx: float, dy: float, mm_per_px: float, roll: float, mirror: bool = False) -> Point:
+    """A point seen `dx`, `dy` px from the picture's center (right and down
+    positive) as a displacement from the point seen at the center, mm in
+    the frame the camera's roll is measured against (the board's for the
+    head camera, the machine's for the others): the picture's y turned
+    over, its x as well when the picture is mirrored, then turned by the
+    roll and scaled."""
+    u, v = (-dx if mirror else dx), -dy
     radians = math.radians(roll)
     c, s = math.cos(radians), math.sin(radians)
-    u, v = dx, -dy
     return (mm_per_px * (u * c - v * s), mm_per_px * (u * s + v * c))
 
 
@@ -156,15 +154,16 @@ def scale_from_shift(before: Point, after: Point, step: float) -> tuple[float, f
 
 @dataclass
 class MachineAccess:
-    """What the find routine needs of the machine: the link, the streamer
-    for its frame, where the tool is on the board for a status, and the
-    travel clearance."""
+    """What a camera's routine needs of this machine: the link, the
+    streamer for its frame, the height the head rises to before it moves,
+    whether there is a focus axis, and, for the head camera's routine,
+    where the tool is on the board for a status."""
 
     link: Link
     streamer: object
-    head_point: Callable[[object], Point]
-    clearance: float
+    lift: float
     has_focus_axis: bool
+    head_point: Callable[[object], Point] | None = None
 
 
 class Camera:
@@ -204,7 +203,7 @@ class Camera:
         them, looking for the board it looked for."""
         before = self.settings()
         merged = {**before.model_dump(), **{key: value for key, value in patch.items() if value is not None}}
-        if "offset" in merged and isinstance(merged["offset"], (list, tuple)):
+        if isinstance(merged["offset"], (list, tuple)):
             merged["offset"] = tuple(float(v) for v in merged["offset"])
         settings = CameraSettings.model_validate(merged)
         settings.check()
@@ -369,14 +368,16 @@ class Camera:
         restarts = link.restarts
         settings = self.settings()
         try:
+            head_point = access.head_point
+            assert head_point is not None, "the find routine reads the tool's board point"
             status = link.status_now(1.0, routine=True)
             if status.state != "Idle":
                 raise CameraError(f"the machine is {status.raw or status.state}, not Idle")
             # Up to the travel height, so the move to the mark clears the board.
             self._step(progress, "lifting", 0)
-            if access.has_focus_axis and status.h is not None and status.h < access.clearance - 1e-6:
-                self._line(link, f"go H{coord(access.clearance, FOCUS_DECIMALS)}")
-                status = self._settle(link, restarts, abs(access.clearance - status.h) / 100.0 * 60.0)
+            if access.has_focus_axis and status.h is not None and status.h < access.lift - 1e-6:
+                self._line(link, f"go H{coord(access.lift, FOCUS_DECIMALS)}")
+                status = self._settle(link, restarts, abs(access.lift - status.h) / 100.0 * 60.0)
             # Where the camera should see the mark: the mark less the offset in force.
             self._step(progress, "moving", 1)
             offset = settings.offset
@@ -386,7 +387,7 @@ class Camera:
             if step > 0.0 or mm_per_px <= 0.0:
                 self._step(progress, "scale", 2)
                 move = step if step > 0.0 else DEFAULT_STEP
-                head = access.head_point(status)
+                head = head_point(status)
                 status = self._move_to(access, status, (head[0] + move, head[1]), restarts)
                 after = self._spot(progress, mm_per_px, roll)
                 mm_per_px, roll = scale_from_shift((spot.dx, spot.dy), (after.dx, after.dy), move)
@@ -394,17 +395,17 @@ class Camera:
                 spot = self._spot(progress, mm_per_px, roll)
             self._step(progress, "centering", 3)
             for attempt in range(CENTER_TRIES):
-                delta = pixel_to_board(spot.dx, spot.dy, mm_per_px, roll)
+                delta = picture_to_machine(spot.dx, spot.dy, mm_per_px, roll)
                 if math.hypot(*delta) <= CENTER_TOLERANCE:
                     break
-                head = access.head_point(status)
+                head = head_point(status)
                 status = self._move_to(access, status, (head[0] + delta[0], head[1] + delta[1]), restarts)
                 spot = self._spot(progress, mm_per_px, roll)
                 progress.done = 3 + attempt
             # The picture's center is the head plus the offset, and the mark
             # is the center plus what is left of the spot's distance.
-            head = access.head_point(status)
-            delta = pixel_to_board(spot.dx, spot.dy, mm_per_px, roll)
+            head = head_point(status)
+            delta = picture_to_machine(spot.dx, spot.dy, mm_per_px, roll)
             found = (mark[0] - head[0] - delta[0], mark[1] - head[1] - delta[1])
             self.update({"offset": found, "roll": roll, "mm_per_px": mm_per_px})
             self._step(progress, "done", progress.total)
@@ -448,7 +449,7 @@ class Camera:
             raise CameraError("no mark in the picture: jog the camera over the mark by hand and find again")
         spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))
         if mm_per_px > 0.0:
-            spot.mm = math.hypot(*pixel_to_board(spot.dx, spot.dy, mm_per_px, roll))
+            spot.mm = math.hypot(*picture_to_machine(spot.dx, spot.dy, mm_per_px, roll))
         progress.spot = spot
         self._publish()
         return spot

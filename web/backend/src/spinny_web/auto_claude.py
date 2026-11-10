@@ -17,7 +17,7 @@ import asyncio
 import json
 import os
 import signal
-from collections.abc import Coroutine, Mapping
+from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +192,6 @@ class ClaudeCodeSession:
         system: str,
         max_calls: int,
         python: str,
-        env: Mapping[str, str] | None = None,
     ) -> None:
         self.binary = binary
         self.api_url = api_url
@@ -203,7 +202,6 @@ class ClaudeCodeSession:
         self.system = system
         self.max_calls = max_calls
         self.python = python
-        self.env = env
         self.session_id: str | None = None
         self.preface = ""
 
@@ -217,8 +215,9 @@ class ClaudeCodeSession:
     def argv(self) -> list[str]:
         return command(self.binary or "claude", self.python, self.api_url, self.system, self.model, self.session_id)
 
-    def _environment(self) -> dict[str, str]:
-        env = dict(self.env if self.env is not None else os.environ)
+    @staticmethod
+    def _environment() -> dict[str, str]:
+        env = dict(os.environ)
         # A backend started from inside a Claude Code session carries its
         # marker; the command run here is a session of its own.
         env.pop("CLAUDECODE", None)

@@ -13,10 +13,10 @@ can never be taken for the next line's.
 `DeviceMover` lets the cameras' routines move the device's head: a move,
 then the wait command, so a picture is read with the head at rest.
 
-A run sends a job on its own thread: a fixed program (`run`), or a
-placement that decides each next line from what the cameras and the
-vacuum sensor say (`run_job`, see placer.py). Every line it sends is
-counted, and a stop ends it after the line in flight.
+A run sends a job on its own thread (`run_job`): a placement that decides
+each next line from what the cameras and the vacuum sensor say (see
+placer.py). Every line it sends is counted, and a stop ends it after the
+line in flight.
 """
 
 from __future__ import annotations
@@ -31,9 +31,10 @@ from typing import Any, Callable
 
 import serial
 
+from .camera import DONE, ERROR, RUNNING, STOPPED
 from .link import check_url
 from .log import log
-from .openpnp import Block, Device, Plan, code_of, num, read_position
+from .openpnp import Device, code_of, move_xy, move_z, read_position
 from .pnp import Mover, PnpError
 
 OK = re.compile(r"^ok\b", re.IGNORECASE)
@@ -43,8 +44,8 @@ READ_TIMEOUT = 0.05
 WRITE_TIMEOUT = 2.0
 # How long an `ok` that follows a refusal is waited for, s.
 TRAILING_OK = 0.3
-LOG_LINES = 200
-RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
+# The device's last lines in and out, which its state shows.
+LOG_LINES = 60
 
 
 class DeviceLinkError(Exception):
@@ -100,9 +101,6 @@ class RunContext:
         self.link = link
         self.timeout = timeout
         self.progress = progress
-
-    def stopped(self) -> bool:
-        return self.link._stop.is_set()
 
     def send(self, line: str) -> list[str]:
         if self.link._stop.is_set():
@@ -295,32 +293,6 @@ class GcodeDevice:
 
     # --- a program ---------------------------------------------------------------
 
-    def run(self, plan: Plan, timeout: float, on_pick: Callable[[Block], None], on_end: Callable[[RunProgress], None] | None = None) -> None:
-        """Sends a fixed program on its own thread, every line as planned;
-        `on_pick` hears of every part once its pick lines are answered, so a
-        stop or a failure after a pick leaves the feeders counted by what
-        was taken from them."""
-        if not plan.blocks:
-            raise DeviceLinkError("the program places no part")
-
-        def job(ctx: RunContext) -> None:
-            for line in plan.head:
-                ctx.send(line)
-            for block in plan.blocks:
-                ctx.progress.part = block.ref
-                ctx.publish()
-                for line in block.pick:
-                    ctx.send(line)
-                on_pick(block)
-                for line in [*block.check, *block.place, *block.release]:
-                    ctx.send(line)
-                ctx.progress.placed.append(block.ref)
-                ctx.publish()
-            for line in plan.tail:
-                ctx.send(line)
-
-        self.run_job(job, sum(1 for line in plan.text().splitlines() if code_of(line)), timeout, on_end)
-
     def run_job(
         self,
         job: Callable[[RunContext], None],
@@ -393,15 +365,16 @@ class GcodeDevice:
             "homed": self.homed,
             "position": self.position,
             "progress": self.progress.to_dict() if self.progress is not None else None,
-            "log": list(self.log)[-60:],
+            "log": list(self.log),
         }
 
 
 class DeviceMover(Mover):
-    """A G-code device's head for the up camera's routines: X and Y, Z as
-    the height, every move followed by the wait command so a picture is
-    read with the head at rest. `in_run` lets a program being sent use it
-    between a pick and a place; `aborted` is the routine's own stop."""
+    """A G-code device's head: X and Y, Z as the height, every move
+    followed by the wait command so a picture is read with the head at
+    rest. It serves the up and top cameras' routines, and, given a run's
+    `send`, the looks a run takes between a pick and a place; `aborted` is
+    a routine's own stop."""
 
     name = "device"
     letters = ("X", "Y")
@@ -411,13 +384,11 @@ class DeviceMover(Mover):
         self,
         link: GcodeDevice,
         device: Device,
-        in_run: bool = False,
         aborted: Callable[[], bool] | None = None,
         send: Callable[[str], list[str]] | None = None,
     ) -> None:
         self.link = link
         self.device = device
-        self.in_run = in_run
         self._aborted = aborted or (lambda: False)
         # A run's own sender, which counts the lines it sends.
         self._send = send
@@ -426,10 +397,10 @@ class DeviceMover(Mover):
     def check(self) -> None:
         if not self.link.connected:
             raise ValueError("the device is not connected")
-        if self.link.running and not self.in_run:
+        if self.link.running:
             raise PnpError("a program is being sent to the device")
         if not self.device.position:
-            raise ValueError("the device profile has no position command, which the up camera's routines need")
+            raise ValueError("the device profile has no position command, which the cameras' routines need")
 
     def begin(self) -> None:
         position = read_position(self._command(self.device.position), self.device.axes)
@@ -452,8 +423,7 @@ class DeviceMover(Mover):
             self._z(self.device.safe_z)
 
     def go(self, point) -> None:
-        x, y, _, _ = self.device.axes
-        self._command(f"{self.device.move} {x}{num(point[0])} {y}{num(point[1])} F{num(self.device.feed_xy, 0)}")
+        self._command(move_xy(self.device, (point[0], point[1])))
         self._wait()
         self._at[0], self._at[1] = float(point[0]), float(point[1])
 
@@ -461,15 +431,14 @@ class DeviceMover(Mover):
         self._z(height)
 
     def halt(self) -> None:
-        if not self.in_run:
-            self.link.stop(self.device.stop)
+        self.link.stop(self.device.stop)
 
     def turn(self, degrees: float) -> None:
-        self._command(f"{self.device.move} {self.device.angle_word(degrees)} F{num(self.device.feed_xy, 0)}")
+        self._command(move_xy(self.device, None, degrees))
         self._wait()
 
     def _z(self, height: float) -> None:
-        self._command(f"{self.device.move} {self.device.axes[2]}{num(height)} F{num(self.device.feed_z, 0)}")
+        self._command(move_z(self.device, height))
         self._wait()
         self._at[2] = height
 

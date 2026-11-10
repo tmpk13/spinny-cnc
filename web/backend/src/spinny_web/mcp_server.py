@@ -7,8 +7,9 @@ the machine. Claude Code takes it as
 
     claude mcp add spinny -- uv run --directory <repository> spinny-mcp
 
-and the Auto tab's Claude Code provider starts it the same way for every
-turn, pointed at the backend that runs the turn.
+The Auto tab's Claude Code provider has Claude Code start it for every
+turn as `<python> -m spinny_web.mcp_server --url <backend>`, with the
+Python the backend runs on and the address it is reached at.
 """
 
 from __future__ import annotations

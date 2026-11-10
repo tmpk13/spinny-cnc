@@ -94,9 +94,6 @@ class Route:
             w == h or (w.startswith("{") and w.endswith("}") and h != "") for w, h in zip(want, have)
         )
 
-    def __str__(self) -> str:
-        return f"{self.method} {self.path}"
-
 
 def permitted(routes: Iterable[Route], method: str, path: str) -> bool:
     return any(route.matches(method, path) for route in routes)
@@ -864,7 +861,8 @@ def _tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_placement_program",
-            "The G-code program that would place a board job's parts on the pick and place device. Answers the text; sends nothing.",
+            "The G-code program that places a board job's parts on the pick and place device as planned before a run;"
+            " a run changes it where a camera or the vacuum sensor says otherwise. Answers the text; sends nothing.",
             obj({"job_id": JOB, "refs": REFS}, ("job_id",)),
             (Route(get, "/api/pnp/device/program.gcode"),),
             _get_placement_program,
@@ -883,12 +881,11 @@ class RouteGuard(httpx.AsyncBaseTransport):
     """Passes on only the requests some tool may make; any other is answered
     403 here, before it reaches the backend."""
 
-    def __init__(self, inner: httpx.AsyncBaseTransport, routes: Iterable[Route] = ROUTES) -> None:
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
         self.inner = inner
-        self.routes = tuple(routes)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if not permitted(self.routes, request.method, request.url.path):
+        if not permitted(ROUTES, request.method, request.url.path):
             return httpx.Response(
                 403,
                 json={"detail": f"{request.method} {request.url.path} is not a route a tool may call"},
@@ -900,8 +897,9 @@ class RouteGuard(httpx.AsyncBaseTransport):
         await self.inner.aclose()
 
 
-def _short(message: str, limit: int = 300) -> str:
-    return message if len(message) <= limit else message[:limit] + "..."
+def _short(message: str) -> str:
+    """A schema's message cut to 300 characters: it quotes the value."""
+    return message if len(message) <= 300 else message[:300] + "..."
 
 
 def sendable(text: str) -> str:
@@ -945,12 +943,13 @@ class ToolBox:
         self.client = client
 
     @classmethod
-    def in_process(cls, app: Any, base_url: str = "http://127.0.0.1") -> ToolBox:
+    def in_process(cls, app: Any) -> ToolBox:
         """Calls into `app` itself, with nothing listening on a port. The
         requests carry no Origin, as a script's do, so the origin guard
-        passes them."""
+        passes them, and come in under the loopback address, which the
+        host check always takes."""
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-        return cls(httpx.AsyncClient(transport=RouteGuard(transport), base_url=base_url, timeout=TIMEOUT))
+        return cls(httpx.AsyncClient(transport=RouteGuard(transport), base_url="http://127.0.0.1", timeout=TIMEOUT))
 
     @classmethod
     def over_http(cls, url: str) -> ToolBox:

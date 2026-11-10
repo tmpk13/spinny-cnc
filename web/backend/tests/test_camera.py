@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from spinny_web import camera as camera_module
 from spinny_web.app import Backend, create_app
-from spinny_web.camera import CameraSettings, pixel_to_board, scale_from_shift
+from spinny_web.camera import CameraSettings, picture_to_machine, scale_from_shift
 from spinny_web.link import Link
 from spinny_web.vision import VisionClient, VisionError, find_pcbv
 
@@ -346,16 +346,15 @@ def test_the_picture_geometry_round_trips():
     for roll in (0.0, 37.0, -120.0, 180.0):
         before = (3.0, -4.0)
         # The head moves +2 mm along X: the spot moves 2 mm of board -X in the picture.
-        moved = pixel_to_board(1.0, 0.0, 1.0, -roll)
+        moved = picture_to_machine(1.0, 0.0, 1.0, -roll)
         after = (before[0] - 2.0 / 0.02 * moved[0], before[1] + 2.0 / 0.02 * moved[1])
         mm_per_px, found = scale_from_shift(before, after, 2.0)
         assert mm_per_px == pytest.approx(0.02)
-        delta = pixel_to_board(after[0] - before[0], after[1] - before[1], mm_per_px, found)
+        delta = picture_to_machine(after[0] - before[0], after[1] - before[1], mm_per_px, found)
         assert delta == pytest.approx((-2.0, 0.0), abs=1e-9)
     with pytest.raises(ValueError, match="did not move"):
         scale_from_shift((1.0, 1.0), (1.0, 1.0), 2.0)
-    settings = CameraSettings(size="640x480")
-    assert (settings.width, settings.height) == (640, 480)
+    CameraSettings(size="640x480").check()
     with pytest.raises(ValueError, match="WIDTHxHEIGHT"):
         CameraSettings(size="big").check()
 

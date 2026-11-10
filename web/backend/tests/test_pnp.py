@@ -13,9 +13,10 @@ from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, create_app
+from spinny_web.camera import picture_to_machine
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.link import Link
-from spinny_web.pnp import UpCameraSettings, calibrate, footprints_of, job_components, parse_sexp, picture_to_machine
+from spinny_web.pnp import UpCameraSettings, calibrate, footprints_of, job_components, parse_sexp
 
 REPO = Path(__file__).resolve().parents[3]
 BOARD_SAMPLE = REPO / "toolpath" / "tests" / "data" / "board.kicad_pcb"

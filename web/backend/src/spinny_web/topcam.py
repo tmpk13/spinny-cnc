@@ -30,9 +30,10 @@ from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
 
-from .camera import CAPTURE_KEYS
+from .camera import CAPTURE_KEYS, DONE, ERROR, STOPPED, Spot, picture_to_machine
 from .log import log
-from .pnp import POLARITIES, Mover, PnpError, RoutineProgress, Spot, calibrate, picture_to_machine, DONE, ERROR, STOPPED
+from .openpnp import SHADES
+from .pnp import Mover, PnpError, RoutineProgress, calibrate
 from .vision import VisionClient, VisionError
 
 Point = tuple[float, float]
@@ -85,7 +86,7 @@ class TopCameraSettings(BaseModel):
             raise ValueError("the top camera fps must be 1 to 120")
         if not self.pcbv.strip():
             raise ValueError("the pcbv program must be named")
-        if self.mark_spot not in POLARITIES:
+        if self.mark_spot not in SHADES:
             raise ValueError("the mark spot is dark or bright")
         for name, value in (("mark place", self.mark_at), ("offset", self.offset)):
             if value is not None and any(not math.isfinite(v) or abs(v) > 10000.0 for v in value):

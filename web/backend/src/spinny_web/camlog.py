@@ -1,13 +1,15 @@
 """The camera log: the pictures the cameras' routines looked at, kept to see
 afterwards where a finder went wrong and where it did not.
 
-With logging on, every look a routine takes (the head camera finding its
-mark, the up camera centering the nozzle and looking at a part, a G-code
-device's run looking at each part it picked) keeps three things: the
+With logging on, every look a routine takes keeps three things: the
 camera's picture as it was, the same picture with what the look found drawn
-over it, and a line saying what was asked and what came back. A look that
-found nothing is kept too, since that is the one to see. A photo can be
-taken by hand at any time, logging on or not.
+over it, and a line saying what was asked and what came back. The looks
+are the head camera finding its mark; the up camera centering the nozzle,
+measuring its runout and looking at a part, a G-code device's run looking
+at each part it picked; and the top camera measuring its offset, finding a
+board's fiducials and a feeder's marks, and looking at a pocket before its
+pick. A look that found nothing is kept too, since that is the one to see.
+A photo can be taken by hand at any time, logging on or not.
 
 The picture with the marks is an SVG holding the JPEG and the marks over it
 (the picture's center, the circle the finder searched, the spot it found
@@ -117,7 +119,7 @@ class CameraLog:
     `publish` is called with the state after every change, for the page.
     """
 
-    def __init__(self, folder: Path | None, enabled: bool = False, publish: Callable[[dict], None] | None = None) -> None:
+    def __init__(self, folder: Path, enabled: bool = False, publish: Callable[[dict], None] | None = None) -> None:
         self.folder = folder
         self.enabled = enabled
         self._publish = publish or (lambda state: None)
@@ -125,18 +127,16 @@ class CameraLog:
         self._entries: list[dict] = []
         self._last_stamp = ""
         self._serial = 0
-        if folder is not None:
-            index = folder / INDEX
-            try:
-                for line in index.read_text(encoding="utf-8").splitlines():
-                    try:
-                        entry = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-                        self._entries.append(entry)
-            except OSError:
-                pass
+        try:
+            for line in (folder / INDEX).read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+                    self._entries.append(entry)
+        except OSError:
+            pass
 
     # --- the state --------------------------------------------------------------
 
@@ -166,7 +166,7 @@ class CameraLog:
     def path_of(self, name: str) -> Path | None:
         """The file of a logged picture, by its name; None for a name that
         is not one, or one not kept."""
-        if self.folder is None or not FILE_NAME.match(name):
+        if not FILE_NAME.match(name):
             return None
         path = self.folder / name
         return path if path.is_file() else None
@@ -189,9 +189,9 @@ class CameraLog:
         and the same with the marks of `spot`, a reply of its `spot`, when
         logging is on or `force`; with `pose`, also pcbv's picture with the
         board's pose drawn. The entry kept, or None when nothing was: the
-        log is off, there is nowhere to keep it, or the picture could not
-        be had, which a routine never stops for."""
-        if not (self.enabled or force) or self.folder is None:
+        log is off, or the picture could not be had or kept, which a
+        routine never stops for."""
+        if not (self.enabled or force):
             return None
         # The reply's protocol id says nothing about the picture.
         if spot is not None:
@@ -268,8 +268,6 @@ class CameraLog:
             return f"{stamp}-{self._serial:03d}"
 
     def _append_index(self, entry: dict) -> None:
-        if self.folder is None:
-            return
         try:
             with (self.folder / INDEX).open("a", encoding="utf-8") as index:
                 index.write(json.dumps(entry, separators=(",", ":")) + "\n")
@@ -277,8 +275,6 @@ class CameraLog:
             log.warning("camera log: cannot write the index: %s", exc)
 
     def _write_index(self) -> None:
-        if self.folder is None:
-            return
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             temp = self.folder / f"{INDEX}.tmp"
@@ -288,8 +284,6 @@ class CameraLog:
             log.warning("camera log: cannot write the index: %s", exc)
 
     def _remove_files(self, entry: dict) -> None:
-        if self.folder is None:
-            return
         for name in (entry.get("files") or {}).values():
             if isinstance(name, str) and FILE_NAME.match(name):
                 try:

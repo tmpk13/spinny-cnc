@@ -36,6 +36,9 @@ LOAD_SECONDS = 30.0
 TURN_SECONDS = 1.0
 # The largest frame taken from the stream, bytes.
 MAX_FRAME_BYTES = 32 * 1024 * 1024
+# The width, px, a pcbv started here scales each frame down to before it
+# looks for a board or a spot in it.
+WORK_WIDTH = 1024
 # Where the pcbv program is looked for when the settings name it by a
 # bare name that is not on PATH: the sibling repository's builds.
 PCBV_SIBLING = Path(__file__).resolve().parents[5] / "pcb-vision" / "target"
@@ -138,7 +141,7 @@ class VisionClient:
     def running(self) -> bool:
         return self._stream is not None and self._stream.alive
 
-    def start(self, device: str, size: str, fps: int, pcbv: str, work_width: int = 1024) -> dict:
+    def start(self, device: str, size: str, fps: int, pcbv: str) -> dict:
         """Starts pcbv on the device, or connects to one serving at a
         `socket://host:port` device; answers its `hello`."""
         said: list[str] = []
@@ -156,7 +159,7 @@ class VisionClient:
                 stream = _Stream(sock.makefile("rb"), sock.makefile("wb"), None, sock)
             else:
                 program = find_pcbv(pcbv)
-                command = [program, "serve", "--camera", device, "--size", size, "--fps", str(int(fps)), "--work-width", str(int(work_width))]
+                command = [program, "serve", "--camera", device, "--size", size, "--fps", str(int(fps)), "--work-width", str(WORK_WIDTH)]
                 try:
                     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 except OSError as exc:
@@ -305,9 +308,6 @@ class VisionClient:
         if max_area is not None:
             fields["max_area"] = float(max_area)
         return self.request("spot", **fields)
-
-    def reset(self) -> dict:
-        return self.request("reset")
 
     # --- the threads ----------------------------------------------------------
 

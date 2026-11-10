@@ -37,10 +37,14 @@ The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
 | `center.py` | the `spinny-center` test burn built in place as a job, coarse (board paths) or fine (joint space) |
 | `runner.py` | streams a job lazily, hold/resume/stop, progress events |
 | `vision.py` | the camera through pcb-vision's `pcbv serve`: the program started on a device here, or one reached at a `socket://` device, one JSON request a line and the frame's bytes after its reply |
-| `camera.py` | the camera's settings and state, its picture and pose, the mark the tool made, and the routine that finds the mark in the picture and measures the camera's offset, roll and scale |
-| `pnp.py` | pick and place: the parts of a board job read from its kept `.kicad_pcb` (an s-expression reader, KiCad 5 to 10) and placed in the job's frame, and the up camera fixed to the machine, with the routine that centers the nozzle over it (measuring where it is and how its picture scales, turns and mirrors) and the one that reads where a part sits on the nozzle |
+| `camera.py` | the camera's settings and state, its picture and pose, the mark the tool made, and the routine that finds the mark in the picture and measures the camera's offset, roll and scale; and what every camera's routines share: their states, a spot seen, a point in the picture taken to the machine, the machine's part in a routine |
+| `cameras.py` | the cameras attached, for a camera's device to be picked from: pcbv's list of the V4L2 cameras here, named by their by-id (or by-path) links, and the ones a Pi streams to this computer's loopback |
+| `camlog.py` | the camera log: every look a routine takes, kept while logging is on (the picture, the same with what the look found drawn over it as an SVG, and a line of what was asked and what came back), and photos taken by hand; the oldest go past 300 |
+| `pnp.py` | pick and place: the parts of a board job read from its kept `.kicad_pcb` (an s-expression reader, KiCad 5 to 10) and placed in the job's frame, and the up camera fixed to this machine or a G-code device, with the routine that centers the nozzle over it (measuring where it is and how its picture scales, turns and mirrors), the one that reads where a part sits on the nozzle, and on a device the one that measures how far the nozzle's tip runs off its turning axis |
 | `openpnp.py` | a pick and place machine driven with the G-code OpenPnP's GcodeDriver sends: device profiles in `pnp/` (port, dialect, heights, feeders) read and checked, the board's fit on the device from reference parts, and the placement program (pick from the first feeder whose words the part holds, place turned from the feeder's angle, the wait command before every vacuum switch) |
-| `gcode_device.py` | the link to that machine: a serial port or a `socket://` url, a line at a time, each answered `ok` (a refusal's trailing `ok` taken with it, Marlin's `busy:` keeping a slow line alive), a program sent on its own thread and stopped with the profile's quickstop |
+| `gcode_device.py` | the link to that machine: a serial port or a `socket://` url, a line at a time, each answered `ok` (a refusal's trailing `ok` taken with it, Marlin's `busy:` keeping a slow line alive), a run sent on its own thread and stopped with the profile's quickstop, and the device's head as the cameras' routines move it |
+| `placer.py` | a placement run on that machine, each next line made from what the cameras and the vacuum sensor say: the board's fiducials found first when asked, then per part the feeder's marks, the pocket looked at, the pick, the vacuum read, the look over the up camera that corrects the place and the angle, the place; a pick that will not do let go and the next pocket tried |
+| `topcam.py` | that machine's top camera, on its head looking down: its settings, the routine that measures its offset from the nozzle and how its picture scales, turns and mirrors, and the look that finds a fiducial, a feeder's mark or a part in its pocket |
 | `align.py` | marks that pair a job's design points (pads, holes, any point) with where the machine or the camera found them, the fit (`spinny_laser.align`) and its application to the job |
 | `resume.py` | the resume record (`var/resume.json`, how far the last run got and the plan it was made from) and the machine's last reported position (`var/position.json`), both kept across sessions |
 | `heightmap.py` | the probed height map (a grid in board mm, bilinear between points), its file, and the run compensation: focus heights on every line, or power raised for the defocus |
@@ -166,15 +170,17 @@ classDiagram
         CameraSettings device, size, fps, side, finish, offset, roll, mm_per_px
         Camera.start / stop / load_board / frame / pose / state
         Camera.find(access, step) lift, move, scale, center, the offset saved
-        pixel_to_board / scale_from_shift
+        picture_to_machine(dx, dy, mm_per_px, roll, mirror) / scale_from_shift
     }
     class pnp {
         footprints_of(text) the parts of a board file
         job_components(job, path) in the job's frame
         UpCameraSettings device, size, fps, spots, position, height, mm_per_px, roll, mirror
-        UpCamera.center_nozzle(access, step) lift, over the camera, down, scale, center, the position saved
-        UpCamera.measure_part(access) the part's offset from the nozzle
-        picture_to_machine / calibrate
+        UpCamera.center_nozzle(mover, step) lift, over the camera, down, scale, center, the position saved
+        UpCamera.measure_part(mover) the part's offset from the nozzle
+        UpCamera.measure_runout(mover, place, keep) the tip's circle as the nozzle turns
+        MachineMover / DeviceMover  the head a routine moves
+        calibrate
     }
     class openpnp {
         parse(text, id) Device: port, dialect, heights, feeders
@@ -185,7 +191,23 @@ classDiagram
     class gcode_device {
         GcodeDevice.connect(url, baud, wait_ms, init, timeout) / disconnect
         GcodeDevice.command(line, timeout) the answer, or a refusal
-        GcodeDevice.run(plan, timeout, on_block) / stop(line)
+        GcodeDevice.run_job(job, total, timeout) / stop(line)
+    }
+    class placer {
+        Placement(device, link, parts, fit, taken, refs, title, setup) the run's job
+        fiducial_fit(found, angle) the board's place from its fiducials
+    }
+    class topcam {
+        TopCamera.measure_offset(mover, step, z, guess)
+        TopCamera.find_fiducials / locate_fiducials
+        TopCamera.look_at(mover, point, shade, within, z) a spot near a point
+    }
+    class cameras {
+        detect(pcbv, held) the cameras here and on the loopback
+    }
+    class camlog {
+        CameraLog.look(client, camera, routine, step, spot) a look kept
+        overlay_svg(jpeg, width, height, spot, title)
     }
     class align {
         Alignment.mark_tool(job, machine, design, nearest, within)
@@ -270,10 +292,22 @@ classDiagram
     app --> pnp
     app --> openpnp
     app --> gcode_device
+    app --> placer
+    app --> topcam
+    app --> cameras
+    app --> camlog
     gcode_device --> openpnp
+    gcode_device --> pnp
+    placer --> gcode_device
+    placer --> pnp
+    placer --> topcam
+    topcam --> pnp
+    topcam --> vision
+    cameras --> vision
     app --> align
     camera --> vision
     camera --> link
+    pnp --> camera
     pnp --> vision
     pnp --> link
     align --> jobs

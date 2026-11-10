@@ -12,11 +12,11 @@ from device_fakes import DeviceTopCamera, DeviceUpCamera, FakeMarlin, turn, wait
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, create_app
+from spinny_web.camera import picture_to_machine
 from spinny_web.gcode_device import GcodeDevice
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, DeviceError, board_fit, parse, plan, tip_shift
-from spinny_web.placer import wrap90
-from spinny_web.pnp import fit_circle, footprints_of, picture_angle_to_machine, picture_to_machine
+from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, DeviceError, board_fit, parse, plan, tip_shift, wrap
+from spinny_web.pnp import fit_circle, footprints_of, picture_angle_to_machine
 
 BASE = """name = "rig"
 [port]
@@ -131,7 +131,7 @@ def test_a_circle_is_fitted_through_points_and_an_angle_seen_is_turned_to_the_ma
     for degrees in (-80.0, -10.0, 0.0, 33.0, 89.0):
         mx, my = picture_to_machine(math.cos(math.radians(degrees)), math.sin(math.radians(degrees)), 1.0, 7.0, True)
         assert picture_angle_to_machine(degrees, 7.0, True) == pytest.approx(math.degrees(math.atan2(my, mx)))
-    assert wrap90(46.0) == -44.0 and wrap90(-45.0) == 45.0 and wrap90(91.0) == pytest.approx(1.0)
+    assert wrap(46.0, 90.0) == -44.0 and wrap(-45.0, 90.0) == 45.0 and wrap(91.0, 90.0) == pytest.approx(1.0)
 
 
 def test_a_board_file_gives_its_fiducials_whatever_their_flags_and_its_parts_bodies():

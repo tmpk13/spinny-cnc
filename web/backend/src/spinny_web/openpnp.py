@@ -39,6 +39,7 @@ from pathlib import Path
 from spinny_laser.align import Fit, fit_rigid
 
 from .cam import write_whole
+from .kinematics import num, turned
 
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 AXIS = re.compile(r"^[A-Z]$")
@@ -654,22 +655,17 @@ class DeviceStore:
 # --- the program -------------------------------------------------------------------
 
 
-def num(value: float, decimals: int = 3) -> str:
-    """A plain decimal with the zeros after its point dropped, and no negative zero."""
-    text = f"{value:.{decimals}f}"
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return "0" if text in ("-0", "") else text
-
-
-def wrap(degrees: float) -> float:
-    """An angle in (-180, 180]."""
-    turned = math.fmod(degrees, 360.0)
-    if turned <= -180.0:
-        turned += 360.0
-    elif turned > 180.0:
-        turned -= 360.0
-    return turned
+def wrap(degrees: float, period: float = 360.0) -> float:
+    """An angle in (-period/2, period/2]: in (-180, 180] by default, and
+    in (-45, 45] with a period of 90, a rectangle's turn, which a quarter
+    turn leaves as it was."""
+    half = period / 2.0
+    left = math.fmod(degrees, period)
+    if left <= -half:
+        left += period
+    elif left > half:
+        left -= period
+    return left
 
 
 def board_fit(references: list[tuple[tuple[float, float], tuple[float, float]]], angle: float | None) -> Fit:
@@ -686,13 +682,6 @@ def board_fit(references: list[tuple[tuple[float, float], tuple[float, float]]],
 VISION_NOTE = "; looked at over the up camera: placed where its center lands"
 POCKET_NOTE = "; the top camera looks at the pocket first: picked where the part is"
 MARKS_NOTE = "; the feeder's marks are found with the top camera first: its places follow them"
-
-
-def turned(point: tuple[float, float], degrees: float) -> tuple[float, float]:
-    """A vector turned counterclockwise by `degrees`."""
-    radians = math.radians(degrees)
-    c, s = math.cos(radians), math.sin(radians)
-    return (point[0] * c - point[1] * s, point[0] * s + point[1] * c)
 
 
 def tip_shift(runout: tuple[float, float], degrees: float) -> tuple[float, float]:
@@ -749,12 +738,13 @@ class Plan:
         return "\n".join(lines) + "\n"
 
     def summary(self) -> dict:
+        text = self.text()
         return {
             "parts": [{"ref": block.ref, "feeder": block.feeder, "index": block.index, "vision": block.vision} for block in self.blocks],
             "skipped": self.skipped,
             "fit": self.fit.to_dict(),
-            "lines": sum(1 for line in self.text().splitlines() if code_of(line)),
-            "text": self.text(),
+            "lines": count_code(text.splitlines()),
+            "text": text,
         }
 
 
@@ -763,28 +753,54 @@ def code_of(line: str) -> str:
     return line.split(";", 1)[0].strip()
 
 
+def count_code(lines: list[str]) -> int:
+    """How many of the lines go out: those that are more than a comment."""
+    return sum(1 for line in lines if code_of(line))
+
+
 def dwell_line(device: Device, ms: int) -> list[str]:
     if ms <= 0 or not device.dwell:
         return []
     return [device.dwell.replace("{ms}", str(ms)).replace("{s}", num(ms / 1000.0))]
 
 
+def move_z(device: Device, z: float) -> str:
+    """The nozzle to the height `z`, at the Z feed."""
+    return f"{device.move} {device.axes[2]}{num(z)} F{num(device.feed_z, 0)}"
+
+
+def move_xy(device: Device, point: tuple[float, float] | None, degrees: float | None = None) -> str:
+    """A move at the X/Y feed: the head over `point` when given, the nozzle
+    turned to `degrees` (counterclockwise from above) when given."""
+    words = [device.move]
+    if point is not None:
+        words += [f"{device.axes[0]}{num(point[0])}", f"{device.axes[1]}{num(point[1])}"]
+    if degrees is not None:
+        words.append(device.angle_word(degrees))
+    words.append(f"F{num(device.feed_xy, 0)}")
+    return " ".join(words)
+
+
 def safe_line(device: Device) -> str:
-    return f"{device.move} {device.axes[2]}{num(device.safe_z)} F{num(device.feed_z, 0)}"
+    return move_z(device, device.safe_z)
+
+
+def pick_label(part: dict, feeder: Feeder, index: int) -> str:
+    """What the comment before a pick says: the part, its value, and which
+    of the feeder's parts it is, counted from 1."""
+    return f"{part['ref']} {part.get('value', '')} from {feeder.id} #{index + 1}"
 
 
 def pick_lines(device: Device, feeder: Feeder, label: str, point: tuple[float, float, float]) -> list[str]:
     """The lines that take a part from its pocket: a comment saying which,
     the feeder's own lines, up to the safe height, over the pocket with the
     nozzle turned to 0, down, the vacuum on, and back up."""
-    x, y, z, _ = device.axes
-    move = device.move
     return [
         f"; {label}".rstrip(),
         *feeder.feed,
         safe_line(device),
-        f"{move} {x}{num(point[0])} {y}{num(point[1])} {device.angle_word(0.0)} F{num(device.feed_xy, 0)}",
-        f"{move} {z}{num(point[2])} F{num(device.feed_z, 0)}",
+        move_xy(device, (point[0], point[1]), 0.0),
+        move_z(device, point[2]),
         *([device.wait] if device.wait else []),
         device.pick,
         *dwell_line(device, device.pick_dwell_ms),
@@ -809,15 +825,13 @@ def check_lines(device: Device, held: bool) -> list[str]:
 def place_lines(device: Device, point: tuple[float, float], turn: float, place_z: float) -> list[str]:
     """The lines that put a held part down: across at the safe height,
     turned to its angle, down, the vacuum off, and back up."""
-    x, y, z, _ = device.axes
-    move = device.move
     return [
-        f"{move} {x}{num(point[0])} {y}{num(point[1])} {device.angle_word(turn)} F{num(device.feed_xy, 0)}",
-        f"{move} {z}{num(place_z)} F{num(device.feed_z, 0)}",
+        move_xy(device, point, turn),
+        move_z(device, place_z),
         *([device.wait] if device.wait else []),
         device.place,
         *dwell_line(device, device.place_dwell_ms),
-        f"{move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
+        safe_line(device),
     ]
 
 
@@ -895,7 +909,7 @@ def plan(
         angle = wrap(float(part.get("rotation", 0.0)) + fit.rotation)
         turn = wrap(angle - feeder.rotation)
         place_z = feeder.place_z if feeder.place_z is not None else device.place_z
-        pick = pick_lines(device, feeder, f"{ref} {part.get('value', '')} from {feeder.id} #{index + 1}", feeder.place_of(index if feeder.count > 0 else 0))
+        pick = pick_lines(device, feeder, pick_label(part, feeder, index), feeder.place_of(index if feeder.count > 0 else 0))
         notes = []
         if feeder.marks and feeder.id not in marked:
             marked.add(feeder.id)
@@ -927,12 +941,7 @@ def plan(
 
 def board_goto(device: Device, fit: Fit, part: dict) -> list[str]:
     """The nozzle up to the safe height and over a part's place on the device."""
-    x, y, z, _ = device.axes
-    qx, qy = fit.apply((float(part["x"]), float(part["y"])))
-    return [
-        f"{device.move} {z}{num(device.safe_z)} F{num(device.feed_z, 0)}",
-        f"{device.move} {x}{num(qx)} {y}{num(qy)} F{num(device.feed_xy, 0)}",
-    ]
+    return [safe_line(device), move_xy(device, fit.apply((float(part["x"]), float(part["y"]))))]
 
 
 POSITION = re.compile(r"\b([A-Z]):\s*(-?\d+(?:\.\d+)?)")
