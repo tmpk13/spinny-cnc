@@ -3,6 +3,8 @@
 // the canvas with a little perspective. Pure functions, so the view math
 // tests without a canvas.
 
+import { DEG } from "./kinematics.ts";
+
 export type Vec3 = [number, number, number];
 
 export interface Camera {
@@ -37,8 +39,6 @@ export const FIT_MARGIN = 1.1;
 export const DEG_PER_PX = 0.4;
 /** Nothing closer to the eye than this along the view is drawn, mm. */
 const NEAR = 0.05;
-
-const DEG = Math.PI / 180;
 
 export function clampPitch(pitch: number): number {
     return Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch));

@@ -4,6 +4,8 @@
 // with it. The table is checked against the fixture the Python prints
 // (mise run keys-fixture), and so is a board read into a sample file.
 
+import { commentStart } from "./toml.ts";
+
 /** How a key's value sits in its setting. */
 export type KeyKind = "number" | "integer" | "flag" | "bit" | "word" | "socket" | "scale" | "kinematics" | "tool" | "host";
 
@@ -178,25 +180,8 @@ function escapeRegex(text: string): string {
 
 /** A value and the comment after it, the `#` outside any string. */
 function splitComment(rest: string): [string, string] {
-    let quote: string | null = null;
-    let escaped = false;
-    for (let i = 0; i < rest.length; i += 1) {
-        const char = rest[i]!;
-        if (quote) {
-            if (escaped) {
-                escaped = false;
-            } else if (char === "\\" && quote === '"') {
-                escaped = true;
-            } else if (char === quote) {
-                quote = null;
-            }
-        } else if (char === '"' || char === "'") {
-            quote = char;
-        } else if (char === "#") {
-            return [rest.slice(0, i), rest.slice(i)];
-        }
-    }
-    return [rest, ""];
+    const at = commentStart(rest);
+    return [rest.slice(0, at), rest.slice(at)];
 }
 
 /** Each section as [name, first line after its header, end], the top first with no header. */

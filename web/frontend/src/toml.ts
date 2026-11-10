@@ -25,8 +25,8 @@ export interface TomlTable {
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 const NUMBER = /^[+-]?(\d[\d_]*)(\.\d[\d_]*)?([eE][+-]?\d+)?$/;
 
-/** The text up to a `#` outside a string, trailing space dropped. */
-export function stripComment(line: string): string {
+/** Where a line's comment begins: its first `#` outside a string, or the line's length when it has none. */
+export function commentStart(line: string): number {
     let quote: string | null = null;
     for (let i = 0; i < line.length; i++) {
         const char = line[i]!;
@@ -39,10 +39,15 @@ export function stripComment(line: string): string {
         } else if (char === '"' || char === "'") {
             quote = char;
         } else if (char === "#") {
-            return line.slice(0, i).trimEnd();
+            return i;
         }
     }
-    return line.trimEnd();
+    return line.length;
+}
+
+/** The text up to a `#` outside a string, trailing space dropped. */
+export function stripComment(line: string): string {
+    return line.slice(0, commentStart(line)).trimEnd();
 }
 
 /** The depth of open brackets at the end of a line, strings not counted. */

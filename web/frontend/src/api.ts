@@ -336,6 +336,11 @@ export function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+/** The width a camera's picture is asked for at: the width given, whole, from 160 to 4096 pixels. */
+export function frameWidth(width: number): number {
+    return Math.max(160, Math.min(4096, Math.round(width)));
+}
+
 /** Pulls a readable message out of an error body: FastAPI's detail, or the text. */
 export function errorMessage(data: unknown, status: number, statusText: string): string {
     if (typeof data === "string" && data.trim() !== "") {
@@ -760,11 +765,15 @@ export class HttpApi implements Api {
         return this.request<CameraState>("POST", "/api/camera/stop");
     }
 
-    cameraFrameUrl(width: number, overlay: boolean): string {
+    /** A camera's picture at `path`, at `frameWidth(width)`, with the marks drawn on it when `overlay`. */
+    private frameUrl(path: string, width: number, overlay: boolean): string {
         // The backend sends every picture with no-store; the time on the
         // query keeps a browser that ignores it from showing an old one.
-        const size = Math.max(160, Math.min(4096, Math.round(width)));
-        return `${this.base}/api/camera/frame.jpg?width=${size}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+        return `${this.base}${path}?width=${frameWidth(width)}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+    }
+
+    cameraFrameUrl(width: number, overlay: boolean): string {
+        return this.frameUrl("/api/camera/frame.jpg", width, overlay);
     }
 
     cameraPose(): Promise<CameraPose> {
@@ -832,8 +841,7 @@ export class HttpApi implements Api {
     }
 
     pnpFrameUrl(width: number, overlay: boolean): string {
-        const size = Math.max(160, Math.min(4096, Math.round(width)));
-        return `${this.base}/api/pnp/frame.jpg?width=${size}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+        return this.frameUrl("/api/pnp/frame.jpg", width, overlay);
     }
 
     pnpNozzle(step: number): Promise<PnpState> {
@@ -959,8 +967,7 @@ export class HttpApi implements Api {
     }
 
     topFrameUrl(width: number, overlay: boolean): string {
-        const size = Math.max(160, Math.min(4096, Math.round(width)));
-        return `${this.base}/api/pnp/device/top/frame.jpg?width=${size}&overlay=${overlay ? 1 : 0}&t=${Date.now()}`;
+        return this.frameUrl("/api/pnp/device/top/frame.jpg", width, overlay);
     }
 
     topMark(): Promise<DeviceState> {

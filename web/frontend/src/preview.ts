@@ -37,10 +37,10 @@ import {
     unproject,
     zoomAt,
 } from "./camera.ts";
-import { cssVar } from "./dom.ts";
+import { cssVar, readStored, writeStored } from "./dom.ts";
 import type { JobPlace } from "./jsontext.ts";
 import { boardOfJoint, turned } from "./kinematics.ts";
-import type { PathRef } from "./regroup.ts";
+import { refKey, type PathRef } from "./regroup.ts";
 import { SPEED_COLORS, isCapped, speedBucket, speedMap, type SpeedLimits, type SpeedMap } from "./speed.ts";
 import type { Board, Grid, HeightMap, Job, Joint, Kinematics, Marker, Move, Path, Point } from "./types.ts";
 
@@ -503,39 +503,14 @@ export function heightSpread(map: HeightMap): { mean: number; range: number } | 
     return { mean, range: Math.max(...heights) - Math.min(...heights) };
 }
 
-function readFlag(key: string, fallback: boolean): boolean {
-    try {
-        if (typeof localStorage === "undefined") {
-            return fallback;
-        }
-        const stored = localStorage.getItem(key);
-        return stored === null ? fallback : stored === "1";
-    } catch {
-        return fallback;
-    }
-}
-
-/** A choice remembered under `key`; null when none was made in this browser. */
+/** A choice remembered under `key`, "1" on and "0" off; null when none was made in this browser. */
 function readChoice(key: string): boolean | null {
-    try {
-        if (typeof localStorage === "undefined") {
-            return null;
-        }
-        const stored = localStorage.getItem(key);
-        return stored === null ? null : stored === "1";
-    } catch {
-        return null;
-    }
+    const stored = readStored(key);
+    return stored === null ? null : stored === "1";
 }
 
-function writeFlag(key: string, on: boolean): void {
-    try {
-        if (typeof localStorage !== "undefined") {
-            localStorage.setItem(key, on ? "1" : "0");
-        }
-    } catch {
-        // Nothing to remember into; the choice holds for this page.
-    }
+function writeChoice(key: string, on: boolean): void {
+    writeStored(key, on ? "1" : "0");
 }
 
 interface Colors {
@@ -724,13 +699,13 @@ export class Preview {
     onPick: ((ref: PathRef | null, additive: boolean) => void) | null = null;
     /** Called with the paths a selection box holds and whether they add to the picked ones. */
     onBox: ((refs: PathRef[], additive: boolean) => void) | null = null;
-    private heights = readFlag(HEIGHTS_KEY, true);
+    private heights = readChoice(HEIGHTS_KEY) ?? true;
     /** The grid picked in this browser; null follows the machine, a grid on a cartesian one. */
     private gridChoice = readChoice(GRID_KEY);
     private pending = false;
     private observer: ResizeObserver | null = null;
     private pointers = new Map<number, Pointer>();
-    private locked = readFlag(LOCK_KEY, false);
+    private locked = readChoice(LOCK_KEY) ?? false;
     private disposers: (() => void)[] = [];
     private palette: Colors | null = null;
     private paletteAt = 0;
@@ -867,7 +842,7 @@ export class Preview {
     setShowHeights(on: boolean): void {
         if (on !== this.heights) {
             this.heights = on;
-            writeFlag(HEIGHTS_KEY, on);
+            writeChoice(HEIGHTS_KEY, on);
             this.requestDraw();
         }
     }
@@ -889,7 +864,7 @@ export class Preview {
     setShowGrid(on: boolean): void {
         const before = this.showGrid;
         this.gridChoice = on;
-        writeFlag(GRID_KEY, on);
+        writeChoice(GRID_KEY, on);
         if (on !== before) {
             this.requestDraw();
         }
@@ -955,7 +930,7 @@ export class Preview {
 
     setRotationLocked(locked: boolean): void {
         this.locked = locked;
-        writeFlag(LOCK_KEY, locked);
+        writeChoice(LOCK_KEY, locked);
         this.requestDraw();
     }
 
@@ -1449,7 +1424,7 @@ export class Preview {
             // the last of them marked, and the rest faint.
             const scrub = speeds === null ? this.scrubAt : null;
             const order = scrub !== null ? this.orderOf().index : null;
-            const done = (g: number, p: number): boolean => order === null || (order.get(`${g}:${p}`) ?? Infinity) < scrub!;
+            const done = (g: number, p: number): boolean => order === null || (order.get(refKey([g, p])) ?? Infinity) < scrub!;
             if (scrub !== null && scrub > 0) {
                 const last = this.orderOf().order[scrub - 1];
                 const path = last && last[1] >= 0 ? job.groups[last[0]]?.paths[last[1]] : undefined;
@@ -1663,7 +1638,7 @@ export class Preview {
             }
             group.paths.forEach((_, p) => order.push([g, p]));
         });
-        const index = new Map(order.map((ref, at) => [`${ref[0]}:${ref[1]}`, at]));
+        const index = new Map(order.map((ref, at) => [refKey(ref), at]));
         this.orderCache = { job, order, index };
         return this.orderCache;
     }

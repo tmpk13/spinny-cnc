@@ -1602,7 +1602,7 @@ export interface CamPlacement {
     anchor: CamAnchor;
     offset: [number, number];
     layer: string;
-    mirror: "none" | "x" | "y";
+    mirror: Mirror;
 }
 
 /** A profile as the list shows it. */

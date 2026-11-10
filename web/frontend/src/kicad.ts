@@ -4,6 +4,8 @@
 // arcs, texts) lie on each. The file is read as a stream of lists without
 // building a tree, so a board of a few megabytes costs one pass.
 
+import { countText } from "./format.ts";
+
 /** One layer of a board, as its table lists it. */
 export interface BoardLayer {
     /** The layer's name in the file: F.Cu, F.SilkS, Edge.Cuts, User.1. */
@@ -218,6 +220,6 @@ export function boardLayers(text: string): BoardLayer[] {
 /** A layer as the import's chooser lists it: its name, the name it is shown by, and what is on it. */
 export function layerChoiceText(layer: BoardLayer): string {
     const shown = layer.shown ? ` (${layer.shown})` : "";
-    const items = layer.items === 0 ? "empty" : layer.items === 1 ? "1 item" : `${layer.items} items`;
+    const items = layer.items === 0 ? "empty" : countText(layer.items, "item", "items");
     return `${layer.name}${shown}: ${items}`;
 }

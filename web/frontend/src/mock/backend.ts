@@ -2,7 +2,7 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { fitRigid, turnPoint } from "../align.ts";
-import { ApiError, errorText, type Api } from "../api.ts";
+import { ApiError, errorText, frameWidth, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
 import { formatFixed } from "../format.ts";
 import { fromBoard, type FromBoard } from "../machinekeys.ts";
@@ -1852,11 +1852,6 @@ function probeReplies(machine: MockMachine, distance: number, feed: number | nul
         return [report, "ok"];
     }
     return [report, "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"];
-}
-
-/** The width a camera's picture is drawn at: the width asked for, whole, from 160 to 4096 pixels. */
-function frameWidth(width: number): number {
-    return Math.max(160, Math.min(4096, Math.round(width)));
 }
 
 /** The time now as the backend stamps a map it makes: to the second, in UTC as +00:00. */

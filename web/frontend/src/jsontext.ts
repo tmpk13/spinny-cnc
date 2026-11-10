@@ -57,6 +57,32 @@ interface Container {
     expectKey: boolean;
 }
 
+/** The string whose opening quote is at `start`: its text between the quotes as written, and where its closing quote is (at or past the text's end when it is not closed). */
+function stringAt(text: string, start: number): { raw: string; close: number } {
+    let j = start + 1;
+    let raw = "";
+    while (j < text.length && text[j] !== '"') {
+        if (text[j] === "\\") {
+            raw += text.slice(j, j + 2);
+            j += 2;
+            continue;
+        }
+        raw += text[j];
+        j += 1;
+    }
+    return { raw, close: j };
+}
+
+/** A string read where an object expects a key, taken as the key of its entry. */
+function takeKey(container: Container, raw: string): void {
+    try {
+        container.key = JSON.parse(`"${raw}"`) as string;
+    } catch {
+        container.key = raw;
+    }
+    container.expectKey = false;
+}
+
 /**
  * The steps into the JSON value at `offset` in `text`: the keys and indices
  * of the containers round it, so a caret inside the third point of the
@@ -80,28 +106,13 @@ export function stepsAt(text: string, offset: number): JsonStep[] {
         const char = text[i]!;
         if (char === '"') {
             const top = stack[stack.length - 1];
-            let j = i + 1;
-            let raw = "";
-            while (j < text.length && text[j] !== '"') {
-                if (text[j] === "\\") {
-                    raw += text.slice(j, j + 2);
-                    j += 2;
-                    continue;
-                }
-                raw += text[j];
-                j += 1;
-            }
+            const { raw, close } = stringAt(text, i);
             if (top && top.kind === "object" && top.expectKey) {
-                try {
-                    top.key = JSON.parse(`"${raw}"`) as string;
-                } catch {
-                    top.key = raw;
-                }
-                top.expectKey = false;
+                takeKey(top, raw);
             } else {
                 startEntry();
             }
-            i = j + 1;
+            i = close + 1;
             continue;
         }
         if (char === "{" || char === "[") {
@@ -171,28 +182,13 @@ export function offsetOf(text: string, steps: JsonStep[]): number | null {
             top!.index = 0;
         }
         if (char === '"') {
-            let j = i + 1;
-            let raw = "";
-            while (j < text.length && text[j] !== '"') {
-                if (text[j] === "\\") {
-                    raw += text.slice(j, j + 2);
-                    j += 2;
-                    continue;
-                }
-                raw += text[j];
-                j += 1;
-            }
+            const { raw, close } = stringAt(text, i);
             if (top && top.kind === "object" && top.expectKey) {
-                try {
-                    top.key = JSON.parse(`"${raw}"`) as string;
-                } catch {
-                    top.key = raw;
-                }
-                top.expectKey = false;
+                takeKey(top, raw);
             } else if (matches()) {
                 return i;
             }
-            i = j;
+            i = close;
             continue;
         }
         if ((char === "{" || char === "[") && matches()) {
@@ -206,10 +202,7 @@ export function offsetOf(text: string, steps: JsonStep[]): number | null {
                 for (; j < text.length; j++) {
                     const c = text[j]!;
                     if (c === '"') {
-                        j += 1;
-                        while (j < text.length && text[j] !== '"') {
-                            j += text[j] === "\\" ? 2 : 1;
-                        }
+                        j = stringAt(text, j).close;
                     } else if (c === "{" || c === "[") {
                         depth += 1;
                     } else if (c === "}" || c === "]") {

@@ -4,6 +4,7 @@
 // file, and the marked one embeds it as the backend's embeds its JPEG. The
 // routines' looks are logged by the real backend only.
 
+import { escapeHtml as escape } from "../highlight.ts";
 import type { CamLogEntry, SpotReply } from "../types.ts";
 
 /** Most entries kept, as the backend keeps them. */
@@ -13,10 +14,6 @@ const CENTER = "#2aa198";
 const SEARCH = "#93a1a1";
 const FOUND = "#d33682";
 const MISSED = "#dc322f";
-
-function escape(text: string): string {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /**
  * The picture with what a look found drawn over it, as the backend draws

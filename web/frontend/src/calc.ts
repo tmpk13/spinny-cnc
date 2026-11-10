@@ -10,11 +10,10 @@
 // the rest of the page gives them.
 
 import { errorText } from "./api.ts";
+import { DEG } from "./kinematics.ts";
 
 /** Millimeters in each length unit a number may carry. */
 export const UNITS: Record<string, number> = { mm: 1, cm: 10, in: 25.4, mil: 0.0254, ft: 304.8 };
-
-const DEG = Math.PI / 180;
 
 /** The functions a field may call, by name, with how many arguments each takes. */
 const FUNCTIONS: Record<string, { args: [number, number]; call: (...values: number[]) => number }> = {
