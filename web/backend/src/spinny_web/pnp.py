@@ -973,8 +973,12 @@ class UpCamera:
                 spot = self._spot(mover, progress, settings.nozzle_spot, place, f"the nozzle's tip left the picture at {angle:g} degrees")
                 seen.append(picture_to_machine(spot.dx, spot.dy, place.mm_per_px, place.roll, place.mirror))
         finally:
+            # Back to 0, without hiding why the routine ended.
             if not mover.stopped():
-                mover.turn(0.0)
+                try:
+                    mover.turn(0.0)
+                except PnpError:
+                    pass
         center, radius, rms = fit_circle(seen)
         # The tip at 0 less the axis: how far off true the tip runs.
         runout = (seen[0][0] - center[0], seen[0][1] - center[1])

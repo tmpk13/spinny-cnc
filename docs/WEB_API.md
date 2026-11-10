@@ -802,7 +802,7 @@ it let go. A pick that will not do (no part held, nothing on the nozzle,
 too far off, turned too far, the wrong size) is let go at `discard` or in
 its pocket and the next pocket tried, up to `pick_tries`; then the part
 is left out and listed in `failed`. A part still on the nozzle after its
-place stops the run, and so do two parts left out one after another. The
+place, or after a failed pick was let go, stops the run, and so do two parts left out one after another. The
 program from *plan* is the plan before the run; the run changes it where
 a camera or the vacuum says otherwise.
 

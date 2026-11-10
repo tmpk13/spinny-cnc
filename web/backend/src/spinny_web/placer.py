@@ -248,7 +248,7 @@ class Placement:
                 continue
             for line in lines:
                 ctx.send(line)
-            self._check_released(ctx, block.ref)
+            self._check_released(ctx, f"{block.ref} was placed")
             ctx.progress.placed.append(block.ref)
             self._failed_in_a_row = 0
             self._doing(ctx, None)
@@ -333,7 +333,10 @@ class Placement:
         if not low <= value <= high:
             raise Rejected(f"the vacuum read {num(value)} with no part held ({num(low)} to {num(high)} with one)")
 
-    def _check_released(self, ctx: RunContext, ref: str) -> None:
+    def _check_released(self, ctx: RunContext, what: str) -> None:
+        """The nozzle is empty once a part was let go (`what` says which,
+        in words); a part still on it stops the run, as the next pick would
+        read as held whatever it took."""
         value = self._read(ctx, held=False)
         vacuum = self.device.vacuum
         if value is None or vacuum is None or vacuum.part_off is None:
@@ -341,7 +344,7 @@ class Placement:
         low, high = vacuum.part_off
         if not low <= value <= high:
             raise DeviceLinkError(
-                f"the vacuum read {num(value)} after {ref} was placed ({num(low)} to {num(high)} empty):"
+                f"the vacuum read {num(value)} after {what} ({num(low)} to {num(high)} empty):"
                 " the part may still be on the nozzle, so the run stops before it is let go somewhere else"
             )
 
@@ -362,6 +365,7 @@ class Placement:
         ]
         for line in lines:
             ctx.send(line)
+        self._check_released(ctx, f"a part was {where}")
         return where
 
     # --- the up camera -----------------------------------------------------------------

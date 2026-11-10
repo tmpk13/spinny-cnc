@@ -466,8 +466,9 @@ part not on the nozzle over the up camera, one off by too much or of the
 wrong size is let go at `[motion] discard` (or back in its pocket) and
 the next pocket tried, up to `pick_tries`; the part is then left out and
 listed under the program, and *Run the rest* places what the last run did
-not. A part still on the nozzle after its place stops the run, and so do
-two parts left out one after another.
+not. A part still on the nozzle after its place (or after a failed pick
+was let go) stops the run, and so do two parts left out one after
+another.
 
 Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the vacuum line

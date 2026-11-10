@@ -242,8 +242,9 @@ def moves(lines: list[str]) -> list[tuple[float, float]]:
 def test_a_pick_the_vacuum_finds_empty_is_let_go_at_the_discard_place_and_the_next_pocket_taken(client):
     job_id = rig(client, profile(motion="discard = [0.0, 0.0, -1.5]", rest=VACUUM))
     client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
-    # The first pick holds nothing, the second a part, which lets go.
-    client.fake.readings = [20.0, 80.0, 5.0]
+    # The first pick holds nothing (and the nozzle reads empty once let go
+    # at the discard place), the second a part, which lets go.
+    client.fake.readings = [20.0, 5.0, 80.0, 5.0]
     before = len(client.fake.lines)
     state = run(client, {"job": job_id, "refs": ["R1"]})
     assert state["progress"]["state"] == "done", state["progress"]
@@ -252,7 +253,7 @@ def test_a_pick_the_vacuum_finds_empty_is_let_go_at_the_discard_place_and_the_ne
     across = moves(sent)
     # Pocket 1, the discard place, pocket 2, the place.
     assert across == [(10.0, 20.0), (0.0, 0.0), (14.0, 20.0), (100.0, 50.0)]
-    assert sent.count("M105") == 3 and "G0 Z-1.5 F600" in sent
+    assert sent.count("M105") == 4 and "G0 Z-1.5 F600" in sent
     assert state["progress"]["sent"] == state["progress"]["total"]
 
 
@@ -265,10 +266,21 @@ def test_a_part_that_stays_on_the_nozzle_stops_the_run(client):
     assert state["progress"]["placed"] == [] and state["taken"] == {"res": 1}
 
 
+def test_a_part_still_on_the_nozzle_after_a_discard_stops_the_run(client):
+    job_id = rig(client, profile(rest=VACUUM))
+    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    # A pick read as failed whose part then will not let go.
+    client.fake.readings = [20.0, 60.0]
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    assert state["progress"]["state"] == "error"
+    assert "after a part was put back in its pocket" in state["progress"]["error"] and "may still be on the nozzle" in state["progress"]["error"]
+
+
 def test_two_parts_in_a_row_left_out_stop_the_run(client):
     job_id = rig(client, profile(rest=VACUUM))
     client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
-    client.fake.readings = [20.0]
+    # Every pick holds nothing; each let go reads empty.
+    client.fake.readings = [20.0, 5.0] * 6
     state = run(client, {"job": job_id})
     progress = state["progress"]
     assert progress["state"] == "error" and "2 parts in a row were left out" in progress["error"]
