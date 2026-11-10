@@ -15,7 +15,7 @@ from device_fakes import DeviceUpCamera, FakeMarlin, wait_for
 from spinny_web.app import Backend, create_app
 from spinny_web.gcode_device import DeviceLinkError, GcodeDevice, RunContext
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import VISION_NOTE, DeviceError, board_fit, count_code, parse, plan, read_position, wrap
+from spinny_web.openpnp import VISION_NOTE, DeviceError, board_fit, check_id, count_code, parse, plan, read_position, wrap
 
 REPO = Path(__file__).resolve().parents[3]
 SHIPPED = REPO / "pnp" / "openpnp-marlin.toml"
@@ -94,6 +94,13 @@ def test_a_profile_that_does_not_read_names_the_key(change, words):
     with pytest.raises(DeviceError) as error:
         parse(text, "test")
     assert words in str(error.value)
+
+
+def test_a_device_id_is_the_whole_text():
+    # A line break after an id is not part of a file name.
+    assert check_id("openpnp-marlin") == "openpnp-marlin"
+    with pytest.raises(DeviceError, match="not a device id"):
+        check_id("openpnp-marlin\n")
 
 
 def test_a_position_reads_from_each_firmwares_answer():

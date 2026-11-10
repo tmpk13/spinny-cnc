@@ -37,11 +37,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from spinny_laser.align import Fit, fit_rigid, turn
+from spinny_laser.machines import is_id
 
 from .files import write_whole
 from .kinematics import num
 
-ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 AXIS = re.compile(r"^[A-Z]$")
 # A G-code line as a profile may give it: printable, one line.
 LINE = re.compile(r"^[\x20-\x7e]*$")
@@ -65,7 +65,7 @@ class NotFound(LookupError):
 
 
 def check_id(device_id: str) -> str:
-    if not ID_PATTERN.match(device_id):
+    if not is_id(device_id):
         raise DeviceError(f"{device_id!r} is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64")
     return device_id
 
@@ -488,7 +488,7 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     for number, table in enumerate(tables, start=1):
         section = f"feeder {number}"
         feeder_id = read.text(table, "id", section, "")
-        if not ID_PATTERN.match(feeder_id):
+        if not is_id(feeder_id):
             raise read.fail(section, "id", "must be lower case letters, digits, - and _, starting with a letter or digit")
         if any(other.id == feeder_id for other in feeders):
             raise read.fail(section, "id", f"{feeder_id!r} is another feeder's too")
