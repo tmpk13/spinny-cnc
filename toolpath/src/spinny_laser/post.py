@@ -9,7 +9,8 @@ depth and a rise, pass by pass down to the depth; one cut with another bit
 than the spindle operation before it is preceded by a stop (M0) to change
 the bit. A laser operation cuts at the surface (or at the tool's height on a
 depth axis) with its power on every cut. A polar profile is written by the
-grblHAL polar writer in `gcode`.
+polar writer in `gcode`, with its joint controller: the radius on X and the
+angle on the profile's rotary axis.
 """
 
 from __future__ import annotations
@@ -165,32 +166,35 @@ class _Cartesian:
                 seconds = max(seconds, abs(distance) / rate * 60.0)
         return seconds
 
+    def step(self, axis: cam.Axis, value: float, words: list[str], moved: dict[cam.Axis, float], always: bool = False) -> None:
+        """The axis' word for `value` onto the line being written, and the
+        controller taken there; an axis already there is left out unless
+        `always`. `moved` gets how far the axis goes, nothing for one that
+        nothing has put anywhere yet."""
+        before = self.at[axis.letter]
+        if not always and before is not None and abs(before - value) <= 1e-9:
+            return
+        words.append(f"{axis.letter}{self.num(value)}")
+        moved[axis] = value - before if before is not None else 0.0
+        self.at[axis.letter] = value
+        self.reach(axis, value)
+
     def go(self, point: Point | None = None, z: float | None = None, setup: dict[cam.Axis, float] | None = None) -> None:
         """A rapid in machine coordinates: the plane, the depth, or setup axes.
         An axis already there is left out, but for a park or a home; one
         that nothing has put anywhere yet adds no time."""
         words: list[str] = []
         moves: dict[cam.Axis, float] = {}
-
-        def step(axis: cam.Axis, value: float, always: bool = False) -> None:
-            before = self.at[axis.letter]
-            if not always and before is not None and abs(before - value) <= 1e-9:
-                return
-            words.append(f"{axis.letter}{self.num(value)}")
-            moves[axis] = value - before if before is not None else 0.0
-            self.at[axis.letter] = value
-            self.reach(axis, value)
-
         if point is not None:
             assert self.x is not None and self.y is not None
             mx, my = self.machine_xy(point)
-            step(self.x, mx)
-            step(self.y, my)
+            self.step(self.x, mx, words, moves)
+            self.step(self.y, my, words, moves)
         if z is not None:
             assert self.depth is not None
-            step(self.depth, self.machine_z(z))
+            self.step(self.depth, self.machine_z(z), words, moves)
         for axis, value in (setup or {}).items():
-            step(axis, value, always=True)
+            self.step(axis, value, words, moves, always=True)
         if words:
             self.emit("G0 " + " ".join(words))
             self.report.seconds += self.rapid_seconds(moves)
@@ -200,15 +204,9 @@ class _Cartesian:
         assert self.x is not None and self.y is not None
         mx, my = self.machine_xy(point)
         words: list[str] = []
-        length = 0.0
         moved: dict[cam.Axis, float] = {}
         for axis, value in ((self.x, mx), (self.y, my)):
-            before = self.at[axis.letter]
-            if before is None or abs(before - value) > 1e-9:
-                words.append(f"{axis.letter}{self.num(value)}")
-                moved[axis] = value - (before if before is not None else value)
-                self.at[axis.letter] = value
-                self.reach(axis, value)
+            self.step(axis, value, words, moved)
         if not words:
             return
         length = math.hypot(*moved.values()) if len(moved) == 2 else abs(next(iter(moved.values())))
@@ -233,12 +231,7 @@ class _Cartesian:
         words: list[str] = []
         moved: dict[cam.Axis, float] = {}
         for axis, value in ((self.x, mx), (self.y, my), (self.depth, mz)):
-            before = self.at[axis.letter]
-            if before is None or abs(before - value) > 1e-9:
-                words.append(f"{axis.letter}{self.num(value)}")
-                moved[axis] = value - (before if before is not None else value)
-                self.at[axis.letter] = value
-                self.reach(axis, value)
+            self.step(axis, value, words, moved)
         if not words:
             return
         length = math.sqrt(sum(d * d for d in moved.values()))
@@ -437,8 +430,9 @@ class _Cartesian:
 
 
 def _polar(job: BuiltJob, profile: cam.Profile) -> Program:
-    """A polar profile goes through the grblHAL polar writer: the radius on X
-    and the angle on the rotary axis letter, laser operations only."""
+    """A polar profile goes through the polar writer in `gcode` with its
+    joint controller: the radius on X and the angle on the rotary axis
+    letter, laser operations only."""
     radius = profile.axis(cam.RADIUS)
     angle = profile.axis(cam.ANGLE)
     assert radius is not None and angle is not None
