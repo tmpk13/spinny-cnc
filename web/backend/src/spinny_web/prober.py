@@ -26,12 +26,12 @@ from typing import Callable
 
 from spinny_laser import polar
 
+from .camera import DONE, ERROR, RUNNING, STOPPED
 from .heightmap import Finite, Grid, HeightMap, HeightMapStore, estimate_points_seconds
-from .kinematics import FOCUS_DECIMALS, Streamer, coord, num, turned
+from .kinematics import FOCUS_DECIMALS, CartesianStreamer, Streamer, coord, num, turned
 from .link import Link, LinkError, idle_status, parse_probe, settle
 from .runner import halt
 
-RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
 # Answer time allowed for a positioning line, on top of the time a move
 # should take to come to rest, and on top of a probe's own travel time.
 LINE_TIMEOUT = 10.0
@@ -143,8 +143,8 @@ def reach_joint(
     """The joint that puts the probe tip over a board point on the machine
     the streamer is for, `angle` the table's angle to unwrap from; refused
     when the head would pass a soft limit (0 for none)."""
-    if streamer.cartesian:
-        joint = cartesian_probe_joint(point, offset, float(getattr(streamer, "angle", 0.0)))
+    if isinstance(streamer, CartesianStreamer):
+        joint = cartesian_probe_joint(point, offset, streamer.angle)
         if z_max > 0 and abs(joint[1]) > z_max + 1e-9:
             raise ProberError(
                 f"the probe cannot reach ({point[0]:.2f}, {point[1]:.2f}): the head would go to"
@@ -161,6 +161,20 @@ def reach_joint(
             f" R{joint[0]:.3f}, past the soft limit r_max={r_max:g}"
         )
     return joint
+
+
+def touch_moves(
+    streamer: Streamer, start: tuple[float, float], target: tuple[float, float], at: float | None, travel: float | None
+) -> list[tuple[str, float]]:
+    """The lines a touch at the joint `target` sends before it probes, each
+    with the seconds its motion should take: up to the travel height first
+    when the head, at the height `at`, is lower, then over the target from
+    the joint `start`."""
+    moves = []
+    if travel is not None and at is not None and at < travel - 1e-6:
+        moves.append((f"go H{coord(travel, FOCUS_DECIMALS)}", (travel - at) / streamer.rates.h_rate * 60.0))
+    moves.append((f"go {streamer.words(target)}", streamer._rapid_seconds(start, target)))
+    return moves
 
 
 @dataclass
@@ -217,12 +231,12 @@ class Prober:
     def __init__(
         self,
         store: HeightMapStore,
-        publish: Callable[[dict | None, dict | None], None] | None = None,
+        publish: Callable[[], None] | None = None,
         message: Callable[[str, str], None] | None = None,
     ) -> None:
         self.store = store
-        # Called with the progress and the map after every change.
-        self._publish = publish or (lambda progress, heightmap: None)
+        # Called after every change of the progress or the map.
+        self._publish = publish or (lambda: None)
         self._message = message or (lambda level, text: None)
         self._lock = threading.Lock()
         self._abort = threading.Event()
@@ -395,7 +409,7 @@ class Prober:
                     daemon=True,
                 )
                 self._thread.start()
-            self._emit(progress, None)
+            self._publish()
             return progress.to_dict()
         if resume is not None:
             heightmap = resume
@@ -430,7 +444,7 @@ class Prober:
         # Every point is checked for reach before the first move. A grid
         # point inside the tip's circle about the axis is probed from the
         # circle when near enough; a pad is where it is.
-        angle = status.a if not streamer.cartesian else float(getattr(streamer, "angle", 0.0))
+        angle = streamer.angle if isinstance(streamer, CartesianStreamer) else status.a
         slack = 0.0 if heightmap.is_pad_map else grid.spacing / 2.0
         joints = {}
         todo = heightmap.remaining()
@@ -450,22 +464,19 @@ class Prober:
             # The new map replaces the old one from the start, so the page
             # shows its grid filling in rather than the old heights.
             self.store.put(heightmap)
-            try:
-                estimate = estimate_points_seconds([heightmap.point_of(key) for key in todo], settings, streamer.rates)
-            except (TypeError, ValueError, ZeroDivisionError):
-                estimate = None
+            estimate = estimate_points_seconds([heightmap.point_of(key) for key in todo], settings, streamer.rates)
             self.progress = ProbeProgress(total=heightmap.wanted, done=done, started_done=done, estimate=estimate)
             progress = self.progress
             self._link = link
             start = streamer.start_of(status)
             self._thread = threading.Thread(
                 target=self._run,
-                args=(grid, settings, link, streamer, start, travel, joints, heightmap, progress, self._restarts, todo, status.h),
+                args=(settings, link, streamer, start, travel, joints, heightmap, progress, self._restarts, todo, status.h),
                 name="prober",
                 daemon=True,
             )
             self._thread.start()
-        self._emit(progress, heightmap)
+        self._publish()
         return progress.to_dict()
 
     def stop(self) -> dict:
@@ -505,29 +516,21 @@ class Prober:
 
     # --- the probing thread -----------------------------------------------
 
-    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch, start, target, at=None) -> None:
+    def _run_touch(self, settings, link, streamer, travel, progress, restarts, touch, start, target, at) -> None:
         """One probe down where the head is, or at `target` after a move
         there from `start` (risen from `at` to the travel height first, if
         lower), then back up; `touch` gets the contact height with the head
         at rest at the travel height."""
-        if restarts is None:
-            restarts = link.restarts
         h_rate = streamer.rates.h_rate
         try:
             with self._lock:
                 progress.point = (0, 0)
-            self._emit(progress, None)
+            self._publish()
             if target is not None:
-                if at is not None and at < travel - 1e-6:
-                    self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
-                    self._settle(link, (travel - at) / h_rate * 60.0, restarts)
-                self._request(link, f"go {streamer.words(target)}", LINE_TIMEOUT)
-                self._settle(link, streamer._rapid_seconds(start, target), restarts)
-            height = self._touch(link, settings.feed, settings.depth, h_rate)
-            if settings.slow > 0.0:
-                self._request(link, f"go H{coord(height + settings.backoff, FOCUS_DECIMALS)}", LINE_TIMEOUT)
-                self._settle(link, settings.backoff / h_rate * 60.0, restarts)
-                height = self._touch(link, settings.slow, 2.0 * settings.backoff, h_rate)
+                for line, seconds in touch_moves(streamer, start, target, at, travel):
+                    self._request(link, line, LINE_TIMEOUT)
+                    self._settle(link, seconds, restarts)
+            height = self._probe_point(link, settings, h_rate, restarts)
             self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
             self._settle(link, abs(travel - height) / h_rate * 60.0, restarts)
             if link.restarts != restarts:
@@ -537,56 +540,32 @@ class Prober:
                 progress.point = None
             touch(round(height, 4), travel)
             self._finish(progress, DONE, None)
-        except (LinkError, ValueError) as exc:
-            if self._abort.is_set():
-                return
-            reason = str(exc)
-            self._abort.set()
-            if link.restarts == restarts and link.is_open:
-                try:
-                    status = link.status_now(1.0, routine=True)
-                except LinkError:
-                    status = None
-                if status is None or status.state != "Alarm":
-                    stopped, note = halt(link, self._message)
-                    if not stopped:
-                        reason = f"{reason}; the machine could not be stopped: {note}"
-            self._message("error", f"probing failed: {reason}")
-            self._finish(progress, ERROR, reason)
         except Exception as exc:
-            self._abort.set()
-            self._message("error", f"probing failed: {exc!r}")
-            self._finish(progress, ERROR, f"probing failed: {exc!r}")
+            self._failed(exc, link, restarts, progress)
 
-    def _run(self, grid, settings, link, streamer, start, travel, joints, heightmap, progress, restarts, todo=None, at=None) -> None:
-        if restarts is None:
-            restarts = link.restarts
+    def _run(self, settings, link, streamer, start, travel, joints, heightmap, progress, restarts, todo, at) -> None:
         h_rate = streamer.rates.h_rate
         # Where the head is, and how far the rise to the travel height
         # queued ahead of the next move has to go.
         joint = start
         rise = 0.0
         try:
-            if at is not None and at < travel:
+            if at < travel:
                 # Up to the travel height before anything moves across.
                 self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
                 rise = travel - at
-            for key in grid.order() if todo is None else todo:
+            for key in todo:
                 if self._abort.is_set():
                     return
                 with self._lock:
                     progress.point = key if key[1] >= 0 else None
                     progress.pad = key[0] if key[1] < 0 else None
-                self._emit(progress, None)
+                self._publish()
                 target = joints[key]
                 self._request(link, f"go {streamer.words(target)}", LINE_TIMEOUT)
                 self._settle(link, rise / h_rate * 60.0 + streamer._rapid_seconds(joint, target), restarts)
                 joint = target
-                height = self._touch(link, settings.feed, settings.depth, h_rate)
-                if settings.slow > 0.0:
-                    self._request(link, f"go H{coord(height + settings.backoff, FOCUS_DECIMALS)}", LINE_TIMEOUT)
-                    self._settle(link, settings.backoff / h_rate * 60.0, restarts)
-                    height = self._touch(link, settings.slow, 2.0 * settings.backoff, h_rate)
+                height = self._probe_point(link, settings, h_rate, restarts)
                 self._request(link, f"go H{coord(travel, FOCUS_DECIMALS)}", LINE_TIMEOUT)
                 rise = abs(travel - height)
                 heightmap.record(key, height)
@@ -595,7 +574,7 @@ class Prober:
                 if link.restarts != restarts:
                     raise LinkError("the machine reset during probing")
                 self.store.put(heightmap)
-                self._emit(progress, heightmap)
+                self._publish()
             # The last rise is answered once it is queued, not once it is
             # done; the map is finished when the head is back up and still,
             # so a run started on it finds the machine at rest.
@@ -604,34 +583,56 @@ class Prober:
                 progress.point = None
                 progress.pad = None
             self._finish(progress, DONE, None, heightmap)
-        except (LinkError, ValueError) as exc:
-            if self._abort.is_set():
-                # The stop that set the flag reports the end.
-                return
-            reason = str(exc)
-            self._abort.set()
-            if link.restarts != restarts:
-                # The machine came back up with its focus axis wherever the
-                # head was: the offset kept from the last map belongs to
-                # the old numbers.
-                heightmap.focus_set = False
-            if link.restarts == restarts and link.is_open:
-                # A missed probe has already raised the alarm and stopped;
-                # anything else is halted the way a stop would halt it.
-                try:
-                    status = link.status_now(1.0, routine=True)
-                except LinkError:
-                    status = None
-                if status is None or status.state != "Alarm":
-                    stopped, note = halt(link, self._message)
-                    if not stopped:
-                        reason = f"{reason}; the machine could not be stopped: {note}"
-            self._message("error", f"probing failed: {reason}")
-            self._finish(progress, ERROR, reason, heightmap)
         except Exception as exc:
+            self._failed(exc, link, restarts, progress, heightmap)
+
+    def _probe_point(self, link: Link, settings: ProbeSettings, h_rate: float, restarts: int) -> float:
+        """The height at contact under the head, from rest: a touch at the
+        feed and, with a slow speed set, a back off and a second touch at
+        that speed."""
+        height = self._touch(link, settings.feed, settings.depth, h_rate)
+        if settings.slow > 0.0:
+            self._request(link, f"go H{coord(height + settings.backoff, FOCUS_DECIMALS)}", LINE_TIMEOUT)
+            self._settle(link, settings.backoff / h_rate * 60.0, restarts)
+            height = self._touch(link, settings.slow, 2.0 * settings.backoff, h_rate)
+        return height
+
+    def _failed(
+        self, exc: Exception, link: Link, restarts: int, progress: ProbeProgress, heightmap: HeightMap | None = None
+    ) -> None:
+        """Ends probing on what the probing thread raised. A link's or a
+        value's error ends it with its text, and the machine is halted as a
+        stop halts it unless it reset or raised an alarm; one a stop caused
+        is left for the stop to report. Anything else is a fault, reported
+        as one. `heightmap`, the map being probed, is kept as far as it got."""
+        if not isinstance(exc, (LinkError, ValueError)):
             self._abort.set()
             self._message("error", f"probing failed: {exc!r}")
             self._finish(progress, ERROR, f"probing failed: {exc!r}", heightmap)
+            return
+        if self._abort.is_set():
+            # The stop that set the flag reports the end.
+            return
+        reason = str(exc)
+        self._abort.set()
+        if heightmap is not None and link.restarts != restarts:
+            # The machine came back up with its focus axis wherever the
+            # head was: the offset kept from the last map belongs to the
+            # old numbers.
+            heightmap.focus_set = False
+        if link.restarts == restarts and link.is_open:
+            # A missed probe has already raised the alarm and stopped;
+            # anything else is halted the way a stop would halt it.
+            try:
+                status = link.status_now(1.0, routine=True)
+            except LinkError:
+                status = None
+            if status is None or status.state != "Alarm":
+                stopped, note = halt(link, self._message)
+                if not stopped:
+                    reason = f"{reason}; the machine could not be stopped: {note}"
+        self._message("error", f"probing failed: {reason}")
+        self._finish(progress, ERROR, reason, heightmap)
 
     def _settle(self, link: Link, seconds: float, restarts: int) -> None:
         """Waits for the head to come to rest: the motion queued should take
@@ -681,9 +682,4 @@ class Prober:
             progress.finished = time.monotonic()
         if heightmap is not None:
             self.store.put(heightmap)
-        self._emit(progress, heightmap)
-
-    def _emit(self, progress: ProbeProgress, heightmap: HeightMap | None) -> None:
-        with self._lock:
-            snapshot = progress.to_dict()
-        self._publish(snapshot, heightmap.model_dump() if heightmap is not None else None)
+        self._publish()

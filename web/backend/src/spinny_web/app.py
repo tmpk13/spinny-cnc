@@ -111,7 +111,7 @@ from .kinematics import (
     plan_print,
     turned,
 )
-from .kinematics import FOCUS_DECIMALS, coord
+from .kinematics import FOCUS_DECIMALS
 from .link import (
     check_url,
     CommandError,
@@ -127,7 +127,7 @@ from .link import (
     loss_verdict,
 )
 from .log import LEVELS, log, path_for as log_path, setup as setup_log, tail as log_tail, wire_line, wire_note
-from .prober import Prober, ProberError, ProbeSettings, reach_joint
+from .prober import Prober, ProberError, ProbeSettings, reach_joint, touch_moves
 from .resume import PositionStore, ResumeStore
 from .runner import DONE, HOLD, RUNNING, Runner, RunnerError, halt
 from .tools import ToolBox
@@ -1439,7 +1439,7 @@ class Backend:
                 f": {record['error']}" if record.get("error") else "",
             )
 
-    def _publish_probe(self, progress: dict | None, heightmap: dict | None) -> None:
+    def _publish_probe(self) -> None:
         self._drop_stale_focus()
         self.publish_heightmap()
 
@@ -2897,11 +2897,14 @@ class Backend:
                         # as a grid's points are.
                         target = reach_joint(tip, settings.offset, streamer, self.table_angle(status), 0.0, r_max, z_max)
                     if dry_run:
+                        # What the prober sends before it probes, when the
+                        # head goes to the target first.
+                        moves = [] if target is None else touch_moves(streamer, streamer.start_of(status), target, status.h, self.travel_height)
                         return {
                             "point": [round(tip[0], 4), round(tip[1], 4)],
                             "index": list(found[0]) if found is not None else None,
                             "distance": round(found[2], 3) if found is not None else 0.0,
-                            "lines": self._touch_lines(status, streamer, target),
+                            "lines": [line for line, _ in moves],
                         }
 
                     def touched(height: float, travel: float) -> None:
@@ -2939,19 +2942,6 @@ class Backend:
         if job_id is None:
             raise ValueError("the nearest point clear of the cuts needs a job: load one, or run one first")
         return self._job(job_id)
-
-    def _touch_lines(self, status, streamer: Streamer, target) -> list[str]:
-        """What a touch at a target sends before it probes: up to the travel
-        height first when the head is lower, as the prober does, then over
-        the target."""
-        if target is None:
-            return []
-        lines = []
-        travel = self.travel_height
-        if travel is not None and status.h is not None and status.h < travel - 1e-6:
-            lines.append(f"go H{coord(travel, FOCUS_DECIMALS)}")
-        lines.append(f"go {streamer.words(target)}")
-        return lines
 
     def _touched(self, link: Link, mode: str, height: float, travel: float, tip: tuple[float, float], frame: int) -> None:
         """What a probe under the head found, with the head back up at rest.
