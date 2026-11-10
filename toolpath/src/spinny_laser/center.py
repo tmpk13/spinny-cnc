@@ -40,6 +40,10 @@ from pathlib import Path
 from . import __version__, fine, gcode, machine, preview
 from .polar import Point
 
+# How far the coarse pattern's lines run and the radius of its reference
+# ring when none is asked for, mm.
+DEFAULT_REACH = 6.0
+DEFAULT_RING = 8.0
 # Angle between samples around the reference ring. At the default radius
 # the chord is a tenth of a millimeter and its sagitta a thousandth of
 # one, so the ring is round well inside anything measurable on the board.
@@ -243,9 +247,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = machine.parse_args(parser, argv)
     if args.reach is None:
-        args.reach = fine.Design.reach if args.fine else 6.0
+        args.reach = fine.Design.reach if args.fine else DEFAULT_REACH
     if args.ring is None:
-        args.ring = 0.0 if args.fine else 8.0
+        args.ring = 0.0 if args.fine else DEFAULT_RING
     if args.fine:
         # The fine pattern has its own geometry and writes joint-space
         # lines; a flag for the coarse pattern or the gcode dialect would

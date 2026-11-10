@@ -72,8 +72,8 @@ def build(
 
 
 def _coarse(request: CenterRequest, rotary_max_rate: float | None) -> CalibrateResult:
-    reach = 6.0 if request.reach is None else request.reach
-    ring = 8.0 if request.ring is None else request.ring
+    reach = coarse_pattern.DEFAULT_REACH if request.reach is None else request.reach
+    ring = coarse_pattern.DEFAULT_RING if request.ring is None else request.ring
     if request.lines == 0 and ring <= 0:
         raise ValueError("0 lines needs a ring to measure")
     groups = coarse_pattern.build(
