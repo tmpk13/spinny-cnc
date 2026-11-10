@@ -2468,9 +2468,7 @@ class Backend:
             if compensation is None and not focus_here and not self.milling and not self.dispensing and group_focus(job):
                 if self.link is not None and self.link.is_open:
                     self._check_focus_start(job, self.link.status_now(1.0, routine=True).h)
-            return self.runner.start(
-                job, self.link, self.streamer(status), compensation, restarts, reserved=True, frame=self.focus_frame()
-            )
+            return self.runner.start(job, self.link, self.streamer(status), compensation, restarts, frame=self.focus_frame())
         finally:
             self.runner.release()
 
@@ -2569,7 +2567,6 @@ class Backend:
                     streamer,
                     compensation,
                     restarts,
-                    reserved=True,
                     skip=skip,
                     pieces=pieces,
                     plan_start=plan_start,
@@ -2796,13 +2793,13 @@ class Backend:
 
     def _start_map_probe(
         self,
-        grid: Grid,
+        grid: Grid | None,
         resume: HeightMap | None,
         points: list[tuple[float, float]] | None = None,
         box: tuple | None = None,
     ) -> None:
-        """Starts probing a map: `grid`, or the pads at `points` in `box`;
-        with `resume`, going on with that map."""
+        """Starts probing a map: `grid`, or the pads at `points` in `box`
+        with no grid; with `resume`, going on with that map."""
         # The check that no run is under way and the prober's claim are one
         # step: a run asked for at the same moment waits for this, then
         # finds the board being probed.
@@ -2825,7 +2822,6 @@ class Backend:
                             " position set): its heights and the new ones would not agree, so probe it anew"
                         )
                     self.prober.start(
-                        grid,
                         self.probe_settings(),
                         link,
                         self.streamer(status),
@@ -2833,7 +2829,7 @@ class Backend:
                         z_max,
                         spindle_off,
                         keep_focus=self._heights_frame == frame,
-                        reserved=True,
+                        grid=grid,
                         travel=self.travel_height,
                         resume=resume,
                         points=points,
@@ -2911,14 +2907,12 @@ class Backend:
                         self._touched(link, body.mode, height, travel, tip, frame)
 
                     self.prober.start(
-                        Grid(x0=-1.0, y0=-1.0, x1=1.0, y1=1.0, nx=2, ny=2),
                         settings,
                         link,
                         streamer,
                         r_max,
                         z_max,
                         spindle_off,
-                        reserved=True,
                         travel=self.travel_height,
                         touch=touched,
                         target=target,
@@ -3059,12 +3053,11 @@ class Backend:
 
     def start_pads(self, body: PadsBody) -> dict:
         points, _, resume, box = self.pad_points(body)
-        # A pad map's grid is made from its points; the prober is given one
-        # all the same, the map's own when going on with it.
+        # A pad map's grid is made from its points.
         if resume is not None:
-            self._start_map_probe(resume.grid, resume, points=resume.points, box=box)
+            self._start_map_probe(None, resume, points=resume.points, box=box)
         else:
-            self._start_map_probe(Grid(x0=-1.0, y0=-1.0, x1=1.0, y1=1.0, nx=2, ny=2), None, points=points, box=box)
+            self._start_map_probe(None, None, points=points, box=box)
         log.info("probing the pads: %d points%s", len(points), ", going on with the map" if resume is not None else "")
         return self.heightmap_state()
 

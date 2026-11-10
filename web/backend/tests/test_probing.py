@@ -17,6 +17,7 @@ import pytest
 from fake_serial import FakeSerial, fake_opener
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starts import start_probe
 
 from spinny_web import prober as prober_module
 from spinny_web.app import Backend, ProbeBody, create_app
@@ -856,7 +857,7 @@ def start_held(prober: Prober, link: Link, end) -> None:
 
     def start() -> None:
         try:
-            prober.start(Grid(x0=-10, y0=-5, x1=10, y1=5, nx=2, ny=2), ProbeSettings(), link, Streamer())
+            start_probe(prober, ProbeSettings(), link, Streamer(), grid=Grid(x0=-10, y0=-5, x1=10, y1=5, nx=2, ny=2))
             outcome["result"] = "started"
         except ProberError as exc:
             outcome["result"] = str(exc)
@@ -887,7 +888,7 @@ def test_a_stop_or_a_reset_while_probing_starts_ends_it_before_anything_moves(tm
         assert not prober.active and store.get() is None
         assert not any(line.split()[0] in ("go", "probe") for line in fake.received_lines)
         # Nothing is left behind: the next probing runs.
-        prober.start(Grid(x0=-10, y0=-5, x1=10, y1=5, nx=2, ny=2), ProbeSettings(), link, Streamer())
+        start_probe(prober, ProbeSettings(), link, Streamer(), grid=Grid(x0=-10, y0=-5, x1=10, y1=5, nx=2, ny=2))
         assert wait_until(lambda: not prober.active, 10.0)
         assert prober.progress.state == "done", prober.snapshot()
     finally:
@@ -941,7 +942,7 @@ def test_a_half_turn_before_the_first_point_is_waited_out_on_the_virtual_firmwar
         store = HeightMapStore(tmp_path / "heightmap.json")
         prober = Prober(store)
         settings = ProbeSettings(depth=4, feed=600, slow=0)
-        prober.start(Grid(x0=-10, y0=-1, x1=-6, y1=1, nx=2, ny=2), settings, link, Streamer())
+        start_probe(prober, settings, link, Streamer(), grid=Grid(x0=-10, y0=-1, x1=-6, y1=1, nx=2, ny=2))
         assert wait_until(lambda: not prober.active, 60.0)
         assert prober.progress.state == "done", prober.snapshot()
         heightmap = store.get()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from replay import parse
+from starts import start_probe, start_run
 
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
@@ -169,7 +170,7 @@ def test_a_dispensing_job_runs_on_the_virtual_firmware(dispenser_firmware):
         expected = list(streamer.job_pieces(job, (0.0, 0.0)))
         assert expected[0].line == "set A0"
         runner = Runner()
-        runner.start(job, link, streamer)
+        start_run(runner, job, link, streamer)
         deadline = time.monotonic() + 120.0
         while runner.progress.state != DONE and time.monotonic() < deadline:
             assert runner.progress.state in ("running", "done"), runner.snapshot()
@@ -204,7 +205,7 @@ def test_small_job_runs_on_the_virtual_firmware(firmware):
         expected = [piece for piece in streamer.job_pieces(job, (0.0, 0.0))]
         assert expected[-1].line.endswith(" S500 M150")
         runner = Runner()
-        runner.start(job, link, streamer)
+        start_run(runner, job, link, streamer)
         deadline = time.monotonic() + 120.0
         while runner.progress.state != DONE and time.monotonic() < deadline:
             assert runner.progress.state in ("running", "done"), runner.snapshot()
@@ -238,7 +239,7 @@ def test_a_far_side_cut_runs_on_the_virtual_firmware(firmware):
         expected = [piece for piece in streamer.job_pieces(job, (0.0, 0.0))]
         assert expected[-1].line == "cut R-4.500 A110.0000 F4000 S400"
         runner = Runner()
-        runner.start(job, link, streamer)
+        start_run(runner, job, link, streamer)
         deadline = time.monotonic() + 120.0
         while runner.progress.state != DONE and time.monotonic() < deadline:
             assert runner.progress.state in ("running", "done"), runner.snapshot()
@@ -264,7 +265,7 @@ def test_a_reset_during_a_held_run_ends_it_without_another_line(firmware):
         paths = [[(10.0 + i * 0.1, -3.0), (10.0 + i * 0.1, 3.0)] for i in range(60)]
         job = Job(id="e2e-reset", name="many", groups=[Group(label="one", power=500, speed=200, paths=paths)])
         runner = Runner()
-        runner.start(job, link, Streamer())
+        start_run(runner, job, link, Streamer())
         deadline = time.monotonic() + 30.0
         while runner.progress.sent < 16 and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -304,7 +305,7 @@ def test_a_stop_from_motion_holds_first_and_resets_at_rest(firmware):
         seen: list[str] = []
         link.subscribe(lambda event: seen.append(f"{event.kind}:{event.data}"))
         runner = Runner()
-        runner.start(job, link, Streamer())
+        start_run(runner, job, link, Streamer())
         deadline = time.monotonic() + 30.0
         while runner.progress.sent < 16 and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -371,7 +372,7 @@ def test_probing_then_a_focus_run_follows_the_board_on_the_virtual_firmware(focu
         prober = Prober(store)
         settings = ProbeSettings(depth=4, feed=240, slow=30, backoff=0.3, offset=(2.0, 1.0))
         streamer = Streamer()
-        prober.start(Grid(x0=-8, y0=-8, x1=8, y1=8, nx=3, ny=3), settings, link, streamer)
+        start_probe(prober, settings, link, streamer, grid=Grid(x0=-8, y0=-8, x1=8, y1=8, nx=3, ny=3))
         deadline = time.monotonic() + 120.0
         while prober.active and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -394,7 +395,7 @@ def test_probing_then_a_focus_run_follows_the_board_on_the_virtual_firmware(focu
         square = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0), (-5.0, -5.0)]
         job = Job(id="focus", name="square", groups=[Group(label="one", power=500, speed=2000, paths=[square])])
         runner = Runner()
-        runner.start(job, link, streamer, compensation)
+        start_run(runner, job, link, streamer, compensation)
         deadline = time.monotonic() + 120.0
         while runner.progress.state == "running" and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -466,7 +467,7 @@ def test_a_cartesian_spindle_probes_then_mills_at_depth_under_the_board_on_the_v
         prober = Prober(store)
         streamer = CartesianStreamer(angle=0.0, spindle=Spindle(clearance=1.0, spinup=0.1))
         settings = ProbeSettings(depth=4, feed=240, slow=30, backoff=0.3, offset=(0.0, 0.0))
-        prober.start(Grid(x0=-8, y0=-8, x1=8, y1=8, nx=3, ny=3), settings, link, streamer)
+        start_probe(prober, settings, link, streamer, grid=Grid(x0=-8, y0=-8, x1=8, y1=8, nx=3, ny=3))
         deadline = time.monotonic() + 120.0
         while prober.active and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -487,7 +488,7 @@ def test_a_cartesian_spindle_probes_then_mills_at_depth_under_the_board_on_the_v
             groups=[Group(label="iso", power=600, speed=400, depth=0.2, passes=2, plunge=120, paths=[square])],
         )
         runner = Runner()
-        runner.start(job, link, streamer, compensation)
+        start_run(runner, job, link, streamer, compensation)
         deadline = time.monotonic() + 120.0
         while runner.progress.state == "running" and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -553,7 +554,7 @@ def test_a_model_is_cut_out_on_the_virtual_mill(mill_firmware, tmp_path):
     link.open()
     try:
         runner = Runner()
-        runner.start(job, link, streamer, None)
+        start_run(runner, job, link, streamer, None)
         deadline = time.monotonic() + 300.0
         while runner.progress.state == "running" and time.monotonic() < deadline:
             time.sleep(0.05)

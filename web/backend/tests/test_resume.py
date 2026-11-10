@@ -10,6 +10,7 @@ import time
 import pytest
 from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
+from starts import start_run
 
 from spinny_web.app import Backend, create_app
 from spinny_web.jobs import Group, Job
@@ -140,7 +141,7 @@ def test_a_run_picked_up_part_way_sends_the_approach_then_the_rest():
         streamer = CartesianStreamer(spindle=Spindle(clearance=2.0, spinup=0.0))
         pieces = list(streamer.job_pieces(job, (0.0, 0.0)))
         skip = streamer.rewind(pieces, 5)
-        progress = runner.start(job, link, streamer, skip=skip, pieces=pieces, plan_start=(0.0, 0.0))
+        progress = start_run(runner, job, link, streamer, skip=skip, pieces=pieces, plan_start=(0.0, 0.0))
         # The thread is off as soon as the start returns, so the counts may
         # have moved on by a line or two; they began at the skip.
         assert progress["resumed_from"] == skip and skip <= progress["acked"] <= progress["sent"]
@@ -163,7 +164,7 @@ def test_a_count_past_the_job_is_refused():
         streamer = CartesianStreamer(spindle=Spindle(spinup=0.0))
         pieces = list(streamer.job_pieces(mill_job(), (0.0, 0.0)))
         with pytest.raises(Exception):
-            runner.start(mill_job(), link, streamer, skip=len(pieces) + 1, pieces=pieces, plan_start=(0.0, 0.0))
+            start_run(runner, mill_job(), link, streamer, skip=len(pieces) + 1, pieces=pieces, plan_start=(0.0, 0.0))
         assert not runner.active
     finally:
         link.close()
@@ -173,7 +174,7 @@ def test_the_record_follows_a_run_from_the_top():
     fake, link, runner, records = setup()
     try:
         job = laser_job()
-        runner.start(job, link, Streamer())
+        start_run(runner, job, link, Streamer())
         wait_done(runner)
         assert runner.progress.state == DONE
         assert records[0]["state"] == "running" and records[0]["job"] == "l1"

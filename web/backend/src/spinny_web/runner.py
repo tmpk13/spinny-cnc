@@ -140,10 +140,19 @@ class Runner:
     def reserve(self, link: Link | None) -> None:
         """Claims the machine for a run about to start, before the caller
         reads what it needs to get it ready: a stop, hold or reset from
-        here on keeps it from starting. `start(..., reserved=True)` takes
-        the claim over; `release` gives it back when no start follows."""
+        here on keeps it from starting. `start` takes the claim over;
+        `release` gives it back when no start follows."""
         with self._lock:
-            self._claim(link)
+            if self.active:
+                raise RunnerError("a job is already running")
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                # Its halt is still on its way to the machine; a new run
+                # would be streamed into the reset that ends the old one.
+                raise RunnerError("the previous run is still stopping")
+            self._starting = True
+            self._cancel_start = None
+            self._starting_link = link
 
     def release(self) -> None:
         """Gives back a claim `reserve` made that no `start` took over."""
@@ -153,38 +162,26 @@ class Runner:
                 self._cancel_start = None
                 self._starting_link = None
 
-    def _claim(self, link: Link | None) -> None:
-        if self.active:
-            raise RunnerError("a job is already running")
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            # Its halt is still on its way to the machine; a new run
-            # would be streamed into the reset that ends the old one.
-            raise RunnerError("the previous run is still stopping")
-        self._starting = True
-        self._cancel_start = None
-        self._starting_link = link
-
     def start(
         self,
         job: Job,
         link: Link | None,
         streamer: Streamer,
-        compensation: Compensation | None = None,
-        restarts: int | None = None,
-        reserved: bool = False,
+        compensation: Compensation | None,
+        restarts: int | None,
         skip: int = 0,
         pieces: list[Piece] | None = None,
         plan_start: tuple[float, float] | None = None,
         frame: str | None = None,
     ) -> dict:
-        """Plans the run from where the machine is and starts streaming it.
+        """Plans the run from where the machine is and starts streaming it,
+        taking over the claim `reserve` made, with whatever stop or hold
+        came since.
 
-        `restarts` is the link's restart count when the caller began to
-        get the run ready (reading settings, say): a reset from then on
-        refuses the start. By default it is taken as planning begins.
-        `reserved` takes over a claim `reserve` made, with whatever stop or
-        hold came since.
+        `restarts` is the link's restart count when the caller claimed the
+        run, before it read what it needed (settings, say): a reset from
+        then on refuses the start. None goes with no link, which is
+        refused.
 
         `skip` picks the job up at that line: the lines before it are
         counted as done, the head is brought to where it begins, and the
@@ -196,16 +193,11 @@ class Runner:
         resume record keeps beside the height a group's focus counts from.
         """
         with self._lock:
-            if reserved:
-                if not self._starting:
-                    raise RunnerError("the run was not reserved")
-                self._starting_link = link
-            else:
-                self._claim(link)
+            if not self._starting:
+                raise RunnerError("the run was not reserved")
+            self._starting_link = link
         try:
-            start, stats, restarts, pieces = self._prepare(
-                job, link, streamer, compensation, restarts, plan_start=plan_start, pieces=pieces
-            )
+            start, stats, pieces = self._prepare(job, link, streamer, compensation, plan_start=plan_start, pieces=pieces)
             assert link is not None
             if skip < 0 or skip > stats.moves:
                 raise RunnerError(f"the job has {stats.moves} lines, so it cannot be picked up at line {skip}")
@@ -278,7 +270,6 @@ class Runner:
         link: Link | None,
         streamer: Streamer,
         compensation: Compensation | None,
-        restarts: int | None = None,
         plan_start: tuple[float, float] | None = None,
         pieces: list[Piece] | None = None,
     ):
@@ -286,10 +277,6 @@ class Runner:
             raise RunnerError("not connected")
         # A job the machine must not run is refused before anything is sent.
         streamer.check_job(job)
-        # Taken before anything is read: the run counts every restart from
-        # here as one under it, a reset while it is being planned included.
-        if restarts is None:
-            restarts = link.restarts
         # The status and the estimate run outside the lock: the reader thread
         # takes it for every snapshot, and the status answer arrives on that
         # thread.
@@ -332,7 +319,7 @@ class Runner:
         after = idle_status(link, RunnerError, wrap=True)
         if (after.r, after.a, after.z, after.h) != (status.r, status.a, status.z, status.h):
             raise RunnerError("the machine moved while the run was being prepared")
-        return start, stats, restarts, pieces
+        return start, stats, pieces
 
     def cancel_start(self, reason: str) -> bool:
         """Keeps the run being prepared from starting; False when no run is

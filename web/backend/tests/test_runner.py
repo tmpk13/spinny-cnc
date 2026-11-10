@@ -9,6 +9,7 @@ import pytest
 from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 from replay import parse
+from starts import start_run
 
 from spinny_web.app import Backend, create_app
 from spinny_web.jobs import Group, Job
@@ -77,7 +78,7 @@ def test_run_to_completion_reports_progress_and_moves_the_machine():
         job = small_job()
         streamer = Streamer()
         expected = [piece for piece in streamer.job_pieces(job, (0.0, 0.0))]
-        progress = runner.start(job, link, streamer)
+        progress = start_run(runner, job, link, streamer)
         assert progress["state"] == RUNNING and progress["total"] == len(expected)
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
         final = runner.snapshot()
@@ -102,7 +103,7 @@ def test_progress_is_published_at_most_five_times_a_second_between_changes():
             name="ring",
             groups=[Group(label="ring", paths=[[(20.0 + (i % 2), i * 0.5) for i in range(200)]])],
         )
-        runner.start(big, link, Streamer())
+        start_run(runner, big, link, Streamer())
         assert wait_for(lambda: runner.progress.state == DONE, 20.0)
         elapsed = runner.snapshot()["seconds"]
         running = [p for p in sink.progress if p["state"] == RUNNING]
@@ -115,7 +116,7 @@ def test_progress_is_published_at_most_five_times_a_second_between_changes():
 def test_hold_resume_and_stop():
     fake, link, sink, runner = setup(move_time=0.5)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: fake.state() == "Run", 2.0)
         runner.hold()
         assert runner.progress.state == HOLD
@@ -144,7 +145,7 @@ def test_hold_resume_and_stop():
             runner.stop()
         assert fake.state() == "Idle"
         # The next run starts cleanly.
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.state == DONE, 20.0)
     finally:
         link.close()
@@ -154,20 +155,20 @@ def test_refuses_when_not_connected_or_not_idle():
     fake, link, sink, runner = setup(move_time=0.5)
     try:
         with pytest.raises(RunnerError):
-            runner.start(small_job(), None, Streamer())
+            start_run(runner, small_job(), None, Streamer())
         link.request_ok("go R3")
         link.status_now(1.0)
         with pytest.raises(RunnerError):
-            runner.start(small_job(), link, Streamer())
+            start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: fake.state() == "Idle", 2.0)
         link.status_now(1.0)
         with pytest.raises(RunnerError):
-            runner.start(Job(id="empty", name="empty"), link, Streamer())
+            start_run(runner, Job(id="empty", name="empty"), link, Streamer())
         closed = Link("fake://", open_port=fake_opener(FakeSerial()), poll=False)
         closed.open()
         closed.close()
         with pytest.raises(RunnerError):
-            runner.start(small_job(), closed, Streamer())
+            start_run(runner, small_job(), closed, Streamer())
     finally:
         link.close()
 
@@ -176,7 +177,7 @@ def test_a_refused_line_ends_the_run_with_an_error():
     fake, link, sink, runner = setup(move_time=0.05)
     try:
         fake.settings["r_max"] = 12.0
-        runner.start(small_job(radius=10.0), link, Streamer())
+        start_run(runner, small_job(radius=10.0), link, Streamer())
         assert wait_for(lambda: runner.progress.state == ERROR, 10.0)
         final = runner.snapshot()
         assert "error:4" in final["error"]
@@ -190,7 +191,7 @@ def test_a_refused_line_ends_the_run_with_an_error():
 def test_a_vanishing_port_ends_the_run_with_an_error():
     fake, link, sink, runner = setup(move_time=0.5, ok_delay=0.05)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.sent >= 2, 2.0)
         fake.vanish()
         assert wait_for(lambda: runner.progress.state == ERROR, 5.0)
@@ -205,7 +206,7 @@ def test_stop_does_not_count_flushed_lines_as_acked():
     # those and they never count.
     fake, link, sink, runner = setup(move_time=0.5, ok_delay=0.5)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: fake.state() == "Run", 3.0)
         assert runner.progress.sent >= 4
         progress = runner.stop()
@@ -220,7 +221,7 @@ def test_stop_does_not_count_flushed_lines_as_acked():
 def test_stop_returns_quickly_when_the_machine_is_already_at_rest():
     fake, link, sink, runner = setup(move_time=0.001, ok_delay=0.3)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.sent >= 1, 2.0)
         assert fake.state() == "Idle"
         # The lines it has taken in are answered at once from here: an
@@ -253,7 +254,7 @@ class Crashing(Streamer):
 def test_a_crash_in_the_streaming_thread_is_reported_and_halts_the_machine():
     fake, link, sink, runner = setup(move_time=0.3)
     try:
-        runner.start(small_job(), link, Crashing())
+        start_run(runner, small_job(), link, Crashing())
         assert wait_for(lambda: runner.progress.state == ERROR, 5.0)
         final = runner.snapshot()
         assert "RuntimeError" in final["error"] and "boom" in final["error"]
@@ -285,7 +286,7 @@ def test_start_does_not_hold_the_lock_while_asking_the_machine():
         # reader thread, which must not wait behind a starting run.
         link.subscribe(lambda event: runner.snapshot())
         streamer = Watching(runner)
-        runner.start(small_job(), link, streamer)
+        start_run(runner, small_job(), link, streamer)
         assert streamer.locked is False
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
     finally:
@@ -313,7 +314,7 @@ def test_a_machine_that_resets_mid_run_stops_the_run_and_says_so():
     )
     try:
         streamer = Streamer()
-        runner.start(big, link, streamer)
+        start_run(runner, big, link, streamer)
         assert wait_for(lambda: runner.progress.sent > 5, 5.0)
         assert runner.progress.sent < runner.progress.total
         # The machine restarts underneath the run.
@@ -335,13 +336,13 @@ def test_a_job_of_joint_paths_runs_through_the_axis():
             name="fine",
             groups=[Group(label="rail", power=400, speed=200, joints=[[(-6.0, 0.0), (6.0, 0.0)]])],
         )
-        runner.start(job, link, Streamer())
+        start_run(runner, job, link, Streamer())
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
         lines = [line for line in fake.received_lines if line.split()[0] in ("go", "cut")]
         assert lines == ["go R-6.000 A0.0000", "cut R6.000 A0.0000 F200 S400"]
         assert fake.joint[0] == pytest.approx(6.0)
         with pytest.raises(RunnerError):
-            runner.start(Job(id="j3", name="empty", groups=[Group(label="off", enabled=False, joints=[[(-6.0, 0.0), (6.0, 0.0)]])]), link, Streamer())
+            start_run(runner, Job(id="j3", name="empty", groups=[Group(label="off", enabled=False, joints=[[(-6.0, 0.0), (6.0, 0.0)]])]), link, Streamer())
     finally:
         link.close()
 
@@ -363,7 +364,7 @@ def test_a_reset_from_outside_the_run_stops_it_before_another_line_goes_out():
         )],
     )
     try:
-        runner.start(big, link, Streamer())
+        start_run(runner, big, link, Streamer())
         assert wait_for(lambda: runner.progress.sent >= 16, 5.0)
         assert wait_for(lambda: fake.state() == "Idle", 1.0)
         link.realtime(REALTIME_RESET)
@@ -389,7 +390,7 @@ def test_a_version_asked_from_the_console_does_not_end_the_run():
         )],
     )
     try:
-        runner.start(big, link, Streamer())
+        start_run(runner, big, link, Streamer())
         assert wait_for(lambda: runner.progress.sent > 5, 5.0)
         # The answer to `version` is the banner line: an answer, not a restart.
         assert link.request("version")[-1] == "ok"
@@ -404,7 +405,7 @@ def test_stop_waits_for_the_hold_to_finish_before_the_reset():
     # fake's ramp stands in for that. The reset must wait for it.
     fake, link, sink, runner = setup(move_time=0.5, hold_ramp=0.3)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: fake.state() == "Run", 2.0)
         progress = runner.stop()
         assert progress["state"] == STOPPED and progress["error"] is None
@@ -422,7 +423,7 @@ def test_a_stop_that_finds_the_machine_still_moving_leaves_the_alarm_up(monkeypa
     monkeypatch.setattr(runner_module, "HOLD_WAIT", 0.2)
     fake, link, sink, runner = setup(move_time=0.5, hold_ramp=1.0)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: fake.state() == "Run", 2.0)
         progress = runner.stop()
         # The reset went out anyway: a stop must stop. What it cost is
@@ -439,7 +440,7 @@ def test_a_stop_that_finds_the_machine_still_moving_leaves_the_alarm_up(monkeypa
 def test_a_hold_after_the_run_ended_is_refused_and_leaves_it_done():
     fake, link, sink, runner = setup(move_time=0.002)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.state == RUNNING, 2.0)
         real = link.realtime
 
@@ -469,10 +470,10 @@ def test_start_refuses_while_the_previous_thread_is_still_stopping():
         stale.start()
         runner._thread = stale
         with pytest.raises(RunnerError, match="still stopping"):
-            runner.start(small_job(), link, Streamer())
+            start_run(runner, small_job(), link, Streamer())
         gate.set()
         stale.join(1.0)
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
     finally:
         link.close()
@@ -491,7 +492,7 @@ def test_a_run_being_prepared_counts_as_active_and_checks_the_start_again():
                 return super().estimate(job, start, compensation)
 
         with pytest.raises(RunnerError, match="moved"):
-            runner.start(small_job(), link, SlowStreamer())
+            start_run(runner, small_job(), link, SlowStreamer())
         assert seen == [True]
         assert not runner.active
         assert runner.progress.state == "idle"
@@ -503,7 +504,7 @@ def test_the_drain_gives_up_as_an_error_not_as_done(monkeypatch):
     monkeypatch.setattr(runner_module, "DRAIN_TIMEOUT", 0.3)
     fake, link, sink, runner = setup(move_time=100.0)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: not runner.active, 10.0)
         final = runner.snapshot()
         assert final["state"] == ERROR
@@ -520,7 +521,7 @@ def test_a_hold_during_the_drain_does_not_count_against_the_budget(monkeypatch):
     # after the last ack; keep it well inside the budget.
     fake, link, sink, runner = setup(move_time=0.005)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.sent == runner.progress.total, 5.0)
         runner.hold()
         time.sleep(0.7)
@@ -534,7 +535,7 @@ def test_a_hold_during_the_drain_does_not_count_against_the_budget(monkeypatch):
 def test_stop_reports_an_error_when_the_halt_cannot_reach_the_machine():
     fake, link, sink, runner = setup(move_time=0.5)
     try:
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: fake.state() == "Run", 2.0)
 
         # The port goes away under the stop: the machine keeps cutting
@@ -554,7 +555,7 @@ def test_a_run_starts_with_the_table_angle_renumbered_within_a_turn():
     fake, link, sink, runner = setup(move_time=0.002)
     try:
         fake.joint = [10.0, 1085.0]
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
         assert "set A5" in fake.received_lines
         first = next(line for line in fake.received_lines if line.split()[0] in ("go", "cut"))
@@ -591,11 +592,11 @@ def test_a_run_stopped_while_it_is_being_prepared_never_starts(action):
                 return super().estimate(job, start, compensation)
 
         with pytest.raises(RunnerError, match="not started|reset while"):
-            runner.start(small_job(), link, SlowStreamer())
+            start_run(runner, small_job(), link, SlowStreamer())
         assert not runner.active
         assert motion_lines(fake) == []
         # The refusal was that start's alone: the next one runs.
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: runner.progress.state == DONE, 10.0)
     finally:
         link.close()
@@ -607,8 +608,12 @@ def test_a_reset_before_the_runner_was_asked_refuses_the_start():
     try:
         before = link.restarts
         assert link.reset()
-        with pytest.raises(RunnerError, match="reset while"):
-            runner.start(small_job(), link, Streamer(), None, before)
+        runner.reserve(link)
+        try:
+            with pytest.raises(RunnerError, match="reset while"):
+                runner.start(small_job(), link, Streamer(), None, before)
+        finally:
+            runner.release()
         assert motion_lines(fake) == []
     finally:
         link.close()
@@ -643,7 +648,7 @@ def test_an_abort_as_the_run_ends_never_leaves_it_marked_running():
             runner._abort.armed = True
 
         runner._drain = drained
-        runner.start(small_job(), link, Streamer())
+        start_run(runner, small_job(), link, Streamer())
         assert wait_for(lambda: not runner.active, 10.0), runner.snapshot()
         assert runner.progress.state in (DONE, STOPPED)
     finally:

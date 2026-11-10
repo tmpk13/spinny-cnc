@@ -258,33 +258,30 @@ class Prober:
         with self._lock:
             return self.progress.to_dict() if self.progress is not None else None
 
-    def reserve(self, link: Link | None) -> None:
+    def reserve(self, link: Link) -> None:
         """Claims the machine for a probing about to start, before the
         caller reads what it needs: a stop or reset from here on keeps it
-        from starting. `start(..., reserved=True)` takes the claim over;
-        `release` gives it back when no start follows."""
+        from starting. `start` takes the claim over; `release` gives it
+        back when no start follows."""
         with self._lock:
-            self._claim(link)
+            if self.active:
+                raise ProberError("probing is already under way")
+            thread = self._thread
+            if thread is not None and thread.is_alive():
+                raise ProberError("the last probing is still stopping")
+            self._starting = True
+            # A stop from here on ends the start before anything moves.
+            self._abort.clear()
+            # A restart from here on is one the probing did not ask for.
+            self._restarts = link.restarts
 
     def release(self) -> None:
         """Gives back a claim `reserve` made that no `start` took over."""
         with self._lock:
             self._starting = False
 
-    def _claim(self, link: Link | None) -> None:
-        if self.active:
-            raise ProberError("probing is already under way")
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            raise ProberError("the last probing is still stopping")
-        self._starting = True
-        # A stop from here on ends the start before anything moves.
-        self._abort.clear()
-        self._restarts = link.restarts if link is not None else None
-
     def start(
         self,
-        grid: Grid,
         settings: ProbeSettings,
         link: Link | None,
         streamer: Streamer,
@@ -292,7 +289,7 @@ class Prober:
         z_max: float = 0.0,
         spindle_off: int | None = None,
         keep_focus: bool = True,
-        reserved: bool = False,
+        grid: Grid | None = None,
         resume: HeightMap | None = None,
         touch: Callable[[float, float], None] | None = None,
         target: tuple[float, float] | None = None,
@@ -300,53 +297,42 @@ class Prober:
         box: tuple[float, float, float, float] | None = None,
         travel: float | None = None,
     ) -> dict:
-        """Starts probing `grid`. `spindle_off` is the output's duty with a
-        spindle stopped, on a machine whose output drives one: probing is
-        refused while the status shows any other, since the tool may be
-        the probe and would be lowered onto the copper turning.
+        """Starts probing `grid`, taking over the claim `reserve` made, with
+        whatever stop or reset came since. `spindle_off` is the output's
+        duty with a spindle stopped, on a machine whose output drives one:
+        probing is refused while the status shows any other, since the
+        tool may be the probe and would be lowered onto the copper turning.
         `keep_focus` false starts the new map without the last one's focus
         offset, which then held only for heights from another frame.
-        `reserved` takes over a claim `reserve` made, with whatever stop or
-        reset came since.
 
-        `resume` goes on with a map probed in part: its grid is probed
-        where it has no height yet, and the heights it has are kept.
+        `resume` goes on with a map probed in part, on its own grid: it is
+        probed where it has no height yet, and the heights it has are kept.
         `touch` makes it a single point under the head rather than a map:
-        the grid is ignored, the probe goes down where the head is, and
-        `touch` is called with the contact height and the travel height
-        once the head is back up and at rest, before probing is reported
-        done; the map in the store is left alone. With `target`, a joint
-        the caller has checked for reach, the head goes there at the
-        travel height first and the probe goes down under it there.
-        `points` makes it a pad map rather than a grid: those board points
-        are probed, in their order, and the map's grid is `box` (the job's
-        extent) with a margin, filled in from them; `resume` goes on with a
-        pad map the same way, its points being the ones. `travel`, the
-        host's travel height, is what the head rises to before it goes
-        across, when the head is lower; a single probe where the head is
-        goes down from where it is."""
-        try:
-            if touch is None and points is None:
-                grid.check()
-            if points is not None and not points:
-                raise ProberError("no pads to probe")
-            settings.check()
-            if link is None or not link.is_open:
-                raise ProberError("not connected")
-            if resume is not None:
-                resume.check()
-                if resume.grid != grid:
-                    raise ProberError("the map to go on with was probed on another grid")
-        except Exception:
-            if reserved:
-                self.release()
-            raise
+        the probe goes down where the head is, and `touch` is called with
+        the contact height and the travel height once the head is back up
+        and at rest, before probing is reported done; the map in the store
+        is left alone. With `target`, a joint the caller has checked for
+        reach, the head goes there at the travel height first and the
+        probe goes down under it there. `points` makes it a pad map rather
+        than a grid: those board points are probed, in their order, and
+        the map's grid is `box` (the job's extent) with a margin, filled in
+        from them; `resume` goes on with a pad map the same way, its points
+        being the ones. Only a grid map takes `grid`. `travel`, the host's
+        travel height, is what the head rises to before it goes across,
+        when the head is lower; a single probe where the head is goes down
+        from where it is."""
+        if grid is not None:
+            grid.check()
+        if points is not None and not points:
+            raise ProberError("no pads to probe")
+        settings.check()
+        if link is None or not link.is_open:
+            raise ProberError("not connected")
+        if resume is not None:
+            resume.check()
         with self._lock:
-            if reserved:
-                if not self._starting:
-                    raise ProberError("the probing was not reserved")
-            else:
-                self._claim(link)
+            if not self._starting:
+                raise ProberError("the probing was not reserved")
         try:
             return self._start(
                 grid, settings, link, streamer, r_max, z_max, spindle_off, keep_focus, resume, touch, target, points, box, travel
@@ -356,7 +342,7 @@ class Prober:
 
     def _start(
         self,
-        grid: Grid,
+        grid: Grid | None,
         settings: ProbeSettings,
         link: Link,
         streamer: Streamer,
@@ -382,7 +368,7 @@ class Prober:
             with self._lock:
                 if self._abort.is_set():
                     raise ProberError("probing was stopped before it started")
-                if self._restarts is not None and link.restarts != self._restarts:
+                if link.restarts != self._restarts:
                     raise ProberError("the machine was reset while probing was being started")
                 self.progress = ProbeProgress(total=1)
                 progress = self.progress
@@ -418,6 +404,7 @@ class Prober:
             if points is not None:
                 heightmap = HeightMap.for_points(points, box if box is not None else _box_of(points), settings.offset)
             else:
+                assert grid is not None, "a grid map needs its grid"
                 heightmap = HeightMap.empty(grid, settings.offset)
             done = 0
             # A map probed before keeps its focus offset only if the probe has
@@ -459,7 +446,7 @@ class Prober:
         with self._lock:
             if self._abort.is_set():
                 raise ProberError("probing was stopped before it started")
-            if self._restarts is not None and link.restarts != self._restarts:
+            if link.restarts != self._restarts:
                 raise ProberError("the machine was reset while probing was being started")
             # The new map replaces the old one from the start, so the page
             # shows its grid filling in rather than the old heights.
