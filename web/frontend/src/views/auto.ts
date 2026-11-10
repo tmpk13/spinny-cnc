@@ -9,7 +9,7 @@
 import { button, el, replace, setLocked } from "../dom.ts";
 import { mergeAuto, type AppState } from "../state.ts";
 import type { AutoEntry, AutoProvider, AutoSettings } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 
 /** How long a folded tool call's result may be, characters. */
 export const SHORT = 100;
@@ -185,10 +185,7 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
     }
 
     async function newChat(): Promise<void> {
-        const state = await ctx.call(ctx.api.autoClear());
-        if (state) {
-            ctx.store.set({ auto: state });
-        }
+        await into(ctx, "auto", ctx.api.autoClear());
     }
 
     async function keep(patch: Parameters<Ctx["api"]["setAutoSettings"]>[0]): Promise<void> {
@@ -276,10 +273,6 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
     ctx.store.subscribe((state) => renderSettings(state), ["autoSettings"]);
     renderConversation(ctx.store.get());
     renderSettings(ctx.store.get());
-    void ctx.call(ctx.api.autoSettings()).then((settings) => {
-        if (settings) {
-            ctx.store.set({ autoSettings: settings });
-        }
-    });
+    void into(ctx, "autoSettings", ctx.api.autoSettings());
     void ctx.refreshAuto();
 }

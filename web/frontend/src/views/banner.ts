@@ -4,11 +4,11 @@
 // may know better (a link that dropped mid-cut and came straight back,
 // say) and keep it rather than focus again.
 
-import { el } from "../dom.ts";
+import { button, el } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import type { AppState } from "../state.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 import { mapComplete } from "./heightmap.ts";
 
 export interface FocusPrompt {
@@ -41,21 +41,14 @@ export function focusPrompt(state: AppState): FocusPrompt | null {
 
 export function mountFocusBanner(root: HTMLElement, ctx: Ctx): void {
     const text = el("span", { class: "banner-text" });
-    const keep = el("button", { type: "button", class: "btn btn-primary btn-small" });
+    // Its label, Keep and the offset, is set from the prompt.
+    const keep = button("", () => into(ctx, "heightMap", ctx.api.keepFocus()), "btn btn-primary btn-small");
     const dismiss = el("button", { type: "button", class: "btn btn-quiet btn-small" }, "Dismiss");
     const banner = el("div", { class: "banner hidden", role: "status" }, text, keep, dismiss);
     root.append(banner);
     // Dismissed for one prompt: a later drop of the offset asks again.
     let dismissed: string | null = null;
 
-    keep.addEventListener("click", async () => {
-        keep.disabled = true;
-        const state = await ctx.call(ctx.api.keepFocus());
-        keep.disabled = false;
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
-    });
     dismiss.addEventListener("click", () => {
         dismissed = text.textContent;
         banner.classList.add("hidden");

@@ -9,6 +9,8 @@
 // Angles in and out of the trigonometric functions are degrees, the way
 // the rest of the page gives them.
 
+import { errorText } from "./api.ts";
+
 /** Millimeters in each length unit a number may carry. */
 export const UNITS: Record<string, number> = { mm: 1, cm: 10, in: 25.4, mil: 0.0254, ft: 304.8 };
 
@@ -211,7 +213,7 @@ export function calculate(text: string): number | string {
         }
         return Number.isFinite(value) ? value : "no finite value";
     } catch (error) {
-        return error instanceof Error ? error.message : String(error);
+        return errorText(error);
     }
 }
 

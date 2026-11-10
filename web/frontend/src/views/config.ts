@@ -7,6 +7,7 @@
 // it the list of every key a file can set shows the file's value next to
 // the board's.
 
+import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { keyLine, setKey, type KeyValue } from "../machinekeys.ts";
@@ -43,10 +44,6 @@ export function describeMachine(document: MachineDocument): string {
 // The file picked is a per-browser convenience; storage that is blocked
 // or empty leaves the pick to the loaded file, else the first.
 const PICK_KEY = "spinny.machine";
-
-function errorText(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
 
 /** What the board row says of the board: what it runs, and whether its flash has it. */
 export function boardText(connected: boolean, picked: string | null, current: string | null, unsaved: string[]): string {

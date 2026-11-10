@@ -3,6 +3,7 @@
 // comments), the file's text to edit whole, a design made into a job through
 // the profile, and a job written out as gcode for the profile's controller.
 
+import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatDuration, formatLength, parseNumber } from "../format.ts";
@@ -161,10 +162,6 @@ const PICK_KEY = "spinny.cam.profile";
 
 function fmt(value: number | null): string {
     return value === null ? "" : String(value);
-}
-
-function errorText(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 /** The CAM panel in `root`, and the profile's file to edit whole in `fileRoot`. */

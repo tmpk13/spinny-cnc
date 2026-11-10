@@ -332,6 +332,11 @@ export interface Api {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** What a caught error says: its message, or the value thrown as text. */
+export function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 /** Pulls a readable message out of an error body: FastAPI's detail, or the text. */
 export function errorMessage(data: unknown, status: number, statusText: string): string {
     if (typeof data === "string" && data.trim() !== "") {
@@ -373,8 +378,7 @@ export class HttpApi implements Api {
         try {
             response = await this.fetchFn(this.base + path, init);
         } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
-            throw new ApiError(0, `backend unreachable: ${reason}`);
+            throw new ApiError(0, `backend unreachable: ${errorText(error)}`);
         }
         const text = await response.text();
         let data: unknown = null;

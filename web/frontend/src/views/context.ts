@@ -31,6 +31,22 @@ export interface Ctx {
     reloadJob(id: string): Promise<void>;
 }
 
+/**
+ * Awaits a request whose answer is a part of the state, and puts the
+ * answer in the store under `key`; a failure is a toast, as `ctx.call`
+ * makes it, and leaves the store as it was. Resolves to the answer,
+ * undefined on a failure.
+ */
+export async function into<K extends keyof AppState, T extends AppState[K]>(ctx: Ctx, key: K, promise: Promise<T>): Promise<T | undefined> {
+    const answer = await ctx.call(promise);
+    if (answer) {
+        const patch: Partial<AppState> = {};
+        patch[key] = answer;
+        ctx.store.set(patch);
+    }
+    return answer;
+}
+
 /** Radio-style button row; `format` gives each value its label. */
 export function choiceRow<T>(
     values: T[],

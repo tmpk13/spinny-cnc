@@ -1,7 +1,7 @@
 // A run or a pickup the backend refuses until the operator gives their word
 // on what nothing else can vouch for.
 
-import { ApiError } from "../api.ts";
+import { ApiError, errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import type { Ctx } from "./context.ts";
 
@@ -52,7 +52,7 @@ export async function withWords<T, K extends string>(
             const refusal = error instanceof ApiError && error.status === 409 ? error.message : null;
             const word = refusal === null ? undefined : words.find((each) => !given.has(each.key) && each.ends.test(refusal));
             if (refusal === null || word === undefined) {
-                ctx.toast("error", error instanceof Error ? error.message : String(error));
+                ctx.toast("error", errorText(error));
                 return undefined;
             }
             const asked = `${refusal.charAt(0).toUpperCase()}${refusal.slice(1)}. ${word.question}`;

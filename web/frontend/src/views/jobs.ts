@@ -1,5 +1,6 @@
 // Upload, job list, the selected job's groups and stats, and the run controls.
 
+import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
@@ -802,7 +803,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         try {
             result = arrayPaths(job, refs, arraySpec());
         } catch (error) {
-            ctx.toast("error", error instanceof Error ? error.message : String(error));
+            ctx.toast("error", errorText(error));
             return;
         }
         if (job.recipe && !(await askConfirm(`Add ${result.refs.length} copies to ${job.name}?${recipeLost(job, "lose them")}`, "Make array"))) {
@@ -863,7 +864,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         try {
             result = regroup(job, refs, pickedTarget.value === "new" ? "new" : Number(pickedTarget.value), pickedLabel.value);
         } catch (error) {
-            ctx.toast("error", error instanceof Error ? error.message : String(error));
+            ctx.toast("error", errorText(error));
             return;
         }
         const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;
@@ -894,7 +895,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         try {
             made = removePaths(job, refs);
         } catch (error) {
-            ctx.toast("error", error instanceof Error ? error.message : String(error));
+            ctx.toast("error", errorText(error));
             return;
         }
         const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;

@@ -1,7 +1,7 @@
 // Entry point: picks the real backend or the in-page mock, wires the event
 // feed into the store, and mounts the views.
 
-import { HttpApi, type Api } from "./api.ts";
+import { errorText, HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
@@ -46,7 +46,7 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
             try {
                 return await promise;
             } catch (error) {
-                toast("error", error instanceof Error ? error.message : String(error));
+                toast("error", errorText(error));
                 return undefined;
             }
         },

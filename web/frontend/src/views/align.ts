@@ -4,12 +4,13 @@
 // by hand, or the camera's picture centered on it. The fit the marks give
 // is shown after every change, and Apply turns and shifts the job by it.
 
+import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, foldPanel, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { AlignFit, AlignMark, AlignMarkRequest, AlignState, CameraState, Job } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import type { AlignFit, AlignMark, AlignMarkRequest, CameraState, Job } from "../types.ts";
+import { into, type Ctx } from "./context.ts";
 
 /** One line on a fit; what a refused fit said when there is none. */
 export function fitText(fit: AlignFit | null, problem: string | null = null): string {
@@ -86,14 +87,6 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
     );
     root.append(foldPanel("spinny.align.open", el("summary", { class: "panel-head" }, el("h2", {}, "Align"), badge), body));
 
-    /** An alignment request; its answer is the state, which goes into the store. */
-    async function act(promise: Promise<AlignState>): Promise<void> {
-        const state = await ctx.call(promise);
-        if (state) {
-            ctx.store.set({ align: state });
-        }
-    }
-
     async function markHere(): Promise<void> {
         const job = ctx.store.get().job;
         if (!job) {
@@ -118,7 +111,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
             request.nearest = pick.value as "pad" | "hole";
             request.within = reach;
         }
-        await act(ctx.api.alignMark(request));
+        await into(ctx, "align", ctx.api.alignMark(request));
     }
 
     async function capture(): Promise<void> {
@@ -127,15 +120,15 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "select the job to align");
             return;
         }
-        await act(ctx.api.alignCapture(job.id));
+        await into(ctx, "align", ctx.api.alignCapture(job.id));
     }
 
     async function remove(index: number): Promise<void> {
-        await act(ctx.api.alignDeleteMark(index));
+        await into(ctx, "align", ctx.api.alignDeleteMark(index));
     }
 
     async function clear(): Promise<void> {
-        await act(ctx.api.alignClear());
+        await into(ctx, "align", ctx.api.alignClear());
     }
 
     async function apply(): Promise<void> {
@@ -193,7 +186,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
             }
         }).catch((error: unknown) => {
             if (seq === fitSeq) {
-                fitLine.textContent = fitText(null, error instanceof Error ? error.message : String(error));
+                fitLine.textContent = fitText(null, errorText(error));
             }
         });
     }

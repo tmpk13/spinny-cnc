@@ -17,7 +17,7 @@ import { setPending, type AppState } from "../state.ts";
 import type { DevicePlan, DeviceReference, DeviceState, SpotPolarity, TopSettings, TopState } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
 import { pnpRoutineText, polaritySelect } from "./pnp.ts";
 import type { Setup } from "./steps.ts";
@@ -168,8 +168,8 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const revert = button("Revert", () => showFile(), "btn btn-quiet");
     const status = el("span", { class: "muted config-status" });
     const connect = button("Connect", () => toggleConnect(), "btn btn-primary");
-    const home = button("Home", () => ctx.call(ctx.api.deviceHome()).then(take), "btn");
-    const readPosition = button("Read position", () => ctx.call(ctx.api.devicePosition()).then(take), "btn btn-quiet");
+    const home = button("Home", () => into(ctx, "device", ctx.api.deviceHome()), "btn");
+    const readPosition = button("Read position", () => into(ctx, "device", ctx.api.devicePosition()), "btn btn-quiet");
     const positionLine = el("span", { class: "muted" });
     const line = el("input", { type: "text", class: "field", placeholder: "a G-code line", "aria-label": "Device line", spellcheck: "false", autocomplete: "off" }) as HTMLInputElement;
     const send = button("Send", () => sendLine(), "btn btn-quiet");
@@ -182,7 +182,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const planButton = button("Plan", () => planNow(), "btn");
     const download = el("a", { class: "btn btn-quiet", download: "placement.gcode" }, "Download") as HTMLAnchorElement;
     const run = button("Run", () => runNow(), "btn btn-primary");
-    const stop = button("Stop", () => ctx.call(ctx.api.deviceStop()).then(take), "btn btn-danger");
+    const stop = button("Stop", () => into(ctx, "device", ctx.api.deviceStop()), "btn btn-danger");
     const recount = button("Count feeders again", () => recountFeeders(), "btn btn-quiet");
     const runLine = el("p", { class: "muted vision-routine" });
     const planLine = el("p", { class: "muted" });
@@ -196,7 +196,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     step.setAttribute("aria-label", "Device centering step mm");
     const center = button("Center nozzle", () => centerNozzle(), "btn");
     center.title = "Over the up camera on this device: measures where it is and how its picture lies, for the feeders marked vision";
-    const runout = button("Measure runout", () => ctx.call(ctx.api.deviceRunout()).then(take), "btn");
+    const runout = button("Measure runout", () => into(ctx, "device", ctx.api.deviceRunout()), "btn");
     runout.title = "The nozzle's tip found at six turns over the up camera: how far it runs off the turning axis, made up for at every look and place";
     const routineLine = el("p", { class: "muted vision-routine" });
     // The top camera, on the head and looking down.
@@ -204,7 +204,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const topPictureBox = el("div", { class: "vision-picture-box hidden" }, topPicture);
     const topStart = button("Start", () => startTop(), "btn btn-primary");
     topStart.title = "start the top camera on the settings shown, sending any not applied first";
-    const topStop = button("Stop", () => ctx.call(ctx.api.topStop()).then(take), "btn");
+    const topStop = button("Stop", () => into(ctx, "device", ctx.api.topStop()), "btn");
     const topDevice = el("input", { type: "text", class: "field", "aria-label": "Top camera device", placeholder: "/dev/video2", spellcheck: "false" }) as HTMLInputElement;
     const topSize = el("input", { type: "text", class: "field", "aria-label": "Top camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
     const topFps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
@@ -220,13 +220,13 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     });
     const topApply = button("Apply", () => applyTop(), "btn");
     const topLine = el("p", { class: "muted" });
-    const markHere = button("Nozzle on mark", () => ctx.call(ctx.api.topMark()).then(take), "btn");
+    const markHere = button("Nozzle on mark", () => into(ctx, "device", ctx.api.topMark()), "btn");
     markHere.title = "The nozzle's tip is over a mark the top camera can see: its place is kept for Measure offset";
     const topStep = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     topStep.setAttribute("aria-label", "Top camera step mm");
     const measureOffset = button("Measure offset", () => measureTopOffset(), "btn");
     measureOffset.title = "The head goes where the camera should see the mark, measures the picture with a step along X and Y, and centers the mark: the camera's offset from the nozzle";
-    const topAbort = button("Abort", () => ctx.call(ctx.api.topAbort()).then(take), "btn btn-danger");
+    const topAbort = button("Abort", () => into(ctx, "device", ctx.api.topAbort()), "btn btn-danger");
     const topRoutineLine = el("p", { class: "muted vision-routine" });
     const topLog = el("div", { class: "camlog-box" });
     mountCameraLog(topLog, ctx, "top");
@@ -321,12 +321,6 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         setStatus(problem ?? "edited, not saved", problem !== null);
     });
 
-    function take(state: DeviceState | undefined): void {
-        if (state) {
-            ctx.store.set({ device: state });
-        }
-    }
-
     async function loadList(): Promise<void> {
         const listing = await ctx.call(ctx.api.devices());
         if (!listing) {
@@ -375,7 +369,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
                 pick.value = picked ?? "";
                 return;
             }
-            take(state);
+            ctx.store.set({ device: state });
             picked = next;
             await showFile();
         })();
@@ -410,7 +404,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         if (dirty && !device?.connected && !(await askConfirm("The profile has edits that are not saved; connect with the saved one?", "Connect"))) {
             return;
         }
-        take(await ctx.call(device?.connected ? ctx.api.deviceDisconnect() : ctx.api.deviceConnect()));
+        await into(ctx, "device", device?.connected ? ctx.api.deviceDisconnect() : ctx.api.deviceConnect());
     }
 
     async function sendLine(): Promise<void> {
@@ -421,7 +415,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const answer = await ctx.call(ctx.api.deviceCommand(text));
         if (answer) {
             const { reply, ...state } = answer;
-            take(state);
+            ctx.store.set({ device: state });
             ctx.toast("info", `${text}: ${reply.join(" | ") || "ok"}`);
         }
     }
@@ -438,7 +432,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a part in the Parts panel first");
             return;
         }
-        take(await ctx.call(ctx.api.deviceReference({ job: state.job.id, ref: state.pnpPart, ...(camera ? { camera: true } : {}) })));
+        await into(ctx, "device", ctx.api.deviceReference({ job: state.job.id, ref: state.pnpPart, ...(camera ? { camera: true } : {}) }));
     }
 
     async function findFiducialsNow(): Promise<void> {
@@ -447,7 +441,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a board job first");
             return;
         }
-        take(await ctx.call(ctx.api.deviceFiducials(job.id)));
+        await into(ctx, "device", ctx.api.deviceFiducials(job.id));
     }
 
     // The top camera's fields: filled from the state unless edited since.
@@ -479,13 +473,13 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const state = await ctx.call(ctx.api.topSettings(patch));
         if (state) {
             topTracked.reset();
-            take(state);
+            ctx.store.set({ device: state });
         }
         return state !== undefined;
     }
     async function startTop(): Promise<void> {
         if (await applyTop()) {
-            take(await ctx.call(ctx.api.topStart()));
+            await into(ctx, "device", ctx.api.topStart());
         }
     }
     async function measureTopOffset(): Promise<void> {
@@ -494,7 +488,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "the step is 0 to 20 mm");
             return;
         }
-        take(await ctx.call(ctx.api.topOffset(value)));
+        await into(ctx, "device", ctx.api.topOffset(value));
     }
 
     function visible(): boolean {
@@ -514,7 +508,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     async function clearReferences(): Promise<void> {
         const job = ctx.store.get().job;
         if (job) {
-            take(await ctx.call(ctx.api.deviceDropReferences(job.id)));
+            await into(ctx, "device", ctx.api.deviceDropReferences(job.id));
         }
     }
 
@@ -525,7 +519,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "the board's turn is within 360 degrees, or blank to fit it");
             return;
         }
-        void ctx.call(ctx.api.deviceSelect(text === "" ? { clear_angle: true } : { angle: value! })).then(take);
+        void into(ctx, "device", ctx.api.deviceSelect(text === "" ? { clear_angle: true } : { angle: value! }));
     });
 
     async function centerNozzle(): Promise<void> {
@@ -534,7 +528,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "the step is 0 to 10 mm");
             return;
         }
-        take(await ctx.call(ctx.api.deviceNozzle(value)));
+        await into(ctx, "device", ctx.api.deviceNozzle(value));
         await ctx.refreshPnp();
     }
 
@@ -582,13 +576,13 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             const { parts, skipped: left2, fit, lines, text, ...rest } = started;
             plan = { parts, skipped: left2, fit, lines, text };
             renderPlan();
-            take(rest as DeviceState);
+            ctx.store.set({ device: rest as DeviceState });
         }
     }
 
     async function recountFeeders(): Promise<void> {
         if (await askConfirm("Count every feeder from its first part again? Do it once they are refilled.", "Count again")) {
-            take(await ctx.call(ctx.api.deviceResetFeeders()));
+            await into(ctx, "device", ctx.api.deviceResetFeeders());
         }
     }
 
@@ -670,7 +664,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const job = state.job;
         replace(refList, ...referencesOf(device, job?.id ?? null).map((entry) =>
             el("li", {}, `${entry.ref} at X ${formatFixed(entry.at[0], 3)} Y ${formatFixed(entry.at[1], 3)}${entry.by && entry.by !== "nozzle" ? ` (${entry.by})` : ""} `,
-                button("Drop", () => job ? ctx.call(ctx.api.deviceDropReferences(job.id, entry.ref)).then(take) : Promise.resolve(), "btn btn-quiet btn-small")),
+                button("Drop", () => job ? into(ctx, "device", ctx.api.deviceDropReferences(job.id, entry.ref)) : Promise.resolve(), "btn btn-quiet btn-small")),
         ));
         here.textContent = state.pnpPart ? `Here: ${state.pnpPart}` : "Here";
         const angleText = device?.angle === null || device?.angle === undefined ? "" : String(device.angle);

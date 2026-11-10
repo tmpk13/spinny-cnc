@@ -16,6 +16,7 @@
 // remembered in this browser.
 
 import { turnPoint } from "../align.ts";
+import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
@@ -836,7 +837,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             if (mine !== ticket) {
                 return;
             }
-            showProblem(error instanceof Error ? error.message : String(error));
+            showProblem(errorText(error));
             replace(notes);
             ctx.store.set({ millPlan: null });
         }

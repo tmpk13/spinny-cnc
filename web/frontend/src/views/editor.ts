@@ -11,6 +11,7 @@
 // out of step. The editor keeps what the field showed last and puts it
 // back the moment its size returns.
 
+import { errorText } from "../api.ts";
 import { el } from "../dom.ts";
 import { highlightToml } from "../highlight.ts";
 import { TomlError, parseToml } from "../toml.ts";
@@ -56,7 +57,7 @@ export function tomlProblem(text: string): { line: number; message: string } | n
         if (error instanceof TomlError) {
             return { line: error.line, message: error.message };
         }
-        return { line: 0, message: error instanceof Error ? error.message : String(error) };
+        return { line: 0, message: errorText(error) };
     }
 }
 

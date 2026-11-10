@@ -7,7 +7,7 @@ import { askConfirm } from "../confirm.ts";
 import { button, el, replace, setLocked } from "../dom.ts";
 import type { AppState } from "../state.ts";
 import type { CamLogEntry, CamLogState, LoggedCamera } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 
 /** How many of a camera's newest pictures its panel shows. */
 export const SHOWN = 6;
@@ -57,10 +57,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     async function take(): Promise<void> {
         const entry = await ctx.call(ctx.api.takePhoto(camera, true));
         if (entry) {
-            const state = await ctx.call(ctx.api.camLog());
-            if (state) {
-                ctx.store.set({ camlog: state });
-            }
+            await into(ctx, "camlog", ctx.api.camLog());
             ctx.toast("info", `photo kept: ${lookText(entry)}`);
         }
     }
@@ -71,10 +68,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
         }
         const removed = await ctx.call(ctx.api.clearCamLog());
         if (removed !== null) {
-            const state = await ctx.call(ctx.api.camLog());
-            if (state) {
-                ctx.store.set({ camlog: state });
-            }
+            await into(ctx, "camlog", ctx.api.camLog());
         }
     }
 
@@ -118,9 +112,5 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     }
     ctx.store.subscribe(render, ["camlog"]);
     render(ctx.store.get());
-    void ctx.call(ctx.api.camLog()).then((state) => {
-        if (state) {
-            ctx.store.set({ camlog: state });
-        }
-    });
+    void into(ctx, "camlog", ctx.api.camLog());
 }

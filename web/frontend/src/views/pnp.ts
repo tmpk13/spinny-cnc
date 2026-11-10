@@ -12,7 +12,7 @@ import { setPending, type AppState } from "../state.ts";
 import type { Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 import { DEVICE_SETUP, mountDevice } from "./device.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
 import { FRAME_INTERVAL_MS, FRAME_WIDTH } from "./vision.ts";
@@ -305,7 +305,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const pictureBox = el("div", { class: "vision-picture-box hidden" }, picture);
     const startButton = button("Start", () => startCamera(), "btn btn-primary");
     startButton.title = "start the up camera on the settings shown, sending any not applied first";
-    const stopButton = button("Stop", () => act(ctx.api.pnpStop()), "btn");
+    const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn");
     let overlayOn = true;
     const overlayButton = button("Overlay", () => {
         overlayOn = !overlayOn;
@@ -367,12 +367,12 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const mirror = el("input", { type: "checkbox", "aria-label": "Up camera mirrored" }) as HTMLInputElement;
     const nozzleApply = button("Apply", () => applyMeasured(), "btn");
     const nozzleChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
-    const forget = button("Forget position", () => act(ctx.api.pnpSettings({ clear: ["position"] })), "btn btn-quiet");
+    const forget = button("Forget position", () => into(ctx, "pnp", ctx.api.pnpSettings({ clear: ["position"] })), "btn btn-quiet");
     const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Centering step mm");
     const centerButton = button("Center nozzle", () => centerNozzle(), "btn btn-primary");
-    const partButton = button("Look at part", () => act(ctx.api.pnpPart()), "btn");
-    const abortButton = button("Abort", () => act(ctx.api.pnpAbort()), "btn btn-danger");
+    const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
+    const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
     const routineLine = el("p", { class: "muted vision-routine" });
     const partLine = el("p", { class: "muted" });
     roots.nozzle.append(
@@ -418,13 +418,6 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         setPending(ctx.store, "pnp", camera + measured);
     }
 
-    async function act(promise: Promise<PnpState>): Promise<void> {
-        const state = await ctx.call(promise);
-        if (state) {
-            ctx.store.set({ pnp: state });
-        }
-    }
-
     /** The camera fields typed in or picked and not applied. */
     function cameraPatch(): Partial<PnpSettings> {
         const patch: Partial<PnpSettings> = {};
@@ -453,7 +446,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.toast("info", "nothing changed");
             return;
         }
-        await act(ctx.api.pnpSettings(patch));
+        await into(ctx, "pnp", ctx.api.pnpSettings(patch));
     }
 
     /** Starts the up camera on what the fields show: settings picked or typed and not applied go first. */
@@ -466,7 +459,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             }
             ctx.store.set({ pnp: state });
         }
-        await act(ctx.api.pnpStart());
+        await into(ctx, "pnp", ctx.api.pnpStart());
     }
 
     async function applyMeasured(): Promise<void> {
@@ -499,7 +492,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.toast("info", "nothing changed");
             return;
         }
-        await act(ctx.api.pnpSettings(patch));
+        await into(ctx, "pnp", ctx.api.pnpSettings(patch));
     }
 
     async function centerNozzle(): Promise<void> {
@@ -508,7 +501,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.toast("error", "the step is 0 to 10 mm");
             return;
         }
-        await act(ctx.api.pnpNozzle(value));
+        await into(ctx, "pnp", ctx.api.pnpNozzle(value));
     }
 
     async function gotoPart(): Promise<void> {

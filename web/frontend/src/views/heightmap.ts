@@ -8,7 +8,7 @@ import { isDispensing, isMilling, outputDuty, profileOf } from "../profile.ts";
 import { boardOfJoint, lerpJoint } from "../kinematics.ts";
 import type { AppState } from "../state.ts";
 import type { Compensate, Grid, HeightMap, HeightMapState, Job, PadProbeRequest, ProbeRequest, ProbeSettings, Profile, Progress, TouchMode } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 
 /** A grid when there is neither a map nor a job to take one from. */
 export const DEFAULT_GRID: Grid = { x0: -20, y0: -20, x1: 20, y1: 20, nx: 5, ny: 5 };
@@ -796,10 +796,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!ok) {
             return;
         }
-        const state = await ctx.call(ctx.api.probe(request));
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
+        await into(ctx, "heightMap", ctx.api.probe(request));
     }
 
     async function planPads(): Promise<void> {
@@ -832,10 +829,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!(await askConfirm(question, resume ? "Continue" : "Probe pads"))) {
             return;
         }
-        const state = await ctx.call(ctx.api.probePads(request));
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
+        await into(ctx, "heightMap", ctx.api.probePads(request));
     }
 
     async function continueProbe(): Promise<void> {
@@ -851,10 +845,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!ok) {
             return;
         }
-        const state = await ctx.call(ctx.api.probe({ ...map.grid, resume: true }));
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
+        await into(ctx, "heightMap", ctx.api.probe({ ...map.grid, resume: true }));
     }
 
     async function probeHere(mode: TouchMode): Promise<void> {
@@ -864,10 +855,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!(await askConfirm(question, "Probe here"))) {
             return;
         }
-        const state = await ctx.call(ctx.api.probeHere({ mode }));
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
+        await into(ctx, "heightMap", ctx.api.probeHere({ mode }));
     }
 
     // The backend picks the point and says where it is before anything
@@ -884,10 +872,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!(await askConfirm(question, "Probe nearest"))) {
             return;
         }
-        const state = await ctx.call(ctx.api.probeHere(request));
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
+        await into(ctx, "heightMap", ctx.api.probeHere(request));
     }
 
     async function applyFocus(offset: number | null): Promise<void> {
@@ -931,10 +916,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!(await askConfirm("Clear the height map? A compensated run needs it probed again.", "Clear"))) {
             return;
         }
-        const state = await ctx.call(ctx.api.clearHeightMap());
-        if (state) {
-            ctx.store.set({ heightMap: state });
-        }
+        await into(ctx, "heightMap", ctx.api.clearHeightMap());
     }
 
     function showSettings(settings: ProbeSettings | null): void {

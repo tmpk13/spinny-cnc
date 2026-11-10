@@ -14,7 +14,7 @@ import { setPending, type AppState } from "../state.ts";
 import type { CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
-import type { Ctx } from "./context.ts";
+import { into, type Ctx } from "./context.ts";
 
 /**
  * How often a camera's picture is asked for while it shows, ms, and the
@@ -94,7 +94,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const poseLine = el("p", { class: "muted vision-pose" }, poseText(null));
     const start = button("Start", () => startCamera(), "btn btn-primary");
     start.title = "start the camera on the settings shown, sending any not applied first";
-    const stop = button("Stop", () => act(ctx.api.cameraStop()), "btn");
+    const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn");
 
     // The settings: what the camera is read with, and how it sits against
     // the tool, which the routine below measures and Apply writes back.
@@ -129,7 +129,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     ];
 
     const lookButton = button("Look for board", () => lookForBoard(), "btn");
-    const unloadButton = button("Unload", () => act(ctx.api.cameraBoard(null)), "btn btn-quiet");
+    const unloadButton = button("Unload", () => into(ctx, "camera", ctx.api.cameraBoard(null)), "btn btn-quiet");
     const boardNote = el("span", { class: "muted" });
 
     // The camera offset routine: a mark made with the tool, found in the
@@ -137,10 +137,10 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const depth = numberField({ value: 0.1, min: 0.01, max: 5, step: 0.05, width: "5.5rem" });
     const plunge = numberField({ value: 30, min: 1, max: 1000, step: 5, width: "5.5rem" });
     const markButton = button("Make mark", () => makeMark(), "btn btn-danger");
-    const hereButton = button("Mark is here", () => act(ctx.api.cameraMark({ here: true })), "btn");
+    const hereButton = button("Mark is here", () => into(ctx, "camera", ctx.api.cameraMark({ here: true })), "btn");
     const step = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     const findButton = button("Find mark", () => findMark(), "btn btn-primary");
-    const abortButton = button("Abort", () => act(ctx.api.cameraAbort()), "btn btn-danger");
+    const abortButton = button("Abort", () => into(ctx, "camera", ctx.api.cameraAbort()), "btn btn-danger");
     const routineLine = el("p", { class: "muted vision-routine" });
     const markNote = el("span", { class: "muted" });
 
@@ -206,14 +206,6 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         setPending(ctx.store, "camera", counts[0]! + counts[1]!);
     };
 
-    /** A camera request; its answer is the state, which goes into the store. */
-    async function act(promise: Promise<CameraState>): Promise<void> {
-        const state = await ctx.call(promise);
-        if (state) {
-            ctx.store.set({ camera: state });
-        }
-    }
-
     /** The settings fields that differ from the state: what the camera is read with. */
     function settingsPatch(current: CameraState | null): Partial<CameraSettings> {
         const patch: Partial<CameraSettings> = {};
@@ -248,7 +240,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             }
             ctx.store.set({ camera: state });
         }
-        await act(ctx.api.cameraStart());
+        await into(ctx, "camera", ctx.api.cameraStart());
     }
 
     async function apply(): Promise<void> {
@@ -271,7 +263,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             ctx.toast("info", "nothing changed");
             return;
         }
-        await act(ctx.api.cameraSettings(patch));
+        await into(ctx, "camera", ctx.api.cameraSettings(patch));
     }
 
     async function lookForBoard(): Promise<void> {
@@ -280,7 +272,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             ctx.toast("error", "select a job whose board the camera should look for");
             return;
         }
-        await act(ctx.api.cameraBoard(job.id));
+        await into(ctx, "camera", ctx.api.cameraBoard(job.id));
     }
 
     async function makeMark(): Promise<void> {
@@ -297,7 +289,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         if (!ok) {
             return;
         }
-        await act(ctx.api.cameraMark({ depth: d, plunge: p }));
+        await into(ctx, "camera", ctx.api.cameraMark({ depth: d, plunge: p }));
     }
 
     async function findMark(): Promise<void> {
@@ -306,7 +298,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             ctx.toast("error", "the step is a distance in mm, 0 or more");
             return;
         }
-        await act(ctx.api.cameraFind(s));
+        await into(ctx, "camera", ctx.api.cameraFind(s));
     }
 
     /** The panel is in view: the machine's page is up, the fold open and the tab shown. */

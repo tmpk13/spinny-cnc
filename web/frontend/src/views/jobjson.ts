@@ -6,6 +6,7 @@
 // lands; Apply sends the text back (PUT /api/jobs/{id}), checked there as
 // an upload is, and Revert takes the stored job again.
 
+import { errorText } from "../api.ts";
 import { button, el, setLocked } from "../dom.ts";
 import { type JobPlace, formatJson, offsetOf, placeOf, stepsAt } from "../jsontext.ts";
 import { jointPreview } from "../mock/jobs.ts";
@@ -52,7 +53,7 @@ export function readJobText(text: string, id: string, stored: Job | null = null)
     try {
         data = JSON.parse(text);
     } catch (error) {
-        return `not JSON yet: ${error instanceof Error ? error.message : String(error)}`;
+        return `not JSON yet: ${errorText(error)}`;
     }
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
         return "a job is a JSON object";
