@@ -1026,10 +1026,14 @@ version = "0.1.0"
 source = { editable = "toolpath" }
 dependencies = [
     { name = "laser-sweep" },
+    { name = "pyclipper" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "laser-sweep", editable = "../kicad-to-gcode" }]
+requires-dist = [
+    { name = "laser-sweep", editable = "../kicad-to-gcode" },
+    { name = "pyclipper", specifier = ">=1.3" },
+]
 
 [[package]]
 name = "spinny-web"

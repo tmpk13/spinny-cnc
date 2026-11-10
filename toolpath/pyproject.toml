@@ -1,9 +1,10 @@
 [project]
 name = "spinny-laser"
 version = "0.1.0"
-description = "Toolpaths for a laser on a linear axis over a PCB on a rotary table: polar kinematics, copper clearing and deposition, centering patterns, and gcode for a grblHAL controller"
+description = "Toolpaths for the spinny laser and mill: polar kinematics, copper clearing and deposition, stencils, centering coupons, machine files, CAM profiles and their gcode"
 requires-python = ">=3.12"
-dependencies = ["laser-sweep"]
+# clear.py offsets with pyclipper itself; laser-sweep also depends on it.
+dependencies = ["laser-sweep", "pyclipper>=1.3"]
 
 [project.scripts]
 spinny-iso = "spinny_laser.cli:main"
