@@ -137,7 +137,7 @@ export interface AppState {
     millPlan: Job | null;
     /** The sizes of the Plot page's operation in its fields, drawn over its preview as a sketch's. */
     millDims: Dimension[];
-    /** How the next run is to follow the height map: the Jobs panel's choice, which the other panels describe. */
+    /** How the next run is to follow the height map: the Run panel's choice, which the other panels describe. */
     mapChoice: Compensate;
     /** Edits typed and not applied yet, counted by the panel that holds them (`PENDING_PAGES` and `pendingOn` put them on a tab). */
     pending: Record<string, number>;
