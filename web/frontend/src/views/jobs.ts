@@ -3,16 +3,16 @@
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, downloadText, el, fileDrop, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
-import { formatDuration, formatFixed, formatLength, formatMm, formatPercent, parseNumber } from "../format.ts";
+import { countText, formatDuration, formatFixed, formatLength, formatMm, formatOptional, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
-import { isDispensing, isMilling, profileOf } from "../profile.ts";
+import { isCartesian, isDispensing, isMilling, profileOf } from "../profile.ts";
 import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Group, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest, UploadOptions } from "../types.ts";
 import { calibrationTest } from "./calibrate.ts";
 import { centerTest } from "./center.ts";
-import { focusAgainText, mapUsable, mapUse, runMapUse, showMapUse } from "./heightmap.ts";
+import { focusAgainText, mapUsable, mapUse, runActive, runMapUse, showMapUse } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 import { changedWord, focusHereWord, withFocusHere, withWords } from "./focushere.ts";
 
@@ -124,11 +124,6 @@ export function showsFocus(job: Job, milling: boolean, focusAxis: boolean): bool
         return false;
     }
     return focusAxis || job.groups.some((group) => group.focus !== undefined && group.focus !== null);
-}
-
-/** A group's focus as its field shows it: blank for none. */
-function focusText(focus: number | null | undefined): string {
-    return focus === undefined || focus === null ? "" : String(focus);
 }
 
 /** What the groups table shows of a job's groups besides their fields: each label and how many paths it has. */
@@ -364,8 +359,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             ctx.toast("info", "there are no jobs to delete");
             return;
         }
-        const running = ctx.store.get().progress?.state;
-        const kept = running === "running" || running === "hold" ? " The job running stays." : "";
+        const kept = runActive(ctx.store.get().progress) ? " The job running stays." : "";
         if (!(await askConfirm(`Delete all ${count} jobs? They are gone for good.${kept}`, "Delete all"))) {
             return;
         }
@@ -740,7 +734,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             return;
         }
         const made = arrayPaths(job, refs, spec);
-        arrayNote.textContent = `${made.refs.length} ${made.refs.length === 1 ? "copy" : "copies"} of ${refs.length} ${refs.length === 1 ? "path" : "paths"}, drawn on the preview; each goes at the end of its path's group`;
+        arrayNote.textContent = `${countText(made.refs.length, "copy", "copies")} of ${countText(refs.length, "path", "paths")}, drawn on the preview; each goes at the end of its path's group`;
         ctx.store.set({ arrayDraft: made.job });
     }
 
@@ -770,7 +764,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         // The copies stay picked: Delete paths takes the array back.
         ctx.store.set({ selection: { job: job.id, paths: result.refs } });
         await ctx.refreshJobs();
-        ctx.toast("info", `${result.refs.length} ${result.refs.length === 1 ? "copy" : "copies"} added to ${job.name}`);
+        ctx.toast("info", `${countText(result.refs.length, "copy", "copies")} added to ${job.name}`);
     }
 
     /** The picked paths of the selected job, those it still has; paths picked on the JSON panel's edit are the edit's, not its. */
@@ -791,7 +785,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         // The copies follow the paths picked.
         arrayChanged();
         const groups = new Set(refs.map(([g]) => g)).size;
-        pickedCount.textContent = `${refs.length} ${refs.length === 1 ? "path" : "paths"} picked from ${groups} ${groups === 1 ? "group" : "groups"}`;
+        pickedCount.textContent = `${countText(refs.length, "path", "paths")} picked from ${countText(groups, "group", "groups")}`;
         const chosen = pickedTarget.value;
         const options = [
             el("option", { value: "new" }, "into a new group"),
@@ -819,7 +813,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             ctx.toast("error", errorText(error));
             return;
         }
-        const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;
+        const count = countText(refs.length, "path", "paths");
         if (job.recipe && !(await askConfirm(`Move ${count} of ${job.name}?${recipeLost(job, "put them back")}`, "Move"))) {
             return;
         }
@@ -833,7 +827,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         ctx.store.set({ selection: { job: job.id, paths: result.refs } });
         await ctx.refreshJobs();
         const into = made.groups[result.refs[0]![0]]?.label ?? "the group";
-        ctx.toast("info", `${result.refs.length} ${result.refs.length === 1 ? "path" : "paths"} moved into ${into}`);
+        ctx.toast("info", `${countText(result.refs.length, "path", "paths")} moved into ${into}`);
     }
 
     async function deletePicked(): Promise<void> {
@@ -850,7 +844,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             ctx.toast("error", errorText(error));
             return;
         }
-        const count = `${refs.length} ${refs.length === 1 ? "path" : "paths"}`;
+        const count = countText(refs.length, "path", "paths");
         if (!(await askConfirm(`Take ${count} out of ${job.name}? A group left empty goes too.${recipeLost(job, "bring them back")}`, "Delete paths"))) {
             return;
         }
@@ -1068,7 +1062,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 setUnlessFocused(row.thickness, String(group.thickness ?? DEFAULT_THICKNESS), focused);
             }
             if (row.focus) {
-                setUnlessFocused(row.focus, focusText(group.focus), focused);
+                setUnlessFocused(row.focus, formatOptional(group.focus), focused);
             }
             if (row.enabled !== focused) {
                 row.enabled.checked = group.enabled;
@@ -1102,7 +1096,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         progressState.setAttribute("data-run", text.state);
         progressReason.textContent = text.reason;
         progressBox.classList.toggle("hidden", progress === null || (progress.job !== state.job?.id));
-        const active = progress !== null && (progress.state === "running" || progress.state === "hold");
+        const active = runActive(progress);
         const connected = state.snapshot.connected;
         // A dispenser lays dots: a job of paths is refused before it is sent.
         const refusal = dispenseRefusal(state.job, isDispensing(state.snapshot));
@@ -1111,8 +1105,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         runButton.title = refusal;
         setLocked(runButton, !connected || active || !state.job || refusal !== "");
         runTitle.textContent = state.job ? state.job.name : "no job selected";
-        setLocked(holdButton, !connected || !active || progress.state !== "running");
-        setLocked(resumeButton, !connected || !active || progress.state !== "hold");
+        setLocked(holdButton, !connected || !active || progress?.state !== "running");
+        setLocked(resumeButton, !connected || !active || progress?.state !== "hold");
         setLocked(stopButton, !connected || !active);
         compensate.disabled = active;
         // A spindle follows the board with its depth axis or not at all.
@@ -1130,7 +1124,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         compensateNote.textContent = again;
         compensateNote.classList.toggle("hidden", again === "");
         const choice = compensate.value as Compensate;
-        const ours = active && progress.job === state.job?.id;
+        const ours = active && progress?.job === state.job?.id;
         const planned = mapUse(choice, map, state.job, profileOf(state.snapshot));
         showMapUse(mapChip, ours ? runMapUse(progress, milling) ?? planned : planned);
         // The other panels say what the choice does; set last, since it
@@ -1148,7 +1142,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 pickupLine.value = String(candidate.acked);
                 pickupNote.textContent = "";
             }
-            pickupPosition.textContent = recordPositionText(record?.job === candidate.job ? record : null, state.snapshot.profile?.kinematics === "cartesian");
+            pickupPosition.textContent = recordPositionText(record?.job === candidate.job ? record : null, isCartesian(state.snapshot));
             const idle = state.snapshot.machine?.state === "Idle";
             setLocked(pickupButton, !connected || active || !idle);
             setLocked(pickupPlanButton, !connected || active);
@@ -1196,7 +1190,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             let focus: HTMLInputElement | null = null;
             if (focusColumn && !dots && !carved) {
                 focus = numberField({ min: -50, max: 50, step: 0.1, placeholder: "-" });
-                focus.value = focusText(group.focus);
+                focus.value = formatOptional(group.focus);
                 focus.setAttribute("aria-label", "focus");
                 focus.title = "mm the head is raised above focus for this group, negative lowers it; blank leaves it where the run puts it";
             }

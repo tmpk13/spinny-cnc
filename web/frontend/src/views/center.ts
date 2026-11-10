@@ -4,7 +4,7 @@ import { controlsOf } from "../controls.ts";
 import { button, el, labeled, numberField, replace } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { CenterRequest } from "../types.ts";
+import type { CenterRequest, CenterResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** The fine pattern's own dimensions, as the backend defaults them. */
@@ -79,6 +79,21 @@ export function centerRequest(fields: CenterFields): CenterRequest | string {
     return out;
 }
 
+/**
+ * A test job made, the centering test's or a calibration test's: what the
+ * backend says of it, its summary and notes, in `output`, the job listed
+ * and selected, and a toast naming it.
+ */
+export async function showMade(ctx: Ctx, output: HTMLElement, result: CenterResponse): Promise<void> {
+    replace(output,
+        el("pre", { class: "center-test-summary" }, result.summary.join("\n")),
+        el("ul", { class: "center-test-notes" }, ...result.notes.map((note) => el("li", {}, note))),
+    );
+    await ctx.refreshJobs();
+    await ctx.selectJob(result.job.id);
+    ctx.toast("info", `made ${result.job.name}`);
+}
+
 export function centerTest(ctx: Ctx): HTMLElement {
     const fine = el("input", { type: "checkbox", "aria-label": "Fine pattern" });
     const lines = numberField({ value: COARSE_DEFAULTS.lines, min: 0, step: 1 });
@@ -129,16 +144,9 @@ export function centerTest(ctx: Ctx): HTMLElement {
             return;
         }
         const result = await ctx.call(ctx.api.centerJob(request));
-        if (!result) {
-            return;
+        if (result) {
+            await showMade(ctx, output, result);
         }
-        replace(output,
-            el("pre", { class: "center-test-summary" }, result.summary.join("\n")),
-            el("ul", { class: "center-test-notes" }, ...result.notes.map((note) => el("li", {}, note))),
-        );
-        await ctx.refreshJobs();
-        await ctx.selectJob(result.job.id);
-        ctx.toast("info", `made ${result.job.name}`);
     }
 
     const panel = el("details", { class: "center-test" },

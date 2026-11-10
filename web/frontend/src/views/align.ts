@@ -7,7 +7,7 @@
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, foldPanel, labeled, numberField, replace, setLocked } from "../dom.ts";
-import { formatFixed, parseNumber } from "../format.ts";
+import { countText, formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { AlignFit, AlignMark, AlignMarkRequest, CameraState, Job } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
@@ -197,7 +197,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
         const job = state.job;
         const align = state.align;
         const marks = align && job && align.job === job.id ? align.marks : [];
-        badge.textContent = marks.length === 0 ? "no marks" : `${marks.length} mark${marks.length === 1 ? "" : "s"}`;
+        badge.textContent = marks.length === 0 ? "no marks" : countText(marks.length, "mark", "marks");
         const cells = marks.map((mark) => {
             const words = markWords(mark);
             return [words.design, words.machine, mark.source, mark.kind, words.distance, words.residual];

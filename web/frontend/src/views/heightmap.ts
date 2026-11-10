@@ -462,17 +462,19 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         publishDraft();
     };
+    /** The grid the fields describe, or which field is wrong. */
+    const typedGrid = (): Grid | string => readGrid({
+        x0: gridFields.x0.value,
+        y0: gridFields.y0.value,
+        x1: gridFields.x1.value,
+        y1: gridFields.y1.value,
+        nx: gridFields.nx.value,
+        ny: gridFields.ny.value,
+    });
     // The preview draws the grid the fields describe, so where the points
     // fall on the job is seen before the head goes there.
     const publishDraft = (): void => {
-        const grid = readGrid({
-            x0: gridFields.x0.value,
-            y0: gridFields.y0.value,
-            x1: gridFields.x1.value,
-            y1: gridFields.y1.value,
-            nx: gridFields.nx.value,
-            ny: gridFields.ny.value,
-        });
+        const grid = typedGrid();
         ctx.store.set({ probeDraft: typeof grid === "string" ? null : grid });
     };
     for (const field of Object.values(gridFields)) {
@@ -488,14 +490,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     const marginLabel = labeled("Margin mm", marginField, "labeled inline hidden");
     const estimateNote = el("span", { class: "muted hm-estimate" });
     const probeRequest = (): ProbeRequest | string => {
-        const grid = readGrid({
-            x0: gridFields.x0.value,
-            y0: gridFields.y0.value,
-            x1: gridFields.x1.value,
-            y1: gridFields.y1.value,
-            nx: gridFields.nx.value,
-            ny: gridFields.ny.value,
-        });
+        const grid = typedGrid();
         if (typeof grid === "string") {
             return grid;
         }
@@ -1005,8 +1000,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const machine = state.snapshot.machine;
         const connected = state.snapshot.connected;
         const probing = heightMap?.probe?.state === "running";
-        const running = (state.progress ?? state.snapshot.run)?.state;
-        const busy = running === "running" || running === "hold";
+        const busy = runActive(runProgress);
         const focusAxis = machine?.joint.h !== null && machine?.joint.h !== undefined;
         const idle = machine?.state === "Idle";
         const milling = isMilling(state.snapshot);

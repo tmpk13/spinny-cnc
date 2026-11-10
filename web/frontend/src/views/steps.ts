@@ -6,7 +6,7 @@
 // shown, and whether the panel is folded, is remembered per browser.
 
 import { el, foldPanel, readStored, replace, writeStored } from "../dom.ts";
-import { profileOf } from "../profile.ts";
+import { isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
 import { mapComplete, mapUse, runActive } from "./heightmap.ts";
@@ -105,13 +105,13 @@ export const SETUPS: Setup[] = [
     {
         id: "map",
         label: "Probe and follow a height map",
-        fits: (state) => profileOf(state.snapshot).h_axis && profileOf(state.snapshot).tool !== "spindle",
+        fits: (state) => profileOf(state.snapshot).h_axis && !isMilling(state.snapshot),
         steps: (state) => [connectStep(state), jobStep(state), travelStep(state), probeStep(state), focusStep(state, false), followStep(state), runStep(state)],
     },
     {
         id: "mill",
         label: "Mill a board",
-        fits: (state) => profileOf(state.snapshot).tool === "spindle",
+        fits: (state) => isMilling(state.snapshot),
         steps: (state) => [connectStep(state), jobStep(state), travelStep(state), probeStep(state), focusStep(state, true), followStep(state), runStep(state)],
     },
     {

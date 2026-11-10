@@ -4,11 +4,12 @@
 // of slots a step deeper each). The ones for the machine show; a dispenser
 // has none.
 
-import { button, el, labeled, numberField, replace } from "../dom.ts";
+import { button, el, labeled, numberField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { CalibrateRequest } from "../types.ts";
+import { showMade } from "./center.ts";
 import type { Ctx } from "./context.ts";
 
 /** The raw text of each field; a blank one is left for the backend to default. */
@@ -160,16 +161,9 @@ export function calibrationTest(ctx: Ctx): HTMLElement {
             return;
         }
         const result = await ctx.call(ctx.api.calibrateJob(request));
-        if (!result) {
-            return;
+        if (result) {
+            await showMade(ctx, output, result);
         }
-        replace(output,
-            el("pre", { class: "center-test-summary" }, result.summary.join("\n")),
-            el("ul", { class: "center-test-notes" }, ...result.notes.map((note) => el("li", {}, note))),
-        );
-        await ctx.refreshJobs();
-        await ctx.selectJob(result.job.id);
-        ctx.toast("info", `made ${result.job.name}`);
     }
 
     return panel;

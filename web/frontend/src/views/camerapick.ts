@@ -8,7 +8,7 @@
 // any device by hand.
 
 import { button, el, labeled, replace } from "../dom.ts";
-import { parseNumber } from "../format.ts";
+import { countText, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CamerasResponse, DetectedCamera } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -82,7 +82,7 @@ export function foundText(listing: CamerasResponse | null, device: string): stri
     } else {
         const set = device.trim();
         const missing = set !== "" && cameraOf(listing.cameras, set) === null;
-        words.push(`${count} ${count === 1 ? "camera" : "cameras"} found${missing ? `; the device set, ${set}, is not one of them` : ""}.`);
+        words.push(`${countText(count, "camera", "cameras")} found${missing ? `; the device set, ${set}, is not one of them` : ""}.`);
     }
     words.push(...listing.problems);
     return words.join(" ");

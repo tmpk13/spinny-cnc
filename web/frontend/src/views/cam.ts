@@ -6,7 +6,7 @@
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, downloadText, el, fileDrop, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
-import { formatDuration, formatLength, parseNumber } from "../format.ts";
+import { countText, formatDuration, formatLength, formatOptional, parseNumber } from "../format.ts";
 import { setPending, type AppState } from "../state.ts";
 import type {
     CamGcodeReport,
@@ -159,10 +159,6 @@ export function reportLines(report: CamGcodeReport): [string, string][] {
 
 // The profile last picked is a per-browser convenience, like the tab.
 const PICK_KEY = "spinny.cam.profile";
-
-function fmt(value: number | null): string {
-    return value === null ? "" : String(value);
-}
 
 /** The CAM panel in `root`, and the profile's file to edit whole in `fileRoot`. */
 export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): void {
@@ -396,12 +392,12 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             el("td", { class: "cam-op-name" }, axis.letter),
             el("td", {}, axis.kind),
             el("td", {}, axis.role),
-            el("td", { class: "num" }, axis.min === null && axis.max === null ? "" : `${fmt(axis.min)} to ${fmt(axis.max)}`),
-            el("td", { class: "num" }, fmt(axis.rate)),
-            el("td", { class: "num" }, fmt(axis.rapid)),
-            el("td", { class: "num" }, fmt(axis.offset)),
-            el("td", { class: "num" }, axis.role === "depth" ? fmt(axis.safe) : fmt(axis.park)),
-            el("td", { class: "num" }, fmt(axis.home)),
+            el("td", { class: "num" }, axis.min === null && axis.max === null ? "" : `${formatOptional(axis.min)} to ${formatOptional(axis.max)}`),
+            el("td", { class: "num" }, formatOptional(axis.rate)),
+            el("td", { class: "num" }, formatOptional(axis.rapid)),
+            el("td", { class: "num" }, formatOptional(axis.offset)),
+            el("td", { class: "num" }, axis.role === "depth" ? formatOptional(axis.safe) : formatOptional(axis.park)),
+            el("td", { class: "num" }, formatOptional(axis.home)),
         ));
         return el("table", { class: "cam-table axes" }, el("thead", {}, head), el("tbody", {}, ...rows));
     }
@@ -493,8 +489,8 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         const passText = model
             ? modelPassText(operation.source, operation.cutting, diameter)
             : kind === "spindle"
-                ? `${passes} ${passes === 1 ? "pass" : "passes"} to ${operation.cutting["depth"] ?? 0} mm`
-                : `${passes} ${passes === 1 ? "pass" : "passes"}`;
+                ? `${countText(passes, "pass", "passes")} to ${operation.cutting["depth"] ?? 0} mm`
+                : countText(passes, "pass", "passes");
         return el("tbody", { class: operation.enabled ? "" : "disabled" },
             el("tr", {},
                 el("td", {}, enabled),

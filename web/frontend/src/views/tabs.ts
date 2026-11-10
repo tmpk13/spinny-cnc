@@ -8,6 +8,7 @@
 // count.
 
 import { el, readStored, writeStored } from "../dom.ts";
+import { countText } from "../format.ts";
 import type { AppState, Store } from "../state.ts";
 
 export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config";
@@ -99,7 +100,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): void {
             const count = pendingOn(state.pending, page);
             if (count > 0) {
                 tab.setAttribute("data-pending", String(count));
-                tab.title = `${count} edit${count === 1 ? "" : "s"} on this page not applied`;
+                tab.title = `${countText(count, "edit", "edits")} on this page not applied`;
             } else {
                 tab.removeAttribute("data-pending");
                 tab.removeAttribute("title");

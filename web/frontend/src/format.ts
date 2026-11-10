@@ -72,6 +72,16 @@ export function formatLength(mm: number | null | undefined): string {
     return formatFixed(mm, 1) + " mm";
 }
 
+/** A count with its noun, `one` for one and `many` otherwise: "1 path", "3 paths". */
+export function countText(count: number, one: string, many: string): string {
+    return `${count} ${count === 1 ? one : many}`;
+}
+
+/** A number that may be missing as a field or a cell shows it: blank for none, else as it is. */
+export function formatOptional(value: number | null | undefined): string {
+    return value === null || value === undefined ? "" : String(value);
+}
+
 /** Parses a text field: a number, or arithmetic such as `25.4/2` or `1/8 in` (src/calc.ts); blank or anything else gives null. */
 export function parseNumber(text: string): number | null {
     const trimmed = text.trim();

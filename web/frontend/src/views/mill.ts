@@ -19,17 +19,17 @@ import { turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, readStored, relabel, replace, setLocked, writeStored } from "../dom.ts";
-import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
+import { countText, formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
 import { defaultOperation, recipeOps } from "../mock/mill.ts";
-import { profileOf } from "../profile.ts";
+import { isDispensing, profileOf } from "../profile.ts";
 import { movedDims, operationDims, operationSummary, sameOperation, type RectMode } from "../sketch.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { Compensate, HolePoint, Job, MillKind, MillOperation, MillShape, MillSide, Point } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
 import { withFocusHere } from "./focushere.ts";
-import { mapUsable } from "./heightmap.ts";
+import { mapUsable, runActive } from "./heightmap.ts";
 import { progressText } from "./jobs.ts";
-import { headPosition, markerPicker } from "./markers.ts";
+import { headOrSay, markerPicker } from "./markers.ts";
 
 /** Where the page's fields are remembered between visits. */
 export const MILL_KEY = "spinny.mill";
@@ -356,9 +356,8 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         fx.setAttribute("aria-label", `${title} x`);
         fy.setAttribute("aria-label", `${title} y`);
         const here = button("Here", () => {
-            const head = headPosition(ctx.store.get());
+            const head = headOrSay(ctx);
             if (!head) {
-                ctx.toast("error", "no head position: connect the machine first");
                 return;
             }
             fill([fx, fy], fromBoard(head.x, head.y));
@@ -395,9 +394,8 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     directions.title = "with the spindle turning clockwise: climb runs counterclockwise inside a pocket and clockwise around a part";
 
     const addHere = button("Add here", () => {
-        const head = headPosition(ctx.store.get());
+        const head = headOrSay(ctx);
         if (!head) {
-            ctx.toast("error", "no head position: connect the machine first");
             return;
         }
         appendPoint(fromBoard(head.x, head.y));
@@ -740,7 +738,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         stateBadge.setAttribute("data-state", state);
         setPending(ctx.store, "plot", state === "changed" ? 1 : 0);
         jobTitle.textContent = plotJob && ops
-            ? `${plotJob.name}: ${ops.length} operation${ops.length === 1 ? "" : "s"}${editing !== null ? `, number ${editing + 1} in the fields` : ""}`
+            ? `${plotJob.name}: ${countText(ops.length, "operation", "operations")}${editing !== null ? `, number ${editing + 1} in the fields` : ""}`
             : "no Plot page job selected";
         setLocked(applyButton, state !== "changed");
         setLocked(addButton, typeof op === "string");
@@ -978,7 +976,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     }
 
     function renderMachine(state: AppState): void {
-        const dispenser = state.snapshot.connected && profileOf(state.snapshot).tool === "dispenser";
+        const dispenser = state.snapshot.connected && isDispensing(state.snapshot);
         machineNote.textContent = dispenser ? "the machine is a dispenser, which lays dots: a job made here cuts with a spindle or a laser" : "";
         machineNote.classList.toggle("hidden", !dispenser);
         // The operation follows the machine: planned again for its cutter.
@@ -1077,7 +1075,7 @@ function mountMillRun(root: HTMLElement, ctx: Ctx): void {
         progressTime.textContent = text.time;
         progressReason.textContent = text.reason;
         progressBox.classList.toggle("hidden", progress === null || progress.job !== job?.id);
-        const active = progress !== null && (progress.state === "running" || progress.state === "hold");
+        const active = runActive(progress);
         const connected = state.snapshot.connected;
         setLocked(runButton, !connected || active || !job);
         setLocked(holdButton, !connected || !active || progress?.state !== "running");

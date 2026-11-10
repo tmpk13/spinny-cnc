@@ -8,6 +8,7 @@
 
 import { errorText } from "../api.ts";
 import { button, el, setLocked, tabIndents } from "../dom.ts";
+import { countText } from "../format.ts";
 import { type JobPlace, formatJson, offsetOf, placeOf, stepsAt } from "../jsontext.ts";
 import { jointPreview } from "../mock/jobs.ts";
 import { setPending } from "../state.ts";
@@ -215,7 +216,7 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         largeRow.classList.add("hidden");
         editor.disabled = false;
         editor.value = text;
-        status.textContent = `${job.groups.length} ${job.groups.length === 1 ? "group" : "groups"}, ${job.groups.reduce((sum, group) => sum + group.paths.length, 0)} paths`;
+        status.textContent = `${countText(job.groups.length, "group", "groups")}, ${job.groups.reduce((sum, group) => sum + group.paths.length, 0)} paths`;
     }
 
     ctx.store.subscribe((state, previous) => {
@@ -249,7 +250,7 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
             status.textContent = made;
             return;
         }
-        status.textContent = `reads as a job of ${made.groups.length} ${made.groups.length === 1 ? "group" : "groups"}: drawn on the preview, not kept until Apply`;
+        status.textContent = `reads as a job of ${countText(made.groups.length, "group", "groups")}: drawn on the preview, not kept until Apply`;
         ctx.store.set({ jobDraft: made });
     }
 

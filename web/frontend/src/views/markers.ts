@@ -35,6 +35,15 @@ export function headPosition(state: AppState): Board | null {
     return board ? { x: board.x, y: board.y } : null;
 }
 
+/** Where the head is over the board now; with no machine, null after a toast that says to connect one. */
+export function headOrSay(ctx: Ctx): Board | null {
+    const head = headPosition(ctx.store.get());
+    if (!head) {
+        ctx.toast("error", "no head position: connect the machine first");
+    }
+    return head;
+}
+
 /** A select of the markers that hands the one picked to `onPick` and goes back to its prompt. */
 export function markerPicker(ctx: Ctx, prompt: string, onPick: (marker: Marker) => void): HTMLSelectElement {
     const select = el("select", { class: "field marker-pick", "aria-label": prompt, title: "take the position of a marker" }) as HTMLSelectElement;
@@ -90,12 +99,11 @@ export function mountMarkers(root: HTMLElement, ctx: Ctx): void {
     }
 
     async function markHere(): Promise<void> {
-        const state = ctx.store.get();
-        const head = headPosition(state);
+        const head = headOrSay(ctx);
         if (!head) {
-            ctx.toast("error", "no head position: connect the machine first");
             return;
         }
+        const state = ctx.store.get();
         const marker = { name: typedName(state.markers), x: round(head.x), y: round(head.y) };
         if (await save(withMarker(state.markers, marker))) {
             name.value = "";
@@ -123,9 +131,8 @@ export function mountMarkers(root: HTMLElement, ctx: Ctx): void {
     }
 
     async function moveHere(marker: Marker): Promise<void> {
-        const head = headPosition(ctx.store.get());
+        const head = headOrSay(ctx);
         if (!head) {
-            ctx.toast("error", "no head position: connect the machine first");
             return;
         }
         await save(withMarker(ctx.store.get().markers, { ...marker, x: round(head.x), y: round(head.y) }));

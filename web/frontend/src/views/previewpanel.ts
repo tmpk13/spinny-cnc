@@ -8,7 +8,9 @@
 // paths, which the Jobs panel moves between groups.
 
 import { button, el } from "../dom.ts";
+import { countText } from "../format.ts";
 import { cappedRate } from "../kinematics.ts";
+import { isDispensing, profileOf } from "../profile.ts";
 import { Preview, type Dimension } from "../preview.ts";
 import type { SpeedLimits } from "../speed.ts";
 import { type PathRef, boxedAfter, pickedAfter } from "../regroup.ts";
@@ -37,7 +39,7 @@ export function speedLimitsOf(state: AppState): SpeedLimits {
     };
     const rate = (axis: string, fallback: number): number => cappedRate(number(`${axis}_rate`, fallback), number(`${axis}_steps`, 0), number("step_us", 2));
     return {
-        kinematics: state.snapshot.profile?.kinematics ?? "polar",
+        kinematics: profileOf(state.snapshot).kinematics,
         rRate: rate("r", 560),
         aRate: rate("a", 400),
         zRate: rate("z", 560),
@@ -49,7 +51,7 @@ export function speedLimitsOf(state: AppState): SpeedLimits {
 /** What the cut order slider says at `at` of `total` paths. */
 export function scrubText(at: number, total: number, label: string | null): string {
     if (at >= total) {
-        return `all ${total} ${total === 1 ? "path" : "paths"} in the order they are cut`;
+        return `all ${countText(total, "path", "paths")} in the order they are cut`;
     }
     if (at === 0) {
         return `none of ${total} cut yet`;
@@ -254,7 +256,7 @@ export function mountPreviewPanel(
         // so the rail and the limits are drawn at angle 0.
         const machine = state.snapshot.machine;
         const joint = machine?.joint ?? null;
-        const head = joint && state.snapshot.profile?.tool === "dispenser" ? { ...joint, a: 0 } : joint;
+        const head = joint && isDispensing(state.snapshot) ? { ...joint, a: 0 } : joint;
         preview.setHead(head, machine?.board ?? null);
     }, ["snapshot"]);
     ctx.store.subscribe((state) => {
