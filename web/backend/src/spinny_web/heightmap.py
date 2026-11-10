@@ -169,7 +169,7 @@ class Grid(Finite):
         dx = (self.x1 - self.x0) / (self.nx - 1)
         dy = (self.y1 - self.y0) / (self.ny - 1)
         cells = [[False] * (self.nx - 1) for _ in range(self.ny - 1)]
-        step = min(dx, dy) / 2.0
+        step = self.spacing / 2.0
 
         def mark_box(bx0: float, by0: float, bx1: float, by1: float) -> None:
             i0 = max(0, min(self.nx - 2, math.floor((bx0 - self.x0) / dx)))
@@ -207,7 +207,7 @@ class Grid(Finite):
             return self.model_copy(update={"mask": None})
         return self.model_copy(update={"mask": mask})
 
-    def estimate_seconds(self, settings, rates, cartesian: bool = True) -> float:
+    def estimate_seconds(self, settings, rates) -> float:
         """About how long probing takes: for each point the move from the
         last, a touch down over half the probe depth (the board is somewhere
         under the travel height, and the depth allows for not knowing
@@ -217,8 +217,10 @@ class Grid(Finite):
         xs, ys = self.xs, self.ys
         return estimate_points_seconds([(xs[ix], ys[iy]) for ix, iy in self.order()], settings, rates)
 
-    def covers(self, box: tuple[float, float, float, float], margin: float = COVER_MARGIN) -> bool:
+    def covers(self, box: tuple[float, float, float, float]) -> bool:
+        """Whether the box lies on the grid, allowing COVER_MARGIN past its edge."""
         x0, y0, x1, y1 = box
+        margin = COVER_MARGIN
         return (
             x0 >= self.x0 - margin
             and y0 >= self.y0 - margin
@@ -233,8 +235,8 @@ def estimate_points_seconds(points: list, settings, rates) -> float:
     second touch, the rise back and the answers in between."""
     if not points:
         return 0.0
-    h_rate = float(getattr(rates, "h_rate", 600.0)) or 600.0
-    travel_rate = float(getattr(rates, "r_rate", 560.0)) or 560.0
+    h_rate = rates.h_rate
+    travel_rate = rates.r_rate
     feed = min(float(settings.feed), h_rate)
     descent = float(settings.depth) / 2.0
     per_point = descent / feed * 60.0 + descent / h_rate * 60.0 + PROBE_OVERHEAD
@@ -247,9 +249,10 @@ def estimate_points_seconds(points: list, settings, rates) -> float:
     return seconds
 
 
-def pad_grid(box: tuple[float, float, float, float], margin: float = PAD_GRID_MARGIN) -> Grid:
-    """A pad map's grid: the box with a margin, at about the pad grid
-    spacing, within the point counts a grid may have."""
+def pad_grid(box: tuple[float, float, float, float]) -> Grid:
+    """A pad map's grid: the box with PAD_GRID_MARGIN around it, at about
+    the pad grid spacing, within the point counts a grid may have."""
+    margin = PAD_GRID_MARGIN
     x0, y0, x1, y1 = box
     x0, y0, x1, y1 = x0 - margin, y0 - margin, x1 + margin, y1 + margin
     if x1 - x0 < 2.0 * margin:
@@ -475,11 +478,11 @@ class HeightMap(Finite):
             raise ValueError("the height map has no probed point")
         return nearest[0]
 
-    def cell_probed(self, x: float, y: float, margin: float = COVER_MARGIN) -> bool:
+    def cell_probed(self, x: float, y: float) -> bool:
         """Whether the board point lies in a cell with all four corners
-        probed, allowing `margin` past the grid's edge."""
+        probed, allowing COVER_MARGIN past the grid's edge."""
         grid = self.grid
-        if not grid.covers((x, y, x, y), margin):
+        if not grid.covers((x, y, x, y)):
             return False
         if self.points is not None:
             # A pad map reads anywhere in its box once a pad is probed.
@@ -761,7 +764,7 @@ def check_covers(heightmap: HeightMap, job) -> None:
         return
     # Along every cut, at half a cell: a segment that crosses a cell nobody
     # probed would be cut to a guessed height.
-    step = max(min((grid.x1 - grid.x0) / (grid.nx - 1), (grid.y1 - grid.y0) / (grid.ny - 1)) / 2.0, 1e-3)
+    step = max(grid.spacing / 2.0, 1e-3)
     for group in job.groups:
         if not group.enabled:
             continue

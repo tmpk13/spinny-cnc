@@ -2783,7 +2783,7 @@ class Backend:
         grid, resume = self.probe_grid(body)
         settings = self.probe_settings()
         points = len(resume.remaining()) if resume is not None else grid.points
-        seconds = grid.estimate_seconds(settings, self.rates, self.cartesian)
+        seconds = grid.estimate_seconds(settings, self.rates)
         if resume is not None and grid.points > 0:
             seconds = seconds * points / grid.points
         return {"seconds": round(seconds, 1), "points": points, "grid": grid.model_dump()}
