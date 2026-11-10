@@ -47,19 +47,19 @@ focus axis (`H` mm) with the probe on a machine with one. Both panels
 are drawn again when the controls change.
 
 The page follows what the machine is (`profile` in the backend's state,
-from `$cartesian` and `$spindle`), with a badge in the status bar when it
-is not the polar laser. The Config tab's machine file panel lists the
-files in `machines/`, names the one the live settings are (or says they
-are no file's, and whose controls the jog panel draws), edits the picked
-one, and loads it after a confirmation,
-every firmware setting from the file; *Save to flash* keeps it over a
-restart. On a cartesian machine the cross slide is the Y
+from `$cartesian`, `$spindle` and `$dispenser`), with a badge in the
+status bar when it is not the polar laser. The Config tab's machine file
+panel lists the files in `machines/`, names the one the live settings are
+(or says they are no file's, and whose controls the jog panel draws),
+edits the picked one, and writes it to the board after a confirmation,
+every firmware setting from the file, saved to the board's flash in the
+same step. On a cartesian machine the cross slide is the Y
 axis: it steps like the rail, at the feed given, and the joint goto takes
 `r` and `z`. With a spindle the laser panel starts and stops the spindle,
 the groups table has depth and plunge in place of the power floor, the
-focus axis is the depth axis, "Focus here" is "Touch off here", and the
-firmware settings panel on the Config tab has the travel clearance and
-spin-up. The in-page mock
+focus axis is the depth axis, and "Focus here" is "Touch off here"; the
+travel clearance and the spin-up are the machine file's `[host]
+clearance` and `spinup`. The in-page mock
 takes those settings too: with `$cartesian=1` the cross slide is a joint
 and a board move is one line in the table's frame, and with `$spindle=1`
 it mills a job the way the backend streams one (lift, spindle start,
@@ -150,40 +150,45 @@ toggle that hides the built-in system ports; it marks a machine whose
 last report is old, as the Position panel does, before the backend gives
 the link up. The console's *Log* shows the backend's log, *Wire* the last lines over the wire with their times, polls included.
 
-The page has five tabs under the status bar, remembered per browser and
-set by `?page=plot`, `?page=cam`, `?page=pnp` or `?page=config` in the
-address (the old names `machine` and `mill` still open them): *Jobs*,
-the panels above, *Plot*, *CAM*, *PNP* and *Config*. The CAM page shows a profile from
+The page has six tabs under the status bar (`PAGES` in
+`src/views/tabs.ts`), remembered per browser and set by `?page=plot`,
+`?page=cam`, `?page=pnp`, `?page=auto` or `?page=config` in the address
+(the old names `machine` and `mill` still open them): *Jobs*, the panels
+above, *Plot*, *CAM*, *PNP*, *Auto* and *Config*. The CAM page shows a profile from
 `cam/` (`docs/CAM.md`): its axes,
 its tools and its operations, every cutting setting of an operation in a
 field that writes the one value back into the file (a field left empty is
 the tool's value again), the file's text in an editor that saves it whole
 and shows what is wrong with a text that does not read, a drop zone that
 takes a design (a board with its outline and drill file in one drop, an
-SVG, gcode or a job) through the profile into a job, and *Export gcode*,
-which downloads the picked job as a program for the profile's controller
-with a report of what each axis reaches. The CAM page has a preview of
-its own. The mock reads the shipped profiles itself (`src/mock/toml.ts`,
-`src/mock/cam.ts`): copper geometry is the demo coupon's, and its gcode
+SVG, gcode, a job or an STL model) through the profile into a job, and
+*Export gcode*, which downloads the picked job as a program for the
+profile's controller with a report of what each axis reaches. The CAM
+page has a preview of its own. The mock reads the shipped profiles itself
+(`src/toml.ts`, `src/mock/cam.ts`): copper geometry is the demo coupon's, and its gcode
 follows the backend's post for a cartesian profile.
 
 The Config page is where a machine is described: the machine file panel
-picks a file from `machines/` (`docs/MACHINES.md`), shows it in the TOML
-editor, makes a new file from the text shown, deletes one, checks the
-text against the backend (*Check*), saves it whole (*Save*, which keeps
-nothing of a text that does not read), and loads it onto the board
-(*Load to board*, then *Save to flash*). The pins, the laser output, the
-probe and an optional tool output, are keys of the file; they are read at
-boot, so the page says to save and restart after a load that changes one.
-Beside it the firmware settings panel shows the live values with inline
-edits, the host's chord tolerance and the milling values. Both TOML
-editors (`src/views/editor.ts`) color the text (`src/highlight.ts`) and
+(`src/views/config.ts`) picks a file from `machines/`
+(`docs/MACHINES.md`), shows it in the TOML editor, makes a new file from
+the text shown, deletes one, checks the text against the backend
+(*Check*), saves it whole (*Save*, which keeps nothing of a text that does
+not read), writes every setting to the board and saves it to the board's
+flash in the same step (*Write to board*, which saves an edited text
+first), and writes the board's values into the text (*Read from board*).
+The pins, the laser output, the probe and an optional tool output, are
+keys of the file; they are read at boot, so after a write that changes
+one the page says to restart the board. Beside the editor, *Settings*
+(`src/views/settingslist.ts`) lists every key a file can set, the file's
+value beside the board's; nothing is edited there, and a click takes the
+editor to the key. The TOML editors (`src/views/editor.ts`: the machine
+file's, the CAM profile's and the G-code device profile's) color the text (`src/highlight.ts`) and
 read it with the page's own TOML reader (`src/toml.ts`) on every edit,
 naming the line that does not read before any save; the backend's check
 is the one that counts.
 
-Arrow keys jog when no field that uses them has focus and the machine's
-page is up; Escape cancels a jog
+Arrow keys jog when no field that uses them has focus and the jog panel's
+page (Jobs or Plot) is up; Escape cancels a jog
 or goto from anywhere but a dialog while a machine is connected. The event feed is opened again when it
 goes silent for 5 s while a machine is connected, since a backend host that
 loses power sends no close. The page reads the settings again when the
@@ -240,7 +245,7 @@ classDiagram
         AppState
     }
     class views {
-        statusbar tabs steps dro jog laser markers mill jobs center heightmap previewpanel vision align pnp auto console settings cam config editor toasts
+        context statusbar tabs steps banner dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision camerapick camlog align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals
@@ -302,12 +307,37 @@ classDiagram
         parseMachine(text, id) MachineDocument  the backend's checks and words, camera included
         DEFAULT_SETTINGS
     }
+    class mock_pnp {
+        UP_TRUTH TOP_TRUTH  where the up and top cameras really sit, their pictures, a board job's pads as its parts
+    }
+    class mock_openpnp {
+        parseDevice(text, id) MockDevice  the backend's device profile reader and placement program, line for line
+    }
+    class mock_calibrate {
+        calibrateJob(id, request, milling, limits) the calibration tests
+    }
+    class mock_camlog {
+        MockCameraLog  photos taken by hand, kept with the picture marked up
+    }
+    class mock_thumbs {
+        thumbnail(job) the job list's small drawing
+    }
+    class mock_order {
+        innerFirst(paths) whatever lies inside a closed shape first
+    }
     views --> align
     mock_backend --> align
     mock_backend --> mock_vision
     mock_backend --> mock_padmap
     mock_backend --> mock_mill
     mock_backend --> mock_auto
+    mock_backend --> mock_pnp
+    mock_backend --> mock_openpnp
+    mock_backend --> mock_calibrate
+    mock_backend --> mock_camlog
+    mock_backend --> mock_thumbs
+    mock_jobs --> mock_order
+    mock_cam --> mock_order
     main --> api
     main --> ws
     main --> state

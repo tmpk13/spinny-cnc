@@ -29,10 +29,10 @@ The line protocol is [../docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
 | Crate | What |
 | --- | --- |
-| `core` | the controller: parser, settings, planner, stepper, cross slide, machine state |
-| `rp2040` | the BTT SKR Pico port: USB, step timer, laser PWM, TMC2209, flash |
+| `core` | the controller: parser, settings, planner, stepper, cross slide, homing and endstop halts, machine state |
+| `rp2040` | the BTT SKR Pico port: USB, step timer, laser PWM, probe and endstop inputs, TMC2209, flash |
 | `rp2040-logic` | the port's hardware-free arithmetic, so it tests on the host |
-| `virtual` | the core on a TCP socket with a virtual clock |
+| `virtual` | the core on a TCP socket with a virtual clock, and endstops where `--stop` puts them |
 
 `core`, `rp2040-logic` and `virtual` are one workspace. `rp2040` is
 excluded and keeps its own `.cargo/config.toml`, because a `build.target`
@@ -75,6 +75,7 @@ the simulator does not show that closing the port stops anything.
 | `--machine PATH` | a machine file from `machines/` (`docs/MACHINES.md`): its axes, kinematics and tool applied to the settings at start |
 | `--settings K=V` | set a machine setting at start, repeatable; after `--machine` it overrides the file |
 | `--store PATH` | file standing in for the settings sector, so `$save` works |
+| `--stop L[MIN][,MAX]` | an endstop on joint `L` (`R`, `A`, `H` or `Z`), closed at or below `MIN` and at or above `MAX`; repeatable |
 | `--surface B[,SX,SY[,C]]` | a board under the probe, its top at focus height `B + SX*x + SY*y + C*(x^2 + y^2)`; without it a probe finds nothing |
 | `--probe-offset L,C` | the probe tip `L` mm along the rail and `C` mm across it from the beam; it adds no board of its own |
 | `--quiet` | no periodic report on stderr |
@@ -115,14 +116,19 @@ flowchart TB
         MACHINE --> PLANNER[planner: blocks, junctions, lookahead]
         MACHINE --> FRONT[stepper front: prep segments]
         MACHINE --> SLIDE[slide: one trapezoid, cross slide only]
+        MACHINE --> HOME[homing: a joint at a time, through the planner or the slide]
+        HOME --> PLANNER
+        HOME --> SLIDE
         PLANNER --> FRONT
         FRONT --> RING[(segment ring)]
-        RING --> ISR[stepper isr: bresenham, duty, probe latch]
+        RING --> ISR[stepper isr: bresenham, duty, probe and endstop latch, endstop halt]
         TIMER --> ISR
     end
     ISR --> PINS[step, dir, enable: R, A, H, Z when cartesian]
     PROBE[probe input] --> ISR
     PROBE --> MACHINE
+    STOPS[endstop inputs] --> ISR
+    STOPS --> MACHINE
     LOOP --> SLIDE
     SLIDE --> ZPINS[cross slide step, dir]
     ISR --> PWM[laser duty, left alone for a spindle]

@@ -108,8 +108,7 @@ board sits out of focus.
    selected job, and while a run lasts the status bar shows what it
    follows.
 
-Wiring and bring-up are in `firmware/rp2040/README.md`; nothing of this has
-run on hardware yet.
+Wiring and bring-up are in `firmware/rp2040/README.md`.
 
 ### Cartesian and spindle
 
@@ -117,8 +116,9 @@ Two optional modes use the same machine; both are firmware settings, off
 by default, and the page follows them. The quickest way between them is
 the *Config* tab, which edits and loads a whole file from
 `machines/` ([MACHINES.md](MACHINES.md)): `cartesian-laser` and
-`cartesian-mill` are the two modes below with the slide's travel set to
-30 mm either side; copy one and change the limit to yours. The settings
+`cartesian-mill` are the two modes below, the slide's travel either side
+being their `[slide] limit` (30 mm in the one, 40 in the other); copy one
+and change the limit to yours. The settings
 named below are what such a file writes.
 
 `$cartesian=1` makes it an X/Y machine: the rail is X, the cross slide Y,
@@ -135,7 +135,8 @@ by that angle, so a board placed for a polar job is cut in the same place.
 travel height, the spindle starts and spins up, and every path is a plunge,
 the cuts at depth and a rise, each pass of a group a step deeper. Groups
 carry a depth and a plunge rate; the host keeps the travel clearance and
-the spin-up (the Config tab's settings panel).
+the spin-up, the machine file's `[host] clearance` and `spinup`
+([MACHINES.md](MACHINES.md#schema)).
 
 1. Touch the tool to the copper and press *Set H=0 here*: without a height
    map H 0 is the surface.
@@ -249,11 +250,11 @@ for priming the needle and checking the flow.
    layer (`F.Paste`; a copper layer's pads are its flashes), the paste
    thickness over a pad (0.12 mm by default) in the upload form and in
    the group's *thickness* afterwards. A dot's volume is the pad's area
-   times the thickness, and the plunger pushes it out over the *output*
-   setting, mm^3 of paste per mm of plunger, which depends on the syringe
-   and is worth measuring once by weight: the Config tab's host settings
-   hold it with the needle's *gap* over the pad, the *retract* after each
-   dot, the *extrude rate* and the *dwell* before the retract.
+   times the thickness, and the plunger pushes it out over `output`, mm^3
+   of paste per mm of plunger, which depends on the syringe and is worth
+   measuring once by weight. It and the rest of what a dot is made of
+   (`gap`, `retract`, `extrude_rate`, `dwell_ms`) are `[host]` keys of the
+   machine file ([MACHINES.md](MACHINES.md#schema)).
 2. Line the job up with the board ([below](#lining-a-job-up-with-the-board)).
 3. Touch the needle to a pad and press *Set H=0 here*, or probe the pads
    ([below](#probing-the-pads)) and run with *height map: auto* so the
@@ -338,9 +339,12 @@ gcode file has none to probe.
 ### The camera and its offset
 
 A camera on the head ([MACHINES.md](MACHINES.md), `[camera]`) is read by
-the backend through `pcbv serve` from the sibling pcb-vision repository
-(`mise run build-pcbv` builds it; on a Raspberry Pi that runs the
-backend, build it there or point `pcbv` at a binary built for it). The
+the backend through `pcbv serve` from the sibling pcb-vision repository:
+`mise run build-pcbv` builds it here, `mise run deploy-pi -- --web`
+cross-builds it for a Raspberry Pi that runs the backend and installs it
+there ([ARCHITECTURE.md](ARCHITECTURE.md#controller-on-a-raspberry-pi)),
+and a release built beside pcb-vision carries it as `bin/pcbv`
+([RELEASE.md](RELEASE.md#the-other-programs)). The
 Camera panel on the Jobs page starts it, shows its picture with a
 crosshair at the center, and, with *Look for board* on a job imported
 from a KiCad file, where on the board the picture is and how well it is

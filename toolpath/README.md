@@ -1,13 +1,23 @@
 # spinny-laser toolpath
 
 The Python library behind the web backend and the command line tools:
-polar kinematics (`polar`), copper clearing (`clear`) and deposition
-(`deposit`), solder paste stencils (`stencil`), the centering coupons
-(`center`, `fine`), the pads and holes
+polar kinematics (`polar`), which layer of a board a job is read from and
+the gerber that holds it (`board`), copper clearing (`clear`) and
+deposition (`deposit`), solder paste stencils (`stencil`), a layer cut on
+its lines (`lines`), a board's outline as a cut, its pieces joined into
+loops and a bit kept off the board (`outline`), the cutting order that
+puts whatever lies inside a closed shape before the shape (`order`), the
+centering coupons (`center`, `fine`), the calibration tests
+(`calibrate`: a laser's material grid and focus ladder, a mill's depth
+row), the pads and holes
 of a board layer (`pads`), the turn and shift that line a job up with the
 board (`align`), the Plot page's simple operations (`mill`: drilling,
 a line, facing, pockets and profiles), the machine configuration files
-(`machines`), the CAM
+(`machines`, with the page's controls in `controls`, and in
+`machine_keys` the key each firmware setting is written with and a file's
+text brought to a board's values), where the programs keep their files
+(`home`: the repository's directories in a checkout, else one home
+directory), the CAM
 profiles (`cam`, `camjob`, `post`: a design through a profile's
 operations, gcode for the profile's controller; `carve` runs the 3D
 kernel in `carve/` for an STL model), and the gcode emitter for a
@@ -85,7 +95,27 @@ classDiagram
     }
     class align {
         fit_rigid(pairs, angle) Fit: rotation, shift, scale, rms, residuals
-        turn(point, degrees) / turned_paths(paths, degrees)
+        turn(point, degrees)
+    }
+    class board {
+        check_layer(layer) / layer_of(path) / layer_table(text)
+        find_plotted(directory, layer, board_file) the gerber kicad-cli plotted for the layer
+        is_bottom(layer) / layer_word(layer)
+    }
+    class lines {
+        drawn_lines(image) a stroke's centerline, a fill's outline
+        ordered(lines, pace, start) joined where their ends meet, by travel, inside first
+    }
+    class outline {
+        cut(outline, radius) Cut  loops in cutting order, a bit's middle kept off the board
+    }
+    class order {
+        depths(paths) / inner_first(paths) whatever lies inside a closed shape first
+    }
+    class calibrate {
+        material(powers, speeds, ...) a laser's grid of squares
+        focus_ladder(focuses, ...) a laser's lines a focus step apart
+        depth(depths, ...) a mill's row of slots
     }
     class machines {
         load(path) Machine
@@ -97,7 +127,22 @@ classDiagram
         default_controls(kinematics, tool, focus) the page's controls for a machine file that says nothing
         parse_controls(reader, top, ...) the [controls] table, filled in from the defaults
     }
+    class machine_keys {
+        KEYS  the section and key of every firmware setting
+        value_of(key, settings, host)
+        from_board(text, live, host, where) the keys whose values differ written into the text
+    }
+    class home {
+        root(environ, repo) where var/, machines/, cam/ and pnp/ are
+        seed(target, shipped) a release's copies on the first start
+    }
     machines --> controls
+    machine_keys --> machines
+    machine_keys ..> web_backend : Read from board
+    calibrate ..> web_backend : calibration tests
+    home ..> web_backend : var, machines, cam, pnp
+    lines ..> web_backend : board import, lines mode
+    outline ..> web_backend : board import
     class cam {
         Profile  axes, tools, operations, post, placement, materials, stock, model, spindle
         load / load_all(directory) / parse(text, id)
@@ -176,7 +221,19 @@ classDiagram
     camcli --> cam
     camcli --> camjob
     camcli --> post
+    camcli --> home
+    carve --> home
     camjob --> cam
+    camjob --> board : the layer and its gerber
+    camjob --> outline : a board's outline cut
+    camjob --> order : inside first
+    cam --> board
+    cli --> board
+    lines --> clear : pieces joined, travel order
+    lines --> order
+    outline --> clear : pieces joined
+    outline --> order
+    outline --> laser_sweep : offsets
     camjob --> carve : a model's toolpaths
     camjob --> clear : clearing strokes
     camjob --> deposit : edges, fill, thin

@@ -12,7 +12,7 @@ reflashed and speaks neither G-code nor a serial line protocol.
   `0x82`, set up with vendor requests `0x9A` (EPP 1.9) and `0xB1` (parallel
   init). It is not a tty, so pyserial and the Pi's spinny-bridge cannot
   carry it.
-- On this PC's kernel (7.0) `spi_ch341` claims `1a86:5512` as soon as the
+- On kernel 7.0 `spi_ch341` claims `1a86:5512` as soon as the
   board is plugged in. It has to be blacklisted or detached before libusb
   can claim the interface, and a udev rule is needed for access without root.
 - A frame is `0x00`, 30 command bytes padded with `F`, and a OneWire CRC-8
@@ -46,7 +46,8 @@ stencils, but it does not ablate bare copper.
 The CAM tab's built job (`camjob.BuiltJob`: groups of polylines in mm with
 speed, passes and power) holds everything a K40 needs, so isolation, vector
 clearing, outlines and the F.Paste stencil carry over. The machine side
-does not: the line protocol, the Run tab's runner and link, the height map,
+does not: the line protocol, the Jobs page's Run panel, the runner and
+link, the height map,
 probing, focus and power compensation, speed-tied power, endstop settings
 and the `[controls]` jog panel all assume this repo's firmware.
 
@@ -57,7 +58,7 @@ flowchart LR
     GC -->|route 1| MK[MeerK40t] -->|USB| M2[M2 Nano]
     EGV --> MK
     EGV --> ND[nano_device, route 3] -->|pyusb, CH341 EPP| M2
-    JOB[Run tab: jobs, runner, link] -->|route 4, line protocol| PICO[SKR Pico in the K40]
+    JOB[Jobs page: jobs, runner, link] -->|route 4, line protocol| PICO[SKR Pico in the K40]
 ```
 
 ## Routes

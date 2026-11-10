@@ -268,8 +268,9 @@ neither. An axis's `endstop_pin` is an input like the probe's: two axes
 may share one, and an axis may share the probe's, but a fitted endstop
 (`endstop` other than `none`) may not sit on the output's or the tool
 output's pin. The pins and `[enable] fitted` are read from flash at boot,
-so a load that changes one wants *Save to flash* and a restart of the
-board; the page says so after such a load. The endstop pins are claimed
+so a write that changes one takes effect after a restart of the board
+(*Write to board* has saved it already); the page says so after such a
+write. The endstop pins are claimed
 at boot whether or not the axis has a switch yet, so `endstop` itself
 applies at once.
 
@@ -361,8 +362,8 @@ depth axis with a spindle), a Center button to `R 0` (and `Z 0` when
 cartesian), and a zero button per joint. `polar-laser.toml` spells those
 defaults out with a comment on each key, which is where to start a file
 of your own; the other shipped files say what differs for their kind (the
-mill leaves the rail's bar out: the rail is X there, which the pad's X
-bar moves).
+mill leaves the board pad out, since its X and Y bars are the rail and the
+slide).
 
 An entry fills in what it leaves out from the default for its joint; an
 entry given a `letter` or a `label` but no `buttons` is labeled
@@ -378,14 +379,15 @@ still taken and means nothing now. The virtual firmware checks only that
 The backend reads the file, maps it onto every firmware setting and writes the
 ones that differ from the machine's, one `$name=value` line each, all or
 nothing: a value the firmware refuses has the ones sent before it put back.
-The host values are stored once the firmware's part is through. Nothing is
-saved to flash unless asked (`{"save": true}`, or *Save to flash* on the
-page), so a load can be tried and undone with a power cycle. A load is
+The host values are stored once the firmware's part is through. Through
+the API nothing is saved to flash unless asked (`{"save": true}`), so a
+load there can be tried and undone with a power cycle; the page's *Write
+to board* always saves. A load is
 refused while a run or probing owns the machine, like any settings write.
 
 Which file the live settings are is decided on every settings read by
-comparing every value, so a setting changed by hand at the console or in
-the table turns the pick to "settings of no file" until a file is loaded
+comparing every value, so a setting changed by hand at the console or by
+a page control turns the pick to "settings of no file" until a file is loaded
 again. Values are compared as the firmware reports them: a 32 bit float
 printed with three decimals.
 

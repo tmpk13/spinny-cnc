@@ -4,8 +4,7 @@ RP2040 firmware for the spinny laser. It runs the `spinny-core` control
 core on a BTT SKR Pico: the radius motor on the X socket, the rotary table
 on the Y socket, the cross slide on the Z socket, an optional focus axis
 on the E socket with a touch probe on Z-STOP, the laser TTL input from a
-PWM pin, and the line protocol of `docs/PROTOCOL.md` over USB CDC. No
-endstops, no homing.
+PWM pin, and the line protocol of `docs/PROTOCOL.md` over USB CDC.
 
 Two optional modes use the same wiring. `$cartesian=1` steps the cross
 slide from the step timer as a fourth joint, so the rail is X and the
@@ -121,8 +120,7 @@ information for this.
 
 ## First bring-up
 
-Nothing here has run on a machine yet. Do it in this order, with the laser
-disconnected until the last step.
+Do it in this order, with the laser disconnected until the last step.
 
 1. Flash the board and open the port: the banner should arrive and `$`
    should list the settings.

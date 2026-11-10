@@ -62,9 +62,10 @@ alone does not), or a home finds a switch on one of those joints.
 on the polar machine; on a cartesian one it is `(r, z)` turned by `a`.
 `profile` is what the machine is, from its settings as last read (a laser
 on the polar machine before the first): `kinematics` is `polar` or
-`cartesian` (`$cartesian`), `tool` is `laser` or `spindle` (`$spindle`).
-It follows a setting changed from the settings page or typed at the
-console.
+`cartesian` (`$cartesian`), `tool` is `laser`, `spindle` (`$spindle`) or
+`dispenser` (`$dispenser` with `$cartesian`). It follows a setting
+written from a machine file (Config tab) or a page control, or typed at
+the console.
 `joint.h` (the focus axis, mm, up positive) and `probe` (the probe input is
 active) are `null` on a machine without a focus axis (`$h_axis=0`).
 
@@ -90,7 +91,7 @@ jog in progress. Move requests are served one at a time.
 | `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a bare `status` returns its report in `lines` (asked for with the `?` byte); a typed `laser off` or `spindle off` during a run stops the run (hold, then reset) and returns `{"lines": []}`, and while a run is still being prepared cancels its start and goes out as typed; `set`, `disable`, `$<name>=<value>`, `$load`, `$defaults` and `spindle S` answer 409 while a run or probing owns the machine (`spindle S` only while probing); an accepted `set`, or a `$` line that may rescale or turn the axes, takes the height map's focus offset back |
 
 Board jogs and gotos are turned into joint moves on the host with the chord
-tolerance from the settings page, so a board move through the axis becomes
+tolerance (`[host] tolerance`), so a board move through the axis becomes
 a radial move in, a turn, and a radial move out. On a cartesian machine a
 board move is one straight `jogto R Z`, with the board turned by the table
 angle as reported, and `z_max` bounds it beside `r_max`. Joint jogs move one motor
@@ -948,4 +949,5 @@ it does not watch then.
 | `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
 | `pnp_device` | the G-code device state (`GET /api/pnp/device`), whenever it changes: connected, a line answered by a command, every part of a program, a reference or a feeder count |
 | `markers` | `{"markers": [...]}` whenever the list is put |
+| `camlog` | the camera log state, as `GET /api/camlog` answers it with no query (the newest entries of every camera), after every change |
 | `auto` | `{"entry": entry or null, "busy": true, "cleared": false}`: an entry of the Auto conversation added or changed, or none when only `busy` changed (a turn ended); `cleared` when the conversation was cleared. An answer being written is sent at most ten times a second, its whole text so far each time, and once more when it is done |
