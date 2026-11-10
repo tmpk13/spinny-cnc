@@ -685,7 +685,7 @@ def test_the_layer_of_a_board_is_checked_and_kept():
     job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1))
     assert job.layer == "F.Cu"
     assert job.summary()["layer"] == "F.Cu"
-    assert jobs.job_from_dict(json.loads(jobs.job_to_json(job))).layer == "F.Cu"
+    assert Job.model_validate_json(job.model_dump_json()).layer == "F.Cu"
 
 
 def test_a_gerber_whose_name_does_not_say_its_layer_is_taken_for_copper(tmp_path):

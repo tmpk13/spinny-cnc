@@ -239,8 +239,3 @@ def path_min_radius(path: list[Point]) -> float:
     if len(path) == 1:
         return radius_of(path[0])
     return min(closest_approach(a, b) for a, b in zip(path, path[1:]))
-
-
-def linear_resolution(steps_per_degree: float, radius: float) -> float:
-    """What one rotary step moves the surface at a radius, mm."""
-    return math.radians(1.0 / steps_per_degree) * radius

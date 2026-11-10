@@ -327,7 +327,3 @@ def profile_circle(
     # inside a hole.
     ccw = (side == INSIDE) == climb
     return line(circle(cx, cy, radius, ccw=ccw, tolerance=tolerance))
-
-
-def path_length(path: Path) -> float:
-    return sum(math.dist(p, q) for p, q in zip(path, path[1:]))

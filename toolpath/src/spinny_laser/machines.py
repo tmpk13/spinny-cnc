@@ -41,7 +41,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from spinny_laser.controls import default_controls, parse_controls
+from spinny_laser.controls import parse_controls
 
 KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle", "dispenser")
@@ -86,15 +86,6 @@ TUNING_KEYS = {
     "tpwmthrs": (0, TPWMTHRS_MAX),
 }
 
-FLAGS = frozenset({"en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser", "tmc_intpol"})
-INTEGERS = frozenset({
-    "dir_invert", "idle_ms", "step_us", "laser_hz", "laser_ms", "tmc_hold_pct", "probe_ms",
-    "tmc_r_ma", "tmc_a_ma", "tmc_z_ma", "tmc_h_ma", "tmc_r_micro", "tmc_a_micro", "tmc_z_micro", "tmc_h_micro",
-    "sockets", "laser_pin", "probe_pin", "tool_pin",
-    "r_stop", "a_stop", "h_stop", "z_stop", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin",
-    "stop_invert", "limits",
-    *(f"tmc_{key}" for key in TUNING_KEYS),
-})
 # Where an axis's endstops are, in the order of the <axis>_stop values.
 ENDSTOPS = ("none", "min", "max", "both")
 # The board's GPIOs a pin setting may name: up to PIN_MAX, less the driver
@@ -106,9 +97,6 @@ HEADERS = {
     17: "FAN1", 18: "FAN2", 20: "FAN3", 21: "BED", 23: "HE", 29: "SERVO", 24: "RGB",
     4: "X-STOP", 3: "Y-STOP", 25: "Z-STOP", 16: "E-STOP", 22: "PROBE", 26: "THB", 27: "TH0",
 }
-# Settings the firmware reads at boot: a change takes effect after a save
-# to flash and a restart.
-BOOT_SETTINGS = ("laser_pin", "probe_pin", "tool_out", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin")
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MICROSTEPS = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 # The largest float the firmware holds, and the longest probe brake.

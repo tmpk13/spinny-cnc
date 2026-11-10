@@ -10,7 +10,8 @@ import pytest
 
 from spinny_laser import machine, machines
 from spinny_laser.controls import KINDS, default_controls_by_kind, kind_id
-from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, controls_file, current, default_controls, load, load_all, matches, matching, parse
+from spinny_laser.controls import default_controls
+from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, cli_defaults, controls_file, current, load, load_all, matches, matching, parse
 
 REPO = Path(__file__).resolve().parents[2]
 SHIPPED = REPO / "machines"
@@ -19,9 +20,6 @@ FIXTURE = Path(__file__).parent / "data" / "default-controls.json"
 
 def test_the_defaults_cover_every_setting_once():
     assert len(FIRMWARE_DEFAULTS) == 83
-    assert machines.FLAGS <= set(FIRMWARE_DEFAULTS) and machines.INTEGERS <= set(FIRMWARE_DEFAULTS)
-    for name in machines.FLAGS | machines.INTEGERS:
-        assert isinstance(FIRMWARE_DEFAULTS[name], int)
 
 
 def test_endstops_and_homing_are_read_per_axis():

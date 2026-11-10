@@ -6,7 +6,7 @@ import math
 
 import pytest
 from polar_sim import deviation
-from replay import board, parse, replay
+from replay import board, board_lines, parse, replay
 
 from spinny_web.heightmap import Compensation, Grid, HeightMap
 from spinny_web.jobs import Group, Job
@@ -222,7 +222,7 @@ def test_estimate_of_an_empty_job():
 
 def test_board_jog_through_the_axis_turns_on_the_spot():
     streamer = Streamer(tolerance=TOLERANCE)
-    lines = streamer.board_jog((5.0, 0.0), -10.0, 0.0, feed=500.0)
+    lines = board_lines(streamer, (5.0, 0.0), (-5.0, 0.0), feed=500.0)
     assert all(line.startswith("jogto ") and line.endswith(" F500") for line in lines)
     turns = [line for line in lines if line.startswith("jogto A")]
     assert len(turns) == 1 and abs(float(turns[0].split()[1][1:])) == 180.0
@@ -234,12 +234,12 @@ def test_board_jog_through_the_axis_turns_on_the_spot():
 
 def test_board_goto_without_feed_and_short_moves():
     streamer = Streamer(tolerance=TOLERANCE)
-    lines = streamer.board_goto((0.0, 90.0), 0.0, 4.0)
+    lines = board_lines(streamer, (0.0, 90.0), (0.0, 4.0))
     assert lines == ["jogto R4.000 A90.0000"]
-    lines = streamer.board_goto((0.0, 0.0), 0.0, 4.0)
+    lines = board_lines(streamer, (0.0, 0.0), (0.0, 4.0))
     assert lines == ["jogto A90.0000", "jogto R4.000 A90.0000"]
-    assert streamer.board_goto((4.0, 90.0), 0.0, 4.0) == []
-    marks, final = replay(streamer.board_goto((10.0, 0.0), 0.0, 10.0))
+    assert board_lines(streamer, (4.0, 90.0), (0.0, 4.0)) == []
+    marks, final = replay(board_lines(streamer, (10.0, 0.0), (0.0, 10.0)))
     assert abs(final[1] - 90.0) < 1e-9
 
 
@@ -364,10 +364,10 @@ def test_a_board_move_from_the_far_side_comes_back_through_the_axis():
     board move from there returns along the rail to the axis and leaves it
     the usual way, rather than turning the table with the head out on the
     far side and calling that the axis."""
-    lines = Streamer().board_goto((-5.0, 0.0), 0.0, 3.0)
+    lines = board_lines(Streamer(), (-5.0, 0.0), (0.0, 3.0))
     assert lines == ["jogto R0.000 A0.0000", "jogto A90.0000", "jogto R3.000 A90.0000"]
     # A jog by a board step from there does the same.
-    lines = Streamer().board_jog((-5.0, 0.0), 1.0, 0.0)
+    lines = board_lines(Streamer(), (-5.0, 0.0), (-4.0, 0.0))
     assert lines[0] == "jogto R0.000 A0.0000"
     # An exact half turn may unwrap either way.
     assert lines[-1] in ("jogto R4.000 A180.0000", "jogto R4.000 A-180.0000")
@@ -393,8 +393,6 @@ def test_rates_follow_the_step_pulse_width_and_default_to_the_firmwares():
     wide = Rates.from_settings({"r_rate": 560, "a_rate": 400, "r_steps": 10240, "a_steps": 14222.222, "step_us": 20})
     assert wide.r_rate == pytest.approx(1.0e6 / 33 * 60 / 10240, rel=1e-4)
     assert wide.a_rate == pytest.approx(1.0e6 / 33 * 60 / 14222.222, rel=1e-4)
-    with pytest.raises(ValueError):
-        Streamer().board_goto((5.0, 0.0), float("nan"), 0.0)
 
 
 def flat_focus(focus: float, head_h: float = 0.0, mode: str = "focus"):

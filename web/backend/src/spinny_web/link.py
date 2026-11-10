@@ -151,7 +151,6 @@ class Pending:
     response: str | None = None
     lines: list[str] = field(default_factory=list)
     callback: Callable[["Pending"], None] | None = None
-    sent_at: float = field(default_factory=time.monotonic)
 
     @property
     def ok(self) -> bool:

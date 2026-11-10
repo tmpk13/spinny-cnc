@@ -8,6 +8,7 @@ import time
 
 import pytest
 from fake_serial import FakeSerial, fake_opener
+from replay import board_lines
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, create_app, profile_of
@@ -62,9 +63,9 @@ def test_a_cartesian_path_through_the_axis_is_nothing_special():
 def test_the_board_turns_with_the_table_angle():
     streamer = CartesianStreamer(angle=90.0)
     # A quarter turn on, board X lies along the slide the other way.
-    lines = streamer.board_goto((0.0, 0.0), 0.0, 5.0)
+    lines = board_lines(streamer, (0.0, 0.0), (0.0, 5.0))
     assert lines == ["jogto R5.000 Z0.000"]
-    lines = streamer.board_goto((0.0, 0.0), 5.0, 0.0)
+    lines = board_lines(streamer, (0.0, 0.0), (5.0, 0.0))
     assert lines == ["jogto R0.000 Z-5.000"]
     assert streamer.board_of((5.0, 0.0)) == pytest.approx((0.0, 5.0))
     assert head_board(5.0, 90.0, 0.0, True) == pytest.approx((0.0, 5.0))
@@ -87,7 +88,7 @@ def test_cartesian_jogs_put_z_beside_the_others():
     streamer = CartesianStreamer()
     assert streamer.joint_jog(1.0, None, None, None, -0.5) == "jog R1 Z-0.5"
     assert streamer.joint_goto(3.0, None, 200.0, -1.0, 4.0) == "jogto R3 H-1 Z4 F200"
-    assert streamer.board_jog((1.0, 2.0), 1.0, 1.0) == ["jogto R2.000 Z3.000"]
+    assert board_lines(streamer, (1.0, 2.0), (2.0, 3.0)) == ["jogto R2.000 Z3.000"]
 
 
 def test_rates_take_the_slide_and_the_focus_axis_too():

@@ -108,7 +108,7 @@ classDiagram
     class kinematics {
         Streamer.job_pieces(job, start)
         Streamer.estimate(job) Stats
-        Streamer.board_jog / board_goto
+        Streamer.board_targets / jog_lines
         Streamer.joint_jog / joint_goto
         Streamer.slide_jog / slide_goto
         CartesianStreamer(angle) R and Z in the table frame

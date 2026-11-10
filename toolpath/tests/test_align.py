@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from spinny_laser.align import fit_rigid, turn, turned_paths
+from spinny_laser.align import fit_rigid, turn
 
 
 def moved(point, degrees, shift):
@@ -51,10 +51,8 @@ def test_marks_on_one_design_point_cannot_be_fitted():
         fit_rigid([((math.nan, 0.0), (0.0, 0.0))])
 
 
-def test_the_fit_reads_as_a_document_and_turns_paths():
+def test_the_fit_reads_as_a_document():
     fit = fit_rigid([((0.0, 0.0), (1.0, 2.0)), ((10.0, 0.0), (1.0, 12.0))])
     doc = fit.to_dict()
     assert doc["rotation"] == pytest.approx(90.0) and doc["shift"] == pytest.approx([1.0, 2.0])
     assert doc["marks"] == 2 and doc["rms"] == 0.0 and doc["scale"] == 1.0
-    turned = turned_paths([[(1.0, 0.0), (0.0, 1.0)]], 90.0)
-    assert [value for path in turned for point in path for value in point] == pytest.approx([0.0, 1.0, -1.0, 0.0], abs=1e-12)

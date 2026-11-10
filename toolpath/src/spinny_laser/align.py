@@ -99,8 +99,3 @@ def fit_rigid(pairs: list[Pair], angle: float | None = None) -> Fit:
     residuals = tuple(math.dist(fit.apply(design), machine) for design, machine in pairs)
     rms = math.sqrt(sum(r * r for r in residuals) / n)
     return Fit(rotation=rotation, shift=shift, scale=scale, rms=rms, residuals=residuals, marks=n)
-
-
-def turned_paths(paths: list, degrees: float) -> list:
-    """Polylines turned about the origin."""
-    return [[turn((float(x), float(y)), degrees) for x, y in path] for path in paths]

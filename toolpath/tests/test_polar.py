@@ -100,12 +100,6 @@ def test_closest_approach():
     assert polar.path_min_radius([(2.0, 0.0), (3.0, 0.0), (0.0, 0.1)]) == pytest.approx(0.1, abs=1e-3)
 
 
-def test_linear_resolution():
-    # 200 steps, 16 microsteps, 100:1 gives 320000 steps a turn.
-    steps_per_degree = 320000 / 360.0
-    assert polar.linear_resolution(steps_per_degree, 50.0) == pytest.approx(0.00098, rel=0.01)
-
-
 def test_the_far_side_of_the_axis_is_not_on_it():
     assert not polar.on_axis((-5.0, 0.0))
     assert not polar.on_axis((5.0, 0.0))

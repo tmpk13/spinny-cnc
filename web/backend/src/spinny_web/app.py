@@ -35,6 +35,7 @@ from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser import pads as board_pads
 from spinny_laser.cam import CamError
+from spinny_laser.controls import default_controls
 
 from . import __version__, calibration, center
 from .align import Alignment
@@ -4053,7 +4054,7 @@ def profile_of(values: dict) -> dict:
 def controls_of(profile: dict) -> dict:
     """The page's controls for a machine whose settings are no file's: the
     defaults for what the profile says it is."""
-    return machine_files.default_controls(profile["kinematics"], profile["tool"], profile["h_axis"])
+    return default_controls(profile["kinematics"], profile["tool"], profile["h_axis"])
 
 
 def _host_number(host: dict, name: str, default: float) -> float:

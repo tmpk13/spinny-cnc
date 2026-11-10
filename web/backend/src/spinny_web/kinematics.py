@@ -29,7 +29,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable, Iterator
 
 from spinny_laser import polar
@@ -1356,18 +1356,6 @@ class Streamer:
         """`jogto` lines for joint targets; a turn carries only the angle word."""
         suffix = f" F{num(feed)}" if feed else ""
         return [f"jogto {self.words(joint, radius=not turn)}{suffix}" for joint, turn in targets]
-
-    def board_move(self, start: Joint, target: Point, feed: float | None = None) -> list[str]:
-        """`jogto` lines that take the beam to a board point from a joint."""
-        _finite(target[0], target[1], feed)
-        return self.jog_lines(self.board_targets(start, target), feed)
-
-    def board_jog(self, start: Joint, dx: float, dy: float, feed: float | None = None) -> list[str]:
-        here = self.board_of(start)
-        return self.board_move(start, (here[0] + dx, here[1] + dy), feed)
-
-    def board_goto(self, start: Joint, x: float, y: float, feed: float | None = None) -> list[str]:
-        return self.board_move(start, (x, y), feed)
 
     def joint_jog(
         self, dr: float | None, da: float | None, feed: float | None = None, dh: float | None = None, dz: float | None = None

@@ -239,8 +239,8 @@ def test_grblhal_is_the_default_and_writes_board_xy_in_g94():
     assert all(re.fullmatch(r"G1 X-?\d+\.\d{3} Y-?\d+\.\d{3}( S[\d.]+ F\d+)?", c) for c in cuts)
     assert cuts[0].endswith(" S500.00 F400")
     assert all(" F" not in c for c in cuts[1:])
-    motion = [l for l in job.text.splitlines() if l.startswith("G0 ") or l.startswith("G1 X")]
-    assert all(" A" not in l for l in motion)
+    motion = [line for line in job.text.splitlines() if line.startswith("G0 ") or line.startswith("G1 X")]
+    assert all(" A" not in line for line in motion)
     assert job.text.strip().endswith("G0 X0.000 Y0.000")
 
 
@@ -262,7 +262,7 @@ def test_grblhal_presplits_where_the_controllers_pieces_would_stray():
 
 def test_grblhal_leaves_the_axis_through_a_tiny_hop():
     job = emit_grblhal([[(-2.0, 0.0), (2.0, 0.0)]])
-    body = [l for l in job.text.splitlines() if l and not l.startswith(";")]
+    body = [line for line in job.text.splitlines() if line and not line.startswith(";")]
     assert "G0 X0.002 Y0.000" in body
     hop = body.index("G0 X0.002 Y0.000")
     assert body[hop - 1] == "M4 S0"

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import io
-import json
 import math
 import re
 import secrets
@@ -1544,11 +1543,3 @@ class JobStore:
         temp = target.with_suffix(".json.tmp")
         temp.write_text(job.model_dump_json(), encoding="utf-8")
         temp.replace(target)
-
-
-def job_from_dict(data: dict) -> Job:
-    return Job.model_validate(data)
-
-
-def job_to_json(job: Job) -> str:
-    return json.dumps(job.model_dump(), separators=(",", ":"))

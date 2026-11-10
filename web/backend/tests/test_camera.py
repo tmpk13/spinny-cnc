@@ -10,7 +10,6 @@ import sys
 import textwrap
 import threading
 import time
-from pathlib import Path
 
 import pytest
 from fake_serial import FakeSerial, fake_opener

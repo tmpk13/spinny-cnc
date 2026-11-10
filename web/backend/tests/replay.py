@@ -20,6 +20,12 @@ def board(joint: tuple[float, float]) -> Point:
     return (joint[0] * math.cos(theta), joint[0] * math.sin(theta))
 
 
+def board_lines(streamer, start: tuple[float, float], target: Point, feed: float | None = None) -> list[str]:
+    """The `jogto` lines of a move to a board point, planned the way the
+    backend plans a board jog or goto."""
+    return streamer.jog_lines(streamer.board_targets(start, target), feed)
+
+
 def parse(line: str) -> tuple[str, dict[str, float]]:
     keyword, _, rest = line.partition(" ")
     return keyword.lower(), {k.upper(): float(v) for k, v in WORD.findall(rest)}
