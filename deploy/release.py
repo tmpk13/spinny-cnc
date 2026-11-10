@@ -51,6 +51,8 @@ PYTHON = "3.12"
 GLIBC = "2.28"
 # cargo-zigbuild and zig itself, run through uvx from PyPI for the build only.
 ZIGBUILD = ["uvx", "--from", "cargo-zigbuild==0.24.1", "cargo-zigbuild"]
+# What the downloads call themselves; see fetch().
+USER_AGENT = "spinny-release"
 # Paths whose uncommitted changes would go into an archive.
 SOURCES = ["toolpath", "web", "carve", "firmware", "deploy", "docs/RELEASE.md", "pyproject.toml", "uv.lock"]
 # Committed directories shipped inside spinny_web, which seeds a new home
@@ -162,17 +164,22 @@ def fresh(path: Path) -> Path:
 
 
 def fetch(url: str, path: Path, tries: int = 4) -> Path:
-    """The file at url saved to path unless it is there already. GitHub's
-    release downloads now and then answer 403 or drop the connection, so
-    a failed try is retried after a pause."""
+    """The file at url saved to path unless it is there already. Astral's
+    mirror of the python-build-standalone releases (the host newer uv
+    versions list) refuses urllib's own User-Agent with 403, so the
+    request names this script instead; GitHub's release downloads now and
+    then answer 403 or drop the connection, so a failed try is retried
+    after a pause."""
     if path.is_file():
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
     print(f"downloading {path.name}", flush=True)
     partial = path.with_name(path.name + ".part")
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     for attempt in range(1, tries + 1):
         try:
-            urllib.request.urlretrieve(url, partial)
+            with urllib.request.urlopen(request) as answer, partial.open("wb") as out:
+                shutil.copyfileobj(answer, out)
             break
         except OSError as exc:
             if attempt == tries:
