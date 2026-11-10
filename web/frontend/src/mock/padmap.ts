@@ -6,7 +6,8 @@
 // and bends smoothly between them.
 
 import type { Grid, HeightMap, Job, PadPoint } from "../types.ts";
-import { shortTour } from "./jobs.ts";
+import { round4, shortTour } from "./jobs.ts";
+import { extent } from "./order.ts";
 
 /** Pads under this area are left out, mm^2. */
 export const MIN_AREA = { low: 0.05, high: 1000, fallback: 0.5 };
@@ -50,36 +51,12 @@ export function selectPads(pads: PadPoint[], minArea: number, maxPoints: number)
 
 /** The grid a pad map carries: the job's extent and the points' with a margin, at about the spacing. */
 export function padMapGrid(job: Job, points: [number, number][]): Grid {
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    const take = (x: number, y: number): void => {
-        x0 = Math.min(x0, x);
-        y0 = Math.min(y0, y);
-        x1 = Math.max(x1, x);
-        y1 = Math.max(y1, y);
-    };
-    for (const [x, y] of points) {
-        take(x, y);
-    }
-    for (const group of job.groups) {
-        for (const path of group.paths) {
-            for (const [x, y] of path) {
-                take(x, y);
-            }
-        }
-    }
-    for (const path of job.outline) {
-        for (const [x, y] of path) {
-            take(x, y);
-        }
-    }
+    const [minX, minY, maxX, maxY] = extent([...points, ...job.groups.flatMap((group) => group.paths.flat()), ...job.outline.flat()]);
     const round = (value: number): number => Math.round(value * 1000) / 1000;
-    x0 = round(x0 - PAD_GRID_MARGIN);
-    y0 = round(y0 - PAD_GRID_MARGIN);
-    x1 = round(x1 + PAD_GRID_MARGIN);
-    y1 = round(y1 + PAD_GRID_MARGIN);
+    const x0 = round(minX - PAD_GRID_MARGIN);
+    const y0 = round(minY - PAD_GRID_MARGIN);
+    const x1 = round(maxX + PAD_GRID_MARGIN);
+    const y1 = round(maxY + PAD_GRID_MARGIN);
     const count = (span: number): number => Math.max(2, Math.min(50, Math.round(span / PAD_GRID_SPACING) + 1));
     return { x0, y0, x1, y1, nx: count(x1 - x0), ny: count(y1 - y0) };
 }
@@ -159,7 +136,7 @@ export function fillPadHeights(map: HeightMap): void {
                 }
                 bend = weights > 0 ? weighted / weights : 0;
             }
-            row.push(Math.round((at(x, y) + bend) * 10000) / 10000);
+            row.push(round4(at(x, y) + bend));
         }
         out.push(row);
     }

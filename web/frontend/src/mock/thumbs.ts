@@ -6,6 +6,7 @@
 // kept skipped and at most MAX_POINTS drawn.
 
 import type { Job, Point } from "../types.ts";
+import { extent } from "./order.ts";
 
 export const COLORS = ["#dc322f", "#268bd2", "#859900", "#6c71c4"];
 export const SIZE = 64;
@@ -23,20 +24,7 @@ export function thumbnail(job: Job): string {
         }
         return { index, enabled: group.enabled, paths };
     });
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const { paths } of groups) {
-        for (const path of paths) {
-            for (const [x, y] of path) {
-                x0 = Math.min(x0, x);
-                y0 = Math.min(y0, y);
-                x1 = Math.max(x1, x);
-                y1 = Math.max(y1, y);
-            }
-        }
-    }
+    const [x0, y0, x1, y1] = extent(groups.flatMap(({ paths }) => paths.flat()));
     if (x0 > x1) {
         return `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 1 1"></svg>`;
     }

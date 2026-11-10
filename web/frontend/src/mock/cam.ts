@@ -35,7 +35,7 @@ import type {
 } from "../types.ts";
 import { DEFAULT_DEPTH, DEFAULT_PLUNGE, GERBER_EXTENSIONS, computeStats, demoCoupon, extensionOf, flipPaths, formatG, isBottom, layerOf, modelStats, outlineCut, parseGcode, parseSvg, shiftPaths, type RateLimits } from "./jobs.ts";
 import { isTable } from "./machines.ts";
-import { innerFirst } from "./order.ts";
+import { extent, innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 
 export const SHIPPED_PROFILES: { id: string; text: string }[] = [
@@ -596,7 +596,7 @@ function readTool(reader: Reader, table: TomlTable, index: number, material = fa
     if (tip !== null && angle === null) {
         throw reader.fail(section, "tip", "needs angle: the included angle of the V bit point, degrees");
     }
-    let width = diameter ?? spot;
+    const width = diameter ?? spot;
     if (width === null && angle === null) {
         throw reader.fail(section, kind === "spindle" ? "diameter" : "spot", "is needed: the width of the cut, mm");
     }
@@ -628,14 +628,13 @@ function readTool(reader: Reader, table: TomlTable, index: number, material = fa
     }
     reader.done(table, section, ["id", "kind", "name", "diameter", "spot", "passes", "angle", "tip", ...Object.keys(bounds), ...millKeys]);
     if (angle !== null) {
+        const vbit: CamTool = { id, kind, name, width: 0, settings, angle, tip: tip ?? 0, ...(diameter !== null ? { shank: diameter } : {}), ...end };
         // The nominal width is the cut at the tool's own default depth.
-        const depth = settings["depth"] ?? DEFAULT_DEPTH;
-        const wide = (tip ?? 0) + 2 * depth * Math.tan((angle / 2) * Math.PI / 180);
-        width = diameter !== null ? Math.min(wide, diameter) : wide;
-        if (width <= 0) {
+        const nominal = widthAt(vbit, settings["depth"] ?? DEFAULT_DEPTH);
+        if (nominal <= 0) {
             throw reader.fail(section, "tip", "or the depth must give the cut some width");
         }
-        return { id, kind, name, width, settings, angle, tip: tip ?? 0, ...(diameter !== null ? { shank: diameter } : {}), ...end };
+        return { ...vbit, width: nominal };
     }
     return { id, kind, name, width: width ?? 0, settings, ...end };
 }
@@ -1076,13 +1075,10 @@ function place(design: Geometry, placement: CamPlacement): Geometry {
     const points = all.flat();
     let [dx, dy] = placement.offset;
     if (placement.anchor !== "keep" && points.length > 0) {
-        const xs = points.map((p) => p[0]);
-        const ys = points.map((p) => p[1]);
-        const minX = Math.min(...xs);
-        const minY = Math.min(...ys);
+        const [minX, minY, maxX, maxY] = extent(points);
         if (placement.anchor === "center") {
-            dx -= (minX + Math.max(...xs)) / 2;
-            dy -= (minY + Math.max(...ys)) / 2;
+            dx -= (minX + maxX) / 2;
+            dy -= (minY + maxY) / 2;
         } else {
             dx -= minX;
             dy -= minY;

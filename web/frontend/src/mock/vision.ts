@@ -8,7 +8,9 @@
 import { turned } from "../kinematics.ts";
 import type { Board, CameraPose, CameraSettings, DetectedCamera, Job, Path } from "../types.ts";
 import { svgUrl } from "./camlog.ts";
+import { round4 } from "./jobs.ts";
 import { CAMERA_FINISHES, CAMERA_SIDES, CAMERA_SIZE } from "./machines.ts";
+import { extent } from "./order.ts";
 
 /** How the camera really sits: the picture's center from the tool, its roll and its scale at the board. */
 export interface CameraTruth {
@@ -157,25 +159,8 @@ export function jobPlacement(job: Job): Placement {
 
 /** The board extent of a job in its own frame: its outline, copper, paths and pads. */
 export function jobBounds(job: Job): { x0: number; y0: number; x1: number; y1: number } | null {
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    const take = (x: number, y: number): void => {
-        x0 = Math.min(x0, x);
-        y0 = Math.min(y0, y);
-        x1 = Math.max(x1, x);
-        y1 = Math.max(y1, y);
-    };
     const paths: Path[] = [...job.outline, ...job.copper, ...job.groups.flatMap((group) => group.paths)];
-    for (const path of paths) {
-        for (const [x, y] of path) {
-            take(x, y);
-        }
-    }
-    for (const [x, y] of job.pads ?? []) {
-        take(x, y);
-    }
+    const [x0, y0, x1, y1] = extent([...paths.flat(), ...(job.pads ?? [])]);
     return Number.isFinite(x0) ? { x0, y0, x1, y1 } : null;
 }
 
@@ -202,11 +187,10 @@ export function boardPose(center: Board, job: Job, placement: Placement, truth: 
     if (!over) {
         return { state: "lost", spots: seen, expected: pads.length, fps: POSE_FPS, age_ms: POSE_AGE_MS };
     }
-    const round = (value: number): number => Math.round(value * 10000) / 10000;
     return {
         state: "locked",
-        center: [round(gerber.x), round(-gerber.y)],
-        angle_deg: round(truth.roll - placement.rotation),
+        center: [round4(gerber.x), round4(-gerber.y)],
+        angle_deg: round4(truth.roll - placement.rotation),
         mm_per_px: truth.mmPerPx,
         inliers: seen,
         expected: pads.length,
@@ -214,7 +198,7 @@ export function boardPose(center: Board, job: Job, placement: Placement, truth: 
         spots: seen,
         fps: POSE_FPS,
         age_ms: POSE_AGE_MS,
-        job_center: [round(jobCenter.x), round(jobCenter.y)],
+        job_center: [round4(jobCenter.x), round4(jobCenter.y)],
     };
 }
 

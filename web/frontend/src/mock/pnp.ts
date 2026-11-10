@@ -5,10 +5,12 @@
 // a board job stands for. Picture coordinates are pixels from the
 // picture's center, x right and y down.
 
+import { turnPoint } from "../align.ts";
 import type { Component, Job, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
 import { svgUrl } from "./camlog.ts";
+import { round4 } from "./jobs.ts";
 import { CAMERA_SIZE } from "./machines.ts";
-import { parseSize } from "./vision.ts";
+import { inPicture, parseSize } from "./vision.ts";
 
 /** How the up camera really sits, and the part the mock's nozzle holds. */
 export interface UpTruth {
@@ -140,9 +142,9 @@ export function checkPnpSettings(settings: PnpSettings): void {
 
 /** Where a point `mm` from the nozzle-over-center place (machine frame) shows in the picture, px from its center. */
 export function upPicturePoint(mm: [number, number], truth: UpTruth): { px: number; py: number } {
-    const radians = (-truth.roll * Math.PI) / 180;
-    const u = (mm[0] * Math.cos(radians) - mm[1] * Math.sin(radians)) / truth.mmPerPx;
-    const v = (mm[0] * Math.sin(radians) + mm[1] * Math.cos(radians)) / truth.mmPerPx;
+    const [x, y] = turnPoint(mm, -truth.roll);
+    const u = x / truth.mmPerPx;
+    const v = y / truth.mmPerPx;
     return { px: truth.mirror ? -u : u, py: -v };
 }
 
@@ -192,9 +194,8 @@ export function upFrameSvg(scene: UpScene, width: number, overlay: boolean): str
 
 /** Whether the nozzle (or its part) is in the picture at all, `mm` from the camera's center place. */
 export function upInPicture(mm: [number, number], truth: UpTruth, size: string): boolean {
-    const [w, h] = parseSize(size);
     const p = upPicturePoint(mm, truth);
-    return Math.abs(p.px) <= w / 2 && Math.abs(p.py) <= h / 2;
+    return inPicture(p.px, p.py, size);
 }
 
 /**
@@ -208,14 +209,13 @@ export function mockComponents(job: Job): Component[] {
     }
     const pads = job.pads ?? [];
     const rotation = ((job.rotation ?? 0) % 360 + 360) % 360;
-    const round = (value: number): number => Math.round(value * 1e4) / 1e4;
     const parts: Component[] = pads.map(([x, y, area], index) => ({
         ref: `TP${index + 1}`,
         value: `${Math.round(area * 10) / 10} mm^2`,
         footprint: "TestPoint:TestPoint_Pad",
         side: "front",
-        x: round(x),
-        y: round(y),
+        x: round4(x),
+        y: round4(y),
         rotation,
         pads: 1,
         smd: true,
@@ -233,8 +233,8 @@ export function mockComponents(job: Job): Component[] {
             value: "Fiducial",
             footprint: "Fiducial:Fiducial_1mm_Mask2mm",
             side: "front",
-            x: round(x),
-            y: round(y),
+            x: round4(x),
+            y: round4(y),
             rotation: 0,
             pads: 1,
             smd: true,

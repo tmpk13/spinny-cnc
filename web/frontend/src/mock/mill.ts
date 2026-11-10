@@ -8,6 +8,7 @@ import { turnPoint } from "../align.ts";
 import { sameOperation } from "../sketch.ts";
 import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point, Recipe } from "../types.ts";
 import { checkDepth, checkPower, checkSpeed, computeStats, DEFAULT_DEPTH, DEFAULT_PLUNGE, formatG, MAX_GROUP_PASSES, MAX_VALUE, MAX_VALUE_TEXT, type RateLimits } from "./jobs.ts";
+import { extent } from "./order.ts";
 
 export const DEFAULT_TOLERANCE = 0.005;
 export const MIN_STEPOVER = 0.05;
@@ -648,33 +649,8 @@ export function moveJob(job: Job, degrees: number, dx: number, dy: number): void
 
 /** The middle of the box round everything the job cuts and its outline; the origin for a job with nothing on the board. */
 export function cutMiddle(job: Job): Point {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    const take = (x: number, y: number): void => {
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-    };
-    for (const g of job.groups) {
-        for (const path of g.paths) {
-            for (const [x, y] of path) {
-                take(x, y);
-            }
-        }
-        for (const path of g.moves ?? []) {
-            for (const [x, y] of path) {
-                take(x, y);
-            }
-        }
-    }
-    for (const path of job.outline) {
-        for (const [x, y] of path) {
-            take(x, y);
-        }
-    }
+    const cuts = job.groups.flatMap((g) => [...g.paths.flat(), ...(g.moves ?? []).flat()]);
+    const [minX, minY, maxX, maxY] = extent([...cuts, ...job.outline.flat()]);
     return minX > maxX ? [0, 0] : [(minX + maxX) / 2, (minY + maxY) / 2];
 }
 

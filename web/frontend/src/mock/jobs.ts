@@ -3,7 +3,7 @@
 
 import { errorText } from "../api.ts";
 import { axisSnap, boardOfJoint, jointOfBoard, jointPath, moveMinutes, surfaceLength } from "../kinematics.ts";
-import { innerFirst } from "./order.ts";
+import { extent, innerFirst } from "./order.ts";
 import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, Move, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
@@ -42,6 +42,11 @@ export function formatG(value: number): string {
         return `${mantissa.replace(/\.?0+$/, "")}e${e < 0 ? "-" : "+"}${String(Math.abs(e)).padStart(2, "0")}`;
     }
     return String(rounded);
+}
+
+/** A number rounded to four decimals, as the mock answers points, offsets and angles. */
+export function round4(value: number): number {
+    return Math.round(value * 1e4) / 1e4;
 }
 
 export function checkPower(power: number, what = "power"): void {
@@ -846,9 +851,7 @@ export function outlineCut(outline: Path[], radius: number): Path[] {
         return outline;
     }
     return outline.map((path) => {
-        const xs = path.map(([x]) => x);
-        const ys = path.map(([, y]) => y);
-        const [x0, y0, x1, y1] = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        const [x0, y0, x1, y1] = extent(path);
         const start: Point = [x0, y0 - radius];
         const loop: Point[] = [start];
         const corners: [number, number, number][] = [[x1, y0, -90], [x1, y1, 0], [x0, y1, 90], [x0, y0, 180]];
@@ -970,22 +973,6 @@ export function shortTour<T extends [number, number, ...number[]]>(points: T[]):
     return out;
 }
 
-function bounds(paths: Path[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const path of paths) {
-        for (const [x, y] of path) {
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-        }
-    }
-    return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
-}
-
 /** The paths moved by `dx`, `dy`. */
 export function shiftPaths(paths: Path[], dx: number, dy: number): Path[] {
     return paths.map((path) => path.map(([x, y]) => [x + dx, y + dy]));
@@ -1009,10 +996,10 @@ export function placeJob(
     let dx = offset.x;
     let dy = offset.y;
     if (anchor === "center") {
-        const box = bounds(all);
-        if (box) {
-            dx -= (box.minX + box.maxX) / 2;
-            dy -= (box.minY + box.maxY) / 2;
+        const [minX, minY, maxX, maxY] = extent(all.flat());
+        if (Number.isFinite(minX)) {
+            dx -= (minX + maxX) / 2;
+            dy -= (minY + maxY) / 2;
         }
     }
     return {

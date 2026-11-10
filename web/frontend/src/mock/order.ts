@@ -18,12 +18,17 @@ export function isClosed(path: Path): boolean {
     return Math.abs(x0 - x1) <= CLOSED_WITHIN && Math.abs(y0 - y1) <= CLOSED_WITHIN;
 }
 
-function box(path: Path): [number, number, number, number] {
+/**
+ * The box round the points, [x0, y0, x1, y1], for paths, pads and moves
+ * alike; with no points the empty box, [Infinity, Infinity, -Infinity,
+ * -Infinity], whose x0 is above its x1.
+ */
+export function extent(points: Iterable<readonly [number, number, ...unknown[]]>): [number, number, number, number] {
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const [x, y] of path) {
+    for (const [x, y] of points) {
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
@@ -58,13 +63,13 @@ function inside([x, y]: Point, polygon: Path): boolean {
 /** For each path, how many of the closed paths enclose it: larger, its box round the other's, the other's first point inside. */
 export function depths(paths: Path[]): number[] {
     const closed = paths.map((path, index) => (isClosed(path) ? index : -1)).filter((index) => index >= 0);
-    const boxes = new Map(closed.map((index) => [index, box(paths[index]!)]));
+    const boxes = new Map(closed.map((index) => [index, extent(paths[index]!)]));
     const areas = new Map(closed.map((index) => [index, area(paths[index]!)]));
     return paths.map((path, i) => {
         if (path.length === 0) {
             return 0;
         }
-        const own = box(path);
+        const own = extent(path);
         const size = areas.get(i) ?? 0;
         let depth = 0;
         for (const j of closed) {

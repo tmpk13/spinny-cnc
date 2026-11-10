@@ -9,6 +9,7 @@ import { fromBoard, type FromBoard } from "../machinekeys.ts";
 import {
     AXIS_EPSILON,
     DEG,
+    boardOfJoint,
     cappedRate,
     cartesianSurfaceLength,
     distanceToSegment,
@@ -39,6 +40,7 @@ import {
     jointPreview,
     pathMoves,
     placeJob,
+    round4,
     checkThickness,
     checkFocus,
     DEFAULT_THICKNESS,
@@ -64,6 +66,7 @@ import {
 } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbKey, thumbnail } from "./thumbs.ts";
+import { extent } from "./order.ts";
 import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, labelStem, MAX_OPERATIONS, moveJob, movedAs, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
 import { calibrateJob } from "./calibrate.ts";
 import {
@@ -98,6 +101,7 @@ import {
     planSummary,
     planText,
     safeLine,
+    wrapAngle,
     xyLine,
     zLine,
     type MockBlock,
@@ -1503,10 +1507,6 @@ export const PNP_STEP_SECONDS = 0.4;
 /** How fast the mock's G-code device takes a program's lines. */
 export const DEVICE_LINES_PER_SECOND = 40;
 
-function round4(value: number): number {
-    return Math.round(value * 1e4) / 1e4;
-}
-
 function clamp(value: number, low: number, high: number): number {
     return value < low ? low : value > high ? high : value;
 }
@@ -1623,7 +1623,10 @@ export function gridMaskedForJob(grid: Grid, job: Job, margin: number): Grid {
             }
         }
         for (const poly of group.joints ?? []) {
-            const points: Point[] = poly.map(([r, a]) => [r * Math.cos(a * Math.PI / 180), r * Math.sin(a * Math.PI / 180)]);
+            const points: Point[] = poly.map(([r, a]) => {
+                const board = boardOfJoint({ r, a });
+                return [board.x, board.y];
+            });
             if (points.length === 0) {
                 continue;
             }
@@ -1771,23 +1774,10 @@ function checkUsable(map: HeightMap): void {
  * turns the table sweeps an arc well outside the box of its ends.
  */
 function jobExtent(job: Job): [number, number, number, number] | null {
-    const xs: number[] = [];
-    const ys: number[] = [];
-    for (const group of job.groups) {
-        if (!group.enabled) {
-            continue;
-        }
-        const points: [number, number][] =
-            group.joints && group.joints.length > 0 ? group.joints.flatMap((poly) => jointPreview(poly)) : group.paths.flat();
-        for (const [x, y] of points) {
-            xs.push(x);
-            ys.push(y);
-        }
-    }
-    if (xs.length === 0) {
-        return null;
-    }
-    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    const points = job.groups
+        .filter((group) => group.enabled)
+        .flatMap((group): [number, number][] => (group.joints && group.joints.length > 0 ? group.joints.flatMap((poly) => jointPreview(poly)) : group.paths.flat()));
+    return points.length > 0 ? extent(points) : null;
 }
 
 /** Refuses a job that reaches past the probed area, where the edge value would stand in for a board nobody measured. */
@@ -1862,6 +1852,11 @@ function probeReplies(machine: MockMachine, distance: number, feed: number | nul
         return [report, "ok"];
     }
     return [report, "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"];
+}
+
+/** The width a camera's picture is drawn at: the width asked for, whole, from 160 to 4096 pixels. */
+function frameWidth(width: number): number {
+    return Math.max(160, Math.min(4096, Math.round(width)));
 }
 
 /** The time now as the backend stamps a map it makes: to the second, in UTC as +00:00. */
@@ -5649,7 +5644,7 @@ export class MockBackend implements Api, EventFeed {
             running: this.cameraRunning,
             board: this.cameraJob,
             mark: this.cameraMarkPoint ? [this.cameraMarkPoint.x, this.cameraMarkPoint.y] : null,
-            frame: this.cameraRunning ? { width, height, age_ms: 40, fps: POSE_FPS } : null,
+            frame: this.cameraRunning ? { width, height, age_ms: POSE_AGE_MS, fps: POSE_FPS } : null,
             pose: this.poseOf(),
             routine: this.routine ? structuredClone(this.routine) : null,
         };
@@ -5729,7 +5724,7 @@ export class MockBackend implements Api, EventFeed {
 
     /** The picture as the mock draws it now: the loaded board where it really lies, the mark, the crosshair and, with `overlay`, the pose. */
     cameraFrameUrl(width: number, overlay: boolean): string {
-        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        const size = frameWidth(width);
         const job = this.cameraJob ? this.jobStore.get(this.cameraJob) : undefined;
         const placement = this.placement;
         const real = (point: Board): Board => (job && placement ? placedPoint(designPoint(point, jobPlacement(job)), placement) : point);
@@ -6010,14 +6005,7 @@ export class MockBackend implements Api, EventFeed {
                 // its move in the picture, turned over and by the roll, is
                 // -X, which fixes the roll.
                 config.mm_per_px = Math.round((session.step / pixels) * 1e6) / 1e6;
-                let roll = 180 - (Math.atan2(-ddy, ddx) * 180) / Math.PI;
-                while (roll > 180) {
-                    roll -= 360;
-                }
-                while (roll <= -180) {
-                    roll += 360;
-                }
-                config.roll = Math.round(roll * 1e4) / 1e4;
+                config.roll = round4(wrapAngle(180 - (Math.atan2(-ddy, ddx) * 180) / Math.PI));
                 if (!this.findMoveBy(session, { x: -session.step, y: 0 })) {
                     return;
                 }
@@ -6411,7 +6399,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     pnpFrameUrl(width: number, overlay: boolean): string {
-        const size = Math.max(160, Math.min(4096, Math.round(width)));
+        const size = frameWidth(width);
         return upFrameSvg({ nozzle: this.nozzleFromCamera(), holding: this.pnpHolding, size: this.pnpConfig.size, truth: UP_TRUTH }, size, overlay);
     }
 
@@ -6544,10 +6532,8 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "the up camera needs an X/Y machine ($cartesian=1)");
         }
         // The board frame is the joints' turned by the table's angle.
-        const angle = (this.machine.joint.a * Math.PI) / 180;
-        const r = part.x * Math.cos(angle) + part.y * Math.sin(angle);
-        const z = -part.x * Math.sin(angle) + part.y * Math.cos(angle);
-        await this.goto({ kind: "joint", r: r - seen.dx, z: z - seen.dy } as GotoRequest);
+        const joint = turned({ x: part.x, y: part.y }, -this.machine.joint.a);
+        await this.goto({ kind: "joint", r: joint.x - seen.dx, z: joint.y - seen.dy } as GotoRequest);
     }
 
     // --- a G-code pick and place machine -------------------------------------------
@@ -6783,7 +6769,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     topFrameUrl(width: number, overlay: boolean): string {
-        return topFrameSvg(this.topConfig.size, Math.max(160, Math.min(4096, Math.round(width))), overlay);
+        return topFrameSvg(this.topConfig.size, frameWidth(width), overlay);
     }
 
     async topMark(): Promise<DeviceState> {
