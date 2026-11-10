@@ -8,7 +8,7 @@ import pytest
 from laser_sweep import geom
 from laser_sweep.gerber import CURVE_TOLERANCE
 
-from spinny_laser import clear
+from spinny_laser import clear, polar
 
 SPOT = 0.1
 KEEP = SPOT / 2.0
@@ -64,7 +64,12 @@ class Segments:
     def distance(self, point) -> float:
         key = (math.floor(point[0] / self.cell), math.floor(point[1] / self.cell))
         near = self.buckets.get(key, [])
-        return min((clear._segment_distance(point, a, b) for a, b in near), default=math.inf)
+        return min((segment_distance(point, a, b) for a, b in near), default=math.inf)
+
+
+def segment_distance(point, a, b) -> float:
+    """How far the point is from the segment from a to b."""
+    return polar.closest_approach((a[0] - point[0], a[1] - point[1]), (b[0] - point[0], b[1] - point[1]))
 
 
 def check_keeps_clear(strokes, copper, keep, frame) -> None:

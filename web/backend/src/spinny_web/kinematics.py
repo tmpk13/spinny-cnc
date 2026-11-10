@@ -277,12 +277,6 @@ def coord(value: float, decimals: int) -> str:
     return text
 
 
-def surface_length(a: Joint, b: Joint) -> float:
-    """Board length of one joint move, as the firmware reckons it."""
-    arc = (a[0] + b[0]) / 2.0 * math.radians(b[1] - a[1])
-    return math.hypot(b[0] - a[0], arc)
-
-
 def _spindle_speed(line: str) -> float | None:
     """The S of a `spindle S` line; None for `spindle off`."""
     for word in line.split()[1:]:
@@ -376,15 +370,11 @@ class Streamer:
         self,
         tolerance: float = DEFAULT_TOLERANCE,
         rates: Rates | None = None,
-        decimals: int = DECIMALS,
-        angle_decimals: int = ANGLE_DECIMALS,
         spindle: Spindle | None = None,
         dispense: Dispense | None = None,
     ) -> None:
         self.kinematics = Kinematics(tolerance)
         self.rates = rates or Rates()
-        self.decimals = decimals
-        self.angle_decimals = angle_decimals
         self.spindle = spindle
         self.dispense = dispense
         # The focus axis height a laser group's focus counts from when the
@@ -398,7 +388,7 @@ class Streamer:
         # be moved by, and a pass between the two would otherwise be
         # streamed as chords sweeping half a turn of the table at a radius
         # of microns, seconds of the beam on one spot under `mode const`.
-        self.snap = max(0.5 * 10.0 ** -decimals, tolerance)
+        self.snap = max(0.5 * 10.0 ** -DECIMALS, tolerance)
 
     @property
     def tolerance(self) -> float:
@@ -423,24 +413,20 @@ class Streamer:
             first = (0.0, first[1])
         return first
 
-    def words(self, joint: Joint, radius: bool = True, angle: bool = True, h: float | None = None) -> str:
+    def words(self, joint: Joint, radius: bool = True, h: float | None = None) -> str:
         parts = []
         if radius:
-            parts.append(f"R{coord(joint[0], self.decimals)}")
-        if angle:
-            parts.append(f"A{coord(joint[1], self.angle_decimals)}")
+            parts.append(f"R{coord(joint[0], DECIMALS)}")
+        parts.append(f"A{coord(joint[1], ANGLE_DECIMALS)}")
         if h is not None:
             parts.append(f"H{coord(h, FOCUS_DECIMALS)}")
         return " ".join(parts)
 
     def _same(self, a: Joint, b: Joint) -> bool:
         return (
-            abs(a[0] - b[0]) < 0.5 * 10.0 ** -self.decimals
-            and abs(a[1] - b[1]) < 0.5 * 10.0 ** -self.angle_decimals
+            abs(a[0] - b[0]) < 0.5 * 10.0 ** -DECIMALS
+            and abs(a[1] - b[1]) < 0.5 * 10.0 ** -ANGLE_DECIMALS
         )
-
-    def surface_length(self, a: Joint, b: Joint) -> float:
-        return surface_length(a, b)
 
     def _rapid_seconds(self, a: Joint, b: Joint) -> float:
         dr = abs(b[0] - a[0])
@@ -450,7 +436,7 @@ class Streamer:
     def _cut_cost(self, a: Joint, b: Joint, feed: float) -> tuple[float, bool]:
         dr = abs(b[0] - a[0])
         da = abs(b[1] - a[1])
-        surface = surface_length(a, b)
+        surface = polar.surface_length(a, b)
         minutes = surface / feed if feed > 0 else 0.0
         actual = max(minutes, dr / self.rates.r_rate, da / self.rates.a_rate)
         limited = actual > minutes * (1.0 + 1e-9) and surface > 0.0
@@ -542,36 +528,22 @@ class Streamer:
             if piece.group is not None and piece.kind in ("go", "turn", "cut"):
                 want = base + offsets.get(piece.group, 0.0)
                 if current is None or abs(want - current) >= quantum:
-                    seconds = abs(want - (base if current is None else current)) / self.rates.h_rate * 60.0
+                    lift = self._lift(want, base if current is None else current, piece.group, piece.start if piece.start is not None else piece.joint)
                     current = want
                     if piece.kind in ("go", "turn"):
                         piece = dataclasses.replace(
                             piece,
                             line=f"{piece.line} H{coord(want, FOCUS_DECIMALS)}",
-                            seconds=max(piece.seconds, seconds),
+                            seconds=max(piece.seconds, lift.seconds),
                             h=want,
                         )
                     else:
-                        yield Piece(
-                            line=f"go H{coord(want, FOCUS_DECIMALS)}",
-                            kind="lift",
-                            joint=piece.start if piece.start is not None else piece.joint,
-                            seconds=seconds,
-                            group=piece.group,
-                            h=want,
-                        )
+                        yield lift
                 last_group = piece.group
             last_joint = piece.joint
             yield piece
         if current is not None and abs(current - base) >= quantum and last_joint is not None:
-            yield Piece(
-                line=f"go H{coord(base, FOCUS_DECIMALS)}",
-                kind="lift",
-                joint=last_joint,
-                seconds=abs(current - base) / self.rates.h_rate * 60.0,
-                group=last_group,
-                h=base,
-            )
+            yield self._lift(base, current, last_group, last_joint)
 
     def compensate(self, pieces: Iterator[Piece], compensation: "Compensation", offsets: dict[int, float] | None = None) -> Iterator[Piece]:
         """The pieces rewritten for the board's height.
@@ -612,14 +584,7 @@ class Streamer:
             if focus and piece.kind == "cut" and piece.start is not None:
                 if not placed or (said is not None and abs(extra_of(piece) - said) >= quantum):
                     h = focus_at(piece, piece.start)
-                    yield Piece(
-                        line=f"go H{coord(h, FOCUS_DECIMALS)}",
-                        kind="lift",
-                        joint=piece.start,
-                        seconds=abs(h - last_h) / self.rates.h_rate * 60.0,
-                        group=piece.group,
-                        h=h,
-                    )
+                    yield self._lift(h, last_h, piece.group, piece.start)
                     last_h = h
             placed = True
             if focus and piece.kind in ("go", "turn", "cut"):
@@ -668,13 +633,7 @@ class Streamer:
                 continue
             first = joints[0]
             if not self._same(joint, first):
-                yield Piece(
-                    line=f"go {self.words(first)}",
-                    kind="go",
-                    joint=first,
-                    seconds=self._rapid_seconds(joint, first),
-                    group=index,
-                )
+                yield self._go(joint, first, index)
                 joint = first
             for target in joints[1:]:
                 if self._same(joint, target):
@@ -685,7 +644,7 @@ class Streamer:
                     kind="cut",
                     joint=target,
                     seconds=seconds,
-                    length=surface_length(joint, target),
+                    length=polar.surface_length(joint, target),
                     limited=limited,
                     group=index,
                     start=joint,
@@ -720,13 +679,7 @@ class Streamer:
                     continue
                 for kind, a, b, p, q in self._path_moves(points, joint):
                     if kind == "go":
-                        yield Piece(
-                            line=f"go {self.words(b)}",
-                            kind="go",
-                            joint=b,
-                            seconds=self._rapid_seconds(a, b),
-                            group=index,
-                        )
+                        yield self._go(a, b, index)
                     elif kind == "turn":
                         yield Piece(
                             line=f"go {self.words(b, radius=False)}",
@@ -769,9 +722,18 @@ class Streamer:
         top = compensation.highest() if compensation is not None else 0.0
         return top + tool.clearance
 
-    def _lift(self, h: float, frm: float | None, group: int | None, joint: Joint = (0.0, 0.0)) -> Piece:
+    def _lift(self, h: float, frm: float | None, group: int | None, joint: Joint) -> Piece:
+        """The focus or depth axis to `h` from `frm` (None: in no time), over `joint`."""
         seconds = abs(h - frm) / self.rates.h_rate * 60.0 if frm is not None else 0.0
         return Piece(line=f"go H{coord(h, FOCUS_DECIMALS)}", kind="lift", joint=joint, seconds=seconds, group=group, h=h)
+
+    def _go(self, frm: Joint, to: Joint, group: int | None) -> Piece:
+        """A rapid from one joint to another."""
+        return Piece(line=f"go {self.words(to)}", kind="go", joint=to, seconds=self._rapid_seconds(frm, to), group=group)
+
+    def _plunge(self, h: float, frm: float, rate: float, group: int | None, joint: Joint) -> Piece:
+        """The tool down (or up) to `h` from `frm` at `rate` mm/min, over `joint`."""
+        return Piece(line=f"cut H{coord(h, FOCUS_DECIMALS)} F{num(rate)}", kind="plunge", joint=joint, seconds=abs(frm - h) / rate * 60.0, group=group, h=h)
 
     def check_job(self, job: "Job") -> None:
         """Refuses, with a ValueError, a job this streamer would make into
@@ -888,10 +850,9 @@ class Streamer:
             return compensation.focus(point) if compensation is not None else 0.0
 
         joint = start
-        h: float | None = None
         speed: float | None = None
         last_group: int | None = None
-        yield self._lift(travel, h, None, joint)
+        yield self._lift(travel, None, None, joint)
         h = travel
         for index, group in enumerate(job.groups):
             if not group.enabled:
@@ -921,48 +882,22 @@ class Streamer:
                         # A drill: the bit goes down at the point and up.
                         first = self._path_start(points[0], joint)
                         if not self._same(joint, first):
-                            yield Piece(
-                                line=f"go {self.words(first)}",
-                                kind="go",
-                                joint=first,
-                                seconds=self._rapid_seconds(joint, first),
-                                group=index,
-                            )
+                            yield self._go(joint, first, index)
                             joint = first
                         bottom = surface(self.board_of(joint)) - depth
-                        yield Piece(
-                            line=f"cut H{coord(bottom, FOCUS_DECIMALS)} F{num(plunge)}",
-                            kind="plunge",
-                            joint=joint,
-                            seconds=abs((h if h is not None else bottom) - bottom) / plunge * 60.0,
-                            group=index,
-                            h=bottom,
-                        )
+                        yield self._plunge(bottom, h, plunge, index, joint)
                         yield self._lift(travel, bottom, index, joint)
                         h = travel
                         continue
                     plunged = False
                     for kind, a, b, p, q in self._path_moves(points, joint):
                         if kind == "go":
-                            yield Piece(
-                                line=f"go {self.words(b)}",
-                                kind="go",
-                                joint=b,
-                                seconds=self._rapid_seconds(a, b),
-                                group=index,
-                            )
+                            yield self._go(a, b, index)
                             joint = b
                             continue
                         if not plunged:
                             bottom = surface(self.board_of(joint)) - depth
-                            yield Piece(
-                                line=f"cut H{coord(bottom, FOCUS_DECIMALS)} F{num(plunge)}",
-                                kind="plunge",
-                                joint=joint,
-                                seconds=abs((h if h is not None else bottom) - bottom) / plunge * 60.0,
-                                group=index,
-                                h=bottom,
-                            )
+                            yield self._plunge(bottom, h, plunge, index, joint)
                             h = bottom
                             plunged = True
                         if kind == "turn":
@@ -1006,7 +941,7 @@ class Streamer:
                         h = travel
         yield Piece(line="spindle off", kind="spindle", joint=joint, group=last_group)
 
-    def _carve_pieces(self, group, index: int, joint: Joint, h: float | None, travel: float, surface, compensation):
+    def _carve_pieces(self, group, index: int, joint: Joint, h: float, travel: float, surface, compensation):
         """A model's moves: each path from the travel height down to its
         first point, its moves as they are with the surface under them
         added to their height, and up again. A move's feed is along it in
@@ -1023,11 +958,11 @@ class Streamer:
                 continue
             x, y, z, kind = path[0]
             first = self.joint_at((float(x), float(y)))
-            if h is None or abs(h - travel) > 1e-9:
+            if abs(h - travel) > 1e-9:
                 yield self._lift(travel, h, index, joint)
                 h = travel
             if not self._same(joint, first):
-                yield Piece(line=f"go {self.words(first)}", kind="go", joint=first, seconds=self._rapid_seconds(joint, first), group=index)
+                yield self._go(joint, first, index)
                 joint = first
             down = surface((float(x), float(y))) + float(z)
             if kind == MOVE_RAPID:
@@ -1040,14 +975,7 @@ class Streamer:
                     h=down,
                 )
             else:
-                yield Piece(
-                    line=f"cut H{coord(down, FOCUS_DECIMALS)} F{num(plunge)}",
-                    kind="plunge",
-                    joint=joint,
-                    seconds=abs(h - down) / plunge * 60.0,
-                    group=index,
-                    h=down,
-                )
+                yield self._plunge(down, h, plunge, index, joint)
             h = down
             at = (float(x), float(y), float(z))
             for x, y, z, kind in path[1:]:
@@ -1070,18 +998,11 @@ class Streamer:
                     end = self.joint_at(point)
                     high = surface(point) + at[2] + t * (z - at[2])
                     piece = run / parts
-                    rise = high - h
                     if piece < 1e-9:
-                        yield Piece(
-                            line=f"cut H{coord(high, FOCUS_DECIMALS)} F{num(rate)}",
-                            kind="plunge",
-                            joint=joint,
-                            seconds=abs(rise) / rate * 60.0,
-                            group=index,
-                            h=high,
-                        )
+                        yield self._plunge(high, h, rate, index, joint)
                         h = high
                         continue
+                    rise = high - h
                     board_feed = rate * piece / math.hypot(piece, rise)
                     seconds, limited = self._carve_cost(joint, end, rise, board_feed)
                     yield Piece(
@@ -1147,7 +1068,7 @@ class Streamer:
                 point = (float(path[0][0]), float(path[0][1]))
                 target = self._path_start(point, joint)
                 if not self._same(joint, target):
-                    yield Piece(line=f"go {self.words(target)}", kind="go", joint=target, seconds=self._rapid_seconds(joint, target), group=index)
+                    yield self._go(joint, target, index)
                     joint = target
                 low = surface(point) + dispense.gap
                 yield Piece(
@@ -1282,9 +1203,9 @@ class Streamer:
         if joint is None:
             return None
         declared = polar.unwrap(status.a, joint[1])
-        if abs(declared - status.a) < 0.5 * 10.0 ** -self.angle_decimals:
+        if abs(declared - status.a) < 0.5 * 10.0 ** -ANGLE_DECIMALS:
             return None
-        return f"set A{num(declared, self.angle_decimals)}"
+        return f"set A{num(declared, ANGLE_DECIMALS)}"
 
     def estimate(
         self,
@@ -1383,7 +1304,7 @@ class Streamer:
         _finite(z, feed)
         # Z is never put on a line with R or A: the three are not
         # interpolated together, so the firmware refuses the combination.
-        words = [f"Z{num(z, self.decimals)}"]
+        words = [f"Z{num(z, DECIMALS)}"]
         if feed:
             words.append(f"F{num(feed)}")
         return f"{keyword} {' '.join(words)}"
@@ -1400,16 +1321,16 @@ class Streamer:
         _finite(r, a, feed, h, z)
         words = []
         if r is not None and (keyword == "jogto" or r != 0.0):
-            words.append(f"R{num(r, self.decimals)}")
+            words.append(f"R{num(r, DECIMALS)}")
         if a is not None and (keyword == "jogto" or a != 0.0):
-            words.append(f"A{num(a, self.angle_decimals)}")
+            words.append(f"A{num(a, ANGLE_DECIMALS)}")
         # The focus axis, which the firmware refuses without one fitted.
         if h is not None and (keyword == "jogto" or h != 0.0):
             words.append(f"H{num(h, FOCUS_DECIMALS)}")
         # The cross slide beside the others: a joint only on a cartesian
         # machine, and the firmware refuses it elsewhere.
         if z is not None and (keyword == "jogto" or z != 0.0):
-            words.append(f"Z{num(z, self.decimals)}")
+            words.append(f"Z{num(z, DECIMALS)}")
         if not words:
             raise ValueError("a joint move needs a radius, an angle, a focus height or a cross slide position")
         if feed:
@@ -1480,18 +1401,15 @@ class CartesianStreamer(Streamer):
     def _path_start(self, point: Point, joint: Joint) -> Joint:
         return self.joint_at(point)
 
-    def words(self, joint: Joint, radius: bool = True, angle: bool = True, h: float | None = None) -> str:
-        parts = [f"R{coord(joint[0], self.decimals)}", f"Z{coord(joint[1], self.decimals)}"]
+    def words(self, joint: Joint, radius: bool = True, h: float | None = None) -> str:
+        parts = [f"R{coord(joint[0], DECIMALS)}", f"Z{coord(joint[1], DECIMALS)}"]
         if h is not None:
             parts.append(f"H{coord(h, FOCUS_DECIMALS)}")
         return " ".join(parts)
 
     def _same(self, a: Joint, b: Joint) -> bool:
-        quantum = 0.5 * 10.0 ** -self.decimals
+        quantum = 0.5 * 10.0 ** -DECIMALS
         return abs(a[0] - b[0]) < quantum and abs(a[1] - b[1]) < quantum
-
-    def surface_length(self, a: Joint, b: Joint) -> float:
-        return math.dist(a, b)
 
     def _rapid_seconds(self, a: Joint, b: Joint) -> float:
         return max(abs(b[0] - a[0]) / self.rates.r_rate, abs(b[1] - a[1]) / self.rates.z_rate) * 60.0

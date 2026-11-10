@@ -269,8 +269,7 @@ def cut_length(groups: list[JointGroup]) -> float:
     for group in groups:
         for poly in group.joints:
             for a, b in zip(poly, poly[1:]):
-                arc = (a[0] + b[0]) / 2.0 * math.radians(b[1] - a[1])
-                total += math.hypot(b[0] - a[0], arc)
+                total += polar.surface_length(a, b)
     return total
 
 

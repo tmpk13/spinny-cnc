@@ -43,6 +43,7 @@ import pyclipper
 from laser_sweep import geom
 from laser_sweep.geom import SCALE, Polygons
 
+from . import polar
 from .polar import Point
 
 RADIAL, RINGS, LINES = "radial", "rings", "lines"
@@ -257,11 +258,7 @@ def radial_extent(area: Polygons) -> tuple[float, float]:
     far = max(math.hypot(x, y) for contour in area for x, y in contour)
     if _inside(area, (0.0, 0.0)):
         return 0.0, far
-    near = min(
-        _segment_distance((0.0, 0.0), a, b)
-        for contour in area
-        for a, b in zip(contour, contour[1:] + contour[:1])
-    )
+    near = min(polar.closest_approach(a, b) for contour in area for a, b in zip(contour, contour[1:] + contour[:1]))
     return near, far
 
 
@@ -273,14 +270,6 @@ def _inside(area: Polygons, point: Point) -> bool:
         if pyclipper.PointInPolygon(probe, contour) != 0:
             winding += 1 if pyclipper.Orientation(contour) else -1
     return winding != 0
-
-
-def _segment_distance(point: Point, a: Point, b: Point) -> float:
-    ax, ay = a
-    dx, dy = b[0] - ax, b[1] - ay
-    length = dx * dx + dy * dy
-    t = 0.0 if length == 0.0 else max(0.0, min(1.0, ((point[0] - ax) * dx + (point[1] - ay) * dy) / length))
-    return math.hypot(point[0] - (ax + t * dx), point[1] - (ay + t * dy))
 
 
 # --- the fills ----------------------------------------------------------------

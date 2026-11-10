@@ -64,6 +64,13 @@ def joint_of(point: Point, previous_angle: float) -> Joint:
     return (radius_of(point), angle_of(point, previous_angle))
 
 
+def surface_length(a: Joint, b: Joint) -> float:
+    """Board length of one joint move, as the firmware reckons it: the
+    radius's run and the arc the turn sweeps at the mean radius."""
+    arc = (a[0] + b[0]) / 2.0 * math.radians(b[1] - a[1])
+    return math.hypot(b[0] - a[0], arc)
+
+
 def cartesian(joint: Joint) -> Point:
     radius, angle = joint
     theta = math.radians(angle)
