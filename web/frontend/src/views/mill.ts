@@ -17,7 +17,7 @@
 
 import { turnPoint } from "../align.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
 import { defaultOperation, recipeOps } from "../mock/mill.ts";
 import { profileOf } from "../profile.ts";
@@ -222,8 +222,8 @@ export interface StoredFields {
 
 /** The fields remembered from the last visit; anything that does not read is left out. */
 export function readStoredOperation(): Partial<MillOperation> & StoredFields {
+    const text = readStored(MILL_KEY);
     try {
-        const text = globalThis.localStorage?.getItem(MILL_KEY);
         const data: unknown = text ? JSON.parse(text) : null;
         return data && typeof data === "object" ? (data as Partial<MillOperation> & StoredFields) : {};
     } catch {
@@ -232,11 +232,7 @@ export function readStoredOperation(): Partial<MillOperation> & StoredFields {
 }
 
 function storeOperation(op: Partial<MillOperation> & StoredFields): void {
-    try {
-        globalThis.localStorage?.setItem(MILL_KEY, JSON.stringify(op));
-    } catch {
-        // Not remembered; the fields still hold for this visit.
-    }
+    writeStored(MILL_KEY, JSON.stringify(op));
 }
 
 /** What cuts on this page: the connected machine's tool, else the one last used here, else the spindle. */

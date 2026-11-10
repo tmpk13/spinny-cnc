@@ -1,6 +1,6 @@
 // Connection selector, machine state, firmware version and the event link.
 
-import { button, el, replace } from "../dom.ts";
+import { button, el, readStored, replace, writeStored } from "../dom.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
 import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -33,12 +33,8 @@ export function portLabel(port: Port): string {
 }
 
 function readHideSystem(): boolean {
-    try {
-        const stored = localStorage.getItem(HIDE_SYSTEM_KEY);
-        return stored === null ? true : stored === "1";
-    } catch {
-        return true;
-    }
+    const stored = readStored(HIDE_SYSTEM_KEY);
+    return stored === null ? true : stored === "1";
 }
 
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
@@ -48,11 +44,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const hideLabel = el("label", { class: "muted hide-system-label", title: "Leave out the built-in serial ports, which are never the controller" }, hideBox, " hide system ports");
     hideBox.addEventListener("change", () => {
         hideSystem = hideBox.checked;
-        try {
-            localStorage.setItem(HIDE_SYSTEM_KEY, hideSystem ? "1" : "0");
-        } catch {
-            // Nothing to remember it in: the choice holds for this page.
-        }
+        writeStored(HIDE_SYSTEM_KEY, hideSystem ? "1" : "0");
         renderPorts(ctx.store.get().ports);
     });
     const select = el("select", { class: "field", "aria-label": "Serial port" });

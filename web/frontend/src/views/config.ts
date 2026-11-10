@@ -8,7 +8,7 @@
 // the board's.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, replace, setLocked } from "../dom.ts";
+import { button, el, labeled, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { keyLine, setKey, type KeyValue } from "../machinekeys.ts";
 import { setPending } from "../state.ts";
 import type { MachineDocument, MachineProblem, MachineResponse, MachineSummary } from "../types.ts";
@@ -43,22 +43,6 @@ export function describeMachine(document: MachineDocument): string {
 // The file picked is a per-browser convenience; storage that is blocked
 // or empty leaves the pick to the loaded file, else the first.
 const PICK_KEY = "spinny.machine";
-
-function readPick(): string | null {
-    try {
-        return globalThis.localStorage?.getItem(PICK_KEY) ?? null;
-    } catch {
-        return null;
-    }
-}
-
-function writePick(id: string): void {
-    try {
-        globalThis.localStorage?.setItem(PICK_KEY, id);
-    } catch {
-        // Not remembered; the pick still works.
-    }
-}
 
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -125,7 +109,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
 
     let files: MachineSummary[] = [];
     let broken: MachineProblem[] = [];
-    let picked: string | null = readPick();
+    let picked: string | null = readStored(PICK_KEY);
     let shown: MachineResponse | null = null;
     // What the editor's text read as when last checked: the list's file
     // values follow the text as it is typed, not only as saved.
@@ -208,7 +192,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
                 return;
             }
             picked = next;
-            writePick(next);
+            writeStored(PICK_KEY, next);
             await open(next);
         })();
     });
@@ -279,7 +263,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             picked = ids.includes(listed.current ?? "") ? listed.current : ids[0] ?? null;
         }
         if (picked !== null) {
-            writePick(picked);
+            writeStored(PICK_KEY, picked);
         }
         renderPick();
         if (picked !== null) {
@@ -398,7 +382,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             const response = await ctx.api.saveMachineFile(id, text);
             newId.value = "";
             picked = id;
-            writePick(id);
+            writeStored(PICK_KEY, id);
             await refreshList();
             show(response);
             ctx.toast("info", `saved machines/${id}.toml`);

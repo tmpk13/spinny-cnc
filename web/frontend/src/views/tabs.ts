@@ -7,7 +7,7 @@
 // per browser. A tab whose page holds edits not applied yet carries their
 // count.
 
-import { el } from "../dom.ts";
+import { el, readStored, writeStored } from "../dom.ts";
 import type { AppState, Store } from "../state.ts";
 
 export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config";
@@ -71,11 +71,7 @@ export function readPage(): PageId {
     } catch {
         // No address to read; the memory decides.
     }
-    try {
-        return pageNamed(globalThis.localStorage?.getItem(PAGE_KEY)) ?? "jobs";
-    } catch {
-        return "jobs";
-    }
+    return pageNamed(readStored(PAGE_KEY)) ?? "jobs";
 }
 
 /** Shows a page: the attribute the stylesheet switches on, the tabs' state, and the memory of it. */
@@ -85,11 +81,7 @@ export function showPage(id: PageId): void {
     for (const tab of Array.from(document.querySelectorAll<HTMLButtonElement>(".tabs .tab"))) {
         tab.setAttribute("aria-selected", tab.dataset["page"] === id ? "true" : "false");
     }
-    try {
-        globalThis.localStorage?.setItem(PAGE_KEY, id);
-    } catch {
-        // Not remembered; the page still shows.
-    }
+    writeStored(PAGE_KEY, id);
 }
 
 export function mountTabs(root: HTMLElement, store: Store<AppState>): void {

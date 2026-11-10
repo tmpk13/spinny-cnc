@@ -1,4 +1,5 @@
-// Small DOM helpers: element construction and a few common controls.
+// Small DOM helpers: element construction, a few common controls, and what
+// this browser remembers for the page.
 
 import { calcText, calculate } from "./calc.ts";
 import { parseNumber } from "./format.ts";
@@ -227,4 +228,37 @@ export function cssVar(node: Element, name: string, fallback: string): string {
 /** Which page is up (jobs, plot, cam, pnp, auto or config), as the tabs set it on #app. */
 export function activePage(): string {
     return document.getElementById("app")?.getAttribute("data-page") ?? "jobs";
+}
+
+/** What this browser remembers under `key`; null when it remembers nothing there, or its storage is blocked. */
+export function readStored(key: string): string | null {
+    try {
+        return globalThis.localStorage?.getItem(key) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/** Remembers `value` under `key` in this browser; with its storage blocked nothing is kept. */
+export function writeStored(key: string, value: string): void {
+    try {
+        globalThis.localStorage?.setItem(key, value);
+    } catch {
+        // Not remembered; the page works without it.
+    }
+}
+
+/**
+ * A panel that folds: `head` is its summary line, shown folded or not,
+ * and `body` what folds away. Whether it is open is remembered in this
+ * browser under `key`, "1" open and "0" folded; with nothing remembered it
+ * is open. `onToggle` runs after every fold and unfold.
+ */
+export function foldPanel(key: string, head: HTMLElement, body: HTMLElement, onToggle?: (open: boolean) => void): HTMLDetailsElement {
+    const fold = el("details", { class: "panel-fold", open: readStored(key) !== "0" }, head, body);
+    fold.addEventListener("toggle", () => {
+        writeStored(key, fold.open ? "1" : "0");
+        onToggle?.(fold.open);
+    });
+    return fold;
 }

@@ -7,7 +7,7 @@
 // is the 3D preview's camera.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, labeled, numberField, setLocked } from "../dom.ts";
+import { activePage, button, el, foldPanel, labeled, numberField, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -68,26 +68,6 @@ export function cameraBadge(state: CameraState | null): string {
         return "finding mark";
     }
     return state.pose?.state === "locked" ? "locked" : "running";
-}
-
-// Whether the panel is folded is a per-browser convenience; storage that is
-// blocked or empty leaves the panel open.
-const FOLD_KEY = "spinny.camera.open";
-
-function readFoldOpen(): boolean {
-    try {
-        return globalThis.localStorage?.getItem(FOLD_KEY) !== "0";
-    } catch {
-        return true;
-    }
-}
-
-function writeFoldOpen(open: boolean): void {
-    try {
-        globalThis.localStorage?.setItem(FOLD_KEY, open ? "1" : "0");
-    } catch {
-        // Not remembered; the panel still folds.
-    }
 }
 
 export interface VisionPanel {
@@ -203,14 +183,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             + " made by hand or a hole. Find mark lifts the head, goes where the camera should see the mark, moves the step along X to"
             + " measure the scale and the roll, and centers the picture on the mark: the offset is the mark less the tool's point."),
     );
-    const fold = el("details", { class: "panel-fold", open: readFoldOpen() },
-        el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge),
-        body,
-    );
-    fold.addEventListener("toggle", () => {
-        writeFoldOpen(fold.open);
-        refreshFrame(true);
-    });
+    // Unfolded, the picture is asked for at once rather than at the next tick.
+    const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => refreshFrame(true));
     root.append(fold);
 
     // The settings fields follow the state until typed in; what each was

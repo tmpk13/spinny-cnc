@@ -5,7 +5,7 @@
 // press on any step takes the page to the panel that does it. Which setup is
 // shown, and whether the panel is folded, is remembered per browser.
 
-import { el, replace } from "../dom.ts";
+import { el, foldPanel, readStored, replace, writeStored } from "../dom.ts";
 import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
@@ -167,22 +167,6 @@ export function goToPanel(id: string): void {
     setTimeout(() => node.classList.remove("flash"), 1600);
 }
 
-function readStored(key: string): string | null {
-    try {
-        return globalThis.localStorage?.getItem(key) ?? null;
-    } catch {
-        return null;
-    }
-}
-
-function writeStored(key: string, value: string): void {
-    try {
-        globalThis.localStorage?.setItem(key, value);
-    } catch {
-        // Not remembered; the panel still works.
-    }
-}
-
 /** The setups that fit the machine; every one before a machine is connected, since which it is is not known yet. */
 export function setupsFor(setups: Setup[], state: AppState): Setup[] {
     if (!state.snapshot.connected) {
@@ -204,13 +188,10 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] | ((stat
     const next = el("p", { class: "muted hint roadmap-next" });
     // How far the setup has got, in the head, which shows while folded.
     const count = el("span", { class: "badge roadmap-count" });
-    const head = el("summary", { class: "panel-head" }, el("h2", {}, "Setup"), count);
-    const fold = el("details", { class: "panel-fold", open: readStored(`${key}.open`) !== "0" },
-        head,
+    root.append(foldPanel(`${key}.open`,
+        el("summary", { class: "panel-head" }, el("h2", {}, "Setup"), count),
         el("div", { class: "panel-body" }, el("div", { class: "button-row" }, pick), list, next),
-    );
-    fold.addEventListener("toggle", () => writeStored(`${key}.open`, fold.open ? "1" : "0"));
-    root.append(fold);
+    ));
 
     let chosen = readStored(`${key}.setup`);
     let offered = "";

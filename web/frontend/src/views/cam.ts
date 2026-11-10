@@ -4,7 +4,7 @@
 // the profile, and a job written out as gcode for the profile's controller.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatDuration, formatLength, parseNumber } from "../format.ts";
 import { setPending, type AppState } from "../state.ts";
 import type {
@@ -159,22 +159,6 @@ export function reportLines(report: CamGcodeReport): [string, string][] {
 // The profile last picked is a per-browser convenience, like the tab.
 const PICK_KEY = "spinny.cam.profile";
 
-function readPick(): string | null {
-    try {
-        return globalThis.localStorage?.getItem(PICK_KEY) ?? null;
-    } catch {
-        return null;
-    }
-}
-
-function writePick(id: string): void {
-    try {
-        globalThis.localStorage?.setItem(PICK_KEY, id);
-    } catch {
-        // Not remembered; the pick still holds for the page.
-    }
-}
-
 function fmt(value: number | null): string {
     return value === null ? "" : String(value);
 }
@@ -251,7 +235,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
 
     let files: CamSummary[] = [];
     let shown: CamProfileResponse | null = null;
-    let picked: string | null = readPick();
+    let picked: string | null = readStored(PICK_KEY);
     let dirty = false;
     // An edit not saved is counted on the page's tab.
     const setDirty = (value: boolean): void => {
@@ -266,7 +250,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     });
     pick.addEventListener("change", () => {
         picked = pick.value;
-        writePick(picked);
+        writeStored(PICK_KEY, picked);
         void load(picked);
     });
 
@@ -295,7 +279,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             picked = files[0]?.id ?? null;
         }
         if (picked !== null) {
-            writePick(picked);
+            writeStored(PICK_KEY, picked);
         }
         renderPick();
         if (picked !== null) {
@@ -592,7 +576,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             const response = await ctx.api.saveCamProfile(id, text);
             newId.value = "";
             picked = id;
-            writePick(id);
+            writeStored(PICK_KEY, id);
             setDirty(false);
             await refreshList();
             show(response);

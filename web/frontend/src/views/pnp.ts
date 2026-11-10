@@ -5,7 +5,7 @@
 // where a part sits on it, and a goto that takes it over a part's place.
 // Its own setup steps lead through all of it.
 
-import { button, el, labeled, numberField, replace, setLocked, activePage } from "../dom.ts";
+import { activePage, button, el, labeled, numberField, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -20,11 +20,7 @@ const TARGET_KEY = "spinny.pnp.target";
 
 /** Which machine places the parts, as remembered in this browser: this one unless a G-code device was picked. */
 export function readTarget(): "machine" | "device" {
-    try {
-        return globalThis.localStorage?.getItem(TARGET_KEY) === "device" ? "device" : "machine";
-    } catch {
-        return "machine";
-    }
+    return readStored(TARGET_KEY) === "device" ? "device" : "machine";
 }
 
 /** How often the picture is asked for while it shows, ms, and the width it is asked at. */
@@ -304,11 +300,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     ) as HTMLSelectElement;
     target.addEventListener("change", () => {
         const value = target.value === "device" ? "device" : "machine";
-        try {
-            globalThis.localStorage?.setItem(TARGET_KEY, value);
-        } catch {
-            // Not remembered; the pick holds for this page.
-        }
+        writeStored(TARGET_KEY, value);
         ctx.store.set({ pnpTarget: value });
     });
     ctx.store.set({ pnpTarget: readTarget() });

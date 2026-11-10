@@ -5,7 +5,7 @@
 // is shown after every change, and Apply turns and shifts the job by it.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, el, foldPanel, labeled, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { AlignFit, AlignMark, AlignMarkRequest, AlignState, CameraState, Job } from "../types.ts";
@@ -38,24 +38,6 @@ export function markWords(mark: AlignMark): { design: string; machine: string; d
         distance: mark.kind === "point" || mark.kind === "center" ? "-" : `${formatFixed(mark.distance, 3)} mm`,
         residual: mark.residual === null ? "-" : `${formatFixed(mark.residual, 3)} mm`,
     };
-}
-
-const FOLD_KEY = "spinny.align.open";
-
-function readFoldOpen(): boolean {
-    try {
-        return globalThis.localStorage?.getItem(FOLD_KEY) !== "0";
-    } catch {
-        return true;
-    }
-}
-
-function writeFoldOpen(open: boolean): void {
-    try {
-        globalThis.localStorage?.setItem(FOLD_KEY, open ? "1" : "0");
-    } catch {
-        // Not remembered; the panel still folds.
-    }
 }
 
 export type MarkPick = "pad" | "hole" | "point";
@@ -102,12 +84,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
             + " from the pose. One mark gives a shift, two or more a turn and a shift fitted by least squares. Apply turns the job"
             + " about the origin and shifts it: its paths, outline, copper, pads and holes move."),
     );
-    const fold = el("details", { class: "panel-fold", open: readFoldOpen() },
-        el("summary", { class: "panel-head" }, el("h2", {}, "Align"), badge),
-        body,
-    );
-    fold.addEventListener("toggle", () => writeFoldOpen(fold.open));
-    root.append(fold);
+    root.append(foldPanel("spinny.align.open", el("summary", { class: "panel-head" }, el("h2", {}, "Align"), badge), body));
 
     /** An alignment request; its answer is the state, which goes into the store. */
     async function act(promise: Promise<AlignState>): Promise<void> {
