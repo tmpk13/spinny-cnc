@@ -601,10 +601,11 @@ def label_stem(label: str) -> str:
     return re.sub(r"[-+]?\d+(?:\.\d+)?", "#", label)
 
 
-def carry_settings(old: list[Group], new: list[Group]) -> None:
-    """Each old group's settings onto the group made again in its place:
-    the first new group whose label is the old one's but for its numbers
-    takes the first such old group's, the second the second's."""
+def matched(old: list[Group], new: list[Group]) -> Iterator[tuple[Group, Group]]:
+    """Each old group with the new group made again in its place: the
+    first new group whose label is an old one's but for its numbers goes
+    with the first such old group, the second with the second. A new group
+    with no old one left of its label is left out."""
     by_stem: dict[str, list[Group]] = defaultdict(list)
     for group in old:
         by_stem[label_stem(group.label)].append(group)
@@ -614,9 +615,15 @@ def carry_settings(old: list[Group], new: list[Group]) -> None:
         index = seen[stem]
         seen[stem] += 1
         if index < len(by_stem[stem]):
-            source = by_stem[stem][index]
-            for name in SETTINGS:
-                setattr(group, name, getattr(source, name))
+            yield by_stem[stem][index], group
+
+
+def carry_settings(old: list[Group], new: list[Group]) -> None:
+    """Each old group's settings onto the group made again in its place,
+    as `matched` pairs them."""
+    for source, group in matched(old, new):
+        for name in SETTINGS:
+            setattr(group, name, getattr(source, name))
 
 
 def with_width(job: Job, width: float, streamer: Streamer) -> Job:

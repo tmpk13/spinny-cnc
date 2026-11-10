@@ -42,7 +42,7 @@ from .jobs import (
     check_depth,
     check_power,
     check_speed,
-    label_stem,
+    matched,
 )
 from .kinematics import Streamer
 
@@ -217,9 +217,13 @@ def size_of(diameter: float) -> float:
     return math.floor(diameter * scale + 0.5) / scale
 
 
-def _wanted(op: MillOperation) -> set[float] | None:
-    """The hole sizes a holes operation takes; None for all."""
-    return None if op.sizes is None else {size_of(size) for size in op.sizes}
+def _taken(op: MillOperation, holes: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+    """The holes, x, y and diameter, of the sizes a holes operation takes:
+    all of them when it names none."""
+    if op.sizes is None:
+        return list(holes)
+    wanted = {size_of(size) for size in op.sizes}
+    return [hole for hole in holes if size_of(hole[2]) in wanted]
 
 
 def hole_groups(op: MillOperation, holes: list[tuple[float, float, float]]) -> tuple[list[Group], list[str]]:
@@ -227,12 +231,9 @@ def hole_groups(op: MillOperation, holes: list[tuple[float, float, float]]) -> t
     where the last one ended: drilled, or bored out with the bit when it
     is wider than the bit and boring is asked for."""
     notes: list[str] = []
-    wanted = _wanted(op)
     by_size: dict[float, list[tuple[float, float]]] = defaultdict(list)
-    for x, y, d in holes:
-        size = size_of(d)
-        if wanted is None or size in wanted:
-            by_size[size].append((x, y))
+    for x, y, d in _taken(op, holes):
+        by_size[size_of(d)].append((x, y))
     if not by_size:
         raise JobImportError("no holes of the sizes asked for")
     groups: list[Group] = []
@@ -280,8 +281,7 @@ def build(op: MillOperation, holes: list[tuple[float, float, float]] | None = No
             if not holes:
                 raise JobImportError("the job has no drill holes: import its board with the drill file")
             groups, notes = hole_groups(op, holes)
-            wanted = _wanted(op)
-            kept_holes = [h for h in holes if wanted is None or size_of(h[2]) in wanted]
+            kept_holes = _taken(op, holes)
             outline = [_circle_outline(x, y, d) for x, y, d in kept_holes]
             name = f"holes {len(kept_holes)}"
         elif op.kind == LINE:
@@ -451,8 +451,7 @@ def _group_count(op: MillOperation) -> int | None:
         return 1
     if op.holes is None:
         return None
-    wanted = _wanted(op)
-    return len({size for size in (size_of(d) for _, _, d in op.holes) if wanted is None or size in wanted})
+    return len({size_of(d) for _, _, d in _taken(op, op.holes)})
 
 
 def _by_operation(op_list: list[MillOperation], groups: list[Group]) -> list[list[Group]] | None:
@@ -503,22 +502,12 @@ def _paired(old_ops: list[MillOperation], new_ops: list[MillOperation]) -> list[
 
 
 def _carry(old: list[Group], new: list[Group], base: Group | None) -> None:
-    """Each old group's settings onto the new group of its label but for
-    the numbers, in order, matched as carry_settings matches them. With
+    """Each old group's settings onto the new group `matched` pairs it
+    with: the new group of its label but for the numbers, in order. With
     `base`, the group the old operation's own numbers make, every setting
     the new numbers leave as they were; without, only the settings no
     operation sets."""
-    by_stem: dict[str, list[Group]] = defaultdict(list)
-    for group in old:
-        by_stem[label_stem(group.label)].append(group)
-    seen: dict[str, int] = defaultdict(int)
-    for group in new:
-        stem = label_stem(group.label)
-        index = seen[stem]
-        seen[stem] += 1
-        if index >= len(by_stem[stem]):
-            continue
-        source = by_stem[stem][index]
+    for source, group in matched(old, new):
         for name in SETTINGS if base is not None else PAGE_SETTINGS:
             if base is None or getattr(group, name) == getattr(base, name):
                 setattr(group, name, getattr(source, name))
