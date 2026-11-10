@@ -222,13 +222,14 @@ export function onEnter(target: HTMLButtonElement): (event: Event) => void {
 
 /**
  * Makes Tab in a text area put four spaces in at the caret, as the files
- * the page edits are indented, rather than leave the field. The field
+ * the page edits are indented, rather than leave the field; Shift+Tab
+ * still leaves it, so the keyboard alone can always get out. The field
  * stays scrolled where it was, and an input event that bubbles tells its
  * listeners of the edit.
  */
 export function tabIndents(area: HTMLTextAreaElement): void {
     area.addEventListener("keydown", (event) => {
-        if (event.key === "Tab" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
             event.preventDefault();
             const { selectionStart: start, selectionEnd: end, scrollTop: top, scrollLeft: left, value } = area;
             area.value = value.slice(0, start) + "    " + value.slice(end);
