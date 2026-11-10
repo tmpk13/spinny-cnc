@@ -163,9 +163,14 @@ def find_layer(directory: Path, layer: str, table: dict[str, str] | None = None)
 
 def find_plotted(directory: Path, layer: str, board_file: Path | str) -> Path:
     """The gerber kicad-cli plotted into `directory` for the layer of
-    `board_file`, under whatever name the board shows the layer by."""
+    `board_file`, under whatever name the board shows the layer by. With
+    none there, the board has no such layer, which the LayerError says."""
+    board_file = Path(board_file)
     try:
-        table = layer_table(Path(board_file).read_text(encoding="utf-8", errors="replace"))
+        table = layer_table(board_file.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         table = {}
-    return find_layer(directory, layer, table)
+    try:
+        return find_layer(directory, layer, table)
+    except LayerError:
+        raise LayerError(f"{board_file.name} has no layer {layer}") from None

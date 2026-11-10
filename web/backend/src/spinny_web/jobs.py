@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import align as alignment
-from spinny_laser import board
+from spinny_laser import board, camjob
 from spinny_laser import clear as copper_clearing
 from spinny_laser import deposit as copper_deposition
 from spinny_laser import lines as cut_lines
@@ -31,11 +31,11 @@ from spinny_laser import order as cut_order
 from spinny_laser import outline as board_outline
 from spinny_laser import pads as board_pads
 from spinny_laser import stencil as paste_stencil
+from spinny_laser.cam import CENTER, KEEP, place
 
 from . import kinematics
 from .kinematics import Streamer
 
-ANCHOR_CENTER, ANCHOR_KEEP = "center", "keep"
 DEFAULT_POWER = 500.0
 DEFAULT_SPEED = 400.0
 DEFAULT_SPOT = 0.1
@@ -680,7 +680,7 @@ class ImportOptions:
     power: float = DEFAULT_POWER
     speed: float = DEFAULT_SPEED
     spot: float = DEFAULT_SPOT
-    anchor: str = ANCHOR_CENTER
+    anchor: str = CENTER
     offset: Point = (0.0, 0.0)
     tolerance: float = kinematics.DEFAULT_TOLERANCE
     passes: int = 1
@@ -707,8 +707,8 @@ class ImportOptions:
     mirror: str | None = None
 
     def check(self) -> None:
-        if self.anchor not in (ANCHOR_CENTER, ANCHOR_KEEP):
-            raise JobImportError(f"anchor must be {ANCHOR_CENTER} or {ANCHOR_KEEP}")
+        if self.anchor not in (CENTER, KEEP):
+            raise JobImportError(f"anchor must be {CENTER} or {KEEP}")
         if self.mode not in MODES:
             raise JobImportError(f"mode must be one of {', '.join(MODES)}")
         if self.clear not in CLEAR_CHOICES:
@@ -762,7 +762,7 @@ def import_file(path: Path, name: str, options: ImportOptions, streamer: Streame
         job = from_json(path.read_text(encoding="utf-8"), name)
     elif suffix == ".svg":
         job = from_svg(path.read_text(encoding="utf-8"), name, options)
-    elif suffix in (".gcode", ".nc", ".ngc"):
+    elif suffix in camjob.GCODE_SUFFIXES:
         job = from_gcode(path.read_text(encoding="utf-8", errors="replace"), name, options)
     elif suffix == ".kicad_pcb" or suffix in GERBER_SUFFIXES:
         job = from_board(path, name, options, pace=streamer.rates.r_rate / streamer.rates.a_rate, milled=streamer.tool == SPINDLE)
@@ -927,20 +927,6 @@ def checked(job: Job) -> Job:
     return job
 
 
-def place(paths: list[Polyline], anchor: str, offset: Point) -> list[Polyline]:
-    """Anchor a drawing on the axis and shift it by the offset."""
-    dx, dy = offset
-    if anchor == ANCHOR_CENTER:
-        xs = [x for path in paths for x, _ in path]
-        ys = [y for path in paths for _, y in path]
-        if xs:
-            dx -= (min(xs) + max(xs)) / 2.0
-            dy -= (min(ys) + max(ys)) / 2.0
-    elif anchor != ANCHOR_KEEP:
-        raise JobImportError(f"unknown anchor {anchor!r}")
-    return [[(x + dx, y + dy) for x, y in path] for path in paths]
-
-
 def from_gcode(text: str, name: str, options: ImportOptions) -> Job:
     """Absolute X/Y `G0`/`G1` cuts, grouped by the power and feed they ran at."""
     from spinny_laser import convert
@@ -951,17 +937,15 @@ def from_gcode(text: str, name: str, options: ImportOptions) -> Job:
         raise JobImportError(str(exc)) from exc
     if not paths:
         raise JobImportError("the file has no cuts")
-    placed = place([path.points for path in paths], options.anchor, options.offset)
+    placed = iter(place([path.points for path in paths], options.anchor, options.offset))
     # Consecutive paths at one power and feed share a group, and the file's
     # order is kept: a cut-out that comes after an engraving in the file
     # stays after it, so a piece freed by it cannot move under the beam
     # before the engraving is done.
-    groups: list[Group] = []
-    for path, points in zip(paths, placed):
-        if groups and groups[-1].power == path.power and groups[-1].speed == path.speed:
-            groups[-1].paths.append(points)
-        else:
-            groups.append(Group(label=f"S{path.power:g} F{path.speed:g}", power=path.power, speed=path.speed, paths=[points]))
+    groups = [
+        Group(label=convert.run_label(run[0]), power=run[0].power, speed=run[0].speed, paths=[next(placed) for _ in run])
+        for run in convert.runs(paths)
+    ]
     return Job(
         name=name,
         source="gcode",
@@ -1115,10 +1099,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             isocli.export_board(path, options.layer, outline=True, drill=True, into=into)
             # kicad-cli names a gerber after the name a layer is shown by,
             # F.SilkS as F_Silkscreen, which the board's table may set.
-            try:
-                copper_path = board.find_plotted(into, options.layer, path)
-            except board.LayerError:
-                raise JobImportError(f"{path.name} has no layer {options.layer}") from None
+            copper_path = board.find_plotted(into, options.layer, path)
             source = "kicad"
             for drill_path in sorted(into.glob("*.drl")):
                 holes.extend(board_pads.holes_of(excellon.read(drill_path)))
@@ -1148,7 +1129,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         holes = [(x * flip[0], y * flip[1], d) for x, y, d in holes]
         outline: list = []
         if outline_path is not None:
-            outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
+            outline = board_outline.read(outline_path)
         config = isolate.IsoConfig(
             spot=options.spot,
             passes=options.passes,
@@ -1299,17 +1280,10 @@ def dispense_groups(pads: list, shift: tuple[float, float], options: ImportOptio
 def isolation_groups(plan, cleared: list, options: ImportOptions, word: str = "copper") -> list[Group]:
     """A group per isolation loop offset, then the clearing, if any; `word`
     is what the layer draws, for the labels."""
-    groups: list[Group] = []
-    for index in sorted({loop.index for loop in plan.loops}):
-        members = [loop for loop in plan.loops if loop.index == index]
-        groups.append(
-            Group(
-                label=f"isolation loop {index + 1} at {members[0].offset:.3f} mm",
-                power=options.power,
-                speed=options.speed,
-                paths=[[tuple(p) for p in loop.points] for loop in members],
-            )
-        )
+    groups = [
+        Group(label=f"isolation loop {index + 1} at {offset:.3f} mm", power=options.power, speed=options.speed, paths=loops)
+        for index, offset, loops in camjob.isolation_passes(plan)
+    ]
     if cleared:
         # Before the outline: a board cut free may move under the beam.
         groups.append(

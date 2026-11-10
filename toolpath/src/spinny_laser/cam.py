@@ -443,6 +443,28 @@ class Profile:
         }
 
 
+def place(paths: list[list[tuple[float, float]]], anchor: str, offset: tuple[float, float]) -> list[list[tuple[float, float]]]:
+    """Paths placed as a board is: the middle of their extent on the
+    origin (center), its lower left corner on it (corner), or left where
+    they are (keep), then moved by `offset`. Paths with no point stay as
+    they are."""
+    points = [p for path in paths for p in path]
+    if not points:
+        return [list(path) for path in paths]
+    if anchor == KEEP:
+        dx, dy = offset
+    else:
+        min_x, max_x = min(p[0] for p in points), max(p[0] for p in points)
+        min_y, max_y = min(p[1] for p in points), max(p[1] for p in points)
+        if anchor == CENTER:
+            dx, dy = offset[0] - (min_x + max_x) / 2.0, offset[1] - (min_y + max_y) / 2.0
+        elif anchor == CORNER:
+            dx, dy = offset[0] - min_x, offset[1] - min_y
+        else:
+            raise CamError(f"unknown anchor {anchor!r}")
+    return [[(x + dx, y + dy) for x, y in path] for path in paths]
+
+
 # --- reading ----------------------------------------------------------------
 
 

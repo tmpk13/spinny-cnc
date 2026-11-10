@@ -10,15 +10,14 @@ segments.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from laser_sweep.postprocess import REFUSED_G, Line, parse_line
 
-from . import __version__, gcode, machine, preview
+from . import __version__, cam, gcode, machine, preview
 from .polar import Point
-
-CENTER, KEEP = "center", "keep"
 
 
 class ConvertError(ValueError):
@@ -117,33 +116,34 @@ def _refuse(line: Line, index: int) -> None:
             raise ConvertError(f"line {index + 1}: G{code} is {reason}")
 
 
+def run_label(path: Path2D) -> str:
+    """The name of a run of paths: the power and feed it cuts at."""
+    return f"S{path.power:g} F{path.speed:g}"
+
+
+def power_and_feed(path: Path2D) -> tuple[float, float]:
+    return path.power, path.speed
+
+
+def runs(paths: list[Path2D], key: Callable[[Path2D], object] = power_and_feed) -> list[list[Path2D]]:
+    """The paths in runs of consecutive ones alike by `key`, the power and
+    feed they cut at unless told otherwise, in the file's order: a cut-out
+    that comes after an engraving stays after it."""
+    out: list[list[Path2D]] = []
+    for path in paths:
+        if out and key(out[-1][0]) == key(path):
+            out[-1].append(path)
+        else:
+            out.append([path])
+    return out
+
+
 def group_paths(paths: list[Path2D]) -> list[gcode.PathGroup]:
     """Consecutive paths at one power and feed become one group."""
-    groups: list[gcode.PathGroup] = []
-    for path in paths:
-        if groups and groups[-1].power == path.power and groups[-1].speed == path.speed:
-            groups[-1].paths.append(path.points)
-        else:
-            groups.append(
-                gcode.PathGroup(
-                    label=f"S{path.power:g} F{path.speed:g}",
-                    paths=[path.points],
-                    power=path.power,
-                    speed=path.speed,
-                )
-            )
-    return groups
-
-
-def place(paths: list[Path2D], anchor: str, offset: Point) -> None:
-    dx, dy = offset
-    if anchor == CENTER:
-        xs = [x for path in paths for x, _ in path.points]
-        ys = [y for path in paths for _, y in path.points]
-        dx -= (min(xs) + max(xs)) / 2.0
-        dy -= (min(ys) + max(ys)) / 2.0
-    for path in paths:
-        path.points = [(x + dx, y + dy) for x, y in path.points]
+    return [
+        gcode.PathGroup(label=run_label(run[0]), paths=[path.points for path in run], power=run[0].power, speed=run[0].speed)
+        for run in runs(paths)
+    ]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -156,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("input", type=Path, help="gcode with absolute mm G0/G1 moves")
     place_group = parser.add_argument_group("placement")
     place_group.add_argument(
-        "--anchor", choices=(CENTER, KEEP), default=CENTER,
+        "--anchor", choices=(cam.CENTER, cam.KEEP), default=cam.CENTER,
         help="center puts the middle of the cut extent on the rotation axis,"
         " keep treats the file's origin as the axis",
     )
@@ -178,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
         paths = read_paths(args.input.read_text())
         if not paths:
             raise ConvertError(f"{args.input} has no cuts")
-        place(paths, args.anchor, offset)
+        for path, points in zip(paths, cam.place([path.points for path in paths], args.anchor, offset)):
+            path.points = points
     except (ConvertError, ValueError) as exc:
         parser.error(str(exc))
 

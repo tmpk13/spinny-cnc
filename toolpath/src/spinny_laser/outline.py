@@ -21,8 +21,9 @@ router cuts a lone line on Edge.Cuts: a slot the bit's width.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from laser_sweep import geom, isolate
+from laser_sweep import geom, gerber, isocli, isolate
 
 from . import clear
 from .order import depths, inner_first, is_closed
@@ -39,6 +40,20 @@ class Cut:
     loose: int = 0
     # Cutouts too narrow for the bit, as drawn; not among the paths.
     narrow: list[Polyline] = field(default_factory=list)
+
+
+def read(path: Path, offset: float = 0.0) -> list[Polyline]:
+    """The profile an Edge.Cuts gerber draws, as drawn, or a loop `offset`
+    mm outside it.
+
+    A profile drawn as separate lines and arcs is plotted one stroke per
+    piece, and only a closed path can be grown, so the pieces are joined
+    first when there is an offset.
+    """
+    drawn = isocli.outline_paths(gerber.read(path))
+    if offset:
+        drawn = clear.chains(drawn)
+    return isocli.outline_cut(drawn, offset)
 
 
 def cut(outline: list[Polyline], radius: float = 0.0) -> Cut:

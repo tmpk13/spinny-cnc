@@ -15,14 +15,7 @@ import tempfile
 from pathlib import Path
 
 from laser_sweep import excellon, geom, gerber, isocli, isolate
-from laser_sweep.isocli import (
-    AUTO,
-    NONE,
-    SourceError,
-    outline_cut,
-    outline_paths,
-    resolve,
-)
+from laser_sweep.isocli import AUTO, NONE, SourceError, resolve
 from laser_sweep.isolate import (
     ANCHOR_CENTER,
     ANCHOR_KEEP,
@@ -33,8 +26,8 @@ from laser_sweep.isolate import (
 )
 from laser_sweep.layout import INSIDE_OUT, OUTSIDE_IN
 
-from . import __version__, board, gcode, machine, preview
-from .clear import chains
+from . import __version__, board, camjob, gcode, machine, preview
+from . import outline as board_outline
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,19 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def read_outline(path: Path, offset: float) -> list:
-    """The board profile as drawn, or a loop `offset` mm outside it.
-
-    A profile drawn as separate lines and arcs is plotted one stroke per
-    piece, and only a closed path can be grown, so the pieces are joined
-    first when there is an offset.
-    """
-    drawn = outline_paths(gerber.read(path))
-    if offset:
-        drawn = chains(drawn)
-    return outline_cut(drawn, offset)
-
-
 def resolve_input(args, temporary: list) -> tuple[Path, Path | None, Path | None]:
     """The files that hold the layer, the profile and the holes.
 
@@ -144,10 +124,7 @@ def resolve_input(args, temporary: list) -> tuple[Path, Path | None, Path | None
         temporary.append(holder)
         directory = Path(holder.name)
     isocli.export_board(source, args.layer, outline=outline_mode == AUTO, drill=drill_mode == AUTO, into=directory)
-    try:
-        layer_path = board.find_plotted(directory, args.layer, source)
-    except board.LayerError:
-        raise SourceError(f"{source.name} has no layer {args.layer}") from None
+    layer_path = board.find_plotted(directory, args.layer, source)
     outline = None if outline_mode in (AUTO, NONE) else Path(args.outline)
     drill = None if drill_mode in (AUTO, NONE) else Path(args.drill)
     if outline_mode == AUTO:
@@ -206,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SourceError(f"{copper_path} draws no {word}")
         outline = []
         if outline_path is not None:
-            outline = read_outline(outline_path, args.outline_offset)
+            outline = board_outline.read(outline_path, args.outline_offset)
         drills = []
         holes = 0
         if drill_path is not None:
@@ -221,17 +198,10 @@ def main(argv: list[str] | None = None) -> int:
         drill_holes=holes, check_bridges=args.bridge_check,
     )
 
-    groups: list[gcode.PathGroup] = []
-    for index in sorted({loop.index for loop in plan.loops}):
-        members = [loop for loop in plan.loops if loop.index == index]
-        groups.append(
-            gcode.PathGroup(
-                label=f"isolation loop {index + 1} at {members[0].offset:.3f} mm",
-                paths=[list(loop.points) for loop in members],
-                power=args.power,
-                speed=args.speed,
-            )
-        )
+    groups = [
+        gcode.PathGroup(label=f"isolation loop {index + 1} at {offset:.3f} mm", paths=loops, power=args.power, speed=args.speed)
+        for index, offset, loops in camjob.isolation_passes(plan)
+    ]
     if plan.outline:
         for repeat in range(args.outline_passes):
             groups.append(

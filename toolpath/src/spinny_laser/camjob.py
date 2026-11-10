@@ -32,7 +32,10 @@ Move = tuple[float, float, float, int]
 
 GERBER_SUFFIXES = board.GERBER_SUFFIXES
 BOARD_SUFFIXES = GERBER_SUFFIXES + (".kicad_pcb",)
+GCODE_SUFFIXES = (".gcode", ".nc", ".ngc")
 MODEL_SUFFIXES = (".stl",)
+# The files `read_design` reads.
+DESIGN_SUFFIXES = BOARD_SUFFIXES + GCODE_SUFFIXES + MODEL_SUFFIXES
 # Over the material for the moves between cuts, mm.
 CLEARANCE = 1.0
 # A model's chord tolerance is never finer than this: arcs any finer only
@@ -149,10 +152,7 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
             temporary = tempfile.TemporaryDirectory(prefix="spinny-cam-")
             into = Path(temporary.name)
             isocli.export_board(path, layer, outline=True, drill=True, into=into)
-            try:
-                copper_path = board.find_plotted(into, layer, path)
-            except board.LayerError:
-                raise DesignError(f"{path.name} has no layer {layer}") from None
+            copper_path = board.find_plotted(into, layer, path)
             source = "kicad"
         else:
             copper_path = path
@@ -171,7 +171,7 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
             raise DesignError(f"{copper_path.name} draws no {board.layer_word(read_layer)}")
         outline: list[Polyline] = []
         if outline_path is not None:
-            outline = isocli.outline_cut(isocli.outline_paths(gerber.read(outline_path)), 0.0)
+            outline = board_outline.read(outline_path)
         holes: list[tuple[Point, float, Point | None]] = []
         for drill_path in drill_paths:
             for hole in excellon.read(drill_path).holes:
@@ -194,6 +194,22 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
     finally:
         if temporary is not None:
             temporary.cleanup()
+
+
+def read_design(path: Path, placement: cam.Placement) -> Design:
+    """A board, an X/Y gcode file or a 3D model as a design, its suffix
+    saying which; the gcode's paths are placed as the profile's
+    [placement] says."""
+    suffix = path.suffix.lower()
+    if suffix in BOARD_SUFFIXES:
+        return read_board(path, placement.layer)
+    if suffix in GCODE_SUFFIXES:
+        design = read_gcode(path.read_text(encoding="utf-8", errors="replace"), path.stem)
+        design.paths = place_paths(design.paths, placement.anchor, placement.offset)
+        return design
+    if suffix in MODEL_SUFFIXES:
+        return read_model(path)
+    raise DesignError(f"{path.name}: not a board, an X/Y gcode file or an STL model")
 
 
 def _drill_files(directory: Path, stem: str) -> tuple[list[Path], list[Path]]:
@@ -465,6 +481,17 @@ def _model_job(profile: cam.Profile, design: Design, name: str | None, tolerance
     )
 
 
+def isolation_passes(plan: isolate.IsoPlan) -> list[tuple[int, float, list[Polyline]]]:
+    """An isolation plan's loops a pass at a time, in the order the passes
+    are cut: each pass's index, its distance from the copper and its
+    loops."""
+    passes = []
+    for index in sorted({loop.index for loop in plan.loops}):
+        members = [loop for loop in plan.loops if loop.index == index]
+        passes.append((index, members[0].offset, [[tuple(p) for p in loop.points] for loop in members]))
+    return passes
+
+
 def _isolation_width(profile: cam.Profile) -> float:
     """The width the isolation is cut at: its operation's, at the depth it
     cuts (a V bit widens with it), else the narrowest tool's."""
@@ -556,11 +583,10 @@ def _operation_groups(
         return []
     plan = board.plan
     if source == cam.ISOLATION:
-        groups = []
-        for index in sorted({loop.index for loop in plan.loops}):
-            members = [loop for loop in plan.loops if loop.index == index]
-            label = f"{prefix}: loop {index + 1} at {members[0].offset:.3f} mm"
-            groups.append(_group(operation, tool, label, [[tuple(p) for p in loop.points] for loop in members]))
+        groups = [
+            _group(operation, tool, f"{prefix}: loop {index + 1} at {offset:.3f} mm", loops)
+            for index, offset, loops in isolation_passes(plan)
+        ]
         if plan.bridges:
             notes.append(f"{prefix}: {len(plan.bridges)} places where copper is too close to part at {width:g} mm")
         return groups
@@ -718,36 +744,20 @@ def _slot(start: Point, end: Point, diameter: float, width: float) -> Polyline:
 
 
 def place_paths(sets: list[PathSet], anchor: str, offset: Point) -> list[PathSet]:
-    """Ready paths placed as a board would be: centered on the origin, their
-    lower left corner on it, or left where they are, then moved by `offset`."""
-    points = [p for found in sets for path in found.paths for p in path]
-    if not points:
-        return sets
-    if anchor == cam.KEEP:
-        dx, dy = offset
-    else:
-        min_x, max_x = min(p[0] for p in points), max(p[0] for p in points)
-        min_y, max_y = min(p[1] for p in points), max(p[1] for p in points)
-        if anchor == cam.CENTER:
-            dx, dy = offset[0] - (min_x + max_x) / 2.0, offset[1] - (min_y + max_y) / 2.0
-        elif anchor == cam.CORNER:
-            dx, dy = offset[0] - min_x, offset[1] - min_y
-        else:
-            raise DesignError(f"unknown anchor {anchor!r}")
-    return [PathSet(found.label, [[(x + dx, y + dy) for x, y in path] for path in found.paths]) for found in sets]
+    """Ready paths placed together as a board would be (`cam.place`)."""
+    placed = iter(cam.place([path for found in sets for path in found.paths], anchor, offset))
+    return [PathSet(found.label, [next(placed) for _ in found.paths]) for found in sets]
 
 
 def read_gcode(text: str, name: str) -> Design:
-    """Cut paths of an X/Y gcode file, one set per run at the same power and feed."""
-    from .convert import read_paths
+    """Cut paths of an X/Y gcode file, one set per run at the same power and
+    feed. A run is told from the next by its label, so a power or a feed
+    that differs from the one before only past what the label prints joins
+    its set."""
+    from . import convert
 
-    sets: list[PathSet] = []
-    for path in read_paths(text):
-        label = f"S{path.power:g} F{path.speed:g}"
-        if sets and sets[-1].label == label:
-            sets[-1].paths.append([tuple(p) for p in path.points])
-        else:
-            sets.append(PathSet(label, [[tuple(p) for p in path.points]]))
+    runs = convert.runs(convert.read_paths(text), key=convert.run_label)
+    sets = [PathSet(convert.run_label(run[0]), [[tuple(p) for p in path.points] for path in run]) for run in runs]
     if not sets:
         raise DesignError(f"{name}: no cuts in the gcode")
     return Design(name=name, source="gcode", paths=sets)

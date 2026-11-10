@@ -17,7 +17,6 @@ from .jobs import Group, Job, JobImportError, NotFound, Offset, from_json, svg_p
 from .kinematics import Streamer
 
 SVG_SUFFIXES = (".svg",)
-GCODE_SUFFIXES = (".gcode", ".nc", ".ngc")
 
 
 def write_whole(path: Path, text: str) -> None:
@@ -126,12 +125,13 @@ def pick_design(folder: Path, layer: str) -> tuple[Path, list[str]]:
 
 
 def read_design(path: Path, profile: Profile, tolerance: float) -> camjob.Design:
+    """A design from an uploaded file: an SVG's shapes or a job's board
+    paths here, placed as the profile says, and whatever the toolpath
+    library reads (`camjob.read_design`) there."""
     suffix = path.suffix.lower()
     place = profile.placement
-    if suffix in camjob.MODEL_SUFFIXES:
-        return camjob.read_model(path)
-    if suffix in camjob.BOARD_SUFFIXES:
-        return camjob.read_board(path, place.layer)
+    if suffix in camjob.DESIGN_SUFFIXES:
+        return camjob.read_design(path, place)
     if suffix in SVG_SUFFIXES:
         shapes = svg_polylines(path.read_text(encoding="utf-8"), tolerance)
         if not shapes:
@@ -141,8 +141,6 @@ def read_design(path: Path, profile: Profile, tolerance: float) -> camjob.Design
             label = "no stroke" if color == "no stroke" else f"stroke {color}"
             sets.setdefault(color, camjob.PathSet(label, [])).paths.append([tuple(p) for p in points])
         design = camjob.Design(name=path.stem, source="svg", paths=list(sets.values()))
-    elif suffix in GCODE_SUFFIXES:
-        design = camjob.read_gcode(path.read_text(encoding="utf-8", errors="replace"), path.stem)
     elif suffix == ".json":
         job = from_json(path.read_text(encoding="utf-8"), path.stem)
         sets_ = [camjob.PathSet(group.label, [[tuple(p) for p in path_] for path_ in group.paths]) for group in job.groups if group.paths]

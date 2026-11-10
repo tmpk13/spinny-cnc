@@ -18,7 +18,6 @@ import sys
 from pathlib import Path
 
 from . import __version__, cam, camjob, home, post
-from .camjob import BOARD_SUFFIXES
 
 # The repository's var/out in a checkout, else under the spinny home.
 OUT_DIR = home.root() / "var" / "out"
@@ -40,24 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def read_design(path: Path, profile: cam.Profile) -> camjob.Design:
-    suffix = path.suffix.lower()
-    if suffix in BOARD_SUFFIXES:
-        return camjob.read_board(path, profile.placement.layer)
-    if suffix in (".gcode", ".nc", ".ngc"):
-        design = camjob.read_gcode(path.read_text(encoding="utf-8", errors="replace"), path.stem)
-        design.paths = camjob.place_paths(design.paths, profile.placement.anchor, profile.placement.offset)
-        return design
-    if suffix in camjob.MODEL_SUFFIXES:
-        return camjob.read_model(path)
-    raise camjob.DesignError(f"{path.name}: not a board, an X/Y gcode file or an STL model")
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         profile = cam.load(args.profile)
-        design = read_design(args.design, profile)
+        design = camjob.read_design(args.design, profile.placement)
         built = camjob.build(profile, design, args.name, tolerance=args.tolerance)
         program = post.post(built, profile)
     except (cam.CamError, camjob.DesignError, post.PostError, OSError) as exc:

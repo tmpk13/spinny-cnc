@@ -13,7 +13,8 @@ from laser_sweep import geom, gerber, isolate
 from laser_sweep.isolate import ANCHOR_CENTER, IsoConfig
 from polar_sim import nearest_deviation, replay, replay_grblhal
 from spinny_laser import machine
-from spinny_laser.cli import main, read_outline
+from spinny_laser.cli import main
+from spinny_laser.outline import read as read_outline
 from spinny_laser.gcode import PolarOptions
 
 DATA = Path(__file__).parent / "data"
