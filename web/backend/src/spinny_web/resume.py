@@ -15,6 +15,8 @@ import threading
 import time
 from pathlib import Path
 
+from .files import write_whole
+
 # Seconds between writes of the position while it keeps changing: a jog or
 # a run moves it many times a second, and the file is for the next session.
 POSITION_INTERVAL = 1.0
@@ -110,7 +112,7 @@ class PositionStore:
         """A status report: kept at once, written when a second has passed
         since the last write. Not taken while the position is held."""
         now = time.monotonic()
-        record = {"r": status.r, "a": status.a, "z": status.z, "h": status.h, "state": status.state, "at": _iso(time.time())}
+        record = {"r": status.r, "a": status.a, "z": status.z, "h": status.h, "state": status.state, "at": now_iso()}
         with self._lock:
             self._load()
             if self._held is not None:
@@ -192,9 +194,7 @@ def _write_json(path: Path, record: dict | None) -> None:
     problems, reported where the config is saved."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(record, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-        tmp.replace(path)
+        write_whole(path, json.dumps(record, indent=2, allow_nan=False) + "\n")
     except (OSError, ValueError):
         pass
 

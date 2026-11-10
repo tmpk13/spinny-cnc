@@ -38,7 +38,7 @@ from pathlib import Path
 
 from spinny_laser.align import Fit, fit_rigid
 
-from .cam import write_whole
+from .files import write_whole
 from .kinematics import num, turned
 
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")

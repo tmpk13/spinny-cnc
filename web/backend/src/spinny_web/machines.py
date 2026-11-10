@@ -9,7 +9,8 @@ from pathlib import Path
 from spinny_laser import machines as machine_files
 from spinny_laser.machines import Machine, MachineError
 
-from .cam import NotFound, write_whole
+from .cam import NotFound
+from .files import write_whole
 
 
 class MachineStore:

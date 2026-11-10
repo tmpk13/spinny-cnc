@@ -4,8 +4,6 @@ gcode for the profile's controller."""
 
 from __future__ import annotations
 
-import os
-import secrets
 import threading
 from pathlib import Path
 
@@ -13,23 +11,11 @@ from laser_sweep import isocli
 from spinny_laser import cam, camjob, post
 from spinny_laser.cam import CamError, Profile
 
+from .files import write_whole
 from .jobs import Group, Job, JobImportError, NotFound, Offset, from_json, svg_polylines
 from .kinematics import Streamer
 
 SVG_SUFFIXES = (".svg",)
-
-
-def write_whole(path: Path, text: str) -> None:
-    """The text written as the file all at once: into a temporary of its
-    own beside it, then moved over it, so a reader never sees half a file
-    and two writers at once each move a whole one, the last one staying."""
-    temporary = path.with_name(f"{path.name}.{secrets.token_hex(4)}.tmp")
-    try:
-        temporary.write_text(text, encoding="utf-8")
-        os.replace(temporary, path)
-    except OSError:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 class ProfileStore:

@@ -39,13 +39,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import tempfile
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from .files import write_whole
 from .jobs import MAX_VALUE, Finite
 from .resume import now_iso
 
@@ -809,20 +808,5 @@ class HeightMapStore:
                 except FileNotFoundError:
                     pass
                 return
-            _write_atomic(self.path, heightmap.model_dump_json(indent=2))
-
-
-def _write_atomic(path: Path, text: str) -> None:
-    """A file that is either the old one or the whole new one."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix=path.name, dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text + "\n")
-        os.replace(temp, path)
-    except BaseException:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
-        raise
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            write_whole(self.path, heightmap.model_dump_json(indent=2) + "\n")

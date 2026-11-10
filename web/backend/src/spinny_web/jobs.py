@@ -34,6 +34,7 @@ from spinny_laser import stencil as paste_stencil
 from spinny_laser.cam import CENTER, KEEP, place
 
 from . import kinematics
+from .files import write_whole
 from .kinematics import DISPENSER, MAX_VALUE, SPINDLE, Streamer
 
 DEFAULT_POWER = 500.0
@@ -1464,10 +1465,7 @@ class JobStore:
         """Keeps the KiCad board a job was imported from beside it, so the
         camera can look for it; False when the file cannot be written."""
         try:
-            target = self.directory / f"{job_id}.kicad_pcb"
-            temp = target.with_suffix(".kicad_pcb.tmp")
-            temp.write_bytes(data)
-            temp.replace(target)
+            write_whole(self.directory / f"{job_id}.kicad_pcb", data)
         except OSError:
             return False
         return True
@@ -1480,10 +1478,7 @@ class JobStore:
         if suffix == ".kicad_pcb":
             return self.keep_board(job_id, data)
         try:
-            target = self.directory / f"{job_id}.upload{suffix}"
-            temp = target.with_name(target.name + ".tmp")
-            temp.write_bytes(data)
-            temp.replace(target)
+            write_whole(self.directory / f"{job_id}.upload{suffix}", data)
         except OSError:
             return False
         return True
@@ -1502,7 +1497,4 @@ class JobStore:
         return path if path.is_file() else None
 
     def _write(self, job: Job) -> None:
-        target = self.directory / f"{job.id}.json"
-        temp = target.with_suffix(".json.tmp")
-        temp.write_text(job.model_dump_json(), encoding="utf-8")
-        temp.replace(target)
+        write_whole(self.directory / f"{job.id}.json", job.model_dump_json())

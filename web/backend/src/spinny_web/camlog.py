@@ -33,6 +33,8 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from .files import write_whole
+
 log = logging.getLogger("spinny_web.camlog")
 
 # Most entries kept; the oldest go with their pictures past this.
@@ -277,9 +279,7 @@ class CameraLog:
     def _write_index(self) -> None:
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
-            temp = self.folder / f"{INDEX}.tmp"
-            temp.write_text("".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in self._entries), encoding="utf-8")
-            temp.replace(self.folder / INDEX)
+            write_whole(self.folder / INDEX, "".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in self._entries))
         except OSError as exc:
             log.warning("camera log: cannot write the index: %s", exc)
 

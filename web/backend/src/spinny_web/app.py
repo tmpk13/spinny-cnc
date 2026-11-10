@@ -46,6 +46,7 @@ from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .camera import Camera, CameraError, MachineAccess, pose_summary
 from .camlog import CAMERAS, CameraLog
+from .files import write_whole
 from .cameras import detect as detect_cameras
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
@@ -836,7 +837,7 @@ class Backend:
                 if text is None:
                     raise ValueError("the config kept changing while it was saved")
                 self.config_path.parent.mkdir(parents=True, exist_ok=True)
-                self.config_path.write_text(text + "\n", encoding="utf-8")
+                write_whole(self.config_path, text + "\n")
             except (OSError, ValueError) as exc:
                 # The value is in force for this process; say that it will not
                 # outlive it rather than lose it in silence.
