@@ -343,6 +343,22 @@ def test_tools_make_change_and_delete_a_job_in_the_app_itself(app):
     asyncio.run(go())
 
 
+DXF = "  0\nSECTION\n  2\nENTITIES\n  0\nCIRCLE\n  8\nHOLES\n 10\n0\n 20\n0\n 40\n2\n  0\nLINE\n  8\nCUT\n 10\n0\n 20\n0\n 11\n10\n 21\n0\n  0\nENDSEC\n  0\nEOF\n"
+
+
+def test_a_tool_makes_a_job_of_a_dxf_drawing_a_group_a_layer(app):
+    async def go():
+        async with ToolBox.in_process(app) as box:
+            made = await box.call("make_job", {"filename": "plate.dxf", "content": DXF, "anchor": "keep"})
+            assert not made.error, made.text
+            job = json.loads(made.text)
+            assert job["name"] == "plate" and [group["label"] for group in job["groups"]] == ["layer HOLES", "layer CUT"]
+            # The circle's chords stay within the tolerance of it, inside it.
+            assert job["extent"] == pytest.approx([-2.0, -2.0, 10.0, 2.0], abs=0.006)
+
+    asyncio.run(go())
+
+
 def test_tools_make_a_plot_job_of_operations_change_its_list_and_combine_jobs(app):
     async def go():
         async with ToolBox.in_process(app) as box:

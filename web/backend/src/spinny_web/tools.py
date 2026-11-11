@@ -461,14 +461,15 @@ MAKE_JOB = obj(
     {
         "filename": text(
             "the file's name, whose suffix says what it is: .svg (a drawing in mm, one group per stroke"
-            " color), .gcode or .nc (absolute X/Y G0/G1 moves with S and F), or .json (a job: name and groups,"
+            " color), .dxf (an ASCII DXF drawing, one group per layer, mm unless its $INSUNITS says otherwise),"
+            " .gcode or .nc (absolute X/Y G0/G1 moves with S and F), or .json (a job: name and groups,"
             " each with label, power, speed, passes and paths as lists of [x, y] in mm); the name without"
             " the suffix becomes the job's name",
-            pattern=r"^[A-Za-z0-9][A-Za-z0-9 _.()-]{0,110}\.(svg|gcode|nc|ngc|json)$",
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9 _.()-]{0,110}\.(svg|dxf|gcode|nc|ngc|json)$",
         ),
         "content": text("the whole file", minLength=1, maxLength=MAX_CONTENT),
-        "power": number("laser power (or spindle speed) for an SVG's groups, the firmware's S", minimum=0),
-        "speed": number("feed for an SVG's groups, mm/min", exclusiveMinimum=0),
+        "power": number("laser power (or spindle speed) for a drawing's groups, the firmware's S", minimum=0),
+        "speed": number("feed for a drawing's groups, mm/min", exclusiveMinimum=0),
         "spot": number("the beam's width, or the bit's, mm; the job remembers it", exclusiveMinimum=0, maximum=1000),
         "passes": integer("isolation passes; leave out for a drawing", minimum=1, maximum=50),
         "anchor": text("center puts the drawing's middle at the offset; keep leaves its coordinates as they are", enum=["center", "keep"]),
@@ -562,7 +563,7 @@ PLOT_OPERATIONS = obj(
 
 UPLOAD_FILE = obj(
     {
-        "name": text("the file's name with its suffix: .kicad_pcb, a gerber, .drl, .svg, .gcode, .json or .stl", pattern=FILE_NAME),
+        "name": text("the file's name with its suffix: .kicad_pcb, a gerber, .drl, .svg, .dxf, .gcode, .json or .stl", pattern=FILE_NAME),
         "content": text("the whole file", minLength=1, maxLength=MAX_CONTENT),
     },
     ("name", "content"),
@@ -672,7 +673,7 @@ def _tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "make_job",
-            "Make a job from a file you write: an SVG drawing, absolute X/Y G-code, or a job as JSON. Use this"
+            "Make a job from a file you write: an SVG or DXF drawing, absolute X/Y G-code, or a job as JSON. Use this"
             " for shapes, text outlines, test patterns and anything drawn. The job is stored and shows in the"
             " Jobs tab; nothing is cut until the operator runs it there.",
             MAKE_JOB,
@@ -794,8 +795,8 @@ def _tools() -> tuple[Tool, ...]:
         Tool(
             "make_cam_job",
             "Run design files you write through a CAM profile's operations into a stored job: a KiCad board"
-            " (or a copper gerber with its outline and drill files beside it), an SVG, X/Y G-code, a job, or an"
-            " STL model on a 3D profile. Call list_cam_profiles first.",
+            " (or a copper gerber with its outline and drill files beside it), an SVG or DXF drawing, X/Y G-code,"
+            " a job, or an STL model on a 3D profile. Call list_cam_profiles first.",
             obj(
                 {
                     "profile_id": CAM_PROFILE,
