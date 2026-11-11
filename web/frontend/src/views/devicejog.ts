@@ -7,7 +7,7 @@
 // over. The arrow keys jog X and Y, Page Up and Page Down jog Z, while the
 // PNP page places with the device.
 
-import { activePage, button, el, inputHasFocus, modalOpen, numberField, onEnter, setLocked } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, lockFor, modalOpen, numberField, onEnter } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
@@ -151,14 +151,14 @@ export function mountDeviceJog(root: HTMLElement, ctx: Ctx, active: () => boolea
         const busy = device?.running === true || state.pnp?.routine?.state === "running" || device?.top?.routine?.state === "running";
         const idle = device?.connected === true && !busy;
         for (const control of locked) {
-            setLocked(control, !idle);
+            lockFor(control, [device?.connected !== true, "connect the device first"], [!idle, "the device is busy"]);
         }
         const doc = state.deviceDoc?.document;
-        setLocked(park, !idle || !doc?.park);
-        setLocked(overCamera, !idle || !device?.camera.position);
+        lockFor(park, [device?.connected !== true, "connect the device first"], [!idle, "the device is busy"], [!doc?.park, "the profile has no [motion] park"]);
+        lockFor(overCamera, [device?.connected !== true, "connect the device first"], [!idle, "the device is busy"], [!device?.camera.position, "the up camera's place is not known yet"]);
         const offsetKnown = (device?.top?.offset ?? null) !== null || (doc?.top?.offset ?? null) !== null;
-        setLocked(toNozzle, !idle || !offsetKnown);
-        setLocked(toCamera, !idle || !offsetKnown);
+        lockFor(toNozzle, [device?.connected !== true, "connect the device first"], [!idle, "the device is busy"], [!offsetKnown, "the top camera's offset is not known"]);
+        lockFor(toCamera, [device?.connected !== true, "connect the device first"], [!idle, "the device is busy"], [!offsetKnown, "the top camera's offset is not known"]);
         const at = device?.position;
         position.textContent = at
             ? `At X ${formatFixed(at.x ?? 0, 3)} Y ${formatFixed(at.y ?? 0, 3)}${at.z !== undefined ? ` Z ${formatFixed(at.z, 3)}` : ""}${at.rotation !== undefined ? ` A ${formatFixed(at.rotation, 2)}` : ""}`

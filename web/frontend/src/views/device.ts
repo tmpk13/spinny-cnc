@@ -9,7 +9,7 @@
 // and shows the lines going out and coming back. The board's place on the
 // device, the run and the cameras have panels of their own.
 
-import { button, el, labeled, numberField, onEnter, replace, setLocked } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField, onEnter, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CamPath, CamValue, DevicePlan, DeviceReference, DeviceState, Port, TopState } from "../types.ts";
@@ -516,21 +516,21 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const running = device?.running === true;
         connect.textContent = connected ? "Disconnect" : "Connect";
         connect.classList.toggle("btn-primary", !connected);
-        setLocked(connect, picked === null || running);
+        lockFor(connect, [picked === null, "pick a profile first"], [running, "a run is under way"]);
         const routine = state.pnp?.routine;
         const moving = routine?.state === "running" && routine.target === "device";
         const topBusy = device?.top?.routine?.state === "running";
         const idle = connected && !running && !moving && !topBusy;
         for (const control of [home, readPosition, send, vacuumOn, vacuumOff]) {
-            setLocked(control, !idle);
+            lockFor(control, [!connected, "connect the device first"], [!idle, "the device is busy"]);
         }
-        setLocked(vacuumRead, !idle || !state.deviceDoc?.document.vacuum);
-        setLocked(light, !idle || state.deviceDoc?.document.light !== true);
+        lockFor(vacuumRead, [!connected, "connect the device first"], [!idle, "the device is busy"], [!state.deviceDoc?.document.vacuum, "the profile has no [vacuum] read lines"]);
+        lockFor(light, [!connected, "connect the device first"], [!idle, "the device is busy"], [state.deviceDoc?.document.light !== true, "the profile has no light_on lines"]);
         light.setAttribute("aria-pressed", device?.light === true ? "true" : "false");
         portPick.disabled = connected;
         portField.disabled = connected;
-        setLocked(detect, connected);
-        setLocked(identify, running || moving || topBusy);
+        setLocked(detect, connected, "disconnect first to pick another port");
+        setLocked(identify, running || moving || topBusy, "the device is busy");
         const position = device?.position;
         positionLine.textContent = position
             ? `X ${formatFixed(position.x ?? 0, 3)} Y ${formatFixed(position.y ?? 0, 3)}${position.z !== undefined ? ` Z ${formatFixed(position.z, 3)}` : ""}${position.rotation !== undefined ? ` A ${formatFixed(position.rotation, 2)}` : ""}${device?.homed ? "" : " (not homed)"}`

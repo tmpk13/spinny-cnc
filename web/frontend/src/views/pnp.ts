@@ -7,7 +7,7 @@
 // camera, the board's place on it, and placing). Its own setup steps
 // lead through all of it.
 
-import { activePage, button, el, labeled, numberField, readStored, replace, setLocked, Tracked, writeStored } from "../dom.ts";
+import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -841,7 +841,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const busy = onDevice ? state.device?.running === true : state.pnp?.routine?.state === "running";
         const chosen = selected !== null && partsOf(state).some((part) => part.ref === selected);
         const linked = onDevice ? state.device?.connected === true : state.snapshot.connected;
-        setLocked(gotoButton, !linked || !chosen || busy);
+        lockFor(gotoButton, [!linked, onDevice ? "connect the device first" : "connect first"], [busy, onDevice ? "the device is busy" : "a camera routine is under way"], [!chosen, "pick a part first"]);
         correctLabel.classList.toggle("hidden", onDevice);
         withCameraLabel.classList.toggle("hidden", !onDevice);
         const offsetKnown = (state.device?.top?.offset ?? null) !== null || (state.deviceDoc?.document.top?.offset ?? null) !== null;
@@ -943,14 +943,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const busy = pnp?.routine?.state === "running";
         cameraBadge.textContent = busy ? "routine" : running ? "running" : "stopped";
         cameraBadge.setAttribute("data-camera", busy ? "finding mark" : running ? "running" : "stopped");
-        setLocked(startButton, running);
-        setLocked(stopButton, !running || busy);
+        setLocked(startButton, running, "the up camera is running");
+        lockFor(stopButton, [!running, "the up camera is not running"], [busy, "a routine is under way: abort it first"]);
         const connected = state.snapshot.connected;
-        setLocked(centerButton, !connected || !running || busy);
-        setLocked(partButton, !connected || !running || busy || !pnp?.position || !(pnp.mm_per_px > 0));
-        setLocked(abortButton, !busy);
-        setLocked(forget, !pnp?.position || busy);
-        setLocked(overButton, !connected || busy || !pnp?.position);
+        lockFor(centerButton, [!connected, "connect first"], [!running, "start the up camera first"], [busy, "a routine is under way"]);
+        lockFor(partButton, [!connected, "connect first"], [!running, "start the up camera first"], [busy, "a routine is under way"], [!pnp?.position || !(pnp.mm_per_px > 0), "center the nozzle over the up camera first"]);
+        setLocked(abortButton, !busy, "no routine under way");
+        lockFor(forget, [!pnp?.position, "no place kept"], [busy, "a routine is under way"]);
+        lockFor(overButton, [!connected, "connect first"], [busy, "a routine is under way"], [!pnp?.position, "the up camera's place is not known yet"]);
         if (pnp) {
             cameraFields.follow(device, pnp.device);
             cameraFields.follow(size, pnp.size);
@@ -982,11 +982,11 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
                 field.value = value === undefined ? "" : String(value);
             }
         }
-        setLocked(placeHere, !linked || busy);
-        setLocked(placeForget, deviceState?.camera.measured !== true || busy);
-        setLocked(deviceCenter, !linked || busy || !running);
-        setLocked(runout, !linked || busy || !running || !(deviceState?.camera.mm_per_px && deviceState.camera.position));
-        setLocked(deviceAbort, !moving);
+        lockFor(placeHere, [!linked, "connect the device first"], [busy, "a routine is under way"]);
+        lockFor(placeForget, [deviceState?.camera.measured !== true, "no place kept: the profile's is used"], [busy, "a routine is under way"]);
+        lockFor(deviceCenter, [!linked, "connect the device first"], [busy, "a routine is under way"], [!running, "start the up camera first"]);
+        lockFor(runout, [!linked, "connect the device first"], [busy, "a routine is under way"], [!running, "start the up camera first"], [!(deviceState?.camera.mm_per_px && deviceState.camera.position), "center the nozzle over the up camera first"]);
+        setLocked(deviceAbort, !moving, "no routine under way on the device");
         deviceRoutineLine.textContent = pnp?.routine?.target === "device" ? pnpRoutineText(pnp) : "";
     }
 

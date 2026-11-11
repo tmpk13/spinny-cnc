@@ -8,7 +8,7 @@
 // is under way, with its progress, its steps and Stop.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { button, el, lockFor, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { DevicePlan, DeviceState, DeviceStep } from "../types.ts";
@@ -238,15 +238,15 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
             fiducialsFirst.checked = true;
         }
         fiducialsFirst.disabled = !measured || !hasFiducials;
-        setLocked(planButton, !job || !device?.profile);
-        setLocked(run, !connected || running || !job);
-        setLocked(stop, !running);
-        setLocked(windowStop, !running);
-        setLocked(runRest, !connected || running || partsLeft(device, plan, job?.id ?? null).length === 0);
-        setLocked(recount, running);
+        lockFor(planButton, [!job, "pick a board job first"], [!device?.profile, "pick a device profile first"]);
+        lockFor(run, [!connected, "connect the device first"], [running, "a run is under way"], [!job, "pick a board job first"]);
+        setLocked(stop, !running, "no run under way");
+        setLocked(windowStop, !running, "no run under way");
+        lockFor(runRest, [!connected, "connect the device first"], [running, "a run is under way"], [partsLeft(device, plan, job?.id ?? null).length === 0, "the last run left no part of this job"]);
+        setLocked(recount, running, "a run is under way");
         const count = device?.boards ?? 0;
         boards.textContent = `${count} board${count === 1 ? "" : "s"}`;
-        setLocked(resetBoards, count === 0 || running);
+        lockFor(resetBoards, [running, "a run is under way"], [count === 0, "no board counted yet"]);
         const text = device?.lost ? `Link lost: ${device.lost}` : deviceRunText(device);
         runLine.textContent = text;
         windowLine.textContent = text;

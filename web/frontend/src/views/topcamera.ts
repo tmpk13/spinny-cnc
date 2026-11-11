@@ -4,7 +4,7 @@
 // nozzle's tip was put on. Its picture shows in the Cameras panel; the
 // looks of its routines are kept in its camera log.
 
-import { button, el, labeled, numberField, setLocked, Tracked, type TrackedField } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField, setLocked, Tracked, type TrackedField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { SpotPolarity, TopSettings } from "../types.ts";
@@ -128,12 +128,12 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             tracked.follow(field, top ? String(top[key] ?? "") : "");
         }
         badge.textContent = busy ? "routine" : top?.running ? "running" : "stopped";
-        setLocked(start, top?.running === true || busy);
-        setLocked(stop, top?.running !== true || busy);
-        setLocked(apply, busy);
-        setLocked(markHere, !connected || running || moving || busy);
-        setLocked(measure, !connected || running || moving || busy || top?.running !== true || !top?.mark_at);
-        setLocked(abort, !busy);
+        lockFor(start, [top?.running === true, "the top camera is running"], [busy, "a routine is under way"]);
+        lockFor(stop, [top?.running !== true, "the top camera is not running"], [busy, "a routine is under way: abort it first"]);
+        setLocked(apply, busy, "a routine is under way");
+        lockFor(markHere, [!connected, "connect the device first"], [running || moving || busy, "the device is busy"]);
+        lockFor(measure, [!connected, "connect the device first"], [running || moving || busy, "the device is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
+        setLocked(abort, !busy, "no routine under way");
         offsetLine.textContent = topCameraText(top);
         routineLine.textContent = topRoutineText(top);
         pick.render();

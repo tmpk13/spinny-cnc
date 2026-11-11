@@ -9,7 +9,7 @@
 // references once two or more are found.
 
 import { fitRigid, type RigidFit } from "../align.ts";
-import { button, el, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Component, DeviceState } from "../types.ts";
@@ -128,12 +128,12 @@ export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
         const picked = state.pnpPart !== null && parts.some((part) => part.ref === state.pnpPart);
         nozzleHere.textContent = picked ? `Nozzle here: ${state.pnpPart}` : "Nozzle here";
         cameraHere.textContent = picked ? `Camera here: ${state.pnpPart}` : "Camera here";
-        setLocked(nozzleHere, !connected || busy || !picked);
+        lockFor(nozzleHere, [!connected, "connect the device first"], [busy, "the device is busy"], [!picked, "pick a part in the Parts panel first"]);
         const offsetKnown = (device?.top?.offset ?? null) !== null || (state.deviceDoc?.document.top?.offset ?? null) !== null;
-        setLocked(cameraHere, !connected || busy || !picked || !offsetKnown);
-        setLocked(clear, refs.length === 0);
+        lockFor(cameraHere, [!connected, "connect the device first"], [busy, "the device is busy"], [!picked, "pick a part in the Parts panel first"], [!offsetKnown, "the top camera's offset is not known: give it in the profile or measure it"]);
+        setLocked(clear, refs.length === 0, "no reference to clear");
         const measured = device?.top?.offset !== null && device?.top?.offset !== undefined && (device?.top?.mm_per_px ?? 0) > 0;
-        setLocked(findFiducials, !connected || busy || device?.top?.running !== true || !measured || !job);
+        lockFor(findFiducials, [!connected, "connect the device first"], [busy, "the device is busy"], [device?.top?.running !== true, "start the top camera first"], [!measured, "measure the top camera's offset first"], [!job, "pick a board job first"]);
         fitLine.textContent = fitText(fit, refs.length, device?.angle);
         fiducialLine.textContent = fiducialText(device?.top, job?.id ?? null);
         const angleText = device?.angle === null || device?.angle === undefined ? "" : String(device.angle);
