@@ -2,6 +2,7 @@
 
 import { button, el, readStored, replace, writeStored } from "../dom.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
+import { gcodePort } from "../ports.ts";
 import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
@@ -14,10 +15,13 @@ export const STALE_SECONDS = 1.5;
 
 /** The port to offer first: the controller by name, then the url last used, then any USB device, then anything. */
 export function defaultPort(ports: Port[]): Port | null {
+    // A pick and place controller's port (a LumenPnP's Marlin) is the PNP
+    // page's to pick, never offered for this machine.
+    const usb = ports.filter((port) => port.kind === "usb" && !gcodePort(port));
     return ports.find((port) => port.spinny)
         ?? ports.find((port) => port.kind === "last")
-        ?? ports.find((port) => port.kind === "usb")
-        ?? ports[0]
+        ?? usb[0]
+        ?? ports.find((port) => !gcodePort(port))
         ?? null;
 }
 

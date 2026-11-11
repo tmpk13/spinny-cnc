@@ -15,7 +15,7 @@ import {
     boardSvg,
     pnpRoutineText,
 } from "../src/views/pnp.ts";
-import { click, connected, runUntilIdle, settle, setup } from "./harness.ts";
+import { click, connected, runUntilIdle, settle, setup, pnpRoots } from "./harness.ts";
 
 function part(ref: string, overrides: Partial<Component> = {}): Component {
     return { ref, value: "10k", footprint: "Resistor_SMD:R_0603", side: "front", x: 0, y: 0, rotation: 0, pads: 2, smd: true, dnp: false, ...overrides };
@@ -144,17 +144,7 @@ describe("the pnp page", () => {
         // This machine places the parts unless a G-code device was picked before.
         localStorage.removeItem("spinny.pnp.target");
         const { store, ctx, backend, calls } = setup();
-        const roots = {
-            steps: document.createElement("section"),
-            parts: document.createElement("section"),
-            board: document.createElement("section"),
-            camera: document.createElement("section"),
-            nozzle: document.createElement("section"),
-            device: document.createElement("section"),
-        };
-        for (const root of Object.values(roots)) {
-            document.body.append(root);
-        }
+        const roots = pnpRoots();
         await backend.connect("/dev/ttyACM0");
         await backend.applyMachine("cartesian-mill");
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
@@ -202,14 +192,7 @@ describe("the pnp page", () => {
     test("the up camera is picked from the cameras found, started on what the fields show, and started again on another", async () => {
         localStorage.removeItem("spinny.pnp.target");
         const { store, ctx, calls } = setup();
-        const roots = {
-            steps: document.createElement("section"),
-            parts: document.createElement("section"),
-            board: document.createElement("section"),
-            camera: document.createElement("section"),
-            nozzle: document.createElement("section"),
-            device: document.createElement("section"),
-        };
+        const roots = pnpRoots();
         mountPnp(roots, ctx);
         await ctx.refreshPnp();
         await ctx.refreshCamera();

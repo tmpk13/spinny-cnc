@@ -147,7 +147,11 @@ function pageOf(node: Element): PageId | null {
     return PAGES.find((page) => page.id === id)?.id ?? null;
 }
 
-/** Takes the page to a panel: its tab, the panel scrolled into view, and a short flash on it. */
+/**
+ * Takes the page to a panel: its tab, the panel scrolled into view, and its
+ * border pulsing until a press inside it (or another step's panel taking
+ * over), so the eye finds it however the page is laid out.
+ */
 export function goToPanel(id: string): void {
     const node = document.getElementById(id);
     if (!node) {
@@ -160,11 +164,11 @@ export function goToPanel(id: string): void {
     if (typeof node.scrollIntoView === "function") {
         node.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-    node.classList.remove("flash");
-    // Read back so a flash started again restarts its animation.
-    void node.offsetWidth;
-    node.classList.add("flash");
-    setTimeout(() => node.classList.remove("flash"), 1600);
+    for (const other of Array.from(document.querySelectorAll(".panel.pulse"))) {
+        other.classList.remove("pulse");
+    }
+    node.classList.add("pulse");
+    node.addEventListener("pointerdown", () => node.classList.remove("pulse"), { once: true });
 }
 
 /** The setups that fit the machine; every one before a machine is connected, since which it is is not known yet. */

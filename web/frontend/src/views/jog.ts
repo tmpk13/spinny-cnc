@@ -88,7 +88,12 @@ export function travelText(travel: number | null | undefined): string {
 }
 
 /** `page` is the page whose panel this is: its keys jog only while that page shows. */
-export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
+/**
+ * Mounts the jog panel in `root` for the page `page`, whose arrow keys it
+ * answers; `active` says when they are its at all (the PNP page jogs a
+ * G-code device instead while that one places).
+ */
+export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () => boolean = () => true): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
     // a step typed in, which is the step while it is there.
     const picks = new Map<BarId, number>();
@@ -445,7 +450,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
         }
         // Jog keys belong to a field that has the focus, and jog only from
         // the page this panel is on: on the others nothing should move.
-        if (inputHasFocus() || activePage() !== page) {
+        if (inputHasFocus() || activePage() !== page || !active()) {
             return;
         }
         event.preventDefault();

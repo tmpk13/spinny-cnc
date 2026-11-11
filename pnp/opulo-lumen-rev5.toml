@@ -1,0 +1,111 @@
+# An Opulo LumenPnP with the Rev05 motherboard running Opulo's Marlin,
+# as Opulo's stock OpenPnP configuration drives it (openpnp/machine.xml in
+# github.com/opulo-inc/lumenpnp, November 2026). On USB it is a CDC serial
+# port named MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode: pick it in the
+# G-code device panel.
+#
+# The places here are the head's X and Y with the left nozzle (N1) over a
+# point. OpenPnP places its top camera at the head and N1 at -23.544,
+# -65.188 from it, so OpenPnP's places become these by adding 23.544 and
+# 65.188. The right nozzle (N2) is not used.
+#
+# Z is a seesaw: N1 goes down as Z falls below 31.5 and N2 as Z rises above
+# it, so 31.5, with both nozzles up, is the safe height, and every move
+# across goes there first, whether Z stands above it or below.
+name = "Opulo LumenPnP (Rev05, Marlin)"
+description = "LumenPnP, left nozzle N1: Opulo's stock OpenPnP commands, safe Z 31.5"
+
+[port]
+url = ""                 # picked in the G-code device panel
+baud = 115200            # a USB CDC port takes any
+wait_ms = 2000
+timeout = 60
+
+[gcode]
+# Opulo's connect lines: millimeters, absolute, the travel acceleration,
+# and both vacuum sensors (behind an I2C mux at 112, each at 109) set to
+# convert on their own.
+init = [
+    "G21",
+    "G90",
+    "M204 T3500",
+    "M260 A112 B1 S1",
+    "M260 A109",
+    "M260 B48",
+    "M260 B27",
+    "M260 S1",
+    "M260 A112 B2 S1",
+    "M260 A109",
+    "M260 B48",
+    "M260 B27",
+    "M260 S1",
+]
+end = []
+move = "G1"
+x = "X"
+y = "Y"
+z = "Z"
+rotation = "A"           # N1's turn; B is N2's
+rotation_cw = false
+wait = "M400"
+pick = ["M106 P1 S180", "M106"]   # VAC1 on: its valve (fan 1, held at 180) and its pump (fan 0)
+place = ["M107 P1", "M107"]       # VAC1 off
+dwell = "G4 P{ms}"
+home = "G28"
+position = "M114"        # answers X: Y: Z: A: B:
+stop = "M410"
+light_on = ["M150 P255 R255 U255 B255"]   # the ring lights both cameras share
+light_off = ["M150 P0"]
+
+[motion]
+feed_xy = 6000           # mm/min; Opulo's machine allows 17000
+feed_z = 3000            # mm/min; Opulo's allows 20000
+safe_z = 31.5            # both nozzles up
+# MEASURE BEFORE A RUN: jog N1's tip down onto the board's top, press Read
+# position, and set this to that Z plus the parts' height. 20 keeps the tip
+# well above a board on the bed, so a part dropped from there is the worst.
+place_z = 20.0
+pick_dwell_ms = 200      # Opulo's for the N045 tip
+place_dwell_ms = 100
+pick_tries = 3
+park = [42.328, 411.916]   # Opulo's park place
+# discard = [105.996, 221.582, 5.5]  # Opulo's discard place, for N1; left out, a failed part goes back in its pocket
+
+# VAC1's sensor (XGZP6857D through the I2C mux): the reading is the
+# pressure's top byte, lower with more vacuum. Press Read vacuum with the
+# nozzle open and then with a part (or a finger) on it before setting the
+# ranges: Opulo's for the N045 tip are below, and its OpenPnP does not
+# check them by default.
+[vacuum]
+read = ["M260 A112 B1 S1", "M260 A109 B6 S1", "M261 A109 B1 S2"]
+pattern = "^.*data:(?<Value>.*)"
+# part_on = [220, 241]
+# part_off = [248, 255]
+
+# The bottom camera (the PNP tab's up camera) as Opulo places it:
+# 38.376, 154.632 seen by N1, its tip sharp at Z 4. Center nozzle measures
+# the place again; the Z is Opulo's, so check the tip clears the camera's
+# window by jogging down to it once.
+[camera]
+position = [61.92, 219.82]
+z = 4.0
+max_offset = 1.0
+max_turn = 15
+size_tolerance = 0.3
+
+# The top camera: its picture's center 23.544, 65.188 from N1 as designed;
+# Measure offset finds it on the machine.
+[top_camera]
+offset = [23.544, 65.188]
+fiducial = "bright"
+within = 2.0
+
+# One table per feeder; jog N1 onto a feeder's first part to read its
+# place. Opulo's Photon feeders are not driven: their tape is not advanced.
+# [[feeder]]
+# id = "r-10k-0603"
+# match = "10k 0603"
+# at = [100.0, 50.0, 12.0]   # the first part's place, X Y Z (Z: the tip on the part)
+# pitch = [4.0, 0.0]
+# count = 50
+# rotation = 0

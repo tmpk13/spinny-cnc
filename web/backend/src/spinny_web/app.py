@@ -24,7 +24,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -51,7 +51,7 @@ from .files import write_whole
 from .cameras import detect as detect_cameras
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import Device, DeviceStore, Plan, board_fit, board_goto, plan, read_position
+from .openpnp import Device, DeviceStore, Plan, board_fit, board_goto, move_xy, move_z, plan, read_position, safe_line
 from .openpnp import NotFound as DeviceNotFound
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, MachineMover, PnpError, UpCamera, job_components
@@ -149,6 +149,17 @@ PNP_DIR = HOME / "pnp"
 # it, and no shipped copies (its own directories are the files).
 PACKAGE_DIR = Path(__file__).resolve().parent
 SHIPPED_DIR = PACKAGE_DIR / "defaults"
+# What a new device profile starts as: the profile for OpenPnP's Marlin, as
+# a release ships it, else as the checkout has it.
+DEVICE_TEMPLATE_NAME = "openpnp-marlin.toml"
+
+
+def device_template() -> str:
+    for folder in (SHIPPED_DIR / "pnp", PNP_DIR):
+        path = folder / DEVICE_TEMPLATE_NAME
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    raise ValueError(f"no {DEVICE_TEMPLATE_NAME} to start a profile from: give its text")
 FRONTEND_DIST = PACKAGE_DIR / "page" if (PACKAGE_DIR / "page").is_dir() else PACKAGE_DIR.parents[2] / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
@@ -552,6 +563,64 @@ class DeviceSelectBody(Finite):
     # Degrees the board is turned on the device, for a fit from one reference.
     angle: float | None = None
     clear_angle: bool = False
+    # The port to talk to instead of the profile's [port] url; "" goes back
+    # to the profile's.
+    url: str | None = None
+
+
+class DeviceNewBody(BaseModel):
+    # The new profile's text; left out, a copy of the shipped template.
+    text: str | None = None
+
+
+class DevicePatchBody(BaseModel):
+    # The table and the key: ["motion", "place_z"], ["feeder", 0, "at"];
+    # null takes the key out.
+    path: list[str | int]
+    value: Any = None
+
+
+class DeviceIdentifyBody(BaseModel):
+    url: str
+
+
+class DeviceJogBody(Finite):
+    axis: Literal["x", "y", "z", "rotation"]
+    # mm, or degrees counterclockwise from above for the rotation; signed.
+    step: float
+
+
+class DeviceMoveBody(Finite):
+    # The head's X and Y (across at the safe height), then Z, and the
+    # nozzle's turn in degrees; each one left out stays as it is.
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    rotation: float | None = None
+
+
+class DeviceSwapBody(BaseModel):
+    # Which of the two goes over the point the other one is over.
+    to: Literal["nozzle", "camera"]
+
+
+class DeviceCameraBody(Finite):
+    # The up camera's place on the device: typed, the head's place now
+    # with the nozzle over it by eye (`here`), or forgotten (`clear`).
+    position: tuple[float, float] | None = None
+    here: bool = False
+    clear: bool = False
+
+
+class DeviceLightBody(BaseModel):
+    on: bool
+
+
+class DeviceVacuumBody(BaseModel):
+    # The vacuum switched on or off first, when given; then the sensor read
+    # when asked.
+    on: bool | None = None
+    read: bool = False
 
 
 class DeviceTextBody(BaseModel):
@@ -607,6 +676,8 @@ class TopOffsetBody(Finite):
 class DeviceGotoBody(BaseModel):
     job: str
     ref: str
+    # The top camera's picture center over the part, not the nozzle.
+    camera: bool = False
 
 
 class DeviceNozzleBody(Finite):
@@ -3258,23 +3329,28 @@ class Backend:
             camera = self._device_camera_place(self.device_profile())
         except (ValueError, DeviceNotFound):
             camera = self._device_camera_place(None)
+        port = config.get("url")
         return {
             "profile": config.get("profile"),
+            "port": port if isinstance(port, str) and port else None,
             "angle": config.get("angle"),
             "references": [dict(entry) for entry in config.get("references", [])],
             "taken": dict(config.get("taken", {})),
-            "camera": camera.to_dict(),
+            "boards": int(config.get("boards", 0)) if isinstance(config.get("boards", 0), int) else 0,
+            "camera": {**camera.to_dict(), "measured": isinstance(config.get("camera"), dict) and bool(config["camera"].get("position"))},
             "top": self.top.state(),
             **self.pnp_device.state(),
         }
 
     def _device_camera_place(self, device: Device | None) -> CameraPlace:
         """Where the up camera sits on the device, as centering the nozzle
-        over it measured, at the height the profile says the nozzle is
-        sharp at."""
+        over it measured (or the profile has it, until then), at the height
+        the profile says the nozzle is sharp at."""
         kept = self._device_config().get("camera")
         kept = kept if isinstance(kept, dict) else {}
         position = kept.get("position")
+        if not (isinstance(position, list) and len(position) == 2) and device is not None and device.camera_position is not None:
+            position = list(device.camera_position)
         runout = kept.get("runout")
         try:
             return CameraPlace(
@@ -3413,6 +3489,17 @@ class Backend:
             if abs(body.angle) > 360.0:
                 raise ValueError("the board's turn must be within 360 degrees")
             config["angle"] = body.angle
+        if body.url is not None:
+            url = body.url.strip()
+            if self.pnp_device.connected and url != (config.get("url") or ""):
+                raise HTTPException(status_code=409, detail="disconnect the device before picking another port")
+            if url:
+                _check_port(url)
+                if self.link is not None and self.link.is_open and self.link.url == url:
+                    raise ValueError(f"{url} is this machine's own port")
+                config["url"] = url
+            else:
+                config.pop("url", None)
         self._save_config()
         return self.publish_pnp_device()
 
@@ -3425,10 +3512,38 @@ class Backend:
             raise HTTPException(status_code=409, detail="the top camera routine is moving the device")
         return self.device_profile()
 
+    def device_url(self, device: Device) -> str:
+        """The port the device is talked to on: the one picked in the panel, else the profile's."""
+        picked = self._device_config().get("url")
+        return picked if isinstance(picked, str) and picked else device.url
+
     def device_connect(self) -> dict:
         device = self.device_profile()
-        self.pnp_device.connect(device.url, device.baud, device.wait_ms, device.init, device.timeout)
+        url = self.device_url(device)
+        if url and self.link is not None and self.link.is_open and self.link.url == url:
+            raise ValueError(f"{url} is this machine's own port: pick the device's")
+        self.pnp_device.connect(url, device.baud, device.wait_ms, device.init, device.timeout)
         return self.device_state()
+
+    def device_identify(self, url: str) -> dict:
+        """What the firmware on a port says it is (M115), the port opened only
+        for the question; the device's own port is asked over its link, and
+        this machine's is never opened."""
+        url = url.strip()
+        _check_port(url)
+        if self.link is not None and self.link.is_open and self.link.url == url:
+            raise ValueError(f"{url} is this machine's own port")
+        if self.pnp_device.connected and self.pnp_device.url == url:
+            from .gcode_device import IDENTIFY, firmware_of
+
+            self._device_idle()
+            reply = self.pnp_device.command(IDENTIFY, 5.0)
+            return {"url": url, "lines": reply, **firmware_of(reply)}
+        try:
+            baud = self.device_profile().baud
+        except (ValueError, DeviceNotFound):
+            baud = 115200
+        return self.pnp_device.identify(url, baud)
 
     def device_disconnect(self) -> dict:
         if self.pnp_device.running:
@@ -3479,10 +3594,7 @@ class Backend:
         if body.at is None:
             offset = (0.0, 0.0)
             if body.camera:
-                top = self.top.settings()
-                if not top.measured or top.offset is None:
-                    raise ValueError("the top camera's offset is not measured: put the nozzle on a mark, then Measure offset")
-                offset = top.offset
+                offset = self._top_offset(self.device_profile())
             self.device_position()
             position = self.pnp_device.position or {}
             at = (float(position["x"]) + offset[0], float(position["y"]) + offset[1])
@@ -3584,6 +3696,10 @@ class Backend:
             raise ValueError("the top camera is not running: start it, since the run looks with it")
 
         def ended(progress) -> None:
+            if progress.state == "done":
+                with self._config_lock:
+                    config["boards"] = int(config.get("boards", 0) or 0) + 1
+                self._save_config()
             level = "info" if progress.state == "done" else "error"
             failed = f", {len(progress.failed)} left out" if progress.failed else ""
             why = f", {progress.error}" if progress.error and progress.state == "error" else ""
@@ -3606,11 +3722,190 @@ class Backend:
         self.pnp_device.stop(line)
 
     def device_goto(self, body: DeviceGotoBody) -> dict:
+        """The nozzle, or the top camera's picture center, over a part's place
+        on the device: up to the safe height, then across; Z stays there."""
         device = self._device_idle()
         parts = self.job_parts(body.job)["components"]
         part = self._part(body.job, body.ref, parts)
-        for line in board_goto(device, self._device_fit(body.job, parts), part):
+        fit = self._device_fit(body.job, parts)
+        if body.camera:
+            offset = self._top_offset(device)
+            x, y = fit.apply((float(part["x"]), float(part["y"])))
+            self._device_lines(device, [safe_line(device), move_xy(device, (x - offset[0], y - offset[1]))])
+        else:
+            self._device_lines(device, board_goto(device, fit, part))
+        return self.publish_pnp_device()
+
+    def _top_offset(self, device: Device) -> tuple[float, float]:
+        """Where the top camera's picture center is from the nozzle: as
+        measured, else as the profile's design has it."""
+        top = self.top.settings()
+        if top.offset is not None:
+            return (float(top.offset[0]), float(top.offset[1]))
+        if device.top is not None and device.top.offset is not None:
+            return device.top.offset
+        raise ValueError("the top camera's offset is not known: give [top_camera] offset in the profile, or Measure offset")
+
+    def _device_lines(self, device: Device, lines: list[str], track: dict | None = None) -> None:
+        """Lines sent one at a time, each answered, the position kept as
+        `track` says it ends (x, y, z, rotation) when given."""
+        for line in lines:
             self.pnp_device.command(line, device.timeout)
+        if track:
+            position = dict(self.pnp_device.position or {})
+            position.update(track)
+            self.pnp_device.position = position
+
+    def _device_here(self, device: Device) -> dict:
+        """The head's place read off the device, X and Y at least."""
+        self.device_position()
+        return dict(self.pnp_device.position or {})
+
+    def device_jog(self, body: DeviceJogBody) -> dict:
+        """One axis moved by a step from where the device says it is: the
+        position is read first (a queued move counts), then the move goes
+        out at the axis' feed. Z moves alone, X and Y keep the height."""
+        device = self._device_idle()
+        if not device.position:
+            raise ValueError("the device profile has no position command, which a jog starts from")
+        limit = 360.0 if body.axis == "rotation" else 500.0
+        if body.step == 0.0 or abs(body.step) > limit:
+            raise ValueError(f"step: up to {limit:g} {'degrees' if body.axis == 'rotation' else 'mm'} either way")
+        here = self._device_here(device)
+        if body.axis not in here:
+            letter = device.axes[("x", "y", "z", "rotation").index(body.axis)]
+            raise DeviceLinkError(f"'{device.position}' answered no {letter}: it cannot be jogged from where it is")
+        if body.axis == "rotation":
+            # The axis' own value: turned the other way on an axis that turns clockwise.
+            value = here["rotation"] + (-body.step if device.rotation_cw else body.step)
+            line = f"{device.move} {device.axes[3]}{num(value)} F{num(device.feed_xy, 0)}"
+        elif body.axis == "z":
+            value = here["z"] + body.step
+            line = move_z(device, value)
+        else:
+            value = here[body.axis] + body.step
+            point = (value, here["y"]) if body.axis == "x" else (here["x"], value)
+            line = move_xy(device, point)
+        self._device_lines(device, [line], {body.axis: round(value, 4)})
+        return self.publish_pnp_device()
+
+    def device_move(self, body: DeviceMoveBody) -> dict:
+        """The head to a place: across at the safe height when X or Y is
+        given (the other one kept), then down or up to Z, the nozzle turned
+        on the way across."""
+        device = self._device_idle()
+        if body.x is None and body.y is None and body.z is None and body.rotation is None:
+            raise ValueError("give x, y, z or rotation")
+        for value in (body.x, body.y, body.z):
+            if value is not None and abs(value) > 10000.0:
+                raise ValueError("a place must be within 10000 mm")
+        lines: list[str] = []
+        track: dict = {}
+        if body.x is not None or body.y is not None:
+            here = self._device_here(device) if body.x is None or body.y is None else {}
+            point = (body.x if body.x is not None else here["x"], body.y if body.y is not None else here["y"])
+            lines += [safe_line(device), move_xy(device, point, body.rotation)]
+            track.update({"x": point[0], "y": point[1], "z": device.safe_z})
+        elif body.rotation is not None:
+            lines.append(move_xy(device, None, body.rotation))
+        if body.z is not None:
+            lines.append(move_z(device, body.z))
+            track["z"] = body.z
+        self._device_lines(device, lines, track)
+        return self.publish_pnp_device()
+
+    def device_park(self) -> dict:
+        device = self._device_idle()
+        if device.park is None:
+            raise ValueError("the device profile has no [motion] park place")
+        self._device_lines(device, [safe_line(device), move_xy(device, device.park)], {"x": device.park[0], "y": device.park[1], "z": device.safe_z})
+        return self.publish_pnp_device()
+
+    def device_over_camera(self) -> dict:
+        """The nozzle over the up camera, turned to 0, at the height it is
+        sharp at there (the safe height when the profile gives none)."""
+        device = self._device_idle()
+        place = self._device_camera_place(device)
+        if place.position is None:
+            raise ValueError("the up camera's place on the device is not known: set it, or Center nozzle over it")
+        lines = [safe_line(device), move_xy(device, place.position, 0.0)]
+        track = {"x": place.position[0], "y": place.position[1], "z": device.safe_z}
+        if place.height is not None:
+            lines.append(move_z(device, place.height))
+            track["z"] = place.height
+        if device.light_on and self.pnp_device.light is not True:
+            lines = [*device.light_on, *lines]
+            self.pnp_device.light = True
+        self._device_lines(device, lines, track)
+        return self.publish_pnp_device()
+
+    def device_swap(self, body: DeviceSwapBody) -> dict:
+        """The nozzle over the point the top camera looks at, or the camera
+        over the point the nozzle is over: the head moved by the camera's
+        offset, at the safe height."""
+        device = self._device_idle()
+        offset = self._top_offset(device)
+        here = self._device_here(device)
+        sign = 1.0 if body.to == "nozzle" else -1.0
+        point = (here["x"] + sign * offset[0], here["y"] + sign * offset[1])
+        self._device_lines(device, [safe_line(device), move_xy(device, point)], {"x": point[0], "y": point[1], "z": device.safe_z})
+        return self.publish_pnp_device()
+
+    def device_camera(self, body: DeviceCameraBody) -> dict:
+        """The up camera's place on the device set by hand: typed, the head's
+        place now with the nozzle over it by eye, or forgotten. Its scale,
+        roll and the nozzle's runout stay as measured."""
+        device = self._device_idle() if body.here else self.device_profile()
+        place = self._device_camera_place(device)
+        if body.clear:
+            place.position = None
+        elif body.here:
+            here = self._device_here(device)
+            place.position = (round(here["x"], 4), round(here["y"], 4))
+        elif body.position is not None:
+            if any(abs(value) > 10000.0 for value in body.position):
+                raise ValueError("the up camera's place must be within 10000 mm")
+            place.position = (float(body.position[0]), float(body.position[1]))
+        else:
+            raise ValueError("give a position, here or clear")
+        self._keep_device_camera(place)
+        return self.device_state()
+
+    def device_light(self, on: bool) -> dict:
+        device = self._device_idle()
+        lines = device.light_on if on else device.light_off
+        if not lines:
+            raise ValueError(f"the device profile has no [gcode] light_{'on' if on else 'off'}")
+        self._device_lines(device, list(lines))
+        self.pnp_device.light = on
+        return self.publish_pnp_device()
+
+    def device_vacuum(self, body: DeviceVacuumBody) -> dict:
+        """The vacuum switched with the profile's pick and place lines, and
+        the sensor read with its read lines: what finding part_on and
+        part_off takes."""
+        device = self._device_idle()
+        if body.on is None and not body.read:
+            raise ValueError("give on, or read")
+        reply: list[str] = []
+        if body.on is not None:
+            self._device_lines(device, list(device.pick if body.on else device.place))
+            self.pnp_device.vacuum = body.on
+        if body.read:
+            vacuum = device.vacuum
+            if vacuum is None:
+                raise ValueError("the device profile has no [vacuum] read lines")
+            for line in vacuum.read:
+                reply = self.pnp_device.command(line, device.timeout)
+            value = vacuum.reading(reply)
+            if value is None:
+                raise DeviceLinkError(f"'{vacuum.read[-1]}' answered no reading its pattern finds: {' | '.join(reply) or 'nothing'}")
+            self.pnp_device.reading = value
+        return {"reply": reply, **self.publish_pnp_device()}
+
+    def device_boards_reset(self) -> dict:
+        self._device_config()["boards"] = 0
+        self._save_config()
         return self.publish_pnp_device()
 
     def device_reset_feeders(self, body: DeviceFeederBody) -> dict:
@@ -3888,6 +4183,15 @@ def _tip_point(status, offset: tuple[float, float], cartesian: bool, table_angle
     plunger). On the polar machine the head sits on the rail (across 0),
     on a cartesian one at the cross slide's position."""
     return turn((status.r + offset[0], (status.z if cartesian else 0.0) + offset[1]), table_angle)
+
+
+def _check_port(url: str) -> None:
+    """A port typed for the G-code device: a device path or a socket url,
+    refused as a bad request otherwise."""
+    try:
+        check_url(url)
+    except LinkError as exc:
+        raise ValueError(str(exc)) from None
 
 
 def _by_id_names() -> dict[str, str]:
@@ -4705,6 +5009,30 @@ def create_app(
     def device_profile_check(device_id: str, body: DeviceTextBody):
         return guarded(lambda: backend.pnp_devices.check(device_id, body.text))
 
+    @app.patch("/api/pnp/devices/{device_id}")
+    def device_profile_patch(device_id: str, body: DevicePatchBody):
+        result = guarded(lambda: backend.pnp_devices.patch(device_id, body.path, body.value))
+        backend.publish_pnp_device()
+        return result
+
+    @app.post("/api/pnp/devices/{device_id}")
+    def device_profile_new(device_id: str, body: DeviceNewBody | None = None):
+        def make():
+            text = (body.text if body is not None else None) or device_template()
+            return backend.pnp_devices.create(device_id, text)
+
+        return guarded(make)
+
+    @app.delete("/api/pnp/devices/{device_id}")
+    def device_profile_delete(device_id: str):
+        def remove():
+            if backend._device_config().get("profile") == device_id and backend.pnp_device.connected:
+                raise HTTPException(status_code=409, detail="disconnect the device before removing its profile")
+            backend.pnp_devices.remove(device_id)
+            return backend.pnp_devices.list()
+
+        return guarded(remove)
+
     @app.get("/api/pnp/device")
     def device_state():
         return guarded(backend.device_state)
@@ -4762,6 +5090,46 @@ def create_app(
     @app.post("/api/pnp/device/goto")
     def device_goto(body: DeviceGotoBody):
         return guarded(lambda: backend.device_goto(body))
+
+    @app.post("/api/pnp/device/identify")
+    def device_identify(body: DeviceIdentifyBody):
+        return guarded(lambda: backend.device_identify(body.url))
+
+    @app.post("/api/pnp/device/jog")
+    def device_jog(body: DeviceJogBody):
+        return guarded(lambda: backend.device_jog(body))
+
+    @app.post("/api/pnp/device/move")
+    def device_move(body: DeviceMoveBody):
+        return guarded(lambda: backend.device_move(body))
+
+    @app.post("/api/pnp/device/park")
+    def device_park():
+        return guarded(backend.device_park)
+
+    @app.post("/api/pnp/device/over-camera")
+    def device_over_camera():
+        return guarded(backend.device_over_camera)
+
+    @app.post("/api/pnp/device/swap")
+    def device_swap(body: DeviceSwapBody):
+        return guarded(lambda: backend.device_swap(body))
+
+    @app.put("/api/pnp/device/camera")
+    def device_camera(body: DeviceCameraBody):
+        return guarded(lambda: backend.device_camera(body))
+
+    @app.post("/api/pnp/device/light")
+    def device_light(body: DeviceLightBody):
+        return guarded(lambda: backend.device_light(body.on))
+
+    @app.post("/api/pnp/device/vacuum")
+    def device_vacuum(body: DeviceVacuumBody):
+        return guarded(lambda: backend.device_vacuum(body))
+
+    @app.post("/api/pnp/device/boards/reset")
+    def device_boards_reset():
+        return guarded(backend.device_boards_reset)
 
     @app.post("/api/pnp/device/nozzle")
     def device_nozzle(body: DeviceNozzleBody | None = None):

@@ -100,6 +100,21 @@ describe("HttpApi G-code device routes", () => {
         await api.topMark();
         await api.topOffset(1.5);
         await api.topAbort();
+        await api.patchDeviceFile("marlin", ["motion", "place_z"], 12.5);
+        await api.newDeviceFile("lumen");
+        await api.deleteDeviceFile("lumen");
+        await api.deviceSelect({ url: "/dev/ttyACM1" });
+        await api.deviceIdentify("/dev/ttyACM1");
+        await api.deviceJog("x", -1);
+        await api.deviceMove({ x: 10, y: 20 });
+        await api.devicePark();
+        await api.deviceOverCamera();
+        await api.deviceSwap("camera");
+        await api.deviceCamera({ here: true });
+        await api.deviceLight(true);
+        await api.deviceVacuum({ on: false, read: true });
+        await api.deviceBoardsReset();
+        await api.deviceGoto("a1", "R1", true);
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["GET", "/api/pnp/devices", null],
             ["GET", "/api/pnp/devices/marlin", null],
@@ -119,7 +134,7 @@ describe("HttpApi G-code device routes", () => {
             ["POST", "/api/pnp/device/plan", { job: "a1", refs: ["R1", "C2"] }],
             ["POST", "/api/pnp/device/run", { job: "a1", fiducials: false }],
             ["POST", "/api/pnp/device/stop", null],
-            ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1" }],
+            ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1", camera: false }],
             ["POST", "/api/pnp/device/feeders/reset", { feeder: "tape" }],
             ["POST", "/api/pnp/device/feeders/reset", {}],
             ["POST", "/api/pnp/device/nozzle", { step: 0.5 }],
@@ -133,6 +148,21 @@ describe("HttpApi G-code device routes", () => {
             ["POST", "/api/pnp/device/top/mark", null],
             ["POST", "/api/pnp/device/top/offset", { step: 1.5 }],
             ["POST", "/api/pnp/device/top/abort", null],
+            ["PATCH", "/api/pnp/devices/marlin", { path: ["motion", "place_z"], value: 12.5 }],
+            ["POST", "/api/pnp/devices/lumen", {}],
+            ["DELETE", "/api/pnp/devices/lumen", null],
+            ["PUT", "/api/pnp/device", { url: "/dev/ttyACM1" }],
+            ["POST", "/api/pnp/device/identify", { url: "/dev/ttyACM1" }],
+            ["POST", "/api/pnp/device/jog", { axis: "x", step: -1 }],
+            ["POST", "/api/pnp/device/move", { x: 10, y: 20 }],
+            ["POST", "/api/pnp/device/park", null],
+            ["POST", "/api/pnp/device/over-camera", null],
+            ["POST", "/api/pnp/device/swap", { to: "camera" }],
+            ["PUT", "/api/pnp/device/camera", { here: true }],
+            ["POST", "/api/pnp/device/light", { on: true }],
+            ["POST", "/api/pnp/device/vacuum", { on: false, read: true }],
+            ["POST", "/api/pnp/device/boards/reset", null],
+            ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1", camera: true }],
         ]);
         expect(api.deviceProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/device/program.gcode?job=a1&refs=R1%2CC2");
         expect(api.topFrameUrl(640, true)).toMatch(/^http:\/\/host\/api\/pnp\/device\/top\/frame\.jpg\?width=640&overlay=1&t=\d+$/);

@@ -1160,13 +1160,15 @@ export interface FeederSummary {
     /** Marks on the feeder the top camera finds once a run; its places follow them. */
     marks: [number, number][];
     mark: SpotPolarity;
+    /** How far from the up camera's center its parts are looked for, mm; null takes the profile's. */
+    crop?: number | null;
 }
 
-/** The vacuum sensor: the line that reads it, the pattern whose group is the reading, the readings with a part held and empty. */
+/** The vacuum sensor: the lines that read it, the pattern whose group is the reading, the readings with a part held and empty (none: read by hand only). */
 export interface DeviceVacuum {
-    read: string;
+    read: string[];
     pattern: string;
-    part_on: [number, number];
+    part_on: [number, number] | null;
     part_off: [number, number] | null;
 }
 
@@ -1189,19 +1191,40 @@ export interface DeviceDocument {
     axes: string[];
     /** A positive rotation turns the nozzle clockwise seen from above. */
     rotation_cw: boolean;
+    /** mm/min across and up or down. */
+    feed_xy: number;
+    feed_z: number;
     safe_z: number;
     place_z: number;
+    pick_dwell_ms: number;
+    place_dwell_ms: number;
+    /** Where the head waits out of the way; null when the profile has none. */
+    park: [number, number] | null;
+    /** Where the up camera is as designed, before centering measures it. */
+    camera_position: [number, number] | null;
+    /** The profile switches lights for the cameras. */
+    light: boolean;
     /** Where a part that failed a check is let go; null puts it back in its pocket. */
     discard: [number, number, number] | null;
     pick_tries: number;
     /** The height the nozzle is seen sharp at over the up camera, when it sits on this device. */
     camera_z: number | null;
+    /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
+    crop?: number | null;
     max_offset: number;
     max_turn: number;
     size_tolerance: number;
     vacuum: DeviceVacuum | null;
     top: DeviceTopProfile | null;
     feeders: FeederSummary[];
+}
+
+/** What the firmware on a port said it is, in answer to M115. */
+export interface DeviceIdentity {
+    url: string;
+    lines: string[];
+    firmware: string | null;
+    machine: string | null;
 }
 
 export interface DevicesResponse {
@@ -1241,6 +1264,15 @@ export interface DeviceRun {
     job: string | null;
     error: string | null;
     seconds: number;
+    /** What the run did, a line per step: seconds from its start, the part, and how it went. */
+    steps?: DeviceStep[];
+}
+
+export interface DeviceStep {
+    t: number;
+    ref: string | null;
+    text: string;
+    level: "info" | "warning" | "error";
 }
 
 /** The top camera's settings: the capture, the mark the offset is measured from, and what it measured. */
@@ -1285,13 +1317,21 @@ export interface TopState extends TopSettings {
 export interface DeviceState {
     /** The profile picked, or null. */
     profile: string | null;
+    /** The port picked in the panel, which wins over the profile's; null talks on the profile's. */
+    port?: string | null;
+    /** Boards a run finished since the count was reset. */
+    boards?: number;
+    /** Whether the lights were last switched on; null until switched. */
+    light?: boolean | null;
+    /** The vacuum as last switched and the sensor's last reading. */
+    vacuum?: { on: boolean | null; reading: number | null };
     /** Degrees the board is turned on the device, for a fit from one reference. */
     angle: number | null;
     references: DeviceReference[];
     /** How many parts each feeder has given. */
     taken: Record<string, number>;
     /** Where the up camera sits on the device and how its picture lies, as centering the nozzle over it measured, and the nozzle tip's runout off its turning axis at 0, mm. */
-    camera: { position: [number, number] | null; height: number | null; mm_per_px: number; roll: number; mirror: boolean; runout?: [number, number] | null };
+    camera: { position: [number, number] | null; height: number | null; mm_per_px: number; roll: number; mirror: boolean; runout?: [number, number] | null; measured?: boolean };
     /** The top camera on the device's head. */
     top?: TopState;
     connected: boolean;

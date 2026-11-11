@@ -1,9 +1,11 @@
-// The PNP page: the parts of the selected board job in a list and on a
-// drawing of the board, the up camera's picture with its settings (its
-// device picked from the cameras found attached, or typed), and the
-// nozzle: where it sits over the up camera (measured by centering it),
-// where a part sits on it, and a goto that takes it over a part's place.
-// Its own setup steps lead through all of it.
+// The PNP page: the parts of the selected board job in a list (sorted by
+// any column, grouped by value and footprint) and on a drawing of the
+// board that zooms and pans; a board picked or uploaded right here; the
+// jog of whichever machine places (this one, or a G-code device); the
+// cameras' pictures; the up camera's settings with where it sits on the
+// machine; and for a G-code device its own panels (the device, the top
+// camera, the board's place on it, and placing). Its own setup steps
+// lead through all of it.
 
 import { activePage, button, el, labeled, numberField, readStored, replace, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
@@ -12,12 +14,21 @@ import { setPending, type AppState } from "../state.ts";
 import type { Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
+import { mountCameraView } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
-import { DEVICE_SETUP, mountDevice } from "./device.ts";
+import { DEVICE_SETUP, deviceCameraText, mountDevice } from "./device.ts";
+import { mountDeviceJog } from "./devicejog.ts";
+import { mountDeviceRefs } from "./devicerefs.ts";
+import { mountDeviceRun } from "./devicerun.ts";
+import { infoTip } from "./infotip.ts";
+import { mountJog } from "./jog.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
-import { FRAME_INTERVAL_MS, FRAME_WIDTH } from "./vision.ts";
+import { mountTopCamera } from "./topcamera.ts";
 
 const TARGET_KEY = "spinny.pnp.target";
+const SIDE_KEY = "spinny.pnp.side";
+const SORT_KEY = "spinny.pnp.sort";
+const GROUP_KEY = "spinny.pnp.group";
 
 /** Which machine places the parts, as remembered in this browser: this one unless a G-code device was picked. */
 export function readTarget(): "machine" | "device" {
@@ -27,8 +38,16 @@ export function readTarget(): "machine" | "device" {
 /** How often the up camera's state is asked for while the page shows, ms. */
 const POLL_MS = 500;
 
+export type Side = "all" | "front" | "back";
+
+/** The side the list starts on: the one picked before, else the front, where parts are placed. */
+export function readSide(): Side {
+    const stored = readStored(SIDE_KEY);
+    return stored === "all" || stored === "back" ? stored : "front";
+}
+
 /** The parts that match a filter (ref, value or footprint, any case) on a side. */
-export function filterParts(parts: Component[], text: string, side: "all" | "front" | "back"): Component[] {
+export function filterParts(parts: Component[], text: string, side: Side): Component[] {
     const words = text.trim().toLowerCase().split(/\s+/).filter((word) => word !== "");
     return parts.filter((part) => {
         if (side !== "all" && part.side !== side) {
@@ -43,6 +62,49 @@ export function filterParts(parts: Component[], text: string, side: "all" | "fro
 export function footprintName(footprint: string): string {
     const at = footprint.indexOf(":");
     return at >= 0 ? footprint.slice(at + 1) : footprint;
+}
+
+export type SortKey = "ref" | "value" | "footprint" | "x" | "y" | "rotation" | "side";
+
+/** Text compared the way people count: R2 before R10. */
+export function naturalCompare(a: string, b: string): number {
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+/** The parts sorted by a column, ties by reference; `descending` turns the order round. */
+export function sortParts(parts: Component[], key: SortKey, descending = false): Component[] {
+    const sorted = [...parts].sort((a, b) => {
+        let order: number;
+        switch (key) {
+            case "x":
+            case "y":
+            case "rotation":
+                order = a[key] - b[key];
+                break;
+            case "footprint":
+                order = naturalCompare(footprintName(a.footprint), footprintName(b.footprint));
+                break;
+            default:
+                order = naturalCompare(String(a[key]), String(b[key]));
+        }
+        return order !== 0 ? order : naturalCompare(a.ref, b.ref);
+    });
+    return descending ? sorted.reverse() : sorted;
+}
+
+/** The parts grouped by value and footprint, in the order of their first part. */
+export function groupParts(parts: Component[]): { key: string; value: string; footprint: string; parts: Component[] }[] {
+    const groups = new Map<string, { key: string; value: string; footprint: string; parts: Component[] }>();
+    for (const part of parts) {
+        const key = JSON.stringify([part.value, part.footprint]);
+        let group = groups.get(key);
+        if (!group) {
+            group = { key, value: part.value, footprint: part.footprint, parts: [] };
+            groups.set(key, group);
+        }
+        group.parts.push(part);
+    }
+    return [...groups.values()];
 }
 
 /** The up camera's place on the board: its joints turned by the table's angle, as a cartesian machine's board frame is. */
@@ -110,9 +172,10 @@ export interface BoardScene {
 }
 
 /**
- * The board drawing: outline, pads, every part as a dot with its reference,
- * and the up camera; y up. The head is drawn into it by `placeHead`, which
- * follows the machine without drawing the board again.
+ * The board drawing: outline, pads, every part as a dot with its reference
+ * (its value and footprint on hover), and the up camera; y up. The head is
+ * drawn into it by `placeHead`, which follows the machine without drawing
+ * the board again.
  */
 export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { root: SVGElement; box: Box } | null {
     const box = drawingBox(scene.job, scene.parts, scene.camera ? [scene.camera] : []);
@@ -137,6 +200,7 @@ export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { ro
     for (const part of scene.parts) {
         const chosen = part.ref === scene.selected;
         const group = svg("g", { class: `pnp-part${chosen ? " selected" : ""}${part.side === "back" ? " back" : ""}${part.dnp ? " dnp" : ""}`, "data-ref": part.ref },
+            svg("title", {}, `${part.ref} ${part.value} ${footprintName(part.footprint)}`),
             svg("circle", { cx: sx(part.x), cy: sy(part.y), r: (chosen ? dot * 2 : dot).toFixed(3) }),
             svg("text", { x: sx(part.x), y: (box.y1 - part.y - dot * 2.2).toFixed(3), "font-size": text.toFixed(3) }, part.ref),
         );
@@ -172,19 +236,42 @@ export function placeHead(root: SVGElement, box: Box, head: { x: number; y: numb
     root.append(crossMark(head, box, "pnp-head", "head"));
 }
 
+/** A view box zoomed by `factor` about a point of it (fractions of its width and height from its top left), kept within `limit` and no smaller than a 64th of it. */
+export function zoomBox(view: Box, factor: number, fx: number, fy: number, limit: Box): Box {
+    const width = view.x1 - view.x0;
+    const height = view.y1 - view.y0;
+    const fullWidth = limit.x1 - limit.x0;
+    const scale = Math.min(Math.max(factor, (fullWidth / 64) / width), fullWidth / width);
+    const nextWidth = width * scale;
+    const nextHeight = height * scale;
+    const px = view.x0 + fx * width;
+    const py = view.y0 + fy * height;
+    return clampBox({ x0: px - fx * nextWidth, y0: py - fy * nextHeight, x1: px - fx * nextWidth + nextWidth, y1: py - fy * nextHeight + nextHeight }, limit);
+}
+
+/** A view box moved back inside `limit` where it hangs over, its size kept. */
+export function clampBox(view: Box, limit: Box): Box {
+    const width = view.x1 - view.x0;
+    const height = view.y1 - view.y0;
+    const x0 = Math.min(Math.max(view.x0, limit.x0), Math.max(limit.x0, limit.x1 - width));
+    const y0 = Math.min(Math.max(view.y0, limit.y0), Math.max(limit.y0, limit.y1 - height));
+    return { x0, y0, x1: x0 + width, y1: y0 + height };
+}
+
 /** One line on the routine: which, where it is, and how it ended. */
 export function pnpRoutineText(state: PnpState | null): string {
     const routine = state?.routine;
     if (!routine) {
         return "";
     }
-    const what = routine.kind === "nozzle" ? "Centering the nozzle" : "Looking at the part";
+    const what = routine.kind === "nozzle" ? "Centering the nozzle" : routine.kind === "runout" ? "Measuring the runout" : "Looking at the part";
     if (routine.state === "running") {
         const spot = routine.spot ? `, nozzle ${formatFixed(routine.spot.mm, 3)} mm off center` : "";
         return `${what}: ${routine.step} (${routine.done} of ${routine.total})${spot}`;
     }
     if (routine.state === "done") {
-        return routine.kind === "nozzle" ? "Nozzle centered: camera place, scale, roll and mirror measured." : "Part measured: offset below.";
+        return routine.kind === "nozzle" ? "Nozzle centered: camera place, scale, roll and mirror measured."
+            : routine.kind === "runout" ? "Runout measured." : "Part measured: offset below.";
     }
     return `${what} ${routine.state}${routine.error && routine.error !== "stopped" ? `: ${routine.error}` : ""}`;
 }
@@ -221,7 +308,7 @@ export const PNP_SETUP: Setup = {
                 hint: "Jog the nozzle into the up camera's view, then press Center nozzle.",
                 panel: "pnp-nozzle",
             },
-            { label: "Board", done: parts > 0, hint: "Pick a board job uploaded as .kicad_pcb in the Parts panel.", panel: "pnp-parts" },
+            { label: "Board", done: parts > 0, hint: "Pick or upload a board (.kicad_pcb) in the Parts panel.", panel: "pnp-parts" },
             {
                 label: "Part on nozzle",
                 done: pnp?.part_offset !== null && pnp?.part_offset !== undefined,
@@ -245,17 +332,34 @@ export interface PnpRoots {
     nozzle: HTMLElement;
     /** The G-code device's panel. */
     device: HTMLElement;
+    /** The jog of the machine that places. */
+    jog: HTMLElement;
+    /** The cameras' pictures. */
+    view: HTMLElement;
+    /** The device's top camera. */
+    top: HTMLElement;
+    /** The board's place on the device. */
+    refs: HTMLElement;
+    /** Placing with the device. */
+    run: HTMLElement;
 }
+
+const COLUMNS: [SortKey, string][] = [["ref", "Ref"], ["value", "Value"], ["footprint", "Footprint"], ["x", "X"], ["y", "Y"], ["rotation", "Rot"], ["side", "Side"]];
 
 export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     let selected: string | null = null;
     // The job, and where it lay, the parts were asked for: a reply for
     // another is dropped, and a job moved, turned or aligned is asked again.
     let asked: string | null = null;
+    let loading = false;
 
     // The steps follow the machine the parts are placed with.
     mountSteps(roots.steps, ctx, (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP], "spinny.steps.pnp");
     mountDevice(roots.device, ctx);
+    mountDeviceRefs(roots.refs, ctx);
+    mountDeviceRun(roots.run, ctx);
+    mountTopCamera(roots.top, ctx, () => visible() && ctx.store.get().pnpTarget === "device");
+    mountCameraView(roots.view, ctx);
     const target = el("select", { class: "field", "aria-label": "Place with" },
         el("option", { value: "machine" }, "this machine"),
         el("option", { value: "device" }, "a G-code device (OpenPnP compatible)"),
@@ -267,51 +371,78 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     });
     ctx.store.set({ pnpTarget: readTarget() });
 
+    // --- the jog: this machine's panel, or the device's bars ---
+    const machineJog = el("div", { class: "stack pnp-machine-jog" });
+    const deviceJog = el("div", { class: "stack pnp-device-jog" });
+    roots.jog.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog")), el("div", { class: "panel-body" }, machineJog, deviceJog));
+    mountJog(machineJog, ctx, "pnp", () => ctx.store.get().pnpTarget === "machine");
+    mountDeviceJog(deviceJog, ctx, () => ctx.store.get().pnpTarget === "device");
+
     // --- the parts ---
     const jobPick = el("select", { class: "field", "aria-label": "Board job" }) as HTMLSelectElement;
+    const upload = el("input", { type: "file", accept: ".kicad_pcb", class: "hidden", "aria-label": "Board file" }) as HTMLInputElement;
+    const uploadButton = button("Upload board", () => upload.click(), "btn btn-quiet btn-small");
+    uploadButton.title = "upload a .kicad_pcb as a job and list its parts";
     const filter = el("input", { type: "search", class: "field", placeholder: "ref, value or footprint", "aria-label": "Filter parts" }) as HTMLInputElement;
     const sidePick = el("select", { class: "field", "aria-label": "Side" },
-        el("option", { value: "all" }, "both sides"), el("option", { value: "front" }, "front"), el("option", { value: "back" }, "back")) as HTMLSelectElement;
-    const partsNote = el("p", { class: "muted hint" });
+        el("option", { value: "front" }, "front"), el("option", { value: "back" }, "back"), el("option", { value: "all" }, "both sides")) as HTMLSelectElement;
+    sidePick.value = readSide();
+    const grouped = el("input", { type: "checkbox", "aria-label": "Group by value and footprint" }) as HTMLInputElement;
+    grouped.checked = readStored(GROUP_KEY) === "1";
+    const partsNote = el("p", { class: "muted hint pnp-parts-note" });
     const table = el("table", { class: "pnp-parts" });
     const correct = el("input", { type: "checkbox", "aria-label": "Correct by the part on the nozzle" }) as HTMLInputElement;
     const correctLabel = el("label", { class: "muted" }, correct, " part center over the place");
+    const withCamera = el("input", { type: "checkbox", "aria-label": "Go with the top camera" }) as HTMLInputElement;
+    const withCameraLabel = el("label", { class: "muted", title: "the top camera's crosshair goes over the part instead of the nozzle" }, withCamera, " with the top camera");
     const gotoButton = button("Go to part", () => gotoPart(), "btn btn-primary");
+    gotoButton.title = "X and Y over the picked part, at the safe height (Travel H here, safe Z on a device); Z stays up";
     const chosenLine = el("p", { class: "muted pnp-chosen" });
     roots.parts.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Parts")),
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Place with", target, "labeled inline")),
-            el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), sidePick),
-            el("div", { class: "button-row" }, filter),
-            el("div", { class: "button-row" }, gotoButton, correctLabel),
+            el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), uploadButton, upload),
+            el("div", { class: "button-row" }, filter, sidePick, el("label", { class: "muted" }, grouped, " group")),
+            el("div", { class: "button-row" }, gotoButton, correctLabel, withCameraLabel),
             chosenLine,
             partsNote,
             el("div", { class: "pnp-parts-box" }, table),
         ),
     );
-    jobPick.addEventListener("change", () => void ctx.selectJob(jobPick.value === "" ? null : jobPick.value));
-    filter.addEventListener("input", () => renderParts(ctx.store.get()));
-    sidePick.addEventListener("change", () => renderParts(ctx.store.get()));
+    jobPick.addEventListener("change", () => {
+        partsNote.textContent = "Loading the job...";
+        void ctx.selectJob(jobPick.value === "" ? null : jobPick.value);
+    });
+    filter.addEventListener("input", () => renderAll());
+    sidePick.addEventListener("change", () => {
+        writeStored(SIDE_KEY, sidePick.value);
+        renderAll();
+    });
+    grouped.addEventListener("change", () => {
+        writeStored(GROUP_KEY, grouped.checked ? "1" : "0");
+        renderParts(ctx.store.get());
+    });
+    upload.addEventListener("change", () => void uploadBoard());
+
+    let sortKey: SortKey = (COLUMNS.map(([key]) => key)).find((key) => key === (readStored(SORT_KEY) ?? "").replace(/^-/, "")) ?? "ref";
+    let sortDown = (readStored(SORT_KEY) ?? "").startsWith("-");
+    // The groups folded shut, by value and footprint.
+    const folded = new Set<string>();
 
     // --- the board ---
     const drawing = el("div", { class: "pnp-drawing" });
-    roots.board.append(el("div", { class: "panel-head" }, el("h2", {}, "Board")), el("div", { class: "panel-body" }, drawing,
-        el("p", { class: "muted hint" }, "Click a part to pick it. Hollow dots are on the back.")));
+    const fit = button("Fit", () => resetView(), "btn btn-quiet btn-small");
+    fit.title = "the whole board again";
+    roots.board.append(
+        el("div", { class: "panel-head" }, el("h2", {}, "Board"), fit),
+        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; the wheel zooms, a drag pans, a double-click fits. Hollow dots are on the back.")),
+    );
 
     // --- the up camera ---
-    const picture = el("img", { class: "vision-picture", alt: "Up camera picture with a center crosshair" }) as HTMLImageElement;
-    const pictureBox = el("div", { class: "vision-picture-box hidden" }, picture);
     const startButton = button("Start", () => startCamera(), "btn btn-primary");
     startButton.title = "start the up camera with these settings";
     const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn");
-    let overlayOn = true;
-    const overlayButton = button("Overlay", () => {
-        overlayOn = !overlayOn;
-        overlayButton.setAttribute("aria-pressed", overlayOn ? "true" : "false");
-        refreshFrame(true);
-    }, "btn btn-quiet btn-small btn-toggle");
-    overlayButton.setAttribute("aria-pressed", "true");
     const cameraBadge = el("span", { class: "badge" }, "stopped");
     const device = el("input", { type: "text", class: "field", "aria-label": "Up camera device", spellcheck: "false" }) as HTMLInputElement;
     const size = el("input", { type: "text", class: "field", "aria-label": "Up camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
@@ -332,11 +463,39 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const upLog = el("div", { class: "camlog-box" });
     mountCameraLog(upLog, ctx, "up");
     const cameraChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
+    // Where the up camera sits on a G-code device: typed, taken by eye, or measured.
+    const placeX = numberField({ step: 0.01, width: "6rem" });
+    placeX.setAttribute("aria-label", "Up camera place X");
+    const placeY = numberField({ step: 0.01, width: "6rem" });
+    placeY.setAttribute("aria-label", "Up camera place Y");
+    const placeSet = button("Set", () => setPlace(), "btn btn-quiet btn-small");
+    placeSet.title = "keep the typed place as the up camera's";
+    const placeHere = button("Camera is here", () => into(ctx, "device", ctx.api.deviceCamera({ here: true })), "btn");
+    placeHere.title = "the nozzle is over the up camera's center by eye: keep where the head is as its place";
+    const placeForget = button("Forget", () => into(ctx, "device", ctx.api.deviceCamera({ clear: true })), "btn btn-quiet btn-small");
+    placeForget.title = "forget the place kept: the profile's again";
+    const deviceStep = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
+    deviceStep.setAttribute("aria-label", "Device centering step mm");
+    const deviceCenter = button("Center nozzle", () => centerOnDevice(), "btn");
+    deviceCenter.title = "find where the up camera is and its picture's scale, roll and mirror, by moving the nozzle over it until it sits on the crosshair";
+    const runout = button("Measure runout", () => into(ctx, "device", ctx.api.deviceRunout()), "btn");
+    runout.title = "turn the nozzle over the up camera to measure how far its tip runs off its turning axis";
+    const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
+    const deviceCameraLine = el("p", { class: "muted" });
+    const deviceRoutineLine = el("p", { class: "muted vision-routine" });
+    const deviceCalibration = el("div", { class: "stack pnp-camera-device" },
+        el("h3", {}, "On the device"),
+        deviceCameraLine,
+        el("div", { class: "button-row" }, labeled("X", placeX, "labeled inline"), labeled("Y", placeY, "labeled inline"), placeSet, placeForget),
+        el("div", { class: "button-row" }, placeHere, infoTip("upcam")),
+        el("div", { class: "button-row" }, labeled("Step mm", deviceStep, "labeled inline"), deviceCenter, runout, deviceAbort, infoTip("runout")),
+        deviceRoutineLine,
+        el("p", { class: "muted hint" }, "Center nozzle moves the nozzle over the camera's place, finds it in the picture, measures the picture against two small moves, and moves the nozzle onto the crosshair: that place is the camera's."),
+    );
     roots.camera.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Up camera"), cameraBadge),
         el("fieldset", { class: "panel-body" },
-            pictureBox,
-            el("div", { class: "button-row" }, startButton, stopButton, overlayButton),
+            el("div", { class: "button-row" }, startButton, stopButton),
             cameraPick.row,
             cameraPick.note,
             el("div", { class: "field-grid" },
@@ -348,6 +507,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ),
             el("div", { class: "button-row" }, cameraApply, cameraChip),
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
+            deviceCalibration,
             upLog,
         ),
     );
@@ -370,13 +530,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Centering step mm");
     const centerButton = button("Center nozzle", () => centerNozzle(), "btn btn-primary");
-    centerButton.title = "Find the up camera's place and scale by centering the nozzle in it";
+    centerButton.title = "find the up camera's place and scale by moving the nozzle onto its crosshair";
     const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
+    partButton.title = "over the up camera with a part on the nozzle: measure where it sits on the nozzle";
     const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
     const routineLine = el("p", { class: "muted vision-routine" });
     const partLine = el("p", { class: "muted" });
     roots.nozzle.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Nozzle")),
+        el("div", { class: "panel-head" }, el("h2", {}, "Nozzle"), infoTip("upcam")),
         el("fieldset", { class: "panel-body" },
             el("div", { class: "field-grid" },
                 labeled("Camera at R mm", posR),
@@ -502,6 +663,26 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         await into(ctx, "pnp", ctx.api.pnpNozzle(value));
     }
 
+    async function centerOnDevice(): Promise<void> {
+        const value = parseNumber(deviceStep.value);
+        if (value === null || value < 0 || value > 10) {
+            ctx.toast("error", "step: 0 to 10 mm");
+            return;
+        }
+        await into(ctx, "device", ctx.api.deviceNozzle(value));
+        await ctx.refreshPnp();
+    }
+
+    async function setPlace(): Promise<void> {
+        const x = parseNumber(placeX.value);
+        const y = parseNumber(placeY.value);
+        if (x === null || y === null) {
+            ctx.toast("error", "place: an X and a Y");
+            return;
+        }
+        await into(ctx, "device", ctx.api.deviceCamera({ position: [x, y] }));
+    }
+
     async function gotoPart(): Promise<void> {
         const state = ctx.store.get();
         const job = state.job;
@@ -510,25 +691,41 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             return;
         }
         if (state.pnpTarget === "device") {
-            const device = await ctx.call(ctx.api.deviceGoto(job.id, selected));
-            if (device) {
-                ctx.store.set({ device });
-            }
+            await into(ctx, "device", ctx.api.deviceGoto(job.id, selected, withCamera.checked));
             return;
         }
         await ctx.call(ctx.api.pnpGoto({ job: job.id, ref: selected, correct: correct.checked }));
     }
 
+    async function uploadBoard(): Promise<void> {
+        const file = upload.files?.[0];
+        upload.value = "";
+        if (!file) {
+            return;
+        }
+        partsNote.textContent = `Uploading ${file.name}...`;
+        const job = await ctx.call(ctx.api.uploadJob(file, {}));
+        if (job) {
+            await ctx.refreshJobs();
+            await ctx.selectJob(job.id);
+        } else {
+            renderParts(ctx.store.get());
+        }
+    }
+
     function pick(ref: string): void {
         selected = selected === ref ? null : ref;
         ctx.store.set({ pnpPart: selected });
-        const state = ctx.store.get();
-        renderParts(state);
-        renderBoard(state);
+        renderAll();
     }
 
     function partsOf(state: AppState): Component[] {
         return state.components !== null && state.components.job === state.job?.id ? state.components.components : [];
+    }
+
+    /** The parts on the side shown. */
+    function sideParts(state: AppState): Component[] {
+        return filterParts(partsOf(state), "", sidePick.value as Side);
     }
 
     // What the table and the drawing were last made from: they are made
@@ -537,6 +734,42 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     let tableKey = "";
     let boardKey = "";
     let drawn: { root: SVGElement; box: Box } | null = null;
+    let view: Box | null = null;
+
+    function renderAll(): void {
+        const state = ctx.store.get();
+        renderParts(state);
+        renderBoard(state);
+    }
+
+    function header(): HTMLTableSectionElement {
+        return el("thead", {}, el("tr", {}, ...COLUMNS.map(([key, name]) => {
+            const mark = key === sortKey ? (sortDown ? " v" : " ^") : "";
+            return el("th", {
+                class: `sortable${key === sortKey ? " sorted" : ""}`,
+                title: `sort by ${name.toLowerCase()}`,
+                onclick: () => {
+                    sortDown = key === sortKey ? !sortDown : false;
+                    sortKey = key;
+                    writeStored(SORT_KEY, `${sortDown ? "-" : ""}${key}`);
+                    tableKey = "";
+                    renderParts(ctx.store.get());
+                },
+            }, `${name}${mark}`);
+        }))) as HTMLTableSectionElement;
+    }
+
+    function row(part: Component, hidden = false): HTMLTableRowElement {
+        return el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}${hidden ? " hidden" : ""}`, onclick: () => pick(part.ref) },
+            el("td", { class: "mono" }, part.ref),
+            el("td", {}, part.value, part.dnp ? el("span", { class: "muted" }, " dnp") : null),
+            el("td", { class: "muted", title: part.footprint }, footprintName(part.footprint)),
+            el("td", { class: "mono" }, formatFixed(part.x, 2)),
+            el("td", { class: "mono" }, formatFixed(part.y, 2)),
+            el("td", { class: "mono" }, formatFixed(part.rotation, 1)),
+            el("td", { class: "muted" }, part.side),
+        ) as HTMLTableRowElement;
+    }
 
     function renderParts(state: AppState): void {
         const all = partsOf(state);
@@ -545,39 +778,48 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.store.set({ pnpPart: null });
         }
         renderActions(state);
-        const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, selected]);
+        const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, selected, sortKey, sortDown, grouped.checked, [...folded], loading]);
         if (key === tableKey) {
             return;
         }
         tableKey = key;
-        const shown = filterParts(all, filter.value, sidePick.value as "all" | "front" | "back");
+        const shown = sortParts(filterParts(all, filter.value, sidePick.value as Side), sortKey, sortDown);
         const note = state.components !== null && state.components.job === state.job?.id ? state.components.note : null;
         partsNote.textContent = !state.job
-            ? "Pick a board job to list its parts."
+            ? "Pick a board job, or upload a .kicad_pcb, to list its parts."
+            : loading ? `Loading the parts of ${state.job.name}...`
             : note ?? (all.length === 0 ? "The board has no parts." : `${shown.length} of ${all.length} parts`);
-        const rows = shown.map((part) => {
-            const row = el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}`, onclick: () => pick(part.ref) },
-                el("td", { class: "mono" }, part.ref),
-                el("td", {}, part.value, part.dnp ? el("span", { class: "muted" }, " dnp") : null),
-                el("td", { class: "muted", title: part.footprint }, footprintName(part.footprint)),
-                el("td", { class: "mono" }, formatFixed(part.x, 2)),
-                el("td", { class: "mono" }, formatFixed(part.y, 2)),
-                el("td", { class: "mono" }, formatFixed(part.rotation, 1)),
-                el("td", { class: "muted" }, part.side),
-            );
-            return row;
-        });
-        replace(table,
-            el("thead", {}, el("tr", {}, ...["Ref", "Value", "Footprint", "X", "Y", "Rot", "Side"].map((name) => el("th", {}, name)))),
-            el("tbody", {}, ...rows),
-        );
+        partsNote.classList.toggle("loading", loading);
+        let rows: HTMLTableRowElement[];
+        if (grouped.checked) {
+            rows = groupParts(shown).flatMap((group) => {
+                const shut = folded.has(group.key);
+                const head = el("tr", {
+                    class: `pnp-group${shut ? " shut" : ""}`,
+                    title: shut ? "show the parts" : "fold the parts away",
+                    onclick: () => {
+                        if (folded.has(group.key)) {
+                            folded.delete(group.key);
+                        } else {
+                            folded.add(group.key);
+                        }
+                        renderParts(ctx.store.get());
+                    },
+                }, el("td", { colspan: "7" }, `${shut ? "+" : "-"} ${group.value || "(no value)"}  ${footprintName(group.footprint)}  x${group.parts.length}  `,
+                    el("span", { class: "muted" }, group.parts.map((part) => part.ref).join(" ")))) as HTMLTableRowElement;
+                return [head, ...group.parts.map((part) => row(part, shut))];
+            });
+        } else {
+            rows = shown.map((part) => row(part));
+        }
+        replace(table, header(), el("tbody", {}, ...rows));
         const chosen = all.find((part) => part.ref === selected) ?? null;
         chosenLine.textContent = chosen
             ? `${chosen.ref} ${chosen.value}: X ${formatFixed(chosen.x, 3)} Y ${formatFixed(chosen.y, 3)}, ${formatFixed(chosen.rotation, 1)} deg, ${chosen.side}`
             : "No part picked.";
     }
 
-    /** The goto's button and box, which follow the machine and the up camera. */
+    /** The goto's button and boxes, which follow the machine and the cameras. */
     function renderActions(state: AppState): void {
         const onDevice = state.pnpTarget === "device";
         const busy = onDevice ? state.device?.running === true : state.pnp?.routine?.state === "running";
@@ -585,25 +827,90 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const linked = onDevice ? state.device?.connected === true : state.snapshot.connected;
         setLocked(gotoButton, !linked || !chosen || busy);
         correctLabel.classList.toggle("hidden", onDevice);
+        withCameraLabel.classList.toggle("hidden", !onDevice);
+        const offsetKnown = (state.device?.top?.offset ?? null) !== null || (state.deviceDoc?.document.top?.offset ?? null) !== null;
+        withCamera.disabled = !offsetKnown;
+        if (withCamera.disabled) {
+            withCamera.checked = false;
+        }
         correct.disabled = !state.pnp?.part_offset;
         if (correct.disabled) {
             correct.checked = false;
         }
     }
 
-    function renderBoard(state: AppState): void {
-        const machine = state.snapshot.machine;
-        const camera = isCartesian(state.snapshot) ? cameraOnBoard(state.pnp?.position ?? null, machine?.joint.a ?? 0) : null;
-        const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera]);
-        if (key !== boardKey) {
-            boardKey = key;
-            drawn = boardSvg({ job: state.job, parts: partsOf(state), selected, camera }, pick);
-            replace(drawing, drawn?.root ?? el("p", { class: "muted" }, "Nothing to draw: pick a board job."));
-        }
+    function setView(next: Box): void {
+        view = next;
+        drawn?.root.setAttribute("viewBox", `${(next.x0 - (drawn?.box.x0 ?? 0)).toFixed(3)} ${((drawn?.box.y1 ?? 0) - next.y1).toFixed(3)} ${(next.x1 - next.x0).toFixed(3)} ${(next.y1 - next.y0).toFixed(3)}`);
+    }
+
+    function resetView(): void {
         if (drawn) {
-            placeHead(drawn.root, drawn.box, state.snapshot.connected && machine ? machine.board : null);
+            setView(drawn.box);
         }
     }
+
+    function renderBoard(state: AppState): void {
+        const machine = state.snapshot.machine;
+        const camera = state.pnpTarget === "machine" && isCartesian(state.snapshot) ? cameraOnBoard(state.pnp?.position ?? null, machine?.joint.a ?? 0) : null;
+        const parts = sideParts(state);
+        const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, loading]);
+        if (key !== boardKey) {
+            boardKey = key;
+            const before = drawn?.box ?? null;
+            drawn = boardSvg({ job: state.job, parts, selected, camera }, pick);
+            replace(drawing, drawn?.root ?? el("p", { class: `muted${loading ? " loading" : ""}` }, loading ? "Loading the board..." : "Nothing to draw: pick a board job."));
+            // A pick keeps the zoom; another board starts whole.
+            if (drawn && view && before && JSON.stringify(before) === JSON.stringify(drawn.box)) {
+                setView(view);
+            } else {
+                view = drawn?.box ?? null;
+            }
+        }
+        if (drawn) {
+            placeHead(drawn.root, drawn.box, state.pnpTarget === "machine" && state.snapshot.connected && machine ? machine.board : null);
+        }
+    }
+
+    // The drawing zooms about the pointer and pans by a drag.
+    drawing.addEventListener("wheel", (event) => {
+        if (!drawn || !view) {
+            return;
+        }
+        event.preventDefault();
+        const rect = drawn.root.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+            return;
+        }
+        const fx = (event.clientX - rect.left) / rect.width;
+        const fy = (event.clientY - rect.top) / rect.height;
+        // The SVG's y runs down; a box's y0 is its bottom, so the pointer's height counts from the top.
+        const next = zoomBox(view, event.deltaY < 0 ? 0.8 : 1.25, fx, 1 - fy, drawn.box);
+        setView(next);
+    }, { passive: false });
+    let panFrom: { x: number; y: number; view: Box } | null = null;
+    drawing.addEventListener("pointerdown", (event) => {
+        if (!drawn || !view || event.button !== 0 || (event.target as Element).closest(".pnp-part")) {
+            return;
+        }
+        panFrom = { x: event.clientX, y: event.clientY, view };
+        drawing.setPointerCapture?.(event.pointerId);
+    });
+    drawing.addEventListener("pointermove", (event) => {
+        if (!panFrom || !drawn) {
+            return;
+        }
+        const rect = drawn.root.getBoundingClientRect();
+        const width = panFrom.view.x1 - panFrom.view.x0;
+        const height = panFrom.view.y1 - panFrom.view.y0;
+        const dx = ((event.clientX - panFrom.x) / rect.width) * width;
+        const dy = ((event.clientY - panFrom.y) / rect.height) * height;
+        setView(clampBox({ x0: panFrom.view.x0 - dx, y0: panFrom.view.y0 + dy, x1: panFrom.view.x1 - dx, y1: panFrom.view.y1 + dy }, drawn.box));
+    });
+    drawing.addEventListener("pointerup", () => {
+        panFrom = null;
+    });
+    drawing.addEventListener("dblclick", () => resetView());
 
     function renderJobs(state: AppState): void {
         const current = state.job?.id ?? "";
@@ -620,10 +927,6 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const busy = pnp?.routine?.state === "running";
         cameraBadge.textContent = busy ? "routine" : running ? "running" : "stopped";
         cameraBadge.setAttribute("data-camera", busy ? "finding mark" : running ? "running" : "stopped");
-        pictureBox.classList.toggle("hidden", !running);
-        if (!running) {
-            picture.removeAttribute("src");
-        }
         setLocked(startButton, running);
         setLocked(stopButton, !running || busy);
         const connected = state.snapshot.connected;
@@ -649,8 +952,25 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         cameraPick.render();
         showPending();
-        routineLine.textContent = pnpRoutineText(pnp);
+        routineLine.textContent = state.pnp?.routine?.target === "device" ? "" : pnpRoutineText(pnp);
         partLine.textContent = partOffsetText(pnp);
+        // The up camera on a G-code device.
+        const deviceState = state.device;
+        const linked = deviceState?.connected === true && !deviceState.running && deviceState.top?.routine?.state !== "running";
+        const moving = busy && pnp?.routine?.target === "device";
+        deviceCameraLine.textContent = deviceCameraText(deviceState);
+        const place = deviceState?.camera.position ?? null;
+        for (const [field, value] of [[placeX, place?.[0]], [placeY, place?.[1]]] as const) {
+            if (field !== document.activeElement) {
+                field.value = value === undefined ? "" : String(value);
+            }
+        }
+        setLocked(placeHere, !linked || busy);
+        setLocked(placeForget, deviceState?.camera.measured !== true || busy);
+        setLocked(deviceCenter, !linked || busy || !running);
+        setLocked(runout, !linked || busy || !running || !(deviceState?.camera.mm_per_px && deviceState.camera.position));
+        setLocked(deviceAbort, !moving);
+        deviceRoutineLine.textContent = pnp?.routine?.target === "device" ? pnpRoutineText(pnp) : "";
     }
 
     // The parts of the selected job, asked for once it changes.
@@ -663,12 +983,20 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         asked = key;
         if (id === null) {
+            loading = false;
             ctx.store.set({ components: null });
             return;
         }
+        loading = true;
+        renderAll();
         const parts = await ctx.call(ctx.api.components(id));
-        if (parts && asked === key) {
-            ctx.store.set({ components: parts });
+        if (asked === key) {
+            loading = false;
+            if (parts) {
+                ctx.store.set({ components: parts });
+            } else {
+                renderAll();
+            }
         }
     }
 
@@ -676,28 +1004,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         return activePage() === "pnp" && document.visibilityState !== "hidden";
     }
 
-    let lastFrame = 0;
-    function refreshFrame(force = false): void {
-        if (!visible() || !ctx.store.get().pnp?.running) {
-            return;
-        }
-        const now = Date.now();
-        if (!force && now - lastFrame < FRAME_INTERVAL_MS - 10) {
-            return;
-        }
-        lastFrame = now;
-        picture.src = ctx.api.pnpFrameUrl(FRAME_WIDTH, overlayOn);
-    }
     // The state is polled while the page shows, for the picture's age and a
     // routine's steps; the event feed carries the rest.
-    const frameTimer = setInterval(() => refreshFrame(), FRAME_INTERVAL_MS);
     const pollTimer = setInterval(() => {
         if (visible()) {
             ctx.api.pnp().then((state) => ctx.store.set({ pnp: state }), () => undefined);
         }
     }, POLL_MS);
     globalThis.addEventListener?.("pagehide", () => {
-        clearInterval(frameTimer);
         clearInterval(pollTimer);
         cameraPick.stop();
     });
@@ -712,15 +1026,21 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         renderCamera(state);
         renderActions(state);
         renderBoard(state);
-    }, ["pnp", "snapshot"]);
+    }, ["pnp", "snapshot", "device", "deviceDoc"]);
     // This machine's camera and nozzle, or the G-code device.
     const showTarget = (state: AppState): void => {
         const onDevice = state.pnpTarget === "device";
         target.value = state.pnpTarget;
-        // The up camera's picture serves either machine; the nozzle panel is this machine's.
+        // The up camera serves either machine; the nozzle panel is this machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        roots.device.classList.toggle("hidden", !onDevice);
+        for (const root of [roots.device, roots.refs, roots.run, roots.top]) {
+            root.classList.toggle("hidden", !onDevice);
+        }
+        deviceCalibration.classList.toggle("hidden", !onDevice);
+        machineJog.classList.toggle("hidden", onDevice);
+        deviceJog.classList.toggle("hidden", !onDevice);
         renderActions(state);
+        renderBoard(state);
     };
     ctx.store.subscribe(showTarget, ["pnpTarget", "device"]);
     showTarget(ctx.store.get());

@@ -44,13 +44,17 @@ export interface MockFeeder {
     /** Marks on the feeder the top camera finds once a run. */
     marks: [number, number][];
     mark: SpotPolarity;
+    /** How far from the up camera's center its parts are looked for, mm; null takes the profile's. */
+    crop: number | null;
 }
 
 export interface MockVacuum {
-    read: string;
+    /** The lines that read it: the reading is in the last one's answer. */
+    read: string[];
     /** As the backend keeps it: Python's (?P<name>...) for a named group. */
     pattern: string;
-    part_on: [number, number];
+    /** The readings with a part held and with the nozzle empty; a sensor with neither is read by hand only. */
+    part_on: [number, number] | null;
     part_off: [number, number] | null;
 }
 
@@ -74,8 +78,9 @@ export interface MockDevice {
     move: string;
     axes: [string, string, string, string];
     wait: string;
-    pick: string;
-    place: string;
+    /** The vacuum on (a pump and a valve may take a line each) and off. */
+    pick: string[];
+    place: string[];
     dwell: string;
     home: string;
     position: string;
@@ -98,6 +103,15 @@ export interface MockDevice {
     max_turn: number;
     size_tolerance: number;
     top: MockTopProfile | null;
+    /** The lights the cameras need, on and off. */
+    light_on: string[];
+    light_off: string[];
+    /** Where the up camera is as designed: the head with the nozzle over its picture's center. */
+    camera_position: [number, number] | null;
+    /** Where the head waits out of the way. */
+    park: [number, number] | null;
+    /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
+    crop: number | null;
 }
 
 class Reader {
@@ -273,11 +287,13 @@ export function parseDevice(text: string, id: string): MockDevice {
     }
     device.axes = axes;
     device.wait = read.text(gcode, "wait", "gcode", "M400");
-    device.pick = read.text(gcode, "pick", "gcode", "M106");
-    device.place = read.text(gcode, "place", "gcode", "M107");
-    if (!device.pick || !device.place) {
-        throw read.fail("gcode", !device.pick ? "pick" : "place", "must name the vacuum's command");
+    device.pick = read.lines(gcode, "pick", "gcode", ["M106"], true);
+    device.place = read.lines(gcode, "place", "gcode", ["M107"], true);
+    if (device.pick.length === 0 || device.place.length === 0) {
+        throw read.fail("gcode", device.pick.length === 0 ? "pick" : "place", "must name the vacuum's command");
     }
+    device.light_on = read.lines(gcode, "light_on", "gcode", [], true);
+    device.light_off = read.lines(gcode, "light_off", "gcode", [], true);
     device.dwell = read.text(gcode, "dwell", "gcode", "G4 P{ms}");
     if (device.dwell && !device.dwell.includes("{ms}") && !device.dwell.includes("{s}")) {
         throw read.fail("gcode", "dwell", "must hold {ms} or {s} for the time, or be empty for none");
@@ -286,7 +302,7 @@ export function parseDevice(text: string, id: string): MockDevice {
     device.position = read.text(gcode, "position", "gcode", "M114");
     device.stop = read.text(gcode, "stop", "gcode", "M410");
     device.rotation_cw = read.flag(gcode, "rotation_cw", "gcode", false);
-    read.done(gcode, "gcode", ["init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop"]);
+    read.done(gcode, "gcode", ["init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop", "light_on", "light_off"]);
     const motion = read.table(top, "motion");
     device.feed_xy = read.number(motion, "feed_xy", "motion", 6000, 1, FEED_LIMIT);
     device.feed_z = read.number(motion, "feed_z", "motion", 1200, 1, FEED_LIMIT);
@@ -296,13 +312,14 @@ export function parseDevice(text: string, id: string): MockDevice {
     device.place_dwell_ms = read.integer(motion, "place_dwell_ms", "motion", 150, 0, 60000);
     device.discard = "discard" in motion ? (read.point(motion, "discard", "motion", 3, null) as [number, number, number]) : null;
     device.pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20);
-    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries"]);
+    device.park = "park" in motion ? (read.point(motion, "park", "motion", 2, null) as [number, number]) : null;
+    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park"]);
     device.vacuum = null;
     const sensor = read.table(top, "vacuum");
     if (Object.keys(sensor).length > 0) {
-        const readLine = read.text(sensor, "read", "vacuum", "");
-        if (!readLine) {
-            throw read.fail("vacuum", "read", "must name the line that reads the vacuum sensor");
+        const readLines = read.lines(sensor, "read", "vacuum", [], true);
+        if (readLines.length === 0) {
+            throw read.fail("vacuum", "read", "must name the line, or lines, that read the vacuum sensor");
         }
         const pattern = read.text(sensor, "pattern", "vacuum", DEFAULT_VACUUM_PATTERN, false).replace(JAVA_GROUP, "(?P<");
         let groups: number;
@@ -314,11 +331,7 @@ export function parseDevice(text: string, id: string): MockDevice {
         if (groups < 1) {
             throw read.fail("vacuum", "pattern", "must hold a group, ( ), around the reading");
         }
-        const partOn = read.span(sensor, "part_on", "vacuum");
-        if (partOn === null) {
-            throw read.fail("vacuum", "part_on", "is needed: the low and high reading with a part held");
-        }
-        device.vacuum = { read: readLine, pattern, part_on: partOn, part_off: read.span(sensor, "part_off", "vacuum") };
+        device.vacuum = { read: readLines, pattern, part_on: read.span(sensor, "part_on", "vacuum"), part_off: read.span(sensor, "part_off", "vacuum") };
         read.done(sensor, "vacuum", ["read", "pattern", "part_on", "part_off"]);
     }
     device.top = null;
@@ -387,16 +400,19 @@ export function parseDevice(text: string, id: string): MockDevice {
             pocket,
             marks,
             mark: read.shade(table, "mark", section, "dark"),
+            crop: "crop" in table ? read.number(table, "crop", section, null, 0.1, 100) : null,
         });
-        read.done(table, section, ["id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark"]);
+        read.done(table, section, ["id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"]);
     });
     device.feeders = feeders;
     const camera = read.table(top, "camera");
     device.camera_z = "z" in camera ? read.number(camera, "z", "camera", null) : null;
+    device.camera_position = "position" in camera ? (read.point(camera, "position", "camera", 2, null) as [number, number]) : null;
+    device.crop = "crop" in camera ? read.number(camera, "crop", "camera", null, 0.1, 100) : null;
     device.max_offset = read.number(camera, "max_offset", "camera", 1, 0.01, 20);
     device.max_turn = read.number(camera, "max_turn", "camera", 15, 0.1, 45);
     device.size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0, 1);
-    read.done(camera, "camera", ["z", "max_offset", "max_turn", "size_tolerance"]);
+    read.done(camera, "camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance"]);
     read.done(top, null, ["name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera"]);
     return device as MockDevice;
 }
@@ -435,16 +451,29 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
         timeout: device.timeout,
         axes: [...device.axes],
         rotation_cw: device.rotation_cw,
+        feed_xy: device.feed_xy,
+        feed_z: device.feed_z,
         safe_z: device.safe_z,
         place_z: device.place_z,
+        pick_dwell_ms: device.pick_dwell_ms,
+        place_dwell_ms: device.place_dwell_ms,
+        park: device.park ? [...device.park] : null,
+        camera_position: device.camera_position ? [...device.camera_position] : null,
+        light: device.light_on.length > 0,
         discard: device.discard ? [...device.discard] : null,
         pick_tries: device.pick_tries,
         camera_z: device.camera_z,
+        crop: device.crop,
         max_offset: device.max_offset,
         max_turn: device.max_turn,
         size_tolerance: device.size_tolerance,
         vacuum: device.vacuum
-            ? { read: device.vacuum.read, pattern: device.vacuum.pattern, part_on: [...device.vacuum.part_on], part_off: device.vacuum.part_off ? [...device.vacuum.part_off] : null }
+            ? {
+                read: [...device.vacuum.read],
+                pattern: device.vacuum.pattern,
+                part_on: device.vacuum.part_on ? [...device.vacuum.part_on] : null,
+                part_off: device.vacuum.part_off ? [...device.vacuum.part_off] : null,
+            }
             : null,
         top: device.top ? { z: device.top.z, offset: device.top.offset ? [...device.top.offset] : null, fiducial: device.top.fiducial, within: device.top.within } : null,
         feeders: device.feeders.map((f) => ({
@@ -460,6 +489,7 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
             pocket: f.pocket,
             marks: f.marks.map((mark) => [mark[0], mark[1]]),
             mark: f.mark,
+            crop: f.crop,
         })),
     };
 }
@@ -610,7 +640,7 @@ export function pickLines(device: MockDevice, feeder: MockFeeder, label: string,
         xyLine(device, point[0], point[1], 0),
         zLine(device, point[2]),
         ...(device.wait ? [device.wait] : []),
-        device.pick,
+        ...device.pick,
         ...dwellLines(device, device.pick_dwell_ms),
         safeLine(device),
     ];
@@ -623,7 +653,9 @@ export function checkLines(device: MockDevice, held: boolean): string[] {
     if (vacuum === null || span === null) {
         return [];
     }
-    return [...(device.wait ? [device.wait] : []), `${vacuum.read} ; vacuum: ${held ? "a part held" : "an empty nozzle"} reads ${gnum(span[0])} to ${gnum(span[1])}`];
+    const first = vacuum.read.slice(0, -1);
+    const last = vacuum.read[vacuum.read.length - 1]!;
+    return [...(device.wait ? [device.wait] : []), ...first, `${last} ; vacuum: ${held ? "a part held" : "an empty nozzle"} reads ${gnum(span[0])} to ${gnum(span[1])}`];
 }
 
 /** The lines that put a held part down: across at the safe height, turned to its angle, down, the vacuum off, and back up. */
@@ -632,7 +664,7 @@ export function placeLines(device: MockDevice, point: [number, number], turn: nu
         xyLine(device, point[0], point[1], turn),
         zLine(device, placeZ),
         ...(device.wait ? [device.wait] : []),
-        device.place,
+        ...device.place,
         ...dwellLines(device, device.place_dwell_ms),
         safeLine(device),
     ];

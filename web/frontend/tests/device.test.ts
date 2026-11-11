@@ -5,7 +5,7 @@ import { blockLines, deviceFit, parseDevice, planDevice, planSummary, VISION_NOT
 import type { Component } from "../src/types.ts";
 import { DEVICE_SETUP, deviceBadge, deviceRunText, referencesOf } from "../src/views/device.ts";
 import { mountPnp } from "../src/views/pnp.ts";
-import { click, dialogButton, settle, setup } from "./harness.ts";
+import { click, dialogButton, settle, setup, pnpRoots } from "./harness.ts";
 
 // The backend's test profile, word for word, so the two programs can be compared.
 const PROFILE = `name = "test machine"
@@ -221,17 +221,7 @@ describe("the up camera on the mock's G-code device", () => {
 describe("the G-code device on the PNP page", () => {
     test("takes the camera's and nozzle's place, references the picked part, plans and runs", async () => {
         const { store, ctx, backend } = setup();
-        const roots = {
-            steps: document.createElement("section"),
-            parts: document.createElement("section"),
-            board: document.createElement("section"),
-            camera: document.createElement("section"),
-            nozzle: document.createElement("section"),
-            device: document.createElement("section"),
-        };
-        for (const root of Object.values(roots)) {
-            document.body.append(root);
-        }
+        const roots = pnpRoots();
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         const file = await backend.deviceFile("openpnp-marlin");
         await backend.saveDeviceFile("openpnp-marlin", file.text.replace('url = ""', 'url = "/dev/ttyACM1"').replace('match = "10k 0603"', 'match = "TestPoint"'));
@@ -259,14 +249,14 @@ describe("the G-code device on the PNP page", () => {
         expect(store.get().device?.connected).toBe(true);
         (roots.parts.querySelector("table.pnp-parts tbody tr") as HTMLElement).click();
         expect(store.get().pnpPart).not.toBeNull();
-        click(roots.device, `Here: ${store.get().pnpPart}`);
+        click(roots.refs, `Nozzle here: ${store.get().pnpPart}`);
         await settle();
         await settle();
         expect(referencesOf(store.get().device, job.id).length).toBe(1);
-        click(roots.device, "Plan");
+        click(roots.run, "Plan");
         await settle();
-        expect(roots.device.querySelector(".device-program")?.textContent).toContain("M106");
-        click(roots.device, "Run");
+        expect(roots.run.querySelector(".device-program")?.textContent).toContain("M106");
+        click(roots.run, "Run");
         await settle();
         await settle();
         dialogButton("Run").click();

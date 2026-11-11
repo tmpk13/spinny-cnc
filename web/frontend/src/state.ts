@@ -15,6 +15,7 @@ import type {
     Compensate,
     ComponentsResponse,
     ConsoleLine,
+    DeviceFile,
     DeviceState,
     Grid,
     HeightMapState,
@@ -127,6 +128,8 @@ export interface AppState {
     pnpTarget: "machine" | "device";
     /** The G-code device; null until read. */
     device: DeviceState | null;
+    /** The picked device profile's text and what it reads as; null until read, or with none picked. */
+    deviceDoc: (DeviceFile & { id: string }) | null;
     /** The saved positions on the board, as the backend keeps them. */
     markers: Marker[];
     /** The Auto tab's conversation and whether a turn is under way; null until read. */
@@ -178,6 +181,7 @@ export function initialState(mock: boolean): AppState {
         pnpPart: null,
         pnpTarget: "machine",
         device: null,
+        deviceDoc: null,
         markers: [],
         auto: null,
         autoSettings: null,

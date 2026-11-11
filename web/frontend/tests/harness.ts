@@ -101,3 +101,24 @@ export function runUntilIdle(backend: MockBackend, dt = 0.05, limit = 20000): vo
         guard += 1;
     }
 }
+
+/** Every root the PNP page mounts into, as sections in the document. */
+export function pnpRoots() {
+    const roots = {
+        steps: document.createElement("section"),
+        parts: document.createElement("section"),
+        board: document.createElement("section"),
+        camera: document.createElement("section"),
+        nozzle: document.createElement("section"),
+        device: document.createElement("section"),
+        jog: document.createElement("section"),
+        view: document.createElement("section"),
+        top: document.createElement("section"),
+        refs: document.createElement("section"),
+        run: document.createElement("section"),
+    };
+    for (const root of Object.values(roots)) {
+        document.body.append(root);
+    }
+    return roots;
+}

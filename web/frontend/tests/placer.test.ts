@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
-import { MARKS_NOTE, POCKET_NOTE, blockLines, deviceFit, parseDevice, planDevice, tipShift, vacuumReading } from "../src/mock/openpnp.ts";
+import { MARKS_NOTE, POCKET_NOTE, blockLines, checkLines, deviceFit, parseDevice, planDevice, tipShift, vacuumReading } from "../src/mock/openpnp.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
 import type { Component, DevicePlan, DeviceState } from "../src/types.ts";
 import { deviceRunText, fiducialText, partsLeft, topCameraText } from "../src/views/device.ts";
 import { mountPnp } from "../src/views/pnp.ts";
-import { settle, setup } from "./harness.ts";
+import { settle, setup, pnpRoots } from "./harness.ts";
 
 // The backend's placer test profile, word for word, so the two plans can be compared.
 function profile(gcode = "", motion = "", feeder = "", rest = ""): string {
@@ -56,9 +56,18 @@ describe("the twin reads the new words as the backend does", () => {
         expect(vacuumReading(java.vacuum!, ["echo: T:5 P:42"])).toBe(42);
     });
 
+    test("a sensor without ranges reads over several lines and checks nothing", () => {
+        const rest = '[vacuum]\nread = ["M260 A112 B1 S1", "M260 A109 B6 S1", "M261 A109 B1 S2"]\npattern = "^.*data:(?<Value>.*)"\n';
+        const device = parseDevice(profile("", "", "", rest), "rig");
+        expect(device.vacuum?.read.at(-1)).toBe("M261 A109 B1 S2");
+        expect(device.vacuum?.part_on).toBeNull();
+        expect(vacuumReading(device.vacuum!, ["echo:i2c-reply: from:109 bytes:1 data:231", "ok"])).toBe(231);
+        expect(checkLines(device, true)).toEqual([]);
+    });
+
     test("a new word that does not read names its key", () => {
         const cases: [string, string][] = [
-            [profile("", "", "", '[vacuum]\nread = "M105"\n'), "[vacuum] part_on is needed"],
+            [profile("", "", "", "[vacuum]\npart_on = [1, 2]\n"), "[vacuum] read must name the line, or lines, that read the vacuum sensor"],
             [profile("", "", "", '[vacuum]\nread = "M105"\npattern = "T:[0-9]+"\npart_on = [1, 2]\n'), "[vacuum] pattern must hold a group"],
             [profile("", "", "", '[vacuum]\nread = "M105"\npart_on = [9, 2]\n'), "must be the low reading, then the high one"],
             [profile("", "", 'pocket = "bright"'), "[feeder 1] pocket looks with the top camera: add a [top_camera] section"],
@@ -196,32 +205,23 @@ describe("the device panel's words", () => {
 
     test("the top camera's controls show on the PNP page", async () => {
         const { store, ctx, backend } = setup();
-        const roots = {
-            steps: document.createElement("section"),
-            parts: document.createElement("section"),
-            board: document.createElement("section"),
-            camera: document.createElement("section"),
-            nozzle: document.createElement("section"),
-            device: document.createElement("section"),
-        };
-        for (const root of Object.values(roots)) {
-            document.body.append(root);
-        }
+        const roots = pnpRoots();
         await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         mountPnp(roots, ctx);
         await ctx.refreshJobs();
         await ctx.refreshDevice();
         await settle();
-        expect(roots.device.textContent).toContain("Top camera on the device");
-        expect(roots.device.textContent).toContain("Nozzle on mark");
-        for (const label of ["Measure runout", "Measure offset", "Camera here", "Find fiducials", "Run the rest"]) {
-            expect(Array.from(roots.device.querySelectorAll("button")).some((each) => each.textContent === label)).toBe(true);
+        expect(roots.top.textContent).toContain("Top camera");
+        expect(roots.top.textContent).toContain("Nozzle on mark");
+        const all = (): HTMLButtonElement[] => Object.values(roots).flatMap((root) => Array.from(root.querySelectorAll("button")));
+        for (const label of ["Measure runout", "Measure offset", "Camera here", "Find fiducials", "Run the rest", "Nozzle over camera", "Camera to nozzle spot"]) {
+            expect(all().some((each) => each.textContent === label)).toBe(true);
         }
         // Started from the panel, with the device typed in sent first.
-        const deviceField = roots.device.querySelector('input[aria-label="Top camera device"]') as HTMLInputElement;
+        const deviceField = roots.top.querySelector('input[aria-label="Top camera device"]') as HTMLInputElement;
         deviceField.value = "/dev/video6";
         deviceField.dispatchEvent(new Event("input"));
-        const start = Array.from(roots.device.querySelectorAll("button")).filter((each) => each.textContent === "Start").pop()!;
+        const start = Array.from(roots.top.querySelectorAll("button")).filter((each) => each.textContent === "Start").pop()!;
         start.click();
         await settle();
         await settle();

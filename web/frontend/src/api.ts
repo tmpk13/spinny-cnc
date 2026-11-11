@@ -30,6 +30,7 @@ import type {
     DeviceCheck,
     DeviceFile,
     DevicePlan,
+    DeviceIdentity,
     DevicesResponse,
     DeviceState,
     GotoRequest,
@@ -279,9 +280,33 @@ export interface Api {
     deviceFile(id: string): Promise<DeviceFile>;
     saveDeviceFile(id: string, text: string): Promise<DeviceFile>;
     checkDeviceFile(id: string, text: string): Promise<DeviceCheck>;
+    /** One value of a profile changed in its text, comments and all; a plain table not there yet is added. */
+    patchDeviceFile(id: string, path: CamPath, value: CamValue): Promise<DeviceFile>;
+    /** A new profile: the text given, else a copy of the shipped template. */
+    newDeviceFile(id: string, text?: string): Promise<DeviceFile>;
+    deleteDeviceFile(id: string): Promise<DevicesResponse>;
     /** The G-code device: the profile picked, the board's references, the feeders' counts, the link and a program being sent. */
     deviceState(): Promise<DeviceState>;
-    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean }): Promise<DeviceState>;
+    /** The profile, the board's typed turn, and the port picked (`url`, "" for the profile's). */
+    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean; url?: string }): Promise<DeviceState>;
+    /** What the firmware on a port says it is (M115); nothing moves. */
+    deviceIdentify(url: string): Promise<DeviceIdentity>;
+    /** One axis moved by a step from where the device says it is: mm, or degrees for the rotation. */
+    deviceJog(axis: "x" | "y" | "z" | "rotation", step: number): Promise<DeviceState>;
+    /** The head to a place: across at the safe height for X or Y, then Z. */
+    deviceMove(target: { x?: number; y?: number; z?: number; rotation?: number }): Promise<DeviceState>;
+    devicePark(): Promise<DeviceState>;
+    /** The nozzle over the up camera, turned to 0, at the height it is sharp at. */
+    deviceOverCamera(): Promise<DeviceState>;
+    /** The nozzle over the point the top camera looks at, or the camera over the nozzle's. */
+    deviceSwap(to: "nozzle" | "camera"): Promise<DeviceState>;
+    /** The up camera's place on the device: typed, the head's now, or forgotten. */
+    deviceCamera(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<DeviceState>;
+    deviceLight(on: boolean): Promise<DeviceState>;
+    /** The vacuum switched, and/or the sensor read. */
+    deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }>;
+    /** The count of boards finished back to 0. */
+    deviceBoardsReset(): Promise<DeviceState>;
     deviceConnect(): Promise<DeviceState>;
     deviceDisconnect(): Promise<DeviceState>;
     deviceCommand(line: string): Promise<DeviceState & { reply: string[] }>;
@@ -296,7 +321,8 @@ export interface Api {
     /** Places the parts; with `fiducials` the top camera finds the board's fiducials first. */
     deviceRun(job: string, refs?: string[], fiducials?: boolean): Promise<DevicePlan & DeviceState>;
     deviceStop(): Promise<DeviceState>;
-    deviceGoto(job: string, ref: string): Promise<DeviceState>;
+    /** The nozzle, or the top camera with `camera`, over a part's place at the safe height. */
+    deviceGoto(job: string, ref: string, camera?: boolean): Promise<DeviceState>;
     /** Counts a feeder (or every one) from its first part again. */
     deviceResetFeeders(feeder?: string): Promise<DeviceState>;
     /** Centers the device's nozzle over the up camera, measuring where the camera is on the device; `step` 0 keeps the scale. */
@@ -882,12 +908,64 @@ export class HttpApi implements Api {
         return this.request<DeviceCheck>("POST", `/api/pnp/devices/${encodeURIComponent(id)}/check`, { text });
     }
 
+    patchDeviceFile(id: string, path: CamPath, value: CamValue): Promise<DeviceFile> {
+        return this.request<DeviceFile>("PATCH", `/api/pnp/devices/${encodeURIComponent(id)}`, { path, value });
+    }
+
+    newDeviceFile(id: string, text?: string): Promise<DeviceFile> {
+        return this.request<DeviceFile>("POST", `/api/pnp/devices/${encodeURIComponent(id)}`, text !== undefined ? { text } : {});
+    }
+
+    deleteDeviceFile(id: string): Promise<DevicesResponse> {
+        return this.request<DevicesResponse>("DELETE", `/api/pnp/devices/${encodeURIComponent(id)}`);
+    }
+
     deviceState(): Promise<DeviceState> {
         return this.request<DeviceState>("GET", "/api/pnp/device");
     }
 
-    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean }): Promise<DeviceState> {
+    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean; url?: string }): Promise<DeviceState> {
         return this.request<DeviceState>("PUT", "/api/pnp/device", patch);
+    }
+
+    deviceIdentify(url: string): Promise<DeviceIdentity> {
+        return this.request<DeviceIdentity>("POST", "/api/pnp/device/identify", { url });
+    }
+
+    deviceJog(axis: "x" | "y" | "z" | "rotation", step: number): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/jog", { axis, step });
+    }
+
+    deviceMove(target: { x?: number; y?: number; z?: number; rotation?: number }): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/move", target);
+    }
+
+    devicePark(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/park");
+    }
+
+    deviceOverCamera(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/over-camera");
+    }
+
+    deviceSwap(to: "nozzle" | "camera"): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/swap", { to });
+    }
+
+    deviceCamera(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<DeviceState> {
+        return this.request<DeviceState>("PUT", "/api/pnp/device/camera", request);
+    }
+
+    deviceLight(on: boolean): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/light", { on });
+    }
+
+    deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }> {
+        return this.request<DeviceState & { reply: string[] }>("POST", "/api/pnp/device/vacuum", request);
+    }
+
+    deviceBoardsReset(): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/boards/reset");
     }
 
     deviceConnect(): Promise<DeviceState> {
@@ -936,8 +1014,8 @@ export class HttpApi implements Api {
         return this.request<DeviceState>("POST", "/api/pnp/device/stop");
     }
 
-    deviceGoto(job: string, ref: string): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/goto", { job, ref });
+    deviceGoto(job: string, ref: string, camera = false): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/goto", { job, ref, camera });
     }
 
     deviceResetFeeders(feeder?: string): Promise<DeviceState> {

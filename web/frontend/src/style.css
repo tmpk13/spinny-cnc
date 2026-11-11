@@ -2500,9 +2500,19 @@ table.cam-table input[type="checkbox"] {
 .badge.roadmap-count[data-apply="pending"] { --tone: var(--accent); }
 .badge.roadmap-count[data-apply="applied"] { --tone: var(--jog); }
 
-/* The panel a setup step was pressed for, briefly marked. */
+/* The panel a setup step was pressed for, briefly marked, then its border
+   pulsing until a press inside it. */
 .panel.flash {
     animation: flash 1.6s ease-out;
+}
+
+.panel.pulse {
+    animation: panel-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes panel-pulse {
+    0%, 100% { box-shadow: 0 0 0 0.1rem var(--ring), var(--shadow); }
+    50% { box-shadow: 0 0 0 0.3rem var(--ring), var(--shadow); }
 }
 
 @keyframes flash {
@@ -2684,6 +2694,247 @@ table.pnp-parts tr.dnp td {
 
 .device-console {
     max-height: 10rem;
+}
+
+/* The run's steps in words: a pick, a look, a place, a retry. */
+.device-steps {
+    max-height: 14rem;
+    overflow: auto;
+    padding: 0.4rem 0.55rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    background: var(--panel-2);
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+.device-step.warning { color: var(--hold); }
+.device-step.error { color: var(--danger); }
+
+.device-run-bar {
+    width: 100%;
+}
+
+/* The run window: over the page at its corner, moved by its head. */
+.run-window {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 40;
+    width: min(28rem, calc(100vw - 2rem));
+    max-height: 70vh;
+    overflow: auto;
+    box-shadow: var(--shadow-lg);
+}
+
+.run-window-head {
+    cursor: move;
+    user-select: none;
+}
+
+.device-port-note {
+    overflow-wrap: anywhere;
+}
+
+/* The PNP page's camera view: one picture, or two side by side. */
+.camera-view-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+    gap: 0.5rem;
+}
+
+.camera-view {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0;
+}
+
+.camera-view-stage {
+    position: relative;
+    overflow: hidden;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--base03);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+
+.camera-view-stage.dragging {
+    cursor: grabbing;
+}
+
+.camera-view-picture {
+    display: block;
+    width: 100%;
+    height: auto;
+    min-height: 6rem;
+    transform-origin: center center;
+    pointer-events: none;
+}
+
+/* The circle a part is looked for within, about the crosshair. */
+.camera-view-ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border: 0.125rem dashed var(--cyan);
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+.camera-view-caption {
+    font-size: 0.8rem;
+}
+
+.camera-view-label {
+    flex: 1 1 auto;
+    font-weight: 600;
+}
+
+/* An "i" beside settings that shows a drawing of what they mean. */
+.info-tip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: help;
+}
+
+.info-tip-mark {
+    width: 1.3rem;
+    height: 1.3rem;
+}
+
+.info-tip-mark circle {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+}
+
+.info-tip-mark text {
+    fill: var(--accent);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 12px;
+    font-style: italic;
+    font-weight: 700;
+}
+
+.info-tip:focus-visible {
+    outline: none;
+}
+
+.info-tip:focus-visible .info-tip-mark circle {
+    stroke-width: 3;
+}
+
+.info-tip-pop {
+    display: none;
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 0.4rem);
+    right: 0;
+    width: min(20rem, 80vw);
+    padding: 0.6rem;
+    color: var(--text);
+    font-size: 0.8rem;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    line-height: 1.4;
+    white-space: normal;
+    background: var(--panel);
+    border: thin solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+}
+
+.info-tip:hover .info-tip-pop,
+.info-tip:focus .info-tip-pop {
+    display: block;
+}
+
+.info-tip-caption {
+    display: block;
+    margin-top: 0.4rem;
+}
+
+.tip-drawing {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.tip-drawing .tip-line,
+.tip-drawing .tip-shape,
+.tip-drawing .tip-dash,
+.tip-drawing .tip-faint,
+.tip-drawing .tip-mark,
+.tip-drawing .tip-arrow {
+    fill: none;
+    stroke: var(--text);
+    stroke-width: 1.2;
+}
+
+.tip-drawing .tip-shape { fill: var(--panel-2); }
+.tip-drawing .tip-faint { stroke: var(--border-strong); fill: var(--panel-2); }
+.tip-drawing .tip-dash { stroke: var(--muted); stroke-dasharray: 4 3; }
+.tip-drawing .tip-mark { fill: var(--accent); stroke: var(--accent); }
+.tip-drawing .tip-arrow { stroke: var(--magenta); stroke-width: 1.5; }
+.tip-drawing .tip-arrowhead { fill: var(--magenta); }
+
+.tip-drawing .tip-text {
+    fill: var(--text);
+    font-family: var(--font);
+    font-size: 0.55rem;
+}
+
+.device-tune > summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+/* The parts table: sorted by a column pressed, grouped by value and footprint. */
+table.pnp-parts th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+table.pnp-parts th.sorted {
+    color: var(--accent);
+}
+
+table.pnp-parts tr.pnp-group td {
+    font-weight: 600;
+    white-space: normal;
+    background: var(--panel-2);
+}
+
+/* A wait for the parts or the job, said with a turning mark. */
+.loading::after {
+    content: "";
+    display: inline-block;
+    width: 0.8em;
+    height: 0.8em;
+    margin-left: 0.5em;
+    vertical-align: -0.1em;
+    border: 0.15em solid var(--border-strong);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(1turn); }
+}
+
+/* The board drawing pans by a drag. */
+.pnp-drawing {
+    touch-action: none;
+    cursor: grab;
 }
 
 .badge.device-badge[data-device="connected"] { --tone: var(--jog); }

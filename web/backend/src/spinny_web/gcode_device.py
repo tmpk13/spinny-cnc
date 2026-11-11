@@ -46,6 +46,8 @@ WRITE_TIMEOUT = 2.0
 TRAILING_OK = 0.3
 # The device's last lines in and out, which its state shows.
 LOG_LINES = 60
+# A run's last steps in words, which its progress shows.
+STEP_LINES = 300
 
 
 class DeviceLinkError(Exception):
@@ -57,6 +59,64 @@ def open_port(url: str, baud: int):
     by this program alone."""
     check_url(url)
     return serial.serial_for_url(url, baudrate=baud, timeout=READ_TIMEOUT, write_timeout=WRITE_TIMEOUT, exclusive=True)
+
+
+# What a firmware says of itself (Marlin, RepRapFirmware, Smoothieware
+# answer M115 so), read off a port before it is picked.
+IDENTIFY = "M115"
+IDENTIFY_SECONDS = 3.0
+FIRMWARE = re.compile(r"FIRMWARE_NAME:\s*(.+?)(?:\s+[A-Z_]+:|$)")
+MACHINE = re.compile(r"MACHINE_TYPE:\s*(.+?)(?:\s+[A-Z_]+:|$)")
+
+
+def identify(url: str, baud: int, opener: Callable[[str, int], Any] = open_port, seconds: float = IDENTIFY_SECONDS) -> dict:
+    """Asks the firmware on a port what it is: M115 out, the lines back until
+    its `ok` or `seconds`, the port closed again. Nothing moves. The firmware's
+    name and the machine's type are picked out where the answer has them."""
+    try:
+        port = opener(url, baud)
+    except (serial.SerialException, OSError, ValueError) as exc:
+        raise DeviceLinkError(f"cannot open {url}: {exc}") from exc
+    lines: list[str] = []
+    try:
+        port.write((IDENTIFY + "\n").encode("ascii"))
+        pending = b""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            chunk = port.read(256)
+            if not chunk:
+                continue
+            pending += chunk
+            done = False
+            while b"\n" in pending:
+                raw, pending = pending.split(b"\n", 1)
+                text = raw.decode("utf-8", errors="replace").strip()
+                if text:
+                    lines.append(text)
+                    done = done or bool(OK.match(text))
+            if done:
+                break
+    except (serial.SerialException, OSError) as exc:
+        raise DeviceLinkError(f"{url}: {exc}") from exc
+    finally:
+        try:
+            port.close()
+        except Exception:
+            pass
+    return {"url": url, "lines": lines, **firmware_of(lines)}
+
+
+def firmware_of(lines: list[str]) -> dict:
+    """The firmware's name and the machine's type in an answer to M115, None where it says none."""
+    firmware = machine = None
+    for line in lines:
+        found = FIRMWARE.search(line)
+        if found and firmware is None:
+            firmware = found.group(1).strip()
+        found = MACHINE.search(line)
+        if found and machine is None:
+            machine = found.group(1).strip()
+    return {"firmware": firmware, "machine": machine}
 
 
 @dataclass
@@ -73,8 +133,14 @@ class RunProgress:
     doing: str | None = None
     # The job placed, when the run places one.
     job: str | None = None
+    # What the run did, a line per step (a pick, a look, a place, a retry),
+    # each with its time from the start, the part and how it went.
+    steps: deque = field(default_factory=lambda: deque(maxlen=STEP_LINES))
     started: float = field(default_factory=time.monotonic, repr=False)
     finished: float | None = field(default=None, repr=False)
+
+    def note(self, text: str, ref: str | None = None, level: str = "info") -> None:
+        self.steps.append({"t": round(time.monotonic() - self.started, 1), "ref": ref, "text": text, "level": level})
 
     def to_dict(self) -> dict:
         end = self.finished if self.finished is not None else time.monotonic()
@@ -89,6 +155,7 @@ class RunProgress:
             "job": self.job,
             "error": self.error,
             "seconds": round(end - self.started, 1),
+            "steps": [dict(entry) for entry in self.steps],
         }
 
 
@@ -135,6 +202,11 @@ class GcodeDevice:
         self.progress: RunProgress | None = None
         self.position: dict | None = None
         self.homed = False
+        # Whether the lights were last switched on, and the vacuum, and its
+        # last reading; None until this link switched or read them.
+        self.light: bool | None = None
+        self.vacuum: bool | None = None
+        self.reading: float | None = None
         self.log: deque[dict] = deque(maxlen=LOG_LINES)
 
     # --- the port ---------------------------------------------------------------
@@ -172,6 +244,9 @@ class GcodeDevice:
         self.url = url
         self.homed = False
         self.position = None
+        self.light = None
+        self.vacuum = None
+        self.reading = None
         self._reader = threading.Thread(target=self._read_loop, args=(port,), name="gcode-device-reader", daemon=True)
         self._reader.start()
         self._note("info", f"connected to {url} at {baud} baud")
@@ -188,6 +263,11 @@ class GcodeDevice:
             raise
         finally:
             self._publish()
+
+    def identify(self, url: str, baud: int) -> dict:
+        """What the firmware on another port says it is, opened the way this
+        link opens its own."""
+        return identify(url, baud, self._opener)
 
     def disconnect(self) -> None:
         self._stop.set()
@@ -364,6 +444,8 @@ class GcodeDevice:
             "running": self.running,
             "homed": self.homed,
             "position": self.position,
+            "light": self.light,
+            "vacuum": {"on": self.vacuum, "reading": self.reading},
             "progress": self.progress.to_dict() if self.progress is not None else None,
             "log": list(self.log),
         }
@@ -403,6 +485,11 @@ class DeviceMover(Mover):
             raise ValueError("the device profile has no position command, which the cameras' routines need")
 
     def begin(self) -> None:
+        # The cameras see by the profile's lights: on before the first look.
+        if self.device.light_on and self.link.light is not True:
+            for line in self.device.light_on:
+                self._command(line)
+            self.link.light = True
         position = read_position(self._command(self.device.position), self.device.axes)
         if "x" not in position or "y" not in position:
             raise PnpError(f"'{self.device.position}' answered no {self.device.axes[0]} and {self.device.axes[1]}")
@@ -418,8 +505,10 @@ class DeviceMover(Mover):
         return self._at[2]
 
     def lift(self) -> None:
+        # To the safe height from either side: on a seesaw Z (two nozzles on
+        # one motor) a Z above it lowers the other nozzle.
         z = self._at[2]
-        if z is None or z < self.device.safe_z - 1e-6:
+        if z is None or abs(z - self.device.safe_z) > 1e-6:
             self._z(self.device.safe_z)
 
     def go(self, point) -> None:

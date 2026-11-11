@@ -494,7 +494,9 @@ class Mover:
         raise NotImplementedError
 
     def lift(self) -> None:
-        """Up to the height the head travels at, when it is lower."""
+        """To the height the head travels at: up from below it on this
+        machine, to it from either side on a device (a seesaw Z lowers its
+        other nozzle above it)."""
         raise NotImplementedError
 
     def go(self, point: Point) -> None:
@@ -849,6 +851,7 @@ class UpCamera:
         angle: float = 0.0,
         head: Point | None = None,
         size: tuple[float, float] | None = None,
+        crop: float | None = None,
     ) -> dict:
         """Over the camera with the part the nozzle holds, the nozzle turned
         to `angle` where it turns and the head at `head` (the camera's place
@@ -857,7 +860,8 @@ class UpCamera:
         and the direction of its long side in the machine's frame, degrees
         (`angle`; None when the picture tells none). `size`, the length and
         width expected, keeps the finder to spots of about that area. Also
-        what a G-code device's run calls between a pick and its place."""
+        what a G-code device's run calls between a pick and its place;
+        `crop`, mm, keeps the look within that far of the picture's center."""
         settings = self.settings()
         self._over_camera(mover, progress, place, angle, head)
         self._step(progress, "looking")
@@ -867,6 +871,8 @@ class UpCamera:
         if size is not None and place.mm_per_px > 0.0:
             area = size[0] * size[1] / (place.mm_per_px * place.mm_per_px)
             limits = {"min_area": area * 0.25, "max_area": area * 4.0}
+        if crop is not None and place.mm_per_px > 0.0:
+            limits["radius"] = crop / place.mm_per_px
         reply = self.client.spot(polarity=settings.part_spot, **limits)
         self._log_look("looking at the part" if progress is not None else "placing: looking at the part", "looking", reply, settings.part_spot)
         if not reply.get("found"):

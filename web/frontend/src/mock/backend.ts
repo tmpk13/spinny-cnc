@@ -87,6 +87,7 @@ import {
 import { MockCameraLog, svgUrl } from "./camlog.ts";
 import { MockAuto } from "./auto.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
+import lumenText from "../../../../pnp/opulo-lumen-rev5.toml" with { type: "text" };
 import {
     DEVICE_ID,
     angleWord,
@@ -101,6 +102,7 @@ import {
     planSummary,
     planText,
     safeLine,
+    vacuumReading,
     wrapAngle,
     xyLine,
     zLine,
@@ -163,6 +165,7 @@ import type {
     Component,
     ComponentsResponse,
     DeviceCheck,
+    DeviceIdentity,
     DeviceFile,
     DevicePlan,
     DeviceReference,
@@ -1890,6 +1893,15 @@ function checkProfileId(id: string): void {
 }
 
 /** Refuses an id no device profile may have, in the backend's words. */
+/** Refuses anything but a device path or a socket url, in the backend's words. */
+function checkPortUrl(url: string): void {
+    const device = /^(\/dev\/[A-Za-z0-9_.:@,+-]+(\/[A-Za-z0-9_.:@,+-]+)*|COM[0-9]+)$/;
+    const socket = /^(socket:\/\/[A-Za-z0-9_.-]+(:[0-9]{1,5})|socket:\/\/\[[0-9A-Fa-f:.]+\]:[0-9]{1,5})$/;
+    if (!device.test(url) && !socket.test(url)) {
+        throw new ApiError(400, `not a serial device path or a socket://host:port url: '${url}'`);
+    }
+}
+
 function checkDeviceId(id: string): void {
     if (!DEVICE_ID.test(id)) {
         throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
@@ -1965,25 +1977,47 @@ export class MockBackend implements Api, EventFeed {
     /** Whether a part hangs on the mock's nozzle: from the first look at one on. */
     private pnpHolding = false;
     /** The G-code device: its profiles by id, what the backend keeps of it, and a link that answers every line `ok`. */
-    private deviceTexts = new Map<string, string>([["openpnp-marlin", openpnpMarlinText]]);
-    private deviceConfig: { profile: string | null; angle: number | null; references: DeviceReference[]; taken: Record<string, number> } = {
+    private deviceTexts = new Map<string, string>([["openpnp-marlin", openpnpMarlinText], ["opulo-lumen-rev5", lumenText]]);
+    private deviceConfig: { profile: string | null; angle: number | null; references: DeviceReference[]; taken: Record<string, number>; url: string | null; boards: number } = {
         profile: null,
         angle: null,
         references: [],
         taken: {},
+        url: null,
+        boards: 0,
     };
-    private deviceLink: { connected: boolean; url: string | null; homed: boolean; position: { x: number; y: number; z: number; rotation: number }; log: { dir: string; text: string }[] } = {
+    private deviceLink: {
+        connected: boolean;
+        url: string | null;
+        homed: boolean;
+        position: { x: number; y: number; z: number; rotation: number };
+        log: { dir: string; text: string }[];
+        light: boolean | null;
+        reading: number | null;
+        vacuumSwitched: boolean | null;
+    } = {
         connected: false,
         url: null,
         homed: false,
         position: { x: 0, y: 0, z: 0, rotation: 0 },
         log: [],
+        light: null,
+        reading: null,
+        vacuumSwitched: null,
     };
     private devicePositionRead = false;
     private deviceProgress: DeviceRun | null = null;
-    private deviceSession: { lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[]; next: number; elapsed: number; device: MockDevice; progress: DeviceRun } | null = null;
+    private deviceSession: {
+        lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[];
+        next: number;
+        elapsed: number;
+        device: MockDevice;
+        progress: DeviceRun;
+        /** Each part's value, for the steps in words. */
+        values: Map<string, string>;
+    } | null = null;
     /** Where the up camera sits on the device, as centering the nozzle over it there measured, and the tip's runout. */
-    private deviceCamera: { position: [number, number] | null; mm_per_px: number; roll: number; mirror: boolean; runout: [number, number] | null } = {
+    private upPlace: { position: [number, number] | null; mm_per_px: number; roll: number; mirror: boolean; runout: [number, number] | null } = {
         position: null,
         mm_per_px: 0,
         roll: 0,
@@ -1992,7 +2026,7 @@ export class MockBackend implements Api, EventFeed {
     };
     private deviceRoutine: { kind: "nozzle" | "runout"; elapsed: number; device: MockDevice; progress: PnpRoutine } | null = null;
     /** Whether the device's vacuum is on, as its pick and place commands left it. */
-    private deviceVacuum = false;
+    private deviceVacuumOn = false;
     /** The device's top camera: its settings, whether it runs, its routine, and the fiducials last found. */
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
@@ -2363,6 +2397,18 @@ export class MockBackend implements Api, EventFeed {
                 pid: 0x000a,
                 kind: "usb",
                 spinny: true,
+            },
+            // A LumenPnP on Opulo's Marlin, as Linux lists its STM32 port.
+            {
+                url: "/dev/serial/by-id/usb-STMicroelectronics_MARLIN_OPULO_LUMEN_REV5_CDC_in_FS_Mode_2050335F4E30-if00",
+                device: "/dev/ttyACM1",
+                description: "MARLIN_OPULO_LUMEN_REV5 CDC in FS Mode",
+                product: "MARLIN_OPULO_LUMEN_REV5 CDC in FS Mode",
+                manufacturer: "STMicroelectronics",
+                vid: 0x0483,
+                pid: 0x5740,
+                kind: "usb",
+                spinny: false,
             },
             { url: "/dev/ttyS0", device: "/dev/ttyS0", description: "n/a", kind: "system", spinny: false },
         ];
@@ -6555,16 +6601,20 @@ export class MockBackend implements Api, EventFeed {
 
     private deviceStateOf(): DeviceState {
         const link = this.deviceLink;
+        const position = this.deviceCameraPosition();
         return {
             profile: this.deviceConfig.profile,
+            port: this.deviceConfig.url,
             angle: this.deviceConfig.angle,
             references: this.deviceConfig.references.map((entry) => ({ ...entry, at: [entry.at[0], entry.at[1]] })),
             taken: { ...this.deviceConfig.taken },
+            boards: this.deviceConfig.boards,
             camera: {
-                ...this.deviceCamera,
-                position: this.deviceCamera.position ? [...this.deviceCamera.position] : null,
-                runout: this.deviceCamera.runout ? [...this.deviceCamera.runout] : null,
+                ...this.upPlace,
+                position: position ? [...position] : null,
+                runout: this.upPlace.runout ? [...this.upPlace.runout] : null,
                 height: this.deviceCameraZ(),
+                measured: this.upPlace.position !== null,
             },
             top: this.topStateOf(),
             connected: link.connected,
@@ -6573,9 +6623,30 @@ export class MockBackend implements Api, EventFeed {
             running: this.deviceSession !== null,
             homed: link.homed,
             position: this.devicePositionRead ? { ...link.position } : null,
-            progress: this.deviceProgress ? { ...this.deviceProgress, placed: [...this.deviceProgress.placed], failed: this.deviceProgress.failed.map((entry) => ({ ...entry })) } : null,
+            light: link.light,
+            vacuum: { on: link.vacuumSwitched, reading: link.reading },
+            progress: this.deviceProgress
+                ? {
+                    ...this.deviceProgress,
+                    placed: [...this.deviceProgress.placed],
+                    failed: this.deviceProgress.failed.map((entry) => ({ ...entry })),
+                    steps: (this.deviceProgress.steps ?? []).map((entry) => ({ ...entry })),
+                }
+                : null,
             log: link.log.slice(-60),
         };
+    }
+
+    /** Where the up camera is on the device: as measured or set, else as the profile has it. */
+    private deviceCameraPosition(): [number, number] | null {
+        if (this.upPlace.position !== null) {
+            return this.upPlace.position;
+        }
+        try {
+            return this.deviceConfig.profile !== null ? this.pickedDevice().camera_position : null;
+        } catch {
+            return null;
+        }
     }
 
     private emitDevice(): void {
@@ -6612,18 +6683,22 @@ export class MockBackend implements Api, EventFeed {
             }
         } else if (code === device.position) {
             const position = this.deviceLink.position;
-            reply.push(`${x}:${position.x.toFixed(2)} ${y}:${position.y.toFixed(2)} ${z}:${position.z.toFixed(2)} E:0.00 Count X:0 Y:0 Z:0`);
+            reply.push(`${x}:${position.x.toFixed(2)} ${y}:${position.y.toFixed(2)} ${z}:${position.z.toFixed(2)} ${a}:${position.rotation.toFixed(2)} E:0.00 Count X:0 Y:0 Z:0`);
         } else if (code === device.home) {
             this.deviceLink.position = { x: 0, y: 0, z: 0, rotation: 0 };
-        } else if (code === device.pick) {
-            this.deviceVacuum = true;
-        } else if (code === device.place) {
-            this.deviceVacuum = false;
+        } else if (device.pick.includes(code)) {
+            this.deviceVacuumOn = true;
+        } else if (device.place.includes(code)) {
+            this.deviceVacuumOn = false;
+        } else if (code === "M115") {
+            reply.push("FIRMWARE_NAME:Marlin 2.1.2 (mock) MACHINE_TYPE:mock device EXTRUDER_COUNT:0");
         }
-        if (device.vacuum && code === device.vacuum.read) {
-            // A sensor read as Marlin answers M105: the middle of the range for how the vacuum stands.
-            const span = this.deviceVacuum ? device.vacuum.part_on : device.vacuum.part_off ?? [0, 0];
-            reply.push(`ok T:${((span[0] + span[1]) / 2).toFixed(2)} /0.00 B:0.00 /0.00 @:0 B@:0`);
+        if (device.vacuum && code === device.vacuum.read[device.vacuum.read.length - 1]) {
+            // The middle of the range for how the vacuum stands, said as an
+            // I2C read (OpenPnP's LumenPnP pattern) and as Marlin's M105.
+            const span = this.deviceVacuumOn ? device.vacuum.part_on ?? [220, 241] : device.vacuum.part_off ?? [248, 255];
+            const value = ((span[0] + span[1]) / 2).toFixed(2);
+            reply.push(`echo:i2c-reply: from:109 bytes:1 data:${value}`, `ok T:${value} /0.00 B:0.00 /0.00 @:0 B@:0`);
         } else {
             reply.push("ok");
         }
@@ -6669,7 +6744,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "an up camera routine is already under way");
         }
         const at = this.deviceLink.position;
-        if (!this.deviceCamera.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
+        if (!this.upPlace.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
             throw new ApiError(400, "no nozzle in the picture: jog it over the up camera and center again");
         }
         const progress: PnpRoutine = { kind: "nozzle", target: "device", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, seconds: 0 };
@@ -6682,7 +6757,7 @@ export class MockBackend implements Api, EventFeed {
 
     async deviceRunout(): Promise<DeviceState> {
         const device = this.deviceIdle();
-        if (!this.deviceCamera.position || !(this.deviceCamera.mm_per_px > 0)) {
+        if (!this.upPlace.position || !(this.upPlace.mm_per_px > 0)) {
             throw new ApiError(400, "the nozzle is not centered over the up camera yet: center it first");
         }
         if (!this.deviceLink.connected) {
@@ -6929,7 +7004,7 @@ export class MockBackend implements Api, EventFeed {
         routine.progress.done = index;
         if (index === steps.length - 1 && routine.kind === "runout") {
             this.deviceLine(routine.device, `${routine.device.move} ${angleWord(routine.device, 0)} F${gnum(routine.device.feed_xy, 0)}`);
-            this.deviceCamera = { ...this.deviceCamera, runout: [...DEVICE_RUNOUT] };
+            this.upPlace = { ...this.upPlace, runout: [...DEVICE_RUNOUT] };
             routine.progress.state = "done";
             this.deviceRoutine = null;
             this.message("info", `nozzle runout ${Math.round(Math.hypot(...DEVICE_RUNOUT) * 1000)} um (turns counterclockwise as the profile says) (mock)`);
@@ -6940,7 +7015,7 @@ export class MockBackend implements Api, EventFeed {
             this.deviceLine(routine.device, xyLine(routine.device, x, y));
             this.deviceLine(routine.device, zLine(routine.device, z));
             // The runout is the nozzle's own and outlasts a new center.
-            this.deviceCamera = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, runout: this.deviceCamera.runout };
+            this.upPlace = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, runout: this.upPlace.runout };
             routine.progress.state = "done";
             routine.progress.spot = { dx: 0, dy: 0, mm: 0 };
             this.deviceRoutine = null;
@@ -6995,7 +7070,7 @@ export class MockBackend implements Api, EventFeed {
         return this.deviceStateOf();
     }
 
-    async deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean }): Promise<DeviceState> {
+    async deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean; url?: string }): Promise<DeviceState> {
         if (patch.profile !== undefined) {
             if (this.deviceLink.connected && patch.profile !== this.deviceConfig.profile) {
                 throw new ApiError(409, "disconnect the device before picking another profile");
@@ -7011,6 +7086,19 @@ export class MockBackend implements Api, EventFeed {
             }
             this.deviceConfig.angle = patch.angle;
         }
+        if (patch.url !== undefined) {
+            const url = patch.url.trim();
+            if (this.deviceLink.connected && url !== (this.deviceConfig.url ?? "")) {
+                throw new ApiError(409, "disconnect the device before picking another port");
+            }
+            if (url) {
+                checkPortUrl(url);
+                if (this.connected && this.url === url) {
+                    throw new ApiError(400, `${url} is this machine's own port`);
+                }
+            }
+            this.deviceConfig.url = url || null;
+        }
         this.emitDevice();
         return this.deviceStateOf();
     }
@@ -7020,12 +7108,16 @@ export class MockBackend implements Api, EventFeed {
         if (this.deviceLink.connected) {
             throw new ApiError(502, "the device is already connected: disconnect first");
         }
-        if (!device.url) {
+        const url = this.deviceConfig.url ?? device.url;
+        if (url && this.connected && this.url === url) {
+            throw new ApiError(400, `${url} is this machine's own port: pick the device's`);
+        }
+        if (!url) {
             throw new ApiError(502, "the device profile names no port: set [port] url");
         }
-        this.deviceLink = { ...this.deviceLink, connected: true, url: device.url, homed: false };
+        this.deviceLink = { ...this.deviceLink, connected: true, url, homed: false, light: null, reading: null, vacuumSwitched: null };
         this.devicePositionRead = false;
-        this.deviceNote("info", `connected to ${device.url} at ${device.baud} baud (mock)`);
+        this.deviceNote("info", `connected to ${url} at ${device.baud} baud (mock)`);
         for (const line of device.init) {
             this.deviceLine(device, line);
         }
@@ -7131,8 +7223,8 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "only a .kicad_pcb upload keeps the board its parts are read from");
         }
         const fit = this.deviceFitOf(jobId, parts);
-        const ready = this.deviceCamera.position !== null && this.deviceCamera.mm_per_px > 0;
-        return { device, plan: planDevice(device, parts, fit, this.deviceConfig.taken, refs, job.name, ready, this.deviceCamera.runout ?? [0, 0]) };
+        const ready = this.upPlace.position !== null && this.upPlace.mm_per_px > 0;
+        return { device, plan: planDevice(device, parts, fit, this.deviceConfig.taken, refs, job.name, ready, this.upPlace.runout ?? [0, 0]) };
     }
 
     async devicePlan(job: string, refs?: string[]): Promise<DevicePlan> {
@@ -7205,11 +7297,22 @@ export class MockBackend implements Api, EventFeed {
         for (const line of plan.tail) {
             lines.push({ code: codeOf(line), block: null });
         }
-        const progress: DeviceRun = { state: "running", sent: 0, total: planSummary(plan).lines, part: null, placed: [], failed: [], doing: null, job, error: null, seconds: 0 };
+        const progress: DeviceRun = { state: "running", sent: 0, total: planSummary(plan).lines, part: null, placed: [], failed: [], doing: null, job, error: null, seconds: 0, steps: [] };
+        progress.steps!.push({ t: 0, ref: null, text: `placing ${plan.blocks.length} parts on ${device.name}`, level: "info" });
+        const values = new Map(mockComponents(this.requireJob(job)).map((part) => [part.ref, part.value]));
         this.deviceProgress = progress;
-        this.deviceSession = { lines, next: 0, elapsed: 0, device, progress };
+        this.deviceSession = { lines, next: 0, elapsed: 0, device, progress, values };
         this.emitDevice();
         return { ...planSummary(plan), ...this.deviceStateOf() };
+    }
+
+    /** A step of a run in words, as the backend keeps its last 300. */
+    private deviceStep(progress: DeviceRun, text: string, ref: string | null, level: "info" | "warning" | "error" = "info"): void {
+        const steps = (progress.steps ??= []);
+        steps.push({ t: progress.seconds, ref, text, level });
+        if (steps.length > 300) {
+            steps.splice(0, steps.length - 300);
+        }
     }
 
     /** The program on the mock's clock, a few dozen lines a second. */
@@ -7238,14 +7341,19 @@ export class MockBackend implements Api, EventFeed {
             if (picked) {
                 session.progress.part = picked.ref;
                 this.deviceConfig.taken[picked.feeder] = Math.max(this.deviceConfig.taken[picked.feeder] ?? 0, picked.index + 1);
+                const value = session.values.get(picked.ref) ?? "";
+                this.deviceStep(session.progress, `picking ${value} from ${picked.feeder} #${picked.index + 1}`.replace("  ", " "), picked.ref);
             }
             if (block) {
                 session.progress.placed.push(block.ref);
+                this.deviceStep(session.progress, `placed at X ${gnum(block.target[0])} Y ${gnum(block.target[1])}, ${gnum(block.angle, 1)} deg`, block.ref);
             }
         }
         if (session.next >= session.lines.length) {
             session.progress.state = "done";
             session.progress.part = null;
+            this.deviceStep(session.progress, `done: ${session.progress.placed.length} placed`, null);
+            this.deviceConfig.boards += 1;
             this.deviceSession = null;
             this.message("info", `placing on ${session.device.name} done: ${session.progress.placed.length} parts placed (mock)`);
         }
@@ -7261,8 +7369,8 @@ export class MockBackend implements Api, EventFeed {
      * sit true to their angle, so one look does.
      */
     private deviceLook(device: MockDevice, block: MockBlock): { code: string; block: MockBlock | null }[] {
-        const camera = this.deviceCamera.position ?? DEVICE_CAMERA_WHERE;
-        const runout = this.deviceCamera.runout ?? [0, 0];
+        const camera = this.upPlace.position ?? DEVICE_CAMERA_WHERE;
+        const runout = this.upPlace.runout ?? [0, 0];
         const axis: [number, number] = [camera[0] + runout[0], camera[1] + runout[1]];
         const [swungX, swungY] = turnPoint(runout, block.turn);
         const head: [number, number] = [axis[0] - swungX, axis[1] - swungY];
@@ -7302,15 +7410,242 @@ export class MockBackend implements Api, EventFeed {
         return this.deviceStateOf();
     }
 
-    async deviceGoto(job: string, ref: string): Promise<DeviceState> {
+    async deviceGoto(job: string, ref: string, camera = false): Promise<DeviceState> {
         const device = this.deviceIdle();
         const part = this.devicePart(job, ref);
         const { plan } = this.devicePlanOf(job, []);
-        for (const line of deviceGotoLines(device, plan.fit, part)) {
-            this.deviceLine(device, line);
+        if (camera) {
+            const offset = this.topOffsetOf(device);
+            const [tx, ty] = turnPoint([part.x, part.y], plan.fit.rotation);
+            const [x, y] = [tx + plan.fit.shift[0], ty + plan.fit.shift[1]];
+            this.deviceLines(device, [safeLine(device), xyLine(device, x - offset[0], y - offset[1])]);
+        } else {
+            this.deviceLines(device, deviceGotoLines(device, plan.fit, part));
         }
         this.emitDevice();
         return this.deviceStateOf();
+    }
+
+    /** Where the top camera's picture center is from the nozzle: as measured, else as the profile's design has it. */
+    private topOffsetOf(device: MockDevice): [number, number] {
+        if (this.topConfig.offset !== null) {
+            return [this.topConfig.offset[0], this.topConfig.offset[1]];
+        }
+        if (device.top?.offset) {
+            return [device.top.offset[0], device.top.offset[1]];
+        }
+        throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the profile, or Measure offset");
+    }
+
+    private deviceLines(device: MockDevice, lines: string[]): void {
+        for (const line of lines) {
+            this.deviceLine(device, line);
+        }
+    }
+
+    /** The head's place read off the device. */
+    private deviceHere(device: MockDevice): { x: number; y: number; z: number; rotation: number } {
+        this.deviceLine(device, device.position);
+        this.devicePositionRead = true;
+        return { ...this.deviceLink.position };
+    }
+
+    async deviceIdentify(url: string): Promise<DeviceIdentity> {
+        checkPortUrl(url.trim());
+        if (this.connected && this.url === url.trim()) {
+            throw new ApiError(400, `${url.trim()} is this machine's own port`);
+        }
+        // The mock's LumenPnP answers as Opulo's Marlin; any other port says nothing.
+        const lines = /LUMEN|deviceport/i.test(url)
+            ? ["FIRMWARE_NAME:Marlin 2.1.2 (Opulo, mock) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin MACHINE_TYPE:LumenPnP EXTRUDER_COUNT:0", "ok"]
+            : [];
+        return { url: url.trim(), lines, firmware: lines.length ? "Marlin 2.1.2 (Opulo, mock)" : null, machine: lines.length ? "LumenPnP" : null };
+    }
+
+    async deviceJog(axis: "x" | "y" | "z" | "rotation", step: number): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        const limit = axis === "rotation" ? 360 : 500;
+        if (!(Number.isFinite(step) && step !== 0 && Math.abs(step) <= limit)) {
+            throw new ApiError(400, `step: up to ${limit} ${axis === "rotation" ? "degrees" : "mm"} either way`);
+        }
+        const here = this.deviceHere(device);
+        let line: string;
+        if (axis === "rotation") {
+            const value = here.rotation + (device.rotation_cw ? -step : step);
+            line = `${device.move} ${device.axes[3]}${gnum(value)} F${gnum(device.feed_xy, 0)}`;
+        } else if (axis === "z") {
+            line = zLine(device, here.z + step);
+        } else {
+            line = axis === "x" ? xyLine(device, here.x + step, here.y) : xyLine(device, here.x, here.y + step);
+        }
+        this.deviceLine(device, line);
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceMove(target: { x?: number; y?: number; z?: number; rotation?: number }): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        if (target.x === undefined && target.y === undefined && target.z === undefined && target.rotation === undefined) {
+            throw new ApiError(400, "give x, y, z or rotation");
+        }
+        if ([target.x, target.y, target.z].some((value) => value !== undefined && !(Number.isFinite(value) && Math.abs(value) <= 10000))) {
+            throw new ApiError(400, "a place must be within 10000 mm");
+        }
+        const lines: string[] = [];
+        if (target.x !== undefined || target.y !== undefined) {
+            const here = target.x === undefined || target.y === undefined ? this.deviceHere(device) : null;
+            lines.push(safeLine(device), xyLine(device, target.x ?? here!.x, target.y ?? here!.y, target.rotation));
+        } else if (target.rotation !== undefined) {
+            lines.push(`${device.move} ${angleWord(device, target.rotation)} F${gnum(device.feed_xy, 0)}`);
+        }
+        if (target.z !== undefined) {
+            lines.push(zLine(device, target.z));
+        }
+        this.deviceLines(device, lines);
+        this.devicePositionRead = true;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async devicePark(): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        if (device.park === null) {
+            throw new ApiError(400, "the device profile has no [motion] park place");
+        }
+        this.deviceLines(device, [safeLine(device), xyLine(device, device.park[0], device.park[1])]);
+        this.devicePositionRead = true;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceOverCamera(): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        const position = this.deviceCameraPosition();
+        if (position === null) {
+            throw new ApiError(400, "the up camera's place on the device is not known: set it, or Center nozzle over it");
+        }
+        const lines = [safeLine(device), xyLine(device, position[0], position[1], 0)];
+        if (device.camera_z !== null) {
+            lines.push(zLine(device, device.camera_z));
+        }
+        if (device.light_on.length > 0 && this.deviceLink.light !== true) {
+            lines.unshift(...device.light_on);
+            this.deviceLink.light = true;
+        }
+        this.deviceLines(device, lines);
+        this.devicePositionRead = true;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceSwap(to: "nozzle" | "camera"): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        const offset = this.topOffsetOf(device);
+        const here = this.deviceHere(device);
+        const sign = to === "nozzle" ? 1 : -1;
+        this.deviceLines(device, [safeLine(device), xyLine(device, here.x + sign * offset[0], here.y + sign * offset[1])]);
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceCamera(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<DeviceState> {
+        const device = request.here ? this.deviceIdle() : this.pickedDevice();
+        if (request.clear) {
+            this.upPlace.position = null;
+        } else if (request.here) {
+            const here = this.deviceHere(device);
+            this.upPlace.position = [round4(here.x), round4(here.y)];
+        } else if (request.position !== undefined) {
+            if (!request.position.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {
+                throw new ApiError(400, "the up camera's place must be within 10000 mm");
+            }
+            this.upPlace.position = [request.position[0], request.position[1]];
+        } else {
+            throw new ApiError(400, "give a position, here or clear");
+        }
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceLight(on: boolean): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        const lines = on ? device.light_on : device.light_off;
+        if (lines.length === 0) {
+            throw new ApiError(400, `the device profile has no [gcode] light_${on ? "on" : "off"}`);
+        }
+        this.deviceLines(device, lines);
+        this.deviceLink.light = on;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }> {
+        const device = this.deviceIdle();
+        if (request.on === undefined && !request.read) {
+            throw new ApiError(400, "give on, or read");
+        }
+        let reply: string[] = [];
+        if (request.on !== undefined) {
+            this.deviceLines(device, request.on ? device.pick : device.place);
+            this.deviceLink.vacuumSwitched = request.on;
+        }
+        if (request.read) {
+            const vacuum = device.vacuum;
+            if (vacuum === null) {
+                throw new ApiError(400, "the device profile has no [vacuum] read lines");
+            }
+            for (const line of vacuum.read) {
+                reply = this.deviceLine(device, line);
+            }
+            const value = vacuumReading(vacuum, reply);
+            if (value === null) {
+                throw new ApiError(502, `'${vacuum.read[vacuum.read.length - 1]}' answered no reading its pattern finds: ${reply.join(" | ") || "nothing"}`);
+            }
+            this.deviceLink.reading = value;
+        }
+        this.emitDevice();
+        return { reply, ...this.deviceStateOf() };
+    }
+
+    async deviceBoardsReset(): Promise<DeviceState> {
+        this.deviceConfig.boards = 0;
+        this.emitDevice();
+        return this.deviceStateOf();
+    }
+
+    async patchDeviceFile(id: string, path: CamPath, value: CamValue): Promise<DeviceFile> {
+        let text = this.deviceOf(id) && this.deviceTexts.get(id)!;
+        const table = path.slice(0, -1);
+        if (table.length === 1 && typeof table[0] === "string" && value !== null && !new RegExp(`^\\s*\\[${table[0]}\\]\\s*(#.*)?$`, "m").test(text)) {
+            text = `${text.replace(/\n+$/, "")}\n\n[${table[0]}]\n`;
+        }
+        let changed: string;
+        try {
+            changed = setValue(text, path, value);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        return this.saveDeviceFile(id, changed);
+    }
+
+    async newDeviceFile(id: string, text?: string): Promise<DeviceFile> {
+        checkDeviceId(id);
+        if (this.deviceTexts.has(id)) {
+            throw new ApiError(400, `a device profile '${id}' is there already`);
+        }
+        return this.saveDeviceFile(id, text ?? openpnpMarlinText);
+    }
+
+    async deleteDeviceFile(id: string): Promise<DevicesResponse> {
+        checkDeviceId(id);
+        if (!this.deviceTexts.has(id)) {
+            throw new ApiError(404, `no device profile '${id}'`);
+        }
+        if (this.deviceConfig.profile === id && this.deviceLink.connected) {
+            throw new ApiError(409, "disconnect the device before removing its profile");
+        }
+        this.deviceTexts.delete(id);
+        return this.devices();
     }
 
     async deviceResetFeeders(feeder?: string): Promise<DeviceState> {

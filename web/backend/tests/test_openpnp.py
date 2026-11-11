@@ -65,7 +65,7 @@ def part(ref: str, value: str, footprint: str, x: float, y: float, rotation: flo
 
 def test_the_shipped_profile_reads():
     shipped = parse(SHIPPED.read_text(encoding="utf-8"), "openpnp-marlin")
-    assert shipped.axes == ("X", "Y", "Z", "A") and shipped.wait == "M400" and shipped.pick == "M106"
+    assert shipped.axes == ("X", "Y", "Z", "A") and shipped.wait == "M400" and shipped.pick == ("M106",)
     assert shipped.feeders and shipped.feeders[0].count == 50
 
 

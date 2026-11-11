@@ -30,6 +30,8 @@ class FakeMarlin:
         self.readings: list[float] = [0.0]
         self.closed = False
         self.silent = False
+        # M114 reports the rotation axis too, as a LumenPnP's Marlin does.
+        self.report_angle = False
         # While set and not yet released, an M400 is answered only once
         # released, and every answer after it waits behind it, in order.
         self.hold: threading.Event | None = None
@@ -80,7 +82,10 @@ class FakeMarlin:
                 self._answer(b"Error:Unknown command\r\nok\r\n")
             elif line == "M114":
                 x, y, z = self.position
-                self._answer(f"X:{x:.2f} Y:{y:.2f} Z:{z:.2f} E:0.00 Count X:0 Y:0 Z:0\r\nok\r\n".encode())
+                angle = f" A:{self.angle:.2f}" if self.report_angle else ""
+                self._answer(f"X:{x:.2f} Y:{y:.2f} Z:{z:.2f}{angle} E:0.00 Count X:0 Y:0 Z:0\r\nok\r\n".encode())
+            elif line == "M115":
+                self._answer(b"FIRMWARE_NAME:Marlin 2.1.2 (Opulo) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin MACHINE_TYPE:LumenPnP EXTRUDER_COUNT:0\r\nCap:EEPROM:1\r\nok\r\n")
             elif line == "M105":
                 value = self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
                 self._answer(f"ok T:{value:.2f} /0.00 B:0.00 /0.00 @:0 B@:0\r\n".encode())

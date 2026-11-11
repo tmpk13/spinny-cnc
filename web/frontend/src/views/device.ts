@@ -1,27 +1,24 @@
 // The PNP page's G-code device: a pick and place machine of its own whose
 // controller takes the G-code OpenPnP's GcodeDriver sends (Marlin,
-// Smoothieware, RepRapFirmware, Grbl). Its profile (pnp/*.toml: the port,
-// the dialect, the heights, the vacuum sensor, the cameras and the
-// feeders) is edited here with the TOML editor the machine files use; the
-// up camera's place and the nozzle's runout are measured on it; its top
-// camera (on the head, looking down) is set up and its offset measured
-// from a mark; the board is placed on the device from reference parts read
-// off it, or from its fiducials found by the top camera; and a placement
-// is planned, shown, downloaded or run, its parts left out named, and the
-// last lines either way show below.
+// Smoothieware, RepRapFirmware, Grbl). This panel picks its profile (the
+// files in pnp/, edited whole on the Config page) and its port (from the
+// ports found, the same list the top bar has, a G-code controller found
+// by its USB name, or typed), asks the firmware what it is, connects,
+// homes, switches the lights and the vacuum and reads the vacuum sensor,
+// tunes the profile's heights, feeds and vacuum ranges a value at a time,
+// and shows the lines going out and coming back. The board's place on the
+// device, the run and the cameras have panels of their own.
 
-import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, labeled, numberField, onEnter, replace, setLocked, Tracked, type TrackedField } from "../dom.ts";
+import { button, el, labeled, numberField, onEnter, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
-import { setPending, type AppState } from "../state.ts";
-import type { DevicePlan, DeviceReference, DeviceState, SpotPolarity, TopSettings, TopState } from "../types.ts";
-import { mountCameraPick } from "./camerapick.ts";
-import { mountCameraLog } from "./camlog.ts";
+import type { AppState } from "../state.ts";
+import type { CamPath, CamValue, DevicePlan, DeviceReference, DeviceState, Port, TopState } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
-import { codeEditor } from "./editor.ts";
-import { pnpRoutineText, polaritySelect } from "./pnp.ts";
+import { infoTip } from "./infotip.ts";
+import { gcodePort } from "../ports.ts";
+import { portLabel } from "./statusbar.ts";
 import type { Setup } from "./steps.ts";
-import { FRAME_INTERVAL_MS, FRAME_WIDTH } from "./vision.ts";
+import { goToPanel } from "./steps.ts";
 
 /** The references of one job. */
 export function referencesOf(device: DeviceState | null, jobId: string | null): DeviceReference[] {
@@ -82,15 +79,18 @@ export function planText(plan: DevicePlan): string {
 /** Where the up camera sits on the device, in words. */
 export function deviceCameraText(device: DeviceState | null): string {
     const camera = device?.camera;
-    if (!camera?.position || !(camera.mm_per_px > 0)) {
-        return "Up camera not measured: jog the nozzle into its view, then Center nozzle.";
+    if (!camera?.position) {
+        return "Up camera place not known: put the nozzle over it and press Camera is here, or type it.";
     }
+    const where = `Up camera at X ${formatFixed(camera.position[0], 3)} Y ${formatFixed(camera.position[1], 3)}${camera.measured === false ? " (the profile's)" : ""}`;
     const sharp = camera.height !== null ? `, nozzle sharp at Z ${formatFixed(camera.height, 3)}` : "";
+    if (!(camera.mm_per_px > 0)) {
+        return `${where}${sharp}; scale not measured: Center nozzle.`;
+    }
     const runout = camera.runout
         ? ` Runout ${formatFixed(Math.hypot(camera.runout[0], camera.runout[1]) * 1000, 0)} um (tip off by X ${formatFixed(camera.runout[0], 3)} Y ${formatFixed(camera.runout[1], 3)} at 0 deg).`
         : " Runout not measured.";
-    return `Up camera at X ${formatFixed(camera.position[0], 3)} Y ${formatFixed(camera.position[1], 3)}${sharp}, `
-        + `${formatFixed(camera.mm_per_px * 1000, 1)} um/px, roll ${formatFixed(camera.roll, 2)} deg${camera.mirror ? ", mirrored" : ""}.${runout}`;
+    return `${where}${sharp}, ${formatFixed(camera.mm_per_px * 1000, 1)} um/px, roll ${formatFixed(camera.roll, 2)} deg${camera.mirror ? ", mirrored" : ""}.${runout}`;
 }
 
 /** Where the top camera looks from the nozzle, in words. */
@@ -133,6 +133,12 @@ export function fiducialText(top: TopState | null | undefined, jobId: string | n
     return `Fiducials ${found.found.map((entry) => entry.ref).join(", ")} found: board turned ${formatFixed(found.fit.rotation, 3)} deg${rms}.`;
 }
 
+/** The ports a device can be put on: every one but this machine's own, the G-code controllers first. */
+export function devicePorts(ports: Port[], own: string | null): Port[] {
+    const usable = ports.filter((port) => port.url !== own && port.device !== own && !port.spinny);
+    return [...usable.filter((port) => gcodePort(port)), ...usable.filter((port) => !gcodePort(port))];
+}
+
 /** The PNP page's setup when a G-code device places the parts. */
 export const DEVICE_SETUP: Setup = {
     id: "pnp-device",
@@ -142,180 +148,139 @@ export const DEVICE_SETUP: Setup = {
         const jobId = state.job?.id ?? null;
         const parts = state.components !== null && state.components.job === jobId ? state.components.components.length : 0;
         return [
-            { label: "Profile", done: device?.profile !== null && device?.profile !== undefined, hint: "Pick a profile in the G-code device panel and set its [port] url.", panel: "pnp-device" },
+            { label: "Profile", done: device?.profile !== null && device?.profile !== undefined, hint: "Pick a profile and a port in the G-code device panel.", panel: "pnp-device" },
             { label: "Connect", done: device?.connected === true, hint: "Press Connect in the G-code device panel.", panel: "pnp-device" },
             { label: "Home", done: device?.homed === true, hint: "Press Home in the G-code device panel.", panel: "pnp-device" },
-            { label: "Board", done: parts > 0, hint: "Pick a board job uploaded as a .kicad_pcb in the Parts panel.", panel: "pnp-parts" },
+            { label: "Board", done: parts > 0, hint: "Pick or upload a board (.kicad_pcb) in the Parts panel.", panel: "pnp-parts" },
             {
                 label: "Reference",
                 done: referencesOf(device, jobId).length > 0,
-                hint: "Jog the nozzle (or top camera) over a part, pick it, and press Here (or Camera here). Two or more parts, or Find fiducials, also fit the turn.",
-                panel: "pnp-device",
+                hint: "Pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here.",
+                panel: "pnp-refs",
             },
-            { label: "Place", done: device?.progress?.state === "done", hint: "Press Plan, check the program, then Run.", panel: "pnp-device" },
+            { label: "Place", done: device?.progress?.state === "done", hint: "Press Plan, check it, then Run.", panel: "pnp-run" },
         ];
     },
 };
 
+/** The profile's values the panel tunes, each by its table and key. */
+interface Tunable {
+    label: string;
+    path: CamPath;
+    unit: string;
+    tip: string;
+    read: (doc: NonNullable<AppState["deviceDoc"]>["document"]) => number | null;
+}
+
+const TUNABLES: Tunable[] = [
+    { label: "Safe Z", path: ["motion", "safe_z"], unit: "mm", tip: "the height every move across goes at", read: (doc) => doc.safe_z },
+    { label: "Place Z", path: ["motion", "place_z"], unit: "mm", tip: "the tip with a part on it at the board's top", read: (doc) => doc.place_z },
+    { label: "Feed XY", path: ["motion", "feed_xy"], unit: "mm/min", tip: "the speed across", read: (doc) => doc.feed_xy },
+    { label: "Feed Z", path: ["motion", "feed_z"], unit: "mm/min", tip: "the speed up and down", read: (doc) => doc.feed_z },
+    { label: "Pick dwell", path: ["motion", "pick_dwell_ms"], unit: "ms", tip: "the wait with the vacuum on before rising", read: (doc) => doc.pick_dwell_ms },
+    { label: "Place dwell", path: ["motion", "place_dwell_ms"], unit: "ms", tip: "the wait with the vacuum off before rising", read: (doc) => doc.place_dwell_ms },
+];
+
+/** The vacuum's ranges the panel tunes: with a part held, and empty. */
+const RANGES: { label: string; key: "part_on" | "part_off"; tip: string }[] = [
+    { label: "Part held", key: "part_on", tip: "the readings with a part on the nozzle; blank checks nothing" },
+    { label: "Empty", key: "part_off", tip: "the readings with the nozzle open; blank checks nothing" },
+];
+
+/** Loads the picked profile's text and document into the store once the pick changes. */
+export async function loadDeviceDoc(ctx: Ctx, force = false): Promise<void> {
+    const id = ctx.store.get().device?.profile ?? null;
+    if (id === null) {
+        ctx.store.set({ deviceDoc: null });
+        return;
+    }
+    if (!force && ctx.store.get().deviceDoc?.id === id) {
+        return;
+    }
+    const file = await ctx.call(ctx.api.deviceFile(id));
+    if (file && ctx.store.get().device?.profile === id) {
+        ctx.store.set({ deviceDoc: { id, ...file } });
+    }
+}
+
 export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const badge = el("span", { class: "badge device-badge" }, "no device");
     const pick = el("select", { class: "field", "aria-label": "Device profile" }) as HTMLSelectElement;
-    const reload = button("Reload", () => loadList(), "btn btn-quiet btn-small");
+    const edit = button("Edit", () => goToPanel("device-file"), "btn btn-quiet btn-small");
+    edit.title = "edit the whole profile on the Config page";
     const listNote = el("p", { class: "muted hint" });
-    const editor = codeEditor("Device profile");
-    const check = button("Check", () => checkText(), "btn");
-    const save = button("Save", () => saveText(), "btn btn-primary");
-    const revert = button("Revert", () => showFile(), "btn btn-quiet");
-    const status = el("span", { class: "muted config-status" });
+    // The port: picked from the ports found, or typed.
+    const portPick = el("select", { class: "field", "aria-label": "Device port" }) as HTMLSelectElement;
+    const portField = el("input", { type: "text", class: "field url", placeholder: "/dev/ttyACM1 or socket://host:port", "aria-label": "Device port url", spellcheck: "false", autocomplete: "off" }) as HTMLInputElement;
+    const detect = button("Detect", () => detectPorts(), "btn btn-quiet btn-small");
+    detect.title = "list the serial ports again and pick the G-code controller among them";
+    const identify = button("Identify", () => identifyPort(), "btn btn-quiet btn-small");
+    identify.title = "ask the firmware on the port what it is (M115); nothing moves";
+    const portNote = el("p", { class: "muted hint device-port-note" });
     const connect = button("Connect", () => toggleConnect(), "btn btn-primary");
     const home = button("Home", () => into(ctx, "device", ctx.api.deviceHome()), "btn");
+    home.title = "home the device's axes (the profile's home command)";
+    const light = button("Light", () => toggleLight(), "btn btn-quiet btn-toggle");
+    light.title = "switch the cameras' lights";
     const readPosition = button("Read position", () => into(ctx, "device", ctx.api.devicePosition()), "btn btn-quiet");
-    const positionLine = el("span", { class: "muted" });
+    const positionLine = el("p", { class: "muted mono" });
+    // The vacuum, switched by hand and read, to find the sensor's ranges.
+    const vacuumOn = button("Vacuum on", () => vacuum({ on: true }), "btn btn-quiet");
+    const vacuumOff = button("Vacuum off", () => vacuum({ on: false }), "btn btn-quiet");
+    const vacuumRead = button("Read vacuum", () => vacuum({ read: true }), "btn btn-quiet");
+    vacuumRead.title = "read the vacuum sensor: with the nozzle open, then blocked, to set the ranges";
+    const vacuumLine = el("span", { class: "muted mono" });
+    // The profile's values, a value at a time.
+    const tuneFields = TUNABLES.map((tunable) => {
+        const field = numberField({ width: "6rem" });
+        field.setAttribute("aria-label", tunable.label);
+        field.title = tunable.tip;
+        field.addEventListener("change", () => void tune(tunable.path, field, tunable.read));
+        return { tunable, field };
+    });
+    const rangeFields = RANGES.map((range) => {
+        const low = numberField({ width: "5rem", placeholder: "low" });
+        const high = numberField({ width: "5rem", placeholder: "high" });
+        low.setAttribute("aria-label", `${range.label} low`);
+        high.setAttribute("aria-label", `${range.label} high`);
+        const save = (): void => void tuneRange(range.key, low, high);
+        low.addEventListener("change", save);
+        high.addEventListener("change", save);
+        return { range, low, high };
+    });
+    const tuneNote = el("p", { class: "muted hint" });
+    const tuneFold = el("details", { class: "device-tune stack" },
+        el("summary", {}, "Tune the profile"),
+        el("div", { class: "field-grid" }, ...tuneFields.map(({ tunable, field }) => labeled(`${tunable.label} ${tunable.unit}`, field))),
+        el("div", { class: "button-row" }, el("span", { class: "muted" }, "What the heights mean"), infoTip("heights")),
+        el("div", { class: "field-grid" }, ...rangeFields.map(({ range, low, high }) => {
+            const group = el("div", { class: "button-row", title: range.tip }, low, high);
+            return labeled(`Vacuum ${range.label.toLowerCase()}`, group);
+        })),
+        tuneNote,
+    );
     const line = el("input", { type: "text", class: "field", placeholder: "a G-code line", "aria-label": "Device line", spellcheck: "false", autocomplete: "off" }) as HTMLInputElement;
     const send = button("Send", () => sendLine(), "btn btn-quiet");
-    const here = button("Here", () => reference(), "btn");
-    here.title = "Record the picked part at the nozzle; 2 or more also fit the turn";
-    const angle = numberField({ step: 0.1, placeholder: "fitted", width: "6rem" });
-    angle.setAttribute("aria-label", "Board turned on the device");
-    angle.title = "the board's turn, used with one reference; 2 or more fit it";
-    const clearRefs = button("Clear", () => clearReferences(), "btn btn-quiet");
-    const refList = el("ul", { class: "device-references" });
-    const planButton = button("Plan", () => planNow(), "btn");
-    planButton.title = "Build the placement G-code and show it; nothing moves";
-    const download = el("a", { class: "btn btn-quiet", download: "placement.gcode" }, "Download") as HTMLAnchorElement;
-    const run = button("Run", () => runNow(), "btn btn-primary");
-    const stop = button("Stop", () => into(ctx, "device", ctx.api.deviceStop()), "btn btn-danger");
-    const recount = button("Count feeders again", () => recountFeeders(), "btn btn-quiet");
-    const runLine = el("p", { class: "muted vision-routine" });
-    const planLine = el("p", { class: "muted" });
-    const skipped = el("ul", { class: "device-skipped" });
-    const program = el("pre", { class: "device-program" });
-    const programFold = el("details", { class: "device-program-fold" }, el("summary", {}, "G-code"), program);
-    const takenLine = el("p", { class: "muted" });
     const consoleBox = el("pre", { class: "device-console", "aria-label": "Device lines" });
-    const cameraLine = el("p", { class: "muted" });
-    const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
-    step.setAttribute("aria-label", "Device centering step mm");
-    const center = button("Center nozzle", () => centerNozzle(), "btn");
-    center.title = "Find the up camera's place and scale by centering the nozzle in it";
-    const runout = button("Measure runout", () => into(ctx, "device", ctx.api.deviceRunout()), "btn");
-    runout.title = "Measure how far the nozzle tip sits off its turning axis, to correct it";
-    const routineLine = el("p", { class: "muted vision-routine" });
-    // The top camera, on the head and looking down.
-    const topPicture = el("img", { class: "vision-picture", alt: "Top camera picture with a center crosshair" }) as HTMLImageElement;
-    const topPictureBox = el("div", { class: "vision-picture-box hidden" }, topPicture);
-    const topStart = button("Start", () => startTop(), "btn btn-primary");
-    topStart.title = "start the top camera with these settings";
-    const topStop = button("Stop", () => into(ctx, "device", ctx.api.topStop()), "btn");
-    const topDevice = el("input", { type: "text", class: "field", "aria-label": "Top camera device", placeholder: "/dev/video2", spellcheck: "false" }) as HTMLInputElement;
-    const topSize = el("input", { type: "text", class: "field", "aria-label": "Top camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
-    const topFps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
-    topFps.setAttribute("aria-label", "Top camera fps");
-    const markSpot = polaritySelect("Mark spot");
-    const topPick = mountCameraPick(ctx, {
-        device: topDevice,
-        size: topSize,
-        fps: topFps,
-        otherLabel: "up camera",
-        otherDevice: (state) => state.pnp?.device ?? null,
-        visible: () => visible(),
-    });
-    const topApply = button("Apply", () => applyTop(), "btn");
-    const topLine = el("p", { class: "muted" });
-    const markHere = button("Nozzle on mark", () => into(ctx, "device", ctx.api.topMark()), "btn");
-    markHere.title = "The nozzle tip is on a mark: keep its place for Measure offset";
-    const topStep = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
-    topStep.setAttribute("aria-label", "Top camera step mm");
-    const measureOffset = button("Measure offset", () => measureTopOffset(), "btn");
-    measureOffset.title = "Move the top camera over the mark to measure its offset from the nozzle";
-    const topAbort = button("Abort", () => into(ctx, "device", ctx.api.topAbort()), "btn btn-danger");
-    const topRoutineLine = el("p", { class: "muted vision-routine" });
-    const topLog = el("div", { class: "camlog-box" });
-    mountCameraLog(topLog, ctx, "top");
-    const cameraHere = button("Camera here", () => reference(true), "btn");
-    cameraHere.title = "Record the picked part at the top camera's crosshair, like Here";
-    const findFiducials = button("Find fiducials", () => findFiducialsNow(), "btn");
-    findFiducials.title = "Find fiducials with the top camera; 2 or more replace the Here references";
-    const fiducialLine = el("p", { class: "muted" });
-    const fiducialsFirst = el("input", { type: "checkbox", "aria-label": "Find fiducials first" }) as HTMLInputElement;
-    const runRest = button("Run the rest", () => runNow(true), "btn");
-    runRest.title = "Place the parts the last run did not, failed ones included";
-    const failedList = el("ul", { class: "device-skipped device-failed" });
-    let fiducialsTouched = false;
-    fiducialsFirst.addEventListener("change", () => {
-        fiducialsTouched = true;
-    });
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "G-code device"), badge),
         el("div", { class: "panel-body" },
-            el("div", { class: "button-row" }, labeled("Profile", pick, "labeled inline"), reload),
+            el("div", { class: "button-row" }, labeled("Profile", pick, "labeled inline"), edit),
             listNote,
-            editor.root,
-            el("div", { class: "button-row" }, check, save, revert, status),
-            el("div", { class: "button-row" }, connect, home, readPosition, positionLine),
+            el("div", { class: "button-row" }, labeled("Port", portPick, "labeled inline"), detect, identify),
+            el("div", { class: "button-row" }, portField),
+            portNote,
+            el("div", { class: "button-row" }, connect, home, light, readPosition),
+            positionLine,
+            el("div", { class: "button-row" }, vacuumOn, vacuumOff, vacuumRead, vacuumLine),
+            tuneFold,
             el("div", { class: "button-row" }, line, send),
-            el("h3", {}, "Up camera on the device"),
-            cameraLine,
-            el("div", { class: "button-row" }, labeled("Step mm", step, "labeled inline"), center, runout),
-            routineLine,
-            el("h3", {}, "Top camera on the device"),
-            topPictureBox,
-            el("div", { class: "button-row" }, topStart, topStop),
-            topPick.row,
-            topPick.note,
-            el("div", { class: "field-grid" },
-                labeled("Device", topDevice),
-                labeled("Size", topSize),
-                labeled("fps", topFps),
-                labeled("Mark spot", markSpot),
-            ),
-            el("div", { class: "button-row" }, topApply),
-            topLine,
-            el("div", { class: "button-row" }, markHere, labeled("Step mm", topStep, "labeled inline"), measureOffset, topAbort),
-            topRoutineLine,
-            topLog,
-            el("h3", {}, "Board on the device"),
-            el("div", { class: "button-row" }, here, cameraHere, labeled("Turned deg", angle, "labeled inline"), clearRefs),
-            refList,
-            el("div", { class: "button-row" }, findFiducials),
-            fiducialLine,
-            el("h3", {}, "Program"),
-            el("div", { class: "button-row" }, planButton, download, run, stop, runRest, recount),
-            el("label", { class: "muted" }, fiducialsFirst, " find fiducials first"),
-            runLine,
-            failedList,
-            planLine,
-            skipped,
-            programFold,
-            takenLine,
             consoleBox,
-            el("p", { class: "muted hint" },
-                "Each part comes from the first feeder whose words match its value and footprint."
-                + " Stop sends the stop command at once and nothing after the line in flight."),
         ),
     );
 
     let picked: string | null = null;
-    let dirty = false;
-    let plan: DevicePlan | null = null;
-    // The job the plan shown is of: the download is its program, once one planned.
-    let planJob: string | null = null;
-    // The angle the field was last filled with, to tell a typed one.
-    let angleShown = "";
-
-    const setDirty = (value: boolean): void => {
-        dirty = value;
-        setPending(ctx.store, "pnp-device", value ? 1 : 0);
-    };
-    const setStatus = (text: string, error: boolean): void => {
-        status.textContent = text;
-        status.classList.toggle("error", error);
-    };
-    editor.onInput((problem) => {
-        setDirty(true);
-        setStatus(problem ?? "edited, not saved", problem !== null);
-    });
 
     async function loadList(): Promise<void> {
         const listing = await ctx.call(ctx.api.devices());
@@ -325,29 +290,11 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const current = ctx.store.get().device?.profile ?? null;
         replace(pick,
             el("option", { value: "" }, listing.devices.length > 0 ? "pick a profile" : "no profiles in pnp/"),
-            ...listing.devices.map((device) => el("option", { value: device.id }, `${device.name} (${device.id})`)),
+            ...listing.devices.map((device) => el("option", { value: device.id }, device.name)),
         );
         pick.value = current ?? "";
         listNote.textContent = listing.problems.map((entry) => `${entry.id}: ${entry.problem}`).join("; ");
-        if (current !== picked) {
-            picked = current;
-            await showFile();
-        }
-    }
-
-    async function showFile(): Promise<void> {
-        if (picked === null) {
-            editor.setText("");
-            setDirty(false);
-            setStatus("", false);
-            return;
-        }
-        const file = await ctx.call(ctx.api.deviceFile(picked));
-        if (file) {
-            editor.setText(file.text);
-            setDirty(false);
-            setStatus(`reads as ${file.document.name}, ${file.document.feeders.length} feeders`, false);
-        }
+        listNote.classList.toggle("hidden", listing.problems.length === 0);
     }
 
     pick.addEventListener("change", () => {
@@ -356,51 +303,83 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             if (next === "" || next === picked) {
                 return;
             }
-            if (dirty && !(await askConfirm(`Leave ${picked}? Unsaved edits are lost.`, "Leave"))) {
-                pick.value = picked ?? "";
-                return;
-            }
             const state = await ctx.call(ctx.api.deviceSelect({ profile: next }));
             if (!state) {
                 pick.value = picked ?? "";
                 return;
             }
             ctx.store.set({ device: state });
-            picked = next;
-            await showFile();
+            await loadDeviceDoc(ctx);
         })();
     });
 
-    async function checkText(): Promise<void> {
-        if (picked === null) {
-            return;
-        }
-        const result = await ctx.call(ctx.api.checkDeviceFile(picked, editor.getText()));
-        if (result) {
-            setStatus(result.document ? `reads as ${result.document.name}, ${result.document.feeders.length} feeders${dirty ? "; not saved" : ""}` : result.problems.join("; "), !result.document);
-        }
+    /** The port the device talks on: the one picked, else the profile's. */
+    function portOf(state: AppState): string {
+        return state.device?.port ?? state.deviceDoc?.document.url ?? "";
     }
 
-    async function saveText(): Promise<void> {
-        if (picked === null) {
+    async function setPort(url: string): Promise<void> {
+        await into(ctx, "device", ctx.api.deviceSelect({ url }));
+    }
+
+    portPick.addEventListener("change", () => {
+        portField.value = portPick.value;
+        void setPort(portPick.value);
+    });
+    portField.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            void setPort(portField.value.trim());
+        }
+    });
+
+    async function detectPorts(): Promise<void> {
+        await ctx.refreshPorts();
+        const state = ctx.store.get();
+        const found = devicePorts(state.ports, state.snapshot.connected ? state.snapshot.url : null).filter((port) => gcodePort(port));
+        if (found.length === 0) {
+            ctx.toast("info", "no G-code controller among the ports: pick or type one");
             return;
         }
-        const saved = await ctx.call(ctx.api.saveDeviceFile(picked, editor.getText()));
-        if (saved) {
-            setDirty(false);
-            setStatus(`saved: ${saved.document.name}, ${saved.document.feeders.length} feeders`, false);
-            plan = null;
-            planJob = null;
-            renderPlan();
+        if (found.length === 1 && portOf(state) !== found[0]!.url && !state.device?.connected) {
+            await setPort(found[0]!.url);
+            ctx.toast("info", `picked ${portLabel(found[0]!)}`);
+            return;
+        }
+        ctx.toast("info", `${found.length} G-code controller${found.length === 1 ? "" : "s"} found: pick one`);
+    }
+
+    async function identifyPort(): Promise<void> {
+        const url = portField.value.trim() || portOf(ctx.store.get());
+        if (url === "") {
+            ctx.toast("error", "pick or type a port first");
+            return;
+        }
+        const answer = await ctx.call(ctx.api.deviceIdentify(url));
+        if (answer) {
+            const port = ctx.store.get().ports.find((entry) => entry.url === url);
+            const where = port?.device && port.device !== url ? port.device : url;
+            portNote.textContent = answer.firmware || answer.machine
+                ? `${where}: ${[answer.firmware, answer.machine].filter((word) => word).join(", ")}`
+                : `${where}: ${answer.lines.length > 0 ? answer.lines.slice(0, 3).join(" | ") : "no answer to M115"}`;
         }
     }
 
     async function toggleConnect(): Promise<void> {
         const device = ctx.store.get().device;
-        if (dirty && !device?.connected && !(await askConfirm("Connect with the saved profile? Your edits are not saved.", "Connect"))) {
-            return;
-        }
         await into(ctx, "device", device?.connected ? ctx.api.deviceDisconnect() : ctx.api.deviceConnect());
+    }
+
+    async function toggleLight(): Promise<void> {
+        await into(ctx, "device", ctx.api.deviceLight(ctx.store.get().device?.light !== true));
+    }
+
+    async function vacuum(request: { on?: boolean; read?: boolean }): Promise<void> {
+        const answer = await ctx.call(ctx.api.deviceVacuum(request));
+        if (answer) {
+            const { reply: _reply, ...state } = answer;
+            ctx.store.set({ device: state });
+        }
     }
 
     async function sendLine(): Promise<void> {
@@ -417,186 +396,118 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     }
     line.addEventListener("keydown", onEnter(send));
 
-    async function reference(camera = false): Promise<void> {
-        const state = ctx.store.get();
-        if (!state.job || state.pnpPart === null) {
-            ctx.toast("error", "pick a part in the Parts panel first");
+    async function patch(path: CamPath, value: CamValue): Promise<boolean> {
+        const id = ctx.store.get().device?.profile;
+        if (!id) {
+            return false;
+        }
+        const file = await ctx.call(ctx.api.patchDeviceFile(id, path, value));
+        if (file) {
+            ctx.store.set({ deviceDoc: { id, ...file } });
+            tuneNote.textContent = `${path.join(".")} saved`;
+        }
+        return file !== undefined;
+    }
+
+    async function tune(path: CamPath, field: HTMLInputElement, read: Tunable["read"]): Promise<void> {
+        const value = parseNumber(field.value);
+        const doc = ctx.store.get().deviceDoc;
+        if (value === null) {
+            ctx.toast("error", `${path[path.length - 1]}: a number`);
+            field.value = doc ? String(read(doc.document) ?? "") : "";
             return;
         }
-        await into(ctx, "device", ctx.api.deviceReference({ job: state.job.id, ref: state.pnpPart, ...(camera ? { camera: true } : {}) }));
-    }
-
-    async function findFiducialsNow(): Promise<void> {
-        const job = ctx.store.get().job;
-        if (!job) {
-            ctx.toast("error", "pick a board job first");
-            return;
-        }
-        await into(ctx, "device", ctx.api.deviceFiducials(job.id));
-    }
-
-    // The top camera's fields: filled from the state unless edited since.
-    const topFields: [TrackedField, keyof TopSettings][] = [[topDevice, "device"], [topSize, "size"], [topFps, "fps"], [markSpot, "mark_spot"]];
-    const topTracked = new Tracked(topFields.map(([field]) => field));
-    function topPatch(): Partial<TopSettings> {
-        const top = ctx.store.get().device?.top;
-        const patch: Partial<TopSettings> = {};
-        if (topDevice.value.trim() !== "" && topDevice.value.trim() !== top?.device) {
-            patch.device = topDevice.value.trim();
-        }
-        if (topSize.value.trim() !== "" && topSize.value.trim() !== top?.size) {
-            patch.size = topSize.value.trim();
-        }
-        const fps = parseNumber(topFps.value);
-        if (fps !== null && fps !== top?.fps) {
-            patch.fps = fps;
-        }
-        if (markSpot.value !== top?.mark_spot) {
-            patch.mark_spot = markSpot.value as SpotPolarity;
-        }
-        return patch;
-    }
-    async function applyTop(): Promise<boolean> {
-        const patch = topPatch();
-        if (Object.keys(patch).length === 0) {
-            return true;
-        }
-        const state = await ctx.call(ctx.api.topSettings(patch));
-        if (state) {
-            topTracked.reset();
-            ctx.store.set({ device: state });
-        }
-        return state !== undefined;
-    }
-    async function startTop(): Promise<void> {
-        if (await applyTop()) {
-            await into(ctx, "device", ctx.api.topStart());
-        }
-    }
-    async function measureTopOffset(): Promise<void> {
-        const value = parseNumber(topStep.value);
-        if (value === null || value < 0 || value > 20) {
-            ctx.toast("error", "step: 0 to 20 mm");
-            return;
-        }
-        await into(ctx, "device", ctx.api.topOffset(value));
-    }
-
-    function visible(): boolean {
-        return activePage() === "pnp" && ctx.store.get().pnpTarget === "device"
-            && document.visibilityState !== "hidden";
-    }
-    const topTimer = setInterval(() => {
-        if (visible() && ctx.store.get().device?.top?.running) {
-            topPicture.src = ctx.api.topFrameUrl(FRAME_WIDTH, true);
-        }
-    }, FRAME_INTERVAL_MS);
-    globalThis.addEventListener?.("pagehide", () => {
-        clearInterval(topTimer);
-        topPick.stop();
-    });
-
-    async function clearReferences(): Promise<void> {
-        const job = ctx.store.get().job;
-        if (job) {
-            await into(ctx, "device", ctx.api.deviceDropReferences(job.id));
+        const whole = path[1] === "pick_dwell_ms" || path[1] === "place_dwell_ms";
+        if (!(await patch(path, whole ? Math.round(value) : value)) && doc) {
+            field.value = String(read(doc.document) ?? "");
         }
     }
 
-    angle.addEventListener("change", () => {
-        const text = angle.value.trim();
-        const value = parseNumber(text);
-        if (text !== "" && (value === null || Math.abs(value) > 360)) {
-            ctx.toast("error", "turn: -360 to 360 deg, or blank to fit it");
+    async function tuneRange(key: "part_on" | "part_off", low: HTMLInputElement, high: HTMLInputElement): Promise<void> {
+        const a = parseNumber(low.value);
+        const b = parseNumber(high.value);
+        if (low.value.trim() === "" && high.value.trim() === "") {
+            await patch(["vacuum", key], null);
             return;
         }
-        void into(ctx, "device", ctx.api.deviceSelect(text === "" ? { clear_angle: true } : { angle: value! }));
-    });
-
-    async function centerNozzle(): Promise<void> {
-        const value = parseNumber(step.value);
-        if (value === null || value < 0 || value > 10) {
-            ctx.toast("error", "step: 0 to 10 mm");
+        if (a === null || b === null) {
             return;
         }
-        await into(ctx, "device", ctx.api.deviceNozzle(value));
-        await ctx.refreshPnp();
+        if (ctx.store.get().deviceDoc?.document.vacuum === null) {
+            ctx.toast("error", "the profile has no [vacuum] read lines: add them on the Config page first");
+            return;
+        }
+        await patch(["vacuum", key], [Math.min(a, b), Math.max(a, b)]);
     }
 
-    async function planNow(): Promise<void> {
-        const job = ctx.store.get().job;
-        if (!job) {
-            ctx.toast("error", "pick a board job first");
+    // What the port select was last drawn from.
+    let portsKey = "";
+    function renderPorts(state: AppState): void {
+        const own = state.snapshot.connected ? state.snapshot.url : null;
+        const ports = devicePorts(state.ports, own);
+        const current = portOf(state);
+        const key = JSON.stringify([ports.map((port) => port.url), current, state.device?.port ?? null, state.deviceDoc?.document.url ?? null]);
+        if (key === portsKey) {
             return;
         }
-        const result = await ctx.call(ctx.api.devicePlan(job.id));
-        if (result) {
-            plan = result;
-            planJob = job.id;
-            renderPlan();
+        portsKey = key;
+        const profileUrl = state.deviceDoc?.document.url ?? "";
+        const options = [
+            el("option", { value: "" }, profileUrl ? `the profile's: ${profileUrl}` : "pick a port"),
+            ...ports.map((port) => el("option", { value: port.url }, `${portLabel(port)}${gcodePort(port) ? "  (G-code)" : ""}`)),
+        ];
+        const picked = state.device?.port ?? null;
+        if (picked !== null && !ports.some((port) => port.url === picked)) {
+            options.push(el("option", { value: picked }, `${picked} (not found now)`));
         }
-    }
-
-    async function runNow(rest = false): Promise<void> {
-        const state = ctx.store.get();
-        const job = state.job;
-        if (!job) {
-            ctx.toast("error", "pick a board job first");
-            return;
-        }
-        const refs = rest ? partsLeft(state.device, plan, job.id) : undefined;
-        if (rest && refs!.length === 0) {
-            ctx.toast("info", "the last run placed every part");
-            return;
-        }
-        const planned = await ctx.call(ctx.api.devicePlan(job.id, refs));
-        if (!planned) {
-            return;
-        }
-        plan = planned;
-        planJob = job.id;
-        renderPlan();
-        const device = state.device?.profile ?? "the device";
-        const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts left out (listed below).` : "";
-        const first = fiducialsFirst.checked ? " Fiducials are found first." : "";
-        if (!(await askConfirm(`Place ${planned.parts.length} parts with ${device}? The head moves and the vacuum switches.${first}${left}`, "Run"))) {
-            return;
-        }
-        const started = await ctx.call(ctx.api.deviceRun(job.id, refs, fiducialsFirst.checked));
-        if (started) {
-            const { parts, skipped: left2, fit, lines, text, ...rest } = started;
-            plan = { parts, skipped: left2, fit, lines, text };
-            renderPlan();
-            ctx.store.set({ device: rest as DeviceState });
+        replace(portPick, ...options);
+        portPick.value = picked ?? "";
+        if (portField !== document.activeElement) {
+            portField.value = current;
         }
     }
 
-    async function recountFeeders(): Promise<void> {
-        if (await askConfirm("Restart every feeder at its first part? Do this after refilling.", "Count again")) {
-            await into(ctx, "device", ctx.api.deviceResetFeeders());
+    function renderTune(state: AppState): void {
+        const doc = state.deviceDoc;
+        for (const { tunable, field } of tuneFields) {
+            if (field !== document.activeElement) {
+                const value = doc ? tunable.read(doc.document) : null;
+                field.value = value === null ? "" : String(value);
+            }
+            field.disabled = doc === null;
+        }
+        for (const { range, low, high } of rangeFields) {
+            const span = doc?.document.vacuum?.[range.key] ?? null;
+            if (low !== document.activeElement && high !== document.activeElement) {
+                low.value = span ? String(span[0]) : "";
+                high.value = span ? String(span[1]) : "";
+            }
+            low.disabled = high.disabled = !doc?.document.vacuum;
         }
     }
 
-    function renderPlan(): void {
-        // Only a program that planned is offered for download: a refused one
-        // would save the refusal as the file.
-        const job = ctx.store.get().job;
-        const ready = plan !== null && planJob !== null && job?.id === planJob;
-        download.href = ready ? ctx.api.deviceProgramUrl(planJob!) : "";
-        download.classList.toggle("disabled", !ready);
-        planLine.textContent = plan ? planText(plan) : "";
-        replace(skipped, ...(plan?.skipped ?? []).map((entry) => el("li", {}, `${entry.ref}: ${entry.reason}`)));
-        program.textContent = plan?.text ?? "";
-        programFold.classList.toggle("hidden", plan === null);
+    // The console follows the newest line only while it is scrolled to the
+    // bottom: scrolled up to read, it stays where it was.
+    let consoleText = "";
+    function renderConsole(device: DeviceState | null): void {
+        const text = (device?.log ?? []).map((entry) => `${entry.dir === "tx" ? ">" : entry.dir === "rx" ? "<" : "#"} ${entry.text}`).join("\n");
+        if (text === consoleText) {
+            return;
+        }
+        const atBottom = consoleBox.scrollHeight - consoleBox.scrollTop - consoleBox.clientHeight < 8;
+        consoleText = text;
+        consoleBox.textContent = text;
+        if (atBottom) {
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
     }
 
     function render(state: AppState): void {
         const device = state.device;
-        // A profile picked elsewhere (another page, the backend's memory) is shown here.
-        if (device && device.profile !== picked && !dirty) {
+        if (device && device.profile !== picked) {
             picked = device.profile;
             pick.value = picked ?? "";
-            void showFile();
+            void loadDeviceDoc(ctx);
         }
         badge.textContent = deviceBadge(device);
         badge.setAttribute("data-device", deviceBadge(device));
@@ -607,77 +518,33 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         setLocked(connect, picked === null || running);
         const routine = state.pnp?.routine;
         const moving = routine?.state === "running" && routine.target === "device";
-        const topRunning = device?.top?.routine?.state === "running";
-        for (const control of [home, readPosition, send, here]) {
-            setLocked(control, !connected || running || moving || topRunning);
+        const topBusy = device?.top?.routine?.state === "running";
+        const idle = connected && !running && !moving && !topBusy;
+        for (const control of [home, readPosition, send, vacuumOn, vacuumOff]) {
+            setLocked(control, !idle);
         }
-        const top = device?.top ?? null;
-        const topBusy = top?.routine?.state === "running";
-        setLocked(center, !connected || running || moving || topBusy || state.pnp?.running !== true);
-        setLocked(runout, !connected || running || moving || topBusy || state.pnp?.running !== true || !(device?.camera.mm_per_px && device.camera.position));
-        cameraLine.textContent = deviceCameraText(device);
-        routineLine.textContent = routine?.target === "device" ? pnpRoutineText(state.pnp) : "";
-        // The top camera.
-        for (const [field, key] of topFields) {
-            topTracked.follow(field, top ? String(top[key] ?? "") : "");
-        }
-        topPictureBox.classList.toggle("hidden", top?.running !== true);
-        setLocked(topStart, top?.running === true || topBusy);
-        setLocked(topStop, top?.running !== true || topBusy);
-        setLocked(topApply, topBusy);
-        setLocked(markHere, !connected || running || moving || topBusy);
-        setLocked(measureOffset, !connected || running || moving || topBusy || top?.running !== true || !top?.mark_at);
-        setLocked(topAbort, !topBusy);
-        topLine.textContent = topCameraText(top);
-        topRoutineLine.textContent = topRoutineText(top);
-        const measured = top?.offset !== null && top?.offset !== undefined && (top?.mm_per_px ?? 0) > 0;
-        setLocked(cameraHere, !connected || running || moving || topBusy || !measured);
-        setLocked(findFiducials, !connected || running || moving || topBusy || top?.running !== true || !measured || !state.job);
-        fiducialLine.textContent = fiducialText(top, state.job?.id ?? null);
-        const hasFiducials = state.components?.job === state.job?.id && (state.components?.components ?? []).some((part) => part.fiducial);
-        // Ticked once it can be, unless the operator has had a say.
-        if (!measured || !hasFiducials) {
-            fiducialsFirst.checked = false;
-        } else if (!fiducialsTouched) {
-            fiducialsFirst.checked = true;
-        }
-        fiducialsFirst.disabled = !measured || !hasFiducials;
-        setLocked(runRest, !connected || running || partsLeft(device, plan, state.job?.id ?? null).length === 0);
-        replace(failedList, ...(device?.progress?.job === state.job?.id ? device?.progress?.failed ?? [] : []).map((entry) => el("li", {}, `${entry.ref} left out: ${entry.reason}`)));
-        setLocked(planButton, !state.job || picked === null);
-        setLocked(run, !connected || running || !state.job);
-        setLocked(stop, !running);
-        setLocked(clearRefs, referencesOf(device, state.job?.id ?? null).length === 0);
+        setLocked(vacuumRead, !idle || !state.deviceDoc?.document.vacuum);
+        setLocked(light, !idle || state.deviceDoc?.document.light !== true);
+        light.setAttribute("aria-pressed", device?.light === true ? "true" : "false");
+        portPick.disabled = connected;
+        portField.disabled = connected;
+        setLocked(detect, connected);
+        setLocked(identify, running || moving || topBusy);
         const position = device?.position;
         positionLine.textContent = position
-            ? `X ${formatFixed(position.x, 3)} Y ${formatFixed(position.y, 3)}${position.z !== undefined ? ` Z ${formatFixed(position.z, 3)}` : ""}${device?.homed ? "" : " (not homed)"}`
+            ? `X ${formatFixed(position.x ?? 0, 3)} Y ${formatFixed(position.y ?? 0, 3)}${position.z !== undefined ? ` Z ${formatFixed(position.z, 3)}` : ""}${position.rotation !== undefined ? ` A ${formatFixed(position.rotation, 2)}` : ""}${device?.homed ? "" : " (not homed)"}`
             : device?.homed ? "homed" : "";
-        const job = state.job;
-        replace(refList, ...referencesOf(device, job?.id ?? null).map((entry) =>
-            el("li", {}, `${entry.ref} at X ${formatFixed(entry.at[0], 3)} Y ${formatFixed(entry.at[1], 3)}${entry.by && entry.by !== "nozzle" ? ` (${entry.by})` : ""} `,
-                button("Drop", () => job ? into(ctx, "device", ctx.api.deviceDropReferences(job.id, entry.ref)) : Promise.resolve(), "btn btn-quiet btn-small")),
-        ));
-        here.textContent = state.pnpPart ? `Here: ${state.pnpPart}` : "Here";
-        const angleText = device?.angle === null || device?.angle === undefined ? "" : String(device.angle);
-        if (angle !== document.activeElement && (angle.value === angleShown || angleShown === "")) {
-            angle.value = angleText;
-        }
-        angleShown = angleText;
-        if (planJob !== null && job?.id !== planJob) {
-            // Another job: its plan is not the one shown.
-            plan = null;
-            planJob = null;
-            renderPlan();
-        }
-        runLine.textContent = device?.lost ? `Link lost: ${device.lost}` : deviceRunText(device);
-        const taken = Object.entries(device?.taken ?? {});
-        takenLine.textContent = taken.length > 0 ? `Picked so far: ${taken.map(([feeder, count]) => `${feeder} ${count}`).join(", ")}` : "";
-        consoleBox.textContent = (device?.log ?? []).map((entry) => `${entry.dir === "tx" ? ">" : entry.dir === "rx" ? "<" : "#"} ${entry.text}`).join("\n");
-        consoleBox.scrollTop = consoleBox.scrollHeight;
+        const reading = device?.vacuum?.reading;
+        vacuumLine.textContent = [
+            device?.vacuum?.on === true ? "vacuum on" : device?.vacuum?.on === false ? "vacuum off" : "",
+            reading !== null && reading !== undefined ? `reads ${formatFixed(reading, 2)}` : "",
+        ].filter((word) => word).join(", ");
+        renderPorts(state);
+        renderTune(state);
+        renderConsole(device);
     }
 
-    ctx.store.subscribe((state) => render(state), ["device", "job", "pnpPart", "components", "pnp"]);
+    ctx.store.subscribe((state) => render(state), ["device", "deviceDoc", "ports", "snapshot", "pnp"]);
     render(ctx.store.get());
-    renderPlan();
     void loadList();
 }

@@ -70,10 +70,23 @@ def test_the_vacuum_reads_with_marlins_pattern_or_openpnps_named_group():
     assert java.vacuum is not None and java.vacuum.reading(["echo: T:5 P:42"]) == 42.0
 
 
+
+def test_a_sensor_without_ranges_is_read_by_hand_only_and_reads_over_several_lines():
+    # The LumenPnP reads its sensor through an I2C mux: three lines, the
+    # reading in the last one's answer, as OpenPnP's pattern has it.
+    rest = '[vacuum]\nread = ["M260 A112 B1 S1", "M260 A109 B6 S1", "M261 A109 B1 S2"]\npattern = "^.*data:(?<Value>.*)"\n'
+    device = parse(profile(rest=rest), "rig")
+    assert device.vacuum is not None and device.vacuum.read[-1] == "M261 A109 B1 S2"
+    assert device.vacuum.part_on is None and device.vacuum.reading(["echo:i2c-reply: from:109 bytes:1 data:231", "ok"]) == 231.0
+    program = plan(device, [part("R1", 1.0, 0.0)], board_fit([((0.0, 0.0), (0.0, 0.0))], 0.0), {})
+    # No range, no check: the program reads nothing.
+    assert not any("M261" in line for line in program.text().splitlines())
+
+
 @pytest.mark.parametrize(
     "text, words",
     [
-        (profile(rest='[vacuum]\nread = "M105"\n'), "[vacuum] part_on is needed"),
+        (profile(rest='[vacuum]\npart_on = [1, 2]\n'), "[vacuum] read must name the line, or lines, that read the vacuum sensor"),
         (profile(rest='[vacuum]\nread = "M105"\npattern = "T:[0-9]+"\npart_on = [1, 2]\n'), "[vacuum] pattern must hold a group"),
         (profile(rest='[vacuum]\nread = "M105"\npattern = "T:("\npart_on = [1, 2]\n'), "[vacuum] pattern is not a regular expression"),
         (profile(rest='[vacuum]\nread = "M105"\npart_on = [9, 2]\n'), "must be the low reading, then the high one"),

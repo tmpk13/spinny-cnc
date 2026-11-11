@@ -120,7 +120,10 @@ describe("the steps panel", () => {
         page.append(panel);
         document.body.append(page);
         goToPanel("target-panel");
-        expect(panel.classList.contains("flash")).toBe(true);
+        // Its border pulses until a press inside it.
+        expect(panel.classList.contains("pulse")).toBe(true);
+        panel.dispatchEvent(new Event("pointerdown"));
+        expect(panel.classList.contains("pulse")).toBe(false);
         expect(localStorage.getItem("spinny.page")).toBe("config");
         // The page and the picks are remembered in storage the other test files share.
         localStorage.removeItem("spinny.page");

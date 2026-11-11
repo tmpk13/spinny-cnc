@@ -299,8 +299,21 @@ function main(): void {
     // Jobs page are not shown beside it.
     mountCam(panel("cam"), ctx, panel("cam-file"));
     mountPreviewPanel(panel("cam-preview"), ctx);
-    // The PNP page: the parts, the board, the up camera and the nozzle.
-    mountPnp({ steps: panel("pnp-steps"), parts: panel("pnp-parts"), board: panel("pnp-board"), camera: panel("pnp-camera"), nozzle: panel("pnp-nozzle"), device: panel("pnp-device") }, ctx);
+    // The PNP page: the parts, the board, the jog, the cameras, the nozzle,
+    // and a G-code device's panels.
+    mountPnp({
+        steps: panel("pnp-steps"),
+        parts: panel("pnp-parts"),
+        board: panel("pnp-board"),
+        camera: panel("pnp-camera"),
+        nozzle: panel("pnp-nozzle"),
+        device: panel("pnp-device"),
+        jog: panel("pnp-jog"),
+        view: panel("pnp-view"),
+        top: panel("pnp-top"),
+        refs: panel("pnp-refs"),
+        run: panel("pnp-run"),
+    }, ctx);
     // The Auto page: the conversation with a model that makes jobs and
     // other data through the backend's tools, and which model it is.
     mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);

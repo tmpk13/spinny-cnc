@@ -158,6 +158,7 @@ class Placement:
     def __call__(self, ctx: RunContext) -> None:
         device = self.device
         mover = DeviceMover(self.link, device, send=ctx.send)
+        ctx.progress.note(f"placing {len(self.program.blocks)} parts on {device.name}")
         for line in self.program.head:
             ctx.send(line)
         if self.fiducials:
@@ -168,6 +169,8 @@ class Placement:
             self._place(ctx, mover, block)
         for line in self.program.tail:
             ctx.send(line)
+        failed = len(ctx.progress.failed)
+        ctx.progress.note(f"done: {len(ctx.progress.placed)} placed" + (f", {failed} left out" if failed else ""))
 
     @staticmethod
     def _lines(blocks: list[Block]) -> int:
@@ -192,7 +195,9 @@ class Placement:
         self.fit = fit
         self.program = self._plan(fit)
         rms = f", {fit.rms * 1000.0:.0f} um rms" if len(found) > 1 else ""
-        self.setup.message("info", f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the device{rms}")
+        said = f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the device{rms}"
+        self.setup.message("info", said)
+        ctx.progress.note(said)
         self._doing(ctx, None)
 
     def _place(self, ctx: RunContext, mover: DeviceMover, block: Block) -> None:
@@ -218,10 +223,12 @@ class Placement:
                     self._take(feeder, index)
                     reason = f"pocket #{index + 1} of {feeder.id} looked empty"
                     self.setup.message("warning", f"{block.ref}: {reason}, passed over")
+                    ctx.progress.note(f"{reason}, passed over", block.ref, "warning")
                     continue
                 point = (seen[0], seen[1], point[2])
             if tries > 1:
                 self._doing(ctx, f"try {tries} of {device.pick_tries}")
+            ctx.progress.note(f"picking {part.get('value', '')} from {feeder.id} #{index + 1}".replace("  ", " "), block.ref)
             for line in pick_lines(device, feeder, pick_label(part, feeder, index), point):
                 ctx.send(line)
             self._take(feeder, index)
@@ -233,15 +240,18 @@ class Placement:
                 where = self._discard(ctx, point)
                 more = "trying the next pocket" if tries < device.pick_tries else "left out"
                 self.setup.message("warning", f"{block.ref}: {reason}; {where}, {more}")
+                ctx.progress.note(f"{reason}; {where}, {more}", block.ref, "warning")
                 continue
             for line in lines:
                 ctx.send(line)
             self._check_released(ctx, f"{block.ref} was placed")
             ctx.progress.placed.append(block.ref)
+            ctx.progress.note(f"placed at X {num(block.target[0])} Y {num(block.target[1])}, {num(block.angle, 1)} deg", block.ref)
             self._failed_in_a_row = 0
             self._doing(ctx, None)
             return
         ctx.progress.failed.append({"ref": block.ref, "reason": reason})
+        ctx.progress.note(f"left out: {reason}", block.ref, "error")
         self._doing(ctx, None)
         # A feeder that ran out is no sign of a wrong setup: the parts of
         # the other feeders still go.
@@ -285,7 +295,9 @@ class Placement:
         fit = fit_rigid(pairs, 0.0 if len(pairs) == 1 else None)
         self.feeder_fits[feeder.id] = fit
         turn = f", turned {fit.rotation:+.2f} degrees" if len(pairs) > 1 else ""
-        self.setup.message("info", f"feeder {feeder.id} sits X {fit.shift[0]:+.3f} Y {fit.shift[1]:+.3f} mm off its profile{turn}")
+        said = f"feeder {feeder.id} sits X {fit.shift[0]:+.3f} Y {fit.shift[1]:+.3f} mm off its profile{turn}"
+        self.setup.message("info", said)
+        ctx.progress.note(said)
         self._doing(ctx, None)
 
     def _look_in_pocket(self, ctx: RunContext, mover: DeviceMover, feeder: Feeder, block: Block, point, index: int) -> Point | None:
@@ -313,17 +325,18 @@ class Placement:
             reply = ctx.send(line)
         value = vacuum.reading(reply)
         if value is None:
-            raise DeviceLinkError(f"'{vacuum.read}' answered no reading its pattern finds: {' | '.join(reply) or 'nothing'}")
+            raise DeviceLinkError(f"'{vacuum.read[-1]}' answered no reading its pattern finds: {' | '.join(reply) or 'nothing'}")
         return value
 
     def _check_held(self, ctx: RunContext) -> None:
         value = self._read(ctx, held=True)
         vacuum = self.device.vacuum
-        if value is None or vacuum is None:
+        if value is None or vacuum is None or vacuum.part_on is None:
             return
         low, high = vacuum.part_on
         if not low <= value <= high:
             raise Rejected(f"the vacuum read {num(value)} with no part held ({num(low)} to {num(high)} with one)")
+        ctx.progress.note(f"vacuum {num(value)}: held", ctx.progress.part)
 
     def _check_released(self, ctx: RunContext, what: str) -> None:
         """The nozzle is empty once a part was let go (`what` says which,
@@ -370,13 +383,15 @@ class Placement:
             swung = turn(runout, angle)
             head = (axis[0] - swung[0], axis[1] - swung[1])
             try:
-                seen = self.setup.up.look_at_part(mover, place, None, angle=angle, head=head, size=block.size)
+                seen = self.setup.up.look_at_part(mover, place, None, angle=angle, head=head, size=block.size, crop=block.crop)
             except NoSpot as exc:
                 raise Rejected("nothing on the nozzle over the up camera") from exc
             except (PnpError, VisionError) as exc:
                 raise DeviceLinkError(f"looking at {block.ref} over the up camera: {exc}") from exc
             self.setup.up.part_offset = seen
             self.setup.publish_up()
+            angle_said = f", long side at {num(float(seen['angle']), 1)} deg" if isinstance(seen.get("angle"), (int, float)) else ""
+            ctx.progress.note(f"seen over the up camera {num(float(seen['mm']))} mm off the nozzle{angle_said}", block.ref)
             self._check_size(block, seen)
             off = (float(seen["dx"]), float(seen["dy"]))
             if math.hypot(*off) > device.max_offset:
