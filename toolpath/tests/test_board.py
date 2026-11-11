@@ -147,3 +147,40 @@ def _box(contours) -> tuple[float, float, float, float]:
     xs = [p[0] for contour in contours for p in contour]
     ys = [p[1] for contour in contours for p in contour]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def test_a_gerber_is_read_with_the_outline_and_drill_file_beside_it():
+    read = board.read(DATA / "board-F_Cu.gbr", "B.Paste")
+    # The gerber's name says its layer, whatever layer was asked for.
+    assert read.source == "gerber" and read.layer == "F.Cu" and read.word == "copper"
+    assert read.name == "board-F_Cu" and read.file == "board-F_Cu.gbr"
+    assert read.copper and read.outline and read.image.figures
+    assert sorted(diameter for _, diameter, _ in read.holes) == [0.8, 0.8, 1.0]
+    assert all(end is None for _, _, end in read.holes)
+    assert read.notes == []
+
+
+def test_a_layer_that_fills_nothing_is_read_empty_for_the_caller_to_judge(tmp_path):
+    lines = tmp_path / "board-User_1.gbr"
+    # One line drawn with a zero width aperture: a line, and no area.
+    lines.write_text("%FSLAX46Y46*%\n%MOMM*%\n%ADD10C,0.000*%\nD10*\nX0Y0D02*\nX10000000Y0D01*\nM02*\n")
+    read = board.read(lines)
+    assert read.layer == "User.1" and read.copper == [] and read.outline == [] and read.holes == []
+    with pytest.raises(camjob.DesignError, match="board-User_1.gbr draws no User.1"):
+        camjob.read_board(lines)
+
+
+def test_what_cannot_be_read_is_a_read_error(tmp_path):
+    with pytest.raises(board.ReadError):
+        board.read(tmp_path / "missing-F_Cu.gbr")
+    with pytest.raises(board.ReadError, match="layer must be a KiCad layer name"):
+        board.read(BOARD, "F.Paste,B.Paste")
+
+
+@needs_kicad
+def test_a_board_file_is_read_with_its_outline_and_drills():
+    read = board.read(BOARD, "F.Cu")
+    assert read.source == "kicad" and read.layer == "F.Cu" and read.name == "board"
+    assert read.copper and read.outline and read.file == "board-F_Cu.gtl"
+    # The board has no holes: its drill file is plotted, and empty.
+    assert read.holes == [] and read.notes == []

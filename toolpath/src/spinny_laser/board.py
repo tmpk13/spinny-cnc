@@ -8,14 +8,27 @@ front copper, .gtp for the front paste, .gto for the front silk, .gm1 for
 the outline, .gbr for a layer without one. A layer name it does not know,
 or a layer the board does not have, is skipped with exit code 0 and
 nothing plotted; an enabled layer with nothing on it is plotted empty.
+
+`read` is the one reader of a board for every job made from one: the
+Jobs page's import and a CAM profile's both start from what it returns.
 """
 
 from __future__ import annotations
 
 import re
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 DEFAULT_LAYER = "F.Cu"
+OUTLINE_LAYER = "Edge.Cuts"
+
+Point = tuple[float, float]
+Polyline = list[Point]
+# A drill file's hole: its center, its diameter, and the far end of its
+# run for a slot, None for a round hole.
+Hole = tuple[Point, float, Point | None]
 
 # The files a board layer comes as: KiCad's own extension and the Protel
 # ones kicad-cli gives the copper, mask, paste, silk and outline layers.
@@ -63,6 +76,120 @@ _WORDS = {"Cu": "copper", "Paste": "paste", "Mask": "mask", "SilkS": "silk"}
 
 class LayerError(ValueError):
     """Not a layer name, or no gerber of the layer where one was looked for."""
+
+
+class ReadError(ValueError):
+    """The board cannot be read: kicad-cli is missing or failed, the board
+    has no such layer, or a gerber or drill file is not one."""
+
+
+@dataclass
+class BoardLayer:
+    """One layer of a board as read, in the file's own millimeters, nothing
+    placed or flipped yet: the drawing, the area it fills, and the outline
+    and drill holes that came with it."""
+
+    # The board file's or the gerber's name without its suffix.
+    name: str
+    # "kicad" for a board file plotted through kicad-cli, "gerber" else.
+    source: str
+    # The layer read; for a gerber the layer its name says, None when it
+    # does not say.
+    layer: str | None
+    # The name of the gerber the layer was read from, for messages.
+    file: str
+    # The layer's gerber image (laser_sweep.gerber.Image): its strokes,
+    # flashes and regions as drawn, for what the filled area loses (a
+    # stroke's middle, a pad, a line drawn with no width).
+    image: Any
+    # The filled area as closed contours; empty for a layer that only
+    # draws lines with no width.
+    copper: list = field(default_factory=list)
+    outline: list[Polyline] = field(default_factory=list)
+    holes: list[Hole] = field(default_factory=list)
+    # What reading left out, one line each.
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def word(self) -> str:
+        return layer_word(self.layer)
+
+
+def read(path: Path | str, layer: str = DEFAULT_LAYER) -> BoardLayer:
+    """A board's `layer` with its outline and drill holes.
+
+    A KiCad board is plotted through kicad-cli into a folder of its own,
+    the layer, Edge.Cuts and the drill files, and read from there. A gerber
+    is the layer its name says, whatever `layer` is, with the outline and
+    drill files looked for in the folder beside it. A layer that fills
+    nothing is returned empty: what to make of that is the caller's.
+    """
+    from laser_sweep import excellon, geom, gerber, isocli
+
+    from . import outline as board_outline
+
+    path = Path(path)
+    temporary: tempfile.TemporaryDirectory | None = None
+    try:
+        if path.suffix.lower() == ".kicad_pcb":
+            check_layer(layer)
+            temporary = tempfile.TemporaryDirectory(prefix="spinny-board-")
+            into = Path(temporary.name)
+            isocli.export_board(path, layer, outline=True, drill=True, into=into)
+            plotted = find_plotted(into, layer, path)
+            source = "kicad"
+            read_layer: str | None = layer
+        else:
+            plotted = path
+            into = path.parent
+            source = "gerber"
+            read_layer = layer_of(path)
+        image = gerber.read(plotted)
+        try:
+            outline_path: Path | None = find_layer(into, OUTLINE_LAYER)
+        except LayerError:
+            outline_path = None
+        outline = board_outline.read(outline_path) if outline_path is not None else []
+        stem = path.stem.split("-")[0]
+        drill_paths, others = drill_files(into, stem) if into.is_dir() else ([], [])
+        holes: list[Hole] = []
+        for drill_path in drill_paths:
+            for hole in excellon.read(drill_path).holes:
+                end = (float(hole.end[0]), float(hole.end[1])) if hole.end else None
+                found = ((float(hole.at[0]), float(hole.at[1])), float(hole.diameter), end)
+                # The same hole in two of the files is drilled once.
+                if found not in holes:
+                    holes.append(found)
+        return BoardLayer(
+            name=path.stem,
+            source=source,
+            layer=read_layer,
+            file=plotted.name,
+            image=image,
+            copper=geom.copper(image),
+            outline=[[(float(x), float(y)) for x, y in piece] for piece in outline],
+            holes=holes,
+            notes=[f"{other.name} is not read: {path.stem}'s drill files start with {stem!r}" for other in others],
+        )
+    except (isocli.SourceError, LayerError, gerber.GerberError, OSError) as exc:
+        raise ReadError(str(exc)) from exc
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
+
+
+def drill_files(directory: Path, stem: str) -> tuple[list[Path], list[Path]]:
+    """The board's drill files in the folder, and the others there.
+
+    KiCad writes the plated holes and the unplated ones (mounting holes)
+    to two files, <board>-PTH.drl and <board>-NPTH.drl, unless asked for
+    one <board>.drl, so every file whose name starts with the board's
+    stem is read; with none named so, every drill file is.
+    """
+    found = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".drl")
+    named = [p for p in found if p.name.startswith(stem)]
+    taken = named or found
+    return taken, [p for p in found if p not in taken]
 
 
 def check_layer(layer: object) -> None:

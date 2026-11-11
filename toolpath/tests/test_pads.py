@@ -50,7 +50,7 @@ def test_a_centroid_discounts_the_holes():
 
 def test_holes_come_from_the_drill_file_a_slot_by_its_middle():
     drills = excellon.parse("M48\nMETRIC\nT1C0.800\n%\nT1\nX12.0Y5.0\nX10.0Y5.0\nX20.0Y7.0G85X24.0Y7.0\nM30\n")
-    holes = holes_of(drills)
+    holes = holes_of([(hole.at, hole.diameter, hole.end) for hole in drills.holes])
     assert holes == [(10.0, 5.0, 0.8), (12.0, 5.0, 0.8), (22.0, 7.0, 0.8)]
 
 

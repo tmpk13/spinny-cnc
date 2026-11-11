@@ -177,6 +177,19 @@ def test_kicad_board_import_exports_gerbers():
     assert job.outline
 
 
+def test_a_gerber_brings_the_holes_of_the_drill_file_beside_it(tmp_path):
+    # Read as a CAM profile reads it (spinny_laser.board.read): alone, as
+    # an upload is, it has no holes; beside its drill file, the file's.
+    alone = tmp_path / BOARD_COPPER.name
+    shutil.copy(BOARD_COPPER, alone)
+    assert jobs.from_board(alone, "alone", ImportOptions(spot=0.1)).holes == []
+    job = jobs.from_board(BOARD_COPPER, "board", ImportOptions(spot=0.1))
+    dx, dy = job.design.shift
+    # Rows first, each moved as the copper was.
+    moved_back = [(round(x - dx, 3), round(y - dy, 3), d) for x, y, d in job.holes]
+    assert moved_back == [(158.0, -110.0, 0.8), (160.0, -105.0, 0.8), (170.0, -102.0, 1.0)]
+
+
 @pytest.mark.parametrize("mode", ["isolate", "deposit", "dispense"])
 def test_a_back_layer_is_flipped_in_x_with_its_pads_and_design_map(tmp_path, mode):
     outline = BOARD_COPPER.parent / "board-Edge_Cuts.gbr"

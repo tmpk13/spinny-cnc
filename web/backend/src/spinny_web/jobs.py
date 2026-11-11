@@ -1104,51 +1104,25 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
     deg/min, which a radial clearing or fill orders its spokes by. `milled`
     says the machine cuts with a spindle, whose bit, the spot wide, runs
     round the outline off the board rather than on its line."""
-    from laser_sweep import geom, gerber, isocli, isolate
+    from laser_sweep import isolate
 
-    from laser_sweep import excellon
-
-    temporary: tempfile.TemporaryDirectory | None = None
-    layer: str | None = options.layer
-    holes: list[tuple[float, float, float]] = []
     try:
-        if path.suffix.lower() == ".kicad_pcb":
-            temporary = tempfile.TemporaryDirectory(prefix="spinny-web-")
-            into = Path(temporary.name)
-            isocli.export_board(path, options.layer, outline=True, drill=True, into=into)
-            # kicad-cli names a gerber after the name a layer is shown by,
-            # F.SilkS as F_Silkscreen, which the board's table may set.
-            copper_path = board.find_plotted(into, options.layer, path)
-            source = "kicad"
-            for drill_path in sorted(into.glob("*.drl")):
-                holes.extend(board_pads.holes_of(excellon.read(drill_path)))
-        else:
-            copper_path = path
-            into = path.parent
-            source = "gerber"
-            layer = board.layer_of(path)
-        word = board.layer_word(layer)
+        read = board.read(path, options.layer)
+        layer, source, image, copper = read.layer, read.source, read.image, read.copper
+        word = read.word
         mirror = options.mirror if options.mirror is not None else ("x" if board.is_bottom(layer) else "none")
         flip = (-1.0 if mirror == "x" else 1.0, -1.0 if mirror == "y" else 1.0)
-        try:
-            outline_path: Path | None = board.find_layer(into, OUTLINE_LAYER)
-        except board.LayerError:
-            outline_path = None
-        image = gerber.read(copper_path)
-        copper = geom.copper(image)
         # Lines drawn with no width leave no ink, and are lines all the same.
         drawn = cut_lines.drawn_lines(image) if options.mode == MODE_LINES else []
         if options.mode == MODE_LINES and not drawn:
-            raise JobImportError(f"{copper_path.name} draws no lines")
+            raise JobImportError(f"{read.file} draws no lines")
         if not copper and options.mode != MODE_LINES:
-            raise JobImportError(f"{copper_path.name} draws no {word}")
+            raise JobImportError(f"{read.file} draws no {word}")
         # The pads and holes flipped as the layer is; the placement then
         # moves them as it moves the copper.
         pads = [(x * flip[0], y * flip[1], area) for x, y, area in board_pads.pads_of(image)]
-        holes = [(x * flip[0], y * flip[1], d) for x, y, d in holes]
-        outline: list = []
-        if outline_path is not None:
-            outline = board_outline.read(outline_path)
+        holes = [(x * flip[0], y * flip[1], d) for x, y, d in board_pads.holes_of(read.holes)]
+        outline: list = read.outline
         config = isolate.IsoConfig(
             spot=options.spot,
             passes=options.passes,
@@ -1158,7 +1132,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
         )
         if options.mode == MODE_DISPENSE:
             if not pads:
-                raise JobImportError(f"{copper_path.name} has no pads to dispense on")
+                raise JobImportError(f"{read.file} has no pads to dispense on")
             shift = isolate.placement(copper, config, 0.0, [(outline, 0.0)])
             placed = isolate.transform(copper, config, shift)
             outline = [list(p) for p in isolate.transform(outline, config, shift)]
@@ -1190,7 +1164,7 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             margin = options.margin or 0.0
             cut = paste_stencil.stencil(placed, options.spot, margin, pace=pace)
             if not cut.paths:
-                raise JobImportError(f"a margin of {margin:g} mm closes every opening of {copper_path.name}")
+                raise JobImportError(f"a margin of {margin:g} mm closes every opening of {read.file}")
             groups = stencil_groups(cut, options, word)
         elif options.mode == MODE_LINES:
             # The beam's middle runs on the lines, so its edge reaches half
@@ -1225,11 +1199,10 @@ def from_board(path: Path, name: str, options: ImportOptions, pace: float = copp
             if copper and plan.copper:
                 x0, y0 = copper[0][0][0] * flip[0], copper[0][0][1] * flip[1]
                 shift = (plan.copper[0][0][0] - x0, plan.copper[0][0][1] - y0)
-    except (isocli.SourceError, gerber.GerberError, ValueError, OSError) as exc:
+    except (ValueError, OSError) as exc:
+        # board.ReadError, the layer's and the gerber's, and the geometry's
+        # refusals are ValueErrors.
         raise JobImportError(str(exc)) from exc
-    finally:
-        if temporary is not None:
-            temporary.cleanup()
 
     dx, dy = shift
     pads = [(round(x + dx, 4), round(y + dy, 4), area) for x, y, area in pads]

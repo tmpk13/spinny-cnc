@@ -648,3 +648,7 @@
   up to date with each fact in one document, clippy and ruff clean with a
   `mise run lint` task, pyclipper declared, Pyright pointed at the uv
   environment; about 1000 lines lighter, every suite green.
+- One board importer (2026-11-10): `spinny_laser.board.read` reads a KiCad
+  board or a gerber with its outline and drill files for both the Jobs
+  page and CAM profiles; the Jobs import now drops a hole listed in two
+  drill files and reads drill files beside a gerber.

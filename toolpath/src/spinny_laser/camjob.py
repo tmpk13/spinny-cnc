@@ -11,7 +11,6 @@ writes gcode from.
 from __future__ import annotations
 
 import math
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -138,62 +137,26 @@ class BuiltJob:
 
 
 def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
-    """A board's copper, outline and drills: a KiCad board exported through
-    kicad-cli, its `layer` read as the copper (the paste layer for a
-    stencil), or a gerber with its siblings found beside it."""
-    from laser_sweep import excellon, geom, gerber, isocli
-
-    path = Path(path)
-    temporary: tempfile.TemporaryDirectory | None = None
-    read_layer: str | None = layer
+    """A board's copper, outline and drills as `board.read` reads them: a
+    KiCad board on its `layer` (the paste layer for a stencil), or a gerber
+    with its siblings found beside it. A layer that fills nothing is
+    refused, there being nothing for the operations to cut."""
     try:
-        if path.suffix.lower() == ".kicad_pcb":
-            board.check_layer(layer)
-            temporary = tempfile.TemporaryDirectory(prefix="spinny-cam-")
-            into = Path(temporary.name)
-            isocli.export_board(path, layer, outline=True, drill=True, into=into)
-            copper_path = board.find_plotted(into, layer, path)
-            source = "kicad"
-        else:
-            copper_path = path
-            into = path.parent
-            source = "gerber"
-            read_layer = board.layer_of(path)
-        try:
-            outline_path: Path | None = board.find_layer(into, "Edge.Cuts")
-        except board.LayerError:
-            outline_path = None
-        stem = path.stem.split("-")[0]
-        drill_paths, others = _drill_files(into, stem) if into.is_dir() else ([], [])
-        image = gerber.read(copper_path)
-        copper = geom.copper(image)
-        if not copper:
-            raise DesignError(f"{copper_path.name} draws no {board.layer_word(read_layer)}")
-        outline: list[Polyline] = []
-        if outline_path is not None:
-            outline = board_outline.read(outline_path)
-        holes: list[tuple[Point, float, Point | None]] = []
-        for drill_path in drill_paths:
-            for hole in excellon.read(drill_path).holes:
-                found = (tuple(hole.at), float(hole.diameter), tuple(hole.end) if hole.end else None)
-                # The same hole in two of the files is drilled once.
-                if found not in holes:
-                    holes.append(found)
-        return Design(
-            name=path.stem,
-            source=source,
-            layer=read_layer,
-            copper=copper,
-            outline=[list(map(tuple, p)) for p in outline],
-            holes=holes,
-            centers=copper_deposition.centerlines(image),
-            notes=[f"{other.name} is not read: {path.stem}'s drill files start with {stem!r}" for other in others],
-        )
-    except (isocli.SourceError, board.LayerError, gerber.GerberError, OSError) as exc:
+        read = board.read(path, layer)
+    except board.ReadError as exc:
         raise DesignError(str(exc)) from exc
-    finally:
-        if temporary is not None:
-            temporary.cleanup()
+    if not read.copper:
+        raise DesignError(f"{read.file} draws no {read.word}")
+    return Design(
+        name=read.name,
+        source=read.source,
+        layer=read.layer,
+        copper=read.copper,
+        outline=read.outline,
+        holes=read.holes,
+        centers=copper_deposition.centerlines(read.image),
+        notes=read.notes,
+    )
 
 
 def read_design(path: Path, placement: cam.Placement) -> Design:
@@ -210,20 +173,6 @@ def read_design(path: Path, placement: cam.Placement) -> Design:
     if suffix in MODEL_SUFFIXES:
         return read_model(path)
     raise DesignError(f"{path.name}: not a board, an X/Y gcode file or an STL model")
-
-
-def _drill_files(directory: Path, stem: str) -> tuple[list[Path], list[Path]]:
-    """The board's drill files in the folder, and the others there.
-
-    KiCad writes the plated holes and the unplated ones (mounting holes)
-    to two files, <board>-PTH.drl and <board>-NPTH.drl, unless asked for
-    one <board>.drl, so every file whose name starts with the board's
-    stem is read; with none named so, every drill file is.
-    """
-    found = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".drl")
-    named = [p for p in found if p.name.startswith(stem)]
-    taken = named or found
-    return taken, [p for p in found if p not in taken]
 
 
 # --- building -----------------------------------------------------------------

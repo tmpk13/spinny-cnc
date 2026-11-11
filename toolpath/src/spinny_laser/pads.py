@@ -16,7 +16,6 @@ from __future__ import annotations
 import math
 
 from laser_sweep import geom
-from laser_sweep.excellon import Drills
 from laser_sweep.gerber import Fill, Image
 
 Point = tuple[float, float]
@@ -43,14 +42,14 @@ def pads_of(image: Image, max_area: float = MAX_PAD_AREA) -> list[Pad]:
     return pads
 
 
-def holes_of(drills: Drills) -> list[Hole]:
-    """Every hole of a drill file, a slot by the middle of its run."""
+def holes_of(drilled: list[tuple[Point, float, Point | None]]) -> list[Hole]:
+    """Every hole as `board.read` lists them (center, diameter, the far
+    end of a slot), a slot by the middle of its run, rows first."""
     holes: list[Hole] = []
-    for hole in drills.holes:
-        x, y = hole.at
-        if hole.end is not None:
-            x, y = (x + hole.end[0]) / 2.0, (y + hole.end[1]) / 2.0
-        holes.append((round(x, 4), round(y, 4), round(hole.diameter, 4)))
+    for (x, y), diameter, end in drilled:
+        if end is not None:
+            x, y = (x + end[0]) / 2.0, (y + end[1]) / 2.0
+        holes.append((round(x, 4), round(y, 4), round(diameter, 4)))
     holes.sort(key=lambda hole: (hole[1], hole[0]))
     return holes
 
