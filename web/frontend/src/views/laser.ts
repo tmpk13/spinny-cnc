@@ -32,7 +32,7 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
     const spindleBody = el("div", { class: "tool-spindle hidden" },
         el("div", { class: "field-row" }, labeled("Speed S", speed)),
         el("div", { class: "button-row" }, start, stop),
-        el("p", { class: "muted hint" }, "A job starts and stops the spindle itself. It keeps turning through a hold: Stop ends a job and the spindle with it."),
+        el("p", { class: "muted hint" }, "Jobs start and stop the spindle themselves. It keeps turning during a hold, until Stop."),
     );
     const body = el("fieldset", { class: "panel-body" }, laserBody, spindleBody);
     root.append(title, body);
@@ -49,7 +49,7 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         if (duration > MAX_BEAM_MS) {
-            ctx.toast("error", `the beam test runs for at most ${MAX_BEAM_MS} ms`);
+            ctx.toast("error", `beam test: at most ${MAX_BEAM_MS} ms`);
             return;
         }
         const ok = await askConfirm(`Fire the beam at S${s} for ${duration} ms? Eye protection on.`, "Fire");

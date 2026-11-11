@@ -59,5 +59,5 @@ buttons = ["Z-", "Z+"]
 feed = true
 goto = true
 zero = true
-zero_hint = "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it."
-note = "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+zero_hint = "Zero over the rotation axis to match a polar job's board X/Y."
+note = "Y axis: across the rail (X), with the rail's steps and feed"

@@ -198,7 +198,7 @@ describe("height map math", () => {
         const fields = { x0: "-10", y0: "-5", x1: "10", y1: "5", nx: "3", ny: "2" };
         expect(readGrid(fields)).toEqual(grid());
         expect(readGrid({ ...fields, x0: "a" })).toBe("x0 is not a number");
-        expect(readGrid({ ...fields, x1: "-20" })).toContain("X to above X from");
+        expect(readGrid({ ...fields, x1: "-20" })).toContain("X to must be above X from");
         expect(readGrid({ ...fields, nx: "1" })).toContain("2 to 50");
         expect(readGrid({ ...fields, ny: "2.5" })).toContain("whole numbers");
     });
@@ -364,7 +364,7 @@ describe("height map panel", () => {
     test("the hint gives the sign of the probe tip across the rail", () => {
         const { ctx, root } = setup({ map: null, probe: null, settings: SETTINGS });
         mountHeightMap(root, ctx);
-        expect(root.querySelector(".hm-probe-settings")!.textContent).toContain("positive to the left of outward seen from above");
+        expect(root.querySelector(".hm-probe-settings")!.textContent).toContain("across + left of outward seen from above");
     });
 
     test("probing asks first, then sends the grid in the fields", async () => {
@@ -474,13 +474,13 @@ describe("compensated runs", () => {
         const stale = { ...map, focus_set: false };
         store.set({ heightMap: { map: stale, probe: null, settings: SETTINGS } });
         expect(select.value).toBe("off");
-        expect(note()).toContain("Focus here before a run follows it");
+        expect(note()).toContain("then Focus here");
         click(root, "Run");
         await settle();
         expect(calls.filter((call) => call.name === "runJob").map((call) => call.args)).toEqual([["j1", "off", false]]);
         // A spindle is touched off instead.
         store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "spindle", h_axis: true, r_max: 60, z_max: 0 } } });
-        expect(note()).toContain("Touch off here before a run follows it");
+        expect(note()).toContain("then Touch off here");
         expect(focusAgainText(heightMap([[0, null]]), false)).toBe("");
         expect(focusAgainText(null, false)).toBe("");
     });
@@ -488,10 +488,10 @@ describe("compensated runs", () => {
 
 describe("going on with a map", () => {
     test("says the head rises back to the travel height a miss left it below", () => {
-        expect(goOnTravel(heightMap([[-1.5, null]], { travel: 0.25 }))).toContain("first rises to H 0.250");
+        expect(goOnTravel(heightMap([[-1.5, null]], { travel: 0.25 }))).toContain("at H 0.250");
         // A map saved before the travel height was kept travels where the head is.
-        expect(goOnTravel(heightMap([[-1.5, null]]))).toContain("at the height it has now");
-        expect(goOnTravel(null)).toContain("at the height it has now");
+        expect(goOnTravel(heightMap([[-1.5, null]]))).toContain("at its current height");
+        expect(goOnTravel(null)).toContain("at its current height");
     });
 });
 
@@ -523,7 +523,7 @@ describe("whether a run follows the map", () => {
         const short = { ...ready, grid: { ...ready.grid, x1: 4 } };
         const refusal = mapUse("auto", short, job(), laser);
         expect(refusal).toMatchObject({ kind: "refused", text: "map short of job" });
-        expect(refusal.detail).toContain("the job reaches X -4.0..6.0");
+        expect(refusal.detail).toContain("job X -4.0..6.0");
     });
 
     test("a run under way says what it settled on", () => {

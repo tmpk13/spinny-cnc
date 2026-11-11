@@ -36,8 +36,8 @@ export function defaultControls(profile: Profile): Controls {
     if (cartesian) {
         axes.push(axis(
             "z", "Z", "Cross slide (Y)", null, ["Z-", "Z+"], true, true,
-            "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
-            "Y axis: moves across the rail, which is X; steps and feed as the rail's",
+            "Zero over the rotation axis to match a polar job's board X/Y.",
+            "Y axis: across the rail (X), with the rail's steps and feed",
         ));
     } else {
         // The cross slide is set from a measured centering burn, so its steps
@@ -53,17 +53,15 @@ export function defaultControls(profile: Profile): Controls {
         if (milling) {
             axes.push(axis(
                 "h", "H", "Depth axis", [0.05, 0.1, 1], ["Down", "Up"], false, false,
-                "Touch the tool to the copper first: a milled cut without a height map goes down from H 0."
-                + " A height map probed before keeps its heights in the old numbers, so a run follows it"
-                + " only after Touch off here again (probe again for another board).",
-                "Raises and lowers the tool; up is positive, H 0 is the board's surface",
+                "Touch the tool to the copper first: without a height map, cuts go down from H 0."
+                + " A height map then needs Touch off here again, or a new probe for another board.",
+                "Up is positive, H 0 at the board surface",
             ));
         } else {
             axes.push(axis(
                 "h", "H", "Focus axis", [0.05, 0.1, 1], ["Down", "Up"], false, false,
-                "A height map probed before keeps its heights in the old numbers, so a run follows it"
-                + " only after Focus here again (probe again for another board).",
-                "Raises and lowers the head; up is positive",
+                "A height map then needs Focus here again, or a new probe for another board.",
+                "Up is positive",
             ));
         }
     }
@@ -84,23 +82,22 @@ export function defaultControls(profile: Profile): Controls {
 
 function dispenserControls(focus: boolean): Controls {
     const axes: AxisControl[] = [
-        axis("r", "X", "X (rail)", null, ["X-", "X+"], true, true, "X is measured from here: put the needle over the job's X origin first."),
-        axis("z", "Y", "Y (cross slide)", null, ["Y-", "Y+"], true, true, "Y is measured from here: put the needle over the job's Y origin first."),
+        axis("r", "X", "X (rail)", null, ["X-", "X+"], true, true, "Put the needle over the job's X origin first."),
+        axis("z", "Y", "Y (cross slide)", null, ["Y-", "Y+"], true, true, "Put the needle over the job's Y origin first."),
         // The plunger: small steps, since a dot is a few hundredths of a
         // millimeter of it; its own rate, not the feed field's.
         axis(
             "a", "E", "Dispenser", [0.05, 0.1, 0.5, 1], ["Retract", "Extrude"], false, false,
-            "E counts the plunger from here; nothing on the board changes.",
-            "The plunger, mm pushed out: Extrude lays paste, Retract pulls back",
+            "Resets only the plunger count.",
+            "Plunger travel, mm pushed out",
         ),
     ];
     if (focus) {
         axes.push(axis(
             "h", "H", "Needle height", [0.05, 0.1, 1], ["Down", "Up"], false, false,
-            "Touch the needle to the copper first: a dispensing run without a height map holds its gap over H 0."
-            + " A height map probed before keeps its heights in the old numbers, so a run follows it"
-            + " only after Touch off here again (probe again for another board).",
-            "Raises and lowers the needle; up is positive, H 0 is the board's surface",
+            "Touch the needle to the copper first: without a height map, dispensing holds its gap over H 0."
+            + " A height map then needs Touch off here again, or a new probe for another board.",
+            "Up is positive, H 0 at the board surface",
         ));
     }
     return { pad: true, pad_steps: [0.1, 1, 10], pad_step: 1, feed: true, center: { r: 0, z: 0 }, centering: false, axes };

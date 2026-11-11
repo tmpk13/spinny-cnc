@@ -34,16 +34,16 @@ describe("travel height text", () => {
     });
 
     test("a fresh probing's confirm says where the head travels", () => {
-        expect(freshTravel(null)).toContain("at the height it has now");
-        expect(freshTravel(4)).toContain("first rises to the travel height, H 4.000");
+        expect(freshTravel(null)).toContain("at its current height");
+        expect(freshTravel(4)).toContain("H 4.000 (the travel height)");
     });
 
     test("going on rises to the higher of where probing began and the travel height", () => {
-        expect(goOnTravel(partialMap(0.25), null)).toContain("H 0.250, where probing began");
-        expect(goOnTravel(partialMap(0.25), 3)).toContain("H 3.000, the travel height");
-        expect(goOnTravel(partialMap(5), 3)).toContain("H 5.000, where probing began");
-        expect(goOnTravel(partialMap(null), 3)).toContain("H 3.000, the travel height");
-        expect(goOnTravel(null, null)).toContain("at the height it has now");
+        expect(goOnTravel(partialMap(0.25), null)).toContain("H 0.250 (where probing began)");
+        expect(goOnTravel(partialMap(0.25), 3)).toContain("H 3.000 (the travel height)");
+        expect(goOnTravel(partialMap(5), 3)).toContain("H 5.000 (where probing began)");
+        expect(goOnTravel(partialMap(null), 3)).toContain("H 3.000 (the travel height)");
+        expect(goOnTravel(null, null)).toContain("at its current height");
     });
 });
 

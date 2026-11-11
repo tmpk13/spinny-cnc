@@ -72,8 +72,8 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
     if cartesian:
         axes.append(_axis(
             "z", "Z", "Cross slide (Y)", None, ["Z-", "Z+"], feed=True, goto=True,
-            zero_hint="Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
-            note="Y axis: moves across the rail, which is X; steps and feed as the rail's",
+            zero_hint="Zero over the rotation axis to match a polar job's board X/Y.",
+            note="Y axis: across the rail (X), with the rail's steps and feed",
         ))
     else:
         # The cross slide is set from a measured centering burn, so its steps
@@ -88,17 +88,15 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
         if milling:
             axes.append(_axis(
                 "h", "H", "Depth axis", [0.05, 0.1, 1], ["Down", "Up"], feed=False, goto=False,
-                zero_hint="Touch the tool to the copper first: a milled cut without a height map goes down from H 0."
-                " A height map probed before keeps its heights in the old numbers, so a run follows it"
-                " only after Touch off here again (probe again for another board).",
-                note="Raises and lowers the tool; up is positive, H 0 is the board's surface",
+                zero_hint="Touch the tool to the copper first: without a height map, cuts go down from H 0."
+                " A height map then needs Touch off here again, or a new probe for another board.",
+                note="Up is positive, H 0 at the board surface",
             ))
         else:
             axes.append(_axis(
                 "h", "H", "Focus axis", [0.05, 0.1, 1], ["Down", "Up"], feed=False, goto=False,
-                zero_hint="A height map probed before keeps its heights in the old numbers, so a run follows it"
-                " only after Focus here again (probe again for another board).",
-                note="Raises and lowers the head; up is positive",
+                zero_hint="A height map then needs Focus here again, or a new probe for another board.",
+                note="Up is positive",
             ))
     return {
         "pad": True,
@@ -118,22 +116,21 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
 def _dispenser_controls(focus: bool) -> dict:
     axes = [
         _axis("r", "X", "X (rail)", None, ["X-", "X+"], feed=True, goto=True,
-              zero_hint="X is measured from here: put the needle over the job's X origin first."),
+              zero_hint="Put the needle over the job's X origin first."),
         _axis("z", "Y", "Y (cross slide)", None, ["Y-", "Y+"], feed=True, goto=True,
-              zero_hint="Y is measured from here: put the needle over the job's Y origin first."),
+              zero_hint="Put the needle over the job's Y origin first."),
         # The plunger: small steps, since a dot is a few hundredths of a
         # millimeter of it; its own rate, not the feed field's.
         _axis("a", "E", "Dispenser", [0.05, 0.1, 0.5, 1], ["Retract", "Extrude"], feed=False, goto=False,
-              zero_hint="E counts the plunger from here; nothing on the board changes.",
-              note="The plunger, mm pushed out: Extrude lays paste, Retract pulls back"),
+              zero_hint="Resets only the plunger count.",
+              note="Plunger travel, mm pushed out"),
     ]
     if focus:
         axes.append(_axis(
             "h", "H", "Needle height", [0.05, 0.1, 1], ["Down", "Up"], feed=False, goto=False,
-            zero_hint="Touch the needle to the copper first: a dispensing run without a height map holds its gap over H 0."
-            " A height map probed before keeps its heights in the old numbers, so a run follows it"
-            " only after Touch off here again (probe again for another board).",
-            note="Raises and lowers the needle; up is positive, H 0 is the board's surface",
+            zero_hint="Touch the needle to the copper first: without a height map, dispensing holds its gap over H 0."
+            " A height map then needs Touch off here again, or a new probe for another board.",
+            note="Up is positive, H 0 at the board surface",
         ))
     return {
         "pad": True,

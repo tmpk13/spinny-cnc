@@ -77,5 +77,5 @@ buttons = ["Down", "Up"]
 feed = false
 goto = false
 zero = true
-zero_hint = "A height map probed before keeps its heights in the old numbers, so a run follows it only after Focus here again (probe again for another board)."
-note = "Raises and lowers the head; up is positive"
+zero_hint = "A height map then needs Focus here again, or a new probe for another board."
+note = "Up is positive"

@@ -664,7 +664,7 @@ describe("jobs", () => {
         dialogButton("Focused here: plan").click();
         await settle();
         await settle();
-        expect(document.querySelector("dialog[open]")?.textContent).toContain("Its groups' focus counts from where the head is now.");
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Focus counts from the head's height now.");
         dialogButton("Resume").click();
         await settle();
         await settle();
@@ -705,7 +705,7 @@ describe("jobs", () => {
         dialogButton("Pick up the changed job").click();
         await settle();
         await settle();
-        expect(document.querySelector("dialog[open]")?.textContent).toContain("Its lines are counted in the job as it is now");
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Lines count in the job as it is now");
         dialogButton("Resume").click();
         await settle();
         await settle();
@@ -1195,7 +1195,7 @@ describe("machine files", () => {
         await ctx.refreshSettings();
         await settle();
         const board = root.querySelector(".config-board")?.textContent ?? "";
-        expect(board).toContain("runs settings no file has; 1 written since the last save to flash (a_rate)");
+        expect(board).toContain("runs settings no file has; 1 not saved to flash (a_rate)");
         expect(board).toContain("the jog panel draws this file's controls");
         expect(flash.classList.contains("hidden")).toBe(false);
         // Read from board writes the board's value into the text, not saved.
@@ -1203,13 +1203,13 @@ describe("machine files", () => {
         await settle();
         await settle();
         expect(text.value).toMatch(/\nmax_rate = 123\b/);
-        expect(status()).toBe("1 values read from the board, not saved: Save keeps them");
+        expect(status()).toBe("1 values read from the board; Save to keep them");
         expect(root.querySelector(".config-notes")?.textContent).toContain("[table] max_rate = 123 (was");
         expect((await api.machineFile("cartesian-mill")).text).not.toMatch(/\nmax_rate = 123\b/);
         // Written with the edit: the text is saved first, then written.
         load.click();
         await settle();
-        expect(document.querySelector("dialog[open]")?.textContent).toContain("The edits in the text are saved to the file first.");
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Your edits are saved to the file first.");
         dialogButton("Write").click();
         for (let i = 0; i < 4; i += 1) {
             await settle();
@@ -1226,7 +1226,7 @@ describe("machine files", () => {
         store.set({ snapshot: { ...connected(), connected: false, machine: null } });
         await settle();
         expect(load.disabled).toBe(true);
-        expect(root.textContent).toContain("connect to write the file to the board or read the board into it");
+        expect(root.textContent).toContain("connect to write to or read from the board");
         localStorage.removeItem("spinny.machine");
     });
 
@@ -1459,7 +1459,7 @@ describe("jog position row", () => {
         mountJog(root, ctx);
         click(root, "Last known");
         const said = store.get().toasts.map((toast) => toast.text);
-        expect(said.some((text) => text.includes("held from before the board was connected again or started over"))).toBe(true);
+        expect(said.some((text) => text.includes("from before a reconnect or restart"))).toBe(true);
     });
 
     test("Last known with nothing reported says so", async () => {

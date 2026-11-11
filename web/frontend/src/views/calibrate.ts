@@ -49,7 +49,7 @@ export function calibrateRequest(fields: CalibrateFields): CalibrateRequest | st
             continue;
         }
         if (parts.some((part) => part === null)) {
-            return `give the ${name} ladder its from, to and steps, or none of them`;
+            return `${name} ladder: fill in from, to and steps, or none`;
         }
         if (!Number.isInteger(parts[2])) {
             return `${name} steps must be a whole number`;
@@ -86,19 +86,19 @@ export function calibrationTest(ctx: Ctx): HTMLElement {
         labeled("Fill", fill, "labeled inline"),
         field("x", 0, 1), field("y", 0, 1),
     );
-    material.title = "Power rises left to right, speed bottom to top; a filled square is an engraving test, an outline a cut-through test";
+    material.title = "Power rises to the right, speed upward; filled squares engrave, outlines cut through";
     const depth = el("div", { class: "field-grid" },
         field("depth from", 0.05, 0.01), field("depth to", 0.3, 0.01), field("depth steps", 6, 1),
         field("length", 10, 1), field("gap", 2, 0.5), field("feed", 120, 10), field("plunge", 30, 5), field("spindle", 1000, 100),
         field("x", 0, 1), field("y", 0, 1),
     );
-    depth.title = "A slot per depth, shallowest first, each its own group at that depth";
+    depth.title = "One slot per depth, shallowest first";
     const focus = el("div", { class: "field-grid" },
         field("focus from", -1, 0.1), field("focus to", 1, 0.1), field("focus steps", 9, 1),
         field("power", 500, 10), field("speed", 600, 10), field("length", 10, 1), field("gap", 2, 0.5),
         field("x", 0, 1), field("y", 0, 1),
     );
-    focus.title = "A line per focus step, lowest first, each its own group burnt that many mm over focus (minus under) at one power and speed";
+    focus.title = "One line per step, lowest first. Negative steps are below focus";
     // A laser with a focus axis picks between the material test and the
     // focus ladder; without one the material test is the focus test too.
     const which = el("select", { class: "field", "aria-label": "Test" },
@@ -135,11 +135,11 @@ export function calibrationTest(ctx: Ctx): HTMLElement {
         depth.classList.toggle("hidden", kind !== "depth");
         intro.textContent = kind === "material"
             ? ladder
-                ? "A grid of squares, each its own group at a power and a speed, to find the settings for a material."
-                : "A grid of squares, each its own group at a power and a speed, to find the settings for a material. On a machine with no focus axis it is the focus and power test too: one speed and a ladder of powers."
+                ? "Squares at a range of powers and speeds, to find a material's settings."
+                : "Squares at a range of powers and speeds, to find a material's settings. With one speed and a power ladder it also tests focus."
             : kind === "focus"
-                ? "A row of lines, each its own group burnt a step over or under focus at one power and speed: the thinnest line is at focus. The steps count from the height the run starts at, or from the height map's focus height when the run follows it."
-                : "A row of slots, each its own group a step deeper, to find the depth that parts the copper and check the depth axis's scale.";
+                ? "Lines burnt at steps above and below focus: the thinnest is at focus. Steps count from the start height, or the map's focus height when following a map."
+                : "Slots a step deeper each, to find the depth that cuts through the copper and check the depth axis scale.";
     };
     which.addEventListener("change", () => follow(ctx.store.get()));
     ctx.store.subscribe(follow, ["snapshot"]);

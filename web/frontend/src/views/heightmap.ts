@@ -170,11 +170,11 @@ export function readGrid(fields: Record<GridField, string>): Grid | string {
     }
     const grid = out as Grid;
     if (!(grid.x1 > grid.x0 && grid.y1 > grid.y0)) {
-        return "the grid needs X to above X from, and Y to above Y from";
+        return "X to must be above X from, and Y to above Y from";
     }
     for (const key of ["nx", "ny"] as const) {
         if (!Number.isInteger(grid[key]) || grid[key] < 2 || grid[key] > 50) {
-            return `points must be whole numbers from 2 to 50`;
+            return "points: whole numbers from 2 to 50";
         }
     }
     return grid;
@@ -254,28 +254,28 @@ export function mapPartial(map: HeightMap | null): boolean {
 export function goOnTravel(map: HeightMap | null | undefined, travel: number | null = null): string {
     const began = map?.travel ?? null;
     if (began === null && travel === null) {
-        return "The head travels at the height it has now, so it must clear the board.";
+        return "The head travels at its current height, which must clear the board.";
     }
     const height = Math.max(began ?? -Infinity, travel ?? -Infinity);
     const where = began !== null && began >= height ? "where probing began" : "the travel height";
-    return `The head first rises to H ${formatFixed(height, 3)}, ${where}, if it is lower, and travels there;`
-        + " a point the probe missed is probed again from that height, so deepen the probe if it fell short.";
+    return `The head travels at H ${formatFixed(height, 3)} (${where}) or above.`
+        + " Missed points are probed again from there: increase Depth if the probe fell short.";
 }
 
 /** How a fresh probing travels, for its confirm: at the head's height, or up to the travel height first. */
 export function freshTravel(travel: number | null | undefined): string {
     if (travel === null || travel === undefined) {
-        return "The head travels between them at the height it has now, so it must clear the board,";
+        return "The head travels at its current height, which must clear the board.";
     }
-    return `The head first rises to the travel height, H ${formatFixed(travel, 3)}, if it is lower, and travels between them there,`;
+    return `The head travels at H ${formatFixed(travel, 3)} (the travel height) or above.`;
 }
 
 /** What the probe note says before probing: the height the head travels at, the travel height's or the head's. */
 export function probeTravelText(travel: number | null | undefined): string {
     if (travel === null || travel === undefined) {
-        return "Raise the head so the probe clears the board: probing travels at that height (or set a travel height in the jog panel).";
+        return "Raise the head so the probe clears the board, or set Travel H in the jog panel.";
     }
-    return `Probing rises to the travel height, H ${formatFixed(travel, 3)}, and travels there (a higher head stays higher); Depth counts down from that height.`;
+    return `Probing travels at H ${formatFixed(travel, 3)} (the travel height) or above. Depth counts down from there.`;
 }
 
 /** What the progress line says of the point being probed: a pad's place on a pad map, a point's otherwise. */
@@ -305,8 +305,8 @@ export function focusAgainText(map: HeightMap | null, milling: boolean): string 
         return "";
     }
     return milling
-        ? "The height map has no touch-off offset: jog the tool onto the copper and Touch off here before a run follows it."
-        : "The height map has no focus offset: focus the beam and Focus here before a run follows it.";
+        ? "The height map needs a touch-off: jog the tool onto the copper, then Touch off here."
+        : "The height map needs a focus offset: focus the beam, then Focus here.";
 }
 
 function focusStateText(map: HeightMap, milling: boolean): string {
@@ -369,24 +369,24 @@ export function mapUse(choice: Compensate, map: HeightMap | null, job: Job | nul
             kind: "off",
             text: "map off",
             detail: mapUsable(map)
-                ? "A height map is ready, but the run will not follow it: pick height map: auto to follow it."
-                : "The run cuts at the job's own heights: no height map is followed.",
+                ? "A height map is ready but not used: pick height map: auto."
+                : "The run follows no height map.",
         };
     }
     const refused = (text: string, detail: string): MapUse => ({ kind: "refused", text, detail });
     const mode: "focus" | "power" = choice === "auto" ? (profile.h_axis ? "focus" : "power") : choice;
     if (mode === "focus" && !profile.h_axis) {
-        return refused("no focus axis", "The focus axis is not fitted ($h_axis=0): follow the map by power instead.");
+        return refused("no focus axis", "No focus axis ($h_axis=0): follow the map by power instead.");
     }
     if (mode === "power" && milling) {
-        return refused("not by power", "A spindle follows the board with its depth axis: pick auto or the depth axis.");
+        return refused("not by power", "A spindle cannot follow by power: pick auto or the depth axis.");
     }
     if (map === null) {
-        return refused("no map", "There is no height map: probe the board first, or run with no height map.");
+        return refused("no map", "No height map: probe the board, or pick no height map.");
     }
     if (!mapComplete(map)) {
         const { probed, total } = mapCounts(map);
-        return refused("map not done", `The map is probed at ${probed} of ${total} points: go on probing before a run follows it.`);
+        return refused("map not done", `${probed} of ${total} points probed: press Continue to finish the map.`);
     }
     if (!map.focus_set) {
         return refused(milling ? "no touch-off" : "focus not set", focusAgainText(map, milling));
@@ -396,8 +396,8 @@ export function mapUse(choice: Compensate, map: HeightMap | null, job: Job | nul
     if (box && (box.x0 < grid.x0 - COVER_MARGIN || box.y0 < grid.y0 - COVER_MARGIN || box.x1 > grid.x1 + COVER_MARGIN || box.y1 > grid.y1 + COVER_MARGIN)) {
         return refused(
             "map short of job",
-            `The height map does not cover the job: probed X ${formatFixed(grid.x0, 1)}..${formatFixed(grid.x1, 1)} Y ${formatFixed(grid.y0, 1)}..${formatFixed(grid.y1, 1)},`
-            + ` the job reaches X ${formatFixed(box.x0, 1)}..${formatFixed(box.x1, 1)} Y ${formatFixed(box.y0, 1)}..${formatFixed(box.y1, 1)}.`,
+            `The map does not cover the job: map X ${formatFixed(grid.x0, 1)}..${formatFixed(grid.x1, 1)} Y ${formatFixed(grid.y0, 1)}..${formatFixed(grid.y1, 1)},`
+            + ` job X ${formatFixed(box.x0, 1)}..${formatFixed(box.x1, 1)} Y ${formatFixed(box.y0, 1)}..${formatFixed(box.y1, 1)}.`,
         );
     }
     return { kind: "on", text: `map on: ${compensateWords(mode, milling)}`, detail: followText(mode, milling) };
@@ -405,11 +405,11 @@ export function mapUse(choice: Compensate, map: HeightMap | null, job: Job | nul
 
 function followText(mode: "focus" | "power", milling: boolean): string {
     if (mode === "power") {
-        return "The run follows the height map by power: the beam is driven harder where the board sits out of focus.";
+        return "The run follows the map by power: more power where the board is out of focus.";
     }
     return milling
-        ? "The run follows the height map: the depth axis keeps every cut its depth under the surface."
-        : "The run follows the height map: the focus axis keeps the beam at focus over the board.";
+        ? "The run follows the map: the depth axis keeps each cut at its depth below the surface."
+        : "The run follows the map: the focus axis keeps the beam in focus.";
 }
 
 /** What a run under way does with the map, from its progress; null for a backend that does not say. */
@@ -503,7 +503,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const margin = parseNumber(marginField.value);
         if (margin === null || margin < 0) {
-            return "the margin is a distance in mm, 0 or more";
+            return "margin: 0 mm or more";
         }
         return { ...grid, job: job.id, margin };
     };
@@ -605,7 +605,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     queueField.addEventListener("change", () => {
         const value = parseNumber(queueField.value);
         if (value === null || !Number.isInteger(value) || value < 0 || value > PROBE_MS_MAX) {
-            ctx.toast("error", `the probe queue is a whole number of ms from 0 to ${PROBE_MS_MAX}`);
+            ctx.toast("error", `brake queue: a whole number of ms, 0 to ${PROBE_MS_MAX}`);
             showQueue(ctx.store.get());
             return;
         }
@@ -641,10 +641,10 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const minArea = parseNumber(minAreaField.value);
         const maxPoints = parseNumber(maxPointsField.value);
         if (minArea === null || minArea <= 0) {
-            return "the least pad area is in mm^2, above 0";
+            return "min area: above 0 mm^2";
         }
         if (maxPoints === null || !Number.isInteger(maxPoints) || maxPoints < 2) {
-            return "the most pads probed is a whole number, 2 or more";
+            return "max points: a whole number, 2 or more";
         }
         return { job: job.id, min_area: minArea, max_points: maxPoints, resume };
     };
@@ -653,12 +653,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     const probeHereMap = button("Probe here: tie map", () => probeHere("map"), "btn btn-quiet");
     const probeNearestMap = button("Probe nearest: tie map", () => probeNearest(), "btn btn-quiet");
     const probeHereZero = button("Probe here: set H 0", () => probeHere("zero"), "btn btn-quiet");
-    const PROBE_HERE_HINT = "Probe here lowers the probe where the head is. Tie map: the height found against the map's"
-        + " height there moves the map's offset, so a map probed before a power cycle, a restart or a position set"
-        + " follows the board again without probing it all over; put the tip over copper the map covers, not in a"
-        + " cut. Probe nearest goes to the probed point nearest the tip that the loaded job's cuts (or the last"
-        + " run's) keep clear of, and ties the map there. Set H 0: the surface found becomes H 0, for milling"
-        + " without a map.";
+    const PROBE_HERE_HINT = "Tie map re-aligns the map after a power cycle, restart or Set position: put the tip over"
+        + " copper the map covers, not in a cut. Probe nearest finds such a point. Set H 0 makes the surface H 0,"
+        + " for milling without a map.";
 
     // --- the map ---
     const mapBox = el("div", { class: "hm-map" });
@@ -667,11 +664,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     // --- focus ---
     // On a spindle machine the focus offset is the touch-off: the tool, not
     // a beam, is brought to the surface, and a cut goes that far below it.
-    const FOCUS_HINT = "Focus the beam by eye over the probed area by jogging the head up or down, then"
-        + " Focus here: the offset is the head's height less the board's under the beam.";
-    const TOUCH_HINT = "Jog the tool down over the probed area until it just touches the copper, then"
-        + " Touch off here: the offset is the tool's height less the probed height there. With the"
-        + " tool as the probe (tip offsets 0) it is about 0. A cut goes the group's depth under that.";
+    const FOCUS_HINT = "Jog the head until the beam is in focus over the probed area, then press Focus here.";
+    const TOUCH_HINT = "Jog the tool down over the probed area until it just touches the copper, then press Touch off here.";
     const focusHint = el("p", { class: "muted hint" }, FOCUS_HINT);
     const focusField = numberField({ step: 0.05 });
     // The text the field was last given from the map: a field still showing
@@ -724,15 +718,11 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
                 labeled("Brake queue ms", queueField),
             ),
             el("p", { class: "muted hint" },
-                "Depth is the most the probe goes down from the height it travels at: the travel height (jog panel) or the head's, whichever is higher. Slow 0 touches once."
-                + " The tip offset is from the beam: along the rail, outward positive, and across it,"
-                + " positive to the left of outward seen from above (board +Y at table angle 0, +Z on an"
-                + " X/Y machine). To check the signs, probe one point, then jog the beam over it and compare."
-                + " Before the first probe, watch the Probe readout: it must say up with the tip free and down"
-                + " when the tip touches; the other way round, set invert = true under [probe] in the machine"
-                + " file ($probe_invert). The brake queue is how long the head goes on past the contact before it brakes;"
-                + " the height is read at the contact either way. 0 stops it dead when the probe is"
-                + " no faster than h_jerk. It is a machine setting: Save to flash keeps it."),
+                "Depth: how far the probe goes down from its travel height; Slow 0 touches once."
+                + " Tip offsets are from the beam: along + outward, across + left of outward seen from above (board +Y at"
+                + " table angle 0, +Z on X/Y); probe a point, then jog the beam over it to check."
+                + " The Probe readout must say up when free and down on touch; if not, set invert = true under [probe]."
+                + " Brake queue: run-on past contact, 0 stops dead up to h_jerk; Save to flash keeps it."),
         ),
         el("div", { class: "button-row" }, modeField, marginLabel, fit, estimateNote),
         el("div", { class: "button-row" }, probeButton, continueButton, stopButton),
@@ -747,9 +737,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             padsNote,
         ),
         el("p", { class: "muted hint" },
-            "Probe pads touches the selected job's pads instead of a grid, for a probe that must land on copper (a conductive probe,"
-            + " or the tool itself): every pad of at least the area, the most spread out of them over the count, in a short tour."
-            + " The map's grid is filled in from the pads probed."),
+            "Probe pads touches the job's pads instead of a grid, for a probe that must land on copper."
+            + " Pads under Min area are skipped. Past Max points, the most spread out are kept."),
         el("div", { class: "button-row" }, probeHereMap, probeNearestMap, probeHereZero),
         el("p", { class: "muted hint" }, PROBE_HERE_HINT),
         mapBox,
@@ -777,8 +766,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const points = estimate ? estimate.points : gridPointCount(request);
         const time = estimate ? `, ${aboutTime(estimate.seconds)}` : "";
         const ok = await askConfirm(
-            `Probe ${points} points${time}? ${freshTravel(ctx.store.get().settings?.host.travel)}`
-            + " and it replaces the current map.",
+            `Probe ${points} points${time}? This replaces the current map. ${freshTravel(ctx.store.get().settings?.host.travel)}`,
             "Probe",
         );
         if (!ok) {
@@ -797,8 +785,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         if (!plan) {
             return;
         }
-        const skipped = plan.skipped > 0 ? `, ${plan.skipped} of ${plan.pads} pads under the area` : `, of ${plan.pads} pads`;
-        padsNote.textContent = `${plan.points.length} points${skipped}, ${aboutTime(plan.seconds)}`;
+        const skipped = plan.skipped > 0 ? ` (${plan.skipped} under min area)` : "";
+        padsNote.textContent = `${plan.points.length} points of ${plan.pads} pads${skipped}, ${aboutTime(plan.seconds)}`;
     }
 
     async function startPads(resume: boolean): Promise<void> {
@@ -812,8 +800,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const question = resume
-            ? `Go on probing the ${plan.points.length} pads the map still lacks, ${aboutTime(plan.seconds)}? ${goOnTravel(ctx.store.get().heightMap?.map, ctx.store.get().settings?.host.travel ?? null)}`
-            : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? ${freshTravel(ctx.store.get().settings?.host.travel)} and it replaces the current map.`;
+            ? `Probe the ${plan.points.length} pads still missing, ${aboutTime(plan.seconds)}? ${goOnTravel(ctx.store.get().heightMap?.map, ctx.store.get().settings?.host.travel ?? null)}`
+            : `Probe ${plan.points.length} pads, ${aboutTime(plan.seconds)}? This replaces the current map. ${freshTravel(ctx.store.get().settings?.host.travel)}`;
         if (!(await askConfirm(question, resume ? "Continue" : "Probe pads"))) {
             return;
         }
@@ -827,7 +815,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const left = gridPointCount(map.grid) - map.heights.flat().filter((value) => value !== null).length;
         const ok = await askConfirm(
-            `Go on probing the ${left} points the map still lacks? ${goOnTravel(map, ctx.store.get().settings?.host.travel ?? null)}`,
+            `Probe the ${left} points still missing? ${goOnTravel(map, ctx.store.get().settings?.host.travel ?? null)}`,
             "Continue",
         );
         if (!ok) {
@@ -838,8 +826,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
 
     async function probeHere(mode: TouchMode): Promise<void> {
         const question = mode === "map"
-            ? "Probe down here and tie the height map to the current frame by the height found? The tip must be over copper the map covers."
-            : "Probe down here and make the surface found H 0? The height map's offset, if any, is taken back.";
+            ? "Probe here and tie the height map to the height found? The tip must be over copper the map covers."
+            : "Probe here and make the surface H 0? This clears the height map's offset.";
         if (!(await askConfirm(question, "Probe here"))) {
             return;
         }
@@ -855,8 +843,8 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         const [x, y] = plan.point;
-        const question = `Go to X ${formatFixed(x, 2)} Y ${formatFixed(y, 2)}, the probed point ${formatFixed(plan.distance, 1)} mm`
-            + " from the tip that the job's cuts keep clear of, probe down there and tie the height map to the current frame?";
+        const question = `Go to X ${formatFixed(x, 2)} Y ${formatFixed(y, 2)} (${formatFixed(plan.distance, 1)} mm away, clear of the job's cuts),`
+            + " probe there and tie the height map to it?";
         if (!(await askConfirm(question, "Probe nearest"))) {
             return;
         }
@@ -900,7 +888,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     }
 
     async function clearMap(): Promise<void> {
-        if (!(await askConfirm("Clear the height map? A compensated run needs it probed again.", "Clear"))) {
+        if (!(await askConfirm("Clear the height map? Unless saved, it must be probed again.", "Clear"))) {
             return;
         }
         await into(ctx, "heightMap", ctx.api.clearHeightMap());
@@ -940,7 +928,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         const showValues = map.grid.nx <= LABELED_POINTS && !isPadMap(map);
         const xs = Array.from({ length: map.grid.nx }, (_, i) => map.grid.x0 + (map.grid.x1 - map.grid.x0) * i / (map.grid.nx - 1));
         const ys = Array.from({ length: map.grid.ny }, (_, j) => map.grid.y0 + (map.grid.y1 - map.grid.y0) * j / (map.grid.ny - 1));
-        const table = el("table", { class: "hm-table", "aria-label": "Board height at each probe point, rows from the top of the board" });
+        const table = el("table", { class: "hm-table", "aria-label": "Board height at each probe point, top row first" });
         // Rows from the highest Y down, so the table reads as the board seen
         // from above, the same way up as the preview.
         for (let iy = map.grid.ny - 1; iy >= 0; iy--) {
@@ -949,7 +937,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
                 const value = map.heights[iy]?.[ix] ?? null;
                 const wanted = gridWanted(map.grid, ix, iy);
                 const where = `X ${formatFixed(xs[ix], 1)} Y ${formatFixed(ys[iy], 1)}`;
-                const text = value === null ? (wanted ? "not probed" : "left out: no cut comes near") : `${formatFixed(value, 3)} mm`;
+                const text = value === null ? (wanted ? "not probed" : "skipped: no cut nearby") : `${formatFixed(value, 3)} mm`;
                 const cell = el("td", {
                     class: wanted ? "hm-cell" : "hm-cell hm-cell-skipped",
                     title: `${where}: ${text}`,
@@ -972,7 +960,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         }
         const ends = legendEnds(stats);
         replace(legend,
-            el("div", { class: "hm-scale", title: "Height off the mean; the ends are the strongest colors a cell has" },
+            el("div", { class: "hm-scale", title: "Height above or below the mean" },
                 el("span", {}, ends.low),
                 el("span", { class: "hm-ramp", "aria-hidden": "true" }),
                 el("span", {}, ends.high),
@@ -980,7 +968,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             el("span", { class: "muted" },
                 `mean ${formatFixed(stats.mean, 3)} mm, lowest ${formatFixed(stats.min, 3)}, highest ${formatFixed(stats.max, 3)},`
                 + ` span ${formatFixed(stats.max - stats.min, 3)} mm`
-                + (showValues ? "; cells show the height above the mean" : "")),
+                + (showValues ? ", cells show height above the mean" : "")),
         );
     }
 
@@ -1038,7 +1026,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         setLocked(saveButton, !heightMap?.map);
         const probe = heightMap?.probe ?? null;
         if (connected && machine && !focusAxis) {
-            probeNote.textContent = "No focus axis: set fitted = true under [focus] in the machine file and Write to board, or $h_axis=1 at the console, to probe.";
+            probeNote.textContent = "No focus axis: set fitted = true under [focus] and Write to board, or send $h_axis=1.";
         } else if (probe?.state === "error" || probe?.state === "stopped") {
             probeNote.textContent = `Probing ${probe.state}${probe.error ? `: ${probe.error}` : ""}`;
         } else if (probing && probe && probe.done >= probe.total) {

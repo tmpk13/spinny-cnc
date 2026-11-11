@@ -164,9 +164,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "A height map probed before keeps its heights in the old numbers, so a run follows it only after Focus here again (probe again for another board).",
+                "zero_hint": "A height map then needs Focus here again, or a new probe for another board.",
                 "keys": [],
-                "note": "Raises and lowers the head; up is positive"
+                "note": "Up is positive"
             }
         ]
     },
@@ -335,9 +335,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "Touch the tool to the copper first: a milled cut without a height map goes down from H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board).",
+                "zero_hint": "Touch the tool to the copper first: without a height map, cuts go down from H 0. A height map then needs Touch off here again, or a new probe for another board.",
                 "keys": [],
-                "note": "Raises and lowers the tool; up is positive, H 0 is the board's surface"
+                "note": "Up is positive, H 0 at the board surface"
             }
         ]
     },
@@ -407,9 +407,9 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "zero_hint": "Zero over the rotation axis to match a polar job's board X/Y.",
                 "keys": [],
-                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+                "note": "Y axis: across the rail (X), with the rail's steps and feed"
             }
         ]
     },
@@ -479,9 +479,9 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "zero_hint": "Zero over the rotation axis to match a polar job's board X/Y.",
                 "keys": [],
-                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+                "note": "Y axis: across the rail (X), with the rail's steps and feed"
             },
             {
                 "axis": "h",
@@ -500,9 +500,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "A height map probed before keeps its heights in the old numbers, so a run follows it only after Focus here again (probe again for another board).",
+                "zero_hint": "A height map then needs Focus here again, or a new probe for another board.",
                 "keys": [],
-                "note": "Raises and lowers the head; up is positive"
+                "note": "Up is positive"
             }
         ]
     },
@@ -572,9 +572,9 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "zero_hint": "Zero over the rotation axis to match a polar job's board X/Y.",
                 "keys": [],
-                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+                "note": "Y axis: across the rail (X), with the rail's steps and feed"
             }
         ]
     },
@@ -644,9 +644,9 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "Y is measured from here: over the rotation axis, board X/Y is where a polar job puts it.",
+                "zero_hint": "Zero over the rotation axis to match a polar job's board X/Y.",
                 "keys": [],
-                "note": "Y axis: moves across the rail, which is X; steps and feed as the rail's"
+                "note": "Y axis: across the rail (X), with the rail's steps and feed"
             },
             {
                 "axis": "h",
@@ -665,9 +665,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "Touch the tool to the copper first: a milled cut without a height map goes down from H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board).",
+                "zero_hint": "Touch the tool to the copper first: without a height map, cuts go down from H 0. A height map then needs Touch off here again, or a new probe for another board.",
                 "keys": [],
-                "note": "Raises and lowers the tool; up is positive, H 0 is the board's surface"
+                "note": "Up is positive, H 0 at the board surface"
             }
         ]
     },
@@ -699,7 +699,7 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "X is measured from here: put the needle over the job's X origin first.",
+                "zero_hint": "Put the needle over the job's X origin first.",
                 "keys": [],
                 "note": ""
             },
@@ -716,7 +716,7 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "Y is measured from here: put the needle over the job's Y origin first.",
+                "zero_hint": "Put the needle over the job's Y origin first.",
                 "keys": [],
                 "note": ""
             },
@@ -738,9 +738,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "E counts the plunger from here; nothing on the board changes.",
+                "zero_hint": "Resets only the plunger count.",
                 "keys": [],
-                "note": "The plunger, mm pushed out: Extrude lays paste, Retract pulls back"
+                "note": "Plunger travel, mm pushed out"
             }
         ]
     },
@@ -772,7 +772,7 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "X is measured from here: put the needle over the job's X origin first.",
+                "zero_hint": "Put the needle over the job's X origin first.",
                 "keys": [],
                 "note": ""
             },
@@ -789,7 +789,7 @@
                 "feed": true,
                 "goto": true,
                 "zero": true,
-                "zero_hint": "Y is measured from here: put the needle over the job's Y origin first.",
+                "zero_hint": "Put the needle over the job's Y origin first.",
                 "keys": [],
                 "note": ""
             },
@@ -811,9 +811,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "E counts the plunger from here; nothing on the board changes.",
+                "zero_hint": "Resets only the plunger count.",
                 "keys": [],
-                "note": "The plunger, mm pushed out: Extrude lays paste, Retract pulls back"
+                "note": "Plunger travel, mm pushed out"
             },
             {
                 "axis": "h",
@@ -832,9 +832,9 @@
                 "feed": false,
                 "goto": false,
                 "zero": true,
-                "zero_hint": "Touch the needle to the copper first: a dispensing run without a height map holds its gap over H 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after Touch off here again (probe again for another board).",
+                "zero_hint": "Touch the needle to the copper first: without a height map, dispensing holds its gap over H 0. A height map then needs Touch off here again, or a new probe for another board.",
                 "keys": [],
-                "note": "Raises and lowers the needle; up is positive, H 0 is the board's surface"
+                "note": "Up is positive, H 0 at the board surface"
             }
         ]
     }

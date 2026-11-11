@@ -76,7 +76,7 @@ buttons = ["X-", "X+"]
 feed = true
 goto = true
 zero = true
-zero_hint = "X is measured from here: put the tool over the job's X origin first."
+zero_hint = "Put the tool over the job's X origin first."
 keys = ["ArrowLeft", "ArrowRight"]
 
 [[controls.axes]]
@@ -89,7 +89,7 @@ buttons = ["Y-", "Y+"]
 feed = true
 goto = true
 zero = true
-zero_hint = "Y is measured from here: put the tool over the job's Y origin first."
+zero_hint = "Put the tool over the job's Y origin first."
 keys = ["ArrowDown", "ArrowUp"]
 
 [[controls.axes]]
@@ -102,6 +102,6 @@ buttons = ["Down", "Up"]
 feed = false
 goto = false
 zero = true
-zero_hint = "Touch the tool to the copper first: a milled cut without a height map goes down from Z 0. A height map probed before keeps its heights in the old numbers, so a run follows it only after a new Z 0 here (probe again for another board)."
+zero_hint = "Touch the tool to the copper first: without a height map, cuts go down from Z 0. A height map then needs a new Z 0 here, or a new probe for another board."
 keys = ["PageDown", "PageUp"]
-note = "Raises and lowers the tool; up is positive, Z 0 is the board's surface"
+note = "Up is positive, Z 0 at the board surface"

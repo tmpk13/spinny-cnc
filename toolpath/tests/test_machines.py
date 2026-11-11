@@ -498,7 +498,7 @@ def test_a_controls_entry_fills_in_from_its_default():
     assert (lift["axis"], lift["letter"], lift["label"], lift["steps"], lift["step"]) == ("h", "H", "Lift", [0.5, 2], 2.0)
     # Renamed without buttons: the letter's, not the default's words.
     assert lift["buttons"] == ["H-", "H+"] and lift["keys"] == ["PageDown", "PageUp"]
-    assert lift["note"] == "Raises and lowers the head; up is positive" and lift["zero"] and not lift["feed"]
+    assert lift["note"] == "Up is positive" and lift["zero"] and not lift["feed"]
     assert rail == default_controls("polar", "laser", True)["axes"][0]
     assert found.document()["controls"] == controls
 

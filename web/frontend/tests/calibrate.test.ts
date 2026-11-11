@@ -15,7 +15,7 @@ describe("calibration test", () => {
         expect(calibrateRequest({ kind: "material", fill: "1", "power from": "100", "power to": "400", "power steps": "4", size: "6", x: "" })).toEqual({
             kind: "material", powers: [100, 400, 4], size: 6, fill: true,
         });
-        expect(calibrateRequest({ kind: "material", fill: "0", "power from": "100" })).toBe("give the power ladder its from, to and steps, or none of them");
+        expect(calibrateRequest({ kind: "material", fill: "0", "power from": "100" })).toBe("power ladder: fill in from, to and steps, or none");
         expect(calibrateRequest({ kind: "material", fill: "0", "speed from": "1", "speed to": "2", "speed steps": "2.5" })).toBe("speed steps must be a whole number");
         expect(calibrateRequest({ kind: "depth", fill: "1", "depth from": "0.1", "depth to": "0.3", "depth steps": "3", feed: "90" })).toEqual({
             kind: "depth", depths: [0.1, 0.3, 3], feed: 90,

@@ -152,7 +152,7 @@ describe("probing the pads in the mock", () => {
         click(root, "Plan");
         await settle();
         await settle();
-        expect(root.querySelector(".hm-pads-note")?.textContent).toContain("3 points, of 3 pads");
+        expect(root.querySelector(".hm-pads-note")?.textContent).toContain("3 points of 3 pads");
         (root.querySelector('input[aria-label="Most pads probed"]') as HTMLInputElement).value = "2";
         click(root, "Probe pads");
         await settle();

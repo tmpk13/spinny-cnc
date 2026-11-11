@@ -74,7 +74,7 @@ export function readTravel(text: string): { travel: number | null } | { problem:
     }
     const value = parseNumber(text);
     if (value === null || Math.abs(value) > TRAVEL_LIMIT) {
-        return { problem: `the travel height is an H from -${TRAVEL_LIMIT} to ${TRAVEL_LIMIT} mm, or blank for none` };
+        return { problem: `travel height: -${TRAVEL_LIMIT} to ${TRAVEL_LIMIT} mm, or blank` };
     }
     return { travel: value };
 }
@@ -82,9 +82,9 @@ export function readTravel(text: string): { travel: number | null } | { problem:
 /** What the travel row says it does: rise to the height before moving across, or nothing. */
 export function travelText(travel: number | null | undefined): string {
     if (travel === null || travel === undefined) {
-        return "off: gotos, probing and camera moves go across at the height the head has";
+        return "off: moves go across at the current height";
     }
-    return `gotos, probing and camera moves rise to H ${travel} before going across; a higher head stays where it is`;
+    return `moves rise to H ${travel} before going across, unless higher`;
 }
 
 /** `page` is the page whose panel this is: its keys jog only while that page shows. */
@@ -142,7 +142,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
     const cancel = (): Promise<unknown> => ctx.call(ctx.api.jogCancel());
 
     async function declare(axis: AxisControl): Promise<void> {
-        const ok = await askConfirm(`Declare ${axis.letter} (${axis.label}) to be 0 at the current position? ${axis.zero_hint}`.trim(), "Set 0");
+        const ok = await askConfirm(`Set ${axis.letter} (${axis.label}) to 0 here? ${axis.zero_hint}`.trim(), "Set 0");
         if (ok) {
             await ctx.call(ctx.api.setPosition({ [axis.axis]: 0 }));
         }
@@ -236,7 +236,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
 
     function travelRow(): HTMLDivElement {
         const row = el("div", { class: "goto-row travel-row" }, el("span", { class: "choice-label" }, "Travel H"), travelField, travelNote);
-        row.title = "The H the head rises to before a goto, probing or a camera routine moves it across the board; blank for none. Jogs and runs keep their own heights.";
+        row.title = "Safe height for gotos, probing and camera moves. Jogs and runs ignore it.";
         return row;
     }
 
@@ -308,7 +308,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
                 return;
             }
             const words = given.map(([axis, value]) => `${controlOf(controls, axis)?.letter ?? axis.toUpperCase()} ${value}`).join(", ");
-            const ok = await askConfirm(`Declare the head to be at ${words} without moving it? The height map's offset is taken back and must be set again.`, "Set position");
+            const ok = await askConfirm(`Set the head's position to ${words} without moving it? The height map's offset must then be set again.`, "Set position");
             if (!ok) {
                 return;
             }
@@ -333,11 +333,11 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
                 const time = Number.isNaN(when.getTime()) ? reported.at : when.toLocaleString();
                 // Held, they are not what the machine reads now: it may count
                 // from zero again since.
-                const held = reported.held ? "; held from before the board was connected again or started over" : "";
+                const held = reported.held ? " (from before a reconnect or restart)" : "";
                 ctx.toast("info", `last reported ${time}, ${reported.state}${held}`);
             }
         }, "btn btn-quiet");
-        last.title = "Fill in the last position the machine reported: its last report before the link closed or the board started over, or a run's record";
+        last.title = "Fill in the machine's last reported position";
         for (const field of fields) {
             field.input.addEventListener("keydown", onEnter(set));
         }
@@ -356,8 +356,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs"): void {
         const bars = el("div", { class: "axis-bars" });
         if (controls.pad) {
             bars.append(
-                bar("x", "X", "Board X", "Board mm; the left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), null),
-                bar("y", "Y", "Board Y", "Board mm; the up and down arrow keys", "mm", undefined, ["Y-", "Y+"], (sign) => jogBoard(0, sign * stepOf("y")), null),
+                bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), null),
+                bar("y", "Y", "Board Y", "Up and down arrow keys", "mm", undefined, ["Y-", "Y+"], (sign) => jogBoard(0, sign * stepOf("y")), null),
             );
         }
         for (const axis of controls.axes) {

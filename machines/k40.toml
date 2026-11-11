@@ -106,7 +106,7 @@ buttons = ["X-", "X+"]
 feed = true
 goto = true
 zero = true
-zero_hint = "X is measured from here: put the beam over the job's X origin first."
+zero_hint = "Put the beam over the job's X origin first."
 keys = ["ArrowLeft", "ArrowRight"]
 
 [[controls.axes]]
@@ -119,5 +119,5 @@ buttons = ["Y-", "Y+"]
 feed = true
 goto = true
 zero = true
-zero_hint = "Y is measured from here: put the beam over the job's Y origin first."
+zero_hint = "Put the beam over the job's Y origin first."
 keys = ["ArrowDown", "ArrowUp"]

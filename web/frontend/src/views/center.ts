@@ -152,9 +152,8 @@ export function centerTest(ctx: Ctx): HTMLElement {
     const panel = el("details", { class: "center-test" },
         el("summary", {}, "Centering test"),
         el("p", { class: "muted" },
-            "Radial lines and a ring that show where the rotation axis really is; the fine pattern"
-            + " crosses marks from both sides of the axis so what is left is amplified. Blank reach"
-            + " and ring take the pattern's default. Cut it in constant power mode."),
+            "Lines and a ring that show where the rotation axis really is. The fine pattern"
+            + " magnifies the error. Cut it in constant power mode (Mode const)."),
         el("div", { class: "field-grid" },
             labeled("Fine pattern", fine, "labeled inline"),
             labeled("Lines", lines),
