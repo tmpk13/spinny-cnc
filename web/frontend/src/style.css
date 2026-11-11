@@ -171,6 +171,13 @@ h3 {
     font-size: 0.95rem;
 }
 
+/* A group inside a panel starts on a rule, so its heading reads as a
+   section of the panel rather than one more line of it. */
+.panel h3 {
+    padding-top: var(--flow);
+    border-top: thin solid var(--border);
+}
+
 input[type="checkbox"] {
     accent-color: var(--accent);
 }
@@ -407,6 +414,7 @@ input[type="checkbox"] {
 }
 
 .page-settings .check {
+    display: flex;
     font-size: 0.9rem;
     color: var(--text);
 }
@@ -488,7 +496,14 @@ table.settings-list td {
 
 .settings-key {
     display: block;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+}
+
+/* The key list scrolls sideways inside its panel when the panel is too
+   narrow for its four columns, rather than widening the page. */
+.settings-scroll {
+    overflow-x: auto;
+    scrollbar-width: thin;
 }
 
 .settings-help {
@@ -560,11 +575,15 @@ table.settings-list td {
         min-height: 0;
     }
 
+    /* No padding at the foot either: a box stuck to the bottom of a padded
+       scroll container stops the padding short of it in Chromium, and the
+       panels scrolling under the Run panel showed in that strip. The last
+       panel's margin makes the room instead. */
     .column {
         display: flex;
         flex-direction: column;
         gap: var(--gap);
-        padding: 0 calc(var(--gap) / 2) var(--gap);
+        padding: 0 calc(var(--gap) / 2);
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -585,6 +604,10 @@ table.settings-list td {
     .column > .panel:first-child,
     .column > [data-first] {
         margin-top: var(--gap);
+    }
+
+    .column > [data-last] {
+        margin-bottom: var(--gap);
     }
 
     /* The jog pad, the preview and the job list take the height their
@@ -615,6 +638,16 @@ table.settings-list td {
         z-index: 3;
         margin-top: auto;
         box-shadow: 0 -0.4rem 1rem -0.6rem color-mix(in oklab, var(--text) 35%, transparent), var(--shadow);
+    }
+
+    /* Docked, it sits on the column's bottom edge with nothing under it,
+       its top edge drawn strong so it reads as apart from what scrolls
+       above it. */
+    .column > .panel[data-dock]:not([data-join-up]) {
+        margin-bottom: 0;
+        border-top: 0.15rem solid var(--border-strong);
+        border-bottom-width: 0;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     }
 
     /* The CAM page: the profile on the left, its preview and its file on the right. */
@@ -2609,10 +2642,21 @@ table.cam-table input[type="checkbox"] {
     scrollbar-width: thin;
 }
 
+/* Each step takes an equal share of the row; a share too narrow for the
+   labels shows the numbered circles alone (the next step's name is in
+   the line under the row, every step's in its tooltip), and only a row
+   too narrow even for those scrolls. */
 .roadmap-step {
     position: relative;
-    flex: 1 0 5.5rem;
-    min-width: 5.5rem;
+    flex: 1 1 0;
+    min-width: 2.75rem;
+    container-type: inline-size;
+}
+
+@container (max-width: 4.75rem) {
+    .roadmap-label {
+        display: none;
+    }
 }
 
 /* The line from the step before, through the middle of the circles. */
@@ -3653,7 +3697,7 @@ a.btn.disabled {
 }
 
 .page .panel[data-height] > .panel-head,
-.page .panel[data-height] > details > summary {
+.page .panel[data-height] > details > summary.panel-head-tools {
     position: sticky;
     top: 0;
     z-index: 2;

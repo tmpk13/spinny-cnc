@@ -95,10 +95,13 @@ function stackFindings(): Finding[] {
         if (Math.abs(lead) > 0.6) {
             findings.push({ kind: "lead", where, detail: `${items[0]!.name} starts ${lead.toFixed(1)}px below the top` });
         }
-        // A box that grows to fill its column is taller than its items.
+        // A box that grows to fill its column is taller than its items; one
+        // held at a height (data-height) or scrolling its items has a foot
+        // of its own.
         const parent = box.parentElement ? getComputedStyle(box.parentElement) : null;
         const grown = parent !== null && parent.display.includes("flex") && parseFloat(style.flexGrow) > 0;
-        if (!grown) {
+        const held = box.hasAttribute("data-height") || (/(auto|scroll)/.test(style.overflowY) && box.scrollHeight > box.clientHeight + 1);
+        if (!grown && !held) {
             const bottom = rect.bottom - parseFloat(style.borderBottomWidth) - parseFloat(style.paddingBottom);
             const tail = bottom - items[items.length - 1]!.bottom;
             if (Math.abs(tail) > 0.6) {
@@ -192,9 +195,24 @@ async function openDetails(page: Page): Promise<void> {
     await page.waitForTimeout(150);
 }
 
+/**
+ * Shows a page by its tab, kept out of the bar or not, the bar folded or
+ * not, with the window at its top as a click on the tab would leave it
+ * (sticky rows are measured where they rest).
+ */
 async function tab(page: Page, id: string): Promise<void> {
-    await page.click(`.tabs .tab[data-page="${id}"]`);
+    await page.evaluate((page) => {
+        document.querySelector<HTMLElement>(`.tabs .tab[data-page="${page}"]`)?.click();
+        window.scrollTo(0, 0);
+    }, id);
     await page.waitForTimeout(250);
+}
+
+/** Picks an item of a panel's menu. */
+async function menu(page: Page, panel: string, label: string): Promise<void> {
+    await page.evaluate((id) => document.querySelector<HTMLElement>(`#${id} .panel-menu-button`)?.click(), panel);
+    await page.click(`.menu .menu-item:has-text('${label}')`);
+    await page.waitForTimeout(200);
 }
 
 /** Each state is entered from the one before, then every listed page is checked. */
@@ -222,6 +240,49 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await page.fill("#auto-chat textarea", "list the jobs");
             await page.click("#auto-chat button:has-text('Send')");
             await page.waitForTimeout(800);
+        },
+    },
+    {
+        name: "panels folded, stacked, stuck, one held at a height", pages: ["jobs"], enter: async (page) => {
+            await tab(page, "jobs");
+            await menu(page, "dro", "Fold");
+            await menu(page, "console", "Stack with above");
+            await menu(page, "laser", "Stick to above");
+            // The height handle under the job list, on the wide layout only.
+            const at = await page.evaluate(() => {
+                const jobs = document.getElementById("jobs")!;
+                const bottom = jobs.offsetTop + jobs.offsetHeight;
+                const handle = Array.from(jobs.parentElement!.querySelectorAll<HTMLElement>(".panel-resize"))
+                    .find((node) => !node.hidden && node.getClientRects().length > 0 && Math.abs(parseFloat(node.style.top) - bottom) < 1);
+                handle?.scrollIntoView({ block: "center" });
+                const box = handle?.getBoundingClientRect();
+                return box ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null;
+            });
+            if (at) {
+                await page.mouse.move(at.x, at.y);
+                await page.mouse.down();
+                await page.mouse.move(at.x, at.y - 250, { steps: 5 });
+                await page.mouse.up();
+                await page.waitForTimeout(200);
+            }
+        },
+    },
+    {
+        name: "edit mode, the page settings open", pages: ["jobs", "config"], enter: async (page) => {
+            await page.click(".tabs-gear");
+            await page.click(".page-settings button:has-text('Edit panels')");
+            await page.click(".tabs-gear");
+            await page.waitForTimeout(200);
+        },
+    },
+    {
+        name: "a tab kept out of the bar, the bar folded", pages: ["jobs", "cam"], enter: async (page) => {
+            await page.click(".page-settings .page-settings-tabs label:has-text('CAM')");
+            await page.click(".page-settings label:has-text('Fold the tab bar')");
+            await page.keyboard.press("Escape");
+            await page.click(".tabs-done", { force: true }).catch(() => undefined);
+            await page.mouse.move(5, 600);
+            await page.waitForTimeout(400);
         },
     },
     ...["Holes", "Line", "Face", "Pocket", "Profile"].map((label) => ({

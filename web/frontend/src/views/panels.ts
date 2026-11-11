@@ -439,10 +439,11 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 node.toggleAttribute("data-join-up", at > 0 && drawn[at - 1]!.block === block);
                 node.toggleAttribute("data-join-down", at < drawn.length - 1 && drawn[at + 1]!.block === block);
             });
-            // The first thing shown takes the room over it (the stylesheet's
-            // column rules), whichever panel that is.
+            // The first and last things shown take the room over and under
+            // them (the stylesheet's column rules), whichever panels they are.
             for (const node of desired) {
                 node.toggleAttribute("data-first", node === drawn[0]?.node);
+                node.toggleAttribute("data-last", node === drawn[drawn.length - 1]?.node);
             }
         });
         for (const [key, strip] of page.strips) {

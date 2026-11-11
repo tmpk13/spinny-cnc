@@ -238,7 +238,8 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] | ((stat
     function drawSteps(steps: Step[], states: StepState[]): void {
         replace(list, ...steps.map((step, index) => {
             const item = el("li", { class: "roadmap-step", "data-step": states[index]! },
-                el("button", { type: "button", class: "roadmap-button", title: step.hint, onclick: () => goToPanel(step.panel) },
+                // Named in the tooltip too: a narrow row shows the circles alone.
+                el("button", { type: "button", class: "roadmap-button", title: `${step.label}: ${step.hint}`, onclick: () => goToPanel(step.panel) },
                     el("span", { class: "roadmap-dot" }, String(index + 1)),
                     el("span", { class: "roadmap-label" }, step.label),
                 ),

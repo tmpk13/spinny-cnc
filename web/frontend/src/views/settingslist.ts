@@ -206,7 +206,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         actions,
         el("p", { class: "muted hint" },
             "click a row to go to its key in the file, added if missing. Scales are full steps, or firmware steps where the file uses steps_per_mm."),
-        table,
+        el("div", { class: "settings-scroll" }, table),
     );
 
     function refresh(): void {
