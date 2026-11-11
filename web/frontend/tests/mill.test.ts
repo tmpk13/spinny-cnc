@@ -254,7 +254,7 @@ describe("Plot page", () => {
         expect(root.querySelectorAll<HTMLInputElement>('[aria-label="Corner x"]')[0]!.value).toBe("3.650");
         // A face has no corner radius.
         click(root, "Face");
-        expect(input(root, "Corner radius").closest(".labeled")!.classList.contains("hidden")).toBe(true);
+        expect(input(root, "Corner radius").closest(".hidden")).not.toBeNull();
     });
 
     test("cuts with the machine's laser: spot, power and passes, a point marked with a ring", async () => {

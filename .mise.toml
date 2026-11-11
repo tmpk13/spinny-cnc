@@ -96,6 +96,10 @@ run = "SPINNY_VIRTUAL=firmware/target/debug/spinny-virtual uv run pytest -q web/
 description = "Page: type check and tests"
 run = "cd web/frontend && bun run --silent check && bun test"
 
+[tasks.test-layout]
+description = "Page spacing in Chromium over the mock: stacked blocks one --flow token apart, no text against a box's edge"
+run = "cd web/frontend && bun layout/check.ts"
+
 [tasks.test-sim]
 description = "Gcode simulator"
 run = "cd sim && cargo test -q"
@@ -113,7 +117,7 @@ ruff check toolpath web/backend deploy
 
 [tasks.test]
 description = "Every suite"
-depends = ["test-firmware", "test-carve", "test-toolpath", "test-backend", "test-frontend", "test-sim"]
+depends = ["test-firmware", "test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-sim"]
 
 [tasks.uf2]
 description = "Build the board firmware as a uf2: firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"

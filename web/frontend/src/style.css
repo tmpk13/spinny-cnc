@@ -91,6 +91,13 @@
     --gap: 0.75rem;
     --pad: 0.875rem;
     --touch: 2.75rem;
+
+    /* The space between blocks stacked in a box: under a heading, between
+       any two blocks, and over a heading or a section. The flow rules at
+       the end of this file put it there; nothing else spaces blocks. */
+    --flow-tight: 0.35rem;
+    --flow: 0.6rem;
+    --flow-wide: 1rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -320,12 +327,11 @@ table.settings-list td {
 
 .config-board {
     display: block;
-    margin: 0 0 0.6rem;
     font-size: 0.85rem;
 }
 
 .config-notes {
-    margin: 0 0 0.75rem;
+    margin: 0;
     padding-left: 1.2rem;
     font-size: 0.85rem;
     font-family: var(--mono, monospace);
@@ -475,7 +481,6 @@ table.settings-list td {
     display: flex;
     align-items: center;
     min-height: 2.25rem;
-    margin: 0 0 0.75rem;
     padding-bottom: 0.5rem;
     border-bottom: thin solid var(--border);
 }
@@ -494,10 +499,6 @@ table.settings-list td {
 }
 
 .panel-head h2 {
-    margin: 0;
-}
-
-.panel-head .button-row {
     margin: 0;
 }
 
@@ -694,7 +695,6 @@ input.num.field.invalid {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
 }
 
 .choice-label {
@@ -705,7 +705,8 @@ input.num.field.invalid {
 }
 
 /* A choice row is one segmented control: the buttons share their borders
-   and split the width between them. */
+   and the row's width, each as wide as its label and an equal share of
+   what is left (an equal split put a long label into its padding). */
 .choice-row {
     flex-wrap: nowrap;
     gap: 0;
@@ -716,7 +717,7 @@ input.num.field.invalid {
 }
 
 .choice-row .btn-choice {
-    flex: 1 1 0;
+    flex: 1 1 auto;
     min-width: 0;
     padding-inline: 0.5rem;
     border-radius: 0;
@@ -751,7 +752,6 @@ input.num.field.invalid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
     gap: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
 }
 
 .field-grid .field,
@@ -977,7 +977,6 @@ input.num.field.invalid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
 }
 
 .dro-row-joint {
@@ -1065,7 +1064,6 @@ input.num.field.invalid {
     grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
     gap: 0.5rem 1rem;
     align-items: end;
-    margin-bottom: 0.75rem;
 }
 
 .steps .labeled input {
@@ -1080,7 +1078,6 @@ input.num.field.invalid {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    margin-bottom: 0.75rem;
 }
 
 .axis-bar {
@@ -1132,7 +1129,6 @@ input.num.field.invalid {
 }
 
 .axis-bar-steps .choice-row {
-    margin: 0;
     flex: 1 1 auto;
 }
 
@@ -1160,7 +1156,6 @@ input.num.field.invalid {
     border-radius: var(--radius);
     padding: 1rem 0.75rem;
     text-align: center;
-    margin-bottom: 0.75rem;
     background: var(--panel-2);
     transition: border-color 0.12s, background-color 0.12s;
 }
@@ -1180,7 +1175,6 @@ input.num.field.invalid {
     border: thin solid var(--accent);
     border-radius: var(--radius);
     padding: 0.6rem 0.75rem;
-    margin-bottom: 0.75rem;
     background: color-mix(in oklab, var(--accent) 6%, var(--panel));
     display: flex;
     flex-direction: column;
@@ -1267,7 +1261,6 @@ input.num.field.invalid {
 }
 
 .panel-fold:not([open]) > summary {
-    margin-bottom: 0;
     padding-bottom: 0;
     border-bottom: none;
 }
@@ -1276,7 +1269,6 @@ input.num.field.invalid {
     border: thin solid var(--border);
     border-radius: var(--radius);
     padding: 0 0.75rem;
-    margin-bottom: 0.75rem;
 }
 
 .center-test > summary {
@@ -1289,12 +1281,7 @@ input.num.field.invalid {
     padding-bottom: 0.75rem;
 }
 
-.center-test[open] > summary {
-    margin-bottom: 0.25rem;
-}
-
 .center-test > p {
-    margin: 0 0 0.6rem;
     font-size: 0.875rem;
 }
 
@@ -1307,7 +1294,7 @@ input.num.field.invalid {
     overflow-wrap: anywhere;
     font-family: var(--mono);
     font-size: 0.8rem;
-    margin: 0.5rem 0;
+    margin: 0;
     padding: 0.5rem 0.6rem;
     background: var(--panel-2);
     border-radius: var(--radius);
@@ -1322,7 +1309,7 @@ input.num.field.invalid {
 
 .job-list {
     list-style: none;
-    margin: 0 0 0.75rem;
+    margin: 0;
     padding: 0;
     max-height: 30vh;
     overflow: auto;
@@ -1414,14 +1401,9 @@ input.num.field.invalid {
     font-size: 0.8rem;
 }
 
-.job-details h3 {
-    margin-top: 0.25rem;
-}
-
 table.groups, table.settings {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 0.5rem;
     font-size: 0.9rem;
 }
 
@@ -1502,7 +1484,6 @@ table.groups .group-pick:focus-visible {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    margin-block: 0.5rem;
     padding: 0.5rem 0.6rem;
     border: thin solid var(--pv-select);
     border-radius: var(--radius);
@@ -1566,7 +1547,6 @@ table.groups input.num {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
     gap: 0.4rem;
-    margin-bottom: 0.75rem;
 }
 
 .stat {
@@ -1610,7 +1590,6 @@ table.groups input.num {
     gap: 0.4rem 0.75rem;
     align-items: center;
     font-size: 0.85rem;
-    margin-top: 0.4rem;
     font-family: var(--mono);
     color: var(--muted);
 }
@@ -1686,7 +1665,6 @@ canvas.preview:active {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem 0.5rem;
-    margin-top: 0.4rem;
 }
 
 .scrub-row .scrub {
@@ -1701,7 +1679,6 @@ canvas.preview:active {
 }
 
 .hint {
-    margin: 0.4rem 0 0;
     font-size: 0.78rem;
 }
 
@@ -1749,7 +1726,6 @@ canvas.preview:active {
 .console-input {
     display: flex;
     gap: 0.5rem;
-    margin-top: 0.5rem;
 }
 
 .console-input input {
@@ -1839,20 +1815,14 @@ dialog.confirm::backdrop {
 .hm-badge[data-map="running"] { --tone: var(--run); }
 .hm-badge[data-map="ready"] { --tone: var(--jog); }
 
-.hm-probe-settings {
-    margin-bottom: 0.5rem;
-}
-
 .hm-probe-settings summary {
     color: var(--muted);
     font-size: 0.875rem;
     font-weight: 600;
     min-height: 2rem;
-    margin-bottom: 0.4rem;
 }
 
 .hm-map {
-    margin: 0.5rem 0;
     overflow-x: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
@@ -1896,7 +1866,6 @@ dialog.confirm::backdrop {
     align-items: center;
     gap: 0.25rem 0.75rem;
     font-size: 0.8rem;
-    margin-bottom: 0.5rem;
 }
 
 .hm-scale {
@@ -1918,10 +1887,6 @@ dialog.confirm::backdrop {
         color-mix(in oklab, var(--hm-high) 70%, var(--hm-mid)));
 }
 
-.hm-focus {
-    margin-bottom: 0.25rem;
-}
-
 [data-dro="probe"][data-down] {
     color: var(--hold);
     font-weight: 700;
@@ -1937,12 +1902,11 @@ dialog.confirm::backdrop {
 /* CAM page */
 
 .cam-summary {
-    margin: 0 0 0.75rem;
     font-size: 0.9rem;
 }
 
 .cam-problems, .cam-notes, .config-problems {
-    margin: 0 0 0.75rem;
+    margin: 0;
     padding-left: 1.2rem;
     font-size: 0.9rem;
 }
@@ -1951,18 +1915,9 @@ dialog.confirm::backdrop {
     color: var(--danger);
 }
 
-.cam-section {
-    margin-top: 1rem;
-}
-
-.cam-section h3 {
-    margin-bottom: 0.35rem;
-}
-
 table.cam-table {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 0.5rem;
     font-size: 0.88rem;
 }
 
@@ -2126,7 +2081,7 @@ table.cam-table input[type="checkbox"] {
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 0.15rem 0.75rem;
-    margin: 0.5rem 0;
+    margin: 0;
 }
 
 .cam-report dt {
@@ -2159,7 +2114,6 @@ table.cam-table input[type="checkbox"] {
 
 /* Picking a stopped run up: set apart from the run row above it. */
 .pickup {
-    margin-top: 0.75rem;
     padding-top: 0.5rem;
     border-top: thin solid var(--border);
 }
@@ -2197,7 +2151,6 @@ table.cam-table input[type="checkbox"] {
 
 .vision-picture-box {
     width: 100%;
-    margin: 0 0 0.5rem;
     border-radius: var(--radius);
     overflow: hidden;
     border: thin solid var(--border);
@@ -2230,7 +2183,6 @@ table.cam-table input[type="checkbox"] {
 }
 
 .camera-found {
-    margin: 0 0 0.5rem;
     font-size: 0.82rem;
 }
 
@@ -2251,7 +2203,6 @@ table.cam-table input[type="checkbox"] {
     overflow-x: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
-    margin-bottom: 0.5rem;
 }
 
 .align-marks {
@@ -2274,7 +2225,6 @@ table.cam-table input[type="checkbox"] {
 }
 
 .align-fit {
-    margin: 0.25rem 0;
     font-size: 0.82rem;
 }
 
@@ -2302,7 +2252,6 @@ table.cam-table input[type="checkbox"] {
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
 }
 
 .marker-add .labeled {
@@ -2315,7 +2264,7 @@ table.cam-table input[type="checkbox"] {
 
 .marker-list {
     list-style: none;
-    margin: 0 0 0.5rem;
+    margin: 0;
     padding: 0;
 }
 
@@ -2361,10 +2310,6 @@ table.cam-table input[type="checkbox"] {
     border-radius: var(--radius);
 }
 
-.mill-section {
-    margin-bottom: 0.5rem;
-}
-
 .mill-point .choice-label {
     min-width: 3.5rem;
 }
@@ -2377,13 +2322,12 @@ table.cam-table input[type="checkbox"] {
 }
 
 .mill-notes {
-    margin: 0.25rem 0 0.5rem;
+    margin: 0;
     padding-left: 1.2rem;
     font-size: 0.85rem;
 }
 
 .mill-problem {
-    margin: 0.25rem 0;
     color: var(--danger);
     font-weight: 500;
 }
@@ -2391,10 +2335,6 @@ table.cam-table input[type="checkbox"] {
 /* The Plot page job's operations: the job and the mark of the fields
    against it over a numbered list, each operation a button that puts it
    in the fields, the one in them outlined. */
-.plot-job {
-    margin: 0.25rem 0 0.75rem;
-}
-
 .plot-job-head {
     display: flex;
     flex-wrap: wrap;
@@ -2411,7 +2351,7 @@ table.cam-table input[type="checkbox"] {
 .plot-ops {
     display: grid;
     gap: 0.25rem;
-    margin: 0.4rem 0 0;
+    margin: 0;
     padding: 0;
     list-style: none;
     counter-reset: plot-op;
@@ -2457,7 +2397,6 @@ table.cam-table input[type="checkbox"] {
     display: flex;
     flex-wrap: wrap;
     gap: 0.25rem 0.9rem;
-    margin: 0.4rem 0;
 }
 
 .hole-size {
@@ -2558,10 +2497,6 @@ table.cam-table input[type="checkbox"] {
     border-color: var(--accent);
 }
 
-.roadmap-next {
-    margin: 0.25rem 0 0;
-}
-
 .badge.roadmap-count[data-apply="pending"] { --tone: var(--accent); }
 .badge.roadmap-count[data-apply="applied"] { --tone: var(--jog); }
 
@@ -2623,15 +2558,18 @@ table.pnp-parts tr.dnp td {
     color: var(--muted);
 }
 
-.pnp-chosen {
-    margin: 0.25rem 0;
-}
-
 .pnp-drawing {
     width: 100%;
     border: thin solid var(--border);
     border-radius: var(--radius);
     background: var(--pv-bg);
+}
+
+/* A frame drawn for a picture has no padding, so the picture fills it; a
+   note put there in place of the picture brings its own. */
+.pnp-drawing > :not(svg) {
+    margin: 0;
+    padding: var(--pad);
 }
 
 .pnp-board {
@@ -2714,7 +2652,7 @@ table.pnp-parts tr.dnp td {
 /* PNP page: the G-code device. */
 .device-references,
 .device-skipped {
-    margin: 0.25rem 0 0.5rem;
+    margin: 0;
     padding-left: 1.25rem;
     font-size: 0.85rem;
 }
@@ -2730,7 +2668,7 @@ table.pnp-parts tr.dnp td {
 
 .device-program,
 .device-console {
-    margin: 0.5rem 0 0;
+    margin: 0;
     padding: 0.5rem 0.6rem;
     max-height: 16rem;
     overflow: auto;
@@ -2767,7 +2705,6 @@ a.btn.disabled {
 .json-panel > summary {
     cursor: pointer;
     font-weight: 600;
-    margin-bottom: 0.4rem;
 }
 
 .json-input {
@@ -2794,10 +2731,11 @@ a.btn.disabled {
     box-shadow: 0 0 0 0.125rem var(--ring);
 }
 
+/* The caret's place keeps its line while empty, so nothing under it moves
+   as the caret goes on and off a path. */
 .json-where {
     color: var(--strong);
     min-height: 1.2em;
-    margin-block: 0.3rem 0;
 }
 
 /* The camera log in a camera's panel: the switch, the photo button and the
@@ -2805,7 +2743,6 @@ a.btn.disabled {
 .camlog-box {
     border-top: thin solid var(--border);
     padding-top: 0.5rem;
-    margin-top: 0.5rem;
 }
 
 .camlog-toggle {
@@ -2816,7 +2753,7 @@ a.btn.disabled {
 
 .camlog-list {
     list-style: none;
-    margin: 0.4rem 0 0;
+    margin: 0;
     padding: 0;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
@@ -2875,7 +2812,6 @@ a.btn.disabled {
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
 }
 
 .auto-settings .labeled {
@@ -2908,7 +2844,6 @@ a.btn.disabled {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 0.6rem;
-    margin-bottom: 0.75rem;
     border: thin solid var(--border);
     border-radius: var(--radius);
     background: var(--panel-2);
@@ -3065,6 +3000,58 @@ a.btn.disabled {
 }
 
 .auto-compose .button-row {
-    margin: 0;
     justify-content: flex-end;
+}
+
+/* Flow: the space between blocks stacked in a box belongs to the box, not
+   to the blocks. A block in one of these boxes has no vertical margin of
+   its own; each one after a shown sibling gets a --flow space over it. A
+   gap set by a block's own margin depends on which neighbor it has: a hint
+   with a margin only above sat on the button under it, a paragraph's 1em
+   ran into the panel's padding below it, and rows needed rules that took
+   their margin back off inside other rows. Rows and grids space their
+   items with gap. A box that stacks blocks goes in this list (`stack` for
+   one with no class of its own); `mise run test-layout` finds any that is
+   missing. Each rule weighs one class, the box's, so a component's own
+   margin loses to them, and the later of them wins where two apply.
+
+   An empty box takes no room and gets no margin: a margin on an empty box
+   passes through it and out of the bottom of the box holding it, or adds
+   to the one under it. The console and the JSON panel's caret line keep
+   their size while empty, and so their space. A view hides a box with
+   nothing shown in it rather than leaving it standing empty. */
+:is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
+    .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
+    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > * {
+    margin-block: 0;
+}
+
+:is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
+    .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
+    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(:not(.hidden, [hidden], :is(p, ul, ol, div):empty:not(.console-log, .json-where)))
+    ~ :where(:not(:is(p, ul, ol, div):empty:not(.console-log, .json-where))) {
+    margin-top: var(--flow);
+}
+
+/* A heading stays close to what it names, and starts apart from what is
+   above it, as a section does. */
+:is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
+    .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
+    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(h3) + :where(:not(:is(p, ul, ol, div):empty:not(.console-log, .json-where))) {
+    margin-top: var(--flow-tight);
+}
+
+:is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
+    .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
+    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(:not(.hidden, [hidden], :is(p, ul, ol, div):empty:not(.console-log, .json-where)))
+    ~ :where(h3, .cam-section) {
+    margin-top: var(--flow-wide);
+}
+
+/* Words set straight in a stack sit in a box of their own, since an
+   inline element takes no margin above it. */
+:where(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
+    .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
+    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(label, span, a) {
+    display: inline-block;
 }

@@ -12,6 +12,7 @@
     "devDependencies": {
         "@happy-dom/global-registrator": "^17.4.4",
         "@types/bun": "^1.2.0",
+        "playwright-core": "1.64.0",
         "typescript": "^5.7.0"
     }
 }

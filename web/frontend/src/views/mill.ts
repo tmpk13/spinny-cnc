@@ -420,11 +420,12 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     rw.setAttribute("aria-label", "Width");
     rh.setAttribute("aria-label", "Height");
     corner.setAttribute("aria-label", "Corner radius");
-    const cornersBox = el("div", {}, pointRow("Corner", x0, y0), pointRow("Corner", x1, y1));
-    const centerBox = el("div", {}, pointRow("Center", rcx, rcy), el("div", { class: "field-row" }, labeled("Width mm", rw), labeled("Height mm", rh)));
+    const cornersBox = el("div", { class: "stack" }, pointRow("Corner", x0, y0), pointRow("Corner", x1, y1));
+    const centerBox = el("div", { class: "stack" }, pointRow("Center", rcx, rcy), el("div", { class: "field-row" }, labeled("Width mm", rw), labeled("Height mm", rh)));
     const cornerLabel = labeled("Corner R mm", corner);
     cornerLabel.title = "0 for square corners; inside cuts use at least the bit's radius";
-    const rectBox = el("div", { class: "mill-section" }, rectModes, cornersBox, centerBox, el("div", { class: "field-row" }, cornerLabel));
+    const cornerRow = el("div", { class: "field-row" }, cornerLabel);
+    const rectBox = el("div", { class: "mill-section" }, rectModes, cornersBox, centerBox, cornerRow);
     diameter.setAttribute("aria-label", "Diameter");
     const circleBox = el("div", { class: "mill-section" }, pointRow("Center", cx, cy), el("div", { class: "field-row" }, labeled("Diameter mm", diameter)));
     const holesBox = el("div", { class: "mill-section" },
@@ -720,7 +721,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         rectBox.classList.toggle("hidden", !needs.rect);
         cornersBox.classList.toggle("hidden", rectMode !== "corners");
         centerBox.classList.toggle("hidden", rectMode !== "center");
-        cornerLabel.classList.toggle("hidden", !needs.corner);
+        cornerRow.classList.toggle("hidden", !needs.corner);
         circleBox.classList.toggle("hidden", !needs.circle);
         pointsBox.classList.toggle("hidden", !needs.points);
         closedLabel.classList.toggle("hidden", !needs.closed);
