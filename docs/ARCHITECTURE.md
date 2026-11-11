@@ -49,7 +49,11 @@ flowchart LR
         FE[frontend, TypeScript] <-->|REST, WebSocket| BE[backend, FastAPI]
         BE --> KIN[spinny_laser.polar, or R Z in the table frame when cartesian]
         BE --> LS[laser_sweep: gerber, isolation]
-        BE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
+        BE --> PROBE[probing_part: Backend's probing methods: the map probed, a touch, focus here, the compensation a run follows]
+        PROBE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
+        BE --> DEVP[device_part: Backend's G-code device methods: the port, moves by hand, the cameras' places, lights and vacuum, a run]
+        DEVP --> OPNP
+        ST[stores: one TOML store for machines/, cam/ and pnp/: read, checked, saved whole, a value at a time] --> BE
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
         BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
@@ -67,12 +71,15 @@ flowchart LR
         TOOLS2 -->|HTTP| BE
         BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, the nozzle centered over the up camera, its runout, a part's offset, size and angle on it]
         PNP --> OPNP[openpnp: a device profile, the board fitted from references, the program as planned]
+        OPI[page openpnp.ts: OpenPnP's machine.xml and a job read into a profile and references] -->|the profile saved, references taken| BE
         DF[pnp/*.toml: port, G-code dialect, heights, vacuum sensor, cameras, feeders] --> OPNP
         OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
         PNP --> PLC
         TOPC[topcam: the device's top camera, its offset from a mark, fiducials, feeder marks, pockets] --> PLC
+        PCAM[pnp PickCamera: one base for the up and top cameras: settings, pcbv, a routine at a time] --> TOPC
+        PCAM --> PNP
         PLC --> GD[gcode_device: a line at a time, each answered ok]
-        GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl]
+        GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl, an Opulo LumenPnP]
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
         BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot with its smallest rectangle]
         TOPC <-->|a third pcbv serve| PV3[pcb-vision pcbv serve: the top camera's frame and spot]

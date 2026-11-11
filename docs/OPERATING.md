@@ -448,59 +448,99 @@ driven yet.
 
 *Place with: a G-code device* on the PNP tab hands the parts to another
 pick and place machine, one whose controller takes the G-code OpenPnP's
-GcodeDriver sends. Its setup steps:
+GcodeDriver sends. Its panels: G-code device, Jog, Cameras, Top camera,
+Board on the device and Placing. Its setup steps:
 
-1. Pick a device profile (`pnp/openpnp-marlin.toml` is shipped) and set
-   its `[port] url`, the dialect's commands as its firmware names them
-   (the vacuum's on and off, the dwell, the stop), the heights and the
-   feeders, then Save.
-2. Connect, and Home.
-3. Pick the board job, jog the device's nozzle over a part's place (the
-   line field sends any G-code), pick that part and press *Here*; a second
-   part gives the board's turn too, else type it in *Turned deg*.
-4. *Plan* lists what is placed from which feeder and what is left out and
-   why, and shows the G-code; *Download* saves it; *Run* sends it a line
-   at a time, and *Stop* sends the quickstop at once. Each part placed
-   counts against its feeder; *Count feeders again* once they are refilled.
+1. Pick a profile in the G-code device panel. `pnp/opulo-lumen-rev5.toml`
+   is an Opulo LumenPnP (Rev05 board, Opulo's Marlin) as Opulo's stock
+   OpenPnP setup drives it; `pnp/openpnp-marlin.toml` is a plain Marlin
+   start. The profiles are edited whole on the Config page (*PNP device
+   profile*), where *Import from OpenPnP* reads OpenPnP's `machine.xml`
+   (and a `.job.xml` with its `.board.xml` files) into a new profile:
+   every value read has a box to keep or leave it, and the profile shows
+   as it will be saved. A job's placements become references for the
+   board job picked on the PNP page.
+2. Pick the port: *Detect* lists the serial ports again and picks the
+   G-code controller among them by its USB name (a LumenPnP shows as
+   `MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode`); the list is the top
+   bar's, without this machine's port, and a url can be typed. *Identify*
+   asks the firmware what it is (M115); nothing moves.
+3. Connect, and Home.
+4. Pick or upload the board (a `.kicad_pcb`) in the Parts panel, pick a
+   part, put the nozzle over it with the Jog panel (or the top camera,
+   *with the top camera* on *Go to part*), and press *Nozzle here* or
+   *Camera here* in Board on the device. The references are kept per job
+   and map the whole board: one gives the shift (with *Turned deg*), two
+   or more the turn too, and the panel says how far each one sits off the
+   fit.
+5. *Plan* makes the placement program from the references and the
+   feeders and shows it; nothing moves. *Run* places the parts; a run
+   window shows its progress and its steps (each pick, look, place and
+   retry) over the page, and *Stop* sends the quickstop at once. With
+   *repeat* ticked, a run that finished asks for the next board and
+   places it again; the boards are counted until *Reset*.
+
+Moving the device by hand: the Jog panel's bars (X, Y, Z and the nozzle's
+turn, A) read where the device is and move one axis by the step; the
+arrow keys jog X and Y and Page Up and Page Down Z while the PNP page
+places with the device. *Go to* takes X and Y across at the safe height,
+then Z. *Park*, *Nozzle over camera* (the nozzle over the up camera at
+the height it is sharp at), and *Nozzle to camera spot* or *Camera to
+nozzle spot* (the head moved by the top camera's offset). *Go to part*
+moves X and Y only, at the safe height. The Cameras panel shows the up
+camera, the top camera or both; a drag on a picture moves the head so
+the picture follows the pointer, a double-click brings a point to the
+crosshair, and the wheel zooms. The dashed circle is how far from the
+center a part is looked for (`[camera] crop`, or a feeder's `crop`).
+
+On a seesaw Z like the LumenPnP's, both nozzles are up only at the safe
+height (31.5): every move across goes there first, from above or below.
+Measure *place_z* before the first run (the profile's 20 keeps the tip
+well above a board): jog the tip down onto the board's top, *Read
+position*, and set it to that Z plus the parts' height under *Tune the
+profile*, where the heights, feeds, dwells and the vacuum's ranges are
+set a value at a time. *Vacuum on*, *Vacuum off* and *Read vacuum* find
+the sensor's readings with the nozzle open and blocked before
+`part_on`/`part_off` are set.
 
 Feeders can be tape strips, trays (`columns`, `row_pitch`) or feeders
-told to advance (`feed`, one line or several). With the up camera fixed
-to the device, start it in the Up camera panel, jog the nozzle over it
-and press *Center nozzle* under *Up camera on the device*, then *Measure
-runout*: the tip is found at six turns of the nozzle, its runout made up
-for at every look and place, and a nozzle that turns the other way for
-the profile's `rotation_cw` says so. Parts of a feeder marked
-`vision = true` are looked at over the camera turned to the angle they go
-down at: their offset, size and angle are checked, the angle corrected,
-and they are placed where their center lands.
+told to advance (`feed`, one line or several); one names its parts by
+`refs` or by the words of `match`. The up camera's place on the device
+comes from the profile, or *Camera is here* with the nozzle over it by
+eye, or typed; *Center nozzle* measures it with the picture's scale, roll
+and mirror, then *Measure runout*: the tip is found at six turns of the
+nozzle, its runout made up for at every look and place, and a nozzle that
+turns the other way for the profile's `rotation_cw` says so. Parts of a
+feeder marked `vision = true` are looked at over the camera turned to the
+angle they go down at: their offset, size and angle are checked, the
+angle corrected, and they are placed where their center lands.
 
 The top camera (on the device's head, looking down, `[top_camera]` in the
-profile) is set up under *Top camera on the device*: pick it and Start,
-jog the nozzle's tip onto a mark it can see (a dot on paper, a hole) and
-press *Nozzle on mark*, then *Measure offset*: the head moves so the
-camera should see the mark (by the profile's `offset` guess, or from
-where it stands when there is none), measures the picture and centers
-the mark. Then *Camera here* takes a reference under its crosshair, and
-*Find fiducials* (or *find the fiducials first* on a run) fits the board
-on its fiducials, footprints FID* or named Fiducial, from where the
-references put them. A feeder with `pocket` has each pocket looked at
-before its pick (an empty one is passed over), one with `marks` has its
-marks found once a run and its places moved to follow them.
+profile) is set up in its panel: pick it and Start, jog the nozzle's tip
+onto a mark it can see (a dot on paper, a hole) and press *Nozzle on
+mark*, then *Measure offset*: the head moves so the camera should see the
+mark (by the profile's `offset`, or from where it stands when there is
+none), measures the picture and centers the mark. *Find fiducials* (or
+*find fiducials first* on a run) fits the board on its fiducials,
+footprints FID* or named Fiducial, from where the references put them. A
+feeder with `pocket` has each pocket looked at before its pick (an empty
+one is passed over), one with `marks` has its marks found once a run and
+its places moved to follow them.
 
-With a `[vacuum]` sensor in the profile, a pick that holds nothing, a
+With `part_on` in the profile's `[vacuum]`, a pick that holds nothing, a
 part not on the nozzle over the up camera, one off by too much or of the
 wrong size is let go at `[motion] discard` (or back in its pocket) and
 the next pocket tried, up to `pick_tries`; the part is then left out and
-listed under the program, and *Run the rest* places what the last run did
-not. A part still on the nozzle after its place (or after a failed pick
-was let go) stops the run, and so do two parts left out one after
-another.
+listed, and *Run the rest* places what the last run did not. A part still
+on the nozzle after its place (with `part_off`) stops the run, and so do
+two parts left out one after another.
 
 Nothing here has run against a real machine yet: check the profile's
-commands against the firmware before the first run, with the vacuum line
-disconnected and the nozzle well above the board. The part's angle needs
-pcb-vision at b4d1299 or later (the spot's smallest rectangle); an older
-pcbv places without correcting it and says so.
+commands against the firmware before the first run, with the nozzle well
+above the board. Photon feeders are not driven: their tape does not
+advance. The part's angle needs pcb-vision at b4d1299 or later (the
+spot's smallest rectangle); an older pcbv places without correcting it
+and says so.
 
 ### The Auto tab
 

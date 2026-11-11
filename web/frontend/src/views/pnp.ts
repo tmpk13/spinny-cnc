@@ -534,6 +534,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
     partButton.title = "over the up camera with a part on the nozzle: measure where it sits on the nozzle";
     const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
+    const overButton = button("Nozzle over camera", () => nozzleOverCamera(), "btn");
+    overButton.title = "the nozzle over the up camera's place at the travel height, then down to Sharp at H";
     const routineLine = el("p", { class: "muted vision-routine" });
     const partLine = el("p", { class: "muted" });
     roots.nozzle.append(
@@ -549,6 +551,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ),
             el("div", { class: "button-row" }, nozzleApply, nozzleChip, forget),
             el("div", { class: "button-row" }, labeled("Step mm", step, "labeled inline"), centerButton, partButton, abortButton),
+            el("div", { class: "button-row" }, overButton),
             routineLine,
             partLine,
             el("p", { class: "muted hint" },
@@ -661,6 +664,19 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             return;
         }
         await into(ctx, "pnp", ctx.api.pnpNozzle(value));
+    }
+
+    async function nozzleOverCamera(): Promise<void> {
+        const pnp = ctx.store.get().pnp;
+        if (!pnp?.position) {
+            ctx.toast("error", "the up camera's place is not known: center the nozzle over it, or type it");
+            return;
+        }
+        // A goto answers nothing: true once it was taken.
+        const moved = await ctx.call(ctx.api.goto({ kind: "joint", r: pnp.position[0], z: pnp.position[1] }).then(() => true));
+        if (moved === true && pnp.height !== null) {
+            await ctx.call(ctx.api.goto({ kind: "joint", h: pnp.height }));
+        }
     }
 
     async function centerOnDevice(): Promise<void> {
@@ -934,6 +950,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         setLocked(partButton, !connected || !running || busy || !pnp?.position || !(pnp.mm_per_px > 0));
         setLocked(abortButton, !busy);
         setLocked(forget, !pnp?.position || busy);
+        setLocked(overButton, !connected || busy || !pnp?.position);
         if (pnp) {
             cameraFields.follow(device, pnp.device);
             cameraFields.follow(size, pnp.size);

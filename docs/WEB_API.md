@@ -743,27 +743,35 @@ the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
 RepRapFirmware, Grbl): a line at a time, each answered `ok`, a refusal
 `error...` or `!!` (an `ok` that follows a refusal is taken with it),
 Marlin's `busy:` keeping a slow line alive. A device profile in `pnp/`
-(`--pnp DIR` moves it; `pnp/openpnp-marlin.toml` is shipped, every key
-commented) says how to talk to it: `[port]` `url` (a serial device or
+(`--pnp DIR` moves it; `pnp/openpnp-marlin.toml`, every key commented,
+and `pnp/opulo-lumen-rev5.toml`, an Opulo LumenPnP, are shipped) says how to talk to it: `[port]` `url` (a serial device or
 `socket://host:port`), `baud`, `wait_ms` (a board that resets when its
 port opens boots this long first), `timeout` (s per line; a home gets
 three times it); `[gcode]` `init` and `end` (lines), `move` (the move
 word), `x`, `y`, `z`, `rotation` (axis letters), `wait` (answered once
 the moves queued have run, sent before every vacuum switch), `pick` and
-`place` (vacuum on and off), `dwell` (`{ms}` or `{s}` for the time),
-`home`, `position`, `stop` (a quickstop, sent ahead of its turn),
-`rotation_cw` (true when a positive rotation turns the nozzle clockwise
-seen from above: every angle goes out negated);
-`[motion]` `feed_xy`, `feed_z`, `safe_z`, `place_z`, `pick_dwell_ms`,
-`place_dwell_ms`, `discard` (X Y Z where a part that failed a check is
-let go; left out, it goes back into its pocket), `pick_tries` (pockets
-tried for one part, default 3); `[vacuum]` `read` (the line whose answer
-carries the sensor's reading), `pattern` (a regular expression whose
-group is the reading; default Marlin's `T:` of M105; OpenPnP's
-`(?<Value>...)` reads too), `part_on` (low and high reading with a part
-held, read after each pick), `part_off` (with the nozzle empty, read
-after each place); `[camera]` `z` (the height the nozzle is sharp at over
-the up camera, when it is fixed to this machine), `max_offset` (mm a
+`place` (vacuum on and off, a line or a list: a pump and a valve take
+one each), `dwell` (`{ms}` or `{s}` for the time), `home`, `position`,
+`stop` (a quickstop, sent ahead of its turn), `light_on` and `light_off`
+(the cameras' lights, a line or a list; the cameras' routines switch them
+on first), `rotation_cw` (true when a positive rotation turns the nozzle
+clockwise seen from above: every angle goes out negated);
+`[motion]` `feed_xy`, `feed_z`, `safe_z` (the height moves across go at,
+gone to from above or below: on a seesaw Z the other nozzle comes down
+above it), `place_z`, `pick_dwell_ms`, `place_dwell_ms`, `discard` (X Y Z
+where a part that failed a check is let go; left out, it goes back into
+its pocket), `pick_tries` (pockets tried for one part, default 3), `park`
+(X Y where the head waits); `[vacuum]` `read` (the line, or lines, that
+read the sensor: the reading is in the last one's answer), `pattern` (a
+regular expression whose group is the reading; default Marlin's `T:` of
+M105; OpenPnP's `(?<Value>...)` reads too), `part_on` (low and high
+reading with a part held, read after each pick), `part_off` (with the
+nozzle empty, read after each place); a sensor with neither is read by
+hand only; `[camera]` `position` (where the up camera is as designed, the
+head with the nozzle over its center, until centering measures it), `z`
+(the height the nozzle is sharp at over the up camera, when it is fixed
+to this machine), `crop` (mm from the picture's center a part is looked
+for; left out, pcbv's own reach), `max_offset` (mm a
 part's center may sit off the nozzle's, default 1), `max_turn` (degrees a
 part may sit off its angle, default 15), `size_tolerance` (fraction a
 part's length or width may differ from the one expected, default 0.3; 0
@@ -773,6 +781,8 @@ nozzle as designed, a first guess), `fiducial` (dark or bright), `within`
 (mm from where it is expected that a fiducial, mark or part is looked
 for, default 2); and `[[feeder]]`
 tables: `id`, `match` (words a part's value and footprint must all hold),
+`refs` (the parts it holds by reference, which outdo `match`), `crop` (as
+`[camera] crop`, for its parts),
 `at` (the first part's X Y Z), `pitch` (X Y from one part to the next, or
 from column to column of a tray), `count` (0 for a feeder that presents
 every part at `at`), `columns` and `row_pitch` (a tray, taken row by
@@ -819,8 +829,12 @@ a camera or the vacuum says otherwise.
 | `GET /api/pnp/devices/{id}` | `{"document": {...}, "text": "..."}`; 404 for none |
 | `PUT /api/pnp/devices/{id}` | `{"text": "..."}`: saved once it reads, 400 naming the key otherwise |
 | `POST /api/pnp/devices/{id}/check` | `{"text": "..."}`: `{"document" or null, "problems": [...]}` |
+| `PATCH /api/pnp/devices/{id}` | `{"path": ["motion", "place_z"], "value": 12.5}`: one value changed in the file's text, comments kept, saved once the profile reads (400 naming the key otherwise); a plain table not in the file yet is added; `null` takes the key out |
+| `POST /api/pnp/devices/{id}` | `{"text": "..."}`, or `{}` for a copy of the shipped `openpnp-marlin.toml`: a new profile; 400 when one of that id is there |
+| `DELETE /api/pnp/devices/{id}` | removes the profile's file; answers the list; 409 while it is the device's and connected |
 | `GET /api/pnp/device` | the device state, below |
-| `PUT /api/pnp/device` | `{"profile": "openpnp-marlin", "angle": 90, "clear_angle": false}`, any of them; another profile is 409 while connected |
+| `PUT /api/pnp/device` | `{"profile": "openpnp-marlin", "angle": 90, "clear_angle": false, "url": "/dev/ttyACM1"}`, any of them; another profile or port is 409 while connected; `url` is the port to talk on instead of the profile's (`""` goes back to the profile's), 400 for anything but a device path or a socket url, or this machine's own port |
+| `POST /api/pnp/device/identify` | `{"url": "/dev/ttyACM1"}`: opens the port only to send M115 and read the answer until its `ok` or 3 s: `{"url", "lines": [...], "firmware": "Marlin 2.1.2", "machine": "LumenPnP"}` (null where the answer names none); the device's own port is asked over its link, this machine's is refused |
 | `POST /api/pnp/device/connect`, `.../disconnect` | opens the profile's port, waits `wait_ms`, and sends `init`; 502 when the port does not open or a line is refused; a disconnect is 409 while a program is sent |
 | `POST /api/pnp/device/command` | `{"line": "M114"}`: one line and its answer, `{"reply": [...], ...state}`; 400 for anything but one printable line, 502 for a refusal or no answer |
 | `POST /api/pnp/device/home`, `.../position` | the profile's home (the state's `homed` then true), or its position command, read into `position` (`x`, `y`, `z`, `rotation` by the profile's letters) |
@@ -830,7 +844,16 @@ a camera or the vacuum says otherwise.
 | `GET /api/pnp/device/program.gcode?job=ID&refs=R1,C2` | the program as a file |
 | `POST /api/pnp/device/run` | `{"job", "refs", "fiducials": false}`: places the parts on its own thread as above; each pick counts against its feeder once answered; 409 while one is sent, 400 when a camera it looks with is not running |
 | `POST /api/pnp/device/stop` | sends the profile's `stop` at once and nothing after the line in flight |
-| `POST /api/pnp/device/goto` | `{"job", "ref"}`: the nozzle to `safe_z` and over the part's place |
+| `POST /api/pnp/device/goto` | `{"job", "ref", "camera": false}`: up to `safe_z` and the nozzle over the part's place, or with `camera` the top camera's picture center (by the measured offset, else the profile's) |
+| `POST /api/pnp/device/jog` | `{"axis": "x" \| "y" \| "z" \| "rotation", "step": -1.0}`: the position read, then that axis moved by the step (mm, or degrees counterclockwise from above) at its feed; X and Y keep the height; 502 when the position's answer lacks the axis |
+| `POST /api/pnp/device/move` | `{"x", "y", "z", "rotation"}`, any of them: X and Y across at `safe_z` (the other one kept), then Z |
+| `POST /api/pnp/device/park` | up to `safe_z`, then to `[motion] park`; 400 without one |
+| `POST /api/pnp/device/over-camera` | the lights on, up to `safe_z`, the nozzle turned to 0 over the up camera's place (measured, else the profile's `[camera] position`), down to `[camera] z` |
+| `POST /api/pnp/device/swap` | `{"to": "nozzle" \| "camera"}`: the head moved by the top camera's offset at `safe_z`, so the nozzle goes over the point the camera looked at, or the camera over the nozzle's |
+| `PUT /api/pnp/device/camera` | `{"position": [x, y]}`, `{"here": true}` (the head's place now, the nozzle over the camera by eye) or `{"clear": true}` (the profile's again): the up camera's place on the device; its scale, roll and runout stay |
+| `POST /api/pnp/device/light` | `{"on": true}`: the profile's `light_on` or `light_off` lines; 400 without them |
+| `POST /api/pnp/device/vacuum` | `{"on": true, "read": true}`, either: the vacuum switched by the profile's pick or place lines, then the sensor read by its `[vacuum] read` lines: `{"reply": [...], ...state}`, the reading in `vacuum.reading`; 502 when the pattern finds none |
+| `POST /api/pnp/device/boards/reset` | the count of boards finished back to 0 |
 | `POST /api/pnp/device/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
 | `POST /api/pnp/device/nozzle` | `{"step": 1.0}`: the up camera's nozzle routine (as `POST /api/pnp/nozzle`) on the device, the nozzle turned to 0: its moves are the profile's move word and wait command, its place read with the position command; what it measures is kept as the state's `camera`. The routine shows in the up camera state with `"target": "device"`, and other device lines are 409 meanwhile |
 | `POST /api/pnp/device/runout` | over the up camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the up camera's routine |
@@ -845,10 +868,10 @@ a camera or the vacuum says otherwise.
 Device state:
 
 ```json
-{"profile": "openpnp-marlin", "angle": null,
+{"profile": "openpnp-marlin", "port": "/dev/ttyACM1", "angle": null,
  "references": [{"job": "a1b2", "ref": "FID1", "at": [100.0, 50.0], "by": "fiducial"}],
- "taken": {"r-10k-0603": 2},
- "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "runout": [0.04, -0.01]},
+ "taken": {"r-10k-0603": 2}, "boards": 3,
+ "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "runout": [0.04, -0.01], "measured": true},
  "top": {"running": true, "device": "/dev/video4", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "mark_spot": "dark",
          "mark_at": [120.0, 80.0], "offset": [35.0, -10.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": false,
          "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 15.0}, "routine": null,
@@ -857,7 +880,10 @@ Device state:
  "position": {"x": 100.0, "y": 50.0, "z": 0.0},
  "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"],
               "failed": [{"ref": "C3", "reason": "the vacuum read 20 with no part held (40 to 100 with one)"}],
-              "doing": null, "job": "a1b2", "error": null, "seconds": 12.3},
+              "doing": null, "job": "a1b2", "error": null, "seconds": 12.3,
+              "steps": [{"t": 0.0, "ref": null, "text": "placing 2 parts on rig", "level": "info"},
+                        {"t": 1.2, "ref": "R1", "text": "picking 10k from r-10k-0603 #3", "level": "info"}]},
+ "light": true, "vacuum": {"on": false, "reading": 251.0},
  "log": [{"dir": "tx", "text": "M114"}, {"dir": "rx", "text": "ok"}]}
 ```
 
