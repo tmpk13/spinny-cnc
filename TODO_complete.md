@@ -652,3 +652,7 @@
   board or a gerber with its outline and drill files for both the Jobs
   page and CAM profiles; the Jobs import now drops a hole listed in two
   drill files and reads drill files beside a gerber.
+- 2026-11-11: GUI text pass: about 350 tooltips, hints, confirms and
+  errors on every page cut to the point (one-phrase tooltips, hints of
+  one or two sentences, errors as "field: range"); the PNP tab's Center
+  nozzle, Here buttons and Plan say on hover what they do.
