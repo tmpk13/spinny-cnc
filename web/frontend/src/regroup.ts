@@ -38,7 +38,7 @@ function isDotGroup(group: Group): boolean {
 
 /** The CAM profile's tool a group was made with, by name, as a refusal says it. */
 function madeWith(group: Group): string {
-    return group.tool_name || group.tool_id || "no tool of a profile";
+    return group.tool_name || group.tool_id || "no profile tool";
 }
 
 /**
@@ -57,7 +57,7 @@ export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"
     const sources = [...new Set(picked.map(([g]) => g))].map((g) => job.groups[g]!);
     for (const group of sources) {
         if ((group.joints?.length ?? 0) > 0) {
-            return `${group.label}: a joint-space group's paths are drawn from its joints and cannot be moved`;
+            return `${group.label}: joint-space paths cannot be moved`;
         }
         if ((group.moves?.length ?? 0) > 0) {
             return `${group.label}: a model's moves cannot be moved`;
@@ -67,13 +67,13 @@ export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"
     const dots = isDotGroup(first);
     for (const group of sources) {
         if (isDotGroup(group) !== dots) {
-            return "dots and paths do not go in one group";
+            return "dots and paths cannot share a group";
         }
         if ((group.tool ?? null) !== (first.tool ?? null)) {
-            return `${group.label} was made for ${group.tool ?? "any tool"} and ${first.label} for ${first.tool ?? "any tool"}: they do not go in one group`;
+            return `${group.label} is for ${group.tool ?? "any tool"} and ${first.label} for ${first.tool ?? "any tool"}; they cannot share a group`;
         }
         if ((group.tool_id ?? null) !== (first.tool_id ?? null)) {
-            return `${group.label} was made with ${madeWith(group)} and ${first.label} with ${madeWith(first)}: they do not go in one group`;
+            return `${group.label} uses ${madeWith(group)} and ${first.label} ${madeWith(first)}; they cannot share a group`;
         }
     }
     if (target !== "new") {
@@ -82,16 +82,16 @@ export function regroupRefusal(job: Job, refs: PathRef[], target: number | "new"
             return `the job has no group ${target + 1}`;
         }
         if ((into.joints?.length ?? 0) > 0 || (into.moves?.length ?? 0) > 0) {
-            return `${into.label} takes no paths: its cuts are joints or a model's moves`;
+            return `${into.label} takes no paths (joints or model moves)`;
         }
         if (into.paths.length > 0 && isDotGroup(into) !== dots) {
-            return "dots and paths do not go in one group";
+            return "dots and paths cannot share a group";
         }
         if (into.paths.length > 0 && (into.tool ?? null) !== (first.tool ?? null)) {
-            return `${into.label} was made for ${into.tool ?? "any tool"}, the paths for ${first.tool ?? "any tool"}`;
+            return `${into.label} is for ${into.tool ?? "any tool"}, the paths for ${first.tool ?? "any tool"}`;
         }
         if (into.paths.length > 0 && (into.tool_id ?? null) !== (first.tool_id ?? null)) {
-            return `${into.label} was made with ${madeWith(into)}, the paths with ${madeWith(first)}`;
+            return `${into.label} uses ${madeWith(into)}, the paths use ${madeWith(first)}`;
         }
     }
     return "";
@@ -196,7 +196,7 @@ export function removePaths(job: Job, refs: PathRef[]): Job {
     for (const g of new Set(picked.map(([group]) => group))) {
         const group = job.groups[g]!;
         if ((group.joints?.length ?? 0) > 0 || (group.moves?.length ?? 0) > 0) {
-            throw new Error(`${group.label}: its paths are drawn from its joints or a model's moves and cannot be taken out one by one`);
+            throw new Error(`${group.label}: joint-space and model paths cannot be deleted one by one`);
         }
     }
     const removing = new Set(picked.map(refKey));
@@ -293,24 +293,24 @@ export function arrayRefusal(job: Job, refs: PathRef[], spec: ArraySpec): string
     for (const g of new Set(picked.map(([group]) => group))) {
         const group = job.groups[g]!;
         if ((group.joints?.length ?? 0) > 0) {
-            return `${group.label}: a joint-space group's paths are drawn from its joints and cannot be copied`;
+            return `${group.label}: joint-space paths cannot be copied`;
         }
         if ((group.moves?.length ?? 0) > 0) {
             return `${group.label}: a model's moves cannot be copied`;
         }
     }
     if (!Number.isInteger(spec.count) || spec.count < 2 || spec.count > MAX_ARRAY) {
-        return `the count is a whole number from 2 to ${MAX_ARRAY}, the picked paths included`;
+        return `count: a whole number from 2 to ${MAX_ARRAY}, originals included`;
     }
     const numbers = spec.kind === "linear" ? [spec.dx, spec.dy] : [spec.cx, spec.cy, spec.sweep];
     if (!numbers.every(Number.isFinite)) {
         return "every field needs a number";
     }
     if (spec.kind === "linear" && spec.dx === 0 && spec.dy === 0) {
-        return "the copies need a step: give a step in x or y";
+        return "give a step in x or y";
     }
     if (spec.kind === "circular" && spec.sweep === 0) {
-        return "the copies need an angle to turn through";
+        return "give an angle to sweep";
     }
     if (picked.length * (spec.count - 1) > MAX_ARRAY_PATHS) {
         return `${picked.length * (spec.count - 1)} copies are too many: at most ${MAX_ARRAY_PATHS} paths at once`;

@@ -117,7 +117,7 @@ describe("the speed view", () => {
 
 describe("the cut order slider", () => {
     test("says how far along the cut it is", () => {
-        expect(scrubText(5, 5, null)).toBe("all 5 paths in the order they are cut");
+        expect(scrubText(5, 5, null)).toBe("all 5 paths, in cut order");
         expect(scrubText(0, 5, null)).toBe("none of 5 cut yet");
         expect(scrubText(2, 5, "isolation loop 1")).toBe("2 of 5 cut, the last in isolation loop 1");
     });

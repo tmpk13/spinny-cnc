@@ -1709,11 +1709,11 @@ export class Preview {
         const y = 8;
         const lines: string[] = [];
         if (map === null || map.segments.length === 0) {
-            lines.push(map === null ? "speed: no machine rates to work it out" : "speed: no cuts to show");
+            lines.push(map === null ? "speed: no machine rates" : "speed: no cuts to show");
         } else {
             lines.push(`speed ${Math.round(map.slowest)} to ${Math.round(map.fastest)} mm/min`);
             const share = map.length > 0 ? map.cappedLength / map.length : 0;
-            lines.push(share > 0 ? `capped (red) on ${(share * 100).toFixed(share < 0.1 ? 1 : 0)}% of the cut` : "nothing capped: every cut at its speed");
+            lines.push(share > 0 ? `capped (red) on ${(share * 100).toFixed(share < 0.1 ? 1 : 0)}% of the cut` : "nothing capped");
             if (this.speedLimits?.assumed) {
                 lines.push("default rates: connect for the machine's");
             }

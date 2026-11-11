@@ -70,9 +70,9 @@ describe("regrouping paths", () => {
         expect(after.groups[0]!.areas).toEqual([1, 3]);
         expect(after.groups[1]!.areas).toEqual([2]);
         expect(after.groups[1]!.tool).toBe("dispenser");
-        expect(regroupRefusal(before, [[0, 0], [1, 0]], "new")).toBe("dots and paths do not go in one group");
-        expect(regroupRefusal(before, [[0, 0]], 1)).toBe("dots and paths do not go in one group");
-        expect(() => regroup(before, [[0, 0]], 1)).toThrow("dots and paths do not go in one group");
+        expect(regroupRefusal(before, [[0, 0], [1, 0]], "new")).toBe("dots and paths cannot share a group");
+        expect(regroupRefusal(before, [[0, 0]], 1)).toBe("dots and paths cannot share a group");
+        expect(() => regroup(before, [[0, 0]], 1)).toThrow("dots and paths cannot share a group");
     });
 
     test("a CAM profile's bit goes with its paths, and two bits do not share a group", () => {
@@ -88,10 +88,10 @@ describe("regrouping paths", () => {
         const engraved = regroup(before, [[2, 0]], "new").job.groups;
         expect(engraved.map((g) => [g.label, g.height])).toEqual([["isolation", undefined], ["drills", undefined], ["group", 6]]);
         // The gcode stops to change the bit between groups, never inside one.
-        expect(regroupRefusal(before, [[0, 0], [1, 0]], "new")).toBe("drills was made with 0.8 mm drill and isolation with 30 degree V bit: they do not go in one group");
-        expect(regroupRefusal(before, [[1, 0]], 0)).toBe("isolation was made with 30 degree V bit, the paths with 0.8 mm drill");
+        expect(regroupRefusal(before, [[0, 0], [1, 0]], "new")).toBe("drills uses 0.8 mm drill and isolation 30 degree V bit; they cannot share a group");
+        expect(regroupRefusal(before, [[1, 0]], 0)).toBe("isolation uses 30 degree V bit, the paths use 0.8 mm drill");
         expect(regroupRefusal(job([group("drawn", [line(0)], { tool: "spindle" }), before.groups[1]!]), [[1, 0]], 0)).toBe(
-            "drawn was made with no tool of a profile, the paths with 0.8 mm drill",
+            "drawn uses no profile tool, the paths use 0.8 mm drill",
         );
     });
 
@@ -105,7 +105,7 @@ describe("regrouping paths", () => {
         expect(regroupRefusal(before, [], "new")).toBe("pick some paths in the preview first");
         expect(regroupRefusal(before, [[9, 9]], "new")).toBe("pick some paths in the preview first");
         expect(regroupRefusal(before, [[2, 0]], 7)).toBe("the job has no group 8");
-        expect(() => removePaths(before, [[0, 0]])).toThrow("drawn from its joints");
+        expect(() => removePaths(before, [[0, 0]])).toThrow("cannot be deleted one by one");
     });
 
     test("paths taken out leave their groups, an emptied one dropped", () => {

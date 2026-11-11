@@ -179,7 +179,7 @@ export function widthMode(job: Job): "remake" | "width" | "refused" {
  * they were, which would `undo` the change. Empty for a job with no recipe.
  */
 export function recipeLost(job: Job, undo: string): string {
-    return job.recipe ? ` It is then no longer made again from its ${job.recipe.file ? "file" : "operations"} (another width, the Plot page), which would ${undo}.` : "";
+    return job.recipe ? ` It is no longer remade from its ${job.recipe.file ? "file" : "operations"} (new width, Plot page), which would ${undo}.` : "";
 }
 
 /** The labels a milling machine gives the job's numbers, and a laser's. */
@@ -213,12 +213,12 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         value: DEFAULT_LAYER,
         spellcheck: "false",
         "aria-label": "Board layer",
-        title: "The layer of a KiCad board the job is cut from: a copper layer to isolate or deposit, or F.Paste for a solder paste stencil cut out of a film. A gerber is its own layer",
+        title: "KiCad layer to cut: copper, or F.Paste for a stencil; gerbers ignore it",
     }) as HTMLInputElement;
     const clearField = el("select", {
         class: "field",
         "aria-label": "Clear copper",
-        title: "Burn away the copper the isolation leaves, inside the board outline or else the job's X/Y box (gerber and KiCad only). Radial is the fastest: its spokes run on the rail alone, while rings and lines turn the table",
+        title: "Burn off leftover copper inside the outline (gerber, KiCad); radial is fastest",
     },
         el("option", { value: "off" }, "off"),
         el("option", { value: "radial" }, "radial"),
@@ -230,7 +230,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     const mirrorField = el("select", {
         class: "field",
         "aria-label": "Mirror",
-        title: "How the layer is flipped (gerber and KiCad only). Auto flips a layer on the back (B.Cu, B.Paste) in X, for the board turned over left to right, and leaves the front as drawn",
+        title: "Flip the layer (gerber, KiCad); auto flips back layers in X",
     },
         el("option", { value: "auto" }, "auto"),
         el("option", { value: "none" }, "none"),
@@ -240,7 +240,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     const modeField = el("select", {
         class: "field",
         "aria-label": "Board mode",
-        title: "Isolate burns around the copper to take it away; deposit burns the copper itself and nothing else, for a process that lays copper down; stencil cuts round the inside of every paste opening, so the piece drops out of the film and leaves the hole; on the lines cuts every line of the layer where it is drawn, the beam's middle on it, and every filled shape round its edge, for Edge.Cuts, a silk screen or a drawing (gerber and KiCad only). A deposit, a stencil or the lines leave the board outline off",
+        title: "isolate: burn around the copper; deposit: burn the copper itself; stencil: cut out paste openings; lines: cut along drawn lines",
     },
         el("option", { value: "isolate" }, "isolate"),
         el("option", { value: "deposit" }, "deposit"),
@@ -257,7 +257,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     const fillField = el("select", {
         class: "field",
         "aria-label": "Fill copper",
-        title: "How a deposit fills the copper inside the loop that follows its edge. Contour goes on with loops in to the middle, along each trace and round each pad; radial is the fastest: its spokes run on the rail alone, while rings and lines turn the table",
+        title: "How a deposit fills the copper; radial is fastest",
     },
         el("option", { value: "contour" }, "contour"),
         el("option", { value: "radial" }, "radial"),
@@ -286,9 +286,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     const clearLabel = labeled("Clear copper", clearField);
     const fillLabel = labeled("Fill copper", fillField);
     const thicknessLabel = labeled("Paste mm", thicknessField);
-    thicknessLabel.title = "A dispense: mm of solder paste over every pad; a dot's volume is the pad's area times this";
+    thicknessLabel.title = "Paste height over each pad, mm; dot volume is pad area times this";
     const marginLabel = labeled("Margin mm", marginField);
-    marginLabel.title = "A stencil: mm every paste opening is shrunk by on every side, for less paste than the whole pad; the beam runs half a spot inside that, so the hole is the opening shrunk. The job's margin row cuts it again for another";
+    marginLabel.title = "mm each paste opening shrinks on every side";
     const options = el("div", { class: "field-grid" },
         powerLabel,
         speedLabel,
@@ -334,7 +334,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     // which is the order they are cut in.
     let combining: string[] = [];
     const combineButton = button("Combine", () => combine(), "btn btn-quiet btn-small");
-    combineButton.title = "make one job of the jobs checked in the list, cut in the order they were checked; the jobs themselves stay";
+    combineButton.title = "join the checked jobs into one, in the order checked";
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, combineButton, saveButton, deleteAllButton)),
         drop, chooser, options, centerTest(ctx), calibrationTest(ctx), list, details,
@@ -356,10 +356,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     async function removeAll(): Promise<void> {
         const count = ctx.store.get().jobs.length;
         if (count === 0) {
-            ctx.toast("info", "there are no jobs to delete");
+            ctx.toast("info", "no jobs to delete");
             return;
         }
-        const kept = runActive(ctx.store.get().progress) ? " The job running stays." : "";
+        const kept = runActive(ctx.store.get().progress) ? " The running job stays." : "";
         if (!(await askConfirm(`Delete all ${count} jobs? They are gone for good.${kept}`, "Delete all"))) {
             return;
         }
@@ -450,7 +450,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         const copper = layers.find((layer) => layer.name.endsWith(".Cu") && layer.items > 0);
         replace(chooserSelect, ...layers.map((layer) => el("option", { value: layer.name }, layerChoiceText(layer))));
         chooserSelect.value = has(typed) ? typed : copper?.name ?? layers[0]!.name;
-        chooserTitle.textContent = `${file.name}: the layer to cut`;
+        chooserTitle.textContent = `${file.name}: layer to cut`;
         // The Board choice before the chooser turned it to the lines.
         let before: string | null = null;
         const follow = (): void => {
@@ -466,9 +466,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 showMode();
             }
             const layer = layers.find((entry) => entry.name === name);
-            const empty = layer && layer.items === 0 ? "Nothing is drawn on it. " : "";
+            const empty = layer && layer.items === 0 ? "This layer is empty. " : "";
             const how = modeField.selectedOptions[0]?.textContent ?? modeField.value;
-            chooserNote.textContent = `${empty}Board: ${how}, as set below.`;
+            chooserNote.textContent = `${empty}Board: ${how} (set below).`;
         };
         follow();
         chooser.classList.remove("hidden");
@@ -535,7 +535,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         combining = combining.filter((id) => state.jobs.some((job) => job.id === id));
         replace(list, ...state.jobs.map((job) => {
             const item = el("li", { class: job.id === selected ? "selected" : "" });
-            const check = el("input", { type: "checkbox", class: "job-check", "aria-label": `combine ${job.name}`, title: "check two or more jobs to combine them" }) as HTMLInputElement;
+            const check = el("input", { type: "checkbox", class: "job-check", "aria-label": `combine ${job.name}`, title: "check two or more to combine" }) as HTMLInputElement;
             check.checked = combining.includes(job.id);
             check.addEventListener("change", () => {
                 combining = check.checked ? [...combining.filter((id) => id !== job.id), job.id] : combining.filter((id) => id !== job.id);
@@ -572,7 +572,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         if (jobs.length < 2) {
             return;
         }
-        if (!(await askConfirm(`Make one job of ${jobs.map((job) => job.name).join(", then ")}? It cuts them in that order; the jobs themselves stay.`, "Combine"))) {
+        if (!(await askConfirm(`Combine ${jobs.map((job) => job.name).join(", then ")} into one job? The originals stay.`, "Combine"))) {
             return;
         }
         const made = await ctx.call(ctx.api.combineJobs(jobs.map((job) => job.id)));
@@ -625,13 +625,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     // group of their own or one the job has, or taking them out of it.
     const pickedCount = el("span", { class: "picked-count" });
     const pickedTarget = el("select", { class: "field", "aria-label": "Move picked paths to" }) as HTMLSelectElement;
-    const pickedLabel = el("input", { type: "text", class: "field", "aria-label": "New group name", placeholder: "new group's name", spellcheck: "false" }) as HTMLInputElement;
+    const pickedLabel = el("input", { type: "text", class: "field", "aria-label": "New group name", placeholder: "new group name", spellcheck: "false" }) as HTMLInputElement;
     const pickedMove = button("Move", () => movePicked(), "btn btn-small");
-    pickedMove.title = "move the picked paths into the group chosen; a new group takes the settings of the first group they come from, and is off if any of those groups is";
+    pickedMove.title = "move to the chosen group; a new one copies the first source group's settings, off if any source is off";
     const pickedDelete = button("Delete paths", () => deletePicked(), "btn btn-quiet btn-small");
     const pickedClear = button("Clear", () => ctx.store.set({ selection: null }), "btn btn-quiet btn-small");
     const pickedArray = button("Array", () => toggleArray(), "btn btn-quiet btn-small btn-toggle");
-    pickedArray.title = "copies of the picked paths in a row or round a center, drawn as they are typed";
+    pickedArray.title = "copy the picked paths in a row or around a center";
     pickedArray.setAttribute("aria-pressed", "false");
     // The pattern of copies: a row stepped by x and y, or a turn about a
     // center, the count taking the picked paths in. The copies are drawn
@@ -666,10 +666,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         arrayCy.value = "0";
         arrayChanged();
     }, "btn btn-quiet btn-small");
-    arrayAxis.title = "turn about the board's origin, the rotation axis on the polar machine";
+    arrayAxis.title = "turn about the origin, the polar table's axis";
     const linearFields = el("div", { class: "field-row" }, labeled("Step x mm", arrayDx), labeled("Step y mm", arrayDy));
     const circularFields = el("div", { class: "field-row" }, labeled("Center x mm", arrayCx), labeled("Center y mm", arrayCy), arrayMiddle, arrayAxis, labeled("Sweep deg", arraySweep));
-    circularFields.title = "a whole turn (360) spreads the copies evenly round it; less puts the last one on the end of the sweep; positive turns counterclockwise";
+    circularFields.title = "360 spreads copies evenly; less ends at the sweep; positive is counterclockwise";
     const arrayNote = el("p", { class: "muted hint" });
     const arrayMake = button("Make array", () => makeArray(), "btn btn-primary btn-small");
     const arrayCancel = button("Cancel", () => closeArray(), "btn btn-quiet btn-small");
@@ -734,7 +734,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             return;
         }
         const made = arrayPaths(job, refs, spec);
-        arrayNote.textContent = `${countText(made.refs.length, "copy", "copies")} of ${countText(refs.length, "path", "paths")}, drawn on the preview; each goes at the end of its path's group`;
+        arrayNote.textContent = `${countText(made.refs.length, "copy", "copies")} of ${countText(refs.length, "path", "paths")}, shown on the preview; each joins its path's group`;
         ctx.store.set({ arrayDraft: made.job });
     }
 
@@ -795,7 +795,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         pickedTarget.value = options.some((option) => option.value === chosen) ? chosen : "new";
         pickedLabel.classList.toggle("hidden", pickedTarget.value !== "new");
         const refusal = regroupRefusal(job, refs, pickedTarget.value === "new" ? "new" : Number(pickedTarget.value));
-        pickedMove.title = refusal || "move the picked paths into the group chosen; a new group takes the settings of the first group they come from, and is off if any of those groups is";
+        pickedMove.title = refusal || "move to the chosen group; a new one copies the first source group's settings, off if any source is off";
         setLocked(pickedMove, refusal !== "");
     }
 
@@ -845,7 +845,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             return;
         }
         const count = countText(refs.length, "path", "paths");
-        if (!(await askConfirm(`Take ${count} out of ${job.name}? A group left empty goes too.${recipeLost(job, "bring them back")}`, "Delete paths"))) {
+        if (!(await askConfirm(`Delete ${count} from ${job.name}? Emptied groups go too.${recipeLost(job, "bring them back")}`, "Delete paths"))) {
             return;
         }
         const kept = await ctx.call(ctx.api.replaceJob(job.id, { ...made, recipe: null }));
@@ -855,7 +855,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         ctx.store.set({ selection: null });
         await ctx.reloadJob(job.id);
         await ctx.refreshJobs();
-        ctx.toast("info", `${count} taken out of ${job.name}`);
+        ctx.toast("info", `${count} deleted from ${job.name}`);
     }
 
     // Why a dispenser would refuse the job, beside the run button.
@@ -940,7 +940,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     function pickupRequest(): { line: number; rewind: boolean; compensate: Compensate | null } | null {
         const line = parseNumber(pickupLine.value);
         if (line === null || !Number.isInteger(line) || line < 0) {
-            ctx.toast("error", "the line done is a whole number");
+            ctx.toast("error", "line done: a whole number, 0 or more");
             return null;
         }
         // The map choice follows the row above: what the operator picked, or
@@ -960,8 +960,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
 
     /** What the operator's words make of the plan, said after it. */
     function wordsText(given: ReadonlySet<"focus_here" | "changed">): string {
-        const here = given.has("focus_here") ? " Its groups' focus counts from where the head is now." : "";
-        const changed = given.has("changed") ? " Its lines are counted in the job as it is now, not as the stopped run had them." : "";
+        const here = given.has("focus_here") ? " Focus counts from the head's height now." : "";
+        const changed = given.has("changed") ? " Lines count in the job as it is now, not as the stopped run had it." : "";
         return `${here}${changed}`;
     }
 
@@ -977,8 +977,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         }
         const plan = planned.value;
         const approach = plan.approach.length ? ` First: ${plan.approach.join("; ")}.` : "";
-        const where = plan.next ? ` Then line ${plan.skip}: ${plan.next}.` : " Nothing is left to send.";
-        const fromRecord = plan.planned_from_record ? "" : " The last run's record is another job's, so the lines are counted from where the head is now.";
+        const where = plan.next ? ` Then line ${plan.skip}: ${plan.next}.` : " Nothing left to send.";
+        const fromRecord = plan.planned_from_record ? "" : " The last record is another job's; lines count from the head's position now.";
         pickupNote.textContent = `Starts at line ${plan.skip} of ${plan.total} (${plan.compensate === "off" ? "no height map" : `height map: ${plan.compensate}`}).${approach}${where}${fromRecord}${wordsText(planned.given)}`;
     }
 
@@ -994,8 +994,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         }
         const plan = planned.value;
         const ok = await askConfirm(
-            `Pick ${job.name} up at line ${plan.skip} of ${plan.total}? The head is brought there from where it is now:`
-            + ` ${plan.approach.join("; ") || "nothing to do"}. Check that the position shown is where the head really is.`
+            `Resume ${job.name} at line ${plan.skip} of ${plan.total}? The head moves there first:`
+            + ` ${plan.approach.join("; ") || "nothing to do"}. Check the position shown matches the head.`
             + wordsText(planned.given),
             "Resume",
         );
@@ -1192,7 +1192,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 focus = numberField({ min: -50, max: 50, step: 0.1, placeholder: "-" });
                 focus.value = formatOptional(group.focus);
                 focus.setAttribute("aria-label", "focus");
-                focus.title = "mm the head is raised above focus for this group, negative lowers it; blank leaves it where the run puts it";
+                focus.title = "mm above focus for this group, negative lowers; blank for none";
             }
             const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
             enabled.checked = group.enabled;
@@ -1239,7 +1239,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             // The name has a line of its own above the fields, so they get
             // the whole width of a side panel.
             // The name picks the group's paths in the preview, shift adds them.
-            const name = el("button", { type: "button", class: "group-pick", title: "pick this group's paths in the preview; shift adds them to those picked" },
+            const name = el("button", { type: "button", class: "group-pick", title: "pick this group's paths; shift adds" },
                 el("span", { class: "swatch", "data-group": String(index % 4) }), group.label);
             name.addEventListener("click", (event) => {
                 const refs = groupRefs(job, index);
@@ -1260,25 +1260,25 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         const anyDots = job.groups.some((group) => group.tool === "dispenser");
         const head = anyDots
             ? [
-                el("th", { title: "Dispensing: mm of paste over every pad of the group" }, "Paste mm"),
-                el("th", { title: "Times the group runs over all of its dots" }, "Passes"),
+                el("th", { title: "mm of paste over each pad" }, "Paste mm"),
+                el("th", { title: "Times the group runs" }, "Passes"),
                 el("th", {}, "On"),
             ]
             : milling
             ? [
                 el("th", { title: "Spindle speed" }, "S"),
-                el("th", { title: "How deep under the surface the last pass cuts, mm" }, "Depth"),
+                el("th", { title: "Depth of the last pass below the surface, mm" }, "Depth"),
                 el("th", { title: "Feed along the cut" }, "mm/min"),
-                el("th", { title: "How fast the tool goes down into the cut, mm/min" }, "Plunge"),
-                el("th", { title: "Passes down to the depth, each a step deeper" }, "Passes"),
+                el("th", { title: "Plunge feed, mm/min" }, "Plunge"),
+                el("th", { title: "Passes to reach the depth" }, "Passes"),
                 el("th", {}, "On"),
             ]
             : [
                 el("th", {}, "S"),
-                el("th", { title: "Least power where the head slows for a corner (dyn mode); 0 is none" }, "Min S"),
+                el("th", { title: "Least power in corners (dyn mode); 0 is none" }, "Min S"),
                 el("th", {}, "mm/min"),
-                el("th", { title: "Times the group runs over all of its paths" }, "Passes"),
-                ...(focusColumn ? [el("th", { title: "mm over focus for the group, on the height the run starts at or the height map's focus height; blank is none" }, "Focus")] : []),
+                el("th", { title: "Times the group runs" }, "Passes"),
+                ...(focusColumn ? [el("th", { title: "mm above focus for the group; blank is none" }, "Focus")] : []),
                 el("th", {}, "On"),
             ];
         return el("div", { class: "groups-scroll" }, el("table", { class: "groups" }, el("thead", {}, el("tr", {}, ...head)), ...rows));
@@ -1310,23 +1310,23 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         widthField = field;
         const apply = button(mode === "remake" ? "Re-cut" : "Set", () => applyWidth(), "btn btn-quiet");
         const note = el("span", { class: "muted job-width-note" },
-            mode === "remake" ? "paths made again where the job is now"
-                : mode === "width" ? "the paths stay as they are"
-                    : "made for this width: import again for another");
+            mode === "remake" ? "re-cuts the paths where the job is now"
+                : mode === "width" ? "paths stay as they are"
+                    : "import again for another width");
         if (mode === "refused") {
             field.disabled = true;
             setLocked(apply, true);
-            apply.title = "nothing is kept to make the paths again: import the file again with the new width";
+            apply.title = "nothing kept to re-cut from; import again with the new width";
         } else {
             apply.title = mode === "remake"
-                ? "make the job's paths again for this width from what it was made of, its groups' settings kept"
-                : "the drawn width and the margins of probing take it; the paths are the drawing's lines";
+                ? "re-cut the paths for this width; group settings stay"
+                : "sets the drawn width and probing margins; paths stay";
         }
         field.addEventListener("keydown", onEnter(apply));
         const applyWidth = async (): Promise<void> => {
             const width = parseNumber(field.value);
             if (width === null || !(width > 0)) {
-                ctx.toast("error", "the width is a number of mm above 0");
+                ctx.toast("error", "width: more than 0 mm");
                 return;
             }
             // The row outlives a re-cut: the job as it is now decides.
@@ -1334,7 +1334,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             if (!current || current.id !== job.id || width === current.spot) {
                 return;
             }
-            if (mode === "remake" && !(await askConfirm(`Make ${job.name} again for ${width} mm? Its paths are made anew where the job is now; the groups keep their settings.`, "Re-cut"))) {
+            if (mode === "remake" && !(await askConfirm(`Re-cut ${job.name} for ${width} mm? Paths are remade where the job is now; group settings stay.`, "Re-cut"))) {
                 return;
             }
             const made = await ctx.call(ctx.api.setJobWidth(job.id, width));
@@ -1367,12 +1367,12 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         field.setAttribute("aria-label", "Margin of this stencil");
         jobMarginField = field;
         const apply = button("Re-cut", () => applyMargin(), "btn btn-quiet");
-        apply.title = "cut the stencil again with every opening shrunk by this much on every side, where the job is now; its groups keep their settings";
+        apply.title = "re-cut with each opening shrunk this much per side; group settings stay";
         field.addEventListener("keydown", onEnter(apply));
         const applyMargin = async (): Promise<void> => {
             const value = parseNumber(field.value);
             if (value === null || !(value >= 0 && value <= MAX_MARGIN)) {
-                ctx.toast("error", `the margin is a number of mm from 0 to ${MAX_MARGIN}`);
+                ctx.toast("error", `margin: 0 to ${MAX_MARGIN} mm`);
                 return;
             }
             // The row outlives a re-cut: the job as it is now decides.
@@ -1391,14 +1391,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             el("span", { class: "choice-label" }, "Margin mm"),
             field,
             apply,
-            el("span", { class: "muted job-width-note" }, "openings shrunk this much on every side"),
+            el("span", { class: "muted job-width-note" }, "each opening shrinks this much per side"),
         );
     }
 
     function offsetRow(job: Job): HTMLElement {
         const x = numberField({ value: job.offset.x, width: "5.5rem" });
         const y = numberField({ value: job.offset.y, width: "5.5rem" });
-        const rotation = el("span", { class: "muted job-rotation", title: "Degrees the job has been turned counterclockwise since import, by Turn and by alignment" }, rotationText(job));
+        const rotation = el("span", { class: "muted job-rotation", title: "Counterclockwise turn since import, by Turn and alignment" }, rotationText(job));
         offsetFields = { x, y, rotation };
         const apply = async (): Promise<void> => {
             const ox = parseNumber(x.value);
@@ -1423,7 +1423,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         const turn = async (sign: number): Promise<void> => {
             const degrees = parseNumber(angle.value);
             if (degrees === null || degrees === 0 || Math.abs(degrees) > 360) {
-                ctx.toast("error", "turn needs an angle from -360 to 360 degrees, not 0");
+                ctx.toast("error", "turn: -360 to 360 degrees, not 0");
                 return;
             }
             await ctx.call(ctx.api.patchJob(job.id, { turn: sign * degrees, about: about.value === "origin" ? "origin" : "center" }));
@@ -1432,9 +1432,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         };
         const fixed = job.groups.some((group) => (group.joints?.length ?? 0) > 0);
         const ccw = button("Turn left", () => turn(1), "btn btn-quiet");
-        ccw.title = "Turn the job counterclockwise by the angle";
+        ccw.title = "Turn counterclockwise by the angle";
         const cw = button("Turn right", () => turn(-1), "btn btn-quiet");
-        cw.title = "Turn the job clockwise by the angle";
+        cw.title = "Turn clockwise by the angle";
         // A joint-space group is written about the axis: nothing to turn.
         setLocked(ccw, fixed);
         setLocked(cw, fixed);

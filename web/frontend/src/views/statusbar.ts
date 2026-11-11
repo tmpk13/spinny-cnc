@@ -41,7 +41,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     let hideSystem = readHideSystem();
     const hideBox = el("input", { type: "checkbox", class: "hide-system", "aria-label": "Hide system ports" }) as HTMLInputElement;
     hideBox.checked = hideSystem;
-    const hideLabel = el("label", { class: "muted hide-system-label", title: "Leave out the built-in serial ports, which are never the controller" }, hideBox, " hide system ports");
+    const hideLabel = el("label", { class: "muted hide-system-label", title: "Hide built-in serial ports; they are never the controller" }, hideBox, " hide system ports");
     hideBox.addEventListener("change", () => {
         hideSystem = hideBox.checked;
         writeStored(HIDE_SYSTEM_KEY, hideSystem ? "1" : "0");

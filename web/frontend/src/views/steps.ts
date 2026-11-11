@@ -40,11 +40,11 @@ export function stepStates(steps: Step[]): StepState[] {
 // --- the steps the setups share ---------------------------------------------
 
 export function connectStep(state: AppState): Step {
-    return { label: "Connect", done: state.snapshot.connected, hint: "Pick the controller's port in the bar at the top and press Connect.", panel: "status" };
+    return { label: "Connect", done: state.snapshot.connected, hint: "Pick the port in the top bar and press Connect.", panel: "status" };
 }
 
 export function jobStep(state: AppState): Step {
-    return { label: "Job", done: state.job !== null, hint: "Upload a board or a drawing in the Jobs panel, or pick a job there.", panel: "jobs" };
+    return { label: "Job", done: state.job !== null, hint: "Upload or pick a job in the Jobs panel.", panel: "jobs" };
 }
 
 function travelStep(state: AppState): Step {
@@ -52,7 +52,7 @@ function travelStep(state: AppState): Step {
     return {
         label: "Travel height",
         done: travel !== null && travel !== undefined,
-        hint: "Type a Travel H in the Jog panel that clears the board and its clamps: probing and gotos rise to it before going across.",
+        hint: "Set a Travel H in the Jog panel that clears the board and clamps; probing and gotos rise to it.",
         panel: "jog",
     };
 }
@@ -61,7 +61,7 @@ function probeStep(state: AppState): Step {
     return {
         label: "Probe",
         done: mapComplete(state.heightMap?.map ?? null),
-        hint: "In the Height map panel press Fit to job, then Probe (or Probe pads for a probe that must land on copper).",
+        hint: "In Height map press Fit to job, then Probe (Probe pads if the probe must land on copper).",
         panel: "heightmap",
     };
 }
@@ -71,8 +71,8 @@ function focusStep(state: AppState, milling: boolean): Step {
         label: milling ? "Touch off" : "Focus",
         done: state.heightMap?.map?.focus_set === true,
         hint: milling
-            ? "Jog the tool down until it just touches the copper over the probed area, then press Touch off here."
-            : "Focus the beam by eye over the probed area with the focus axis, then press Focus here.",
+            ? "Jog the tool down to just touch the copper in the probed area, then press Touch off here."
+            : "Focus the beam by eye over the probed area, then press Focus here.",
         panel: "heightmap",
     };
 }
@@ -84,7 +84,7 @@ function followStep(state: AppState): Step {
     return {
         label: "Map on",
         done: following || planned.kind === "on",
-        hint: `Pick height map: auto beside Run; the chip there says map on once a run will follow the map. Now: ${planned.detail}`,
+        hint: `Pick height map: auto beside Run; its chip says map on when the run will follow it. Now: ${planned.detail}`,
         panel: "run",
     };
 }
@@ -94,7 +94,7 @@ function runStep(state: AppState): Step {
     return {
         label: "Run",
         done: progress !== null && progress.job === state.job?.id && progress.state === "done",
-        hint: "Press Run; while it lasts the status bar says whether it follows the map.",
+        hint: "Press Run; the status bar shows whether it follows the map.",
         panel: "run",
     };
 }
@@ -121,17 +121,17 @@ export const SETUPS: Setup[] = [
             const camera = state.camera;
             return [
                 connectStep(state),
-                { label: "Camera on", done: camera?.running === true, hint: "In the Camera panel pick the camera (Detect lists the ones attached) or type its device, then press Start.", panel: "camera" },
+                { label: "Camera on", done: camera?.running === true, hint: "In the Camera panel pick the camera (Detect lists them) or type its device, then press Start.", panel: "camera" },
                 {
                     label: "Mark",
                     done: camera?.mark !== null && camera?.mark !== undefined,
-                    hint: "Make mark cuts a mark with the tool (a spindle); on another machine make one by hand and press Mark is here over it.",
+                    hint: "Make mark cuts one with a spindle; otherwise mark by hand and press Mark is here over it.",
                     panel: "camera",
                 },
                 {
                     label: "Find mark",
                     done: camera?.routine?.state === "done",
-                    hint: "Press Find mark: the head goes where the camera should see the mark and centers the picture on it, which measures the offset.",
+                    hint: "Press Find mark: the head moves the camera over the mark and centers it, which measures the offset.",
                     panel: "camera",
                 },
             ];

@@ -19,7 +19,7 @@ export interface Word<K extends string> {
  * axis was renumbered since the run being picked up began.
  */
 export function focusHereWord(okLabel: string): Word<"focus_here"> {
-    return { key: "focus_here", ends: / with focus here$/, question: "Is the beam focused with the head where it is now?", okLabel };
+    return { key: "focus_here", ends: / with focus here$/, question: "Is the beam in focus with the head where it is now?", okLabel };
 }
 
 /** The job's plan changed since the run being picked up stopped, so its count is another line now. */
@@ -27,7 +27,7 @@ export function changedWord(line: number): Word<"changed"> {
     return {
         key: "changed",
         ends: / a line counted in the job as it is now$/,
-        question: `Pick it up at line ${line} of the job as it is now? Its lines are not the ones the stopped run counted.`,
+        question: `Pick it up at line ${line} of the job as it is now? Its lines differ from the stopped run's.`,
         okLabel: "Pick up the changed job",
     };
 }

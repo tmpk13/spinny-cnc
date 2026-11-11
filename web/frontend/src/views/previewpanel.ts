@@ -51,7 +51,7 @@ export function speedLimitsOf(state: AppState): SpeedLimits {
 /** What the cut order slider says at `at` of `total` paths. */
 export function scrubText(at: number, total: number, label: string | null): string {
     if (at >= total) {
-        return `all ${countText(total, "path", "paths")} in the order they are cut`;
+        return `all ${countText(total, "path", "paths")}, in cut order`;
     }
     if (at === 0) {
         return `none of ${total} cut yet`;
@@ -93,7 +93,7 @@ export function mountPreviewPanel(
     show: (state: AppState) => Job | null = shownJob,
     dims: ((state: AppState) => Dimension[]) | null = null,
 ): Preview {
-    const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board around the rotation axis" });
+    const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board" });
     const preview = new Preview(canvas);
     const lock = button(LOCK_LABEL, () => showLock(preview.toggleRotationLock()), "btn btn-quiet btn-small btn-toggle");
     const showLock = (locked: boolean): void => {
@@ -102,7 +102,7 @@ export function mountPreviewPanel(
     };
     showLock(preview.rotationLocked);
     const heights = button(HEIGHTS_LABEL, () => showHeights(preview.toggleHeights()), "btn btn-quiet btn-small btn-toggle");
-    heights.title = "draw the height map's mesh and probe points";
+    heights.title = "show the height map and probe points";
     const showHeights = (on: boolean): void => {
         heights.setAttribute("aria-pressed", on ? "true" : "false");
     };
@@ -113,7 +113,7 @@ export function mountPreviewPanel(
             apply(on);
         }
     }, "btn btn-quiet btn-small btn-toggle");
-    grid.title = "draw a square grid of X and Y under the work instead of rings about the axis";
+    grid.title = "X/Y grid instead of rings";
     const showGrid = (on: boolean): void => {
         grid.setAttribute("aria-pressed", on ? "true" : "false");
     };
@@ -126,22 +126,22 @@ export function mountPreviewPanel(
         preview.setBoxSelection(!preview.boxSelection);
         box.setAttribute("aria-pressed", preview.boxSelection ? "true" : "false");
     }, "btn btn-quiet btn-small btn-toggle");
-    box.title = "drag a box to pick every path inside it, with shift to add them; right drag still pans";
+    box.title = "drag a box to pick paths; shift adds, right drag pans";
     box.setAttribute("aria-pressed", "false");
     const speed = button(SPEED_LABEL, () => {
         preview.setSpeedView(!preview.speedView);
         speed.setAttribute("aria-pressed", preview.speedView ? "true" : "false");
         showScrub();
     }, "btn btn-quiet btn-small btn-toggle");
-    speed.title = "draw each cut by the speed it runs at, slow to fast, with the moves a machine rate holds below their group's speed marked red";
+    speed.title = "color cuts by speed; red where machine rates slow them";
     speed.setAttribute("aria-pressed", "false");
     // Stepping through the cut: the slider's end draws the job whole.
     const scrub = el("input", { type: "range", class: "scrub", min: "0", max: "0", value: "0", step: "1", "aria-label": "Cut order" }) as HTMLInputElement;
     const scrubNote = el("span", { class: "muted scrub-note" });
     const scrubBack = button("Back", () => stepScrub(-1), "btn btn-quiet btn-small");
-    scrubBack.title = "one path fewer cut";
+    scrubBack.title = "one path fewer";
     const scrubOn = button("On", () => stepScrub(1), "btn btn-quiet btn-small");
-    scrubOn.title = "one path more cut";
+    scrubOn.title = "one path more";
     const scrubRow = el("div", { class: "scrub-row hidden" }, scrubBack, scrub, scrubOn, scrubNote);
     scrub.addEventListener("input", () => setScrub(Number(scrub.value)));
 
@@ -204,16 +204,16 @@ export function mountPreviewPanel(
                 grid,
                 box,
                 speed,
-                viewButton("Top view", "look straight down, the board square to the canvas", () => preview.lookDown()),
-                viewButton("CCW 90", "turn the board a quarter counterclockwise on the canvas", () => preview.turnView(-1)),
-                viewButton("CW 90", "turn the board a quarter clockwise on the canvas", () => preview.turnView(1)),
+                viewButton("Top view", "look straight down", () => preview.lookDown()),
+                viewButton("CCW 90", "turn the view a quarter counterclockwise", () => preview.turnView(-1)),
+                viewButton("CW 90", "turn the view a quarter clockwise", () => preview.turnView(1)),
                 button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small"),
                 button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small"),
             ),
         ),
         el("div", { class: "preview-box" }, canvas),
         scrubRow,
-        el("p", { class: "muted hint" }, "drag orbits, or pans with the rotation locked; shift or right drag pans, wheel zooms, double click resets; a click picks a path, shift or ctrl adds one"),
+        el("p", { class: "muted hint" }, "drag orbits (pans when locked), shift or right drag pans, wheel zooms, double click resets; click picks a path, shift or ctrl adds"),
     );
 
     // The view is fitted again for another job, and kept for a fresh copy of

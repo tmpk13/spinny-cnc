@@ -33,8 +33,8 @@ export function focusPrompt(state: AppState): FocusPrompt | null {
     const record = state.snapshot.resume ?? null;
     const stopped = record?.state === "error" ? `Run ${record.job} stopped at line ${record.acked} of ${record.total}. ` : "";
     return {
-        text: `${stopped}The height map's ${what} offset (${offset} mm) was dropped, since the ${axis} may have moved.`
-            + ` If it has not, keep it; otherwise ${again}.`,
+        text: `${stopped}The height map's ${what} offset (${offset} mm) was dropped: the ${axis} may have moved.`
+            + ` Keep it if not; otherwise ${again}.`,
         keep: `Keep ${offset}`,
     };
 }

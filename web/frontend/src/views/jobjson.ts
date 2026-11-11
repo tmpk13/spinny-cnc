@@ -61,7 +61,7 @@ export function readJobText(text: string, id: string, stored: Job | null = null)
     }
     const raw = data as Record<string, unknown>;
     if (!Array.isArray(raw["groups"])) {
-        return "a job needs its groups, a list";
+        return "a job needs a groups list";
     }
     for (const [index, group] of (raw["groups"] as unknown[]).entries()) {
         if (typeof group !== "object" || group === null || Array.isArray(group)) {
@@ -150,15 +150,15 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
     const status = el("p", { class: "muted hint json-status" });
     const where = el("p", { class: "hint json-where" });
     const applyButton = button("Apply", () => apply(), "btn btn-primary btn-small");
-    applyButton.title = "make the job what the text says; the backend checks it as it checks an upload";
+    applyButton.title = "save the text as the job, checked like an upload";
     const revertButton = button("Revert", () => revert(), "btn btn-quiet btn-small");
-    revertButton.title = "throw the edit away and show the job as it is kept";
+    revertButton.title = "discard the edit";
     const showLarge = button("Show anyway", () => fill(ctx.store.get().job, true), "btn btn-quiet btn-small");
     const large = el("p", { class: "muted hint hidden" });
     const largeRow = el("div", { class: "button-row hidden" }, showLarge);
     const body = el("details", { class: "json-panel" },
         el("summary", {}, "Job JSON"),
-        el("p", { class: "muted hint" }, "The selected job, every path on a line of its own. The caret's path and point are drawn on the preview, and a path clicked there is found here; an edit is drawn as it is typed and kept with Apply."),
+        el("p", { class: "muted hint" }, "One path per line. The caret's path shows on the preview, a path clicked there is found here; Apply keeps an edit."),
         large,
         largeRow,
         editor,
@@ -223,14 +223,14 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         const job = state.job;
         if ((job?.id ?? null) !== shownFor) {
             if (dirty && previous.job) {
-                ctx.toast("info", `the JSON edit of ${previous.job.name} was left`);
+                ctx.toast("info", `dropped the JSON edit of ${previous.job.name}`);
             }
             fill(job);
             return;
         }
         if (job !== shownJob) {
             if (dirty) {
-                status.textContent = "the job changed since this text was taken: Revert takes it as it is now, Apply puts this text in its place";
+                status.textContent = "the job changed since; Revert reloads it, Apply overwrites it with this text";
             } else {
                 fill(job);
             }
@@ -250,7 +250,7 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
             status.textContent = made;
             return;
         }
-        status.textContent = `reads as a job of ${countText(made.groups.length, "group", "groups")}: drawn on the preview, not kept until Apply`;
+        status.textContent = `a job of ${countText(made.groups.length, "group", "groups")}, shown on the preview; Apply keeps it`;
         ctx.store.set({ jobDraft: made });
     }
 
@@ -327,8 +327,8 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
         await ctx.refreshJobs();
         // Paths changed are nothing the file or operations would make
         // again, so the backend keeps no recipe for such a job.
-        const lost = job.recipe && !kept.recipe ? `, no longer made again from its ${job.recipe.file ? "file" : "operations"}` : "";
-        ctx.toast("info", `${kept.name}: kept as the text says${lost}`);
+        const lost = job.recipe && !kept.recipe ? `, no longer remade from its ${job.recipe.file ? "file" : "operations"}` : "";
+        ctx.toast("info", `${kept.name}: saved${lost}`);
     }
 
     function revert(): void {

@@ -241,7 +241,7 @@ describe("moving picked paths between groups", () => {
         store.set({ selection: { job: made.id, paths: [[1, 0]] } });
         press("Delete paths");
         await settle();
-        expect(document.querySelector("dialog[open]")?.textContent).toContain("no longer made again from its operations");
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("no longer remade from its operations");
         dialogButton("Delete paths").click();
         await settleMany();
         expect(sent().recipe).toBeNull();
@@ -257,7 +257,7 @@ describe("moving picked paths between groups", () => {
         store.set({ selection: { job: other.id, paths: [[1, 0]] } });
         press("Move");
         await settle();
-        expect(document.querySelector("dialog[open]")?.textContent).toContain("no longer made again from its operations");
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("no longer remade from its operations");
         dialogButton("Move").click();
         await settleMany();
         expect(sent().recipe).toBeNull();
@@ -416,7 +416,7 @@ describe("the job as JSON", () => {
         Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Apply")!.click();
         await settleMany();
         expect((await api.job(made.id)).recipe ?? null).toBeNull();
-        expect(store.get().toasts.map((toast) => toast.text)).toContain(`${made.name}: kept as the text says, no longer made again from its operations`);
+        expect(store.get().toasts.map((toast) => toast.text)).toContain(`${made.name}: saved, no longer remade from its operations`);
         root.remove();
     });
 });

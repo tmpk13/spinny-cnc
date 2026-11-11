@@ -29,7 +29,7 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
         button("Clear", () => { ctx.store.set({ console: [] }); }, "btn btn-quiet btn-small"),
         button("Log", () => showLog("spinny"), "btn btn-quiet btn-small"),
         button("Wire", () => showLog("wire"), "btn btn-quiet btn-small"),
-        el("label", { class: "check", for: "show-polls", title: "Show the status polls the link sends on its own" }, polls, "polls"),
+        el("label", { class: "check", for: "show-polls", title: "Show the link's own status polls" }, polls, "polls"),
     );
 
     /**

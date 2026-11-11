@@ -46,7 +46,7 @@ export function headOrSay(ctx: Ctx): Board | null {
 
 /** A select of the markers that hands the one picked to `onPick` and goes back to its prompt. */
 export function markerPicker(ctx: Ctx, prompt: string, onPick: (marker: Marker) => void): HTMLSelectElement {
-    const select = el("select", { class: "field marker-pick", "aria-label": prompt, title: "take the position of a marker" }) as HTMLSelectElement;
+    const select = el("select", { class: "field marker-pick", "aria-label": prompt, title: "use a marker's position" }) as HTMLSelectElement;
     const fill = (markers: Marker[]): void => {
         replace(select,
             el("option", { value: "" }, prompt),
@@ -74,7 +74,7 @@ export function mountMarkers(root: HTMLElement, ctx: Ctx): void {
     x.setAttribute("aria-label", "Marker x");
     y.setAttribute("aria-label", "Marker y");
     const here = button("Mark here", () => markHere(), "btn btn-primary btn-small");
-    here.title = "save where the head is over the board, under the name typed or the next M number";
+    here.title = "save the head's position under the typed name or the next M number";
     const add = button("Add", () => addTyped(), "btn btn-quiet btn-small");
     add.title = "save the x and y typed";
     const list = el("ul", { class: "marker-list" });
@@ -82,7 +82,7 @@ export function mountMarkers(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "panel-head" }, el("h2", {}, "Markers"), el("div", { class: "button-row" }, here)),
         el("div", { class: "marker-add" }, labeled("Name", name), labeled("X", x), labeled("Y", y), add),
         list,
-        el("p", { class: "muted hint" }, "a name used again moves that marker; Go rises to the travel height before going across"),
+        el("p", { class: "muted hint" }, "a reused name moves that marker; Go rises to travel height first"),
     );
 
     async function save(markers: Marker[]): Promise<boolean> {
@@ -115,7 +115,7 @@ export function mountMarkers(root: HTMLElement, ctx: Ctx): void {
         const mx = parseNumber(x.value);
         const my = parseNumber(y.value);
         if (mx === null || my === null) {
-            ctx.toast("error", "a marker needs an x and a y");
+            ctx.toast("error", "a marker needs x and y");
             return;
         }
         const markers = ctx.store.get().markers;

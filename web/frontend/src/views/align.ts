@@ -22,7 +22,7 @@ export function fitText(fit: AlignFit | null, problem: string | null = null): st
     }
     const what = fit.marks === 1 ? "one mark: a shift" : `${fit.marks} marks`;
     return `${what}: rotation ${formatFixed(fit.rotation, 4)} deg, shift X ${formatFixed(fit.shift[0], 3)} Y ${formatFixed(fit.shift[1], 3)} mm,`
-        + ` scale ${formatFixed(fit.scale, 5)} (reported only), rms ${formatFixed(fit.rms, 3)} mm`;
+        + ` scale ${formatFixed(fit.scale, 5)} (not applied), rms ${formatFixed(fit.rms, 3)} mm`;
 }
 
 /** A capture needs a running camera with this job's board loaded and locked. */
@@ -46,7 +46,7 @@ export type MarkPick = "pad" | "hole" | "point";
 export function mountAlign(root: HTMLElement, ctx: Ctx): void {
     const badge = el("span", { class: "badge align-badge" }, "no marks");
     const table = el("table", { class: "align-marks" });
-    const pick = el("select", { class: "field", "aria-label": "What the mark pairs the tool's point with" },
+    const pick = el("select", { class: "field", "aria-label": "Pair the tool's point with" },
         el("option", { value: "pad" }, "nearest pad"),
         el("option", { value: "hole" }, "nearest hole"),
         el("option", { value: "point" }, "a point"),
@@ -80,10 +80,8 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "button-row" }, applyButton, clearButton),
         note,
         el("p", { class: "muted hint" },
-            "Mark here pairs the tool's point now with the job's nearest pad or hole, or with a point typed in. Capture from camera"
-            + " pairs the picture's center in the job's frame with the tool's point plus the camera offset, and takes the board's angle"
-            + " from the pose. One mark gives a shift, two or more a turn and a shift fitted by least squares. Apply turns the job"
-            + " about the origin and shifts it: its paths, outline, copper, pads and holes move."),
+            "Mark here pairs the tool's point with the nearest pad or hole, or a typed point; Capture from camera uses the"
+            + " picture's center. One mark fits a shift, two or more a turn too. Apply turns the job about the origin and shifts it."),
     );
     root.append(foldPanel("spinny.align.open", el("summary", { class: "panel-head" }, el("h2", {}, "Align"), badge), body));
 
@@ -105,7 +103,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
         } else {
             const reach = parseNumber(within.value);
             if (reach === null || reach <= 0) {
-                ctx.toast("error", "within is a distance in mm above 0");
+                ctx.toast("error", "within: more than 0 mm");
                 return;
             }
             request.nearest = pick.value as "pad" | "hole";
@@ -142,7 +140,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
         }
         const ok = await askConfirm(
             `Turn ${job.name} by ${formatFixed(fit.rotation, 4)} deg about the origin and move it by X ${formatFixed(fit.shift[0], 3)}`
-            + ` Y ${formatFixed(fit.shift[1], 3)} mm (rms ${formatFixed(fit.rms, 3)} mm)? Its paths, outline, copper, pads and holes move with it.`,
+            + ` Y ${formatFixed(fit.shift[1], 3)} mm (rms ${formatFixed(fit.rms, 3)} mm)? The whole job moves.`,
             "Apply",
         );
         if (!ok) {
@@ -233,12 +231,12 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
             ));
         replace(table,
             el("thead", {}, el("tr", {},
-                el("th", { title: "The design point: a pad or hole of the job, or a point typed in, in the job's frame" }, "Design"),
-                el("th", { title: "Where the machine found it: the tool's point, or the picture's center" }, "Machine"),
+                el("th", { title: "Pad, hole or typed point, in the job's frame" }, "Design"),
+                el("th", { title: "Where the machine found it: tool point or camera center" }, "Machine"),
                 el("th", {}, "Source"),
                 el("th", {}, "Kind"),
-                el("th", { title: "How far the tool was from the pad or hole picked" }, "Distance"),
-                el("th", { title: "The mark's distance from where the last fit puts it" }, "Residual"),
+                el("th", { title: "Tool's distance from the pad or hole" }, "Distance"),
+                el("th", { title: "Distance from where the fit puts it" }, "Residual"),
                 el("th", {}, ""),
             )),
             el("tbody", {}, ...rows),
