@@ -213,6 +213,28 @@ describe("reading an OpenPnP setup", () => {
         expect(parseDevice(buildProfile("lumen", items, kept), "lumen").vacuum?.part_on).toEqual([220, 241]);
     });
 
+    test("a Photon feeder, or one whose place is not set, is left out with why", () => {
+        const extra = MACHINE.replace("</feeders>", `<feeder class="org.openpnp.machine.photon.PhotonFeeder" id="P1" name="Photon 3" enabled="true" part-id="C0402-100n" hardware-id="0123456789AB">
+            <location units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>
+            <offset units="Millimeters" x="0.5" y="-2.0" z="0.0" rotation="0.0"/>
+         </feeder>
+         <feeder class="org.openpnp.machine.reference.feeder.ReferenceAutoFeeder" id="A1" name="Bare auto" enabled="true" part-id="LED-0603">
+            <location units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>
+         </feeder>
+         <feeder class="org.openpnp.machine.reference.feeder.BlindsFeeder" id="B1" name="Blinds" enabled="true" part-id="C0603-1u">
+            <location units="Millimeters" x="80.0" y="30.0" z="12.0" rotation="0.0"/>
+         </feeder>
+      </feeders>`);
+        const { items, warnings } = machineItems(readMachine(extra));
+        const feeders = items.filter((item) => item.group === "Feeders").map((item) => [item.label, item.keep]);
+        // The Photon feeder and the one at 0, 0, 0 are not offered at all;
+        // a kind the import does not know is offered, left unticked.
+        expect(feeders.map(([label]) => label)).toEqual(["MCU tray (TrayFeeder)", "10k strip (StripFeeder)", "Blinds (BlindsFeeder)"]);
+        expect(feeders[2]![1]).toBe(false);
+        expect(warnings.some((warning) => warning.startsWith("feeder Photon 3 (C0402-100n) is left out: a Photon feeder"))).toBe(true);
+        expect(warnings.some((warning) => warning.startsWith("feeder Bare auto (LED-0603) is left out: its place is not set"))).toBe(true);
+    });
+
     test("a job's placements become references, the place Z, and the strip's parts", () => {
         const machine = readMachine(MACHINE);
         const job = readJob(JOB, new Map([["board.board.xml", BOARD]]));

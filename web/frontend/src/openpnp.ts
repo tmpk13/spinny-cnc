@@ -266,6 +266,8 @@ export interface OpenPnpFeeder {
     /** An auto feeder's actuator, which is told to feed. */
     actuator: string | null;
     note: string | null;
+    /** Why its place cannot be read from the file, when it cannot: such a feeder is left out. */
+    unplaced: string | null;
 }
 
 export interface OpenPnpMachine {
@@ -335,8 +337,12 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
         taken: number(node.attrs["feed-count"]),
         actuator: node.attrs["actuator-name"] ?? null,
         note: null as string | null,
+        unplaced: null as string | null,
     };
     const location = placeOf(child(node, "location")) ?? { x: 0, y: 0, z: 0, rotation: 0 };
+    // A place of 0, 0, 0 is one never set: going there would take the
+    // nozzle down to Z 0 wherever that is.
+    const unset = location.x === 0 && location.y === 0 && location.z === 0 ? "its place is not set in the file" : null;
     // The head's place with the nozzle over a point.
     const head = (place: Place): Place => ({ x: place.x - nozzleOffset.x, y: place.y - nozzleOffset.y, z: place.z - nozzleOffset.z, rotation: place.rotation });
     if (kind === "ReferenceTrayFeeder" || kind === "ReferenceRotatedTrayFeeder") {
@@ -354,6 +360,7 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
             count: countX * countY,
             rotation: location.rotation,
             note: kind === "ReferenceRotatedTrayFeeder" ? "a rotated tray, read as square to the axes" : null,
+            unplaced: unset,
         };
     }
     if (kind === "ReferenceStripFeeder") {
@@ -381,13 +388,25 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
             count: Math.max(1, total - fed),
             rotation: (turn * 180) / Math.PI + (eia ? 90 : 0) + location.rotation,
             note: fed > 0 ? `starts at OpenPnP's next part, #${fed + 1}` : null,
+            unplaced: first.x === 0 && first.y === 0 && first.z === 0 ? "its reference hole is not set in the file" : null,
         };
     }
     if (kind === "PhotonFeeder") {
-        return { ...base, at: head(location), rotation: location.rotation, note: "a Photon feeder: its tape is not advanced; feed it by hand or a feed line" };
+        // Its slot is found on the RS-485 bus by its hardware id when OpenPnP
+        // runs, so the file holds no place for it, and its tape is advanced
+        // by packets this page does not send.
+        return {
+            ...base, at: head(location), rotation: location.rotation,
+            unplaced: "a Photon feeder: OpenPnP finds its slot on the feeders' RS-485 bus as it runs, so the file holds no place for it, and its tape is not advanced here",
+        };
     }
     // An auto feeder, a tube, a drag feeder: picked from one place.
-    return { ...base, at: head(location), rotation: location.rotation, note: kind === "ReferenceAutoFeeder" ? null : `a ${kind}: picked at its one place` };
+    const known = ["ReferenceAutoFeeder", "ReferenceTubeFeeder", "ReferenceDragFeeder", "ReferencePushPullFeeder", "ReferenceLoosePartFeeder"].includes(kind);
+    return {
+        ...base, at: head(location), rotation: location.rotation, unplaced: unset,
+        note: kind === "ReferenceAutoFeeder" ? null : known ? `a ${kind}: picked at its one place` : `a ${kind}, which the import does not know: check its place before keeping it`,
+        enabled: base.enabled && known,
+    };
 }
 
 /** The setup an OpenPnP machine.xml describes. */
@@ -809,6 +828,10 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
     }
     const ids = new Set<string>();
     for (const feeder of machine.feeders) {
+        if (feeder.unplaced) {
+            warnings.push(`feeder ${feeder.name} (${feeder.partId || "no part"}) is left out: ${feeder.unplaced}`);
+            continue;
+        }
         // The feeders' places were read for the first nozzle: move them to this one's.
         const shift = { x: (machine.nozzles[0]?.offset.x ?? 0) - offset.x, y: (machine.nozzles[0]?.offset.y ?? 0) - offset.y, z: (machine.nozzles[0]?.offset.z ?? 0) - offset.z };
         const id = feederId(feeder.name, ids);

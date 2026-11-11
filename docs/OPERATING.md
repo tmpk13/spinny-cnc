@@ -576,7 +576,8 @@ two parts left out one after another.
 Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the nozzle well
 above the board. Photon feeders are not driven: their tape does not
-advance. The part's angle needs pcb-vision at b4d1299 or later (the
+advance, and the import leaves them out (OpenPnP finds each one's slot on
+the feeders' bus as it runs, so its machine.xml holds no place for it). The part's angle needs pcb-vision at b4d1299 or later (the
 spot's smallest rectangle); an older pcbv places without correcting it
 and says so.
 
