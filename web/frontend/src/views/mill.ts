@@ -19,16 +19,14 @@ import { turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, numberField, readStored, relabel, replace, setLocked, writeStored } from "../dom.ts";
-import { countText, formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
+import { countText, formatMm, parseNumber } from "../format.ts";
 import { isDispensing, profileOf } from "../profile.ts";
 import { defaultOperation, movedDims, operationDims, operationSummary, recipeOps, sameOperation, type RectMode } from "../sketch.ts";
 import { setPending, type AppState } from "../state.ts";
-import type { Compensate, HolePoint, Job, MillKind, MillOperation, MillShape, MillSide, Point } from "../types.ts";
+import type { HolePoint, Job, MillKind, MillOperation, MillShape, MillSide, Point } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
-import { withFocusHere } from "./focushere.ts";
-import { mapUsable, runActive } from "./heightmap.ts";
-import { progressText } from "./jobs.ts";
 import { headOrSay, markerPicker } from "./markers.ts";
+import { mountRun } from "./run.ts";
 
 /** Where the page's fields are remembered between visits. */
 export const MILL_KEY = "spinny.mill";
@@ -1017,76 +1015,5 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     renderJob();
     void plan();
 
-    mountMillRun(roots.run, ctx);
-}
-
-/** The run panel: the selected job, how it follows the height map, and its run controls and progress. */
-function mountMillRun(root: HTMLElement, ctx: Ctx): void {
-    const title = el("span", { class: "muted mill-run-job" });
-    const stats = el("p", { class: "muted" });
-    const compensate = el("select", { class: "field", "aria-label": "Height map" },
-        el("option", { value: "off" }, "no height map"),
-        el("option", { value: "auto" }, "height map: auto"),
-    ) as HTMLSelectElement;
-    const runButton = button("Run", () => run(), "btn btn-primary");
-    const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
-    const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
-    const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
-    const progressBar = el("div", { class: "progress-fill" });
-    const progressState = el("span", { class: "badge run-state" });
-    const progressCounts = el("span", { class: "progress-counts" });
-    const progressTime = el("span", { class: "progress-time" });
-    const progressReason = el("span", { class: "progress-reason" });
-    const progressBox = el("div", { class: "progress hidden" },
-        el("div", { class: "progress-track" }, progressBar),
-        el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
-    );
-    const mapNote = el("p", { class: "muted hint hidden" });
-    root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Run"), title),
-        stats,
-        el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton),
-        mapNote,
-        progressBox,
-        el("p", { class: "muted hint" }, "before a run: zero the depth on the surface (mill) or focus the beam (laser)"),
-    );
-
-    async function run(): Promise<void> {
-        const job = ctx.store.get().job;
-        if (!job) {
-            return;
-        }
-        await withFocusHere(ctx, (focusHere) => ctx.api.runJob(job.id, compensate.value as Compensate, focusHere), "Focused here: run");
-        await ctx.refreshState();
-    }
-
-    function render(state: AppState): void {
-        const job = state.job;
-        title.textContent = job ? job.name : "no job selected";
-        stats.textContent = job ? `${formatLength(job.stats.length_mm)}, about ${formatDuration(job.stats.seconds)}, ${job.groups.filter((group) => group.enabled).length} of ${job.groups.length} groups on` : "make a job, or select one in the Jobs panel";
-        const progress = state.progress ?? state.snapshot.run;
-        const text = progressText(progress);
-        progressBar.style.width = `${(text.bar * 100).toFixed(1)}%`;
-        progressState.textContent = text.state;
-        progressState.setAttribute("data-run", text.state);
-        progressCounts.textContent = text.counts;
-        progressTime.textContent = text.time;
-        progressReason.textContent = text.reason;
-        progressBox.classList.toggle("hidden", progress === null || progress.job !== job?.id);
-        const active = runActive(progress);
-        const connected = state.snapshot.connected;
-        setLocked(runButton, !connected || active || !job);
-        setLocked(holdButton, !connected || !active || progress?.state !== "running");
-        setLocked(resumeButton, !connected || !active || progress?.state !== "hold");
-        setLocked(stopButton, !connected || !active);
-        compensate.disabled = active;
-        const auto = compensate.value === "auto";
-        const usable = mapUsable(state.heightMap?.map ?? null);
-        mapNote.textContent = auto && !usable ? "no usable height map: probe one and take its offset, or Run is refused" : "";
-        mapNote.classList.toggle("hidden", mapNote.textContent === "");
-    }
-
-    compensate.addEventListener("change", () => render(ctx.store.get()));
-    ctx.store.subscribe((state) => render(state), ["job", "progress", "snapshot", "heightMap"]);
-    render(ctx.store.get());
+    mountRun(roots.run, ctx, { stats: true, hint: "before a run: zero the depth on the surface (mill) or focus the beam (laser)" });
 }

@@ -1,20 +1,20 @@
-// Upload, job list, the selected job's groups and stats, and the run controls.
+// Upload, job list, the selected job's groups and stats; the Run panel beside them is run.ts.
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, downloadText, el, fileDrop, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
 import { countText, formatDuration, formatFixed, formatLength, formatMm, formatOptional, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
-import { isCartesian, isDispensing, isMilling, profileOf } from "../profile.ts";
+import { isMilling, profileOf } from "../profile.ts";
 import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, BoardMode, ClearPattern, Compensate, DepositFill, Group, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest, UploadOptions } from "../types.ts";
+import type { Anchor, BoardMode, ClearPattern, DepositFill, Job, UploadOptions } from "../types.ts";
 import { calibrationTest } from "./calibrate.ts";
 import { centerTest } from "./center.ts";
-import { focusAgainText, mapUsable, mapUse, runActive, runMapUse, showMapUse } from "./heightmap.ts";
+import { runActive } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
-import { changedWord, focusHereWord, withFocusHere, withWords } from "./focushere.ts";
+import { mountRun } from "./run.ts";
 
 /** Every file the Jobs import reads: a drawing, a job, a board layer's gerber or the KiCad file, or gcode. */
 export const ACCEPT = [".svg", ".json", ...GERBER_SUFFIXES, ".kicad_pcb", ...GCODE_SUFFIXES].join(",");
@@ -39,62 +39,6 @@ export function stencilMargin(job: Job): number | null {
     }
     const margin = options["margin"];
     return typeof margin === "number" && Number.isFinite(margin) ? margin : 0;
-}
-
-export function progressText(progress: Progress | null): { bar: number; counts: string; time: string; state: string; reason: string } {
-    if (!progress) {
-        return { bar: 0, counts: "", time: "", state: "", reason: "" };
-    }
-    const bar = progress.total > 0 ? Math.min(1, progress.acked / progress.total) : 0;
-    const from = progress.resumed_from ? `, picked up at line ${progress.resumed_from}` : "";
-    return {
-        bar,
-        counts: `${progress.sent} sent / ${progress.acked} acked / ${progress.total}${from}`,
-        time: `${formatDuration(progress.seconds)} / ${formatDuration(progress.estimate)}`,
-        state: progress.state,
-        // Why a run ended the way it did stays with the run, after the
-        // toast that announced it is gone.
-        reason: progress.error ?? "",
-    };
-}
-
-/**
- * The run of `jobId` a resume could pick up: the progress of the last run
- * when it is this job's and over, else the record kept across sessions.
- * Null while nothing of this job has run, or it ran to the end.
- */
-export function resumable(jobId: string | null, progress: Progress | null, record: ResumeRecord | null | undefined): Progress | ResumeRecord | null {
-    if (jobId === null) {
-        return null;
-    }
-    const candidates = [progress, record ?? null];
-    for (const candidate of candidates) {
-        if (!candidate || candidate.job !== jobId) {
-            continue;
-        }
-        if (candidate.state === "running" || candidate.state === "hold" || candidate.state === "done") {
-            return null;
-        }
-        if (candidate.acked > 0 || candidate.sent > 0) {
-            return candidate;
-        }
-    }
-    return null;
-}
-
-/** Where the last run says the head is, for the operator to check against the machine. */
-export function recordPositionText(record: ResumeRecord | null | undefined, cartesian: boolean): string {
-    const position = record?.position;
-    if (!position) {
-        return "";
-    }
-    const parts = cartesian
-        ? [`X ${formatMm(position.r)}`, `Y ${formatMm(position.z)}`]
-        : [`R ${formatMm(position.r)}`, `A ${position.a.toFixed(3)}`];
-    if (position.h !== null && position.h !== undefined) {
-        parts.push(`${cartesian ? "Z" : "H"} ${formatMm(position.h)}`);
-    }
-    return `last reported position ${parts.join(" ")}${record?.note ? ` (${record.note})` : ""}`;
 }
 
 interface GroupRow {
@@ -137,24 +81,6 @@ export const DEFAULT_PLUNGE = 60;
 /** The paste over a pad when a job does not say, mm. */
 export const DEFAULT_THICKNESS = 0.12;
 
-/** A group of dots: every path one point, as a dispense import makes them. */
-export function isDots(group: Group): boolean {
-    return group.paths.length > 0 && group.paths.every((path) => path.length === 1);
-}
-
-/**
- * Why a dispenser machine would refuse to run the job, as the backend
- * refuses it: an enabled group of paths rather than dots. Empty when it
- * would run, or the machine is not a dispenser.
- */
-export function dispenseRefusal(job: Job | null, dispensing: boolean): string {
-    if (!job || !dispensing) {
-        return "";
-    }
-    const bad = job.groups.find((group) => group.enabled && (group.paths.length > 0 || (group.joints?.length ?? 0) > 0) && !isDots(group));
-    return bad ? `${bad.label}: a dispenser lays dots: import the board with mode dispense` : "";
-}
-
 /**
  * What a new width does to a job, as the backend decides it: the job is
  * made again from its recipe (a kept board file, a Plot page operation),
@@ -190,9 +116,9 @@ export function jobLabels(milling: boolean): { power: string; speed: string; spo
 }
 
 /**
- * The Jobs panel in `root`, and the run controls in `runRoot`: a panel of
- * their own at the foot of the column, so Run stays in reach however long
- * the list and the groups grow.
+ * The Jobs panel in `root`, and the Run panel in `runRoot`: a panel of its
+ * own at the foot of the column, so Run stays in reach however long the
+ * list and the groups grow.
  */
 export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): void {
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Job file" });
@@ -858,158 +784,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         ctx.toast("info", `${count} deleted from ${job.name}`);
     }
 
-    // Why a dispenser would refuse the job, beside the run button.
-    const runNote = el("span", { class: "muted run-note hidden" });
-    const progressBar = el("div", { class: "progress-fill" });
-    const progressCounts = el("span", { class: "progress-counts" });
-    const progressTime = el("span", { class: "progress-time" });
-    const progressState = el("span", { class: "badge run-state" });
-    const progressReason = el("span", { class: "progress-reason" });
-    const runButton = button("Run", () => run(), "btn btn-primary");
-    // How the run follows the height map. It turns to auto by itself while a
-    // usable map exists and back to off when there is none, until the
-    // operator picks something; a choice the map cannot meet is refused by
-    // the backend rather than run without it.
-    const compensate = el("select", { class: "field", "aria-label": "Height map" },
-        el("option", { value: "off" }, "no height map"),
-        el("option", { value: "auto" }, "height map: auto"),
-        el("option", { value: "focus" }, "height map: focus axis"),
-        el("option", { value: "power" }, "height map: power"),
-    ) as HTMLSelectElement;
-    const focusOption = compensate.querySelector('option[value="focus"]') as HTMLOptionElement;
-    const powerOption = compensate.querySelector('option[value="power"]') as HTMLOptionElement;
-    let compensateTouched = false;
-    compensate.addEventListener("change", () => {
-        compensateTouched = true;
-        renderProgress(ctx.store.get());
-    });
-    // What Run does with the map, or what the run under way does with it.
-    const mapChip = el("span", { class: "badge map-use" });
-    const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
-    const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
-    const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
-    const runRow = el("div", { class: "run-row" }, runButton, compensate, mapChip, holdButton, resumeButton, stopButton, runNote);
-    // A map that lost its offset is not followed until it is taken again.
-    const compensateNote = el("p", { class: "muted hint hidden" });
-    const progressBox = el("div", { class: "progress" },
-        el("div", { class: "progress-track" }, progressBar),
-        el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
-    );
-    // Picking a stopped run up: the line to go on from, whether to start
-    // that line's path over, what the plan says, and the button.
-    const pickupLine = numberField({ min: 0, step: 1, width: "7rem" });
-    const pickupRewind = el("input", { type: "checkbox" }) as HTMLInputElement;
-    pickupRewind.checked = true;
-    const pickupPlanButton = button("Plan", () => planPickup(), "btn btn-quiet btn-small");
-    const pickupButton = button("Resume from line", () => pickup(), "btn btn-primary btn-small");
-    const pickupNote = el("p", { class: "muted hint" });
-    const pickupPosition = el("p", { class: "muted hint" });
-    const pickupBox = el("div", { class: "pickup hidden" },
-        el("div", { class: "run-row" },
-            labeled("Line done", pickupLine, "labeled inline"),
-            el("label", { class: "muted" }, pickupRewind, " from the start of its path"),
-            pickupPlanButton,
-            pickupButton,
-        ),
-        pickupNote,
-        pickupPosition,
-    );
-    // The job whose count the line field was filled from, so a new job or
-    // a new record fills it again without overwriting what was typed.
-    let pickupFilledFor: string | null = null;
-    // The run controls: the selected job's name over them, since the
-    // panel they sit in may be far from the list it was picked in.
-    const runTitle = el("span", { class: "muted run-job" });
-    runRoot.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Run"), runTitle),
-        runRow,
-        compensateNote,
-        progressBox,
-        pickupBox,
-    );
-
-    async function run(): Promise<void> {
-        const job = ctx.store.get().job;
-        if (!job) {
-            return;
-        }
-        await withFocusHere(ctx, (focusHere) => ctx.api.runJob(job.id, compensate.value as Compensate, focusHere), "Focused here: run");
-        await ctx.refreshState();
-    }
-
-    function pickupRequest(): { line: number; rewind: boolean; compensate: Compensate | null } | null {
-        const line = parseNumber(pickupLine.value);
-        if (line === null || !Number.isInteger(line) || line < 0) {
-            ctx.toast("error", "line done: a whole number, 0 or more");
-            return null;
-        }
-        // The map choice follows the row above: what the operator picked, or
-        // the way the run being picked up followed the board when untouched.
-        return { line, rewind: pickupRewind.checked, compensate: compensateTouched ? (compensate.value as Compensate) : null };
-    }
-
-    /**
-     * The pickup's plan, with the words the backend asked the operator for:
-     * that the head is at focus where it stands, or that the line is
-     * counted in the job as it is now. Undefined when refused or declined.
-     */
-    function planWithWords(job: Job, request: ResumeRequest): Promise<{ value: ResumePlan; given: ReadonlySet<"focus_here" | "changed"> } | undefined> {
-        const words = [focusHereWord("Focused here: plan"), changedWord(request.line)];
-        return withWords(ctx, words, (given) => ctx.api.planResume(job.id, { ...request, focus_here: given.has("focus_here"), changed: given.has("changed") }));
-    }
-
-    /** What the operator's words make of the plan, said after it. */
-    function wordsText(given: ReadonlySet<"focus_here" | "changed">): string {
-        const here = given.has("focus_here") ? " Focus counts from the head's height now." : "";
-        const changed = given.has("changed") ? " Lines count in the job as it is now, not as the stopped run had it." : "";
-        return `${here}${changed}`;
-    }
-
-    async function planPickup(): Promise<void> {
-        const job = ctx.store.get().job;
-        const request = pickupRequest();
-        if (!job || !request) {
-            return;
-        }
-        const planned = await planWithWords(job, request);
-        if (!planned) {
-            return;
-        }
-        const plan = planned.value;
-        const approach = plan.approach.length ? ` First: ${plan.approach.join("; ")}.` : "";
-        const where = plan.next ? ` Then line ${plan.skip}: ${plan.next}.` : " Nothing left to send.";
-        const fromRecord = plan.planned_from_record ? "" : " The last record is another job's; lines count from the head's position now.";
-        pickupNote.textContent = `Starts at line ${plan.skip} of ${plan.total} (${plan.compensate === "off" ? "no height map" : `height map: ${plan.compensate}`}).${approach}${where}${fromRecord}${wordsText(planned.given)}`;
-    }
-
-    async function pickup(): Promise<void> {
-        const job = ctx.store.get().job;
-        const request = pickupRequest();
-        if (!job || !request) {
-            return;
-        }
-        const planned = await planWithWords(job, request);
-        if (!planned) {
-            return;
-        }
-        const plan = planned.value;
-        const ok = await askConfirm(
-            `Resume ${job.name} at line ${plan.skip} of ${plan.total}? The head moves there first:`
-            + ` ${plan.approach.join("; ") || "nothing to do"}. Check the position shown matches the head.`
-            + wordsText(planned.given),
-            "Resume",
-        );
-        if (!ok) {
-            return;
-        }
-        const words = { focus_here: planned.given.has("focus_here"), changed: planned.given.has("changed") };
-        const started = await ctx.call(ctx.api.resumeJob(job.id, { ...request, ...words }));
-        if (started) {
-            ctx.store.set({ progress: started });
-            pickupNote.textContent = "";
-        }
-        await ctx.refreshState();
-    }
+    mountRun(runRoot, ctx);
 
     function renderDetails(state: AppState): void {
         const job = state.job;
@@ -1019,7 +794,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 detailsJob = null;
                 replace(details, el("p", { class: "muted" }, "select a job to see its groups"));
             }
-            renderProgress(state);
+            renderForm(state);
             return;
         }
         const milling = isMilling(state.snapshot);
@@ -1045,7 +820,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             detailsJob = job;
             refreshDetails(job);
         }
-        renderProgress(state);
+        renderForm(state);
     }
 
     function refreshDetails(job: Job): void {
@@ -1086,69 +861,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         statsEl = fresh;
     }
 
-    function renderProgress(state: AppState): void {
-        const progress = state.progress ?? state.snapshot.run;
-        const text = progressText(progress);
-        progressBar.style.width = `${(text.bar * 100).toFixed(1)}%`;
-        progressCounts.textContent = text.counts;
-        progressTime.textContent = text.time;
-        progressState.textContent = text.state;
-        progressState.setAttribute("data-run", text.state);
-        progressReason.textContent = text.reason;
-        progressBox.classList.toggle("hidden", progress === null || (progress.job !== state.job?.id));
-        const active = runActive(progress);
-        const connected = state.snapshot.connected;
-        // A dispenser lays dots: a job of paths is refused before it is sent.
-        const refusal = dispenseRefusal(state.job, isDispensing(state.snapshot));
-        runNote.textContent = refusal;
-        runNote.classList.toggle("hidden", refusal === "");
-        runButton.title = refusal;
-        setLocked(runButton, !connected || active || !state.job || refusal !== "");
-        runTitle.textContent = state.job ? state.job.name : "no job selected";
-        setLocked(holdButton, !connected || !active || progress?.state !== "running");
-        setLocked(resumeButton, !connected || !active || progress?.state !== "hold");
-        setLocked(stopButton, !connected || !active);
-        compensate.disabled = active;
-        // A spindle follows the board with its depth axis or not at all.
-        const milling = isMilling(state.snapshot);
-        powerOption.disabled = milling;
-        focusOption.textContent = milling ? "height map: depth axis" : "height map: focus axis";
-        if (milling && compensate.value === "power") {
-            compensate.value = "auto";
-        }
-        const map = state.heightMap?.map ?? null;
-        if (!compensateTouched) {
-            compensate.value = mapUsable(map) ? "auto" : "off";
-        }
-        const again = focusAgainText(map, milling);
-        compensateNote.textContent = again;
-        compensateNote.classList.toggle("hidden", again === "");
-        const choice = compensate.value as Compensate;
-        const ours = active && progress?.job === state.job?.id;
-        const planned = mapUse(choice, map, state.job, profileOf(state.snapshot));
-        showMapUse(mapChip, ours ? runMapUse(progress, milling) ?? planned : planned);
-        // The other panels say what the choice does; set last, since it
-        // calls them back.
-        ctx.store.set({ mapChoice: choice });
-        // A run of this job that stopped short can be picked up where it
-        // got to, this session's or an earlier one's.
-        const record = state.snapshot.resume ?? null;
-        const candidate = resumable(state.job?.id ?? null, progress, record);
-        pickupBox.classList.toggle("hidden", candidate === null);
-        if (candidate !== null) {
-            const key = `${candidate.job}:${candidate.acked}`;
-            if (pickupFilledFor !== key && pickupLine !== document.activeElement) {
-                pickupFilledFor = key;
-                pickupLine.value = String(candidate.acked);
-                pickupNote.textContent = "";
-            }
-            pickupPosition.textContent = recordPositionText(record?.job === candidate.job ? record : null, isCartesian(state.snapshot));
-            const idle = state.snapshot.machine?.state === "Idle";
-            setLocked(pickupButton, !connected || active || !idle);
-            setLocked(pickupPlanButton, !connected || active);
-        }
+    /** The parts of the Jobs panel that follow the selected job and the machine: Save, and the upload's labels. */
+    function renderForm(state: AppState): void {
         setLocked(saveButton, !state.job);
-        const labels = jobLabels(milling);
+        const labels = jobLabels(isMilling(state.snapshot));
         relabel(powerLabel, labels.power);
         relabel(speedLabel, labels.speed);
         relabel(spotLabel, labels.spot);

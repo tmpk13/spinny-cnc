@@ -477,7 +477,7 @@ describe("Plot page", () => {
         const { run, store, calls, backend } = mountPage();
         const job = await backend.makeMill({ ops: [{ ...defaultOperation("drill"), points: [[1, 1]] }] });
         store.set({ snapshot: connected(), job: job.job });
-        expect(run.querySelector(".mill-run-job")?.textContent).toBe("drill 1 points");
+        expect(run.querySelector(".run-job")?.textContent).toBe("drill 1 points");
         click(run, "Run");
         await settle();
         expect(calls.find((call) => call.name === "runJob")?.args).toEqual([job.job.id, "off", false]);

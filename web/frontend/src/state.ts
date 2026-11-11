@@ -142,6 +142,8 @@ export interface AppState {
     millDims: Dimension[];
     /** How the next run is to follow the height map: the Run panel's choice, which the other panels describe. */
     mapChoice: Compensate;
+    /** The height map choice picked in a Run panel; null until one is picked, while the choice follows the map. */
+    mapPick: Compensate | null;
     /** Edits typed and not applied yet, counted by the panel that holds them (`PENDING_PAGES` and `pendingOn` put them on a tab). */
     pending: Record<string, number>;
     console: ConsoleLine[];
@@ -188,6 +190,7 @@ export function initialState(mock: boolean): AppState {
         millPlan: null,
         millDims: [],
         mapChoice: "off",
+        mapPick: null,
         pending: {},
         console: [],
         showPolls: false,

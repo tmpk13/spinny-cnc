@@ -10,7 +10,8 @@ import { Store, appendConsole, initialState, pushToast, type AppState } from "..
 import type { Controls, Job, JobSummary, Machine, SettingsResponse, Snapshot, WsEvent } from "../src/types.ts";
 import { mountConsole, writesSettings } from "../src/views/console.ts";
 import { droText, mountDro } from "../src/views/dro.ts";
-import { mountJobs, progressText } from "../src/views/jobs.ts";
+import { mountJobs } from "../src/views/jobs.ts";
+import { progressText } from "../src/views/run.ts";
 import { findButton } from "./harness.ts";
 import { anyOf, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
