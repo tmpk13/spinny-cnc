@@ -203,8 +203,10 @@ Focus the beam instead of zeroing a depth.
    of its operations as kept (*applied*), changed since (*changed*, also
    counted on the tab), or not in it. All of a job's operations cut with
    one bit or spot.
-6. *Run* in the panel beside it (or the Run panel on the Jobs page) cuts
-   the selected job.
+6. *Run* in the Run panel under the preview cuts the selected job. It is
+   the Jobs page's Run panel (the height map choice is the same on both
+   pages, and a stopped run is picked up the same way), with the job's
+   length and time over the buttons.
 
 A job moved or turned on the Jobs page keeps its place when its
 operations change: they are typed where they were before the move, and
