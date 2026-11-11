@@ -49,9 +49,9 @@ describe("picking a camera", () => {
         expect(cameraLabel({ ...stream!, online: false }, null)).toBe("stream on port 2325, 1280x720, no signal  http://127.0.0.1:2325/snapshot");
         expect(foundText(null, "/dev/video0")).toBe("Looking for cameras...");
         expect(foundText({ cameras: [], problems: ["pcbv is not built."] }, ""))
-            .toBe("No camera found: plug one in and press Detect, or type its device below. pcbv is not built.");
+            .toBe("No camera found: plug one in and press Detect, or type a device. pcbv is not built.");
         expect(foundText({ cameras: MOCK_CAMERAS, problems: [] }, "/dev/video0")).toBe("3 cameras found.");
-        expect(foundText({ cameras: MOCK_CAMERAS.slice(0, 1), problems: [] }, "/dev/video1")).toBe("1 camera found; the device set, /dev/video1, is not one of them.");
+        expect(foundText({ cameras: MOCK_CAMERAS.slice(0, 1), problems: [] }, "/dev/video1")).toBe("1 camera found; /dev/video1 is not one of them.");
     });
 
     test("a press that fails says why; a look that fails waits quietly for the next", async () => {

@@ -74,34 +74,34 @@ export function partsLeft(device: DeviceState | null, plan: DevicePlan | null, j
 
 /** The plan in words: what it places, and what it leaves and why. */
 export function planText(plan: DevicePlan): string {
-    const fit = plan.fit.marks > 1 ? `, the board turned ${formatFixed(plan.fit.rotation, 2)} deg (rms ${formatFixed(plan.fit.rms, 3)} mm)` : "";
+    const fit = plan.fit.marks > 1 ? `, board turned ${formatFixed(plan.fit.rotation, 2)} deg (rms ${formatFixed(plan.fit.rms, 3)} mm)` : "";
     const looked = plan.parts.filter((part) => part.vision).length;
-    return `${plan.parts.length} parts in ${plan.lines} lines${fit}${looked > 0 ? `; ${looked} looked at over the up camera` : ""}.`;
+    return `${plan.parts.length} parts in ${plan.lines} lines${fit}${looked > 0 ? `, ${looked} checked on the up camera` : ""}.`;
 }
 
 /** Where the up camera sits on the device, in words. */
 export function deviceCameraText(device: DeviceState | null): string {
     const camera = device?.camera;
     if (!camera?.position || !(camera.mm_per_px > 0)) {
-        return "The up camera's place on the device is not measured: jog the nozzle over it so it shows in the picture, then Center nozzle.";
+        return "Up camera not measured: jog the nozzle into its view, then Center nozzle.";
     }
-    const sharp = camera.height !== null ? `, the nozzle sharp at Z ${formatFixed(camera.height, 3)}` : "";
+    const sharp = camera.height !== null ? `, nozzle sharp at Z ${formatFixed(camera.height, 3)}` : "";
     const runout = camera.runout
-        ? ` Runout ${formatFixed(Math.hypot(camera.runout[0], camera.runout[1]) * 1000, 0)} um (tip X ${formatFixed(camera.runout[0], 3)} Y ${formatFixed(camera.runout[1], 3)} off the axis at 0).`
+        ? ` Runout ${formatFixed(Math.hypot(camera.runout[0], camera.runout[1]) * 1000, 0)} um (tip off by X ${formatFixed(camera.runout[0], 3)} Y ${formatFixed(camera.runout[1], 3)} at 0 deg).`
         : " Runout not measured.";
     return `Up camera at X ${formatFixed(camera.position[0], 3)} Y ${formatFixed(camera.position[1], 3)}${sharp}, `
-        + `${formatFixed(camera.mm_per_px * 1000, 1)} um per pixel, roll ${formatFixed(camera.roll, 2)} deg${camera.mirror ? ", mirrored" : ""}.${runout}`;
+        + `${formatFixed(camera.mm_per_px * 1000, 1)} um/px, roll ${formatFixed(camera.roll, 2)} deg${camera.mirror ? ", mirrored" : ""}.${runout}`;
 }
 
 /** Where the top camera looks from the nozzle, in words. */
 export function topCameraText(top: TopState | null | undefined): string {
     if (!top?.offset || !(top.mm_per_px > 0)) {
         return top?.mark_at
-            ? `The nozzle was on the mark at X ${formatFixed(top.mark_at[0], 3)} Y ${formatFixed(top.mark_at[1], 3)}: Measure offset finds it with the camera.`
-            : "The top camera's offset is not measured: put the nozzle's tip on a mark and press Nozzle on mark, then Measure offset.";
+            ? `Mark kept at X ${formatFixed(top.mark_at[0], 3)} Y ${formatFixed(top.mark_at[1], 3)}: now press Measure offset.`
+            : "Top camera offset not measured: put the nozzle tip on a mark, press Nozzle on mark, then Measure offset.";
     }
     return `Top camera looks from X ${formatFixed(top.offset[0], 3)} Y ${formatFixed(top.offset[1], 3)} off the nozzle, `
-        + `${formatFixed(top.mm_per_px * 1000, 1)} um per pixel, roll ${formatFixed(top.roll, 2)} deg${top.mirror ? ", mirrored" : ""}.`;
+        + `${formatFixed(top.mm_per_px * 1000, 1)} um/px, roll ${formatFixed(top.roll, 2)} deg${top.mirror ? ", mirrored" : ""}.`;
 }
 
 /** The top camera's routine, in words. */
@@ -130,7 +130,7 @@ export function fiducialText(top: TopState | null | undefined, jobId: string | n
         return "";
     }
     const rms = found.found.length > 1 ? `, ${formatFixed(found.fit.rms * 1000, 0)} um rms` : "";
-    return `Fiducials ${found.found.map((entry) => entry.ref).join(", ")} found: the board turned ${formatFixed(found.fit.rotation, 3)} deg${rms}.`;
+    return `Fiducials ${found.found.map((entry) => entry.ref).join(", ")} found: board turned ${formatFixed(found.fit.rotation, 3)} deg${rms}.`;
 }
 
 /** The PNP page's setup when a G-code device places the parts. */
@@ -142,17 +142,17 @@ export const DEVICE_SETUP: Setup = {
         const jobId = state.job?.id ?? null;
         const parts = state.components !== null && state.components.job === jobId ? state.components.components.length : 0;
         return [
-            { label: "Profile", done: device?.profile !== null && device?.profile !== undefined, hint: "Pick the device's profile in the G-code device panel, and set its [port] url.", panel: "pnp-device" },
+            { label: "Profile", done: device?.profile !== null && device?.profile !== undefined, hint: "Pick a profile in the G-code device panel and set its [port] url.", panel: "pnp-device" },
             { label: "Connect", done: device?.connected === true, hint: "Press Connect in the G-code device panel.", panel: "pnp-device" },
-            { label: "Home", done: device?.homed === true, hint: "Press Home so the device knows where it is.", panel: "pnp-device" },
+            { label: "Home", done: device?.homed === true, hint: "Press Home in the G-code device panel.", panel: "pnp-device" },
             { label: "Board", done: parts > 0, hint: "Pick a board job uploaded as a .kicad_pcb in the Parts panel.", panel: "pnp-parts" },
             {
                 label: "Reference",
                 done: referencesOf(device, jobId).length > 0,
-                hint: "Jog the device's nozzle (or its top camera) over a part's place, pick the part, and press Here (or Camera here); two parts give the board's turn too, and Find fiducials then refines it.",
+                hint: "Jog the nozzle (or top camera) over a part, pick it, and press Here (or Camera here). Two or more parts, or Find fiducials, also fit the turn.",
                 panel: "pnp-device",
             },
-            { label: "Place", done: device?.progress?.state === "done", hint: "Plan the program, look it over, and Run it.", panel: "pnp-device" },
+            { label: "Place", done: device?.progress?.state === "done", hint: "Press Plan, check the program, then Run.", panel: "pnp-device" },
         ];
     },
 };
@@ -174,12 +174,14 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const line = el("input", { type: "text", class: "field", placeholder: "a G-code line", "aria-label": "Device line", spellcheck: "false", autocomplete: "off" }) as HTMLInputElement;
     const send = button("Send", () => sendLine(), "btn btn-quiet");
     const here = button("Here", () => reference(), "btn");
-    here.title = "The picked part's place is where the device's nozzle is now";
+    here.title = "Record the picked part at the nozzle; 2 or more also fit the turn";
     const angle = numberField({ step: 0.1, placeholder: "fitted", width: "6rem" });
     angle.setAttribute("aria-label", "Board turned on the device");
+    angle.title = "the board's turn, used with one reference; 2 or more fit it";
     const clearRefs = button("Clear", () => clearReferences(), "btn btn-quiet");
     const refList = el("ul", { class: "device-references" });
     const planButton = button("Plan", () => planNow(), "btn");
+    planButton.title = "Build the placement G-code and show it; nothing moves";
     const download = el("a", { class: "btn btn-quiet", download: "placement.gcode" }, "Download") as HTMLAnchorElement;
     const run = button("Run", () => runNow(), "btn btn-primary");
     const stop = button("Stop", () => into(ctx, "device", ctx.api.deviceStop()), "btn btn-danger");
@@ -195,15 +197,15 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Device centering step mm");
     const center = button("Center nozzle", () => centerNozzle(), "btn");
-    center.title = "Over the up camera on this device: measures where it is and how its picture lies, for the feeders marked vision";
+    center.title = "Find the up camera's place and scale by centering the nozzle in it";
     const runout = button("Measure runout", () => into(ctx, "device", ctx.api.deviceRunout()), "btn");
-    runout.title = "The nozzle's tip found at six turns over the up camera: how far it runs off the turning axis, made up for at every look and place";
+    runout.title = "Measure how far the nozzle tip sits off its turning axis, to correct it";
     const routineLine = el("p", { class: "muted vision-routine" });
     // The top camera, on the head and looking down.
-    const topPicture = el("img", { class: "vision-picture", alt: "The top camera's picture, with a crosshair at its center" }) as HTMLImageElement;
+    const topPicture = el("img", { class: "vision-picture", alt: "Top camera picture with a center crosshair" }) as HTMLImageElement;
     const topPictureBox = el("div", { class: "vision-picture-box hidden" }, topPicture);
     const topStart = button("Start", () => startTop(), "btn btn-primary");
-    topStart.title = "start the top camera on the settings shown, sending any not applied first";
+    topStart.title = "start the top camera with these settings";
     const topStop = button("Stop", () => into(ctx, "device", ctx.api.topStop()), "btn");
     const topDevice = el("input", { type: "text", class: "field", "aria-label": "Top camera device", placeholder: "/dev/video2", spellcheck: "false" }) as HTMLInputElement;
     const topSize = el("input", { type: "text", class: "field", "aria-label": "Top camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
@@ -221,23 +223,23 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     const topApply = button("Apply", () => applyTop(), "btn");
     const topLine = el("p", { class: "muted" });
     const markHere = button("Nozzle on mark", () => into(ctx, "device", ctx.api.topMark()), "btn");
-    markHere.title = "The nozzle's tip is over a mark the top camera can see: its place is kept for Measure offset";
+    markHere.title = "The nozzle tip is on a mark: keep its place for Measure offset";
     const topStep = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     topStep.setAttribute("aria-label", "Top camera step mm");
     const measureOffset = button("Measure offset", () => measureTopOffset(), "btn");
-    measureOffset.title = "The head goes where the camera should see the mark, measures the picture with a step along X and Y, and centers the mark: the camera's offset from the nozzle";
+    measureOffset.title = "Move the top camera over the mark to measure its offset from the nozzle";
     const topAbort = button("Abort", () => into(ctx, "device", ctx.api.topAbort()), "btn btn-danger");
     const topRoutineLine = el("p", { class: "muted vision-routine" });
     const topLog = el("div", { class: "camlog-box" });
     mountCameraLog(topLog, ctx, "top");
     const cameraHere = button("Camera here", () => reference(true), "btn");
-    cameraHere.title = "The picked part's place is under the top camera's crosshair";
+    cameraHere.title = "Record the picked part at the top camera's crosshair, like Here";
     const findFiducials = button("Find fiducials", () => findFiducialsNow(), "btn");
-    findFiducials.title = "The top camera finds the board's fiducials where the references put them; two or more replace the references given by hand";
+    findFiducials.title = "Find fiducials with the top camera; 2 or more replace the Here references";
     const fiducialLine = el("p", { class: "muted" });
     const fiducialsFirst = el("input", { type: "checkbox", "aria-label": "Find fiducials first" }) as HTMLInputElement;
     const runRest = button("Run the rest", () => runNow(true), "btn");
-    runRest.title = "Places the parts of the last run's plan it did not place, those left out included";
+    runRest.title = "Place the parts the last run did not, failed ones included";
     const failedList = el("ul", { class: "device-skipped device-failed" });
     let fiducialsTouched = false;
     fiducialsFirst.addEventListener("change", () => {
@@ -280,7 +282,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             fiducialLine,
             el("h3", {}, "Program"),
             el("div", { class: "button-row" }, planButton, download, run, stop, runRest, recount),
-            el("label", { class: "muted" }, fiducialsFirst, " find the fiducials first"),
+            el("label", { class: "muted" }, fiducialsFirst, " find fiducials first"),
             runLine,
             failedList,
             planLine,
@@ -289,14 +291,8 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             takenLine,
             consoleBox,
             el("p", { class: "muted hint" },
-                "A machine whose controller takes the G-code OpenPnP's GcodeDriver sends, a line at a time with each one answered ok."
-                + " The profile names its port, the words of its dialect, its heights and its feeders (strips, trays, ones told to advance);"
-                + " a part is picked from the first feeder whose words its value and footprint hold, and one from a feeder marked vision is"
-                + " looked at over the up camera (its picture is in the Up camera panel) turned to its angle, and placed where its center lands, its angle corrected."
-                + " Measure runout makes up for a nozzle tip off true. Here pairs the picked part with where the nozzle is (Camera here, the top camera's crosshair): one reference"
-                + " places the board (turned by Turned deg), two or more fit its turn too; Find fiducials (or a run with the box ticked) then fits it on its fiducials."
-                + " A [vacuum] sensor in the profile is read after each pick and place; a pick that will not do is put back and the next pocket tried."
-                + " Plan shows the program as planned, Run places, Stop sends the stop command at once and nothing after the line in flight."),
+                "Each part comes from the first feeder whose words match its value and footprint."
+                + " Stop sends the stop command at once and nothing after the line in flight."),
         ),
     );
 
@@ -360,7 +356,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             if (next === "" || next === picked) {
                 return;
             }
-            if (dirty && !(await askConfirm(`Leave ${picked} without saving the edits to it?`, "Leave"))) {
+            if (dirty && !(await askConfirm(`Leave ${picked}? Unsaved edits are lost.`, "Leave"))) {
                 pick.value = picked ?? "";
                 return;
             }
@@ -401,7 +397,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
 
     async function toggleConnect(): Promise<void> {
         const device = ctx.store.get().device;
-        if (dirty && !device?.connected && !(await askConfirm("The profile has edits that are not saved; connect with the saved one?", "Connect"))) {
+        if (dirty && !device?.connected && !(await askConfirm("Connect with the saved profile? Your edits are not saved.", "Connect"))) {
             return;
         }
         await into(ctx, "device", device?.connected ? ctx.api.deviceDisconnect() : ctx.api.deviceConnect());
@@ -480,7 +476,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     async function measureTopOffset(): Promise<void> {
         const value = parseNumber(topStep.value);
         if (value === null || value < 0 || value > 20) {
-            ctx.toast("error", "the step is 0 to 20 mm");
+            ctx.toast("error", "step: 0 to 20 mm");
             return;
         }
         await into(ctx, "device", ctx.api.topOffset(value));
@@ -511,7 +507,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         const text = angle.value.trim();
         const value = parseNumber(text);
         if (text !== "" && (value === null || Math.abs(value) > 360)) {
-            ctx.toast("error", "the board's turn is within 360 degrees, or blank to fit it");
+            ctx.toast("error", "turn: -360 to 360 deg, or blank to fit it");
             return;
         }
         void into(ctx, "device", ctx.api.deviceSelect(text === "" ? { clear_angle: true } : { angle: value! }));
@@ -520,7 +516,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     async function centerNozzle(): Promise<void> {
         const value = parseNumber(step.value);
         if (value === null || value < 0 || value > 10) {
-            ctx.toast("error", "the step is 0 to 10 mm");
+            ctx.toast("error", "step: 0 to 10 mm");
             return;
         }
         await into(ctx, "device", ctx.api.deviceNozzle(value));
@@ -550,7 +546,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         }
         const refs = rest ? partsLeft(state.device, plan, job.id) : undefined;
         if (rest && refs!.length === 0) {
-            ctx.toast("info", "the last run placed every part of its plan");
+            ctx.toast("info", "the last run placed every part");
             return;
         }
         const planned = await ctx.call(ctx.api.devicePlan(job.id, refs));
@@ -561,9 +557,9 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         planJob = job.id;
         renderPlan();
         const device = state.device?.profile ?? "the device";
-        const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts are left out (listed below).` : "";
-        const first = fiducialsFirst.checked ? " The top camera finds the board's fiducials first." : "";
-        if (!(await askConfirm(`Place ${planned.parts.length} parts with ${device}? Its head moves and its vacuum switches.${first}${left}`, "Run"))) {
+        const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts left out (listed below).` : "";
+        const first = fiducialsFirst.checked ? " Fiducials are found first." : "";
+        if (!(await askConfirm(`Place ${planned.parts.length} parts with ${device}? The head moves and the vacuum switches.${first}${left}`, "Run"))) {
             return;
         }
         const started = await ctx.call(ctx.api.deviceRun(job.id, refs, fiducialsFirst.checked));
@@ -576,7 +572,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
     }
 
     async function recountFeeders(): Promise<void> {
-        if (await askConfirm("Count every feeder from its first part again? Do it once they are refilled.", "Count again")) {
+        if (await askConfirm("Restart every feeder at its first part? Do this after refilling.", "Count again")) {
             await into(ctx, "device", ctx.api.deviceResetFeeders());
         }
     }
@@ -673,7 +669,7 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
             planJob = null;
             renderPlan();
         }
-        runLine.textContent = device?.lost ? `The link was lost: ${device.lost}` : deviceRunText(device);
+        runLine.textContent = device?.lost ? `Link lost: ${device.lost}` : deviceRunText(device);
         const taken = Object.entries(device?.taken ?? {});
         takenLine.textContent = taken.length > 0 ? `Picked so far: ${taken.map(([feeder, count]) => `${feeder} ${count}`).join(", ")}` : "";
         consoleBox.textContent = (device?.log ?? []).map((entry) => `${entry.dir === "tx" ? ">" : entry.dir === "rx" ? "<" : "#"} ${entry.text}`).join("\n");

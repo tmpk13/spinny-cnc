@@ -78,11 +78,11 @@ export function foundText(listing: CamerasResponse | null, device: string): stri
     const count = listing.cameras.length;
     const words: string[] = [];
     if (count === 0) {
-        words.push("No camera found: plug one in and press Detect, or type its device below.");
+        words.push("No camera found: plug one in and press Detect, or type a device.");
     } else {
         const set = device.trim();
         const missing = set !== "" && cameraOf(listing.cameras, set) === null;
-        words.push(`${countText(count, "camera", "cameras")} found${missing ? `; the device set, ${set}, is not one of them` : ""}.`);
+        words.push(`${countText(count, "camera", "cameras")} found${missing ? `; ${set} is not one of them` : ""}.`);
     }
     words.push(...listing.problems);
     return words.join(" ");
@@ -141,11 +141,10 @@ export interface CameraPick {
 export function mountCameraPick(ctx: Ctx, options: CameraPickOptions): CameraPick {
     const select = el("select", { class: "field camera-pick-list", "aria-label": "Detected cameras" }) as HTMLSelectElement;
     const detect = button("Detect", () => detectCameras(ctx, true), "btn btn-quiet");
-    detect.title = "list the cameras attached again";
+    detect.title = "list attached cameras again";
     const row = el("div", { class: "button-row camera-pick" }, labeled("Camera", select, "labeled inline camera-pick-label"), detect);
     const note = el("p", { class: "muted camera-found" });
-    options.device.title = "or a device typed in: a V4L2 node such as /dev/video0, a stream such as http://127.0.0.1:2325/snapshot,"
-        + " a pcbv serving at socket://host:port, or a picture or a folder to replay";
+    options.device.title = "/dev/video0, http://host:2325/snapshot, socket://host:port (pcbv), or a picture or folder";
 
     const fill = (field: HTMLInputElement, value: string): void => {
         if (field.value !== value) {

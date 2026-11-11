@@ -303,7 +303,7 @@ describe("the camera list", () => {
             device.value = "/dev/video7";
             device.dispatchEvent(new Event("input"));
             expect(list.value).toBe("");
-            expect(root.querySelector(".camera-found")?.textContent).toBe("3 cameras found; the device set, /dev/video7, is not one of them.");
+            expect(root.querySelector(".camera-found")?.textContent).toBe("3 cameras found; /dev/video7 is not one of them.");
             // Detect lists them again.
             click(root, "Detect");
             await settle();

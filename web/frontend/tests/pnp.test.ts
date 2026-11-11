@@ -219,7 +219,7 @@ describe("the pnp page", () => {
         await settle();
         await settle();
         // The up camera's /dev/video1 is a metadata node, no camera; the head camera's is said to be so.
-        expect(roots.camera.querySelector(".camera-found")?.textContent).toBe("3 cameras found; the device set, /dev/video1, is not one of them.");
+        expect(roots.camera.querySelector(".camera-found")?.textContent).toBe("3 cameras found; /dev/video1 is not one of them.");
         expect(list.value).toBe("");
         expect(list.options[1]?.textContent).toContain("set as the head camera");
         list.value = MOCK_CAMERAS[1]!.device;

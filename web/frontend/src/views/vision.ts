@@ -81,7 +81,7 @@ export interface VisionPanel {
 
 export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const badge = el("span", { class: "badge vision-badge" }, "stopped");
-    const picture = el("img", { class: "vision-picture", alt: "The camera's picture, with a crosshair at its center" }) as HTMLImageElement;
+    const picture = el("img", { class: "vision-picture", alt: "Camera picture with a center crosshair" }) as HTMLImageElement;
     const pictureBox = el("div", { class: "vision-picture-box" }, picture);
     const overlay = button("Overlay", () => showOverlay(!overlayOn), "btn btn-quiet btn-small btn-toggle");
     overlay.title = "draw the spots and the pose on the picture";
@@ -93,7 +93,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     };
     const poseLine = el("p", { class: "muted vision-pose" }, poseText(null));
     const start = button("Start", () => startCamera(), "btn btn-primary");
-    start.title = "start the camera on the settings shown, sending any not applied first";
+    start.title = "start the camera with these settings";
     const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn");
 
     // The settings: what the camera is read with, and how it sits against
@@ -166,7 +166,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             labeled("Roll deg", roll),
             labeled("mm per px", scale),
         ),
-        el("div", { class: "button-row" }, applyMeasured, pendingChips[1], el("span", { class: "muted" }, "the measured values: what the routine below finds, kept in the backend's settings; write them into the machine file to keep them")),
+        el("div", { class: "button-row" }, applyMeasured, pendingChips[1], el("span", { class: "muted" }, "set by Find mark; copy them into the machine file to keep them")),
         el("div", { class: "button-row" }, lookButton, unloadButton, boardNote),
         el("div", { class: "button-row" },
             labeled("Depth mm", depth, "labeled inline"),
@@ -183,9 +183,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         routineLine,
         logBox,
         el("p", { class: "muted hint" },
-            "Make mark drills a point with the tool where it stands (a spindle machine); Mark is here records the tool's point over a mark"
-            + " made by hand or a hole. Find mark lifts the head, goes where the camera should see the mark, moves the step along X to"
-            + " measure the scale and the roll, and centers the picture on the mark: the offset is the mark less the tool's point."),
+            "Make mark drills a mark at the tool; Mark is here uses a mark or hole already under it."
+            + " Find mark lifts the head, centers the camera on the mark and measures the offset, scale and roll."),
     );
     // Unfolded, the picture is asked for at once rather than at the next tick.
     const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => refreshFrame(true));
@@ -201,7 +200,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             const chip = pendingChips[index]!;
             chip.classList.toggle("hidden", count === 0);
             chip.textContent = `${count} not applied`;
-            chip.title = "the marked fields are typed in and not sent: Apply sends them";
+            chip.title = "marked fields are not sent yet; press Apply";
         });
         setPending(ctx.store, "camera", counts[0]! + counts[1]!);
     };
@@ -269,7 +268,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     async function lookForBoard(): Promise<void> {
         const job = ctx.store.get().job;
         if (!job) {
-            ctx.toast("error", "select a job whose board the camera should look for");
+            ctx.toast("error", "select a job first");
             return;
         }
         await into(ctx, "camera", ctx.api.cameraBoard(job.id));
@@ -283,7 +282,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             return;
         }
         const ok = await askConfirm(
-            `Drill a mark ${d} mm deep where the tool stands, at ${p} mm/min? The spindle starts and cuts the board there.`,
+            `Drill a ${d} mm deep mark at the tool, at ${p} mm/min? The spindle starts and cuts the board.`,
             "Make mark",
         );
         if (!ok) {
@@ -295,7 +294,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     async function findMark(): Promise<void> {
         const s = parseNumber(step.value);
         if (s === null || s < 0) {
-            ctx.toast("error", "the step is a distance in mm, 0 or more");
+            ctx.toast("error", "step: 0 mm or more");
             return;
         }
         await into(ctx, "camera", ctx.api.cameraFind(s));
@@ -369,14 +368,14 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         const job = state.job;
         const hasBoard = job?.design?.board === true;
         setLocked(lookButton, !job || !hasBoard || finding);
-        lookButton.title = job && !hasBoard ? "only a .kicad_pcb upload keeps its board file for the camera" : "";
+        lookButton.title = job && !hasBoard ? "the camera needs a job uploaded as .kicad_pcb" : "";
         setLocked(unloadButton, !camera?.board || finding);
         const looking = camera?.board ? state.jobs.find((entry) => entry.id === camera.board)?.name ?? camera.board : null;
-        boardNote.textContent = looking ? `looking for the board of ${looking}` : "no board loaded";
+        boardNote.textContent = looking ? `looking for ${looking}` : "no board loaded";
         const milling = isMilling(state.snapshot);
         const busy = !connected || !idle || finding;
         setLocked(markButton, busy || !milling || !state.snapshot.profile?.h_axis);
-        markButton.title = milling ? "" : "a mark is drilled with a spindle; on this machine record the tool's point over a mark made by hand";
+        markButton.title = milling ? "" : "needs a spindle; use Mark is here over a mark made by hand";
         setLocked(hereButton, busy);
         setLocked(findButton, busy || !running || !camera?.mark);
         setLocked(abortButton, !finding);

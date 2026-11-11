@@ -33,10 +33,10 @@ function timeOf(entry: CamLogEntry): string {
 
 export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera): void {
     const enabled = el("input", { type: "checkbox", "aria-label": "Log every look" }) as HTMLInputElement;
-    const toggle = el("label", { class: "muted camlog-toggle", title: "keep every picture the cameras' routines look at, as it was and with what the finder found drawn on it" },
-        enabled, " log every look (every camera)");
+    const toggle = el("label", { class: "muted camlog-toggle", title: "keep each picture a routine looks at, with what the finder found" },
+        enabled, " log every look (all cameras)");
     const photo = button("Photo", () => take(), "btn btn-small");
-    photo.title = "keep a picture now, as it is and with what the finder sees drawn on it";
+    photo.title = "keep a picture now, with what the finder sees";
     const clear = button("Clear log", () => clearAll(), "btn btn-quiet btn-small");
     const count = el("span", { class: "muted camlog-count" });
     const gallery = el("ul", { class: "camlog-list" });
@@ -63,7 +63,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     }
 
     async function clearAll(): Promise<void> {
-        if (!(await askConfirm("Forget every picture the camera log kept, of every camera?", "Clear log"))) {
+        if (!(await askConfirm("Delete the logged pictures of every camera?", "Clear log"))) {
             return;
         }
         const removed = await ctx.call(ctx.api.clearCamLog());

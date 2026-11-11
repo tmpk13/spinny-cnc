@@ -184,7 +184,7 @@ export function pnpRoutineText(state: PnpState | null): string {
         return `${what}: ${routine.step} (${routine.done} of ${routine.total})${spot}`;
     }
     if (routine.state === "done") {
-        return routine.kind === "nozzle" ? "Nozzle centered: the position, scale, roll and mirror below are measured." : "Part looked at: its offset is below.";
+        return routine.kind === "nozzle" ? "Nozzle centered: camera place, scale, roll and mirror measured." : "Part measured: offset below.";
     }
     return `${what} ${routine.state}${routine.error && routine.error !== "stopped" ? `: ${routine.error}` : ""}`;
 }
@@ -193,10 +193,10 @@ export function pnpRoutineText(state: PnpState | null): string {
 export function partOffsetText(state: PnpState | null): string {
     const part = state?.part_offset;
     if (!part) {
-        return "No part looked at yet: pick one, then Look at part.";
+        return "No part measured: hold one on the nozzle, then Look at part.";
     }
-    return `The part sits X ${formatFixed(part.dx, 3)} Y ${formatFixed(part.dy, 3)} mm from the nozzle's center (${formatFixed(part.mm, 3)} mm),`
-        + ` and looks ${formatFixed(part.length, 2)} by ${formatFixed(part.width, 2)} mm.`;
+    return `Part sits X ${formatFixed(part.dx, 3)} Y ${formatFixed(part.dy, 3)} mm off the nozzle center (${formatFixed(part.mm, 3)} mm),`
+        + ` size ${formatFixed(part.length, 2)} by ${formatFixed(part.width, 2)} mm.`;
 }
 
 /** The PNP setup: an X/Y machine, the up camera, the nozzle over it, a board job with parts, and a part looked at. */
@@ -211,21 +211,21 @@ export const PNP_SETUP: Setup = {
             {
                 label: "X/Y machine",
                 done: state.snapshot.connected && isCartesian(state.snapshot),
-                hint: "The up camera needs an X/Y machine: pick one on the Config page and Write to board ($cartesian=1).",
+                hint: "The up camera needs an X/Y machine ($cartesian=1): pick one on the Config page and Write to board.",
                 panel: "machine-file",
             },
-            { label: "Up camera on", done: pnp?.running === true, hint: "In the Up camera panel pick the camera (Detect lists the ones attached) or type its device, then press Start.", panel: "pnp-camera" },
+            { label: "Up camera on", done: pnp?.running === true, hint: "Pick or type the camera in the Up camera panel, then press Start.", panel: "pnp-camera" },
             {
                 label: "Nozzle centered",
                 done: pnp?.position !== null && pnp?.position !== undefined && (pnp?.mm_per_px ?? 0) > 0,
-                hint: "Jog the nozzle over the up camera so it shows in the picture, then press Center nozzle: it measures where the camera is.",
+                hint: "Jog the nozzle into the up camera's view, then press Center nozzle.",
                 panel: "pnp-nozzle",
             },
-            { label: "Board", done: parts > 0, hint: "Pick a board job uploaded as a .kicad_pcb in the Parts panel: its footprints are the parts.", panel: "pnp-parts" },
+            { label: "Board", done: parts > 0, hint: "Pick a board job uploaded as .kicad_pcb in the Parts panel.", panel: "pnp-parts" },
             {
                 label: "Part on nozzle",
                 done: pnp?.part_offset !== null && pnp?.part_offset !== undefined,
-                hint: "With a part on the nozzle, press Look at part: the up camera measures where it sits against the nozzle.",
+                hint: "Hold a part on the nozzle, then press Look at part.",
                 panel: "pnp-nozzle",
             },
         ];
@@ -297,13 +297,13 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     // --- the board ---
     const drawing = el("div", { class: "pnp-drawing" });
     roots.board.append(el("div", { class: "panel-head" }, el("h2", {}, "Board")), el("div", { class: "panel-body" }, drawing,
-        el("p", { class: "muted hint" }, "Every part is a dot at its footprint's place, hollow on the back; a press picks one. The cross is the head, the ring the up camera.")));
+        el("p", { class: "muted hint" }, "Click a part to pick it. Hollow dots are on the back.")));
 
     // --- the up camera ---
-    const picture = el("img", { class: "vision-picture", alt: "The up camera's picture, with a crosshair at its center" }) as HTMLImageElement;
+    const picture = el("img", { class: "vision-picture", alt: "Up camera picture with a center crosshair" }) as HTMLImageElement;
     const pictureBox = el("div", { class: "vision-picture-box hidden" }, picture);
     const startButton = button("Start", () => startCamera(), "btn btn-primary");
-    startButton.title = "start the up camera on the settings shown, sending any not applied first";
+    startButton.title = "start the up camera with these settings";
     const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn");
     let overlayOn = true;
     const overlayButton = button("Overlay", () => {
@@ -347,7 +347,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
                 labeled("Part spot", partSpot),
             ),
             el("div", { class: "button-row" }, cameraApply, cameraChip),
-            el("p", { class: "muted hint" }, "A camera fixed to the machine, looking up at what the head holds over it. The spots are what the finder takes for the nozzle (its bore) and for a part on it: dark or bright against what is around them."),
+            el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
             upLog,
         ),
     );
@@ -370,6 +370,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Centering step mm");
     const centerButton = button("Center nozzle", () => centerNozzle(), "btn btn-primary");
+    centerButton.title = "Find the up camera's place and scale by centering the nozzle in it";
     const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
     const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
     const routineLine = el("p", { class: "muted vision-routine" });
@@ -390,10 +391,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             routineLine,
             partLine,
             el("p", { class: "muted hint" },
-                "Center nozzle rises to the travel height, goes over the up camera (once its place is known), comes down to the H the nozzle is sharp at,"
-                + " moves the step along X and along Y to measure how the picture scales, turns and mirrors, and centers the nozzle in the picture:"
-                + " the head's R and Z there are the camera's place. Step 0 keeps the scale measured before. Look at part reads where a part on the"
-                + " nozzle sits against the nozzle's center; Go to part with the box ticked puts that center over the place instead of the nozzle's."),
+                "Center nozzle rises to travel height, then comes down over the up camera to Sharp at H; step 0 keeps the scale."
+                + " With the box ticked, Go to part places the held part's center (from Look at part), not the nozzle's."),
         ),
     );
 
@@ -410,7 +409,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         for (const [chip, count] of [[cameraChip, camera], [nozzleChip, measured]] as const) {
             chip.classList.toggle("hidden", count === 0);
             chip.textContent = `${count} not applied`;
-            chip.title = "the marked fields are typed in and not sent: Apply sends them";
+            chip.title = "marked fields are not sent yet; press Apply";
         }
         cameraApply.classList.toggle("btn-primary", camera > 0);
         nozzleApply.classList.toggle("btn-primary", measured > 0);
@@ -497,7 +496,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     async function centerNozzle(): Promise<void> {
         const value = parseNumber(step.value);
         if (value === null || value < 0 || value > 10) {
-            ctx.toast("error", "the step is 0 to 10 mm");
+            ctx.toast("error", "step: 0 to 10 mm");
             return;
         }
         await into(ctx, "pnp", ctx.api.pnpNozzle(value));
@@ -554,7 +553,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const shown = filterParts(all, filter.value, sidePick.value as "all" | "front" | "back");
         const note = state.components !== null && state.components.job === state.job?.id ? state.components.note : null;
         partsNote.textContent = !state.job
-            ? "Pick a board job: its parts are listed here and drawn beside."
+            ? "Pick a board job to list its parts."
             : note ?? (all.length === 0 ? "The board has no parts." : `${shown.length} of ${all.length} parts`);
         const rows = shown.map((part) => {
             const row = el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}`, onclick: () => pick(part.ref) },
