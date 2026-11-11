@@ -8,11 +8,13 @@ publishing as theirs."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
 from .backend_shared import _check_frame_width, _check_port
+from .feederbus import BusError, FeederBus, slot_place
 from .gcode_device import DeviceLinkError, DeviceMover
 from .kinematics import num
 from .openpnp import LINE as GCODE_LINE
@@ -378,6 +380,10 @@ class DevicePart:
 
     def _device_plan(self, job_id: str, refs: list[str] | None) -> Plan:
         device = self.device_profile()
+        # Bus feeders' slots are asked for only between runs: a question in
+        # the middle of one would take turns with its lines.
+        if not self.pnp_device.running:
+            device = self._found_slots(device)
         parts, taken, title = self._placing(job_id)
         place = self._device_camera_place(device)
         return plan(
@@ -397,7 +403,7 @@ class DevicePart:
         corrected over the up camera, as the profile asks (placer.py)."""
         if self.pnp_device.running:
             raise HTTPException(status_code=409, detail="a program is already being sent to the device")
-        device = self._device_idle()
+        device = self._found_slots(self._device_idle())
         parts, taken, title = self._placing(body.job)
         config = self._device_config()
 
@@ -637,6 +643,72 @@ class DevicePart:
                 raise DeviceLinkError(f"'{vacuum.read[-1]}' answered no reading its pattern finds: {' | '.join(reply) or 'nothing'}")
             self.pnp_device.reading = value
         return {"reply": reply, **self.publish_pnp_device()}
+
+    def _bus(self, device: Device) -> FeederBus:
+        if device.bus is None:
+            raise ValueError("the device profile has no [bus] section")
+        return FeederBus(device.bus, send=lambda line: self.pnp_device.command(line, device.timeout))
+
+    def _found_slots(self, device: Device) -> Device:
+        """The profile with each bus feeder whose slot it does not give
+        placed by the slot the bus says it is in; a feeder not found stays
+        unplaced, and the plan says so."""
+        unplaced = [feeder for feeder in device.feeders if feeder.bus_id is not None and feeder.at is None]
+        if not unplaced or device.bus is None or not self.pnp_device.connected:
+            return device
+        bus = self._bus(device)
+        by_address = {slot.address: slot for slot in device.slots}
+        feeders = []
+        for feeder in device.feeders:
+            if feeder in unplaced:
+                # A feeder the bus cannot find, for whatever reason, stays
+                # unplaced: the plan leaves its parts out and says why.
+                try:
+                    address = bus.find(feeder.bus_id or "")
+                except (BusError, DeviceLinkError):
+                    address = None
+                slot = by_address.get(address) if address is not None else None
+                if slot is not None:
+                    feeder = replace(feeder, slot=address, at=slot_place(slot.at, slot.rotation, feeder.offset), rotation=feeder.rotation + slot.rotation)
+                elif address is not None:
+                    self.publish_message("warning", f"feeder {feeder.id} is at bus address {address}, which has no [[slot]] place in the profile")
+            feeders.append(feeder)
+        return replace(device, feeders=tuple(feeders))
+
+    def device_bus_scan(self) -> dict:
+        """The feeders that answer on the bus, by address, each with its id
+        and the profile's feeder of that id, when there is one."""
+        device = self._device_idle()
+        found = self._bus(device).scan()
+        by_id = {feeder.bus_id: feeder for feeder in device.feeders if feeder.bus_id is not None}
+        slots = {slot.address for slot in device.slots}
+        return {
+            "feeders": [
+                {
+                    "address": entry["address"],
+                    "id": entry["id"],
+                    "feeder": by_id[entry["id"]].id if entry["id"] in by_id else None,
+                    "slot": entry["address"] in slots,
+                }
+                for entry in found
+            ],
+            **self.publish_pnp_device(),
+        }
+
+    def device_bus_feed(self, feeder_id: str) -> dict:
+        """One advance of a feeder on the bus, to see its tape move."""
+        device = self._device_idle()
+        feeder = next((entry for entry in device.feeders if entry.id == feeder_id), None)
+        if feeder is None:
+            raise HTTPException(status_code=404, detail=f"the profile has no feeder {feeder_id!r}")
+        if feeder.bus_id is None:
+            raise ValueError(f"feeder {feeder_id} is not on the bus")
+        try:
+            address = self._bus(device).advance(feeder.bus_id, round(feeder.advance * 10), feeder.slot)
+        except BusError as exc:
+            raise DeviceLinkError(f"feeder {feeder_id}: {exc}") from exc
+        self.publish_message("info", f"feeder {feeder_id} advanced {num(feeder.advance)} mm (bus address {address})")
+        return self.publish_pnp_device()
 
     def device_boards_reset(self) -> dict:
         self._device_config()["boards"] = 0

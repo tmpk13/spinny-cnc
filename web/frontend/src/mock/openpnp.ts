@@ -8,6 +8,7 @@
 import { fitRigid, turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
+import { HEADER_FIELDS, slotPlace } from "../feederbus.ts";
 import type { AlignFit, Component, DeviceDocument, DevicePlan, SpotPolarity } from "../types.ts";
 
 export const DEVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -25,7 +26,8 @@ const JAVA_GROUP = /\(\?<(?![=!])/g;
 export interface MockFeeder {
     id: string;
     match: string;
-    at: [number, number, number];
+    /** The first part's place; null for a feeder on the bus whose slot is found when a run starts. */
+    at: [number, number, number] | null;
     pitch: [number, number];
     count: number;
     /** A tray's columns, 0 for a strip, and the step from row to row. */
@@ -48,7 +50,44 @@ export interface MockFeeder {
     crop: number | null;
     /** The parts it holds by reference, which outdo the words. */
     refs: string[];
+    /** On the bus: its id there, its address (null until found), its place from the slot's, and its advance per part, mm. */
+    bus_id: string | null;
+    slot: number | null;
+    offset: [number, number, number];
+    advance: number;
 }
+
+/** How packets reach the feeders on a bus, as the backend's BusProfile has it. */
+export interface MockBus {
+    send: string;
+    reply: string;
+    header: string[];
+    host: number;
+    broadcast: number;
+    tries: number;
+    max_address: number;
+    poll_ms: number;
+    codes: Record<string, number>;
+}
+
+/** Where the feeder at a bus address presents its part. */
+export interface MockSlot {
+    address: number;
+    at: [number, number, number];
+    rotation: number;
+}
+
+export const BUS_DEFAULTS: MockBus = {
+    send: "M485 {packet}",
+    reply: "rs485-reply: *(?P<packet>[0-9A-Fa-f]*)",
+    header: [...HEADER_FIELDS],
+    host: 0,
+    broadcast: 255,
+    tries: 3,
+    max_address: 32,
+    poll_ms: 50,
+    codes: { get_id: 0x01, init: 0x02, feed: 0x04, status: 0x06, find: 0xc0, ok: 0x00, wrong_id: 0x01, unreachable: 0x02, uninitialized: 0x03, busy: 0x04 },
+};
 
 export interface MockVacuum {
     /** The lines that read it: the reading is in the last one's answer. */
@@ -114,6 +153,9 @@ export interface MockDevice {
     park: [number, number] | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop: number | null;
+    /** The bus smart feeders are on, and where each address's feeder sits. */
+    bus: MockBus | null;
+    slots: MockSlot[];
 }
 
 class Reader {
@@ -347,6 +389,62 @@ export function parseDevice(text: string, id: string): MockDevice {
         };
         read.done(looking, "top_camera", ["z", "offset", "fiducial", "within"]);
     }
+    device.bus = null;
+    const wire = read.table(top, "bus");
+    if (Object.keys(wire).length > 0) {
+        const header = read.lines(wire, "header", "bus", [...HEADER_FIELDS]);
+        if (header.length === 0 || new Set(header).size !== header.length || header.some((name) => !HEADER_FIELDS.includes(name))) {
+            throw read.fail("bus", "header", `must name each of its bytes once, from ${HEADER_FIELDS.join(", ")}`);
+        }
+        const send = read.text(wire, "send", "bus", BUS_DEFAULTS.send);
+        if (!send.includes("{packet}")) {
+            throw read.fail("bus", "send", "must hold {packet}, where the packet's hex goes");
+        }
+        const reply = read.text(wire, "reply", "bus", BUS_DEFAULTS.reply, false).replace(JAVA_GROUP, "(?P<");
+        let groups: number;
+        try {
+            groups = new RegExp(`${jsPattern(reply)}|`).exec("")!.length - 1;
+        } catch (error) {
+            throw read.fail("bus", "reply", `is not a regular expression: ${errorText(error)}`);
+        }
+        if (groups < 1) {
+            throw read.fail("bus", "reply", "must hold a group, ( ), around the answer's hex");
+        }
+        const codes: Record<string, number> = {};
+        for (const name of Object.keys(BUS_DEFAULTS.codes)) {
+            codes[name] = read.integer(wire, name, "bus", BUS_DEFAULTS.codes[name]!, 0, 255);
+        }
+        device.bus = {
+            send,
+            reply,
+            header,
+            host: read.integer(wire, "host", "bus", BUS_DEFAULTS.host, 0, 255),
+            broadcast: read.integer(wire, "broadcast", "bus", BUS_DEFAULTS.broadcast, 0, 255),
+            tries: read.integer(wire, "tries", "bus", BUS_DEFAULTS.tries, 1, 10),
+            max_address: read.integer(wire, "max_address", "bus", BUS_DEFAULTS.max_address, 1, 254),
+            poll_ms: read.integer(wire, "poll_ms", "bus", BUS_DEFAULTS.poll_ms, 10, 5000),
+            codes,
+        };
+        read.done(wire, "bus", ["send", "reply", "header", "host", "broadcast", "tries", "max_address", "poll_ms", ...Object.keys(BUS_DEFAULTS.codes)]);
+    }
+    const slotTables = top["slot"] ?? [];
+    if (!Array.isArray(slotTables) || !slotTables.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
+        throw read.fail(null, "slot", "must be an array of tables ([[slot]])");
+    }
+    const slots: MockSlot[] = [];
+    (slotTables as TomlTable[]).forEach((table, offset) => {
+        const section = `slot ${offset + 1}`;
+        if (device.bus === null) {
+            throw read.fail(section, "address", "is a feeder bus's slot: add a [bus] section");
+        }
+        const address = read.integer(table, "address", section, 0, 1, 254);
+        if (slots.some((other) => other.address === address)) {
+            throw read.fail(section, "address", `${address} is another slot's too`);
+        }
+        slots.push({ address, at: read.point(table, "at", section, 3, null) as [number, number, number], rotation: read.number(table, "rotation", section, 0, -360, 360) });
+        read.done(table, section, ["address", "at", "rotation"]);
+    });
+    device.slots = slots;
     const tables = top["feeder"] ?? [];
     if (!Array.isArray(tables) || !tables.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
         throw read.fail(null, "feeder", "must be an array of tables ([[feeder]])");
@@ -387,15 +485,52 @@ export function parseDevice(text: string, id: string): MockDevice {
         if ((pocket !== null || marks.length > 0) && device.top === null) {
             throw read.fail(section, pocket !== null ? "pocket" : "marks", "looks with the top camera: add a [top_camera] section");
         }
+        let rotation = read.number(table, "rotation", section, 0, -360, 360);
+        let busId: string | null = null;
+        let slot: number | null = null;
+        let busOffset: [number, number, number] = [0, 0, 0];
+        let advance = 4;
+        let at: [number, number, number] | null;
+        if ("bus_id" in table) {
+            if (device.bus === null) {
+                throw read.fail(section, "bus_id", "is a feeder on the bus: add a [bus] section");
+            }
+            const id = read.text(table, "bus_id", section, "").toUpperCase();
+            if (!/^[0-9A-F]{24}$/.test(id)) {
+                throw read.fail(section, "bus_id", `must be the feeder's id: a feeder's id is 24 hex digits, not '${read.text(table, "bus_id", section, "")}'`);
+            }
+            busId = id;
+            if ("at" in table || count > 0 || columns > 0) {
+                throw read.fail(section, "at" in table ? "at" : "count", "is not for a feeder on the bus: its slot gives its place, and it presents every part there");
+            }
+            if ("slot" in table) {
+                slot = read.integer(table, "slot", section, 0, 1, 254);
+                if (!slots.some((entry) => entry.address === slot)) {
+                    throw read.fail(section, "slot", `${slot} has no [[slot]] with its place`);
+                }
+            }
+            busOffset = read.point(table, "offset", section, 3, [0, 0, 0]) as [number, number, number];
+            advance = read.number(table, "advance", section, 4, 0.1, 25.5);
+            const placed = slots.find((entry) => entry.address === slot);
+            at = placed ? slotPlace(placed.at, placed.rotation, busOffset) : null;
+            rotation += placed ? placed.rotation : 0;
+        } else {
+            for (const key of ["slot", "offset", "advance"]) {
+                if (key in table) {
+                    throw read.fail(section, key, "is for a feeder on the bus: give its bus_id");
+                }
+            }
+            at = read.point(table, "at", section, 3, null) as [number, number, number];
+        }
         feeders.push({
             id: feederId,
             match,
-            at: read.point(table, "at", section, 3, null) as [number, number, number],
+            at,
             pitch: read.point(table, "pitch", section, 2, [0, 0]) as [number, number],
             count,
             columns,
             row_pitch: read.point(table, "row_pitch", section, 2, [0, 0]) as [number, number],
-            rotation: read.number(table, "rotation", section, 0, -360, 360),
+            rotation,
             place_z: placeZ,
             feed: read.lines(table, "feed", section, [], true),
             vision: read.flag(table, "vision", section, false),
@@ -405,8 +540,15 @@ export function parseDevice(text: string, id: string): MockDevice {
             mark: read.shade(table, "mark", section, "dark"),
             crop: "crop" in table ? read.number(table, "crop", section, null, 0.1, 100) : null,
             refs,
+            bus_id: busId,
+            slot,
+            offset: busOffset,
+            advance,
         });
-        read.done(table, section, ["id", "match", "refs", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"]);
+        read.done(table, section, [
+            "id", "match", "refs", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size",
+            "pocket", "marks", "mark", "crop", "bus_id", "slot", "offset", "advance",
+        ]);
     });
     device.feeders = feeders;
     const camera = read.table(top, "camera");
@@ -417,7 +559,7 @@ export function parseDevice(text: string, id: string): MockDevice {
     device.max_turn = read.number(camera, "max_turn", "camera", 15, 0.1, 45);
     device.size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0, 1);
     read.done(camera, "camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance"]);
-    read.done(top, null, ["name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera"]);
+    read.done(top, null, ["name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera", "bus", "slot"]);
     return device as MockDevice;
 }
 
@@ -468,6 +610,8 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
         pick_tries: device.pick_tries,
         camera_z: device.camera_z,
         crop: device.crop,
+        bus: device.bus !== null,
+        slots: device.slots.map((slot) => ({ address: slot.address, at: [...slot.at], rotation: slot.rotation })),
         max_offset: device.max_offset,
         max_turn: device.max_turn,
         size_tolerance: device.size_tolerance,
@@ -483,7 +627,7 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
         feeders: device.feeders.map((f) => ({
             id: f.id,
             match: f.match,
-            at: [...f.at],
+            at: f.at ? [...f.at] : null,
             pitch: [...f.pitch],
             count: f.count,
             columns: f.columns,
@@ -495,12 +639,18 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
             mark: f.mark,
             crop: f.crop,
             refs: [...f.refs],
+            bus_id: f.bus_id,
+            slot: f.slot,
+            advance: f.advance,
         })),
     };
 }
 
 /** Where a feeder's part `index` is: along a strip, or row by row in a tray. */
 export function feederPlace(feeder: MockFeeder, index: number): [number, number, number] {
+    if (feeder.at === null) {
+        throw new Error(`feeder ${feeder.id}'s place is not known: its slot is found on the feeder bus when a run starts`);
+    }
     if (feeder.columns > 0) {
         const column = index % feeder.columns;
         const row = Math.floor(index / feeder.columns);
@@ -643,8 +793,10 @@ export function tipShift(runout: [number, number], degrees: number): [number, nu
 
 /** The lines that take a part from its pocket: which, the feeder's own lines, up, over it turned to 0, down, the vacuum on, and back up. */
 export function pickLines(device: MockDevice, feeder: MockFeeder, label: string, point: [number, number, number]): string[] {
+    const advance = feeder.bus_id !== null ? [`; ${feeder.id} advances ${gnum(feeder.advance)} mm on the feeder bus`] : [];
     return [
         `; ${label}`.trimEnd(),
+        ...advance,
         ...feeder.feed,
         safeLine(device),
         xyLine(device, point[0], point[1], 0),
@@ -731,6 +883,10 @@ export function planDevice(
         }
         if (feeder.vision && !visionReady) {
             skipped.push({ ref: part.ref, reason: `feeder ${feeder.id} wants the up camera: center the nozzle over it first` });
+            continue;
+        }
+        if (feeder.at === null) {
+            skipped.push({ ref: part.ref, reason: `feeder ${feeder.id}'s slot is not known: scan the feeder bus, or run, which finds it` });
             continue;
         }
         const index = given[feeder.id] ?? 0;

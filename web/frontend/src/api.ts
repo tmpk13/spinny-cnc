@@ -7,6 +7,7 @@ import type {
     AutoConversation,
     AutoSettings,
     AutoSettingsUpdate,
+    BusFeeder,
     CalibrateRequest,
     CalibrateResponse,
     CameraPose,
@@ -306,6 +307,10 @@ export interface Api {
     deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }>;
     /** The count of boards finished back to 0. */
     deviceBoardsReset(): Promise<DeviceState>;
+    /** The feeders that answer on the feeder bus, with their ids. */
+    deviceBusScan(): Promise<DeviceState & { feeders: BusFeeder[] }>;
+    /** One advance of a feeder on the bus. */
+    deviceBusFeed(feeder: string): Promise<DeviceState>;
     deviceConnect(): Promise<DeviceState>;
     deviceDisconnect(): Promise<DeviceState>;
     deviceCommand(line: string): Promise<DeviceState & { reply: string[] }>;
@@ -979,6 +984,14 @@ export class HttpApi implements Api {
 
     deviceBoardsReset(): Promise<DeviceState> {
         return this.request<DeviceState>("POST", "/api/pnp/device/boards/reset");
+    }
+
+    deviceBusScan(): Promise<DeviceState & { feeders: BusFeeder[] }> {
+        return this.request<DeviceState & { feeders: BusFeeder[] }>("POST", "/api/pnp/device/bus/scan");
+    }
+
+    deviceBusFeed(feeder: string): Promise<DeviceState> {
+        return this.request<DeviceState>("POST", "/api/pnp/device/bus/feed", { feeder });
     }
 
     deviceConnect(): Promise<DeviceState> {

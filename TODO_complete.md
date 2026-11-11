@@ -710,3 +710,11 @@
   polylines with bulges, arcs, circles, ellipses, splines and nested
   block inserts in the drawing's units; text, hatches and dimensions are
   left out, a binary DXF is refused.
+- Feeders on a bus (2026-11-11): a profile's `[bus]` says how packets
+  reach smart feeders through the controller (send line, reply pattern,
+  header order, addresses, codes), `[[slot]]` where each address presents
+  its part, and a `[[feeder]]` names its `bus_id`; a run finds it by id,
+  initializes, advances and waits before each pick. The LumenPnP profile
+  carries Photon's values, the PNP tab a Feeders panel (Scan bus, Slot
+  here, Keep slot, Feed), and the OpenPnP import brings Photon feeders
+  and their slots. Untested on a LumenPnP.

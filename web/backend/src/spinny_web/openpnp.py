@@ -40,6 +40,7 @@ from spinny_laser.align import Fit, fit_rigid, turn
 from spinny_laser.cam import set_value
 from spinny_laser.machines import is_id
 
+from .feederbus import HEADER_FIELDS, BusProfile, check_id as check_bus_id, slot_place
 from .kinematics import num
 from .stores import TomlStore
 
@@ -78,8 +79,9 @@ class Feeder:
     match: str
     # The first part's place, X Y Z, and the step from one part to the next:
     # along a strip, or with `columns` from column to column of a tray,
-    # `row_pitch` from row to row.
-    at: tuple[float, float, float]
+    # `row_pitch` from row to row. None for a feeder on the bus whose slot
+    # is found when a run starts.
+    at: tuple[float, float, float] | None
     pitch: tuple[float, float] = (0.0, 0.0)
     # Parts in it; 0 for one that presents every part at `at`.
     count: int = 0
@@ -109,6 +111,13 @@ class Feeder:
     # The parts it holds by their references, which outdo the words: an
     # OpenPnP job names each placement's part, so its import knows them.
     refs: tuple[str, ...] = ()
+    # A feeder on the profile's bus: its id there, its address (its slot;
+    # None until found by its id), its pick place from the slot's place,
+    # and how far its tape moves on per part, mm.
+    bus_id: str | None = None
+    slot: int | None = None
+    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    advance: float = 4.0
 
     def holds(self, value: str, footprint: str, ref: str = "") -> bool:
         if self.refs:
@@ -117,6 +126,8 @@ class Feeder:
         return all(word in hay for word in self.match.lower().split())
 
     def place_of(self, index: int) -> tuple[float, float, float]:
+        if self.at is None:
+            raise DeviceError(f"feeder {self.id}'s place is not known: its slot is found on the feeder bus when a run starts")
         if self.columns > 0:
             column, row = index % self.columns, index // self.columns
             return (
@@ -125,6 +136,16 @@ class Feeder:
                 self.at[2],
             )
         return (self.at[0] + index * self.pitch[0], self.at[1] + index * self.pitch[1], self.at[2])
+
+
+@dataclass(frozen=True)
+class Slot:
+    """Where the feeder at a bus address presents its part: the head's
+    place with the nozzle over the slot's point, and the slot's angle."""
+
+    address: int
+    at: tuple[float, float, float]
+    rotation: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -240,6 +261,9 @@ class Device:
     # How far from the up camera's picture center a part is looked for, mm;
     # None looks as far as pcbv does by default (a third of the height).
     crop: float | None = None
+    # The bus smart feeders are on, and where each address's feeder sits.
+    bus: BusProfile | None = None
+    slots: tuple[Slot, ...] = ()
 
     def summary(self) -> dict:
         return {"id": self.id, "name": self.name, "description": self.description, "url": self.url, "feeders": len(self.feeders)}
@@ -273,6 +297,8 @@ class Device:
             "pick_tries": self.pick_tries,
             "camera_z": self.camera_z,
             "crop": self.crop,
+            "bus": self.bus is not None,
+            "slots": [{"address": slot.address, "at": list(slot.at), "rotation": slot.rotation} for slot in self.slots],
             "max_offset": self.max_offset,
             "max_turn": self.max_turn,
             "size_tolerance": self.size_tolerance,
@@ -295,7 +321,7 @@ class Device:
                 {
                     "id": f.id,
                     "match": f.match,
-                    "at": list(f.at),
+                    "at": list(f.at) if f.at is not None else None,
                     "pitch": list(f.pitch),
                     "count": f.count,
                     "columns": f.columns,
@@ -307,6 +333,9 @@ class Device:
                     "mark": f.mark,
                     "crop": f.crop,
                     "refs": list(f.refs),
+                    "bus_id": f.bus_id,
+                    "slot": f.slot,
+                    "advance": f.advance,
                 }
                 for f in self.feeders
             ],
@@ -519,6 +548,53 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         )
         read.done(looking, "top_camera", {"z", "offset", "fiducial", "within"})
 
+    bus = None
+    wire = read.table(top, "bus")
+    if wire:
+        defaults = BusProfile()
+        header = read.lines(wire, "header", "bus", HEADER_FIELDS)
+        if not header or len(set(header)) != len(header) or any(name not in HEADER_FIELDS for name in header):
+            raise read.fail("bus", "header", f"must name each of its bytes once, from {', '.join(HEADER_FIELDS)}")
+        send = read.text(wire, "send", "bus", defaults.send)
+        if "{packet}" not in send:
+            raise read.fail("bus", "send", "must hold {packet}, where the packet's hex goes")
+        reply = JAVA_GROUP.sub("(?P<", read.text(wire, "reply", "bus", defaults.reply, line=False))
+        try:
+            groups = re.compile(reply).groups
+        except re.error as exc:
+            raise read.fail("bus", "reply", f"is not a regular expression: {exc}") from None
+        if groups < 1:
+            raise read.fail("bus", "reply", "must hold a group, ( ), around the answer's hex")
+        codes = {
+            name: read.integer(wire, name, "bus", getattr(defaults, name), 0, 255)
+            for name in ("get_id", "init", "feed", "status", "find", "ok", "wrong_id", "unreachable", "uninitialized", "busy")
+        }
+        bus = BusProfile(
+            send=send,
+            reply=reply,
+            header=header,
+            host=read.integer(wire, "host", "bus", defaults.host, 0, 255),
+            broadcast=read.integer(wire, "broadcast", "bus", defaults.broadcast, 0, 255),
+            tries=read.integer(wire, "tries", "bus", defaults.tries, 1, 10),
+            max_address=read.integer(wire, "max_address", "bus", defaults.max_address, 1, 254),
+            poll_ms=read.integer(wire, "poll_ms", "bus", defaults.poll_ms, 10, 5000),
+            **codes,
+        )
+        read.done(wire, "bus", {"send", "reply", "header", "host", "broadcast", "tries", "max_address", "poll_ms", *codes})
+    slot_tables = top.get("slot", [])
+    if not isinstance(slot_tables, list) or not all(isinstance(item, dict) for item in slot_tables):
+        raise read.fail(None, "slot", "must be an array of tables ([[slot]])")
+    slots: list[Slot] = []
+    for number, table in enumerate(slot_tables, start=1):
+        section = f"slot {number}"
+        if bus is None:
+            raise read.fail(section, "address", "is a feeder bus's slot: add a [bus] section")
+        address = read.integer(table, "address", section, 0, 1, 254)
+        if any(other.address == address for other in slots):
+            raise read.fail(section, "address", f"{address} is another slot's too")
+        slots.append(Slot(address=address, at=read.point(table, "at", section, 3, None), rotation=read.number(table, "rotation", section, 0.0, -360.0, 360.0)))
+        read.done(table, section, {"address", "at", "rotation"})
+
     tables = top.get("feeder", [])
     if not isinstance(tables, list) or not all(isinstance(item, dict) for item in tables):
         raise read.fail(None, "feeder", "must be an array of tables ([[feeder]])")
@@ -550,16 +626,46 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         marks = read.places(table, "marks", section, 2)
         if (pocket is not None or marks) and top_camera is None:
             raise read.fail(section, "pocket" if pocket is not None else "marks", "looks with the top camera: add a [top_camera] section")
+        rotation = read.number(table, "rotation", section, 0.0, -360.0, 360.0)
+        bus_id = None
+        slot = None
+        offset = (0.0, 0.0, 0.0)
+        advance = 4.0
+        if "bus_id" in table:
+            if bus is None:
+                raise read.fail(section, "bus_id", "is a feeder on the bus: add a [bus] section")
+            try:
+                bus_id = check_bus_id(read.text(table, "bus_id", section, ""))
+            except ValueError as exc:
+                raise read.fail(section, "bus_id", f"must be the feeder's id: {exc}") from None
+            if "at" in table or count or columns:
+                raise read.fail(section, "at" if "at" in table else "count", "is not for a feeder on the bus: its slot gives its place, and it presents every part there")
+            if "slot" in table:
+                slot = read.integer(table, "slot", section, 0, 1, 254)
+                if not any(entry.address == slot for entry in slots):
+                    raise read.fail(section, "slot", f"{slot} has no [[slot]] with its place")
+            offset = read.point(table, "offset", section, 3, (0.0, 0.0, 0.0))
+            advance = read.number(table, "advance", section, 4.0, 0.1, 25.5)
+        else:
+            for key in ("slot", "offset", "advance"):
+                if key in table:
+                    raise read.fail(section, key, "is for a feeder on the bus: give its bus_id")
+        if bus_id is not None:
+            placed = next((entry for entry in slots if entry.address == slot), None)
+            at = slot_place(placed.at, placed.rotation, offset) if placed is not None else None
+            rotation = rotation + (placed.rotation if placed is not None else 0.0)
+        else:
+            at = read.point(table, "at", section, 3, None)
         feeders.append(
             Feeder(
                 id=feeder_id,
                 match=match,
-                at=read.point(table, "at", section, 3, None),
+                at=at,
                 pitch=read.point(table, "pitch", section, 2, (0.0, 0.0)),
                 count=count,
                 columns=columns,
                 row_pitch=read.point(table, "row_pitch", section, 2, (0.0, 0.0)),
-                rotation=read.number(table, "rotation", section, 0.0, -360.0, 360.0),
+                rotation=rotation,
                 place_z=place_z_of,
                 feed=read.lines(table, "feed", section, (), one=True),
                 vision=read.flag(table, "vision", section, False),
@@ -569,12 +675,19 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
                 mark=read.shade(table, "mark", section, "dark"),
                 crop=read.number(table, "crop", section, None, 0.1, 100.0) if "crop" in table else None,
                 refs=refs,
+                bus_id=bus_id,
+                slot=slot,
+                offset=offset,
+                advance=advance,
             )
         )
         read.done(
             table,
             section,
-            {"id", "match", "refs", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"},
+            {
+                "id", "match", "refs", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size",
+                "pocket", "marks", "mark", "crop", "bus_id", "slot", "offset", "advance",
+            },
         )
     camera = read.table(top, "camera")
     camera_z = read.number(camera, "z", "camera", None) if "z" in camera else None
@@ -584,7 +697,7 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     max_turn = read.number(camera, "max_turn", "camera", 15.0, 0.1, 45.0)
     size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0.0, 1.0)
     read.done(camera, "camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance"})
-    read.done(top, None, {"name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera"})
+    read.done(top, None, {"name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera", "bus", "slot"})
     return Device(
         id=device_id,
         name=name or device_id,
@@ -625,6 +738,8 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         camera_position=camera_position,
         park=park,
         crop=crop,
+        bus=bus,
+        slots=tuple(slots),
     )
 
 
@@ -805,8 +920,10 @@ def pick_lines(device: Device, feeder: Feeder, label: str, point: tuple[float, f
     """The lines that take a part from its pocket: a comment saying which,
     the feeder's own lines, up to the safe height, over the pocket with the
     nozzle turned to 0, down, the vacuum on, and back up."""
+    advance = [f"; {feeder.id} advances {num(feeder.advance)} mm on the feeder bus"] if feeder.bus_id is not None else []
     return [
         f"; {label}".rstrip(),
+        *advance,
         *feeder.feed,
         safe_line(device),
         move_xy(device, (point[0], point[1]), 0.0),
@@ -916,6 +1033,9 @@ def plan(
             continue
         if feeder.vision and not vision_ready:
             skipped.append({"ref": ref, "reason": f"feeder {feeder.id} wants the up camera: center the nozzle over it first"})
+            continue
+        if feeder.at is None:
+            skipped.append({"ref": ref, "reason": f"feeder {feeder.id}'s slot is not known: scan the feeder bus, or run, which finds it"})
             continue
         index = given.get(feeder.id, 0)
         if feeder.count > 0 and index >= feeder.count:

@@ -316,6 +316,7 @@ function main(): void {
         view: panel("pnp-view"),
         top: panel("pnp-top"),
         refs: panel("pnp-refs"),
+        feeders: panel("pnp-feeders"),
         run: panel("pnp-run"),
     }, ctx);
     // The Auto page: the conversation with a model that makes jobs and

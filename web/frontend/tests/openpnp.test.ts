@@ -204,8 +204,8 @@ describe("reading an OpenPnP setup", () => {
         // The strip runs along +X: its parts 3.5 mm beside the holes, 2 mm
         // past the first, and it starts at the part OpenPnP takes next (#4).
         const strip = device.feeders.find((feeder) => feeder.id === "10k-strip")!;
-        expect(strip.at[0]).toBeCloseTo(225.544 + 3 * 4, 3);
-        expect(strip.at[1]).toBeCloseTo(161.688, 3);
+        expect(strip.at![0]).toBeCloseTo(225.544 + 3 * 4, 3);
+        expect(strip.at![1]).toBeCloseTo(161.688, 3);
         expect(strip.pitch[0]).toBeCloseTo(4, 6);
         expect(strip.count).toBe(8);
         // The levels kept are checked.
@@ -213,10 +213,13 @@ describe("reading an OpenPnP setup", () => {
         expect(parseDevice(buildProfile("lumen", items, kept), "lumen").vacuum?.part_on).toEqual([220, 241]);
     });
 
-    test("a Photon feeder, or one whose place is not set, is left out with why", () => {
-        const extra = MACHINE.replace("</feeders>", `<feeder class="org.openpnp.machine.photon.PhotonFeeder" id="P1" name="Photon 3" enabled="true" part-id="C0402-100n" hardware-id="0123456789AB">
+    test("Photon feeders come as feeders on the bus with its slots; one with no place is left out", () => {
+        const extra = MACHINE.replace("</feeders>", `<feeder class="org.openpnp.machine.photon.PhotonFeeder" id="P1" name="Photon 3" enabled="true" part-id="C0402-100n" hardware-id="0102030405060708090a0b0c" part-pitch="2">
             <location units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>
-            <offset units="Millimeters" x="0.5" y="-2.0" z="0.0" rotation="0.0"/>
+            <offset units="Millimeters" x="0.5" y="-2.0" z="0.25" rotation="90.0"/>
+         </feeder>
+         <feeder class="org.openpnp.machine.photon.PhotonFeeder" id="P2" name="Photon blank" enabled="true" part-id="C0402-1u">
+            <location units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>
          </feeder>
          <feeder class="org.openpnp.machine.reference.feeder.ReferenceAutoFeeder" id="A1" name="Bare auto" enabled="true" part-id="LED-0603">
             <location units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>
@@ -224,15 +227,39 @@ describe("reading an OpenPnP setup", () => {
          <feeder class="org.openpnp.machine.reference.feeder.BlindsFeeder" id="B1" name="Blinds" enabled="true" part-id="C0603-1u">
             <location units="Millimeters" x="80.0" y="30.0" z="12.0" rotation="0.0"/>
          </feeder>
-      </feeders>`);
-        const { items, warnings } = machineItems(readMachine(extra));
+      </feeders>
+      <properties>
+         <entry>
+            <string>PhotonFeeder.FeederSlots</string>
+            <object class="org.openpnp.machine.photon.PhotonFeederSlots">
+               <slots>
+                  <slot address="3"><location units="Millimeters" x="76.456" y="334.812" z="12.0" rotation="0.0"/></slot>
+                  <slot address="4"><location units="Millimeters" x="91.456" y="334.812" z="12.0" rotation="0.0"/></slot>
+               </slots>
+            </object>
+         </entry>
+      </properties>`);
+        const machine = readMachine(extra);
+        expect(machine.slots.map((slot) => slot.address)).toEqual([3, 4]);
+        const { items, warnings } = machineItems(machine);
         const feeders = items.filter((item) => item.group === "Feeders").map((item) => [item.label, item.keep]);
-        // The Photon feeder and the one at 0, 0, 0 are not offered at all;
-        // a kind the import does not know is offered, left unticked.
-        expect(feeders.map(([label]) => label)).toEqual(["MCU tray (TrayFeeder)", "10k strip (StripFeeder)", "Blinds (BlindsFeeder)"]);
-        expect(feeders[2]![1]).toBe(false);
-        expect(warnings.some((warning) => warning.startsWith("feeder Photon 3 (C0402-100n) is left out: a Photon feeder"))).toBe(true);
+        // The bus first, the Photon feeder with an id on it; the blank one
+        // and the one at 0, 0, 0 are not offered; an unknown kind is, unticked.
+        expect(feeders.map(([label]) => label)).toEqual(["Photon feeder bus", "MCU tray (TrayFeeder)", "10k strip (StripFeeder)", "Photon 3 (Photon)", "Blinds (BlindsFeeder)"]);
+        expect(feeders[4]![1]).toBe(false);
+        expect(warnings.some((warning) => warning.startsWith("feeder Photon blank (C0402-1u) is left out: a Photon feeder with no hardware id"))).toBe(true);
         expect(warnings.some((warning) => warning.startsWith("feeder Bare auto (LED-0603) is left out: its place is not set"))).toBe(true);
+        const kept = new Set(items.filter((item) => item.keep).map((item) => item.id));
+        const device = parseDevice(buildProfile("lumen", items, kept), "lumen");
+        expect(device.bus?.send).toBe("M485 {packet}");
+        // The slots lose N1's head offset: 76.456 + 23.544, 334.812 + 65.188.
+        expect(device.slots.map((slot) => [slot.address, slot.at[0], slot.at[1]])).toEqual([[3, 100, 400], [4, 115, 400]]);
+        const photon = device.feeders.find((feeder) => feeder.id === "photon-3")!;
+        expect(photon.bus_id).toBe("0102030405060708090A0B0C");
+        expect(photon.at).toBeNull();
+        expect(photon.offset).toEqual([0.5, -2, 0.25]);
+        expect(photon.advance).toBe(2);
+        expect(photon.rotation).toBe(90);
     });
 
     test("a job's placements become references, the place Z, and the strip's parts", () => {

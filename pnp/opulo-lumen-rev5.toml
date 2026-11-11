@@ -100,8 +100,43 @@ offset = [23.544, 65.188]
 fiducial = "bright"
 within = 2.0
 
+# Opulo's Photon feeders on the LumenPnP's RS-485 bus, through Marlin's
+# M485: a packet goes out as hex and comes back in an rs485-reply line.
+# A packet is a header of to, from, id (its number, which the answer
+# carries back), length and crc (CRC-8, polynomial 7), then a payload whose
+# first byte is the command's code, or in an answer how it went. Scan bus
+# in the PNP tab's Feeders panel lists the feeders that answer.
+[bus]
+send = "M485 {packet}"
+reply = "rs485-reply: *(?<packet>[0-9A-Fa-f]*)"   # one space or none before the hex
+header = ["to", "from", "id", "length", "crc"]
+host = 0
+broadcast = 255
+max_address = 25          # OpenPnP's PhotonFeeder.MaxFeederAddress for the LumenPnP
+tries = 3
+poll_ms = 50
+get_id = 1                # the commands' codes
+init = 2
+feed = 4                  # with the tenths of a mm to move
+status = 6
+find = 192                # 0xC0, to every feeder with an id: answered from its address
+ok = 0                    # the answers' codes
+wrong_id = 1
+unreachable = 2
+uninitialized = 3
+busy = 4
+
+# Where the feeder at each address presents its part: put N1 over a
+# feeder's pick point and press Slot here in the Feeders panel, or let
+# Import from OpenPnP bring the slots OpenPnP kept.
+# [[slot]]
+# address = 1
+# at = [100.0, 30.0, 12.0]
+
 # One table per feeder; jog N1 onto a feeder's first part to read its
-# place. Opulo's Photon feeders are not driven: their tape is not advanced.
+# place. A Photon feeder names its id on the bus instead (Scan bus shows
+# it), and its slot is found by that id when a run starts, unless `slot`
+# gives the address.
 # [[feeder]]
 # id = "r-10k-0603"
 # match = "10k 0603"
@@ -109,3 +144,10 @@ within = 2.0
 # pitch = [4.0, 0.0]
 # count = 50
 # rotation = 0
+#
+# [[feeder]]
+# id = "c-100n-0402"
+# match = "100n 0402"
+# bus_id = "0123456789ABCDEF01234567"  # the Photon feeder's hardware id
+# offset = [0.0, 0.0, 0.0]             # its pick place from its slot's
+# advance = 2                          # mm its tape moves a part: the part pitch

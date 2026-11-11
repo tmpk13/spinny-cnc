@@ -1145,7 +1145,8 @@ export interface FeederSummary {
     id: string;
     /** Words a part's value and footprint must all hold, any case. */
     match: string;
-    at: [number, number, number];
+    /** The first part's place; null for a feeder on the bus whose slot is found when a run starts. */
+    at: [number, number, number] | null;
     pitch: [number, number];
     count: number;
     /** A tray's columns; 0 for a strip. */
@@ -1164,6 +1165,19 @@ export interface FeederSummary {
     crop?: number | null;
     /** The parts it holds by reference, which outdo the words. */
     refs?: string[];
+    /** On the feeder bus: its id there, its address when the profile gives it, and its advance per part, mm. */
+    bus_id?: string | null;
+    slot?: number | null;
+    advance?: number;
+}
+
+/** A feeder that answered a scan of the bus: its address, its id, and the profile's feeder of that id. */
+export interface BusFeeder {
+    address: number;
+    id: string;
+    feeder: string | null;
+    /** The profile has a [[slot]] place for its address. */
+    slot: boolean;
 }
 
 /** The vacuum sensor: the lines that read it, the pattern whose group is the reading, the readings with a part held and empty (none: read by hand only). */
@@ -1213,6 +1227,9 @@ export interface DeviceDocument {
     camera_z: number | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop?: number | null;
+    /** The profile has a feeder bus, and these slots' places. */
+    bus?: boolean;
+    slots?: { address: number; at: [number, number, number]; rotation: number }[];
     max_offset: number;
     max_turn: number;
     size_tolerance: number;

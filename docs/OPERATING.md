@@ -575,11 +575,22 @@ two parts left out one after another.
 
 Nothing here has run against a real machine yet: check the profile's
 commands against the firmware before the first run, with the nozzle well
-above the board. Photon feeders are not driven: their tape does not
-advance, and the import leaves them out (OpenPnP finds each one's slot on
-the feeders' bus as it runs, so its machine.xml holds no place for it). The part's angle needs pcb-vision at b4d1299 or later (the
-spot's smallest rectangle); an older pcbv places without correcting it
-and says so.
+above the board. The part's angle needs pcb-vision at b4d1299 or later
+(the spot's smallest rectangle); an older pcbv places without correcting
+it and says so.
+
+Feeders on a bus, Opulo's Photon feeders on the LumenPnP: the profile's
+`[bus]` says how packets reach them (the LumenPnP profile has Photon's),
+and a feeder names its id there (`bus_id`) instead of a place. *Scan bus*
+in the Feeders panel lists the feeders that answer, by address and id. A
+feeder's pick point comes from its slot's place: put N1 over the point a
+feeder presents its part at and press *Slot here* by its address, or let
+*Import from OpenPnP* bring the slots and the feeders OpenPnP kept. A
+feeder's slot is found by its id when a run starts (*Keep slot* writes it
+into the profile instead); *Feed* moves a feeder's tape on once, to see it
+work. A run advances each feeder on the bus before its pick and waits for
+it; a feeder that does not answer leaves its part out. None of it has
+run on a LumenPnP yet: try *Scan bus* and *Feed* before a run.
 
 ### The Auto tab
 

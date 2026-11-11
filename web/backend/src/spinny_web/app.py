@@ -593,6 +593,11 @@ class DeviceCameraBody(Finite):
     clear: bool = False
 
 
+class DeviceBusFeedBody(BaseModel):
+    # The profile's feeder to advance once.
+    feeder: str
+
+
 class DeviceLightBody(BaseModel):
     on: bool
 
@@ -3961,6 +3966,14 @@ def create_app(
     @app.post("/api/pnp/device/boards/reset")
     def device_boards_reset():
         return guarded(backend.device_boards_reset)
+
+    @app.post("/api/pnp/device/bus/scan")
+    def device_bus_scan():
+        return guarded(backend.device_bus_scan)
+
+    @app.post("/api/pnp/device/bus/feed")
+    def device_bus_feed(body: DeviceBusFeedBody):
+        return guarded(lambda: backend.device_bus_feed(body.feeder))
 
     @app.post("/api/pnp/device/nozzle")
     def device_nozzle(body: DeviceNozzleBody | None = None):

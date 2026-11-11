@@ -793,7 +793,13 @@ nozzle as designed, a first guess), `fiducial` (dark or bright), `within`
 for, default 2); and `[[feeder]]`
 tables: `id`, `match` (words a part's value and footprint must all hold),
 `refs` (the parts it holds by reference, which outdo `match`), `crop` (as
-`[camera] crop`, for its parts),
+`[camera] crop`, for its parts), `bus_id` (a feeder on the bus: its id
+there, 24 hex digits; with it `slot`, the address it sits at, whose
+`[[slot]]` gives its place, found by the id when a run starts when left
+out; `offset`, X Y Z of its pick point from its slot's place, turned by
+the slot's rotation; and `advance`, the mm its tape moves for a part, 0.1
+to 25.5, default 4, sent in tenths; such a feeder has no `at`, `pitch`,
+`count` or `columns` and presents every part at one place),
 `at` (the first part's X Y Z), `pitch` (X Y from one part to the next, or
 from column to column of a tray), `count` (0 for a feeder that presents
 every part at `at`), `columns` and `row_pitch` (a tray, taken row by
@@ -865,6 +871,8 @@ a camera or the vacuum says otherwise.
 | `POST /api/pnp/device/light` | `{"on": true}`: the profile's `light_on` or `light_off` lines; 400 without them |
 | `POST /api/pnp/device/vacuum` | `{"on": true, "read": true}`, either: the vacuum switched by the profile's pick or place lines, then the sensor read by its `[vacuum] read` lines: `{"reply": [...], ...state}`, the reading in `vacuum.reading`; 502 when the pattern finds none |
 | `POST /api/pnp/device/boards/reset` | the count of boards finished back to 0 |
+| `POST /api/pnp/device/bus/scan` | every address from 1 to `max_address` asked for its feeder's id: `{"feeders": [{"address": 3, "id": "0102...", "feeder": "c-100n" or null, "slot": true}], ...state}`, `slot` saying the profile has a `[[slot]]` for that address; 400 without `[bus]` |
+| `POST /api/pnp/device/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the profile lacks, 502 when the feeder does not answer or refuses |
 | `POST /api/pnp/device/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
 | `POST /api/pnp/device/nozzle` | `{"step": 1.0}`: the up camera's nozzle routine (as `POST /api/pnp/nozzle`) on the device, the nozzle turned to 0: its moves are the profile's move word and wait command, its place read with the position command; what it measures is kept as the state's `camera`. The routine shows in the up camera state with `"target": "device"`, and other device lines are 409 meanwhile |
 | `POST /api/pnp/device/runout` | over the up camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the up camera's routine |
@@ -875,6 +883,33 @@ a camera or the vacuum says otherwise.
 | `POST /api/pnp/device/top/mark` | the nozzle's tip is over a mark: the device's position is kept as `mark_at` |
 | `POST /api/pnp/device/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the profile's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
 | `POST /api/pnp/device/top/abort` | ends the top camera's routine and sends the stop command |
+
+A feeder bus (`[bus]`) carries packets to smart feeders through the
+controller, Opulo's Photon feeders on a LumenPnP's RS-485 through
+Marlin's M485 being the one shipped. A packet goes out in the `send` line
+(`{packet}` is its hex) and its answer is the group of the `reply`
+pattern in the line's answer. Its `header` names its bytes in order, from
+`to`, `from`, `id` (the packet's number, which the answer carries back),
+`length` (the payload's) and `crc` (CRC-8, polynomial 0x07, over every
+other byte, in order); then the payload, whose first byte is the command's
+code, or in an answer how it went. `host` and `broadcast` are addresses,
+`tries` the tries per exchange, `max_address` the last address a scan
+asks, `poll_ms` the wait between status asks; the commands' codes are
+`get_id`, `init`, `feed`, `status` and `find`, the answers' `ok`,
+`wrong_id`, `unreachable`, `uninitialized` and `busy` (Photon's values are
+the defaults). Before each pick from a feeder on the bus a run finds it
+by its id (a `find` to the broadcast address, answered from its own),
+initializes it once (`init` with its id; a feeder answering
+`uninitialized` later is initialized again), sends `feed` with the tenths
+of a mm, and asks `status` until it answers `ok` (`busy` while feeding,
+`unreachable` for a jam), waiting at most three times the time the feed's
+answer gave, two seconds at least. A feeder that does not advance leaves
+its part out. `[[slot]]` tables give where the feeder at each `address`
+presents its part (`at`, `rotation`). Without a connected device a plan
+leaves out the parts of a feeder whose slot is found at the run. A device
+file's `document` has `bus` (true with a `[bus]`), `slots`, and each
+feeder's `bus_id`, `slot` and `advance`; a feeder whose slot is found at
+the run has `at` null there.
 
 Device state:
 

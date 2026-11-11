@@ -40,6 +40,7 @@ from typing import Callable
 
 from spinny_laser.align import Fit, fit_rigid, turn
 
+from .feederbus import BusError, FeederBus
 from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice, RunContext
 from .kinematics import num
 from .openpnp import (
@@ -142,6 +143,9 @@ class Placement:
         self.program = self._plan(fit)
         self._no_angle_said = False
         self._failed_in_a_row = 0
+        # The feeder bus as the run sees it: the addresses found and the
+        # feeders initialized stay known from one part to the next.
+        self._bus: FeederBus | None = None
 
     def _plan(self, fit: Fit) -> Plan:
         place = self.setup.up_place
@@ -228,6 +232,12 @@ class Placement:
                 point = (seen[0], seen[1], point[2])
             if tries > 1:
                 self._doing(ctx, f"try {tries} of {device.pick_tries}")
+            if feeder.bus_id is not None:
+                try:
+                    self._advance(ctx, feeder, block.ref)
+                except BusError as exc:
+                    reason = f"feeder {feeder.id} did not advance: {exc}"
+                    break
             ctx.progress.note(f"picking {part.get('value', '')} from {feeder.id} #{index + 1}".replace("  ", " "), block.ref)
             for line in pick_lines(device, feeder, pick_label(part, feeder, index), point):
                 ctx.send(line)
@@ -260,6 +270,16 @@ class Placement:
         self._failed_in_a_row += 1
         if self._failed_in_a_row >= FAILED_IN_A_ROW:
             raise DeviceLinkError(f"{FAILED_IN_A_ROW} parts in a row were left out, the last as {reason}: check the setup before going on")
+
+    def _advance(self, ctx: RunContext, feeder: Feeder, ref: str) -> None:
+        """A feeder on the bus moves its tape on by one part before its pick."""
+        bus_profile = self.device.bus
+        assert bus_profile is not None and feeder.bus_id is not None
+        if self._bus is None:
+            self._bus = FeederBus(bus_profile, send=ctx.send, stopped=lambda: self.link.stopping)
+        self._doing(ctx, f"feeder {feeder.id} advancing")
+        address = self._bus.advance(feeder.bus_id, round(feeder.advance * 10), feeder.slot)
+        ctx.progress.note(f"feeder {feeder.id} advanced {num(feeder.advance)} mm (address {address})", ref)
 
     def _take(self, feeder: Feeder, index: int) -> None:
         self.taken[feeder.id] = max(self.taken.get(feeder.id, 0), index + 1)

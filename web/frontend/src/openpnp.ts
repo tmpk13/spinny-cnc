@@ -268,11 +268,19 @@ export interface OpenPnpFeeder {
     note: string | null;
     /** Why its place cannot be read from the file, when it cannot: such a feeder is left out. */
     unplaced: string | null;
+    /** A Photon feeder: its id on the bus, its pick place from its slot's, and its advance per part, mm. */
+    busId: string | null;
+    busOffset: Place | null;
+    advance: number;
 }
 
 export interface OpenPnpMachine {
     port: string | null;
     baud: number | null;
+    /** The Photon feeders' bus as its data actuator sends and reads it, and its slots' places. */
+    busSend: string | null;
+    busReply: string | null;
+    slots: { address: number; place: Place }[];
     commands: Command[];
     axes: Map<string, Axis>;
     nozzles: Nozzle[];
@@ -338,6 +346,9 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
         actuator: node.attrs["actuator-name"] ?? null,
         note: null as string | null,
         unplaced: null as string | null,
+        busId: null as string | null,
+        busOffset: null as Place | null,
+        advance: 4,
     };
     const location = placeOf(child(node, "location")) ?? { x: 0, y: 0, z: 0, rotation: 0 };
     // A place of 0, 0, 0 is one never set: going there would take the
@@ -392,12 +403,18 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
         };
     }
     if (kind === "PhotonFeeder") {
-        // Its slot is found on the RS-485 bus by its hardware id when OpenPnP
-        // runs, so the file holds no place for it, and its tape is advanced
-        // by packets this page does not send.
+        // Its slot is found on the bus by its hardware id when a run starts
+        // (OpenPnP keeps no slot for it), and its place is the slot's with
+        // its offset; it advances by its part pitch.
+        const id = (node.attrs["hardware-id"] ?? "").toUpperCase();
+        if (!/^[0-9A-F]{24}$/.test(id)) {
+            return { ...base, at: head(location), rotation: 0, unplaced: "a Photon feeder with no hardware id in the file" };
+        }
         return {
-            ...base, at: head(location), rotation: location.rotation,
-            unplaced: "a Photon feeder: OpenPnP finds its slot on the feeders' RS-485 bus as it runs, so the file holds no place for it, and its tape is not advanced here",
+            ...base, at: head(location), rotation: 0,
+            busId: id,
+            busOffset: placeOf(child(node, "offset")) ?? { x: 0, y: 0, z: 0, rotation: 0 },
+            advance: Math.min(25.5, Math.max(0.1, number(node.attrs["part-pitch"], 4))),
         };
     }
     // An auto feeder, a tube, a drag feeder: picked from one place.
@@ -407,6 +424,33 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
         note: kind === "ReferenceAutoFeeder" ? null : known ? `a ${kind}: picked at its one place` : `a ${kind}, which the import does not know: check its place before keeping it`,
         enabled: base.enabled && known,
     };
+}
+
+/**
+ * The Photon feeders' bus: the PhotonFeederData actuator's read command and
+ * pattern (OpenPnP's defaults, M485 and rs485-reply, when the file has no
+ * actuator), and the slots' places, kept in the machine's properties.
+ */
+function busOf(machine: XmlNode, driver: XmlNode | undefined, head: XmlNode | undefined): { busSend: string | null; busReply: string | null; slots: { address: number; place: Place }[] } {
+    const actuator = [...kids(child(machine, "actuators"), "actuator"), ...kids(child(head, "actuators"), "actuator")].find((node) => node.attrs["name"] === "PhotonFeederData");
+    const commands = commandsOf(driver).filter((command) => actuator !== undefined && command.mount === actuator.attrs["id"]);
+    const read = commands.find((command) => command.type === "ACTUATOR_READ_COMMAND")?.lines.map(bare).find((line) => line.includes("{Value}"));
+    const regex = commands.find((command) => command.type === "ACTUATOR_READ_REGEX")?.lines.join("").trim();
+    const slots: { address: number; place: Place }[] = [];
+    for (const entry of kids(child(machine, "properties"), "entry")) {
+        if (child(entry, "string")?.text.trim() !== "PhotonFeeder.FeederSlots") {
+            continue;
+        }
+        const holder = child(child(entry, "object"), "slots") ?? child(entry, "object");
+        for (const slot of kids(holder, "slot")) {
+            const place = placeOf(child(slot, "location"));
+            const address = number(slot.attrs["address"], 0);
+            if (place && address >= 1 && address <= 254 && !(place.x === 0 && place.y === 0 && place.z === 0)) {
+                slots.push({ address, place });
+            }
+        }
+    }
+    return { busSend: read ? read.replace("{Value}", "{packet}") : null, busReply: regex || null, slots };
 }
 
 /** The setup an OpenPnP machine.xml describes. */
@@ -475,6 +519,7 @@ export function readMachine(text: string): OpenPnpMachine {
         park: placeOf(child(head, "park-location")),
         discard: placeOf(child(machine, "discard-location")),
         feeders: kids(child(machine, "feeders"), "feeder").map((node) => feederOf(node, firstNozzle)),
+        ...busOf(machine, driver, head),
     };
 }
 
@@ -512,7 +557,28 @@ export interface ProfileData {
     cameraPosition: [number, number] | null;
     cameraZ: number | null;
     topOffset: [number, number] | null;
-    feeders: { id: string; match: string; refs: string[]; at: [number, number, number]; pitch: [number, number]; count: number; columns: number; rowPitch: [number, number]; rotation: number; feed: string[]; partId: string }[];
+    feeders: ProfileFeeder[];
+    /** The feeder bus's lines, and its slots' places. */
+    bus: { send: string; reply: string } | null;
+    slots: { address: number; at: [number, number, number]; rotation: number }[];
+}
+
+export interface ProfileFeeder {
+    id: string;
+    match: string;
+    refs: string[];
+    at: [number, number, number];
+    pitch: [number, number];
+    count: number;
+    columns: number;
+    rowPitch: [number, number];
+    rotation: number;
+    feed: string[];
+    partId: string;
+    /** On the bus: its id, its pick place from its slot's, and its advance per part. */
+    busId?: string;
+    offset?: [number, number, number];
+    advance?: number;
 }
 
 /** What a profile starts as before anything is kept: the shipped profile's defaults. */
@@ -549,6 +615,8 @@ export function defaultProfile(name: string): ProfileData {
         cameraZ: null,
         topOffset: null,
         feeders: [],
+        bus: null,
+        slots: [],
     };
 }
 
@@ -652,6 +720,18 @@ export function profileText(data: ProfileData): string {
     if (data.topOffset) {
         lines.push("", "[top_camera]", `offset = ${pair(data.topOffset)}`);
     }
+    if (data.bus) {
+        lines.push(
+            "",
+            "# The feeders' bus: packets as hex through the controller, answered in its reply.",
+            "[bus]",
+            `send = ${quote(data.bus.send)}`,
+            `reply = ${quote(data.bus.reply)}`,
+        );
+        for (const slot of data.slots) {
+            lines.push("", "[[slot]]", `address = ${slot.address}`, `at = ${pair(slot.at)}`, `rotation = ${fixed(slot.rotation)}`);
+        }
+    }
     for (const feeder of data.feeders) {
         lines.push("", "[[feeder]]", `id = ${quote(feeder.id)}`);
         if (feeder.refs.length > 0) {
@@ -659,6 +739,14 @@ export function profileText(data: ProfileData): string {
         }
         if (feeder.match) {
             lines.push(`match = ${quote(feeder.match)}`);
+        }
+        if (feeder.busId) {
+            // Its slot is found on the bus by its id when a run starts.
+            lines.push(`bus_id = ${quote(feeder.busId)}`, `offset = ${pair(feeder.offset ?? [0, 0, 0])}`, `advance = ${fixed(feeder.advance ?? 4)}`);
+            if (feeder.rotation !== 0) {
+                lines.push(`rotation = ${fixed(feeder.rotation)}`);
+            }
+            continue;
         }
         lines.push(`at = ${pair(feeder.at)}`, `pitch = ${pair(feeder.pitch)}`, `count = ${feeder.count}`);
         if (feeder.columns > 0) {
@@ -826,6 +914,27 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
         const discard: [number, number, number] = [machine.discard.x - offset.x, machine.discard.y - offset.y, machine.discard.z - offset.z];
         push({ id: "discard", group: "Places", label: "Discard", value: `X ${fixed(discard[0])} Y ${fixed(discard[1])} Z ${fixed(discard[2])}`, keep: false, note: "left out, a failed part goes back in its pocket", apply: (data) => { data.discard = discard; } });
     }
+    const photons = machine.feeders.filter((feeder) => feeder.busId !== null && !feeder.unplaced);
+    const busSend = machine.busSend ?? "M485 {packet}";
+    const busReply = machine.busReply ?? "rs485-reply: *(?<Value>.*)";
+    const slots = machine.slots.map((slot) => ({
+        address: slot.address,
+        at: [slot.place.x - offset.x, slot.place.y - offset.y, slot.place.z - offset.z] as [number, number, number],
+        rotation: slot.place.rotation,
+    }));
+    const giveBus = (data: ProfileData): void => {
+        data.bus = { send: busSend, reply: busReply };
+        data.slots = slots;
+    };
+    if (photons.length > 0 || machine.busSend !== null) {
+        push({
+            id: "bus", group: "Feeders", label: "Photon feeder bus",
+            value: `${busSend}  /  ${busReply}${slots.length > 0 ? `, ${slots.length} slots placed` : ", no slot placed in the file"}`,
+            keep: true,
+            note: "the slots' places as OpenPnP keeps them; a feeder's slot is found by its id when a run starts",
+            apply: giveBus,
+        });
+    }
     const ids = new Set<string>();
     for (const feeder of machine.feeders) {
         if (feeder.unplaced) {
@@ -835,6 +944,28 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
         // The feeders' places were read for the first nozzle: move them to this one's.
         const shift = { x: (machine.nozzles[0]?.offset.x ?? 0) - offset.x, y: (machine.nozzles[0]?.offset.y ?? 0) - offset.y, z: (machine.nozzles[0]?.offset.z ?? 0) - offset.z };
         const id = feederId(feeder.name, ids);
+        if (feeder.busId !== null) {
+            const busId = feeder.busId;
+            const busOffset = feeder.busOffset ?? { x: 0, y: 0, z: 0, rotation: 0 };
+            const match = feeder.partId.replace(/[-_]+/g, " ").trim();
+            push({
+                id: `feeder:${id}`, group: "Feeders", label: `${feeder.name} (Photon)`,
+                value: `${feeder.partId || "no part"}, id ${busId}, ${fixed(feeder.advance)} mm a part, its slot found when a run starts`,
+                keep: feeder.enabled,
+                note: "its parts are matched by the words of its part id unless a job tells them",
+                apply: (data) => {
+                    if (!data.bus) {
+                        giveBus(data);
+                    }
+                    data.feeders.push({
+                        id, match: match || id, refs: [], at: [0, 0, 0], pitch: [0, 0], count: 0, columns: 0, rowPitch: [0, 0],
+                        rotation: busOffset.rotation, feed: [], partId: feeder.partId,
+                        busId, offset: [busOffset.x, busOffset.y, busOffset.z], advance: feeder.advance,
+                    });
+                },
+            });
+            continue;
+        }
         const at: [number, number, number] = [feeder.at.x + shift.x, feeder.at.y + shift.y, feeder.at.z + shift.z];
         const match = feeder.partId.replace(/[-_]+/g, " ").trim();
         const feedId = feeder.actuator ? machine.actuators.get(feeder.actuator) : undefined;

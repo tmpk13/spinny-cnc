@@ -21,7 +21,8 @@ Smoothieware, RepRapFirmware, Grbl): a device profile in `pnp/` says how
 to talk to it, and the backend places a line at a time, each next line
 made from what the up camera, a third camera on that machine's head
 looking down (fiducials, feeder marks, parts in their pockets) and its
-vacuum sensor say.
+vacuum sensor say. Feeders on that machine's own bus (Opulo's Photon
+feeders) are advanced through its controller before each pick.
 
 | Part | What | Build, test, run |
 | --- | --- | --- |
@@ -79,6 +80,9 @@ flowchart LR
         PCAM[pnp PickCamera: one base for the up and top cameras: settings, pcbv, a routine at a time] --> TOPC
         PCAM --> PNP
         PLC --> GD[gcode_device: a line at a time, each answered ok]
+        PLC --> FBUS[feederbus: packets to feeders on a bus, framed as the profile's bus says: a feeder found by its id, initialized, advanced, waited for]
+        FBUS -->|the bus's send line, its reply read back| GD
+        GD <-->|M485 packets carried on RS-485| PHO[Photon feeders in a LumenPnP's slots]
         GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl, an Opulo LumenPnP]
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
         BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot with its smallest rectangle]

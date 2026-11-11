@@ -17,6 +17,7 @@ import { mountCameraLog } from "./camlog.ts";
 import { mountCameraView } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { DEVICE_SETUP, deviceCameraText, mountDevice } from "./device.ts";
+import { mountDeviceFeeders } from "./devicefeeders.ts";
 import { mountDeviceJog } from "./devicejog.ts";
 import { mountDeviceRefs } from "./devicerefs.ts";
 import { mountDeviceRun } from "./devicerun.ts";
@@ -340,6 +341,8 @@ export interface PnpRoots {
     top: HTMLElement;
     /** The board's place on the device. */
     refs: HTMLElement;
+    /** The device's feeders, and its feeder bus. */
+    feeders: HTMLElement;
     /** Placing with the device. */
     run: HTMLElement;
 }
@@ -357,6 +360,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     mountSteps(roots.steps, ctx, (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP], "spinny.steps.pnp");
     mountDevice(roots.device, ctx);
     mountDeviceRefs(roots.refs, ctx);
+    mountDeviceFeeders(roots.feeders, ctx);
     mountDeviceRun(roots.run, ctx);
     mountTopCamera(roots.top, ctx, () => visible() && ctx.store.get().pnpTarget === "device");
     mountCameraView(roots.view, ctx);
@@ -1050,7 +1054,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         target.value = state.pnpTarget;
         // The up camera serves either machine; the nozzle panel is this machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        for (const root of [roots.device, roots.refs, roots.run, roots.top]) {
+        for (const root of [roots.device, roots.refs, roots.feeders, roots.run, roots.top]) {
             root.classList.toggle("hidden", !onDevice);
         }
         deviceCalibration.classList.toggle("hidden", !onDevice);

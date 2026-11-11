@@ -86,6 +86,7 @@ import { MockCameraLog, svgUrl } from "./camlog.ts";
 import { MockAuto } from "./auto.ts";
 import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
 import lumenText from "../../../../pnp/opulo-lumen-rev5.toml" with { type: "text" };
+import { decodePacket, encodePacket, idBytes, slotPlace, type BusPacket } from "../feederbus.ts";
 import {
     DEVICE_ID,
     angleWord,
@@ -104,8 +105,10 @@ import {
     wrapAngle,
     xyLine,
     zLine,
+    jsPattern,
     type MockBlock,
     type MockDevice,
+    type MockFeeder,
 } from "./openpnp.ts";
 import {
     BOARD_MISPLACEMENT,
@@ -133,6 +136,7 @@ import type {
     AutoConversation,
     AutoSettings,
     AutoSettingsUpdate,
+    BusFeeder,
     CamLogEntry,
     CamLogState,
     LoggedCamera,
@@ -2006,7 +2010,7 @@ export class MockBackend implements Api, EventFeed {
     private devicePositionRead = false;
     private deviceProgress: DeviceRun | null = null;
     private deviceSession: {
-        lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[];
+        lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock; advance?: MockFeeder }[];
         next: number;
         elapsed: number;
         device: MockDevice;
@@ -2025,6 +2029,10 @@ export class MockBackend implements Api, EventFeed {
     private deviceRoutine: { kind: "nozzle" | "runout"; elapsed: number; device: MockDevice; progress: PnpRoutine } | null = null;
     /** Whether the device's vacuum is on, as its pick and place commands left it. */
     private deviceVacuumOn = false;
+    /** The fake feeder bus: the feeders initialized, the status asks a feed has left, and the next packet's number. */
+    private busReady = new Set<number>();
+    private busFeeding = new Map<number, number>();
+    private busNumber = 0;
     /** The device's top camera: its settings, whether it runs, its routine, and the fiducials last found. */
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
@@ -6690,6 +6698,9 @@ export class MockBackend implements Api, EventFeed {
             this.deviceVacuumOn = false;
         } else if (code === "M115") {
             reply.push("FIRMWARE_NAME:Marlin 2.1.2 (mock) MACHINE_TYPE:mock device EXTRUDER_COUNT:0");
+        } else if (device.bus !== null && code.startsWith(device.bus.send.split("{packet}")[0]!)) {
+            const prefix = device.bus.send.split("{packet}")[0]!;
+            reply.push(this.busAnswer(device, code.slice(prefix.length).split(/\s/)[0] ?? ""));
         }
         if (device.vacuum && code === device.vacuum.read[device.vacuum.read.length - 1]) {
             // The middle of the range for how the vacuum stands, said as an
@@ -7214,7 +7225,7 @@ export class MockBackend implements Api, EventFeed {
     }
 
     private devicePlanOf(jobId: string, refs: string[] | null): { device: MockDevice; plan: ReturnType<typeof planDevice> } {
-        const device = this.pickedDevice();
+        const device = this.deviceSession === null ? this.foundSlots(this.pickedDevice()) : this.pickedDevice();
         const job = this.requireJob(jobId);
         const parts = mockComponents(job);
         if (parts.length === 0) {
@@ -7274,12 +7285,16 @@ export class MockBackend implements Api, EventFeed {
             this.message("info", this.keepFiducials(job));
             ({ device, plan } = this.devicePlanOf(job, refs ?? null));
         }
-        const lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock }[] = [];
+        const lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock; advance?: MockFeeder }[] = [];
         for (const line of plan.head) {
             lines.push({ code: codeOf(line), block: null });
         }
         for (const block of plan.blocks) {
             // A part counts against its feeder once its pick lines are answered.
+            const busFeeder = device.feeders.find((feeder) => feeder.id === block.feeder && feeder.bus_id !== null);
+            if (busFeeder) {
+                lines.push({ code: "", block: null, advance: busFeeder });
+            }
             block.pick.forEach((line, index) => lines.push({ code: codeOf(line), block: null, ...(index === block.pick.length - 1 ? { picked: block } : {}) }));
             for (const line of block.check) {
                 lines.push({ code: codeOf(line), block: null });
@@ -7323,8 +7338,23 @@ export class MockBackend implements Api, EventFeed {
         session.progress.seconds = Math.round(session.elapsed * 10) / 10;
         const due = Math.min(session.lines.length, Math.floor(session.elapsed * DEVICE_LINES_PER_SECOND) + 1);
         while (session.next < due) {
-            const { code, block, look, picked } = session.lines[session.next]!;
+            const { code, block, look, picked, advance } = session.lines[session.next]!;
             session.next += 1;
+            if (advance) {
+                try {
+                    const address = this.busAdvance(session.device, advance);
+                    this.deviceStep(session.progress, `feeder ${advance.id} advanced ${gnum(advance.advance)} mm (address ${address})`, null);
+                } catch (error) {
+                    // The mock's run ends where the backend's would leave the
+                    // part out: its bus answers every feeder it knows.
+                    session.progress.state = "error";
+                    session.progress.error = errorText(error);
+                    this.deviceSession = null;
+                    this.emitDevice();
+                    return;
+                }
+                continue;
+            }
             if (look) {
                 const lines = this.deviceLook(session.device, look);
                 session.lines.splice(session.next, 0, ...lines);
@@ -7603,6 +7633,185 @@ export class MockBackend implements Api, EventFeed {
         }
         this.emitDevice();
         return { reply, ...this.deviceStateOf() };
+    }
+
+    /** The feeders on the mock's bus: the profile's, each at its slot, or at the first address no other takes. */
+    private fakeBus(device: MockDevice): Map<number, string> {
+        const bus = new Map<number, string>();
+        const free = [...device.slots.map((slot) => slot.address), ...Array.from({ length: 254 }, (_, index) => index + 1)];
+        for (const feeder of device.feeders) {
+            if (feeder.bus_id !== null && feeder.slot !== null) {
+                bus.set(feeder.slot, feeder.bus_id);
+            }
+        }
+        for (const feeder of device.feeders) {
+            if (feeder.bus_id !== null && feeder.slot === null) {
+                const address = free.find((candidate) => !bus.has(candidate))!;
+                bus.set(address, feeder.bus_id);
+            }
+        }
+        return bus;
+    }
+
+    /** A packet on the mock's bus answered as its feeders answer: find, id, initialize, feed and status. */
+    private busAnswer(device: MockDevice, hex: string): string {
+        const bus = device.bus!;
+        const packet = decodePacket(hex, bus.header);
+        const codes = bus.codes;
+        if (packet === null || packet.payload.length === 0) {
+            return "rs485-reply: TIMEOUT";
+        }
+        const [code, ...body] = packet.payload;
+        const reply = (sender: number, payload: number[]): string =>
+            `rs485-reply: ${encodePacket({ to: packet.sender, sender, number: packet.number, payload }, bus.header)}`;
+        const feeders = this.fakeBus(device);
+        const asHex = (bytes: number[]): string => bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+        if (packet.to === bus.broadcast && code === codes["find"]) {
+            const address = [...feeders.entries()].find(([, id]) => id === asHex(body))?.[0];
+            return address !== undefined ? reply(address, [codes["ok"]!]) : "rs485-reply: TIMEOUT";
+        }
+        const id = feeders.get(packet.to);
+        if (id === undefined) {
+            return "rs485-reply: TIMEOUT";
+        }
+        if (code === codes["get_id"]) {
+            return reply(packet.to, [codes["ok"]!, ...idBytes(id)]);
+        }
+        if (code === codes["init"]) {
+            if (asHex(body) !== id) {
+                return reply(packet.to, [codes["wrong_id"]!, ...idBytes(id)]);
+            }
+            this.busReady.add(packet.to);
+            return reply(packet.to, [codes["ok"]!, ...idBytes(id)]);
+        }
+        if (code === codes["feed"]) {
+            if (!this.busReady.has(packet.to)) {
+                return reply(packet.to, [codes["uninitialized"]!]);
+            }
+            this.busFeeding.set(packet.to, 2);
+            return reply(packet.to, [codes["ok"]!, 0x01, 0xf4]);
+        }
+        if (code === codes["status"]) {
+            const left = this.busFeeding.get(packet.to) ?? 0;
+            if (left > 1) {
+                this.busFeeding.set(packet.to, left - 1);
+                return reply(packet.to, [codes["busy"]!]);
+            }
+            this.busFeeding.delete(packet.to);
+            return reply(packet.to, [codes["ok"]!]);
+        }
+        return "rs485-reply: TIMEOUT";
+    }
+
+    /** One command on the bus and its answer, as the backend's FeederBus sends it. */
+    private busExchange(device: MockDevice, to: number, code: number, payload: number[] = []): BusPacket | null {
+        const bus = device.bus!;
+        const pattern = new RegExp(jsPattern(bus.reply));
+        for (let attempt = 0; attempt < Math.max(1, bus.tries); attempt++) {
+            const number = this.busNumber;
+            this.busNumber = (this.busNumber + 1) % 256;
+            const line = bus.send.replace("{packet}", encodePacket({ to, sender: bus.host, number, payload: [code, ...payload] }, bus.header));
+            for (const text of this.deviceLine(device, line)) {
+                const found = pattern.exec(text);
+                if (!found) {
+                    continue;
+                }
+                const answer = decodePacket(found.groups?.["packet"] ?? found[1] ?? "", bus.header);
+                if (answer !== null && (!bus.header.includes("id") || answer.number === number)) {
+                    return answer;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** A bus feeder's tape moved on by its advance, as the backend's FeederBus does: found, initialized, fed, waited for. */
+    private busAdvance(device: MockDevice, feeder: MockFeeder): number {
+        const bus = device.bus!;
+        const codes = bus.codes;
+        let address = feeder.slot;
+        if (address === null) {
+            const found = this.busExchange(device, bus.broadcast, codes["find"]!, idBytes(feeder.bus_id!));
+            if (found === null || found.payload[0] !== codes["ok"]) {
+                throw new ApiError(502, `feeder ${feeder.id}: no feeder answered to the id ${feeder.bus_id}: is it in its slot?`);
+            }
+            address = found.sender;
+        }
+        for (let attempt = 0; attempt < 2; attempt++) {
+            if (!this.busReady.has(address)) {
+                const init = this.busExchange(device, address, codes["init"]!, idBytes(feeder.bus_id!));
+                if (init === null || init.payload[0] !== codes["ok"]) {
+                    throw new ApiError(502, `feeder ${feeder.id}: the feeder at address ${address} would not initialize`);
+                }
+            }
+            const fed = this.busExchange(device, address, codes["feed"]!, [Math.round(feeder.advance * 10)]);
+            if (fed === null) {
+                throw new ApiError(502, `feeder ${feeder.id}: the feeder at address ${address} did not answer the feed`);
+            }
+            if (fed.payload[0] === codes["uninitialized"] && attempt === 0) {
+                this.busReady.delete(address);
+                continue;
+            }
+            for (let ask = 0; ask < 10; ask++) {
+                const status = this.busExchange(device, address, codes["status"]!);
+                if (status?.payload[0] === codes["ok"]) {
+                    return address;
+                }
+            }
+            throw new ApiError(502, `feeder ${feeder.id}: the feeder at address ${address} did not finish its feed`);
+        }
+        throw new ApiError(502, `feeder ${feeder.id}: the feeder at address ${address} stays uninitialized`);
+    }
+
+    /** The profile with each bus feeder whose slot it does not give placed by where the bus says it is. */
+    private foundSlots(device: MockDevice): MockDevice {
+        if (device.bus === null || !this.deviceLink.connected || !device.feeders.some((feeder) => feeder.bus_id !== null && feeder.at === null)) {
+            return device;
+        }
+        const feeders = device.feeders.map((feeder) => {
+            if (feeder.bus_id === null || feeder.at !== null) {
+                return feeder;
+            }
+            const found = this.busExchange(device, device.bus!.broadcast, device.bus!.codes["find"]!, idBytes(feeder.bus_id));
+            const slot = found !== null && found.payload[0] === device.bus!.codes["ok"] ? device.slots.find((entry) => entry.address === found.sender) : undefined;
+            return slot ? { ...feeder, slot: slot.address, at: slotPlace(slot.at, slot.rotation, feeder.offset), rotation: feeder.rotation + slot.rotation } : feeder;
+        });
+        return { ...device, feeders };
+    }
+
+    async deviceBusScan(): Promise<DeviceState & { feeders: BusFeeder[] }> {
+        const device = this.deviceIdle();
+        if (device.bus === null) {
+            throw new ApiError(400, "the device profile has no [bus] section");
+        }
+        const found: BusFeeder[] = [];
+        for (let address = 1; address <= device.bus.max_address; address++) {
+            const answer = this.busExchange(device, address, device.bus.codes["get_id"]!);
+            if (answer !== null && answer.payload[0] === device.bus.codes["ok"] && answer.payload.length >= 13) {
+                const id = answer.payload.slice(1, 13).map((byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+                found.push({ address, id, feeder: device.feeders.find((feeder) => feeder.bus_id === id)?.id ?? null, slot: device.slots.some((slot) => slot.address === address) });
+            }
+        }
+        this.emitDevice();
+        return { feeders: found, ...this.deviceStateOf() };
+    }
+
+    async deviceBusFeed(feederId: string): Promise<DeviceState> {
+        const device = this.deviceIdle();
+        const feeder = device.feeders.find((entry) => entry.id === feederId);
+        if (!feeder) {
+            throw new ApiError(404, `the profile has no feeder '${feederId}'`);
+        }
+        if (feeder.bus_id === null) {
+            throw new ApiError(400, `feeder ${feederId} is not on the bus`);
+        }
+        if (device.bus === null) {
+            throw new ApiError(400, "the device profile has no [bus] section");
+        }
+        const address = this.busAdvance(device, feeder);
+        this.message("info", `feeder ${feederId} advanced ${gnum(feeder.advance)} mm (bus address ${address})`);
+        this.emitDevice();
+        return this.deviceStateOf();
     }
 
     async deviceBoardsReset(): Promise<DeviceState> {

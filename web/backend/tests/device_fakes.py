@@ -12,6 +12,59 @@ import threading
 import time
 
 
+class FakePhotonBus:
+    """Photon feeders on the RS-485 bus behind Marlin's M485: each answers
+    the find, its id, initialize, feed and status packets as a feeder does,
+    a feed taking `asks` status asks to finish."""
+
+    def __init__(self, feeders: dict[int, str], asks: int = 2) -> None:
+        self.feeders = dict(feeders)
+        self.ready: set[int] = set()
+        self.asks = asks
+        self.feeding: dict[int, int] = {}
+        self.fed: list[tuple[int, int]] = []
+
+    def answer(self, hex_packet: str) -> str:
+        from spinny_web.feederbus import HEADER_FIELDS, Packet, decode
+
+        packet = decode(hex_packet, HEADER_FIELDS)
+        if packet is None or not packet.payload:
+            return "rs485-reply: TIMEOUT"
+        code, body = packet.payload[0], packet.payload[1:]
+
+        def reply(sender: int, payload: bytes) -> str:
+            return "rs485-reply: " + Packet(to=packet.sender, sender=sender, number=packet.number, payload=payload).encode(HEADER_FIELDS)
+
+        if packet.to == 255 and code == 0xC0:
+            wanted = body.hex().upper()
+            address = next((a for a, i in self.feeders.items() if i == wanted), None)
+            return reply(address, bytes([0])) if address is not None else "rs485-reply: TIMEOUT"
+        feeder = self.feeders.get(packet.to)
+        if feeder is None:
+            return "rs485-reply: TIMEOUT"
+        if code == 0x01:
+            return reply(packet.to, bytes([0]) + bytes.fromhex(feeder))
+        if code == 0x02:
+            if body.hex().upper() != feeder:
+                return reply(packet.to, bytes([1]) + bytes.fromhex(feeder))
+            self.ready.add(packet.to)
+            return reply(packet.to, bytes([0]) + bytes.fromhex(feeder))
+        if code == 0x04:
+            if packet.to not in self.ready:
+                return reply(packet.to, bytes([3]))
+            self.feeding[packet.to] = self.asks
+            self.fed.append((packet.to, body[0]))
+            return reply(packet.to, bytes([0, 0x01, 0xF4]))
+        if code == 0x06:
+            left = self.feeding.get(packet.to, 0)
+            if left > 1:
+                self.feeding[packet.to] = left - 1
+                return reply(packet.to, bytes([4]))
+            self.feeding.pop(packet.to, None)
+            return reply(packet.to, bytes([0]))
+        return "rs485-reply: TIMEOUT"
+
+
 class FakeMarlin:
     """A port that answers like Marlin: `ok` for every line, a position for
     M114 (where its moves took it), `echo:busy` for a slow G28, a refusal
@@ -32,6 +85,8 @@ class FakeMarlin:
         self.silent = False
         # M114 reports the rotation axis too, as a LumenPnP's Marlin does.
         self.report_angle = False
+        # Photon feeders behind M485, when a test gives some.
+        self.bus: FakePhotonBus | None = None
         # While set and not yet released, an M400 is answered only once
         # released, and every answer after it waits behind it, in order.
         self.hold: threading.Event | None = None
@@ -84,6 +139,8 @@ class FakeMarlin:
                 x, y, z = self.position
                 angle = f" A:{self.angle:.2f}" if self.report_angle else ""
                 self._answer(f"X:{x:.2f} Y:{y:.2f} Z:{z:.2f}{angle} E:0.00 Count X:0 Y:0 Z:0\r\nok\r\n".encode())
+            elif line.startswith("M485 ") and self.bus is not None:
+                self._answer(f"{self.bus.answer(line[5:])}\r\nok\r\n".encode())
             elif line == "M115":
                 self._answer(b"FIRMWARE_NAME:Marlin 2.1.2 (Opulo) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin MACHINE_TYPE:LumenPnP EXTRUDER_COUNT:0\r\nCap:EEPROM:1\r\nok\r\n")
             elif line == "M105":
