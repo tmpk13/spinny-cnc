@@ -586,13 +586,28 @@ class MachineMover(Mover):
         return settle(self.access.link, seconds, self._restarts, self._stopped, PnpError, "the routine")
 
 
-class UpCamera:
-    """The up camera's settings and state, pcbv behind them, and the routines.
-    The camera may sit on this machine or on a G-code device: a routine is
-    given the mover of the one it is on and that one's calibration."""
+class PickCamera:
+    """What the up camera and a G-code device's top camera share: settings
+    kept in a dict of the backend's config under `key` (checked whole on
+    every change; a running camera given another device, size, rate or
+    program starts again on them), pcbv behind them, one routine at a time
+    on a thread of its own with an abort, and the routines' looks kept in
+    the camera log while it logs."""
 
-    def __init__(self, config: dict, save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
-        self.config = config
+    # The camera in words, as messages name it, and as the camera log does.
+    label = "camera"
+    log_name = "up"
+    key = "camera"
+    Settings: type = BaseModel
+    # The settings that are places, kept as tuples, and the ones a patch's
+    # `clear` may take back to none.
+    places: tuple[str, ...] = ()
+    clearable: tuple[str, ...] = ()
+    # What a routine of each kind is called when it fails.
+    routines: dict[str, str] = {}
+
+    def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
+        self._store = store
         self._save = save
         self._publish = publish
         self._message = message
@@ -602,46 +617,192 @@ class UpCamera:
         self.camlog = None
         self._looks = 0
         self.progress: RoutineProgress | None = None
-        # Where the last part looked at sat against the nozzle's center, mm
-        # in the machine's frame, and how big it looked.
-        self.part_offset: dict | None = None
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
         self._lock = threading.Lock()
 
     # --- settings -------------------------------------------------------------
 
-    def settings(self) -> UpCameraSettings:
+    def settings(self):
         try:
-            settings = UpCameraSettings.model_validate(self.config.get("pnp", {}))
+            settings = self.Settings.model_validate(self._store().get(self.key, {}))
             settings.check()
             return settings
         except ValueError:
-            return UpCameraSettings()
+            return self.Settings()
 
-    def update(self, patch: dict, clear: tuple[str, ...] = ()) -> UpCameraSettings:
+    def update(self, patch: dict, clear: tuple[str, ...] = ()):
         """Keeps new settings, the whole set checked first; `clear` names the
-        ones (position, height) to take back to none. A running camera given
-        another device, size, rate or program starts again on them."""
+        ones to take back to none. A running camera given another device,
+        size, rate or program starts again on them."""
         before = self.settings()
         merged = {**before.model_dump(), **{key: value for key, value in patch.items() if value is not None}}
         for key in clear:
-            if key in ("position", "height"):
+            if key in self.clearable:
                 merged[key] = None
-        if isinstance(merged.get("position"), (list, tuple)):
-            merged["position"] = tuple(float(v) for v in merged["position"])
-        settings = UpCameraSettings.model_validate(merged)
+        for key in self.places:
+            if isinstance(merged.get(key), (list, tuple)):
+                merged[key] = tuple(float(v) for v in merged[key])
+        settings = self.Settings.model_validate(merged)
         settings.check()
         restart = self.client.running and any(getattr(settings, key) != getattr(before, key) for key in CAPTURE_KEYS)
         if restart and self.routine_active:
-            raise PnpError("the up camera routine is under way: abort it first")
-        self.config["pnp"] = settings.model_dump()
+            raise PnpError(f"the {self.label} routine is under way: abort it first")
+        self._store()[self.key] = settings.model_dump()
         self._save()
         if restart:
             # A start that fails leaves the camera stopped and says why.
             self.client.close()
             self.start()
         return settings
+
+    # --- pcbv -----------------------------------------------------------------
+
+    @property
+    def running(self) -> bool:
+        return self.client.running
+
+    @property
+    def routine_active(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def aborting(self) -> bool:
+        return self._abort.is_set()
+
+    def start(self) -> None:
+        if self.client.running:
+            raise PnpError(f"the {self.label} is already running")
+        settings = self.settings()
+        self.client.start(settings.device, settings.size, settings.fps, settings.pcbv)
+        log.info("%s started on %s", self.label, settings.device)
+
+    def stop(self) -> None:
+        if self.routine_active:
+            raise PnpError(f"the {self.label} routine is under way: abort it first")
+        self.client.close()
+
+    def frame(self, width: int, overlay: bool) -> bytes:
+        if not self.client.running:
+            raise PnpError(f"the {self.label} is not running")
+        _, data = self.client.frame(width=width, overlay=overlay)
+        return data
+
+    def state(self) -> dict:
+        """The settings (places as lists), whether it runs, its latest
+        frame's size, age and rate, and the routine under way or the last."""
+        settings = self.settings()
+        frame = None
+        if self.client.running:
+            try:
+                raw = self.client.pose()
+                if "width" in raw:
+                    frame = {"width": raw.get("width"), "height": raw.get("height"), "age_ms": raw.get("age_ms"), "fps": raw.get("fps")}
+            except VisionError as exc:
+                if "no frame" not in str(exc):
+                    log.warning("%s: %s", self.label, exc)
+        dump = settings.model_dump()
+        for key in self.places:
+            dump[key] = list(dump[key]) if dump[key] is not None else None
+        progress = self.progress
+        return {
+            "running": self.client.running,
+            **dump,
+            "frame": frame,
+            "routine": progress.to_dict() if progress is not None else None,
+        }
+
+    def shutdown(self) -> None:
+        self._abort.set()
+        try:
+            self.client.close()
+        except Exception:
+            pass
+
+    # --- a routine -------------------------------------------------------------
+
+    def abort(self) -> None:
+        if not self.routine_active:
+            raise PnpError(f"no {self.label} routine is under way")
+        self._abort.set()
+
+    def _begin(self, kind: str, steps: tuple[str, ...], mover: Mover, body: Callable[[RoutineProgress], None]) -> None:
+        mover.check()
+        if not self.client.running:
+            raise ValueError(f"the {self.label} is not running: start it first")
+        with self._lock:
+            if self.routine_active:
+                raise PnpError(f"an {self.label} routine is already under way" if self.label[0] in "aeiou" else f"a {self.label} routine is already under way")
+            self._abort.clear()
+            self._looks = 0
+            self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name)
+            progress = self.progress
+            self._thread = threading.Thread(target=self._run, args=(mover, progress, body), name=f"{self.log_name}-{kind}", daemon=True)
+            self._thread.start()
+        self._publish()
+
+    def _run(self, mover: Mover, progress: RoutineProgress, body: Callable[[RoutineProgress], None]) -> None:
+        what = self.routines.get(progress.kind, progress.kind)
+        try:
+            body(progress)
+            self._step(progress, "done")
+            progress.state = DONE
+        except (LinkError, VisionError, PnpError, ValueError) as exc:
+            if self._abort.is_set():
+                progress.state = STOPPED
+                progress.error = "stopped"
+                mover.halt()
+            else:
+                progress.state = ERROR
+                progress.error = str(exc)
+                self._message("error", f"{what} failed: {exc}")
+        except Exception as exc:
+            progress.state = ERROR
+            progress.error = repr(exc)
+            self._message("error", f"{what} failed: {exc!r}")
+        finally:
+            self._publish()
+
+    def _step(self, progress: RoutineProgress | None, step: str) -> None:
+        if progress is None:
+            return
+        progress.step = step
+        self._publish()
+
+    def _log_look(self, routine: str, step: str, reply: dict, shade: str) -> None:
+        """Keeps the picture of a look while logging is on, found or not:
+        a look that found nothing is the one to see."""
+        if self.camlog is None:
+            return
+        self._looks += 1
+        self.camlog.look(self.client, self.log_name, routine, step, spot=reply, note=f"{shade} spot, look {self._looks}")
+
+
+class UpCamera(PickCamera):
+    """The up camera's settings and state, pcbv behind them, and the routines.
+    The camera may sit on this machine or on a G-code device: a routine is
+    given the mover of the one it is on and that one's calibration."""
+
+    label = "up camera"
+    log_name = "up"
+    key = "pnp"
+    Settings = UpCameraSettings
+    places = ("position",)
+    clearable = ("position", "height")
+    routines = {"nozzle": "centering the nozzle", "runout": "measuring the runout", "part": "looking at the part"}
+
+    def __init__(self, config: dict, save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
+        super().__init__(lambda: config, save, publish, message)
+        self.config = config
+        # Where the last part looked at sat against the nozzle's center, mm
+        # in the machine's frame, and how big it looked.
+        self.part_offset: dict | None = None
+
+    def settings(self) -> UpCameraSettings:
+        return super().settings()
+
+    def update(self, patch: dict, clear: tuple[str, ...] = ()) -> UpCameraSettings:
+        return super().update(patch, clear)
 
     def place(self) -> CameraPlace:
         """The camera's calibration on this machine, from the settings."""
@@ -659,71 +820,14 @@ class UpCamera:
             }
         )
 
-    # --- pcbv -----------------------------------------------------------------
-
-    @property
-    def running(self) -> bool:
-        return self.client.running
-
-    @property
-    def routine_active(self) -> bool:
-        thread = self._thread
-        return thread is not None and thread.is_alive()
-
     @property
     def target(self) -> str:
         """The machine the routine under way, or the last one, moves."""
         progress = self.progress
         return progress.target if progress is not None else "machine"
 
-    def aborting(self) -> bool:
-        return self._abort.is_set()
-
-    def start(self) -> None:
-        if self.client.running:
-            raise PnpError("the up camera is already running")
-        settings = self.settings()
-        self.client.start(settings.device, settings.size, settings.fps, settings.pcbv)
-        log.info("up camera started on %s", settings.device)
-
-    def stop(self) -> None:
-        if self.routine_active:
-            raise PnpError("the up camera routine is under way: abort it first")
-        self.client.close()
-
-    def frame(self, width: int, overlay: bool) -> bytes:
-        if not self.client.running:
-            raise PnpError("the up camera is not running")
-        _, data = self.client.frame(width=width, overlay=overlay)
-        return data
-
     def state(self) -> dict:
-        settings = self.settings()
-        frame = None
-        if self.client.running:
-            try:
-                raw = self.client.pose()
-                if "width" in raw:
-                    frame = {"width": raw.get("width"), "height": raw.get("height"), "age_ms": raw.get("age_ms"), "fps": raw.get("fps")}
-            except VisionError as exc:
-                if "no frame" not in str(exc):
-                    log.warning("up camera: %s", exc)
-        progress = self.progress
-        return {
-            "running": self.client.running,
-            **settings.model_dump(),
-            "position": list(settings.position) if settings.position is not None else None,
-            "frame": frame,
-            "routine": progress.to_dict() if progress is not None else None,
-            "part_offset": self.part_offset,
-        }
-
-    def shutdown(self) -> None:
-        self._abort.set()
-        try:
-            self.client.close()
-        except Exception:
-            pass
+        return {**super().state(), "part_offset": self.part_offset}
 
     # --- the routines -----------------------------------------------------------
 
@@ -744,48 +848,6 @@ class UpCamera:
         if not start.measured:
             raise ValueError("the nozzle is not centered over the up camera yet: center it first")
         self._begin("part", PART_STEPS, mover, lambda progress: self._measure(mover, progress, start))
-
-    def abort(self) -> None:
-        if not self.routine_active:
-            raise PnpError("no up camera routine is under way")
-        self._abort.set()
-
-    def _begin(self, kind: str, steps: tuple[str, ...], mover: Mover, body: Callable[[RoutineProgress], None]) -> None:
-        mover.check()
-        if not self.client.running:
-            raise ValueError("the up camera is not running: start it first")
-        with self._lock:
-            if self.routine_active:
-                raise PnpError("an up camera routine is already under way")
-            self._abort.clear()
-            self._looks = 0
-            self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name)
-            progress = self.progress
-            self._thread = threading.Thread(target=self._run, args=(mover, progress, body), name=f"pnp-{kind}", daemon=True)
-            self._thread.start()
-        self._publish()
-
-    def _run(self, mover: Mover, progress: RoutineProgress, body: Callable[[RoutineProgress], None]) -> None:
-        what = {"nozzle": "centering the nozzle", "runout": "measuring the runout"}.get(progress.kind, "looking at the part")
-        try:
-            body(progress)
-            self._step(progress, "done")
-            progress.state = DONE
-        except (LinkError, VisionError, PnpError, ValueError) as exc:
-            if self._abort.is_set():
-                progress.state = STOPPED
-                progress.error = "stopped"
-                mover.halt()
-            else:
-                progress.state = ERROR
-                progress.error = str(exc)
-                self._message("error", f"{what} failed: {exc}")
-        except Exception as exc:
-            progress.state = ERROR
-            progress.error = repr(exc)
-            self._message("error", f"{what} failed: {exc!r}")
-        finally:
-            self._publish()
 
     def _over_camera(self, mover: Mover, progress: RoutineProgress | None, place: CameraPlace, angle: float = 0.0, head: Point | None = None) -> None:
         """Up to the travel height, the nozzle turned to `angle` where it
@@ -967,20 +1029,6 @@ class UpCamera:
     def _measure(self, mover: Mover, progress: RoutineProgress, place: CameraPlace) -> None:
         self.part_offset = self.look_at_part(mover, place, progress)
         self._message("info", f"the part sits X {self.part_offset['dx']:+.3f} Y {self.part_offset['dy']:+.3f} mm from the nozzle's center")
-
-    def _log_look(self, routine: str, step: str, reply: dict, polarity: str) -> None:
-        """Keeps the picture of a look while logging is on, found or not:
-        a look that found nothing is the one to see."""
-        if self.camlog is None:
-            return
-        self._looks += 1
-        self.camlog.look(self.client, "up", routine, step, spot=reply, note=f"{polarity} spot, look {self._looks}")
-
-    def _step(self, progress: RoutineProgress | None, step: str) -> None:
-        if progress is None:
-            return
-        progress.step = step
-        self._publish()
 
     def _spot(self, mover: Mover, progress: RoutineProgress, polarity: str, place: CameraPlace, missing: str) -> Spot:
         if mover.stopped():

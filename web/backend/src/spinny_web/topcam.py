@@ -22,7 +22,6 @@ a run), a feeder's marks and a part in its pocket.
 from __future__ import annotations
 
 import math
-import threading
 from dataclasses import dataclass
 from typing import Callable
 
@@ -30,11 +29,9 @@ from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
 
-from .camera import CAPTURE_KEYS, DONE, ERROR, STOPPED, Spot, picture_to_machine
-from .log import log
+from .camera import Spot, picture_to_machine
 from .openpnp import SHADES
-from .pnp import Mover, PnpError, RoutineProgress, calibrate
-from .vision import VisionClient, VisionError
+from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
 
 Point = tuple[float, float]
 OFFSET_STEPS = ("lifting", "moving", "lowering", "scale", "centering", "done")
@@ -101,121 +98,32 @@ class TopCameraSettings(BaseModel):
         return self.offset is not None and self.mm_per_px > 0.0
 
 
-class TopCamera:
+class TopCamera(PickCamera):
     """The top camera's settings and state, pcbv behind them, the routines,
     and the look the device's run uses. `store` gives the dict its
     settings live in (the device's part of the backend's config)."""
 
+    label = "top camera"
+    log_name = "top"
+    key = "top"
+    Settings = TopCameraSettings
+    places = ("mark_at", "offset")
+    clearable = ("mark_at", "offset")
+    routines = {"offset": "measuring the top camera's offset", "fiducials": "finding the fiducials"}
+
     def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
-        self._store = store
-        self._save = save
-        self._publish = publish
-        self._message = message
-        self.client = VisionClient()
-        self.camlog = None
-        self._looks = 0
-        self.progress: RoutineProgress | None = None
+        super().__init__(store, save, publish, message)
         # The last fiducials found: the job, each one's places, the fit's rms.
         self.fiducials: dict | None = None
-        self._thread: threading.Thread | None = None
-        self._abort = threading.Event()
-        self._lock = threading.Lock()
-
-    # --- settings -------------------------------------------------------------
 
     def settings(self) -> TopCameraSettings:
-        try:
-            settings = TopCameraSettings.model_validate(self._store().get("top", {}))
-            settings.check()
-            return settings
-        except ValueError:
-            return TopCameraSettings()
+        return super().settings()
 
     def update(self, patch: dict, clear: tuple[str, ...] = ()) -> TopCameraSettings:
-        """Keeps new settings, the whole set checked first; `clear` names the
-        ones (mark_at, offset) to take back to none. A running camera given
-        another device, size, rate or program starts again on them."""
-        before = self.settings()
-        merged = {**before.model_dump(), **{key: value for key, value in patch.items() if value is not None}}
-        for key in clear:
-            if key in ("mark_at", "offset"):
-                merged[key] = None
-        for key in ("mark_at", "offset"):
-            if isinstance(merged.get(key), (list, tuple)):
-                merged[key] = tuple(float(v) for v in merged[key])
-        settings = TopCameraSettings.model_validate(merged)
-        settings.check()
-        restart = self.client.running and any(getattr(settings, key) != getattr(before, key) for key in CAPTURE_KEYS)
-        if restart and self.routine_active:
-            raise PnpError("the top camera routine is under way: abort it first")
-        self._store()["top"] = settings.model_dump()
-        self._save()
-        if restart:
-            self.client.close()
-            self.start()
-        return settings
-
-    # --- pcbv -----------------------------------------------------------------
-
-    @property
-    def running(self) -> bool:
-        return self.client.running
-
-    @property
-    def routine_active(self) -> bool:
-        thread = self._thread
-        return thread is not None and thread.is_alive()
-
-    def aborting(self) -> bool:
-        return self._abort.is_set()
-
-    def start(self) -> None:
-        if self.client.running:
-            raise PnpError("the top camera is already running")
-        settings = self.settings()
-        self.client.start(settings.device, settings.size, settings.fps, settings.pcbv)
-        log.info("top camera started on %s", settings.device)
-
-    def stop(self) -> None:
-        if self.routine_active:
-            raise PnpError("the top camera routine is under way: abort it first")
-        self.client.close()
-
-    def frame(self, width: int, overlay: bool) -> bytes:
-        if not self.client.running:
-            raise PnpError("the top camera is not running")
-        _, data = self.client.frame(width=width, overlay=overlay)
-        return data
+        return super().update(patch, clear)
 
     def state(self) -> dict:
-        settings = self.settings()
-        frame = None
-        if self.client.running:
-            try:
-                raw = self.client.pose()
-                if "width" in raw:
-                    frame = {"width": raw.get("width"), "height": raw.get("height"), "age_ms": raw.get("age_ms"), "fps": raw.get("fps")}
-            except VisionError as exc:
-                if "no frame" not in str(exc):
-                    log.warning("top camera: %s", exc)
-        progress = self.progress
-        dump = settings.model_dump()
-        for key in ("mark_at", "offset"):
-            dump[key] = list(dump[key]) if dump[key] is not None else None
-        return {
-            "running": self.client.running,
-            **dump,
-            "frame": frame,
-            "routine": progress.to_dict() if progress is not None else None,
-            "fiducials": self.fiducials,
-        }
-
-    def shutdown(self) -> None:
-        self._abort.set()
-        try:
-            self.client.close()
-        except Exception:
-            pass
+        return {**super().state(), "fiducials": self.fiducials}
 
     # --- the look -----------------------------------------------------------------
 
@@ -346,48 +254,6 @@ class TopCamera:
 
         self._begin("fiducials", steps, mover, body)
 
-    def abort(self) -> None:
-        if not self.routine_active:
-            raise PnpError("no top camera routine is under way")
-        self._abort.set()
-
-    def _begin(self, kind: str, steps: tuple[str, ...], mover: Mover, body: Callable[[RoutineProgress], None]) -> None:
-        mover.check()
-        if not self.client.running:
-            raise ValueError("the top camera is not running: start it first")
-        with self._lock:
-            if self.routine_active:
-                raise PnpError("a top camera routine is already under way")
-            self._abort.clear()
-            self._looks = 0
-            self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name)
-            progress = self.progress
-            self._thread = threading.Thread(target=self._run, args=(mover, progress, body), name=f"top-{kind}", daemon=True)
-            self._thread.start()
-        self._publish()
-
-    def _run(self, mover: Mover, progress: RoutineProgress, body: Callable[[RoutineProgress], None]) -> None:
-        what = "measuring the top camera's offset" if progress.kind == "offset" else "finding the fiducials"
-        try:
-            body(progress)
-            self._step(progress, "done")
-            progress.state = DONE
-        except (VisionError, PnpError, ValueError) as exc:
-            if self._abort.is_set():
-                progress.state = STOPPED
-                progress.error = "stopped"
-                mover.halt()
-            else:
-                progress.state = ERROR
-                progress.error = str(exc)
-                self._message("error", f"{what} failed: {exc}")
-        except Exception as exc:
-            progress.state = ERROR
-            progress.error = repr(exc)
-            self._message("error", f"{what} failed: {exc!r}")
-        finally:
-            self._publish()
-
     def _offset(self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, guess: Point | None) -> None:
         settings = self.settings()
         mark_at = settings.mark_at
@@ -453,15 +319,3 @@ class TopCamera:
         progress.spot = spot
         self._publish()
         return spot
-
-    def _step(self, progress: RoutineProgress | None, step: str) -> None:
-        if progress is None:
-            return
-        progress.step = step
-        self._publish()
-
-    def _log_look(self, routine: str, step: str, reply: dict, shade: str) -> None:
-        if self.camlog is None:
-            return
-        self._looks += 1
-        self.camlog.look(self.client, "top", routine, step, spot=reply, note=f"{shade} spot, look {self._looks}")
