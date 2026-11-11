@@ -494,9 +494,10 @@ table.settings-list td {
     vertical-align: top;
 }
 
+/* A key breaks between its section and its name, never inside a name. */
 .settings-key {
     display: block;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
 }
 
 /* The key list scrolls sideways inside its panel when the panel is too
