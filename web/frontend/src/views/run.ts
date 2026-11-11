@@ -7,7 +7,7 @@
 // for the other panels to describe.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, setLocked } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField } from "../dom.ts";
 import { formatDuration, formatLength, formatMm, parseNumber } from "../format.ts";
 import { isCartesian, isDispensing, isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
@@ -297,10 +297,10 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         runNote.textContent = refusal;
         runNote.classList.toggle("hidden", refusal === "");
         runButton.title = refusal;
-        setLocked(runButton, !connected || active || !job || refusal !== "");
-        setLocked(holdButton, !connected || !active || progress?.state !== "running");
-        setLocked(resumeButton, !connected || !active || progress?.state !== "hold");
-        setLocked(stopButton, !connected || !active);
+        lockFor(runButton, [!connected, "connect first"], [active, "a run is under way"], [!job, "pick a job first"], [refusal !== "", refusal]);
+        lockFor(holdButton, [!connected, "connect first"], [!active, "no run under way"], [progress?.state !== "running", "the run is held already"]);
+        lockFor(resumeButton, [!connected, "connect first"], [!active, "no run under way"], [progress?.state !== "hold", "only a held run resumes"]);
+        lockFor(stopButton, [!connected, "connect first"], [!active, "no run under way"]);
         compensate.disabled = active;
         const milling = isMilling(state.snapshot);
         powerOption.disabled = milling;
@@ -328,8 +328,8 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
             }
             pickupPosition.textContent = recordPositionText(record?.job === candidate.job ? record : null, isCartesian(state.snapshot));
             const idle = state.snapshot.machine?.state === "Idle";
-            setLocked(pickupButton, !connected || active || !idle);
-            setLocked(pickupPlanButton, !connected || active);
+            lockFor(pickupButton, [!connected, "connect first"], [active, "a run is under way"], [!idle, "wait for the machine to be idle"]);
+            lockFor(pickupPlanButton, [!connected, "connect first"], [active, "a run is under way"]);
         }
         // The other panels say what the choice does; set last, since it
         // calls them back. Every copy of the panel settles on the same one.

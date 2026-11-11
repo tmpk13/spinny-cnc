@@ -2,7 +2,7 @@
 // a map of the board, and the focus offset a compensated run needs.
 
 import { askConfirm } from "../confirm.ts";
-import { button, downloadText, el, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
+import { button, downloadText, el, labeled, lockFieldset, lockFor, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
 import { formatDuration, formatFixed, parseNumber } from "../format.ts";
 import { isDispensing, isMilling, outputDuty, profileOf } from "../profile.ts";
 import { boardOfJoint, lerpJoint } from "../kinematics.ts";
@@ -999,31 +999,39 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         // it turning mills a hole at every point. A stopped spindle on an
         // active-low output reports its pin at full duty.
         const spinning = milling && machine !== null && outputDuty(machine.laser, state.settings) > 0;
-        body.disabled = !connected;
-        const canProbe = connected && focusAxis && idle && !probing && !busy && !spinning;
-        setLocked(probeButton, !canProbe);
+        lockFieldset(body, !connected, "connect first");
+        // Why probing cannot start now, the first that holds.
+        const noProbe: [boolean, string][] = [
+            [!connected, "connect first"],
+            [!focusAxis, "the machine has no focus axis to probe with"],
+            [probing, "probing already"],
+            [busy, "a run is under way"],
+            [!idle, "wait for the machine to be idle"],
+            [spinning, "stop the spindle first: the tool may be the probe"],
+        ];
+        lockFor(probeButton, ...noProbe);
         const stored = heightMap?.map ?? null;
         const padMap = isPadMap(stored);
         const partial = mapPartial(stored);
         continueButton.classList.toggle("hidden", !partial || padMap);
-        setLocked(continueButton, !canProbe || !partial || padMap);
+        lockFor(continueButton, ...noProbe, [!partial || padMap, "no grid map partly probed"]);
         padsContinueButton.classList.toggle("hidden", !partial || !padMap);
-        setLocked(padsContinueButton, !canProbe || !partial || !padMap || !state.job);
-        setLocked(padsProbeButton, !canProbe || !state.job);
-        setLocked(padsPlanButton, !state.job);
-        setLocked(probeHereMap, !canProbe || !heightMap?.map);
-        setLocked(probeNearestMap, !canProbe || !heightMap?.map);
-        setLocked(probeHereZero, !canProbe);
+        lockFor(padsContinueButton, ...noProbe, [!partial || !padMap, "no pad map partly probed"], [!state.job, "pick a job first"]);
+        lockFor(padsProbeButton, ...noProbe, [!state.job, "pick a job first"]);
+        setLocked(padsPlanButton, !state.job, "pick a job first");
+        lockFor(probeHereMap, ...noProbe, [!heightMap?.map, "no height map"]);
+        lockFor(probeNearestMap, ...noProbe, [!heightMap?.map, "no height map"]);
+        lockFor(probeHereZero, ...noProbe);
         probeHereZero.textContent = milling ? "Probe here: set Z 0" : "Probe here: set H 0";
-        setLocked(stopButton, !probing);
-        setLocked(focusHere, !connected || !heightMap?.map || !idle || probing);
+        setLocked(stopButton, !probing, "not probing");
+        lockFor(focusHere, [!connected, "connect first"], [!heightMap?.map, "no height map"], [probing, "probing"], [!idle, "wait for the machine to be idle"]);
         focusHere.textContent = touchOff ? "Touch off here" : "Focus here";
         focusHint.textContent = touchOff ? TOUCH_HINT : FOCUS_HINT;
         relabel(focusLabel, touchOff ? "Touch-off offset mm" : "Focus offset mm");
-        setLocked(setFocus, !heightMap?.map || probing);
-        setLocked(clearButton, !heightMap?.map || probing);
-        setLocked(loadButton, probing);
-        setLocked(saveButton, !heightMap?.map);
+        lockFor(setFocus, [!heightMap?.map, "no height map"], [probing, "probing"]);
+        lockFor(clearButton, [!heightMap?.map, "no height map"], [probing, "probing"]);
+        setLocked(loadButton, probing, "probing");
+        setLocked(saveButton, !heightMap?.map, "no height map");
         const probe = heightMap?.probe ?? null;
         if (connected && machine && !focusAxis) {
             probeNote.textContent = "No focus axis: set fitted = true under [focus] and Write to board, or send $h_axis=1.";

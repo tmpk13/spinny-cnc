@@ -489,7 +489,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     }
 
     function renderCombine(): void {
-        setLocked(combineButton, combining.length < 2);
+        setLocked(combineButton, combining.length < 2, "tick two or more jobs to combine");
         combineButton.textContent = combining.length >= 2 ? `Combine ${combining.length}` : "Combine";
     }
 
@@ -653,7 +653,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         }
         const spec = arraySpec();
         const refusal = arrayRefusal(job, refs, spec);
-        setLocked(arrayMake, refusal !== "");
+        setLocked(arrayMake, refusal !== "", refusal);
         if (refusal) {
             arrayNote.textContent = refusal;
             ctx.store.set({ arrayDraft: null });
@@ -722,7 +722,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         pickedLabel.classList.toggle("hidden", pickedTarget.value !== "new");
         const refusal = regroupRefusal(job, refs, pickedTarget.value === "new" ? "new" : Number(pickedTarget.value));
         pickedMove.title = refusal || "move to the chosen group; a new one copies the first source group's settings, off if any source is off";
-        setLocked(pickedMove, refusal !== "");
+        setLocked(pickedMove, refusal !== "", refusal);
     }
 
     async function movePicked(): Promise<void> {
@@ -863,7 +863,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
 
     /** The parts of the Jobs panel that follow the selected job and the machine: Save, and the upload's labels. */
     function renderForm(state: AppState): void {
-        setLocked(saveButton, !state.job);
+        setLocked(saveButton, !state.job, "pick a job first");
         const labels = jobLabels(isMilling(state.snapshot));
         relabel(powerLabel, labels.power);
         relabel(speedLabel, labels.speed);
@@ -1031,8 +1031,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                     : "import again for another width");
         if (mode === "refused") {
             field.disabled = true;
-            setLocked(apply, true);
-            apply.title = "nothing kept to re-cut from; import again with the new width";
+            setLocked(apply, true, "nothing kept to re-cut from; import again with the new width");
         } else {
             apply.title = mode === "remake"
                 ? "re-cut the paths for this width; group settings stay"
@@ -1152,8 +1151,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         const cw = button("Turn right", () => turn(-1), "btn btn-quiet");
         cw.title = "Turn clockwise by the angle";
         // A joint-space group is written about the axis: nothing to turn.
-        setLocked(ccw, fixed);
-        setLocked(cw, fixed);
+        setLocked(ccw, fixed, "joint-space groups do not turn");
+        setLocked(cw, fixed, "joint-space groups do not turn");
         angle.disabled = fixed;
         about.disabled = fixed;
         return el("div", { class: "goto-row" },

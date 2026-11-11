@@ -9,13 +9,15 @@
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { button, el, labeled, lockFor, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { keyLine, setKey, type KeyValue } from "../machinekeys.ts";
+import { profileOf } from "../profile.ts";
 import { setPending } from "../state.ts";
+import { setTip } from "../tooltip.ts";
 import type { MachineDocument, MachineProblem, MachineResponse, MachineSummary } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
-import { mountSettingsList } from "./settingslist.ts";
+import { keyAt, keyTip, mountSettingsList, settingRows, type SettingRow } from "./settingslist.ts";
 
 /** Settings the firmware reads at boot: a change takes effect after a save to flash and a restart. */
 export const BOOT_SETTINGS = ["laser_pin", "probe_pin", "tool_out", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin"];
@@ -119,6 +121,26 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         dirty = value;
         setPending(ctx.store, "machine-file", value ? 1 : 0);
     };
+
+    // A key in the text names what it does under the pointer. The rows are
+    // made again only when the text, the file read or the board's settings
+    // change, not at every move of the pointer.
+    let tipRows: { key: unknown[]; rows: SettingRow[] } | null = null;
+    setTip(editor.textarea, (event) => {
+        const at = editor.positionAt(event.clientX, event.clientY);
+        const text = editor.getText();
+        const key = at ? keyAt(text, at.line, at.column) : null;
+        if (!key) {
+            return null;
+        }
+        const state = ctx.store.get();
+        const file = checked ?? shown?.document ?? null;
+        const stamp = [text, file, state.settings, state.snapshot.profile];
+        if (!tipRows || tipRows.key.some((part, index) => part !== stamp[index])) {
+            tipRows = { key: stamp, rows: settingRows(file, text, state.settings, profileOf(state.snapshot)) };
+        }
+        return keyTip(tipRows.rows, key.section, key.name);
+    });
 
     editor.onInput((problem) => {
         setDirty(true);
@@ -229,8 +251,8 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             text += `; the jog panel draws ${drawn === null ? "the defaults" : drawn === picked ? "this file's controls" : `the controls of ${drawn}`}`;
         }
         loadNote.textContent = text;
-        setLocked(load, !connected || picked === null || shown?.document === null);
-        setLocked(read, !connected || picked === null);
+        lockFor(load, [!connected, "connect first"], [picked === null, "pick a machine file first"], [shown?.document === null, "the file does not parse"]);
+        lockFor(read, [!connected, "connect first"], [picked === null, "pick a machine file first"]);
         // Only something written past the file, at the console or by a
         // page control, leaves the board's flash behind.
         flash.classList.toggle("hidden", !connected || unsaved.length === 0);
@@ -239,7 +261,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     function lockAll(): void {
         const none = picked === null || shown === null;
         for (const node of [remove, save, revert, check]) {
-            setLocked(node, none);
+            setLocked(node, none, "pick a machine file first");
         }
         showLoaded();
     }

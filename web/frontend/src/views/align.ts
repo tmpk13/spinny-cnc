@@ -6,7 +6,7 @@
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, foldPanel, labeled, numberField, replace, setLocked } from "../dom.ts";
+import { button, el, foldPanel, labeled, lockFor, numberField, replace, setLocked } from "../dom.ts";
 import { countText, formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { AlignFit, AlignMark, AlignMarkRequest, CameraState, Job } from "../types.ts";
@@ -249,10 +249,10 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
         const job = state.job;
         const connected = state.snapshot.connected;
         const marks = state.align && job && state.align.job === job.id ? state.align.marks.length : 0;
-        setLocked(markButton, !connected || !job);
-        setLocked(captureButton, !connected || !canCapture(state.camera, job));
-        setLocked(applyButton, !connected || !job || marks === 0);
-        setLocked(clearButton, (state.align?.marks.length ?? 0) === 0);
+        lockFor(markButton, [!connected, "connect first"], [!job, "pick a job first"]);
+        lockFor(captureButton, [!connected, "connect first"], [!canCapture(state.camera, job), "the camera must be locked on this job's board"]);
+        lockFor(applyButton, [!connected, "connect first"], [!job, "pick a job first"], [marks === 0, "mark a point first"]);
+        setLocked(clearButton, (state.align?.marks.length ?? 0) === 0, "no marks to clear");
     }
 
     ctx.store.subscribe((state) => render(state), ["align", "job", "jobs", "camera", "snapshot"]);

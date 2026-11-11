@@ -255,7 +255,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     function lockAll(): void {
         const none = picked === null || shown === null;
         for (const node of [remove, exportButton, save, revert]) {
-            setLocked(node, none);
+            setLocked(node, none, "pick a profile first");
         }
         fileInput.disabled = none;
     }

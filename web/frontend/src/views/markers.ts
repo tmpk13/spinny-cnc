@@ -151,14 +151,14 @@ export function mountMarkers(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         drawn = { markers: state.markers, connected };
-        setLocked(here, !connected);
+        setLocked(here, !connected, "connect first");
         replace(list, ...state.markers.map((marker) => {
             const go = button("Go", () => goTo(marker), "btn btn-quiet btn-small");
             go.title = `go to ${marker.name}`;
-            setLocked(go, !connected);
+            setLocked(go, !connected, "connect first");
             const moved = button("Here", () => moveHere(marker), "btn btn-quiet btn-small");
             moved.title = `move ${marker.name} to where the head is`;
-            setLocked(moved, !connected);
+            setLocked(moved, !connected, "connect first");
             return el("li", {},
                 el("span", { class: "marker-name" }, marker.name),
                 el("span", { class: "mono muted" }, `${formatMm(marker.x)}, ${formatMm(marker.y)}`),

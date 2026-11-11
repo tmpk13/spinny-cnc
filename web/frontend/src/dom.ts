@@ -86,14 +86,43 @@ export function busyWhile(node: HTMLButtonElement, promise: Promise<unknown>): v
     });
 }
 
-/** State-driven disabling of a button; a request in flight keeps it disabled either way. */
-export function setLocked(node: HTMLButtonElement, locked: boolean): void {
+/**
+ * State-driven disabling of a button; a request in flight keeps it
+ * disabled either way. `reason`, given with a lock, says why in the
+ * button's tooltip (src/tooltip.ts shows it over a disabled button).
+ */
+export function setLocked(node: HTMLButtonElement, locked: boolean, reason?: string): void {
     if (locked) {
         node.dataset["locked"] = "1";
     } else {
         delete node.dataset["locked"];
     }
+    if (locked && reason) {
+        node.dataset["reason"] = reason;
+    } else {
+        delete node.dataset["reason"];
+    }
     applyDisabled(node);
+}
+
+/**
+ * Locks a button while any of `conditions` holds, the first one that holds
+ * giving the reason: `lockFor(run, [!connected, "connect first"], [!job,
+ * "pick a job first"])`.
+ */
+export function lockFor(node: HTMLButtonElement, ...conditions: [boolean, string][]): void {
+    const hit = conditions.find(([holds]) => holds);
+    setLocked(node, hit !== undefined, hit?.[1]);
+}
+
+/** Disables a fieldset of controls, giving the reason their tooltips show while it is. */
+export function lockFieldset(fieldset: HTMLFieldSetElement, locked: boolean, reason: string): void {
+    fieldset.disabled = locked;
+    if (locked) {
+        fieldset.dataset["reason"] = reason;
+    } else {
+        delete fieldset.dataset["reason"];
+    }
 }
 
 /** A button that stays disabled while the promise its handler returns is pending, so a second click cannot submit again. */

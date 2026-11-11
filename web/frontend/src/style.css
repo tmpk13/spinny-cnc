@@ -3839,6 +3839,35 @@ a.btn.disabled {
     border-top: thin solid var(--border);
 }
 
+/* --- tooltips (src/tooltip.ts) ------------------------------------------ */
+
+/* A disabled button lets the pointer through to what holds it, where the
+   page's own tooltip finds it: the browsers give it no events of its own
+   (Firefox shows no title then). The cursor it would show goes on the
+   page while the pointer is over one. */
+button:disabled {
+    pointer-events: none;
+}
+
+:root[data-over-disabled] {
+    cursor: not-allowed;
+}
+
+.tip {
+    position: fixed;
+    z-index: 60;
+    max-width: min(22rem, 90vw);
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    white-space: pre-line;
+    color: var(--panel);
+    background: var(--strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    pointer-events: none;
+}
+
 /* Flow: the space between blocks stacked in a box belongs to the box, not
    to the blocks. A block in one of these boxes has no vertical margin of
    its own; each one after a shown sibling gets a --flow space over it. A

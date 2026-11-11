@@ -32,6 +32,8 @@ export interface CodeEditor {
     onInput(listener: (problem: string | null) => void): void;
     /** Selects a line, counted from 0, and scrolls it into the middle of the field. */
     revealLine(line: number): void;
+    /** The line and column (from 0) of the text under a point on the screen, or null off the text. */
+    positionAt(x: number, y: number): { line: number; column: number } | null;
     /**
      * Tells the editor its page was hidden (false) or is back (true). Back,
      * the field is scrolled to where it was, the layer put in step, and the
@@ -59,6 +61,27 @@ export function tomlProblem(text: string): { line: number; message: string } | n
         }
         return { line: 0, message: errorText(error) };
     }
+}
+
+/** The width of one character in a monospaced font, measured once per font. */
+const charWidths = new Map<string, number>();
+
+function charWidth(style: CSSStyleDeclaration): number {
+    const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    let width = charWidths.get(font);
+    if (width === undefined) {
+        const context = typeof document.createElement("canvas").getContext === "function" ? document.createElement("canvas").getContext("2d") : null;
+        if (context) {
+            context.font = font;
+            width = context.measureText("0".repeat(10)).width / 10;
+        }
+        // No canvas to measure with: a monospaced face is about 0.6 of its size.
+        if (!width) {
+            width = (parseFloat(style.fontSize) || 16) * 0.6;
+        }
+        charWidths.set(font, width);
+    }
+    return width;
 }
 
 /** What the field showed last while it was on screen. */
@@ -251,6 +274,20 @@ export function codeEditor(label: string): CodeEditor {
             textarea.scrollTop = Math.max(0, index * height - textarea.clientHeight / 2);
             remember();
             sync();
+        },
+        positionAt(x, y) {
+            const style = getComputedStyle(textarea);
+            const box = textarea.getBoundingClientRect();
+            const height = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 16) * 1.2;
+            const top = box.top + (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.paddingTop) || 0);
+            const left = box.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0);
+            if (x < left || y < top || x > box.right || y > box.bottom) {
+                return null;
+            }
+            return {
+                line: Math.floor((y - top + textarea.scrollTop) / height),
+                column: Math.floor((x - left + textarea.scrollLeft) / charWidth(style)),
+            };
         },
         setShown,
         dispose() {

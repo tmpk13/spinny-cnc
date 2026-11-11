@@ -11,7 +11,7 @@
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
-import { activePage, button, el, inputHasFocus, labeled, modalOpen, numberField, onEnter, replace, setLocked } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, replace, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
@@ -402,8 +402,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     }
 
     function show(state: AppState): void {
-        body.disabled = !state.snapshot.connected;
-        setLocked(cancelButton, !state.snapshot.connected);
+        lockFieldset(body, !state.snapshot.connected, "connect first");
+        setLocked(cancelButton, !state.snapshot.connected, "connect first");
         if (motors) {
             motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
         }

@@ -5,6 +5,7 @@ import { errorText, HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
+import { mountTooltips } from "./tooltip.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
 import { mountAuto } from "./views/auto.ts";
@@ -329,6 +330,7 @@ function main(): void {
     // adds its controls to the heads and puts the panels where the
     // operator left them.
     mountPageSettings(tabTools, mountPanels(panel("app")));
+    mountTooltips();
 
     // Leaving with edits not applied asks first; the browser words it.
     window.addEventListener("beforeunload", (event) => {

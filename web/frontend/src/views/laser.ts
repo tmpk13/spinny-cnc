@@ -5,7 +5,7 @@ import { askConfirm } from "../confirm.ts";
 
 /** The longest beam test the firmware accepts, ms. */
 export const MAX_BEAM_MS = 60000;
-import { button, el, labeled, numberField, setLocked } from "../dom.ts";
+import { button, el, labeled, lockFieldset, numberField, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import type { Mode } from "../types.ts";
@@ -73,7 +73,7 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
     }
 
     ctx.store.subscribe((state) => {
-        body.disabled = !state.snapshot.connected;
+        lockFieldset(body, !state.snapshot.connected, "connect first");
         const milling = isMilling(state.snapshot);
         // The panel is named for screen readers as its title reads.
         const name = milling ? "Spindle" : "Laser";
@@ -87,6 +87,6 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
         }
         // The tool may be the probe: it must not turn while it touches down.
         // Stop stays open whatever happens.
-        setLocked(start, state.heightMap?.probe?.state === "running");
+        setLocked(start, state.heightMap?.probe?.state === "running", "not while probing: the tool may be the probe");
     }, ["snapshot", "heightMap"]);
 }

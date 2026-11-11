@@ -125,6 +125,43 @@ export function settingRows(document: MachineDocument | null, text: string, sett
     return rows;
 }
 
+/**
+ * What a key of a machine file does, for a tooltip over it: its help with
+ * the firmware setting it drives, or just the setting while the board's
+ * help is not known (no machine connected); null for a key the list does
+ * not hold.
+ */
+export function keyTip(rows: SettingRow[], section: string | null, name: string): string | null {
+    const row = rows.find((entry) => entry.section === section && entry.name === name);
+    if (!row) {
+        return null;
+    }
+    if (row.entry.kind === "host") {
+        return row.help || null;
+    }
+    return row.help ? `${row.help} (${row.entry.setting})` : `sets ${row.entry.setting}`;
+}
+
+/**
+ * The key at a column of a line of a TOML text, with the section it is
+ * in (the nearest [name] above, null for the top), or null when the column
+ * is not on a key's name.
+ */
+export function keyAt(text: string, line: number, column: number): { section: string | null; name: string } | null {
+    const lines = text.split("\n");
+    const match = /^(\s*)([A-Za-z0-9_-]+)\s*=/.exec(lines[line] ?? "");
+    if (!match || column < match[1]!.length || column >= match[1]!.length + match[2]!.length) {
+        return null;
+    }
+    for (let index = line - 1; index >= 0; index--) {
+        const head = /^\s*\[\s*([A-Za-z0-9_.-]+)\s*\]/.exec(lines[index]!);
+        if (head) {
+            return { section: head[1]!, name: match[2]! };
+        }
+    }
+    return { section: null, name: match[2]! };
+}
+
 /** The text a row is searched by: its key, the setting it drives and its help. */
 function searchText(row: SettingRow): string {
     return `${row.section ? `[${row.section}] ` : ""}${row.name} ${row.entry.setting} ${row.help}`;
@@ -186,8 +223,9 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         const differ = rows.filter((row) => row.differs).length;
         count.textContent = `${picked.length} of ${rows.length}${state.settings ? `, ${differ} differ` : ""}`;
         const body = el("tbody", {}, ...picked.map(({ row }) => {
-            // The help under the key: the panel is half the page wide.
-            const line = el("tr", { class: row.differs ? "differs" : "", title: `${row.entry.setting}: click to show in the file` },
+            // The help under the key (the panel is half the page wide), and
+            // again on hover with what a click does.
+            const line = el("tr", { class: row.differs ? "differs" : "", title: row.help ? `${row.help}; click to show it in the file` : "click to show it in the file" },
                 el("td", {},
                     el("span", { class: "mono settings-key" }, row.section ? `[${row.section}] ${row.name}` : row.name),
                     el("span", { class: "muted settings-help" }, row.help),

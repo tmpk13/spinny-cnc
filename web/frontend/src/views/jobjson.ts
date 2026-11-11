@@ -180,8 +180,8 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
     const setDirty = (on: boolean): void => {
         dirty = on;
         setPending(ctx.store, PENDING_SOURCE, on ? 1 : 0);
-        setLocked(applyButton, !on);
-        setLocked(revertButton, !on);
+        setLocked(applyButton, !on, "nothing edited");
+        setLocked(revertButton, !on, "nothing edited");
     };
     setDirty(false);
 

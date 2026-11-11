@@ -18,7 +18,7 @@
 import { turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
-import { button, el, labeled, numberField, readStored, relabel, replace, setLocked, writeStored } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField, readStored, relabel, replace, setLocked, writeStored } from "../dom.ts";
 import { countText, formatMm, parseNumber } from "../format.ts";
 import { isDispensing, profileOf } from "../profile.ts";
 import { defaultOperation, movedDims, operationDims, operationSummary, recipeOps, sameOperation, type RectMode } from "../sketch.ts";
@@ -737,9 +737,10 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         jobTitle.textContent = plotJob && ops
             ? `${plotJob.name}: ${countText(ops.length, "operation", "operations")}${editing !== null ? `, editing ${editing + 1}` : ""}`
             : "no Plot job selected";
-        setLocked(applyButton, state !== "changed");
-        setLocked(addButton, typeof op === "string");
-        setLocked(newButton, typeof op === "string");
+        const problem = typeof op === "string" ? op : "";
+        lockFor(applyButton, [problem !== "", problem], [state !== "changed", state === "applied" ? "the job has this operation already" : "pick an operation of the job to change"]);
+        setLocked(addButton, problem !== "", problem);
+        setLocked(newButton, problem !== "", problem);
         addButton.textContent = plotJob ? "Add to job" : "Add to new job";
         replace(opList, ...(ops ?? []).map((each, index) => {
             const edit = button(operationSummary(each), () => {
@@ -750,7 +751,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             edit.title = "edit this operation";
             const up = button("Up", () => move(index), "btn btn-quiet btn-small");
             up.title = "cut before the operation above";
-            setLocked(up, index === 0);
+            setLocked(up, index === 0, "the first operation cuts first already");
             const remove = button("Remove", () => removeOp(index), "btn btn-quiet btn-small");
             const row = el("li", { class: "plot-op" }, edit, el("span", { class: "button-row" }, up, remove));
             row.classList.toggle("editing", index === editing);

@@ -233,8 +233,8 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
         empty.classList.toggle("hidden", entries.length > 0);
         const busy = auto?.busy ?? false;
         working.classList.toggle("hidden", !busy);
-        setLocked(send, busy);
-        setLocked(stop, !busy);
+        setLocked(send, busy, "the model is answering; Stop ends its turn");
+        setLocked(stop, !busy, "nothing to stop");
         if (follow) {
             log.scrollTop = log.scrollHeight;
         }
