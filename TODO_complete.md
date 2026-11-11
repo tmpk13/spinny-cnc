@@ -656,3 +656,57 @@
   errors on every page cut to the point (one-phrase tooltips, hints of
   one or two sentences, errors as "field: range"); the PNP tab's Center
   nozzle, Here buttons and Plan say on hover what they do.
+- LumenPnP profile (2026-11-11): `pnp/opulo-lumen-rev5.toml`, an Opulo
+  LumenPnP with the Rev05 board on Opulo's Marlin, read from Opulo's stock
+  OpenPnP machine.xml: N1, safe Z 31.5 on the seesaw Z, VAC1's pump and
+  valve, the I2C vacuum sensor read, the ring light, both cameras' places.
+- G-code device by hand (2026-11-11): the port detected by its USB name or
+  picked from the top bar's list, the firmware asked what it is (M115),
+  jogs (bars and keys), gotos at the safe height, park, the nozzle over
+  the up camera, the top camera and the nozzle swapped over a point, the
+  up camera's place set by hand, lights, vacuum switched and read, the
+  profile's heights, feeds, dwells and vacuum ranges tuned a value at a
+  time.
+- PNP page in panels (2026-11-11): device, jog (this machine's or the
+  device's), cameras (up, top or both; zoom, drag or double-click to move,
+  the look radius drawn), top camera, board on the device (the map in
+  words with each reference's residual), placing (plan, run window, the
+  run's steps in words, repeat with a board count); parts sorted by any
+  column, grouped by type, front side first, loading shown, a board
+  uploaded from the tab; the board drawing zooms and pans; a setup step's
+  panel pulses until pressed; "i" marks show drawings of what settings
+  mean; the device profiles edited on the Config page.
+- OpenPnP import (2026-11-11): machine.xml, and a job with its boards,
+  read into a new device profile with a box per value to keep or leave
+  and the profile shown before it is saved; a job's placements become
+  references, the board's height the place Z, the feeders' parts by
+  reference. Feeders may name their parts (`refs`) and their look radius
+  (`crop`).
+- Refactors (2026-11-11): one base for the up and top cameras, one TOML
+  store for machine files, CAM profiles and device profiles, and Backend's
+  G-code device and probing methods in parts of their own.
+- Panel layout (2026-11-11): every panel folds and has a menu (its head's
+  "..." or a right-click): move up, down, left, right, hide, stack with
+  the panel above or below (a stack of cards with folder tabs), stick to
+  the one above, free its height; size handles under panels (the body
+  then scrolls) and between columns; an edit mode that drags panels
+  between columns and onto each other; layouts kept by name and swapped
+  from a quick pick; the sticky Run panel docked flush with a clear top
+  border; the steps row and the key list fitted on narrow screens; menus
+  set apart by tone and rules.
+- Page settings (2026-11-11): a gear at the tab bar's end: the tab the
+  page opens on, the tab bar folded to a strip, hidden tabs kept in a More
+  folder, the layouts, edit mode, and the panels hidden.
+- Tooltips on locked buttons (2026-11-11): a disabled button's title shows
+  in Firefox and Chromium alike, with why it is locked ("connect first",
+  "pick a job first"); the machine file's keys and the Config key list
+  show each key's help on hover.
+- Preview speed (2026-11-11): a large job draws ten to twenty times
+  faster.
+- One Run panel (2026-11-11) for the Jobs and Plot pages, and the helpers
+  the page took from the mock moved into src.
+- DXF drawings (2026-11-11): a `.dxf` uploads as a job (a group per
+  layer) and goes through CAM profiles and the model's tools: lines,
+  polylines with bulges, arcs, circles, ellipses, splines and nested
+  block inserts in the drawing's units; text, hatches and dimensions are
+  left out, a binary DXF is refused.
