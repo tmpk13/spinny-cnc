@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { defaultOperation } from "../src/mock/mill.ts";
-import { movedDims, operationDims, operationSummary, sameOperation, sizeText } from "../src/sketch.ts";
+import { defaultOperation, movedDims, operationDims, operationSummary, sameOperation, sizeText } from "../src/sketch.ts";
 import type { MillOperation } from "../src/types.ts";
 import { applyState, plannedOps } from "../src/views/mill.ts";
 

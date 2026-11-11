@@ -77,13 +77,3 @@ export function thumbnail(job: Job): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${sizeW}" height="${sizeH}" viewBox="${box}">`
         + `<g fill="none" stroke-width="${n(stroke, digits + 1)}" stroke-linecap="round" stroke-linejoin="round">${shapes.join("")}</g></svg>`;
 }
-
-/** A short key of what a job's drawing depends on, for the address it is asked at. */
-export function thumbKey(summary: { stats: { length_mm: number; moves: number }; offset: { x: number; y: number }; rotation?: number; groups: { enabled: boolean; paths: number }[] }): string {
-    const text = JSON.stringify([summary.stats.length_mm, summary.stats.moves, summary.offset.x, summary.offset.y, summary.rotation ?? 0, summary.groups.map((group) => [group.enabled ? 1 : 0, group.paths])]);
-    let hash = 5381;
-    for (let index = 0; index < text.length; index++) {
-        hash = ((hash * 33) ^ text.charCodeAt(index)) >>> 0;
-    }
-    return hash.toString(36);
-}

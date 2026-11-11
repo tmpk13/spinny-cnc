@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { thumbKey, thumbnail } from "../src/mock/thumbs.ts";
+import { thumbKey } from "../src/api.ts";
+import { thumbnail } from "../src/mock/thumbs.ts";
 import type { Group, Job } from "../src/types.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { dialogButton, settle, setup } from "./harness.ts";

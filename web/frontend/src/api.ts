@@ -1,6 +1,5 @@
 // Typed wrappers over the backend routes.
 
-import { thumbKey } from "./mock/thumbs.ts";
 import type {
     AlignFit,
     AlignMarkRequest,
@@ -367,6 +366,20 @@ export function errorText(error: unknown): string {
 /** The width a camera's picture is asked for at: the width given, whole, from 160 to 4096 pixels. */
 export function frameWidth(width: number): number {
     return Math.max(160, Math.min(4096, Math.round(width)));
+}
+
+/**
+ * A short key of what a job's thumbnail depends on, put in the address it
+ * is asked at, so the browser keeps an unchanged drawing and asks again
+ * for a changed one.
+ */
+export function thumbKey(summary: { stats: { length_mm: number; moves: number }; offset: { x: number; y: number }; rotation?: number; groups: { enabled: boolean; paths: number }[] }): string {
+    const text = JSON.stringify([summary.stats.length_mm, summary.stats.moves, summary.offset.x, summary.offset.y, summary.rotation ?? 0, summary.groups.map((group) => [group.enabled ? 1 : 0, group.paths])]);
+    let hash = 5381;
+    for (let index = 0; index < text.length; index++) {
+        hash = ((hash * 33) ^ text.charCodeAt(index)) >>> 0;
+    }
+    return hash.toString(36);
 }
 
 /** Pulls a readable message out of an error body: FastAPI's detail, or the text. */

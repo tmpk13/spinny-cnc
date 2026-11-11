@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import type { Camera } from "../src/camera.ts";
 import { formatJson } from "../src/jsontext.ts";
-import { jointPreview } from "../src/mock/jobs.ts";
-import { defaultOperation } from "../src/mock/mill.ts";
+import { jointPreview } from "../src/moves.ts";
 import { Preview } from "../src/preview.ts";
 import { boxedAfter, pickedAfter } from "../src/regroup.ts";
+import { defaultOperation } from "../src/sketch.ts";
 import type { Job, MillOperation } from "../src/types.ts";
 import { jobText, mountJobJson, placeText, readJobText } from "../src/views/jobjson.ts";
 import { mountJobs } from "../src/views/jobs.ts";

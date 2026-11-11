@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { stepCeilingHz } from "../src/kinematics.ts";
-import { jointPreview } from "../src/mock/jobs.ts";
+import { jointPreview } from "../src/moves.ts";
 import { isCapped, SPEED_COLORS, speedBucket, speedMap, type SpeedLimits } from "../src/speed.ts";
 import type { Group, Job } from "../src/types.ts";
 import { scrubText, speedLimitsOf } from "../src/views/previewpanel.ts";

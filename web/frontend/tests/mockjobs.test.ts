@@ -9,9 +9,7 @@ import {
     colorName,
     computeStats,
     demoCoupon,
-    groupMoves,
     jointMinRadius,
-    jointPreview,
     layerOf,
     lengthToMm,
     parseGcode,
@@ -19,11 +17,11 @@ import {
     parseSvg,
     parseTransform,
     pathMinRadius,
-    pathMoves,
     placeJob,
 } from "../src/mock/jobs.ts";
 import { MockBackend } from "../src/mock/backend.ts";
-import { defaultOperation } from "../src/mock/mill.ts";
+import { groupMoves, jointPreview, pathMoves } from "../src/moves.ts";
+import { defaultOperation } from "../src/sketch.ts";
 import type { Group, Job, MillOperation } from "../src/types.ts";
 
 const limits = { rRate: 1000, aRate: 1080, tolerance: 0.005 };

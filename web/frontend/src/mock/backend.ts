@@ -2,7 +2,7 @@
 // rates, the job store, and the event feed the real WebSocket would carry.
 
 import { fitRigid, turnPoint } from "../align.ts";
-import { ApiError, errorText, frameWidth, type Api } from "../api.ts";
+import { ApiError, errorText, frameWidth, thumbKey, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
 import { formatFixed } from "../format.ts";
 import { fromBoard, type FromBoard } from "../machinekeys.ts";
@@ -36,17 +36,14 @@ import {
     computeStats,
     demoCoupon,
     formatG,
-    groupMoves,
-    jointPreview,
-    pathMoves,
     placeJob,
     round4,
     checkThickness,
     checkFocus,
     DEFAULT_THICKNESS,
     shiftPaths,
-    type PlannedMove,
 } from "./jobs.ts";
+import { groupMoves, jointPreview, pathMoves, type PlannedMove } from "../moves.ts";
 import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import {
     CAMERA_DEFAULTS,
@@ -65,9 +62,10 @@ import {
     summaryOf as machineSummaryOf,
 } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
-import { thumbKey, thumbnail } from "./thumbs.ts";
+import { thumbnail } from "./thumbs.ts";
 import { extent } from "./order.ts";
-import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, defaultOperation, labelStem, MAX_OPERATIONS, moveJob, movedAs, placed, recipeOps, remakeMill, unplaced } from "./mill.ts";
+import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, labelStem, MAX_OPERATIONS, moveJob, movedAs, placed, remakeMill, unplaced } from "./mill.ts";
+import { defaultOperation, recipeOps } from "../sketch.ts";
 import { calibrateJob } from "./calibrate.ts";
 import {
     DEVICE_CAMERA_WHERE,

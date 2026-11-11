@@ -1,13 +1,60 @@
 // The Plot page's operation as a sketch: the sizes the preview draws over
 // it (a rectangle's width, height, corners or center and its corner
 // radius, a circle's diameter and center, the points of a drill or a line
-// and the lengths between them), a line naming it in the job's list, and
-// whether two operations cut the same.
+// and the lengths between them), a line naming it in the job's list,
+// whether two operations cut the same, an operation with every field at
+// the backend's default, and the operations a job was made from.
 
 import { turnPoint } from "./align.ts";
 import { countText } from "./format.ts";
-import type { MillOperation, Point } from "./types.ts";
+import type { MillOperation, Point, Recipe } from "./types.ts";
 import type { Dimension } from "./preview.ts";
+
+/** An operation the page would send: every field there, with the backend's defaults. */
+export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOperation {
+    return {
+        kind,
+        cutter: "spindle",
+        name: null,
+        tool: 1,
+        depth: 0.5,
+        step_down: 0.5,
+        stepover: 0.4,
+        speed: 300,
+        plunge: 60,
+        spindle: 10000,
+        power: 500,
+        passes: 1,
+        climb: true,
+        points: [],
+        closed: false,
+        shape: "rect",
+        x0: 0,
+        y0: 0,
+        x1: 0,
+        y1: 0,
+        corner: 0,
+        cx: 0,
+        cy: 0,
+        diameter: 0,
+        side: "outside",
+        job: null,
+        sizes: null,
+        bore: true,
+        holes: null,
+    };
+}
+
+/** The operations a Plot page job was made from: its list, or the one operation a job made before there were lists keeps. */
+export function recipeOps(recipe: Recipe | null | undefined): MillOperation[] {
+    if (!recipe) {
+        return [];
+    }
+    if (recipe.ops && recipe.ops.length > 0) {
+        return [...recipe.ops];
+    }
+    return recipe.mill ? [recipe.mill] : [];
+}
 
 /** How a rectangle is given: by two corners, or by its center and its size. */
 export type RectMode = "corners" | "center";

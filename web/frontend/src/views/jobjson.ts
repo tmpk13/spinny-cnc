@@ -10,7 +10,7 @@ import { errorText } from "../api.ts";
 import { button, el, setLocked, tabIndents } from "../dom.ts";
 import { countText } from "../format.ts";
 import { type JobPlace, formatJson, offsetOf, placeOf, stepsAt } from "../jsontext.ts";
-import { jointPreview } from "../mock/jobs.ts";
+import { jointPreview } from "../moves.ts";
 import { setPending } from "../state.ts";
 import type { Job } from "../types.ts";
 import type { Ctx } from "./context.ts";

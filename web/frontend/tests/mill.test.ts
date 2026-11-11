@@ -7,7 +7,8 @@ import { describe, expect, test } from "bun:test";
 
 import fixture from "../../backend/tests/data/mill-samples.json" with { type: "json" };
 import { parseEvent } from "../src/ws.ts";
-import { buildMill, buildMillJob, defaultOperation, labelStem, passesOf, recipeOps } from "../src/mock/mill.ts";
+import { buildMill, buildMillJob, labelStem, passesOf } from "../src/mock/mill.ts";
+import { defaultOperation, recipeOps } from "../src/sketch.ts";
 import { GRID_KEY, Preview, formatTick, gridLinesIn } from "../src/preview.ts";
 import type { HolePoint, Job, MillOperation, MillResponse, Path } from "../src/types.ts";
 import { PAGES } from "../src/views/tabs.ts";

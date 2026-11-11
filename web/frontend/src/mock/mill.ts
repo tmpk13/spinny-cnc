@@ -5,8 +5,8 @@
 // and the group settings a job made again keeps.
 
 import { turnPoint } from "../align.ts";
-import { sameOperation } from "../sketch.ts";
-import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point, Recipe } from "../types.ts";
+import { defaultOperation, recipeOps, sameOperation } from "../sketch.ts";
+import type { Group, HolePoint, Job, MillOperation, MillResponse, Path, Point } from "../types.ts";
 import { checkDepth, checkPower, checkSpeed, computeStats, DEFAULT_DEPTH, DEFAULT_PLUNGE, formatG, MAX_GROUP_PASSES, MAX_VALUE, MAX_VALUE_TEXT, type RateLimits } from "./jobs.ts";
 import { extent } from "./order.ts";
 
@@ -18,41 +18,6 @@ const EPSILON = 1e-9;
 const BORE_SLACK = 0.05;
 const MAX_POINTS = 5000;
 export const MAX_OPERATIONS = 100;
-
-/** An operation the page would send: every field there, with the backend's defaults. */
-export function defaultOperation(kind: MillOperation["kind"] = "drill"): MillOperation {
-    return {
-        kind,
-        cutter: "spindle",
-        name: null,
-        tool: 1,
-        depth: 0.5,
-        step_down: 0.5,
-        stepover: 0.4,
-        speed: 300,
-        plunge: 60,
-        spindle: 10000,
-        power: 500,
-        passes: 1,
-        climb: true,
-        points: [],
-        closed: false,
-        shape: "rect",
-        x0: 0,
-        y0: 0,
-        x1: 0,
-        y1: 0,
-        corner: 0,
-        cx: 0,
-        cy: 0,
-        diameter: 0,
-        side: "outside",
-        job: null,
-        sizes: null,
-        bore: true,
-        holes: null,
-    };
-}
 
 function checkTool(tool: number): void {
     if (!(Number.isFinite(tool) && tool > 0 && tool <= 100)) {
@@ -652,17 +617,6 @@ export function cutMiddle(job: Job): Point {
     const cuts = job.groups.flatMap((g) => [...g.paths.flat(), ...(g.moves ?? []).flat()]);
     const [minX, minY, maxX, maxY] = extent([...cuts, ...job.outline.flat()]);
     return minX > maxX ? [0, 0] : [(minX + maxX) / 2, (minY + maxY) / 2];
-}
-
-/** The operations a Plot page job was made from: its list, or the one operation a job made before there were lists keeps. */
-export function recipeOps(recipe: Recipe | null | undefined): MillOperation[] {
-    if (!recipe) {
-        return [];
-    }
-    if (recipe.ops && recipe.ops.length > 0) {
-        return [...recipe.ops];
-    }
-    return recipe.mill ? [recipe.mill] : [];
 }
 
 function bitOf(op: MillOperation): string {

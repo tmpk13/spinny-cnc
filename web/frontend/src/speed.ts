@@ -9,7 +9,7 @@
 // its group asks is capped. These are the same sums the job's stats make.
 
 import { boardOfJoint, moveMinutes, surfaceLength } from "./kinematics.ts";
-import { groupMoves, jointPreview } from "./mock/jobs.ts";
+import { groupMoves, jointPreview } from "./moves.ts";
 import type { Job, Joint, Kinematics, Point } from "./types.ts";
 
 /** The rates a machine moves at, mm/min (degrees a minute for the table), and the chord tolerance the moves are planned to. */
