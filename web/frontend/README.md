@@ -11,7 +11,11 @@ bun run dev            # serves index.html with the sources
 ```
 
 `bun run build` writes `dist/`, which the backend serves at `/`. Open
-`?mock=1` for an in-page machine that needs no backend (`src/mock/`);
+`?mock=1` for an in-page machine that needs no backend (`src/mock/`,
+which only `src/main.ts` imports: the page's own code takes nothing from
+it, the mock takes what it shares with the page from `src/`, and its DXF
+reader `src/mock/dxf.ts` is checked against the backend's on the same
+fixtures);
 `?api=http://host:8000`
 points the page at a backend elsewhere, which must have been started with
 that page's origin allowed: `spinny-web --cors-origin http://localhost:3000`
@@ -82,7 +86,8 @@ the backend does.
 The preview draws a one-point path as a dot, a dispense import's the size
 of its pad (`dotRadius` in `src/preview.ts`), and on a dispenser machine
 (`isDispensing` in `src/profile.ts`) the Run panel names a group of paths
-it refuses (`dispenseRefusal` in `src/views/jobs.ts`); dispensing is in
+it refuses (`dispenseRefusal` in `src/views/run.ts`, the Run panel the
+Jobs and Plot pages both mount); dispensing is in
 [OPERATING.md](../../docs/OPERATING.md#dispensing-solder-paste).
 
 The Jobs page's *Camera* panel (`src/views/vision.ts`; `camera.ts` is
@@ -143,7 +148,7 @@ field that writes the one value back into the file (a field left empty is
 the tool's value again), the file's text in an editor that saves it whole
 and shows what is wrong with a text that does not read, a drop zone that
 takes a design (a board with its outline and drill file in one drop, an
-SVG, gcode, a job or an STL model) through the profile into a job, and
+SVG, a DXF, gcode, a job or an STL model) through the profile into a job, and
 *Export gcode*, which downloads the picked job as a program for the
 profile's controller with a report of what each axis reaches. The CAM
 page has a preview of its own. The mock reads the shipped profiles itself
