@@ -301,6 +301,36 @@ camera settings and the CAM profile editors count their edits the same
 way, and every tab shows the count of edits not applied on its page;
 leaving the page with any asks first.
 
+### Panels, tabs and the page settings
+
+Every panel's head has a fold button (the chevron before its name) and a
+menu (the dots after it, or a right click on the head): fold, hide, move
+up, down or to the next column, stack with the panel above or below,
+stick to the panel above, and reset. A stack shows one of its panels at
+a time under a row of tabs; panels stuck together are drawn as one block
+and move together. The Run panel stays at the foot of its column unless
+it is stuck or stacked. On the wide layout a handle under each panel
+holds it at a height (it then scrolls inside), and a handle between two
+columns sets their widths; a double click on either gives the size back.
+
+The gear at the right end of the tab bar opens the page settings: the
+tab the page opens on, the tab bar folded to a thin strip that opens on
+hover or a press, tabs kept out of the bar (they open from *More* at its
+end), the panel layouts kept by name, *Edit panels*, a reset of the page
+shown, and the hidden panels to show again. *Edit panels* puts a grip in
+every head: drag a panel to another place, or onto another panel to
+stack them, then press *Done* in the tab bar. A layout kept by name
+covers every page; *Default* is the page as shipped and cannot be saved
+over. Once one is kept, a pick beside the gear swaps layouts in one
+step. The Setup, Align, Camera and Job JSON panels keep their own fold,
+which a layout does not carry. All of this is kept in the browser, not
+on the machine; a phone keeps the one-column order until its panels are
+moved, and has no size handles.
+
+A disabled button shows on hover what it does and why it is off
+("connect first"), and a key in the Config tab's machine file shows what
+it sets.
+
 ### The travel height
 
 *Travel H* in the Jog panel (on a machine with a focus axis) is an H the

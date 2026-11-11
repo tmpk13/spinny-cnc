@@ -107,8 +107,9 @@ interface PanelView {
     grip: HTMLButtonElement;
     /** The handle under the panel that sets its height; it lives in the column. */
     resize: HTMLElement;
-    /** Whether its view hid it, as last drawn. */
+    /** Whether its view hid it, and its name, as last drawn. */
     viewHidden: boolean;
+    name: string;
 }
 
 let controller: (PanelsController & { reveal(id: string): void }) | null = null;
@@ -232,7 +233,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             chevron = el("button", { type: "button", class: "panel-chevron", "aria-label": `Fold ${name}`, "aria-expanded": "true" });
         }
         const resize = el("div", { class: "panel-resize", title: "drag to hold the panel at a height; double click to free it", "aria-hidden": "true" });
-        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden") };
+        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name };
         place(panel);
 
         // In a summary a press would also open or close the disclosure.
@@ -262,8 +263,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
         resize.addEventListener("pointerdown", (event) => dragHeight(panel, event));
         resize.addEventListener("dblclick", () => update(panel.page, setPrefs(panel.page.layout, panel.id, { height: undefined })));
 
-        // A view that hides or shows its panel, or draws its head again,
-        // is followed: the stacks' tabs and the moves skip hidden panels.
+        // A view that hides or shows its panel, renames it, or draws its
+        // head again, is followed: the stacks' tabs and the moves skip
+        // hidden panels, and a tab carries its panel's name.
         if (typeof MutationObserver === "function") {
             new MutationObserver(() => {
                 if (!panel.head.isConnected || !panel.menuButton.isConnected) {
@@ -273,11 +275,12 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     place(panel);
                 }
                 const hidden = root.classList.contains("hidden");
-                if (hidden !== panel.viewHidden) {
+                if (hidden !== panel.viewHidden || title(root) !== panel.name) {
                     panel.viewHidden = hidden;
+                    panel.name = title(root);
                     render(panel.page);
                 }
-            }).observe(root, { attributes: true, attributeFilter: ["class"], childList: true });
+            }).observe(root, { attributes: true, attributeFilter: ["class", "aria-label"], childList: true });
         }
         return panel;
     }
@@ -367,9 +370,10 @@ export function mountPanels(app: HTMLElement): PanelsController {
             strip = el("div", { class: "panel-tabs", role: "tablist" });
             page.strips.set(key, strip);
         }
-        // Drawn again only when what it shows changes: a tab replaced
+        // Drawn again only when what it shows changes (a panel renamed, as
+        // the Laser panel is on a spindle machine, included): a tab replaced
         // between a press and its release takes no click.
-        const shownKey = `${visible.map((panel) => panel.id).join(" ")}|${front.id}`;
+        const shownKey = `${visible.map((panel) => `${panel.id}=${title(panel.root)}`).join(" ")}|${front.id}`;
         if (strip.dataset["shown"] !== shownKey) {
             strip.dataset["shown"] = shownKey;
             strip.setAttribute("aria-label", `Stack of ${visible.map((panel) => title(panel.root)).join(", ")}`);
