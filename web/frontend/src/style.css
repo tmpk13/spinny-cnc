@@ -631,23 +631,21 @@ table.settings-list td {
 
     /* A docked panel (the run controls, data-dock in the markup) stays at
        the foot of its column while the jobs and the groups scroll under
-       them; the shadow says something is under there. */
-    .column > .panel[data-dock] {
+       them; the shadow says something is under there. It sits on the
+       column's bottom edge with nothing under it, its top edge drawn
+       strong so it reads as apart from what scrolls above it. Stuck to
+       another panel or stacked with one, it is drawn and moves with them
+       instead. */
+    .column > .panel[data-dock]:not([data-join-up], [data-join-down], [data-stacked]) {
         position: sticky;
         bottom: 0;
         z-index: 3;
         margin-top: auto;
-        box-shadow: 0 -0.4rem 1rem -0.6rem color-mix(in oklab, var(--text) 35%, transparent), var(--shadow);
-    }
-
-    /* Docked, it sits on the column's bottom edge with nothing under it,
-       its top edge drawn strong so it reads as apart from what scrolls
-       above it. */
-    .column > .panel[data-dock]:not([data-join-up]) {
         margin-bottom: 0;
         border-top: 0.15rem solid var(--border-strong);
         border-bottom-width: 0;
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        box-shadow: 0 -0.4rem 1rem -0.6rem color-mix(in oklab, var(--text) 35%, transparent), var(--shadow);
     }
 
     /* The CAM page: the profile on the left, its preview and its file on the right. */

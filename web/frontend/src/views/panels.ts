@@ -343,9 +343,19 @@ export function mountPanels(app: HTMLElement): PanelsController {
         if (root.style.height !== want) {
             root.style.height = want;
         }
-        // A panel docked at its column's foot (the Run panel) sits on the
-        // column's edge, where a handle under it could not be reached.
-        panel.resize.hidden = collapsed || !shown(panel.id) || root.hasAttribute("data-behind") || root.hasAttribute("data-dock");
+        panel.resize.hidden = handleHidden(panel, collapsed);
+    }
+
+    /**
+     * Whether the height handle under a panel is out of use: the panel is
+     * folded, not shown, behind in its stack, or docked at its column's
+     * foot (the Run panel, alone), where a handle under it could not be
+     * reached.
+     */
+    function handleHidden(panel: PanelView, collapsed = collapsedOf(panel)): boolean {
+        const { root } = panel;
+        const docked = root.hasAttribute("data-dock") && !["data-join-up", "data-join-down", "data-stacked"].some((name) => root.hasAttribute(name));
+        return collapsed || !shown(panel.id) || root.hasAttribute("data-behind") || docked;
     }
 
     // --- drawing a page --------------------------------------------------------
@@ -444,6 +454,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
             for (const node of desired) {
                 node.toggleAttribute("data-first", node === drawn[0]?.node);
                 node.toggleAttribute("data-last", node === drawn[drawn.length - 1]?.node);
+            }
+            // The joins are known only now: a docked panel stuck to another
+            // gets its handle back.
+            for (const handle of handles) {
+                const panel = [...panels.values()].find((entry) => entry.resize === handle);
+                if (panel) {
+                    handle.hidden = handleHidden(panel);
+                }
             }
         });
         for (const [key, strip] of page.strips) {
