@@ -44,7 +44,7 @@ directory `SPINNY_HOME` names), with:
 | `machines/` | machine files, edited on the Config tab |
 | `cam/` | CAM profiles |
 | `pnp/` | pick and place device profiles |
-| `var/` | jobs, settings, the height map, logs, gcode written by `spinny-cam` |
+| `var/` | jobs, settings, the height map, logs |
 
 `machines/`, `cam/` and `pnp/` start as copies of the ones the release
 ships; once a directory exists it is yours and a later release leaves it
@@ -78,12 +78,14 @@ bin/spinny-virtual --machine ~/.local/share/spinny/machines/cartesian-mill.toml
 
 | Program | Does |
 | --- | --- |
-| `bin/spinny-cam` | a board, an X/Y gcode design or an STL model through a CAM profile to gcode |
 | `bin/spinny-bridge` | serves a controller's serial port over TCP, for a backend on another computer |
-| `bin/spinny-mcp` | the backend's tools for Claude Code or another MCP client (needs the `mcp` package, below) |
-| `bin/spinny-iso`, `spinny-polar`, `spinny-jog`, `spinny-center` | the toolpath command line tools |
+| `bin/spinny-mcp` | the backend's tools for Claude Code or another MCP client (only in archives built with `--extras mcp`) |
 | `bin/spinny-carve` | the 3D kernel the CAM runs for STL models |
 | `bin/pcbv` | the camera program (only in archives built beside pcb-vision) |
+
+The command line twins of the page (`spinny-iso`, `spinny-polar`,
+`spinny-center`, `spinny-cam`) and `spinny-jog` stay in a checkout: the
+page does each of their jobs.
 
 Each takes `--help`. The launchers put `bin/` first on `PATH`, so the
 backend finds `spinny-carve` and `pcbv` beside them; a launcher linked
@@ -99,6 +101,9 @@ the release's own Python (this needs the internet):
 ```sh
 python/bin/python3 -m pip install 'anthropic>=2' 'mcp>=2'
 ```
+
+Such a release has no `bin/spinny-mcp`; `python/bin/python3 -I -m
+spinny_web.mcp_server` is the same server.
 
 ## Building a release
 

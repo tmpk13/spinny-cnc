@@ -58,8 +58,16 @@ SOURCES = ["toolpath", "web", "carve", "firmware", "deploy", "docs/RELEASE.md", 
 # Committed directories shipped inside spinny_web, which seeds a new home
 # with them.
 SHIPPED = ["machines", "cam", "pnp"]
-# The packages whose [project.scripts] get launchers.
+# The packages whose [project.scripts] the launchers come from.
 SCRIPTED = [REPO / "toolpath" / "pyproject.toml", REPO / "web" / "backend" / "pyproject.toml"]
+# The scripts a release has launchers for: the backend, and the serial
+# bridge for a computer beside the controller. The other scripts are
+# command line twins of what the page does (isolation, polar conversion,
+# centering, CAM to gcode) or setup aids for the grblHAL controller the
+# machine no longer runs (spinny-jog), and stay checkout tools.
+LAUNCHED = ("spinny-web", "spinny-bridge")
+# Scripts launched only when the archive carries the extra they need.
+LAUNCHED_WITH = {"spinny-mcp": "mcp"}
 EXTRAS = ("auto", "mcp")
 
 
@@ -94,6 +102,17 @@ def label(version: str, commit: str, tagged: bool, dirty: bool) -> str:
 def entry_points(pyproject: str) -> dict[str, str]:
     """The [project.scripts] of a pyproject.toml: name to `module:function`."""
     return dict(tomllib.loads(pyproject).get("project", {}).get("scripts", {}))
+
+
+def launched(scripts: dict[str, str], extras: list[str]) -> dict[str, str]:
+    """The scripts, name to `module:function`, that get a launcher in an
+    archive with these extras. A launched name missing from the scripts
+    stops the build, so a renamed entry point cannot drop silently."""
+    wanted = [*LAUNCHED, *(name for name, extra in LAUNCHED_WITH.items() if extra in extras)]
+    missing = [name for name in wanted if name not in scripts]
+    if missing:
+        raise SystemExit(f"no [project.scripts] entry for {', '.join(missing)}: update LAUNCHED in deploy/release.py")
+    return {name: scripts[name] for name in wanted}
 
 
 def launcher(name: str, target: str) -> str:
@@ -280,6 +299,7 @@ def bundle(
     page: Path,
     shipped: Path,
     firmware: Path,
+    extras: list[str],
     stamp: dict[str, str],
 ) -> Path:
     root = fresh(BUILD / "stage" / target.triple) / name
@@ -299,11 +319,13 @@ def bundle(
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
+    scripts = {}
     for path in SCRIPTED:
-        for script, entry in entry_points(path.read_text()).items():
-            launch = bin_dir / script
-            launch.write_text(launcher(script, entry))
-            launch.chmod(0o755)
+        scripts.update(entry_points(path.read_text()))
+    for script, entry in launched(scripts, extras).items():
+        launch = bin_dir / script
+        launch.write_text(launcher(script, entry))
+        launch.chmod(0o755)
     programs = build_programs(target)
     for program in programs:
         shutil.copy2(program, bin_dir / program.name)
@@ -387,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     archives = []
     for triple in args.target or sorted(TARGETS):
         target = TARGETS[triple]
-        archives.append(bundle(target, f"spinny-{name}-{target.platform}", wheels, reqs, page, shipped, firmware, stamp))
+        archives.append(bundle(target, f"spinny-{name}-{target.platform}", wheels, reqs, page, shipped, firmware, extras, stamp))
     write_sums(archives)
     return 0
 

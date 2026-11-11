@@ -35,12 +35,28 @@ def test_a_release_is_named_by_version_commit_and_state():
     assert release.label("0.2.0", "4a67b63", tagged=False, dirty=True) == "0.2.0-g4a67b63-dirty"
 
 
-def test_every_script_of_both_packages_gets_a_launcher():
+def _scripts() -> dict[str, str]:
     scripts = {}
     for path in release.SCRIPTED:
         scripts.update(release.entry_points(path.read_text()))
-    assert scripts["spinny-web"] == "spinny_web.app:main"
-    assert {"spinny-bridge", "spinny-mcp", "spinny-cam"} <= set(scripts)
+    return scripts
+
+
+def test_only_the_backend_and_the_bridge_get_launchers_in_a_plain_release():
+    chosen = release.launched(_scripts(), [])
+    assert chosen == {"spinny-web": "spinny_web.app:main", "spinny-bridge": "spinny_web.bridge:main"}
+
+
+def test_the_mcp_server_gets_a_launcher_only_with_its_package():
+    assert "spinny-mcp" not in release.launched(_scripts(), ["auto"])
+    assert release.launched(_scripts(), ["auto", "mcp"])["spinny-mcp"] == "spinny_web.mcp_server:main"
+
+
+def test_a_launched_script_missing_from_the_packages_stops_the_build():
+    scripts = _scripts()
+    del scripts["spinny-bridge"]
+    with pytest.raises(SystemExit, match="spinny-bridge"):
+        release.launched(scripts, [])
 
 
 def test_the_newest_python_for_the_machine_is_picked():
