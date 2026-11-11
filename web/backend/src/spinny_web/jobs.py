@@ -770,6 +770,8 @@ def import_file(path: Path, name: str, options: ImportOptions, streamer: Streame
         job = from_json(path.read_text(encoding="utf-8"), name)
     elif suffix == ".svg":
         job = from_svg(path.read_text(encoding="utf-8"), name, options)
+    elif suffix in camjob.DXF_SUFFIXES:
+        job = from_dxf(path, name, options)
     elif suffix in camjob.GCODE_SUFFIXES:
         job = from_gcode(path.read_text(encoding="utf-8", errors="replace"), name, options)
     elif suffix == ".kicad_pcb" or suffix in GERBER_SUFFIXES:
@@ -1080,6 +1082,36 @@ def from_svg(text: str, name: str, options: ImportOptions) -> Job:
     return Job(
         name=name,
         source="svg",
+        spot=options.spot,
+        offset=Offset(x=options.offset[0], y=options.offset[1]),
+        groups=groups,
+    )
+
+
+def from_dxf(path: Path, name: str, options: ImportOptions) -> Job:
+    """Every line of a DXF drawing as a cut, its curves within the import's
+    tolerance, one group a layer named `layer` and the layer's name, in the
+    order the layers first draw; a part's holes before its outline."""
+    from spinny_laser import dxf
+
+    try:
+        drawing = dxf.read_file(path, options.tolerance)
+    except dxf.DxfError as exc:
+        raise JobImportError(str(exc)) from exc
+    if not drawing.layers:
+        raise JobImportError("the DXF has no lines to cut")
+    placed = iter(place([points for layer in drawing.layers for points in layer.paths], options.anchor, options.offset))
+    groups: list[Group] = []
+    for layer in drawing.layers:
+        group = Group(label=dxf.layer_label(layer.name), power=options.power, speed=options.speed)
+        group.paths = cut_order.inner_first([next(placed) for _ in layer.paths])
+        groups.append(group)
+    # A drawing in a unit other than its header says lands far off.
+    if any(abs(v) > MAX_VALUE for group in groups for points in group.paths for point in points for v in point):
+        raise JobImportError(f"the drawing reaches past {MAX_VALUE:g} mm: is its unit ($INSUNITS) right?")
+    return Job(
+        name=name,
+        source="dxf",
         spot=options.spot,
         offset=Offset(x=options.offset[0], y=options.offset[1]),
         groups=groups,

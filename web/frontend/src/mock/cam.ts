@@ -34,6 +34,7 @@ import type {
     Tool,
 } from "../types.ts";
 import { DEFAULT_DEPTH, DEFAULT_PLUNGE, GERBER_EXTENSIONS, computeStats, demoCoupon, extensionOf, flipPaths, formatG, isBottom, layerOf, modelStats, outlineCut, parseGcode, parseSvg, shiftPaths, type RateLimits } from "./jobs.ts";
+import { type DxfDrawing, layerLabel, readDxf } from "./dxf.ts";
 import { isTable } from "./machines.ts";
 import { extent, innerFirst } from "./order.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
@@ -1010,7 +1011,7 @@ interface Geometry {
     drills: Path[];
 }
 
-function readGeometry(fileName: string, text: string): Geometry {
+function readGeometry(fileName: string, text: string, tolerance: number): Geometry {
     const extension = extensionOf(fileName);
     if (extension === "kicad_pcb" || GERBER_EXTENSIONS.includes(extension)) {
         const coupon = demoCoupon();
@@ -1035,6 +1036,18 @@ function readGeometry(fileName: string, text: string): Geometry {
         case "ngc": {
             const parsed = parseGcode(text);
             return { ...empty, source: "gcode", sets: parsed.groups.map((group) => ({ label: group.label, paths: group.paths })) };
+        }
+        case "dxf": {
+            let drawing: DxfDrawing;
+            try {
+                drawing = readDxf(text, tolerance);
+            } catch (error) {
+                throw new Error(`${fileName}: ${errorText(error)}`);
+            }
+            if (drawing.layers.length === 0) {
+                throw new Error(`${fileName}: the DXF has no lines to cut`);
+            }
+            return { ...empty, source: "dxf", sets: drawing.layers.map((layer) => ({ label: layerLabel(layer.name), paths: layer.paths })) };
         }
         case "json": {
             let data: unknown;
@@ -1136,7 +1149,7 @@ function center(path: Path): Point {
 
 /** The design through every operation of the profile, the way the backend builds it, on the mock's geometry. */
 export function buildCamJob(id: string, profile: CamProfile, name: string, fileName: string, text: string, limits: RateLimits): { job: Job; notes: string[] } {
-    const geometry = place(readGeometry(fileName, text), profile.placement);
+    const geometry = place(readGeometry(fileName, text, limits.tolerance), profile.placement);
     const notes: string[] = [];
     if (geometry.board) {
         notes.push("mock backend: copper geometry needs the real backend, showing a demo coupon");

@@ -39,6 +39,12 @@ what is drawn on it, and picking a drawing (Edge.Cuts, a silk screen, a
 fab or user layer) sets Board to on the lines; Import sends it, Cancel or
 Escape leaves it. A gerber is its own layer.
 
+A drawing is cut on its lines: an SVG a group per stroke color, a DXF a
+group per layer (its lines joined where their ends meet, blocks inserted,
+curves flattened, in the unit its header gives, millimeters when it gives
+none). Save a DXF as ASCII: a binary one is refused. The CAM page takes
+a DXF too, its layers being what a paths operation's `match` picks.
+
 A click on a path in the preview picks it (shift or ctrl adds one or takes
 it back, *Box select* picks every path inside a dragged box, a click on a
 group's name in the Jobs panel all of its paths); the Jobs panel then moves

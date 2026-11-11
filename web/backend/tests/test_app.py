@@ -340,6 +340,28 @@ def test_gcode_and_json_uploads(client):
     assert copy["id"] != job["id"] and copy["source"] == "json" and copy["name"] == "part"
 
 
+DXF_FIXTURES = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "dxf"
+
+
+def test_dxf_uploads_group_by_layer_and_take_a_width_alone(client):
+    data = (DXF_FIXTURES / "lines.dxf").read_bytes()
+    job = client.post("/api/jobs", files={"file": ("plate.dxf", data, "image/vnd.dxf")}, data={"anchor": "keep", "power": "300"}).json()
+    assert job["source"] == "dxf" and job["name"] == "plate"
+    assert [group["label"] for group in job["groups"]] == ["layer CUT", "layer MARK"]
+    cut = job["groups"][0]
+    assert cut["power"] == 300
+    assert cut["paths"][0] == [[20.0, 0.0], [20.0, 10.0], [0.0, 10.0], [0.0, 0.0], [20.0, 0.0]]
+    assert job["stats"]["length_mm"] > 60
+    # A drawing's paths do not follow the spot: another width is the number alone.
+    widened = client.post(f"/api/jobs/{job['id']}/width", json={"width": 0.3}).json()
+    assert widened["spot"] == 0.3 and widened["groups"][0]["paths"] == cut["paths"]
+    binary = client.post("/api/jobs", files={"file": ("b.dxf", b"AutoCAD Binary DXF\r\n\x1a\x00", "image/vnd.dxf")})
+    assert binary.status_code == 400 and "binary DXF" in binary.json()["detail"]
+    empty = "  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF\n".encode()
+    nothing = client.post("/api/jobs", files={"file": ("e.dxf", empty, "image/vnd.dxf")})
+    assert nothing.status_code == 400 and nothing.json()["detail"] == "the DXF has no lines to cut"
+
+
 def test_events_reach_the_broadcast(client, fake):
     backend = client.backend
     seen = []

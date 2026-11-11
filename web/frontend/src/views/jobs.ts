@@ -16,8 +16,8 @@ import { runActive } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 import { mountRun } from "./run.ts";
 
-/** Every file the Jobs import reads: a drawing, a job, a board layer's gerber or the KiCad file, or gcode. */
-export const ACCEPT = [".svg", ".json", ...GERBER_SUFFIXES, ".kicad_pcb", ...GCODE_SUFFIXES].join(",");
+/** Every file the Jobs import reads: a drawing (SVG or DXF), a job, a board layer's gerber or the KiCad file, or gcode. */
+export const ACCEPT = [".svg", ".dxf", ".json", ...GERBER_SUFFIXES, ".kicad_pcb", ...GCODE_SUFFIXES].join(",");
 
 /** The layers of a KiCad board a job is usually cut from, offered under the layer field; any other name may be typed. */
 export const BOARD_LAYERS = ["F.Cu", "B.Cu", "F.Paste", "B.Paste", "F.Mask", "B.Mask", "F.SilkS", "B.SilkS"];
@@ -191,7 +191,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         el("option", { value: "lines" }, "lines"),
     );
     const drop = el("div", { class: "drop" },
-        el("p", {}, "Drop a file here (svg, json, gerber, kicad_pcb, gcode) or"),
+        el("p", {}, "Drop a file here (svg, dxf, json, gerber, kicad_pcb, gcode) or"),
         el("label", { class: "btn btn-quiet" }, "pick a file", fileInput),
     );
     // A KiCad board is cut from one of its layers: the board's own, read

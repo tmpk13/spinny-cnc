@@ -3,12 +3,13 @@
     spinny-cam cam/mill-3axis.toml board.kicad_pcb
     spinny-cam cam/mill-3axis.toml board-F_Cu.gbr -o var/out/board.nc
     spinny-cam cam/cartesian-laser.toml sweep.gcode --name coupon
+    spinny-cam cam/cartesian-laser.toml panel.dxf
     spinny-cam cam/mill-3d.toml bracket.stl
 
 The board (a KiCad file, or a copper gerber with its Edge.Cuts and drill
-files beside it), an X/Y gcode file or an STL model goes through every
-enabled operation of the profile, and the program is written with a
-markdown report beside it.
+files beside it), an X/Y gcode file, a DXF drawing or an STL model goes
+through every enabled operation of the profile, and the program is
+written with a markdown report beside it.
 """
 
 from __future__ import annotations
@@ -26,12 +27,12 @@ OUT_DIR = home.root() / "var" / "out"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="spinny-cam",
-        description="A board, an X/Y gcode design or an STL model through a CAM profile, gcode for its controller out.",
+        description="A board, an X/Y gcode design, a DXF drawing or an STL model through a CAM profile, gcode for its controller out.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("profile", type=Path, help="a CAM profile, cam/*.toml")
-    parser.add_argument("design", type=Path, help="a .kicad_pcb, a copper gerber, an X/Y .gcode/.nc file, or an .stl model")
+    parser.add_argument("design", type=Path, help="a .kicad_pcb, a copper gerber, an X/Y .gcode/.nc file, a .dxf drawing, or an .stl model")
     parser.add_argument("-o", "--output", type=Path, help="the gcode file to write (default: var/out/<design>.nc)")
     parser.add_argument("--name", help="the job's name in the file (default: the design's)")
     parser.add_argument("--tolerance", type=float, default=0.005, help="chord tolerance of rings and arcs, mm")
@@ -43,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         profile = cam.load(args.profile)
-        design = camjob.read_design(args.design, profile.placement)
+        design = camjob.read_design(args.design, profile.placement, args.tolerance)
         built = camjob.build(profile, design, args.name, tolerance=args.tolerance)
         program = post.post(built, profile)
     except (cam.CamError, camjob.DesignError, post.PostError, OSError) as exc:

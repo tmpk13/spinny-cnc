@@ -653,7 +653,7 @@ def test_the_command_line_tool_writes_the_program_and_a_report(tmp_path, capsys)
     assert "- Lines:" in (tmp_path / "board.md").read_text()
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(BOARD_COPPER), "--dry-run"]) == 0
     assert camcli.main([str(SHIPPED / "mill-3axis.toml"), str(tmp_path / "nothing.svg")]) == 1
-    assert "not a board, an X/Y gcode file or an STL model" in capsys.readouterr().err
+    assert "not a board, an X/Y gcode file, a DXF drawing or an STL model" in capsys.readouterr().err
 
 
 def test_a_v_bit_cuts_as_wide_as_the_depth_makes_it():

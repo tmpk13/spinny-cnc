@@ -215,7 +215,7 @@ loops = 1                       # isolation and deposit: loops around (or inside
 pattern = "lines"               # clearing: radial | rings | lines
 fill = "contour"                # deposit: contour | radial | rings | lines
 marks = "circle"                # drills with a laser: circle | cross | dot
-match = "red"                   # paths: a part of the imported paths' label (an SVG stroke, a gcode S and F); "" takes all
+match = "red"                   # paths: a part of the imported paths' label (an SVG stroke, a DXF layer, a gcode S and F); "" takes all
 leave = 0.2                     # a model's: mm left on the walls; leave_floor on the floors (default leave)
 ramp = 3                        # a model's: degrees, the steepest entry; 90 plunges
 band = 1.5                      # a model's: mm past touching the model the tool goes round it
@@ -279,14 +279,14 @@ without `safe`, or a spindle depth that takes more than 100 passes.
 
 ## What an operation makes
 
-| Source | From a board (KiCad, or a copper gerber with its siblings) | From an SVG, gcode or job file |
+| Source | From a board (KiCad, or a copper gerber with its siblings) | From an SVG, DXF, gcode or job file |
 | --- | --- | --- |
 | `isolation` | one group per loop around every copper feature, the first half a tool width out | nothing, noted |
 | `clearing` | the copper left between the loops inside the outline, as strokes of the pattern a stepover apart (a laser: a spot apart), the tool's middle on or past the outermost loop; a tool wider than the isolation keeps its radius from the copper, and a gap narrower than it is left (noted) | nothing, noted |
 | `outline` | the Edge.Cuts profile, its pieces joined where their ends meet, a cutout inside the board before the edge round it; a laser cuts on the line, a mill's bit runs its radius outside the board's edge and inside each cutout, so the board comes out the size drawn (a cutout narrower than the bit is not cut, and a piece that joins no loop is cut on its line, both noted) | nothing, noted |
 | `drills` | a mill: a hole the bit's size is a path of one point, the bit put down at its center and lifted; a wider hole is milled round at `(hole - bit) / 2`; a slot along its middle, or as an inset loop; a laser marks each hole (`marks`) | nothing, noted |
 | `deposit` | the copper itself: edge loops in from its edge, the fill, the traces narrower than the tool along their middle | nothing, noted |
-| `paths` | nothing, noted | the design's paths whose label holds `match`: an SVG's strokes, a gcode file's runs at one S and F, a job's groups; within a group, whatever lies inside a closed shape is cut before the shape |
+| `paths` | nothing, noted | the design's paths whose label holds `match`: an SVG's strokes, a DXF's layers (`layer CUT`), a gcode file's runs at one S and F, a job's groups; within a group, whatever lies inside a closed shape is cut before the shape |
 
 Every group carries the tool's kind (`tool` in the job): the web backend
 refuses to run a group made for the other tool than the machine has, so

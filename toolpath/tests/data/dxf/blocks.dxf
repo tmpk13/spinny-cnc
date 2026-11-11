@@ -1,0 +1,220 @@
+  0
+SECTION
+  2
+HEADER
+  9
+$ACADVER
+  1
+AC1015
+  9
+$INSUNITS
+ 70
+     4
+  0
+ENDSEC
+  0
+SECTION
+  2
+BLOCKS
+  0
+BLOCK
+  8
+0
+  2
+PAD
+ 70
+0
+ 10
+1.0
+ 20
+1.0
+ 30
+0.0
+  3
+PAD
+  1
+
+  0
+CIRCLE
+  8
+0
+ 10
+1.0
+ 20
+1.0
+ 30
+0.0
+ 40
+0.5
+  0
+LINE
+100
+AcDbEntity
+  8
+SILK
+100
+AcDbLine
+ 10
+0.0
+ 20
+1.0
+ 30
+0.0
+ 11
+2.0
+ 21
+1.0
+ 31
+0.0
+  0
+ENDBLK
+  8
+0
+  0
+BLOCK
+  8
+0
+  2
+PAIR
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  3
+PAIR
+  1
+
+  0
+INSERT
+100
+AcDbEntity
+  8
+0
+100
+AcDbBlockReference
+  2
+PAD
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  0
+INSERT
+100
+AcDbEntity
+  8
+0
+100
+AcDbBlockReference
+  2
+PAD
+ 10
+5.0
+ 20
+0.0
+ 30
+0.0
+ 50
+90.0
+  0
+ENDBLK
+  8
+0
+  0
+ENDSEC
+  0
+SECTION
+  2
+ENTITIES
+  0
+INSERT
+100
+AcDbEntity
+  8
+PADS
+100
+AcDbBlockReference
+  2
+PAIR
+ 10
+10.0
+ 20
+10.0
+ 30
+0.0
+ 41
+2.0
+ 50
+30.0
+  0
+INSERT
+100
+AcDbEntity
+  8
+ARRAY
+100
+AcDbBlockReference
+  2
+pad
+ 10
+0.0
+ 20
+-10.0
+ 30
+0.0
+ 70
+3
+ 71
+2
+ 44
+4.0
+ 45
+3.0
+  0
+INSERT
+100
+AcDbEntity
+  8
+GONE
+100
+AcDbBlockReference
+  2
+NOPE
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+  0
+INSERT
+100
+AcDbEntity
+  8
+MIRROR
+100
+AcDbBlockReference
+  2
+PAD
+ 10
+20.0
+ 20
+0.0
+ 30
+0.0
+210
+0.0
+220
+0.0
+230
+-1.0
+  0
+ENDSEC
+  0
+EOF

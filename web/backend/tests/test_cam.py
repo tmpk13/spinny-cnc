@@ -192,6 +192,16 @@ def test_an_svg_goes_through_the_paths_operation_of_the_laser_profile(client, tm
     assert client.post("/api/cam/nope/jobs", files=[("files", ("x.svg", SVG.encode(), "image/svg+xml"))]).status_code == 404
 
 
+def test_a_dxf_drawing_goes_through_the_paths_operation_by_layer(client):
+    answer = upload(client, "cartesian-laser", [DATA / "dxf" / "lines.dxf"])
+    cut = [g for g in answer["job"]["groups"] if g["paths"]]
+    assert [g["label"] for g in cut] == ["engraving: layer CUT", "engraving: layer MARK"]
+    assert answer["job"]["source"] == "dxf"
+    # Placed by the profile: the drawing's corner on its offset.
+    xs = [p[0] for g in cut for path in g["paths"] for p in path]
+    assert min(xs) == pytest.approx(10.0, abs=1e-6)
+
+
 def test_a_job_is_written_as_gcode_for_the_profile(client):
     job = upload(client, "mill-3axis", BOARD_FILES)["job"]
     answer = client.post("/api/cam/mill-3axis/gcode", json={"job": job["id"]})

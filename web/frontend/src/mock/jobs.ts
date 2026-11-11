@@ -1,9 +1,11 @@
-// Job geometry for the in-page mock backend: SVG and gcode readers, a demo
-// coupon for the formats only the real backend can read, placement and stats.
+// Job geometry for the in-page mock backend: SVG and gcode readers (DXF in
+// dxf.ts), a demo coupon for the formats only the real backend can read,
+// placement and stats.
 
 import { errorText } from "../api.ts";
 import { jointOfBoard, moveMinutes, surfaceLength } from "../kinematics.ts";
 import { groupMoves, jointPreview } from "../moves.ts";
+import { layerLabel, readDxf } from "./dxf.ts";
 import { extent, innerFirst } from "./order.ts";
 import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, Move, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
@@ -1593,6 +1595,16 @@ export function buildJob(id: string, name: string, text: string, options: Upload
                 geometry = parseGcode(text);
                 source = "gcode";
                 break;
+            case "dxf": {
+                const drawing = readDxf(text, limits.tolerance);
+                if (drawing.layers.length === 0) {
+                    throw new Error("the DXF has no lines to cut");
+                }
+                // A part's holes and marks before its outline, while the sheet holds it.
+                geometry = { groups: drawing.layers.map((layer) => ({ label: layerLabel(layer.name), paths: innerFirst(layer.paths) })) };
+                source = "dxf";
+                break;
+            }
             default:
                 throw new Error(`unsupported file type: .${extension || "?"}`);
         }
@@ -1607,6 +1619,10 @@ export function buildJob(id: string, name: string, text: string, options: Upload
         turned = { ...turned, groups: turned.groups.map((group) => OUTLINE_GROUPS.includes(group.label) ? { ...group, paths: outlineCut(group.paths, spot / 2) } : group) };
     }
     const placed = placeJob(turned, anchor, offset);
+    // A drawing in a unit other than its header says lands far off.
+    if (source === "dxf" && placed.groups.some((group) => group.paths.some((path) => path.some(([x, y]) => Math.abs(x) > MAX_VALUE || Math.abs(y) > MAX_VALUE)))) {
+        throw new Error(`the drawing reaches past ${MAX_VALUE_TEXT} mm: is its unit ($INSUNITS) right?`);
+    }
     // A gcode group keeps the power and feed the file ran it at.
     const groups: Group[] = placed.groups.map((group, index) => ({
         label: group.label,

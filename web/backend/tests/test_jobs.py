@@ -106,6 +106,52 @@ def test_svg_with_nothing_to_cut_is_refused():
         from_svg("not xml at all", "bad", ImportOptions())
 
 
+def dxf_text(entities: str, units: int | None = None) -> str:
+    header = f"  0\nSECTION\n  2\nHEADER\n  9\n$INSUNITS\n 70\n{units}\n  0\nENDSEC\n" if units is not None else ""
+    return header + f"  0\nSECTION\n  2\nENTITIES\n{entities}  0\nENDSEC\n  0\nEOF\n"
+
+
+def dxf_square(layer: str, x0: float, y0: float, size: float) -> str:
+    corners = [(x0, y0), (x0 + size, y0), (x0 + size, y0 + size), (x0, y0 + size)]
+    vertices = "".join(f" 10\n{x}\n 20\n{y}\n" for x, y in corners)
+    return f"  0\nLWPOLYLINE\n  8\n{layer}\n 90\n4\n 70\n1\n{vertices}"
+
+
+def test_dxf_import_groups_by_layer_places_and_cuts_holes_first(tmp_path):
+    path = tmp_path / "part.dxf"
+    path.write_text(dxf_text(dxf_square("CUT", 0, 0, 40) + dxf_square("CUT", 10, 10, 5) + dxf_square("ENGRAVE", 20, 20, 2), units=4))
+    job = import_file(path, "part", ImportOptions(anchor="center", offset=(3.0, -4.0), power=250, speed=100), Streamer())
+    assert job.source == "dxf" and job.name == "part"
+    assert [group.label for group in job.groups] == ["layer CUT", "layer ENGRAVE"]
+    outline, hole = job.groups[0].paths[1], job.groups[0].paths[0]
+    # The hole inside the outline is cut first, while the sheet holds the part.
+    assert bbox([hole]) == pytest.approx((-7.0, -14.0, -2.0, -9.0), abs=1e-9)
+    x0, y0, x1, y1 = bbox(all_paths(job))
+    assert ((x0 + x1) / 2.0, (y0 + y1) / 2.0) == pytest.approx((3.0, -4.0), abs=1e-9)
+    assert bbox([outline]) == pytest.approx((-17.0, -24.0, 23.0, 16.0), abs=1e-9)
+    assert job.groups[0].power == 250 and job.groups[0].speed == 100
+    assert job.stats.length_mm > 0
+
+
+def test_dxf_import_in_another_unit_and_what_it_refuses(tmp_path):
+    inches = tmp_path / "inches.dxf"
+    inches.write_text(dxf_text(dxf_square("0", 0, 0, 1), units=1))
+    job = import_file(inches, "inches", ImportOptions(anchor="keep"), Streamer())
+    assert bbox(all_paths(job)) == pytest.approx((0.0, 0.0, 25.4, 25.4), abs=1e-9)
+    far = tmp_path / "far.dxf"
+    far.write_text(dxf_text("  0\nLINE\n 10\n0\n 20\n0\n 11\n2\n 21\n0\n", units=7))
+    with pytest.raises(JobImportError, match="reaches past 1e\\+06 mm"):
+        import_file(far, "far", ImportOptions(anchor="keep"), Streamer())
+    binary = tmp_path / "binary.dxf"
+    binary.write_bytes(b"AutoCAD Binary DXF\r\n\x1a\x00\x00")
+    with pytest.raises(JobImportError, match="save the drawing as an ASCII DXF"):
+        import_file(binary, "binary", ImportOptions(), Streamer())
+    text_only = tmp_path / "text.dxf"
+    text_only.write_text(dxf_text("  0\nTEXT\n  1\nhello\n"))
+    with pytest.raises(JobImportError, match="no lines to cut"):
+        import_file(text_only, "text", ImportOptions(), Streamer())
+
+
 def test_gcode_import_groups_consecutive_paths_by_power_and_speed():
     text = """G21
 G90

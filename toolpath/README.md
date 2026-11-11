@@ -7,7 +7,8 @@ deposition (`deposit`), solder paste stencils (`stencil`), a layer cut on
 its lines (`lines`), a board's outline as a cut, its pieces joined into
 loops and a bit kept off the board (`outline`), the cutting order that
 puts whatever lies inside a closed shape before the shape (`order`), the
-centering coupons (`center`, `fine`), the calibration tests
+centering coupons (`center`, `fine`), an ASCII DXF drawing's paths by
+layer (`dxf`, with a twin in the page's mock), the calibration tests
 (`calibrate`: a laser's material grid and focus ladder, a mill's depth
 row), the pads and holes
 of a board layer (`pads`), the turn and shift that line a job up with the
@@ -30,7 +31,7 @@ grblHAL controller (`gcode`, `machine`, `report`, `preview`).
 | `spinny-jog` | MDI rapids for setup: move radially or turn the table |
 | `spinny-center` | a burn that shows where the rotation axis really is; `--fine` amplifies what is left |
 | `spinny-sim` | play a job back on a model of the machine: the `sim/` crate, run with `cargo run` there rather than `uv run` |
-| `spinny-cam` | a board, an X/Y gcode design or an STL model through a CAM profile in `cam/`, gcode for that profile's controller |
+| `spinny-cam` | a board, an X/Y gcode design, a DXF drawing or an STL model through a CAM profile in `cam/`, gcode for that profile's controller |
 
 Usage, the grblHAL setup and what the files contain are in
 [docs/GCODE.md](../docs/GCODE.md); reading the coupons is in
@@ -147,6 +148,7 @@ classDiagram
     home ..> web_backend : var, machines, cam, pnp
     lines ..> web_backend : board import, lines mode
     outline ..> web_backend : board import
+    dxf ..> web_backend : DXF import
     class cam {
         Profile  axes, tools, operations, post, placement, materials, stock, model, spindle
         load / load_all(directory) / parse(text, id)
@@ -156,13 +158,17 @@ classDiagram
         set_value(text, path, value) text, comments kept
     }
     class camjob {
-        read_design(path, placement) Design  a board, gcode or an STL
+        read_design(path, placement, tolerance) Design  a board, gcode, a DXF or an STL
         read_board(path, layer) Design
-        read_gcode(text, name) / place_paths(sets, anchor, offset)
+        read_gcode(text, name) / read_dxf(path) / place_paths(sets, anchor, offset)
         isolation_passes(plan) each pass's offset and loops
         read_model(path) Design  an STL
         build(profile, design) BuiltJob  groups per operation, notes; a model's groups carry moves
         model_request(profile, design, operations) the kernel's request
+    }
+    class dxf {
+        read(text, tolerance) Drawing  paths in mm by layer, blocks inserted, curves flattened
+        decode(data) text  a binary DXF refused
     }
     class carve {
         find() the spinny-carve program
@@ -249,6 +255,8 @@ classDiagram
     camjob --> deposit : edges, fill, thin
     camjob --> laser_sweep : copper, loops, outline, drills
     camjob --> convert : gcode paths
+    camjob --> dxf : a drawing's layers
+    dxf --> clear : pieces joined
     post --> cam
     post --> gcode : a polar profile
     cam ..> web_backend : listed, saved, patched; a design through a profile

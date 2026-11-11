@@ -109,8 +109,8 @@ describe("the file pickers", () => {
         // The backend's board.GERBER_SUFFIXES and its gcode suffixes.
         const gerbers = [".gbr", ".gtl", ".gbl", ".gts", ".gbs", ".gtp", ".gbp", ".gto", ".gbo", ".gm1"];
         const gcode = [".gcode", ".nc", ".ngc"];
-        expect(CAM_ACCEPT.split(",").sort()).toEqual([".svg", ".json", ...gerbers, ".drl", ".kicad_pcb", ...gcode, ".stl"].sort());
-        expect(JOBS_ACCEPT.split(",").sort()).toEqual([".svg", ".json", ...gerbers, ".kicad_pcb", ...gcode].sort());
+        expect(CAM_ACCEPT.split(",").sort()).toEqual([".svg", ".dxf", ".json", ...gerbers, ".drl", ".kicad_pcb", ...gcode, ".stl"].sort());
+        expect(JOBS_ACCEPT.split(",").sort()).toEqual([".svg", ".dxf", ".json", ...gerbers, ".kicad_pcb", ...gcode].sort());
         // A paste layer's gerber through a CAM profile, and a .ngc file through the Jobs import.
         const paste = buildCamJob("0009", parseProfile(shipped("polar-laser"), "p"), "paste", "board-F_Paste.gtp", "G04*", limits);
         expect(paste.job.source).toBe("gerber");

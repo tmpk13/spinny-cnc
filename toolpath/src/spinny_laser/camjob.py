@@ -32,9 +32,10 @@ Move = tuple[float, float, float, int]
 GERBER_SUFFIXES = board.GERBER_SUFFIXES
 BOARD_SUFFIXES = GERBER_SUFFIXES + (".kicad_pcb",)
 GCODE_SUFFIXES = (".gcode", ".nc", ".ngc")
+DXF_SUFFIXES = (".dxf",)
 MODEL_SUFFIXES = (".stl",)
 # The files `read_design` reads.
-DESIGN_SUFFIXES = BOARD_SUFFIXES + GCODE_SUFFIXES + MODEL_SUFFIXES
+DESIGN_SUFFIXES = BOARD_SUFFIXES + GCODE_SUFFIXES + DXF_SUFFIXES + MODEL_SUFFIXES
 # Over the material for the moves between cuts, mm.
 CLEARANCE = 1.0
 # A model's chord tolerance is never finer than this: arcs any finer only
@@ -159,20 +160,24 @@ def read_board(path: Path, layer: str = board.DEFAULT_LAYER) -> Design:
     )
 
 
-def read_design(path: Path, placement: cam.Placement) -> Design:
-    """A board, an X/Y gcode file or a 3D model as a design, its suffix
-    saying which; the gcode's paths are placed as the profile's
-    [placement] says."""
+def read_design(path: Path, placement: cam.Placement, tolerance: float = 0.005) -> Design:
+    """A board, an X/Y gcode file, a DXF drawing (its curves within
+    `tolerance` mm) or a 3D model as a design, its suffix saying which; the
+    gcode's and the drawing's paths are placed as the profile's [placement]
+    says."""
     suffix = path.suffix.lower()
     if suffix in BOARD_SUFFIXES:
         return read_board(path, placement.layer)
-    if suffix in GCODE_SUFFIXES:
-        design = read_gcode(path.read_text(encoding="utf-8", errors="replace"), path.stem)
+    if suffix in GCODE_SUFFIXES or suffix in DXF_SUFFIXES:
+        if suffix in GCODE_SUFFIXES:
+            design = read_gcode(path.read_text(encoding="utf-8", errors="replace"), path.stem)
+        else:
+            design = read_dxf(path, tolerance)
         design.paths = place_paths(design.paths, placement.anchor, placement.offset)
         return design
     if suffix in MODEL_SUFFIXES:
         return read_model(path)
-    raise DesignError(f"{path.name}: not a board, an X/Y gcode file or an STL model")
+    raise DesignError(f"{path.name}: not a board, an X/Y gcode file, a DXF drawing or an STL model")
 
 
 # --- building -----------------------------------------------------------------
@@ -696,6 +701,20 @@ def place_paths(sets: list[PathSet], anchor: str, offset: Point) -> list[PathSet
     """Ready paths placed together as a board would be (`cam.place`)."""
     placed = iter(cam.place([path for found in sets for path in found.paths], anchor, offset))
     return [PathSet(found.label, [next(placed) for _ in found.paths]) for found in sets]
+
+
+def read_dxf(path: Path, tolerance: float = 0.005) -> Design:
+    """A DXF drawing's paths, one set a layer, labeled `layer` and its
+    name, as the Jobs import groups them."""
+    from . import dxf
+
+    try:
+        drawing = dxf.read_file(path, tolerance)
+    except dxf.DxfError as exc:
+        raise DesignError(f"{path.name}: {exc}") from exc
+    if not drawing.layers:
+        raise DesignError(f"{path.name}: the DXF has no lines to cut")
+    return Design(name=path.stem, source="dxf", paths=[PathSet(dxf.layer_label(layer.name), layer.paths) for layer in drawing.layers])
 
 
 def read_gcode(text: str, name: str) -> Design:

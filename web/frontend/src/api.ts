@@ -144,7 +144,7 @@ export interface Api {
     /** Changes one value in the file and keeps the rest, comments included. */
     patchCamProfile(id: string, path: CamPath, value: CamValue): Promise<CamProfileResponse>;
     deleteCamProfile(id: string): Promise<void>;
-    /** The design files (a board with its outline and drill file, an SVG, gcode or a job) through the profile into a stored job. */
+    /** The design files (a board with its outline and drill file, an SVG, a DXF drawing, gcode, a job or a model) through the profile into a stored job. */
     camJob(id: string, files: File[], name?: string): Promise<CamJobResponse>;
     /** A stored job as gcode for the profile's controller. */
     camGcode(id: string, jobId: string): Promise<CamGcodeResponse>;

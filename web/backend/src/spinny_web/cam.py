@@ -69,11 +69,12 @@ def pick_design(folder: Path, layer: str) -> tuple[Path, list[str]]:
 def read_design(path: Path, profile: Profile, tolerance: float) -> camjob.Design:
     """A design from an uploaded file: an SVG's shapes or a job's board
     paths here, placed as the profile says, and whatever the toolpath
-    library reads (`camjob.read_design`) there."""
+    library reads (`camjob.read_design`: a board, gcode, a DXF drawing, a
+    model) there, curves within `tolerance` mm."""
     suffix = path.suffix.lower()
     place = profile.placement
     if suffix in camjob.DESIGN_SUFFIXES:
-        return camjob.read_design(path, place)
+        return camjob.read_design(path, place, tolerance)
     if suffix in SVG_SUFFIXES:
         shapes = svg_polylines(path.read_text(encoding="utf-8"), tolerance)
         if not shapes:

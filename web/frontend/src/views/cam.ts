@@ -24,8 +24,8 @@ import type { Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
 import { showPage } from "./tabs.ts";
 
-/** Every design the CAM reads: a drawing, a job, a board (its layers' gerbers and drill files, or the KiCad file), gcode or a model. */
-export const ACCEPT = [".svg", ".json", ...GERBER_SUFFIXES, ".drl", ".kicad_pcb", ...GCODE_SUFFIXES, ".stl"].join(",");
+/** Every design the CAM reads: a drawing (SVG or DXF), a job, a board (its layers' gerbers and drill files, or the KiCad file), gcode or a model. */
+export const ACCEPT = [".svg", ".dxf", ".json", ...GERBER_SUFFIXES, ".drl", ".kicad_pcb", ...GCODE_SUFFIXES, ".stl"].join(",");
 
 export interface NumberSpec {
     key: string;
@@ -181,7 +181,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Design files" });
     const nameField = el("input", { type: "text", class: "field", placeholder: "job name (default: file name)", "aria-label": "Job name", autocomplete: "off" });
     const drop = el("div", { class: "drop" },
-        el("p", {}, "Drop a board (with outline and drill files), SVG, gcode, JSON or STL here, or"),
+        el("p", {}, "Drop a board (with outline and drill files), SVG, DXF, gcode, JSON or STL here, or"),
         el("label", { class: "btn btn-quiet" }, "pick files", fileInput),
     );
     const notes = el("ul", { class: "cam-notes muted hidden" });

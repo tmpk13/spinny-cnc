@@ -1,0 +1,350 @@
+  0
+SECTION
+  2
+HEADER
+  9
+$ACADVER
+  1
+AC1015
+  9
+$INSUNITS
+ 70
+     4
+  0
+ENDSEC
+  0
+SECTION
+  2
+TABLES
+  0
+TABLE
+  2
+LAYER
+ 70
+4
+  0
+LAYER
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+CUT
+ 70
+0
+ 62
+7
+  6
+CONTINUOUS
+  0
+LAYER
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+MARK
+ 70
+0
+ 62
+1
+  6
+CONTINUOUS
+  0
+LAYER
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+OFF
+ 70
+0
+ 62
+-3
+  6
+CONTINUOUS
+  0
+LAYER
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+FROZEN
+ 70
+1
+ 62
+5
+  6
+CONTINUOUS
+  0
+ENDTAB
+  0
+ENDSEC
+  0
+SECTION
+  2
+ENTITIES
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+100
+AcDbLine
+ 10
+20.0
+ 20
+0.0
+ 30
+0.0
+ 11
+20.0
+ 21
+10.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+100
+AcDbLine
+ 10
+0.0
+ 20
+10.0
+ 30
+0.0
+ 11
+0.0
+ 21
+0.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+100
+AcDbLine
+ 10
+0.0
+ 20
+0.0
+ 30
+0.0
+ 11
+20.0
+ 21
+0.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+100
+AcDbLine
+ 10
+0.0
+ 20
+10.0
+ 30
+0.0
+ 11
+20.0
+ 21
+10.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+100
+AcDbLine
+ 10
+30.0
+ 20
+0.0
+ 30
+0.0
+ 11
+30.0
+ 21
+5.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+100
+AcDbLine
+ 10
+35.0
+ 20
+5.0
+ 30
+0.0
+ 11
+30.0
+ 21
+5.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+MARK
+100
+AcDbLine
+ 10
+5.0
+ 20
+5.0
+ 30
+0.0
+ 11
+15.0
+ 21
+5.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+OFF
+100
+AcDbLine
+ 10
+0.0
+ 20
+20.0
+ 30
+0.0
+ 11
+10.0
+ 21
+20.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+FROZEN
+100
+AcDbLine
+ 10
+0.0
+ 20
+30.0
+ 30
+0.0
+ 11
+10.0
+ 21
+30.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+ 60
+1
+100
+AcDbLine
+ 10
+0.0
+ 20
+40.0
+ 30
+0.0
+ 11
+10.0
+ 21
+40.0
+ 31
+0.0
+  0
+LINE
+100
+AcDbEntity
+  8
+CUT
+ 67
+1
+100
+AcDbLine
+ 10
+0.0
+ 20
+50.0
+ 30
+0.0
+ 11
+10.0
+ 21
+50.0
+ 31
+0.0
+  0
+TEXT
+  8
+MARK
+ 10
+1.0
+ 20
+1.0
+ 30
+0.0
+ 40
+2.5
+  1
+label
+  0
+LINE
+100
+AcDbEntity
+  8
+MARK
+100
+AcDbLine
+ 10
+7.0
+ 20
+7.0
+ 30
+0.0
+ 11
+7.0
+ 21
+7.0
+ 31
+0.0
+  0
+ENDSEC
+  0
+EOF

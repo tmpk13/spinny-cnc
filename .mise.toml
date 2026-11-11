@@ -147,6 +147,10 @@ run = "uv run python -m spinny_laser.machine_keys > toolpath/tests/data/machine-
 description = "Write the Plot page samples fixture the page's in-page twin of the operations is checked against"
 run = "uv run python -m spinny_web.mill > web/backend/tests/data/mill-samples.json"
 
+[tasks.dxf-fixture]
+description = "Write the DXF samples fixture the page's in-page twin of the DXF reader is checked against"
+run = "uv run python -m spinny_laser.dxf > toolpath/tests/data/dxf-samples.json"
+
 [tasks.cam-fixture]
 description = "Write the CAM post samples fixture the page's mock post is checked against, line for line"
 run = "uv run python -m spinny_web.cam > web/backend/tests/data/cam-post-samples.json"
