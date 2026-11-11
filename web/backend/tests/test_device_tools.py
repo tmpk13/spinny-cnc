@@ -298,3 +298,16 @@ def test_a_part_is_looked_for_within_its_feeders_crop_else_the_profiles():
     ]
     program = plan(device, parts, board_fit([((0.0, 0.0), (0.0, 0.0))], 0.0), {}, vision_ready=True)
     assert [block.crop for block in program.blocks] == [3.0, 6.5]
+
+
+def test_a_feeder_that_names_its_parts_holds_them_before_any_words():
+    text = PROFILE.replace('count = 10\n', 'count = 10\n[[feeder]]\nid = "named"\nrefs = ["R2"]\nat = [70.0, 20.0, -2.0]\n')
+    device = parse(text, "rig")
+    assert device.feeders[1].refs == ("R2",) and device.feeders[1].match == ""
+    from spinny_web.openpnp import feeder_for
+
+    r1 = {"ref": "R1", "value": "10k", "footprint": "R_0603"}
+    r2 = {"ref": "R2", "value": "10k", "footprint": "R_0603"}
+    assert feeder_for(device, r1).id == "res" and feeder_for(device, r2).id == "named"
+    with pytest.raises(Exception, match="match must hold"):
+        parse(text.replace('refs = ["R2"]\n', ""), "rig")

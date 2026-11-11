@@ -46,6 +46,8 @@ export interface MockFeeder {
     mark: SpotPolarity;
     /** How far from the up camera's center its parts are looked for, mm; null takes the profile's. */
     crop: number | null;
+    /** The parts it holds by reference, which outdo the words. */
+    refs: string[];
 }
 
 export interface MockVacuum {
@@ -360,8 +362,9 @@ export function parseDevice(text: string, id: string): MockDevice {
             throw read.fail(section, "id", `'${feederId}' is another feeder's too`);
         }
         const match = read.text(table, "match", section, "");
-        if (!match) {
-            throw read.fail(section, "match", "must hold the words of a part's value or footprint");
+        const refs = read.lines(table, "refs", section, []);
+        if (!match && refs.length === 0) {
+            throw read.fail(section, "match", "must hold the words of a part's value or footprint (or give refs)");
         }
         const placeZ = "place_z" in table ? read.number(table, "place_z", section, null) : null;
         const count = read.integer(table, "count", section, 0, 0, 100000);
@@ -401,8 +404,9 @@ export function parseDevice(text: string, id: string): MockDevice {
             marks,
             mark: read.shade(table, "mark", section, "dark"),
             crop: "crop" in table ? read.number(table, "crop", section, null, 0.1, 100) : null,
+            refs,
         });
-        read.done(table, section, ["id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"]);
+        read.done(table, section, ["id", "match", "refs", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"]);
     });
     device.feeders = feeders;
     const camera = read.table(top, "camera");
@@ -490,6 +494,7 @@ export function deviceDocument(device: MockDevice): DeviceDocument {
             marks: f.marks.map((mark) => [mark[0], mark[1]]),
             mark: f.mark,
             crop: f.crop,
+            refs: [...f.refs],
         })),
     };
 }
@@ -509,9 +514,14 @@ export function feederPlace(feeder: MockFeeder, index: number): [number, number,
 }
 
 /** The first feeder whose words a part's value and footprint all hold, or null. */
-export function feederFor<T extends { match: string }>(feeders: T[], value: string, footprint: string): T | null {
+/** The feeder a part comes from: the first that names it among its refs, else the first whose words its value and footprint hold. */
+export function feederFor<T extends { match: string; refs?: string[] }>(feeders: T[], value: string, footprint: string, ref = ""): T | null {
+    const named = feeders.find((feeder) => (feeder.refs?.length ?? 0) > 0 && feeder.refs!.includes(ref));
+    if (named) {
+        return named;
+    }
     const hay = `${value} ${footprint}`.toLowerCase();
-    return feeders.find((feeder) => feeder.match.toLowerCase().split(/\s+/).filter((word) => word !== "").every((word) => hay.includes(word))) ?? null;
+    return feeders.find((feeder) => (feeder.refs?.length ?? 0) === 0 && feeder.match.toLowerCase().split(/\s+/).filter((word) => word !== "").every((word) => hay.includes(word))) ?? null;
 }
 
 /** A plain decimal with the zeros after its point dropped, and no negative zero. */
@@ -714,7 +724,7 @@ export function planDevice(
             skipped.push({ ref: part.ref, reason: "on the back" });
             continue;
         }
-        const feeder = feederFor(device.feeders, part.value, part.footprint);
+        const feeder = feederFor(device.feeders, part.value, part.footprint, part.ref);
         if (!feeder) {
             skipped.push({ ref: part.ref, reason: "no feeder holds it" });
             continue;

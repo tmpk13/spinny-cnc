@@ -13,6 +13,7 @@ import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
 import { mountConsole } from "./views/console.ts";
 import { into, type Ctx } from "./views/context.ts";
+import { mountDeviceProfiles } from "./views/deviceprofiles.ts";
 import { mountDro } from "./views/dro.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobJson } from "./views/jobjson.ts";
@@ -320,6 +321,7 @@ function main(): void {
     // The Config page: the machine files beside the list of every key a
     // file can set, the file's value next to the board's.
     mountConfig(panel("machine-file"), ctx, panel("settings"));
+    mountDeviceProfiles(panel("device-file"), ctx);
     mountToasts(panel("toasts"), ctx);
 
     // Leaving with edits not applied asks first; the browser words it.

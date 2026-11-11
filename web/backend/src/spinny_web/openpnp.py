@@ -106,8 +106,13 @@ class Feeder:
     # How far from the up camera's center its parts are looked for, mm;
     # None takes the profile's [camera] crop.
     crop: float | None = None
+    # The parts it holds by their references, which outdo the words: an
+    # OpenPnP job names each placement's part, so its import knows them.
+    refs: tuple[str, ...] = ()
 
-    def holds(self, value: str, footprint: str) -> bool:
+    def holds(self, value: str, footprint: str, ref: str = "") -> bool:
+        if self.refs:
+            return ref in self.refs
         hay = f"{value} {footprint}".lower()
         return all(word in hay for word in self.match.lower().split())
 
@@ -301,6 +306,7 @@ class Device:
                     "marks": [list(mark) for mark in f.marks],
                     "mark": f.mark,
                     "crop": f.crop,
+                    "refs": list(f.refs),
                 }
                 for f in self.feeders
             ],
@@ -525,8 +531,9 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         if any(other.id == feeder_id for other in feeders):
             raise read.fail(section, "id", f"{feeder_id!r} is another feeder's too")
         match = read.text(table, "match", section, "")
-        if not match:
-            raise read.fail(section, "match", "must hold the words of a part's value or footprint")
+        refs = read.lines(table, "refs", section, ())
+        if not match and not refs:
+            raise read.fail(section, "match", "must hold the words of a part's value or footprint (or give refs)")
         place_z_of = read.number(table, "place_z", section, None) if "place_z" in table else None
         count = read.integer(table, "count", section, 0, 0, 100000)
         columns = read.integer(table, "columns", section, 0, 0, 10000)
@@ -561,12 +568,13 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
                 marks=marks,
                 mark=read.shade(table, "mark", section, "dark"),
                 crop=read.number(table, "crop", section, None, 0.1, 100.0) if "crop" in table else None,
+                refs=refs,
             )
         )
         read.done(
             table,
             section,
-            {"id", "match", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"},
+            {"id", "match", "refs", "at", "pitch", "count", "columns", "row_pitch", "rotation", "place_z", "feed", "vision", "size", "pocket", "marks", "mark", "crop"},
         )
     camera = read.table(top, "camera")
     camera_z = read.number(camera, "z", "camera", None) if "z" in camera else None
@@ -908,7 +916,13 @@ def place_lines(device: Device, point: tuple[float, float], turn: float, place_z
 
 
 def feeder_for(device: Device, part: dict) -> Feeder | None:
-    return next((f for f in device.feeders if f.holds(str(part.get("value", "")), str(part.get("footprint", "")))), None)
+    """The feeder a part comes from: the first that names it among its
+    refs, else the first whose words its value and footprint hold."""
+    ref = str(part.get("ref", ""))
+    named = next((f for f in device.feeders if f.refs and ref in f.refs), None)
+    if named is not None:
+        return named
+    return next((f for f in device.feeders if not f.refs and f.holds(str(part.get("value", "")), str(part.get("footprint", "")))), None)
 
 
 def expected_size(feeder: Feeder, part: dict) -> tuple[float, float] | None:

@@ -2897,6 +2897,44 @@ table.pnp-parts tr.dnp td {
     font-weight: 600;
 }
 
+/* The OpenPnP import: a box per value read, by group. */
+.openpnp-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0.5rem 0.6rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+.openpnp-group legend {
+    padding: 0 0.3rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.openpnp-item {
+    display: grid;
+    grid-template-columns: auto minmax(8rem, 12rem) 1fr;
+    gap: 0.5rem;
+    align-items: baseline;
+    font-size: 0.85rem;
+}
+
+.openpnp-value {
+    overflow-wrap: anywhere;
+    font-size: 0.78rem;
+}
+
+.openpnp-preview {
+    max-height: 20rem;
+}
+
 /* The parts table: sorted by a column pressed, grouped by value and footprint. */
 table.pnp-parts th.sortable {
     cursor: pointer;

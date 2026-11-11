@@ -1162,6 +1162,8 @@ export interface FeederSummary {
     mark: SpotPolarity;
     /** How far from the up camera's center its parts are looked for, mm; null takes the profile's. */
     crop?: number | null;
+    /** The parts it holds by reference, which outdo the words. */
+    refs?: string[];
 }
 
 /** The vacuum sensor: the lines that read it, the pattern whose group is the reading, the readings with a part held and empty (none: read by hand only). */
