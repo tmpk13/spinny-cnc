@@ -40,8 +40,8 @@ from spinny_laser.align import Fit, fit_rigid, turn
 from spinny_laser.cam import set_value
 from spinny_laser.machines import is_id
 
-from .files import write_whole
 from .kinematics import num
+from .stores import TomlStore
 
 AXIS = re.compile(r"^[A-Z]$")
 # A G-code line as a profile may give it: printable, one line.
@@ -628,105 +628,36 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     )
 
 
-class DeviceStore:
-    """The device profiles in one directory, read afresh on every call so an
-    edit by hand shows at once; saved all or nothing after a parse."""
+class DeviceStore(TomlStore):
+    """The device profiles in one directory."""
 
-    def __init__(self, directory: Path) -> None:
-        self.directory = Path(directory)
-        # Each profile as last parsed, by the time its file was written: the
-        # device's state asks for it on every change it publishes.
-        self._parsed: dict[str, tuple[int, Device]] = {}
+    noun = "device profile"
+    error = DeviceError
+    missing = NotFound
+
+    def check_id(self, item_id: str) -> None:
+        check_id(item_id)
+
+    def parse(self, text: str, item_id: str, where: str | None = None) -> Device:
+        return parse(text, item_id, Path(where).name if where else None)
 
     def list(self) -> dict:
-        devices, problems = [], []
-        for path in sorted(self.directory.glob("*.toml")):
-            device_id = path.stem
-            try:
-                devices.append(parse(path.read_text(encoding="utf-8"), device_id, path.name).summary())
-            except (DeviceError, OSError, UnicodeDecodeError) as exc:
-                problems.append({"id": device_id, "problem": str(exc)})
-        return {"devices": devices, "problems": problems}
-
-    def path(self, device_id: str) -> Path:
-        return self.directory / f"{check_id(device_id)}.toml"
-
-    def text(self, device_id: str) -> str:
-        path = self.path(device_id)
-        try:
-            return path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            raise NotFound(f"no device profile {device_id!r}") from None
-        except OSError as exc:
-            raise DeviceError(f"{path}: {exc.strerror or exc}") from exc
-
-    def get(self, device_id: str) -> Device:
-        path = self.path(device_id)
-        try:
-            stamp = path.stat().st_mtime_ns
-        except FileNotFoundError:
-            raise NotFound(f"no device profile {device_id!r}") from None
-        except OSError as exc:
-            raise DeviceError(f"{path}: {exc.strerror or exc}") from exc
-        cached = self._parsed.get(device_id)
-        if cached is not None and cached[0] == stamp:
-            return cached[1]
-        device = parse(self.text(device_id), device_id)
-        self._parsed[device_id] = (stamp, device)
-        return device
-
-    def document(self, device_id: str) -> dict:
-        text = self.text(device_id)
-        return {"document": parse(text, device_id).document(), "text": text}
-
-    def check(self, device_id: str, text: str) -> dict:
-        try:
-            return {"document": parse(text, device_id).document(), "problems": []}
-        except DeviceError as exc:
-            return {"document": None, "problems": [str(exc)]}
-
-    def save(self, device_id: str, text: str) -> dict:
-        path = self.path(device_id)
-        device = parse(text, device_id)
-        if not text.endswith("\n"):
-            text += "\n"
-        try:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            # Through a temporary of its own: two saves at once each move a
-            # whole file, where a shared one left the second without its own.
-            write_whole(path, text)
-        except OSError as exc:
-            raise DeviceError(f"cannot write {path}: {exc.strerror or exc}") from exc
-        return {"document": device.document(), "text": text}
+        devices, problems = self.read_all()
+        return {"devices": [device.summary() for device in devices], "problems": [{"id": item_id, "problem": problem} for item_id, problem in problems]}
 
     def patch(self, device_id: str, path: list, value) -> dict:
         """One value of a profile changed in its text, comments and all, and
         saved once the whole profile reads. A plain table not in the file
         yet ([vacuum], [camera]) is added at its end; `None` takes the key
         out."""
-        text = self.text(device_id)
-        table = path[:-1]
-        if len(table) == 1 and isinstance(table[0], str) and value is not None:
-            header = re.compile(rf"^\s*\[{re.escape(table[0])}\]\s*(#.*)?$", re.MULTILINE)
-            if not header.search(text):
-                text = text.rstrip("\n") + f"\n\n[{table[0]}]\n"
-        return self.save(device_id, set_value(text, tuple(path), value))
-
-    def create(self, device_id: str, text: str) -> dict:
-        """A new profile; refused when one of that id is there."""
-        if self.path(device_id).exists():
-            raise DeviceError(f"a device profile {device_id!r} is there already")
-        return self.save(device_id, text)
-
-    def remove(self, device_id: str) -> None:
-        path = self.path(device_id)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            raise NotFound(f"no device profile {device_id!r}") from None
-        except OSError as exc:
-            raise DeviceError(f"cannot remove {path}: {exc.strerror or exc}") from exc
-        self._parsed.pop(device_id, None)
+        with self._writing:
+            text = self.text(device_id)
+            table = path[:-1]
+            if len(table) == 1 and isinstance(table[0], str) and value is not None:
+                header = re.compile(rf"^\s*\[{re.escape(table[0])}\]\s*(#.*)?$", re.MULTILINE)
+                if not header.search(text):
+                    text = text.rstrip("\n") + f"\n\n[{table[0]}]\n"
+            return self.save(device_id, set_value(text, tuple(path), value))
 
 
 # --- the program -------------------------------------------------------------------

@@ -4,83 +4,39 @@ gcode for the profile's controller."""
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 from laser_sweep import isocli
 from spinny_laser import cam, camjob, post
 from spinny_laser.cam import CamError, Profile
 
-from .files import write_whole
 from .jobs import Group, Job, JobImportError, NotFound, Offset, from_json, stroke_groups, svg_polylines
 from .kinematics import Streamer
+from .stores import TomlStore
 
 SVG_SUFFIXES = (".svg",)
 
 
-class ProfileStore:
-    """The profiles in one directory, read afresh on every call so an edit
-    by hand shows at once; saved all or nothing after a parse."""
+class ProfileStore(TomlStore):
+    """The CAM profiles in one directory."""
 
-    def __init__(self, directory: Path) -> None:
-        self.directory = Path(directory)
-        # Writes take turns: a patch reads the file, changes a line and
-        # writes it whole, and a write in between would be lost under it.
-        self._writing = threading.RLock()
+    noun = "profile"
+    error = CamError
+    missing = NotFound
+
+    def check_id(self, item_id: str) -> None:
+        cam.check_id(item_id)
+
+    def parse(self, text: str, item_id: str, where: str | None = None) -> Profile:
+        return cam.parse(text, item_id, where or f"{item_id}.toml")
 
     def list(self) -> dict:
-        profiles, problems = cam.load_all(self.directory)
-        return {"profiles": [profile.summary() for profile in profiles], "problems": problems}
-
-    def path(self, profile_id: str) -> Path:
-        cam.check_id(profile_id)
-        return self.directory / f"{profile_id}.toml"
-
-    def text(self, profile_id: str) -> str:
-        path = self.path(profile_id)
-        try:
-            return path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            raise NotFound(f"no profile {profile_id!r}") from None
-        except OSError as exc:
-            raise CamError(f"{path}: {exc.strerror or exc}") from exc
+        profiles, problems = self.read_all()
+        return {"profiles": [profile.summary() for profile in profiles], "problems": [problem for _, problem in problems]}
 
     def get(self, profile_id: str) -> Profile:
-        return cam.parse(self.text(profile_id), profile_id, f"{profile_id}.toml")
-
-    def document(self, profile_id: str) -> dict:
-        text = self.text(profile_id)
-        return {"document": cam.parse(text, profile_id, f"{profile_id}.toml").document(), "text": text}
-
-    def save(self, profile_id: str, text: str) -> dict:
-        """Writes the text as the profile, once it reads as one; a text that
-        does not leaves the file as it was."""
-        path = self.path(profile_id)
-        profile = cam.parse(text, profile_id, f"{profile_id}.toml")
-        if not text.endswith("\n"):
-            text += "\n"
-        try:
-            with self._writing:
-                self.directory.mkdir(parents=True, exist_ok=True)
-                write_whole(path, text)
-        except OSError as exc:
-            raise CamError(f"cannot write {path}: {exc.strerror or exc}") from exc
-        return {"document": profile.document(), "text": text}
-
-    def patch(self, profile_id: str, path: list, value) -> dict:
-        with self._writing:
-            changed = cam.set_value(self.text(profile_id), tuple(path), value)
-            return self.save(profile_id, changed)
-
-    def remove(self, profile_id: str) -> None:
-        path = self.path(profile_id)
-        try:
-            with self._writing:
-                path.unlink()
-        except FileNotFoundError:
-            raise NotFound(f"no profile {profile_id!r}") from None
-        except OSError as exc:
-            raise CamError(f"cannot remove {path}: {exc.strerror or exc}") from exc
+        # A profile is read afresh: the CAM page shows each edit by hand at once.
+        return self.parse(self.text(profile_id), profile_id)
 
 
 # --- designs --------------------------------------------------------------------
