@@ -343,7 +343,8 @@ export function mountDevice(root: HTMLElement, ctx: Ctx): void {
         }
         if (found.length === 1 && portOf(state) !== found[0]!.url && !state.device?.connected) {
             await setPort(found[0]!.url);
-            ctx.toast("info", `picked ${portLabel(found[0]!)}`);
+            const port = found[0]!;
+            ctx.toast("info", `picked ${port.device ?? port.url}${port.product || port.description ? `: ${port.product || port.description}` : ""}`);
             return;
         }
         ctx.toast("info", `${found.length} G-code controller${found.length === 1 ? "" : "s"} found: pick one`);
