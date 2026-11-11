@@ -22,6 +22,8 @@ import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
 import { mountMarkers } from "./views/markers.ts";
 import { mountMill } from "./views/mill.ts";
+import { mountPageSettings } from "./views/pagesettings.ts";
+import { mountPanels } from "./views/panels.ts";
 import { mountPnp } from "./views/pnp.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
@@ -275,7 +277,7 @@ function main(): void {
     };
     mountStatusBar(panel("status"), ctx);
     mountFocusBanner(panel("status"), ctx);
-    mountTabs(panel("tabs"), store);
+    const tabTools = mountTabs(panel("tabs"), store);
     mountSteps(panel("steps"), ctx);
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);
@@ -323,6 +325,10 @@ function main(): void {
     mountConfig(panel("machine-file"), ctx, panel("settings"));
     mountDeviceProfiles(panel("device-file"), ctx);
     mountToasts(panel("toasts"), ctx);
+    // Last, once every view has drawn its panel's head: the layout layer
+    // adds its controls to the heads and puts the panels where the
+    // operator left them.
+    mountPageSettings(tabTools, mountPanels(panel("app")));
 
     // Leaving with edits not applied asks first; the browser words it.
     window.addEventListener("beforeunload", (event) => {

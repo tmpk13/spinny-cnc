@@ -183,7 +183,8 @@ input[type="checkbox"] {
     font-family: var(--mono);
 }
 
-.hidden {
+.hidden,
+[hidden] {
     display: none !important;
 }
 
@@ -224,16 +225,33 @@ input[type="checkbox"] {
     display: none;
 }
 
+/* The tab bar: the tabs, the More folder holding tabs kept out of the
+   bar, and the tools at its right end (the layout pick, Done in edit
+   mode, the page settings gear). It sits over the page so its menus and,
+   folded, the opened bar cover the panels. */
 .tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    padding: 0 var(--gap);
-    background: var(--panel);
-    border-bottom: thin solid var(--border);
+    position: relative;
+    z-index: 4;
+    background: var(--panel-2);
+    border-bottom: thin solid var(--border-strong);
 }
 
-.tabs .tab {
+.tabs-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0 var(--gap);
+}
+
+/* The tabs wrap with the tools rather than as a block of their own, so
+   on a narrow screen the gear shares the last row of tabs. */
+.tabs-list {
+    display: contents;
+}
+
+.tabs .tab,
+.tabs .tabs-more {
     font: inherit;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -244,16 +262,178 @@ input[type="checkbox"] {
     padding: 0.55rem 1.1rem 0.4rem;
     min-height: var(--touch);
     cursor: pointer;
-    transition: color 0.12s, border-color 0.12s;
+    transition: color 0.12s, border-color 0.12s, background-color 0.12s;
 }
 
-.tabs .tab:hover {
+.tabs .tab:hover,
+.tabs .tabs-more:hover {
     color: var(--strong);
 }
 
-.tabs .tab[aria-selected="true"] {
+.tabs .tab[aria-selected="true"],
+.tabs .tabs-more[aria-current="page"] {
     color: var(--strong);
+    background: var(--panel);
     border-bottom-color: var(--accent);
+}
+
+/* The More folder: its name and a chevron drawn under it. */
+.tabs .tabs-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.tabs .tabs-more::after {
+    content: "";
+    width: 0.35rem;
+    height: 0.35rem;
+    margin-top: -0.2rem;
+    border-right: 0.125rem solid currentColor;
+    border-bottom: 0.125rem solid currentColor;
+    transform: rotate(45deg);
+}
+
+.tabs-tools {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+    padding-block: 0.25rem;
+}
+
+.tabs-layouts.field {
+    width: auto;
+    max-width: 12rem;
+    min-height: 2.25rem;
+    padding-block: 0.15rem;
+    font-size: 0.85rem;
+}
+
+.tabs-gear {
+    display: inline-grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    border: thin solid transparent;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.tabs-gear:hover,
+.tabs-gear[aria-expanded="true"] {
+    color: var(--strong);
+    background: var(--btn);
+    border-color: var(--border);
+}
+
+.tabs-gear .icon {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+/* Folded, the bar is a strip naming the page; hovering it, a press on it
+   (a screen with no hover), or the keyboard's focus in it opens the bar
+   over the top of the page. */
+.tabs-strip {
+    display: none;
+}
+
+.tabs[data-fold] {
+    height: 1.5rem;
+}
+
+.tabs[data-fold] .tabs-strip {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    padding: 0 var(--gap);
+    font: inherit;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.tabs[data-fold] .tabs-strip::after {
+    content: attr(data-label);
+}
+
+.tabs[data-fold] .tabs-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: var(--panel-2);
+    border-bottom: thin solid var(--border-strong);
+    box-shadow: var(--shadow-lg);
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.12s, visibility 0s 0.3s;
+}
+
+.tabs[data-fold]:is(:hover, [data-open], :has(:focus-visible)) .tabs-bar {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0s;
+}
+
+/* The page settings, under the gear. */
+.page-settings.panel {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    right: 0;
+    z-index: 10;
+    width: min(24rem, calc(100vw - 2 * var(--gap)));
+    max-height: min(40rem, 80vh);
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+}
+
+.page-settings-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+}
+
+.page-settings .check {
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.page-settings .button-row .field:not(select) {
+    flex: 1 1 8rem;
+    width: auto;
+}
+
+.page-settings-problem:empty {
+    display: none;
+}
+
+.page-settings-hidden {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.page-settings-hidden li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
 }
 
 /* Edits on that page not applied yet: their count beside the tab's name. */
@@ -399,26 +579,37 @@ table.settings-list td {
     /* The room over the first panel is its margin, not the column's
        padding: a box stuck to the top of a padded scroll container sits at
        the padding's inner edge in some browsers and at the scrollport's in
-       others, and with no padding there the two agree. */
-    .column > .panel:first-child {
+       others, and with no padding there the two agree. The layout layer
+       marks the first thing shown (data-first), which is not the first
+       child when the operator hid that panel. */
+    .column > .panel:first-child,
+    .column > [data-first] {
         margin-top: var(--gap);
     }
 
     /* The jog pad, the preview and the job list take the height their
-       column has left, so the short panels beside them never stretch. */
-    .column > #jog,
-    .column > #preview,
-    .column > #jobs,
-    .column > #cam,
-    .column > #cam-file,
-    .column > #machine-file {
+       column has left, so the short panels beside them never stretch; a
+       panel folded or held at a height keeps its own. */
+    .column > :is(#jog, #preview, #jobs, #cam, #cam-file, #machine-file):not([data-collapsed], [data-height]) {
         flex: 1 0 auto;
     }
 
-    /* The run controls stay at the foot of their column while the jobs
-       and the groups scroll under them; the shadow says something is
-       under there. */
-    .column > #run {
+    /* Placed by the layout layer: each panel's height handle in its
+       column, each width handle in its page. */
+    .page,
+    .column {
+        position: relative;
+    }
+
+    /* Column widths the operator set, as shares of the page. */
+    .grid[data-widths] {
+        grid-template-columns: var(--cols);
+    }
+
+    /* A docked panel (the run controls, data-dock in the markup) stays at
+       the foot of its column while the jobs and the groups scroll under
+       them; the shadow says something is under there. */
+    .column > .panel[data-dock] {
         position: sticky;
         bottom: 0;
         z-index: 3;
@@ -443,7 +634,7 @@ table.settings-list td {
         grid-template-columns: minmax(0, 3fr) minmax(18rem, 1fr);
     }
 
-    .column > #auto-chat {
+    .column > #auto-chat:not([data-collapsed], [data-height]) {
         flex: 1 1 0;
         min-height: 24rem;
     }
@@ -455,15 +646,18 @@ table.settings-list td {
     }
 }
 
-#steps { grid-area: steps; }
-#dro { grid-area: dro; }
-#preview { grid-area: preview; }
-#jog { grid-area: jog; }
-#laser { grid-area: laser; }
-#jobs { grid-area: jobs; }
-#run { grid-area: run; }
-#heightmap { grid-area: heightmap; }
-#console { grid-area: console; }
+/* The one-column order on a narrow screen; a page whose panels the
+   operator rearranged (data-arranged) shows them in their columns' order
+   instead, column after column. */
+.page:not([data-arranged]) #steps { grid-area: steps; }
+.page:not([data-arranged]) #dro { grid-area: dro; }
+.page:not([data-arranged]) #preview { grid-area: preview; }
+.page:not([data-arranged]) #jog { grid-area: jog; }
+.page:not([data-arranged]) #laser { grid-area: laser; }
+.page:not([data-arranged]) #jobs { grid-area: jobs; }
+.page:not([data-arranged]) #run { grid-area: run; }
+.page:not([data-arranged]) #heightmap { grid-area: heightmap; }
+.page:not([data-arranged]) #console { grid-area: console; }
 
 .panel {
     background: var(--panel);
@@ -2990,11 +3184,6 @@ a.btn.disabled {
 }
 
 /* The selected job as JSON text: a plain field, every path a line. */
-.json-panel > summary {
-    cursor: pointer;
-    font-weight: 600;
-}
-
 .json-input {
     display: block;
     width: 100%;
@@ -3289,6 +3478,365 @@ a.btn.disabled {
 
 .auto-compose .button-row {
     justify-content: flex-end;
+}
+
+/* --- the panels' layout (src/views/panels.ts) --------------------------- */
+
+.icon {
+    width: 1em;
+    height: 1em;
+    flex: none;
+    fill: currentColor;
+}
+
+/* The buttons the layout layer puts in a panel's head: a grip (edit mode
+   only) and a fold chevron before the title, the menu's dots after it.
+   The dots take the head's free room, so the view's own buttons stay at
+   its right end. */
+.panel-grip,
+.panel-chevron,
+.panel-menu-button {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    height: 1.75rem;
+    padding: 0;
+    font: inherit;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.panel-grip:hover,
+.panel-chevron:hover,
+.panel-menu-button:hover,
+.panel-menu-button[aria-expanded="true"] {
+    color: var(--strong);
+    background: var(--btn);
+}
+
+.panel-grip {
+    display: none;
+    order: -1;
+    width: 1.5rem;
+    cursor: grab;
+    touch-action: none;
+}
+
+.panel-chevron {
+    width: 1.25rem;
+    margin-left: -0.15rem;
+}
+
+/* Drawn as the disclosures draw theirs: down when open, right when folded. */
+.panel-chevron::before {
+    content: "";
+    width: 0.4rem;
+    height: 0.4rem;
+    margin-top: -0.15rem;
+    border-right: 0.125rem solid currentColor;
+    border-bottom: 0.125rem solid currentColor;
+    transform: rotate(45deg);
+    transition: transform 0.15s;
+}
+
+.panel-chevron[aria-expanded="false"]::before {
+    margin-top: 0;
+    transform: rotate(-45deg);
+}
+
+/* A disclosure's chevron takes the room the fold button does, so the
+   titles of both kinds of panel line up. */
+.panel-fold > summary.panel-head::before {
+    margin-inline: 0.27rem 0.28rem;
+}
+
+.panel-menu-button {
+    width: 1.75rem;
+    margin-right: auto;
+}
+
+.panel-menu-button .icon {
+    width: 1.1rem;
+    height: 1.1rem;
+}
+
+.panel-head-tools {
+    gap: 0.5rem;
+}
+
+/* A panel folded to its head. */
+.panel[data-collapsed] > :not(.panel-head) {
+    display: none !important;
+}
+
+.panel[data-collapsed] > .panel-head {
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+/* Hidden by the operator, or a panel of a stack behind the one shown. */
+.panel:is([data-off], [data-behind]) {
+    display: none !important;
+}
+
+/* Joined: the next panel of a block stuck together starts on the one
+   above's border, with no gap; the corners where they meet are square. */
+.page [data-join-up] {
+    margin-top: calc(-1 * var(--gap) - 0.0625rem);
+}
+
+.page .panel[data-join-up]:not([data-stacked]) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.page .panel[data-join-down] {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+/* A stack: a row of tabs, one per panel, over the panel shown, the tab of
+   that one open into it as a folder's is. */
+.panel-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.25rem;
+    padding-inline: 0.6rem;
+}
+
+.page .panel[data-stacked] {
+    margin-top: calc(-1 * var(--gap));
+}
+
+.panel-tab {
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    min-height: 2rem;
+    padding: 0.35rem 0.8rem;
+    background: var(--panel-2);
+    border: thin solid var(--border);
+    border-bottom: 0;
+    border-radius: var(--radius) var(--radius) 0 0;
+    cursor: pointer;
+}
+
+.panel-tab:hover {
+    color: var(--strong);
+}
+
+.panel-tab[aria-selected="true"] {
+    position: relative;
+    z-index: 1;
+    margin-bottom: -0.0625rem;
+    padding-bottom: calc(0.35rem + 0.0625rem);
+    color: var(--strong);
+    background: var(--panel);
+    border-color: var(--border);
+}
+
+/* Held at a height: the panel scrolls within it under its head, which
+   stays at the top. The panel's padding over the head is the head's, so
+   where a browser sticks the head in a padded box does not matter. */
+.page .panel[data-height] {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 0;
+    scrollbar-width: thin;
+}
+
+.page .panel[data-height] > .panel-head,
+.page .panel[data-height] > details > summary {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding-top: var(--pad);
+    background: var(--panel);
+}
+
+/* The size handles: one under each panel for its height, one on each
+   boundary between columns for their widths. Only the wide layout has
+   them; a line shows on hover. */
+.panel-resize,
+.column-resize {
+    display: none;
+}
+
+@media (min-width: 64rem) {
+    .panel-resize {
+        display: block;
+        position: absolute;
+        left: calc(var(--gap) / 2);
+        right: calc(var(--gap) / 2);
+        height: 0.75rem;
+        margin-top: -0.375rem;
+        z-index: 2;
+        cursor: ns-resize;
+        touch-action: none;
+    }
+
+    .column-resize {
+        display: block;
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 0.75rem;
+        margin-left: -0.375rem;
+        z-index: 2;
+        cursor: col-resize;
+        touch-action: none;
+    }
+
+    .panel-resize::after,
+    .column-resize::after {
+        content: "";
+        position: absolute;
+        border-radius: 0.125rem;
+        background: var(--accent);
+        opacity: 0;
+        transition: opacity 0.12s;
+    }
+
+    .panel-resize::after {
+        left: 35%;
+        right: 35%;
+        top: calc(50% - 0.125rem);
+        height: 0.25rem;
+    }
+
+    .column-resize::after {
+        top: 0;
+        bottom: 0;
+        left: calc(50% - 0.0625rem);
+        width: 0.125rem;
+    }
+
+    .panel-resize:hover::after,
+    .column-resize:hover::after,
+    #app[data-edit] .panel-resize::after,
+    #app[data-edit] .column-resize::after {
+        opacity: 0.6;
+    }
+
+    /* Edit mode: grips in the heads, every panel outlined. */
+    #app[data-edit] .panel-grip {
+        display: inline-grid;
+    }
+
+    #app[data-edit] .page .panel {
+        outline: 0.125rem dashed color-mix(in oklab, var(--accent) 45%, transparent);
+        outline-offset: -0.0625rem;
+    }
+}
+
+:root[data-dragging],
+:root[data-dragging] * {
+    user-select: none;
+}
+
+.panel[data-dragged] {
+    opacity: 0.45;
+}
+
+/* A dragged panel's name follows the pointer; the mark shows where it
+   would go: a line between blocks, or a box over a panel to stack onto. */
+.drag-ghost {
+    position: fixed;
+    z-index: 50;
+    pointer-events: none;
+    transform: translate(0.75rem, 0.75rem);
+    padding: 0.35rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--strong);
+    background: var(--panel);
+    border: thin solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+}
+
+.drop-mark {
+    position: fixed;
+    z-index: 49;
+    pointer-events: none;
+    border-radius: 0.125rem;
+    background: var(--accent);
+}
+
+.drop-mark.stack {
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+    border: 0.125rem dashed var(--accent);
+    border-radius: var(--radius-lg);
+}
+
+/* A menu of actions (src/menu.ts): a panel's, or the More folder's. */
+.menu {
+    position: fixed;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    min-width: 12rem;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 0.3rem;
+    background: var(--panel);
+    border: thin solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+}
+
+.menu-item {
+    position: relative;
+    font: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    min-height: 2.25rem;
+    padding: 0.35rem 0.9rem 0.35rem 1.75rem;
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius) - 0.15rem);
+    cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+    outline: none;
+    color: var(--strong);
+    background: var(--btn-hover);
+}
+
+.menu-item:disabled {
+    color: var(--muted);
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* A setting that is on: a check mark before its name. */
+.menu-item[aria-checked="true"]::before {
+    content: "";
+    position: absolute;
+    left: 0.7rem;
+    top: calc(50% - 0.35rem);
+    width: 0.3rem;
+    height: 0.55rem;
+    border-right: 0.125rem solid currentColor;
+    border-bottom: 0.125rem solid currentColor;
+    transform: rotate(45deg);
+}
+
+.menu-rule {
+    margin: 0.3rem 0.25rem;
+    border-top: thin solid var(--border);
 }
 
 /* Flow: the space between blocks stacked in a box belongs to the box, not

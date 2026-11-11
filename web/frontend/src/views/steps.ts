@@ -10,6 +10,7 @@ import { isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
 import { mapComplete, mapUse, runActive } from "./heightmap.ts";
+import { revealPanel } from "./panels.ts";
 import { PAGES, showPage, type PageId } from "./tabs.ts";
 
 export interface Step {
@@ -148,9 +149,10 @@ function pageOf(node: Element): PageId | null {
 }
 
 /**
- * Takes the page to a panel: its tab, the panel scrolled into view, and its
- * border pulsing until a press inside it (or another step's panel taking
- * over), so the eye finds it however the page is laid out.
+ * Takes the page to a panel: its tab, the panel shown (unhidden, unfolded,
+ * in front of its stack) and scrolled into view, and its border pulsing
+ * until a press inside it (or another step's panel taking over), so the
+ * eye finds it however the page is laid out.
  */
 export function goToPanel(id: string): void {
     const node = document.getElementById(id);
@@ -161,6 +163,7 @@ export function goToPanel(id: string): void {
     if (page !== null) {
         showPage(page);
     }
+    revealPanel(id);
     if (typeof node.scrollIntoView === "function") {
         node.scrollIntoView({ behavior: "smooth", block: "start" });
     }

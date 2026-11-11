@@ -6,9 +6,16 @@
 // the list of their keys). The pick is set on #app for the stylesheet and remembered
 // per browser. A tab whose page holds edits not applied yet carries their
 // count.
+//
+// What the page settings menu sets for the tabs is kept per browser too
+// (TabPrefs): the tab the page opens on, whether the bar folds to a thin
+// strip that opens on hover or a press, and tabs kept out of the bar, which
+// then open from a More folder at the bar's end.
 
 import { el, readStored, writeStored } from "../dom.ts";
 import { countText } from "../format.ts";
+import { readObject } from "../layout.ts";
+import { closeMenu, openMenu } from "../menu.ts";
 import type { AppState, Store } from "../state.ts";
 
 export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config";
@@ -23,6 +30,7 @@ export const PAGES: { id: PageId; label: string }[] = [
 ];
 
 const PAGE_KEY = "spinny.page";
+export const TABS_KEY = "spinny.tabs";
 
 /** The pages' names before they were renamed, so an old address or a
  * page remembered from before still opens the same page. */
@@ -62,7 +70,48 @@ function pageNamed(value: string | null | undefined): PageId | null {
     return value != null && Object.hasOwn(RENAMED, value) ? RENAMED[value]! : null;
 }
 
-/** The page named in the address (`?page=plot`, `?page=cam`, `?page=pnp`, `?page=auto`, `?page=config`), else the one last shown in this browser, else the Jobs page. */
+/** What the page settings menu keeps for the tabs. */
+export interface TabPrefs {
+    /** The page shown when the page opens: "last" for the one last shown, else a page id. */
+    start: "last" | PageId;
+    /** The bar folds to a thin strip and opens on hover or a press. */
+    fold: boolean;
+    /** Pages whose tabs are kept out of the bar; they open from its More folder. */
+    hidden: PageId[];
+}
+
+/** The tab settings in stored text; anything missing or malformed is the plain bar opening on the last page. */
+export function parseTabPrefs(text: string | null): TabPrefs {
+    const raw = readObject(text);
+    const start = pageNamed(typeof raw["start"] === "string" ? raw["start"] : null);
+    const hidden = Array.isArray(raw["hidden"]) ? raw["hidden"].map((value) => pageNamed(typeof value === "string" ? value : null)) : [];
+    return {
+        start: start ?? "last",
+        fold: raw["fold"] === true,
+        hidden: PAGES.map((page) => page.id).filter((id) => hidden.includes(id)),
+    };
+}
+
+export function readTabPrefs(): TabPrefs {
+    return parseTabPrefs(readStored(TABS_KEY));
+}
+
+const prefListeners: ((prefs: TabPrefs) => void)[] = [];
+
+/** Keeps the tab settings and has the bar follow them. */
+export function writeTabPrefs(prefs: TabPrefs): void {
+    writeStored(TABS_KEY, JSON.stringify(prefs));
+    for (const listener of prefListeners) {
+        listener(prefs);
+    }
+}
+
+/**
+ * The page to open on: the one named in the address (`?page=plot`,
+ * `?page=cam`, `?page=pnp`, `?page=auto`, `?page=config`), else the start
+ * page the settings name, else the one last shown in this browser, else
+ * the Jobs page.
+ */
 export function readPage(): PageId {
     try {
         const asked = pageNamed(new URLSearchParams(globalThis.location?.search ?? "").get("page"));
@@ -70,9 +119,20 @@ export function readPage(): PageId {
             return asked;
         }
     } catch {
-        // No address to read; the memory decides.
+        // No address to read; the settings and the memory decide.
+    }
+    const start = readTabPrefs().start;
+    if (start !== "last") {
+        return start;
     }
     return pageNamed(readStored(PAGE_KEY)) ?? "jobs";
+}
+
+const pageListeners: ((id: PageId) => void)[] = [];
+
+/** Hears every page shown. */
+export function onPage(listener: (id: PageId) => void): void {
+    pageListeners.push(listener);
 }
 
 /** Shows a page: the attribute the stylesheet switches on, the tabs' state, and the memory of it. */
@@ -83,16 +143,95 @@ export function showPage(id: PageId): void {
         tab.setAttribute("aria-selected", tab.dataset["page"] === id ? "true" : "false");
     }
     writeStored(PAGE_KEY, id);
+    for (const listener of pageListeners) {
+        listener(id);
+    }
 }
 
-export function mountTabs(root: HTMLElement, store: Store<AppState>): void {
-    root.setAttribute("role", "tablist");
+/**
+ * Mounts the tab bar in `root`: a tab per page, the More folder for tabs
+ * kept out, and a tools area at the bar's end, returned, for the page
+ * settings.
+ */
+export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElement {
+    const list = el("div", { class: "tabs-list", role: "tablist", "aria-label": "Pages" });
+    const more = el("button", { type: "button", class: "tabs-more", "aria-haspopup": "menu" }, "More");
+    const tools = el("div", { class: "tabs-tools" });
+    const bar = el("div", { class: "tabs-bar" }, list, more, tools);
+    // Folded, the bar is a strip naming the page; a press opens it, for a
+    // screen with no hover.
+    const strip = el("button", { type: "button", class: "tabs-strip", "aria-label": "Show the tabs" });
+    root.append(strip, bar);
     const tabs = PAGES.map((page) => {
-        const tab = el("button", { type: "button", class: "tab", role: "tab", "data-page": page.id, onclick: () => showPage(page.id) }, page.label);
-        root.append(tab);
+        const tab = el("button", {
+            type: "button",
+            class: "tab",
+            role: "tab",
+            "data-page": page.id,
+            onclick: () => {
+                showPage(page.id);
+                root.removeAttribute("data-open");
+            },
+        }, page.label);
+        list.append(tab);
         return { page: page.id, tab };
     });
+    let prefs = readTabPrefs();
+    const current = (): PageId => pageNamed(document.getElementById("app")?.getAttribute("data-page")) ?? "jobs";
+
+    /** The bar as the settings and the page shown have it. */
+    function draw(): void {
+        const page = current();
+        for (const { page: id, tab } of tabs) {
+            tab.hidden = prefs.hidden.includes(id);
+        }
+        more.hidden = prefs.hidden.length === 0;
+        const label = PAGES.find((entry) => entry.id === page)?.label ?? page;
+        // The page shown when its own tab is kept out: More stands for it.
+        const inMore = prefs.hidden.includes(page);
+        more.textContent = inMore ? label : "More";
+        more.setAttribute("aria-current", inMore ? "page" : "false");
+        more.title = inMore ? "the page shown; its tab is kept out of the bar" : "tabs kept out of the bar";
+        root.toggleAttribute("data-fold", prefs.fold);
+        // Drawn by the stylesheet, so no button's text is a tab's name twice.
+        strip.dataset["label"] = label;
+        strip.title = "show the tabs";
+    }
+
+    more.addEventListener("click", () => {
+        openMenu(prefs.hidden.map((id) => ({
+            label: PAGES.find((entry) => entry.id === id)!.label,
+            checked: id === current(),
+            run: () => {
+                showPage(id);
+                root.removeAttribute("data-open");
+            },
+        })), more, "Tabs kept out of the bar");
+    });
+    strip.addEventListener("click", () => {
+        root.toggleAttribute("data-open");
+    });
+    // A press anywhere else folds an opened strip again.
+    document.addEventListener("pointerdown", (event) => {
+        if (root.hasAttribute("data-open") && event.target instanceof Node && !root.contains(event.target) && !(event.target instanceof Element && event.target.closest(".menu"))) {
+            root.removeAttribute("data-open");
+        }
+    }, true);
+    root.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && root.hasAttribute("data-open")) {
+            root.removeAttribute("data-open");
+            closeMenu(false);
+            strip.focus();
+        }
+    });
+    prefListeners.push((next) => {
+        prefs = next;
+        draw();
+    });
+    onPage(() => draw());
+
     showPage(readPage());
+    draw();
     // The count is drawn by the stylesheet from an attribute, so the tab's
     // text stays its name.
     store.subscribe((state) => {
@@ -107,4 +246,5 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): void {
             }
         }
     }, ["pending"]);
+    return tools;
 }

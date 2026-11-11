@@ -32,6 +32,24 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     return node;
 }
 
+/**
+ * An inline drawing in the text color: SVG path data in a box 16 units
+ * square, filled; `evenodd` cuts the inner shapes out (a ring, a gear).
+ */
+export function svgIcon(path: string, evenodd = false): SVGSVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("class", "icon");
+    const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    shape.setAttribute("d", path);
+    if (evenodd) {
+        shape.setAttribute("fill-rule", "evenodd");
+    }
+    svg.append(shape);
+    return svg;
+}
+
 export function append(node: Node, children: Child[]): void {
     for (const child of children) {
         if (child === null || child === undefined || child === false) {

@@ -156,8 +156,10 @@ export function mountJobJson(root: HTMLElement, ctx: Ctx): void {
     const showLarge = button("Show anyway", () => fill(ctx.store.get().job, true), "btn btn-quiet btn-small");
     const large = el("p", { class: "muted hint hidden" });
     const largeRow = el("div", { class: "button-row hidden" }, showLarge);
-    const body = el("details", { class: "json-panel" },
-        el("summary", {}, "Job JSON"),
+    // Folded until opened, as a panel head like the others' (the layout
+    // layer's menu joins it there).
+    const body = el("details", { class: "json-panel panel-fold" },
+        el("summary", { class: "panel-head" }, el("h2", {}, "Job JSON")),
         el("p", { class: "muted hint" }, "One path per line. The caret's path shows on the preview, a path clicked there is found here; Apply keeps an edit."),
         large,
         largeRow,
