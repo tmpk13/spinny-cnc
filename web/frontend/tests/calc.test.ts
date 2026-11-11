@@ -58,7 +58,7 @@ describe("arithmetic in number fields", () => {
         expect(evaluate("alert(1)")).toBeNull();
         expect(evaluate("constructor")).toBeNull();
         expect(evaluate("1; 2")).toBeNull();
-        expect(calculate("foo(2)")).toBe("no foo");
+        expect(calculate("foo(2)")).toBe("unknown foo");
         expect(calculate("1 2")).toBe("something follows the value");
         expect(calculate("1/0")).toBe("no finite value");
         expect(calculate("2 $ 3")).toBe("not arithmetic");

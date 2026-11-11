@@ -176,7 +176,7 @@ class Reader {
         }
         const fn = Object.hasOwn(FUNCTIONS, token.name) ? FUNCTIONS[token.name]! : undefined;
         if (!fn) {
-            throw new Error(`no ${token.name}`);
+            throw new Error(`unknown ${token.name}`);
         }
         if (!this.take("(")) {
             throw new Error(`${token.name} takes its value in brackets`);

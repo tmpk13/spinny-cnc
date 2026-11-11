@@ -48,11 +48,11 @@ const PICK_KEY = "spinny.machine";
 /** What the board row says of the board: what it runs, and whether its flash has it. */
 export function boardText(connected: boolean, picked: string | null, current: string | null, unsaved: string[]): string {
     if (!connected) {
-        return "connect to write the file to the board or read the board into it";
+        return "connect to write to or read from the board";
     }
     const runs = current === null ? "runs settings no file has" : current === picked ? "runs this file" : `runs ${current}`;
     if (unsaved.length > 0) {
-        return `the board ${runs}; ${unsaved.length} written since the last save to flash (${unsaved.join(", ")}): a restart goes back to what flash holds`;
+        return `the board ${runs}; ${unsaved.length} not saved to flash (${unsaved.join(", ")}), lost on restart`;
     }
     return `the board ${runs}, as saved to its flash`;
 }
@@ -71,11 +71,11 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     const reload = button("Reload", () => reloadAll(), "btn btn-quiet btn-small");
     const note = el("p", { class: "muted config-note" });
     const load = button("Write to board", () => loadMachine(), "btn btn-primary");
-    load.title = "Every setting of the file onto the board, saved to its flash at once so a restart keeps it, and the file's [host] values to this host";
+    load.title = "write every setting to the board and its flash, [host] values to the host";
     const read = button("Read from board", () => readBoard(), "btn");
-    read.title = "The board's values into the editor's text where they differ from the file's; nothing is saved until you Save";
+    read.title = "copy differing board values into the text; Save keeps them";
     const flash = button("Save to flash", () => saveFlash(), "btn btn-quiet");
-    flash.title = "Keep what the board runs now, written from the console or a page control since the last save, over a restart";
+    flash.title = "keep the board's current settings over a restart";
     const loadNote = el("span", { class: "muted config-board" });
     const editor = codeEditor("Machine file");
     const check = button("Check", () => checkText(), "btn");
@@ -97,11 +97,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         problems,
         notes,
         el("p", { class: "muted hint" },
-            "the file is the machine: every axis, the pins, the tool, the host's values and the page's controls, with a comment on each key."
-            + " Check reads the text as the backend would; Save keeps nothing of a text that does not read."
-            + " Write to board puts the file's every setting on the board and saves it to the board's flash in the same step, saving the text first when it is edited."
-            + " Read from board writes the board's values into the text where they differ, for you to look over and Save."
-            + " The pins (output, probe, enable and endstop pins) are read at boot: restart the board after a write that changes one."),
+            "Save refuses a file that does not parse. Pins are read at boot: restart the board after changing one."),
     );
 
     let files: MachineSummary[] = [];
@@ -157,14 +153,14 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         let line = keyLine(text, section, name);
         if (line === null) {
             if (editor.syntaxProblem() !== null) {
-                ctx.toast("error", "mend the text first: it does not read");
+                ctx.toast("error", "fix the text first: it does not parse");
                 return;
             }
             if (value === null) {
                 // With no file read there is nothing to take a value from;
                 // with one, the key has none to add (a host value left off).
                 const where = section ? `[${section}] ${name}` : name;
-                ctx.toast("error", (checked ?? shown?.document) ? `${where} has no value to add: type it into the file` : "open a file that reads first");
+                ctx.toast("error", (checked ?? shown?.document) ? `${where} has no value; type it into the file` : "open a file that parses first");
                 return;
             }
             text = setKey(text, section, name, value);
@@ -184,7 +180,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         }
         void (async () => {
             // An edit not saved is not thrown away without a word.
-            if (dirty && picked !== null && !(await askConfirm(`Leave ${picked} without saving the edits to it?`, "Leave"))) {
+            if (dirty && picked !== null && !(await askConfirm(`Leave ${picked}? Unsaved edits are lost.`, "Leave"))) {
                 pick.value = picked;
                 return;
             }
@@ -213,7 +209,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     function renderPick(): void {
         replace(pick,
             ...files.map((file) => el("option", { value: file.id }, file.name)),
-            ...broken.map((entry) => el("option", { value: entry.id }, `${entry.id} (does not read)`)),
+            ...broken.map((entry) => el("option", { value: entry.id }, `${entry.id} (does not parse)`)),
         );
         if (files.length === 0 && broken.length === 0) {
             pick.append(el("option", { value: "", disabled: true }, "no machine files"));
@@ -297,8 +293,8 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         showProblems(response.problems);
         showNotes([]);
         list.refresh();
-        note.textContent = response.document ? describeMachine(response.document) : "the file does not read; mend it and Save";
-        setStatus(response.document ? "" : "does not read", response.document === null);
+        note.textContent = response.document ? describeMachine(response.document) : "the file does not parse; fix it and Save";
+        setStatus(response.document ? "" : "does not parse", response.document === null);
         lockAll();
     }
 
@@ -327,7 +323,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             list.refresh();
             setStatus(`reads as ${describeMachine(result.document)}${dirty ? "; not saved" : ""}`, false);
         } else {
-            setStatus("does not read", true);
+            setStatus("does not parse", true);
         }
     }
 
@@ -362,7 +358,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             showNotes([]);
             setDirty(false);
             showProblems(shown.problems);
-            setStatus(shown.document ? "" : "does not read", shown.document === null);
+            setStatus(shown.document ? "" : "does not parse", shown.document === null);
         }
     }
 
@@ -410,9 +406,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         }
         const id = picked;
         const name = files.find((file) => file.id === id)?.name ?? id;
-        const edited = dirty ? " The edits in the text are saved to the file first." : "";
+        const edited = dirty ? " Your edits are saved to the file first." : "";
         const ok = await askConfirm(
-            `Write ${name} to the board?${edited} Every firmware setting is written from the file and saved to the board's flash, so a restart keeps it; one changed at the console is lost.`,
+            `Write ${name} to the board and its flash?${edited} Settings changed at the console are lost.`,
             "Write",
         );
         if (!ok) {
@@ -435,9 +431,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         const done = await ctx.call(ctx.api.applyMachine(id, true));
         if (done) {
             const pins = changedBootSettings(before, done.values);
-            ctx.toast("info", `${name} written to the board and saved to its flash`);
+            ctx.toast("info", `${name} written to the board and its flash`);
             if (pins.length > 0) {
-                ctx.toast("info", `${pins.join(", ")} changed: restart the board for the pins to take effect`);
+                ctx.toast("info", `${pins.join(", ")} changed: restart the board to apply`);
             }
         }
         // Refreshed either way: a refused write may still have changed
@@ -457,17 +453,17 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         }
         await ctx.refreshSettings();
         if (result.changes.length === 0) {
-            showNotes(result.left.length > 0 ? [`no key can give ${result.left.join(", ")} the board's value`] : []);
-            ctx.toast("info", "the file already says what the board runs");
+            showNotes(result.left.length > 0 ? [`no file key holds the board's ${result.left.join(", ")}`] : []);
+            ctx.toast("info", "the file already matches the board");
             return;
         }
         editor.setText(result.text);
         checked = result.document;
         setDirty(true);
         showProblems(result.problems);
-        const left = result.left.length > 0 ? [`no key can give ${result.left.join(", ")} the board's value`] : [];
+        const left = result.left.length > 0 ? [`no file key holds the board's ${result.left.join(", ")}`] : [];
         showNotes([...result.changes, ...left]);
-        setStatus(`${result.changes.length} values read from the board, not saved: Save keeps them`, false);
+        setStatus(`${result.changes.length} values read from the board; Save to keep them`, false);
         list.refresh();
     }
 

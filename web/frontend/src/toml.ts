@@ -200,7 +200,7 @@ function parseValue(text: string, line: number): TomlValue {
     if (NUMBER.test(text)) {
         const value = Number(text.replace(/_/g, ""));
         if (!Number.isFinite(value)) {
-            throw new TomlError(line, `${text} is not a number read here`);
+            throw new TomlError(line, `${text} is out of range`);
         }
         return value;
     }

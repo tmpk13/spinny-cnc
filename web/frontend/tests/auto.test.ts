@@ -148,7 +148,7 @@ describe("the Auto tab", () => {
         expect(base.classList.contains("hidden")).toBe(true);
         expect(key.textContent).toBe("answers by listing the jobs; no model is asked");
         expect(about.textContent).toContain("at most 25 tool calls");
-        expect(about.textContent).toContain("It cannot connect or disconnect the machine");
+        expect(about.textContent).toContain("It never moves the machine.");
 
         select.value = "openai";
         select.dispatchEvent(new Event("change"));

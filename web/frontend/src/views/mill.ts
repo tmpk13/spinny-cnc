@@ -123,9 +123,9 @@ export function applyText(state: ApplyState, editing: number | null): string {
 /** What each button would do with the fields in that state, for the mark's title. */
 export const APPLY_HINT: Record<ApplyState, string> = {
     new: "New job makes a job of this operation",
-    outside: "Add to job puts this operation at the end of the job; New job makes a job of it alone",
-    applied: "the fields are this operation of the job as it is kept",
-    changed: "Apply puts the fields in place of the operation they were taken from; Add to job puts them at the end",
+    outside: "Add to job appends it; New job makes a job of it alone",
+    applied: "the fields match this operation of the job",
+    changed: "Apply replaces the operation; Add to job appends it",
 };
 
 /** The selected job when it was made on this page (it keeps its operations), else null. */
@@ -313,7 +313,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const cy = field(stored.cy, 0);
     const diameter = field(stored.diameter, 10, { min: 0 });
     const name = el("input", { type: "text", class: "field", placeholder: "made from the operations", spellcheck: "false", "aria-label": "Job name" }) as HTMLInputElement;
-    const points = el("textarea", { class: "field mill-points", rows: "4", spellcheck: "false", placeholder: "x, y\none point a line", "aria-label": "Points" }) as HTMLTextAreaElement;
+    const points = el("textarea", { class: "field mill-points", rows: "4", spellcheck: "false", placeholder: "x, y\none point per line", "aria-label": "Points" }) as HTMLTextAreaElement;
     points.value = Array.isArray(stored.points) ? pointsText(stored.points) : "";
     const closed = el("input", { type: "checkbox", "aria-label": "Closed line" }) as HTMLInputElement;
     closed.checked = stored.closed === true;
@@ -338,11 +338,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     for (const label of Object.values(labels)) {
         label.querySelector("input")?.setAttribute("aria-label", label.querySelector(".labeled-text")?.textContent ?? "");
     }
-    labels["stepover"]!.title = "how far apart a face's rows or a pocket's loops are, as a share of the bit";
-    labels["depth"]!.title = "how deep under the surface the cut ends";
-    labels["stepDown"]!.title = "how far each pass goes down: the passes are as many as it takes to the depth";
-    labels["spot"]!.title = "the beam's width on the work, mm: paths are offset by half of it";
-    labels["passes"]!.title = "how many times each path is burnt";
+    labels["stepover"]!.title = "row or loop spacing, as a fraction of the bit";
+    labels["depth"]!.title = "final depth below the surface";
+    labels["stepDown"]!.title = "depth per pass";
+    labels["spot"]!.title = "beam width; paths are offset by half of it";
+    labels["passes"]!.title = "times each path is burned";
 
     /**
      * A position on the board as the fields take it: in the selected Plot
@@ -363,7 +363,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             fill([fx, fy], fromBoard(head.x, head.y));
             changed();
         }, "btn btn-quiet btn-small");
-        here.title = "take where the head is over the board";
+        here.title = "use the head position";
         const pick = markerPicker(ctx, "marker", (marker) => {
             fill([fx, fy], fromBoard(marker.x, marker.y));
             changed();
@@ -382,7 +382,6 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         changed();
     }, (value) => SHAPES.find((entry) => entry.shape === value)!.label, "Shape");
     const rectModes = choiceRow(RECT_MODES.map((entry) => entry.mode), rectMode, (picked) => setRectMode(picked), (value) => RECT_MODES.find((entry) => entry.mode === value)!.label, "By");
-    rectModes.title = "give the rectangle by two corners, or by its center, its width and its height";
     const sides = choiceRow(SIDES.map((entry) => entry.side), side, (picked) => {
         side = picked;
         changed();
@@ -391,7 +390,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         climb = picked;
         changed();
     }, (value) => (value ? "Climb" : "Conventional"), "Cut");
-    directions.title = "with the spindle turning clockwise: climb runs counterclockwise inside a pocket and clockwise around a part";
+    directions.title = "climb: counterclockwise in a pocket, clockwise around a part (spindle CW)";
 
     const addHere = button("Add here", () => {
         const head = headOrSay(ctx);
@@ -400,7 +399,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         }
         appendPoint(fromBoard(head.x, head.y));
     }, "btn btn-quiet btn-small");
-    addHere.title = "add where the head is over the board";
+    addHere.title = "add the head position";
     const addMarker = markerPicker(ctx, "add marker", (marker) => appendPoint(fromBoard(marker.x, marker.y)));
     const addAll = button("All markers", () => {
         for (const marker of ctx.store.get().markers) {
@@ -424,7 +423,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const cornersBox = el("div", {}, pointRow("Corner", x0, y0), pointRow("Corner", x1, y1));
     const centerBox = el("div", {}, pointRow("Center", rcx, rcy), el("div", { class: "field-row" }, labeled("Width mm", rw), labeled("Height mm", rh)));
     const cornerLabel = labeled("Corner R mm", corner);
-    cornerLabel.title = "the radius the rectangle's corners are rounded to, 0 for square ones; inside, a corner tighter than the bit gets the bit's";
+    cornerLabel.title = "0 for square corners; inside cuts use at least the bit's radius";
     const rectBox = el("div", { class: "mill-section" }, rectModes, cornersBox, centerBox, el("div", { class: "field-row" }, cornerLabel));
     diameter.setAttribute("aria-label", "Diameter");
     const circleBox = el("div", { class: "mill-section" }, pointRow("Center", cx, cy), el("div", { class: "field-row" }, labeled("Diameter mm", diameter)));
@@ -437,11 +436,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const notes = el("ul", { class: "mill-notes muted" });
     const problem = el("p", { class: "mill-problem hidden", role: "alert" });
     const applyButton = button("Apply", () => apply(), "btn btn-primary");
-    applyButton.title = "put the fields in the job in place of the operation they were taken from";
+    applyButton.title = "replace the edited operation with the fields";
     const addButton = button("Add to job", () => add(), "btn");
-    addButton.title = "put the operation at the end of the selected job, or make a job of it when none is selected";
+    addButton.title = "append to the selected job, or make a new job";
     const newButton = button("New job", () => makeNew(), "btn");
-    newButton.title = "make a job of this operation alone, selected, ready to run";
+    newButton.title = "make a job of this operation alone";
     const stateBadge = el("span", { class: "badge plot-state" });
     const jobTitle = el("span", { class: "plot-job-title muted" });
     const opList = el("ol", { class: "plot-ops" });
@@ -584,11 +583,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         }
         const numbers = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, typeof value === "number" ? value : 0])) as Record<keyof typeof values, number>;
         if (laser && !Number.isInteger(numbers.passes)) {
-            return "the passes are a whole number";
+            return "passes must be a whole number";
         }
         if (needs.rect && rectMode === "center") {
             if (numbers.rw < 0 || numbers.rh < 0) {
-                return "the width and the height are 0 or more";
+                return "width and height must be 0 or more";
             }
             [numbers.x0, numbers.y0, numbers.x1, numbers.y1] = keptCenter() ?? cornersOf(numbers.rcx, numbers.rcy, numbers.rw, numbers.rh);
         }
@@ -706,18 +705,18 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         // On a laser the speed is the beam's along the cut, not a feed.
         relabel(labels["speed"]!, laser ? "Speed mm/min" : "Feed mm/min");
         boreText.textContent = laser
-            ? " clear a hole wider than the spot in rings, rather than cut along its edge"
-            : " bore a hole wider than the bit out with it, in rings";
+            ? " fill holes wider than the spot with rings, not just the edge"
+            : " bore holes wider than the bit in rings";
         // A job moved or turned on the Jobs page has its operations typed
         // where they were before the move.
         const moved = jobMoved(plotJob);
         const where = moved
-            ? `positions are ${plotJob!.name}'s own, from before it was moved or turned on the Jobs page: Here and the markers are taken into them, and the plan and the job made are put where it now is`
-            : "positions are board mm";
+            ? `positions are in ${plotJob!.name}'s frame from before it was moved or turned; Here and markers are converted`
+            : "positions in board mm";
         relabel(pointsLabel, moved ? "Points, the job's mm" : "Points, board mm");
         hint.textContent = laser
-            ? `${where}; a point is marked with a ring the spot across, and each pass burns the whole path again; fields take arithmetic, such as 25.4/2 or 1/8 in`
-            : `${where}; the depth is under the surface where the tool was zeroed; fields take arithmetic, such as 25.4/2 or 1/8 in`;
+            ? `${where}; a point burns a spot-wide ring; fields take arithmetic (25.4/2, 1/8 in)`
+            : `${where}; depth is below the zeroed surface; fields take arithmetic (25.4/2, 1/8 in)`;
         rectBox.classList.toggle("hidden", !needs.rect);
         cornersBox.classList.toggle("hidden", rectMode !== "corners");
         centerBox.classList.toggle("hidden", rectMode !== "center");
@@ -738,8 +737,8 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         stateBadge.setAttribute("data-state", state);
         setPending(ctx.store, "plot", state === "changed" ? 1 : 0);
         jobTitle.textContent = plotJob && ops
-            ? `${plotJob.name}: ${countText(ops.length, "operation", "operations")}${editing !== null ? `, number ${editing + 1} in the fields` : ""}`
-            : "no Plot page job selected";
+            ? `${plotJob.name}: ${countText(ops.length, "operation", "operations")}${editing !== null ? `, editing ${editing + 1}` : ""}`
+            : "no Plot job selected";
         setLocked(applyButton, state !== "changed");
         setLocked(addButton, typeof op === "string");
         setLocked(newButton, typeof op === "string");
@@ -750,12 +749,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
                 setFields(each);
                 changed();
             }, "btn btn-quiet btn-small plot-op-pick");
-            edit.title = "put this operation in the fields to change it";
+            edit.title = "edit this operation";
             const up = button("Up", () => move(index), "btn btn-quiet btn-small");
-            up.title = "cut this operation before the one above it";
+            up.title = "cut before the operation above";
             setLocked(up, index === 0);
             const remove = button("Remove", () => removeOp(index), "btn btn-quiet btn-small");
-            remove.title = "take this operation out of the job";
             const row = el("li", { class: "plot-op" }, edit, el("span", { class: "button-row" }, up, remove));
             row.classList.toggle("editing", index === editing);
             return row;
@@ -914,14 +912,14 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             return;
         }
         if (ops.length === 1) {
-            ctx.toast("error", "a job keeps at least one operation: delete the job on the Jobs page");
+            ctx.toast("error", "a job needs at least one operation; delete the job on the Jobs page");
             return;
         }
-        if (!(await askConfirm(`Take operation ${index + 1}, ${operationSummary(ops[index]!)}, out of ${plotJob.name}?`, "Remove"))) {
+        if (!(await askConfirm(`Remove operation ${index + 1} (${operationSummary(ops[index]!)}) from ${plotJob.name}?`, "Remove"))) {
             return;
         }
         const next = editing === null || editing === index ? null : editing > index ? editing - 1 : editing;
-        await send(ops.filter((_, at) => at !== index), plotJob, next, "took an operation out of");
+        await send(ops.filter((_, at) => at !== index), plotJob, next, "removed an operation from");
     }
 
     async function loadHoles(id: string): Promise<void> {
@@ -977,7 +975,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
 
     function renderMachine(state: AppState): void {
         const dispenser = state.snapshot.connected && isDispensing(state.snapshot);
-        machineNote.textContent = dispenser ? "the machine is a dispenser, which lays dots: a job made here cuts with a spindle or a laser" : "";
+        machineNote.textContent = dispenser ? "the machine is a dispenser; jobs made here need a spindle or a laser" : "";
         machineNote.classList.toggle("hidden", !dispenser);
         // The operation follows the machine: planned again for its cutter.
         // A page the machine goes away from keeps the cutter it was using,
@@ -1050,7 +1048,7 @@ function mountMillRun(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "run-row" }, runButton, compensate, holdButton, resumeButton, stopButton),
         mapNote,
         progressBox,
-        el("p", { class: "muted hint" }, "runs the selected job, here or from the Jobs panel; zero the depth on the surface first on a mill, focus the beam on a laser"),
+        el("p", { class: "muted hint" }, "before a run: zero the depth on the surface (mill) or focus the beam (laser)"),
     );
 
     async function run(): Promise<void> {
@@ -1084,7 +1082,7 @@ function mountMillRun(root: HTMLElement, ctx: Ctx): void {
         compensate.disabled = active;
         const auto = compensate.value === "auto";
         const usable = mapUsable(state.heightMap?.map ?? null);
-        mapNote.textContent = auto && !usable ? "no usable height map: the run is refused until one is probed and its offset taken" : "";
+        mapNote.textContent = auto && !usable ? "no usable height map: probe one and take its offset, or Run is refused" : "";
         mapNote.classList.toggle("hidden", mapNote.textContent === "");
     }
 

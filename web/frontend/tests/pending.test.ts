@@ -101,7 +101,7 @@ describe("the settings list", () => {
         travelRow().click();
         expect(text.value.includes("travel")).toBe(false);
         const errors = (): string[] => store.get().toasts.filter((toast) => toast.level === "error").map((toast) => toast.text);
-        expect(errors()).toEqual(["[host] travel has no value to add: type it into the file"]);
+        expect(errors()).toEqual(["[host] travel has no value; type it into the file"]);
         // With one, the key goes in with it.
         await api.updateSettings({ host: { travel: 5 } });
         await ctx.refreshSettings();

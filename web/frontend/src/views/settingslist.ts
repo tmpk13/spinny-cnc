@@ -23,15 +23,15 @@ export interface SettingsListSource {
 
 /** The host's own values: what each is, since the firmware's schema does not hold them. */
 const HOST_HELP: Record<string, string> = {
-    tolerance: "mm: how far a chord may leave a curve the host streams",
-    travel: "H the head rises to before going across; left out, the host's own",
-    clearance: "mm over the surface for travel between cuts or dots",
+    tolerance: "mm: max chord deviation on streamed curves",
+    travel: "H to rise to before travel moves; unset uses the host's",
+    clearance: "mm above the surface for travel between cuts or dots",
     spinup: "s of dwell after the spindle starts or changes speed",
-    speed_control: "false: the spindle runs full on (S = s_max) whatever a group's speed says",
-    gap: "mm of the needle over a pad",
+    speed_control: "false: spindle always at s_max, ignoring group speeds",
+    gap: "mm needle height over a pad",
     retract: "mm the plunger pulls back after a dot",
     output: "mm^3 of paste per mm of plunger",
-    extrude_rate: "mm/min of the plunger while it lays a dot",
+    extrude_rate: "mm/min plunger speed while laying a dot",
     dwell_ms: "ms the needle waits on a dot",
 };
 
@@ -118,7 +118,7 @@ export function settingRows(document: MachineDocument | null, text: string, sett
         }
         let what = entry.kind === "host" ? HOST_HELP[entry.key] ?? "" : help.get(entry.setting) ?? "";
         if (entry.kind === "scale" && name.startsWith("full_")) {
-            what = `the motor's full steps per ${entry.setting === "a_steps" && section === "table" ? "degree" : "mm"}; times the microsteps it is ${entry.setting}`;
+            what = `motor full steps per ${entry.setting === "a_steps" && section === "table" ? "degree" : "mm"}; times microsteps gives ${entry.setting}`;
         }
         rows.push({ entry, section, name, file, board, differs, help: what });
     }
@@ -154,7 +154,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
     const table = el("table", { class: "settings settings-list" });
     const actions = el("div", { class: "button-row settings-actions" },
         search,
-        el("label", { class: "muted" }, onlyDiffer, " only where they differ"),
+        el("label", { class: "muted" }, onlyDiffer, " only differences"),
     );
     // The search stays in view while the long table scrolls under it: on
     // the narrow layout the page scrolls under the status bar, stuck to its
@@ -168,10 +168,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         el("div", { class: "panel-head" }, el("h2", {}, "Settings"), count),
         actions,
         el("p", { class: "muted hint" },
-            "every key a machine file can set, the file's value beside the board's; a difference is marked."
-            + " Click a key to go to it in the file, where it is added with the file's value when the file leaves it out."
-            + " A scale is in full steps over the microsteps, or the firmware's steps where the file gives steps_per_mm."
-            + " A [host] key the file leaves out keeps the host's value."),
+            "click a row to go to its key in the file, added if missing. Scales are full steps, or firmware steps where the file uses steps_per_mm."),
         table,
     );
 
@@ -190,7 +187,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         count.textContent = `${picked.length} of ${rows.length}${state.settings ? `, ${differ} differ` : ""}`;
         const body = el("tbody", {}, ...picked.map(({ row }) => {
             // The help under the key: the panel is half the page wide.
-            const line = el("tr", { class: row.differs ? "differs" : "", title: `${row.entry.setting}: click to go to it in the file` },
+            const line = el("tr", { class: row.differs ? "differs" : "", title: `${row.entry.setting}: click to show in the file` },
                 el("td", {},
                     el("span", { class: "mono settings-key" }, row.section ? `[${row.section}] ${row.name}` : row.name),
                     el("span", { class: "muted settings-help" }, row.help),

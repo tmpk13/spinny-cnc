@@ -179,9 +179,9 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
 
     // --- a job from a design ---
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Design files" });
-    const nameField = el("input", { type: "text", class: "field", placeholder: "job name (the file's)", "aria-label": "Job name", autocomplete: "off" });
+    const nameField = el("input", { type: "text", class: "field", placeholder: "job name (default: file name)", "aria-label": "Job name", autocomplete: "off" });
     const drop = el("div", { class: "drop" },
-        el("p", {}, "Drop a design here (a board with its outline and drill files, svg, gcode, json, or an STL model) or"),
+        el("p", {}, "Drop a board (with outline and drill files), SVG, gcode, JSON or STL here, or"),
         el("label", { class: "btn btn-quiet" }, "pick files", fileInput),
     );
     const notes = el("ul", { class: "cam-notes muted hidden" });
@@ -222,7 +222,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     const editor = el("div", { class: "panel-body" },
         el("div", { class: "button-row" }, save, revert, fileStatus),
         fileEditor.root,
-        el("p", { class: "muted hint" }, "the file is the profile: every axis, tool and operation is here, with a comment on each key; Save checks it whole and keeps nothing of a text that does not read"),
+        el("p", { class: "muted hint" }, "the whole profile; Save checks it and refuses a file that does not parse"),
     );
     fileRoot.append(el("div", { class: "panel-head" }, el("h2", {}, "Profile file")), editor);
 
@@ -312,7 +312,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         lockAll();
         const profile = shown?.document ?? null;
         if (!profile) {
-            summary.textContent = files.length === 0 ? "no profiles in cam/; drop a TOML file there, or save one here" : "";
+            summary.textContent = files.length === 0 ? "no profiles in cam/; add a TOML file there or save one here" : "";
             replace(axesBox);
             replace(toolsBox);
             replace(opsBox);
@@ -320,7 +320,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             stockSection.classList.add("hidden");
             return;
         }
-        const parts = [profile.description, profile.kinematics, profile.machine ? `runs on the ${profile.machine} machine file` : "gcode only"];
+        const parts = [profile.description, profile.kinematics, profile.machine ? `runs on ${profile.machine}` : "gcode only"];
         summary.textContent = parts.filter((part) => part !== "").join(" | ");
         replace(axesBox, axesTable(profile));
         replace(toolsBox, toolsTable(profile));
@@ -339,7 +339,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         const stock = profile.stock ?? { material: null, margin: 2, top: 0, size: null };
         const materials = profile.materials ?? [];
         const material = el("select", { class: "field", "aria-label": "Stock material" },
-            el("option", { value: "" }, "none: the tools' own feeds"),
+            el("option", { value: "" }, "none (tool feeds)"),
             ...materials.map((candidate) => el("option", { value: candidate.id }, candidate.name)),
         );
         material.value = stock.material ?? "";
@@ -356,7 +356,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         const now = profile.model_setup?.turn ?? [0, 0, 0];
         const known = TURNS.findIndex((choice) => choice.turn.every((value, k) => value === now[k]));
         if (known < 0) {
-            turn.append(el("option", { value: "file" }, `as the file says: ${now.join(", ")}`));
+            turn.append(el("option", { value: "file" }, `from the file: ${now.join(", ")}`));
         }
         turn.value = known < 0 ? "file" : String(known);
         turn.addEventListener("change", () => {
@@ -368,12 +368,12 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         if (stock.size) {
             for (const field of [margin, top]) {
                 field.disabled = true;
-                field.title = "the file gives the block's size";
+                field.title = "set by the file's block size";
             }
         }
         const chosen = materials.find((candidate) => candidate.id === stock.material);
         const note = el("p", { class: "muted hint" }, chosen?.note ? `${chosen.name}: ${chosen.note}` : "");
-        const size = stock.size ? el("p", { class: "muted hint" }, `block ${stock.size.join(" x ")} mm, the model in its middle on its bottom`) : null;
+        const size = stock.size ? el("p", { class: "muted hint" }, `block ${stock.size.join(" x ")} mm, model centered on the bottom`) : null;
         return [
             el("div", { class: "button-row" },
                 labeled("Material", material, "labeled inline"),
@@ -439,7 +439,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             input.setAttribute("aria-label", `${operation.name} ${spec.label}`);
             if (typeof own !== "number") {
                 input.classList.add("inherited");
-                input.title = "from the tool; a value typed here is the operation's own, cleared it is the tool's again";
+                input.title = "blank uses the tool's value";
             }
             input.addEventListener("change", () => {
                 const typed = parseNumber(input.value);
@@ -515,7 +515,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             // its edits, and is told it is behind.
             show(response);
             if (dirty) {
-                setStatus("the file changed in the table; Revert takes the saved text", false);
+                setStatus("changed in the table; Revert restores the saved file", false);
             }
         } else if (picked === id && shown) {
             renderProfile();
@@ -646,7 +646,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         if (downloadText(written.filename, written.text)) {
             ctx.toast("info", `saved ${written.filename}`);
         } else {
-            ctx.toast("info", `${written.filename} is written; this browser cannot save it from here`);
+            ctx.toast("info", `${written.filename} made, but this browser cannot save it`);
         }
     }
 

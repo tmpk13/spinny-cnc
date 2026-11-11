@@ -109,7 +109,7 @@ function entryNode(entry: AutoEntry): Shown {
 export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx: Ctx): void {
     const { chat, about } = roots;
     const fresh = button("New chat", () => newChat(), "btn btn-quiet btn-small");
-    fresh.title = "stop the turn under way and start the conversation over";
+    fresh.title = "stop and start a new conversation";
 
     const provider = el("select", { class: "field", "aria-label": "Provider" }) as HTMLSelectElement;
     const model = el("input", { type: "text", class: "field", spellcheck: "false", autocomplete: "off", "aria-label": "Model" }) as HTMLInputElement;
@@ -125,18 +125,18 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
 
     const log = el("div", { class: "auto-log", role: "log", "aria-live": "polite", "aria-label": "Conversation" });
     const empty = el("p", { class: "auto-empty muted" },
-        "Ask for a job (a drawing, a test pattern, text to engrave), a Plot operation, markers, or a placement plan. "
-        + "Nothing here moves the machine: a job it makes is cut when you run it from the Jobs or Plot tab.");
+        "Ask for a job (drawing, test pattern, engraved text), a Plot operation, markers or a placement plan. "
+        + "Nothing here moves the machine; run its jobs from the Jobs or Plot tab.");
     const working = el("p", { class: "auto-working muted" }, "working");
     const input = el("textarea", {
         class: "field auto-input",
         rows: 3,
         "aria-label": "Message",
-        placeholder: "Write a message: Enter sends, Shift+Enter starts a new line",
+        placeholder: "Message (Enter sends, Shift+Enter for a new line)",
     }) as HTMLTextAreaElement;
     const send = button("Send", () => sendMessage(), "btn btn-primary");
     const stop = button("Stop", () => stopTurn(), "btn btn-danger");
-    stop.title = "stop the turn under way; what it made so far stays";
+    stop.title = "stop this turn; what it made stays";
     chat.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Auto"), el("div", { class: "button-row" }, fresh)),
         settingsRow,
@@ -147,14 +147,13 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
     const limit = el("span", {}, "25");
     about.append(
         el("h2", {}, "What it can do"),
-        el("p", {}, "The model works through the backend's own API with the tools it is given: it makes and changes jobs, "
-            + "Plot jobs, markers, the references and plans of a pick and place device, and CAM jobs, and it reads the state, "
-            + "the machine files and the CAM profiles."),
-        el("p", {}, el("strong", {}, "It cannot"), " connect or disconnect the machine, move it, home it, run, hold or stop a job, "
-            + "light the laser, start the spindle, probe, start a camera routine, move a pick and place device, or change the "
-            + "firmware's settings or a machine or CAM file. No tool does these: you run what it made."),
-        el("p", { class: "muted" }, "A turn makes at most ", limit, " tool calls. The same tools serve Claude Code and other MCP "
-            + "clients through spinny-mcp. Keys are read where the backend runs; this page is told only whether each is set."),
+        el("p", {}, "It makes and changes jobs, Plot jobs, CAM jobs, markers and pick and place plans, "
+            + "and reads the machine state, machine files and CAM profiles."),
+        el("p", {}, el("strong", {}, "It never moves the machine."), " It cannot connect, home, run jobs, fire the laser, "
+            + "start the spindle, probe, use cameras, move the pick and place device, "
+            + "or edit settings, machine files or CAM profiles. You run what it made."),
+        el("p", { class: "muted" }, "A turn makes at most ", limit, " tool calls. "
+            + "Keys are read where the backend runs; this page only learns whether each is set."),
     );
 
     input.addEventListener("keydown", (event) => {

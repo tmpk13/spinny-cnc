@@ -275,7 +275,7 @@ describe("Plot page", () => {
         expect(plan.groups[0]!.paths[0]!.length).toBeGreaterThan(8);
         const sent = calls.filter((call) => call.name === "planMill").at(-1)!.args[0] as { ops: { cutter: string; tool: number }[] };
         expect(sent.ops[0]).toMatchObject({ cutter: "laser", tool: 0.1 });
-        expect(root.textContent).toContain("each pass burns the whole path again");
+        expect(root.textContent).toContain("a point burns a spot-wide ring");
         // A spindle machine: the bit's fields again, planned for it.
         store.set({ snapshot: { ...connected(), profile: { ...profile, tool: "spindle" } } });
         await wait(PLAN_DELAY_MS + 30);
