@@ -102,6 +102,55 @@ export function project(frame: Frame, width: number, height: number, point: Vec3
     };
 }
 
+/**
+ * `project` for the many points of one frame: the sums that depend on the
+ * frame alone are worked out once, and a point is written into `out`
+ * instead of a new object, so a job of hundreds of thousands of points
+ * projects in a few milliseconds.
+ */
+export class Projector {
+    private readonly fx: number;
+    private readonly fy: number;
+    private readonly fz: number;
+    private readonly f0: number;
+    private readonly rx: number;
+    private readonly ry: number;
+    private readonly rz: number;
+    private readonly r0: number;
+    private readonly ux: number;
+    private readonly uy: number;
+    private readonly uz: number;
+    private readonly u0: number;
+    private readonly lens: number;
+    private readonly cx: number;
+    private readonly cy: number;
+
+    constructor(frame: Frame, readonly width: number, readonly height: number) {
+        const [ex, ey, ez] = frame.eye;
+        [this.fx, this.fy, this.fz] = frame.forward;
+        [this.rx, this.ry, this.rz] = frame.right;
+        [this.ux, this.uy, this.uz] = frame.up;
+        this.f0 = -(ex * this.fx + ey * this.fy + ez * this.fz);
+        this.r0 = -(ex * this.rx + ey * this.ry + ez * this.rz);
+        this.u0 = -(ex * this.ux + ey * this.uy + ez * this.uz);
+        this.lens = focal(height);
+        this.cx = width / 2;
+        this.cy = height / 2;
+    }
+
+    /** Writes where (x, y, z) lands on the canvas into out[0] and out[1]; false behind the eye, where `project` gives null. */
+    into(x: number, y: number, z: number, out: Float64Array, at = 0): boolean {
+        const depth = x * this.fx + y * this.fy + z * this.fz + this.f0;
+        if (depth <= NEAR) {
+            return false;
+        }
+        const k = this.lens / depth;
+        out[at] = this.cx + k * (x * this.rx + y * this.ry + z * this.rz + this.r0);
+        out[at + 1] = this.cy - k * (x * this.ux + y * this.uy + z * this.uz + this.u0);
+        return true;
+    }
+}
+
 /** The point of the plane z = `planeZ` under a canvas point; null when the ray misses it (looking at the sky). */
 export function unproject(frame: Frame, width: number, height: number, sx: number, sy: number, planeZ = 0): Vec3 | null {
     const f = focal(height);

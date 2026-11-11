@@ -13,7 +13,12 @@
 // not, so what stays still is drawn once into offscreen layers for the
 // camera, size, job and palette of the moment and copied under the head
 // on every frame; the layers are drawn again only when one of those
-// changes.
+// changes. A large job is drawn again on every frame of a pan or a zoom,
+// so its lines are projected without allocating, their detail under half
+// a pixel and the lines off the canvas left out, and stroked a batch of
+// points at a time (see `Pen`); while a drag moves the view of a very
+// large job its lines are drawn a device pixel wide, and in full again
+// once the view stands still.
 //
 // A click (a press let go where it was) picks the path under the pointer,
 // shift or ctrl adds it or takes it back; with box selection on, a drag
@@ -22,8 +27,8 @@
 
 import {
     type Camera,
-    type Frame,
     type Vec3,
+    Projector,
     circlePoints,
     frameOf,
     lookDown,
@@ -99,6 +104,28 @@ const MIN_EXAGGERATION = 1;
 const MAX_EXAGGERATION = 200;
 /** How long the palette read from the stylesheet is trusted before it is read again, ms. */
 const PALETTE_MS = 1000;
+/**
+ * Points a canvas path holds before it is stroked and a new one begun. The
+ * rasterizer's work on a scan line grows with the edges of the path that
+ * cross it, so one path of a whole board's lines costs far more than the
+ * same lines a hundred or so points at a time: 20 000 clearing strokes
+ * across a board took half a second as one path, 38 ms in batches of 128
+ * (Chromium's software canvas; 64 to 256 were within 10%).
+ */
+export const BATCH_POINTS = 128;
+/** A point of a line nearer than this to the last point kept, CSS px either way, is left out: it moves the line by less than that. */
+export const DETAIL_PX = 0.5;
+/**
+ * A job of more points than this is drawn coarser while a drag or the
+ * wheel moves the view: its lines a device pixel wide where they would be
+ * drawn wider than the spot (a hairline costs the rasterizer a fraction of
+ * a wider stroke) and less detail kept, then again in full once the view
+ * has stood still for `SETTLE_MS`.
+ */
+export const COARSE_POINTS = 50_000;
+export const SETTLE_MS = 150;
+/** The detail left out while a large job's view moves, px. */
+const COARSE_DETAIL_PX = 1;
 
 /** What bounds the head, as the machine's profile gives it. */
 export interface Limits {
@@ -611,6 +638,8 @@ interface SceneKey {
     limits: Limits;
     /** The table angle on a cartesian machine, whose limit box turns with it; null on the polar machine, whose limits stand still. */
     angle: number | null;
+    /** Drawn coarser while the view moves. */
+    coarse: boolean;
 }
 
 function sameSceneKey(a: SceneKey, b: SceneKey): boolean {
@@ -618,7 +647,7 @@ function sameSceneKey(a: SceneKey, b: SceneKey): boolean {
         && a.selection === b.selection && a.highlight === b.highlight
         && a.speed === b.speed && a.speedLimits === b.speedLimits && a.scrub === b.scrub
         && sameCamera(a.camera, b.camera) && a.width === b.width && a.height === b.height && a.dpr === b.dpr
-        && a.colors === b.colors && a.angle === b.angle
+        && a.colors === b.colors && a.angle === b.angle && a.coarse === b.coarse
         && a.limits.kinematics === b.limits.kinematics && a.limits.r_max === b.limits.r_max && a.limits.z_max === b.limits.z_max;
 }
 
@@ -656,13 +685,215 @@ interface SelectBox {
     y1: number;
 }
 
-/** A canvas point's distance to the segment from `a` to `b`, px. */
-function segmentDistance(x: number, y: number, a: { x: number; y: number }, b: { x: number; y: number }): number {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
+/** A canvas point's distance to the segment from (ax, ay) to (bx, by), px. */
+function segmentDistance(x: number, y: number, ax: number, ay: number, bx: number, by: number): number {
+    const dx = bx - ax;
+    const dy = by - ay;
     const length = dx * dx + dy * dy;
-    const t = length > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / length)) : 0;
-    return Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t));
+    const t = length > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / length)) : 0;
+    return Math.hypot(x - (ax + dx * t), y - (ay + dy * t));
+}
+
+/** Points of a line on the board: x and y, and a height where it leaves the board (a model's cuts). */
+type Line = readonly (readonly number[])[];
+
+/** How a set of lines is stroked: color, width in CSS px, and opacity. */
+interface Ink {
+    color: string;
+    width: number;
+    alpha: number;
+}
+
+/** Canvas points of the line being drawn, x and y in turn, and whether each is in front of the eye; grown to the longest line yet. */
+let lineXY = new Float64Array(2048);
+let lineInFront = new Uint8Array(1024);
+
+/**
+ * Projects a line into `lineXY` and `lineInFront`: "none" when nothing of
+ * it can show (every point behind the eye, or all of those in front past
+ * one edge of the canvas by more than `margin` px, which leaves the
+ * segments between them past it too), "whole" when every point is in
+ * front, "broken" when some are behind.
+ */
+function projectLine(view: Projector, line: Line, margin: number): "none" | "whole" | "broken" {
+    const n = line.length;
+    if (lineInFront.length < n) {
+        const size = Math.max(n, lineInFront.length * 2);
+        lineXY = new Float64Array(2 * size);
+        lineInFront = new Uint8Array(size);
+    }
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    let behind = false;
+    for (let i = 0; i < n; i++) {
+        const point = line[i]!;
+        if (!view.into(point[0]!, point[1]!, point[2] ?? 0, lineXY, 2 * i)) {
+            lineInFront[i] = 0;
+            behind = true;
+            continue;
+        }
+        lineInFront[i] = 1;
+        const x = lineXY[2 * i]!;
+        const y = lineXY[2 * i + 1]!;
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
+    }
+    if (x0 > x1 || x1 < -margin || y1 < -margin || x0 > view.width + margin || y0 > view.height + margin) {
+        return "none";
+    }
+    return behind ? "broken" : "whole";
+}
+
+/**
+ * Strokes lines on a context a batch at a time (`BATCH_POINTS`): each line
+ * projected once, a point within `detail` px of the last one kept left out
+ * (a run's last point always kept, so a line ends where it does), a line
+ * wholly off the canvas skipped, and the pen lifted across a point behind
+ * the eye. A line split between two batches meets itself under round caps,
+ * which draw as the round join would.
+ */
+export class Pen {
+    private count = 0;
+    /** Something was stroked. */
+    stroked = false;
+
+    constructor(
+        private readonly ctx: CanvasRenderingContext2D,
+        private readonly view: Projector,
+        private readonly margin: number,
+        private readonly detail: number,
+    ) {
+        ctx.beginPath();
+    }
+
+    /** One line; `closed` joins its last point to its first unless it breaks behind the eye. A line of one point is a dot, the round cap of a stroke of no length. */
+    line(line: Line, closed = false): void {
+        const n = line.length;
+        if (n === 0 || projectLine(this.view, line, this.margin) === "none") {
+            return;
+        }
+        const ctx = this.ctx;
+        let pen = false;
+        let broken = false;
+        let started = false;
+        let firstX = 0;
+        let firstY = 0;
+        let lastX = 0;
+        let lastY = 0;
+        for (let i = 0; i < n; i++) {
+            if (lineInFront[i] === 0) {
+                pen = false;
+                broken = true;
+                continue;
+            }
+            const x = lineXY[2 * i]!;
+            const y = lineXY[2 * i + 1]!;
+            if (!pen) {
+                if (this.count >= BATCH_POINTS) {
+                    this.flush();
+                }
+                ctx.moveTo(x, y);
+                this.count += 1;
+                pen = true;
+                lastX = x;
+                lastY = y;
+                if (!started) {
+                    started = true;
+                    firstX = x;
+                    firstY = y;
+                }
+                if (n === 1) {
+                    ctx.lineTo(x, y);
+                    this.count += 1;
+                }
+                continue;
+            }
+            const end = i === n - 1 || lineInFront[i + 1] === 0;
+            if (!end && Math.abs(x - lastX) < this.detail && Math.abs(y - lastY) < this.detail) {
+                continue;
+            }
+            ctx.lineTo(x, y);
+            lastX = x;
+            lastY = y;
+            this.count += 1;
+            if (this.count >= BATCH_POINTS && !end) {
+                this.flush();
+                ctx.moveTo(x, y);
+                this.count = 1;
+            }
+        }
+        if (closed && pen && !broken) {
+            ctx.lineTo(firstX, firstY);
+            this.count += 1;
+        }
+    }
+
+    /** Strokes what is left. */
+    end(): void {
+        if (this.count > 0) {
+            this.ctx.stroke();
+            this.stroked = true;
+        }
+        this.count = 0;
+    }
+
+    private flush(): void {
+        this.ctx.stroke();
+        this.stroked = true;
+        this.ctx.beginPath();
+        this.count = 0;
+    }
+}
+
+/** A model's cut lines, worked out once for its moves. */
+const runsOf = new WeakMap<Move[][], Vec3[][]>();
+
+function cachedRuns(moves: Move[][]): Vec3[][] {
+    let runs = runsOf.get(moves);
+    if (!runs) {
+        runs = cutRuns(moves);
+        runsOf.set(moves, runs);
+    }
+    return runs;
+}
+
+/**
+ * The speed view's lines, worked out once for a speed map: the capped
+ * moves, and the moves in each color's bucket. A move that starts where
+ * the last one of its set ended goes on that one's line: the moves of a
+ * path follow each other, and one line of their points strokes far faster
+ * than as many lines of two (and leaves its sub-pixel steps to the pen).
+ */
+const speedLinesOf = new WeakMap<SpeedMap, { capped: Line[]; buckets: Line[][] }>();
+
+function speedLines(map: SpeedMap): { capped: Line[]; buckets: Line[][] } {
+    let lines = speedLinesOf.get(map);
+    if (!lines) {
+        const buckets: Point[][][] = SPEED_COLORS.map(() => []);
+        const capped: Point[][] = [];
+        const extend = (set: Point[][], from: Point, to: Point): void => {
+            const line = set[set.length - 1];
+            const end = line?.[line.length - 1];
+            if (line && end && end[0] === from[0] && end[1] === from[1]) {
+                line.push(to);
+            } else {
+                set.push([from, to]);
+            }
+        };
+        for (const segment of map.segments) {
+            extend(buckets[speedBucket(segment.speed, map.slowest, map.fastest)]!, segment.from, segment.to);
+            if (isCapped(segment)) {
+                extend(capped, segment.from, segment.to);
+            }
+        }
+        lines = { capped, buckets };
+        speedLinesOf.set(map, lines);
+    }
+    return lines;
 }
 
 export class Preview {
@@ -710,9 +941,19 @@ export class Preview {
     private palette: Colors | null = null;
     private paletteAt = 0;
     private scene: Scene | null = null;
+    /** A layer a translucent set of lines is stroked on opaque before it is laid on the picture with its alpha. */
+    private scratch: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
     /** The page cannot make offscreen canvases; the still layers are drawn every frame instead. */
     private noLayers = false;
     private reachMemo: { job: Job | null; limit: number; reach: number } | null = null;
+    private pointsMemo: { job: Job | null; points: number } | null = null;
+    /** A drag or the wheel is moving the view of a large job: it is drawn coarser until the timer finds it still. */
+    private moving = false;
+    private settleTimer: ReturnType<typeof setTimeout> | null = null;
+    /** How long the last draw took, ms: a view is still only once it has gone unmoved for longer than a frame or two takes. */
+    private drawMs = 0;
+    /** The detail the lines of the layers being drawn keep, px. */
+    private detail = DETAIL_PX;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -777,20 +1018,26 @@ export class Preview {
         if (!job || this.width === 0) {
             return null;
         }
-        const frame = frameOf(this.camera);
+        const view = new Projector(frameOf(this.camera), this.width, this.height);
+        const at = new Float64Array(2);
         let best: { ref: PathRef; distance: number } | null = null;
         job.groups.forEach((group, g) => {
             group.paths.forEach((path, p) => {
                 let nearest = Infinity;
-                let previous: { x: number; y: number } | null = null;
-                for (const [px, py] of path) {
-                    const point = project(frame, this.width, this.height, [px, py, 0]);
-                    if (!point) {
-                        previous = null;
+                let previous = false;
+                let px = 0;
+                let py = 0;
+                for (const [bx, by] of path) {
+                    if (!view.into(bx, by, 0, at)) {
+                        previous = false;
                         continue;
                     }
-                    nearest = Math.min(nearest, previous ? segmentDistance(x, y, previous, point) : Math.hypot(x - point.x, y - point.y));
-                    previous = point;
+                    const qx = at[0]!;
+                    const qy = at[1]!;
+                    nearest = Math.min(nearest, previous ? segmentDistance(x, y, px, py, qx, qy) : Math.hypot(x - qx, y - qy));
+                    previous = true;
+                    px = qx;
+                    py = qy;
                 }
                 if (nearest <= PICK_PX && (best === null || nearest < best.distance)) {
                     best = { ref: [g, p], distance: nearest };
@@ -810,14 +1057,13 @@ export class Preview {
         const x1 = Math.max(box.x0, box.x1);
         const y0 = Math.min(box.y0, box.y1);
         const y1 = Math.max(box.y0, box.y1);
-        const frame = frameOf(this.camera);
+        const view = new Projector(frameOf(this.camera), this.width, this.height);
+        const at = new Float64Array(2);
         const refs: PathRef[] = [];
         job.groups.forEach((group, g) => {
             group.paths.forEach((path, p) => {
-                const inside = path.length > 0 && path.every(([px, py]) => {
-                    const point = project(frame, this.width, this.height, [px, py, 0]);
-                    return point !== null && point.x >= x0 && point.x <= x1 && point.y >= y0 && point.y <= y1;
-                });
+                const inside = path.length > 0 && path.every(([px, py]) =>
+                    view.into(px, py, 0, at) && at[0]! >= x0 && at[0]! <= x1 && at[1]! >= y0 && at[1]! <= y1);
                 if (inside) {
                     refs.push([g, p]);
                 }
@@ -962,18 +1208,67 @@ export class Preview {
 
     /** One pointer dragged from `from` to `to` in canvas px: orbits, or pans. */
     dragBy(from: [number, number], to: [number, number], mode: DragMode): void {
-        if (mode === "orbit") {
-            this.camera = orbit(this.camera, to[0] - from[0], to[1] - from[1]);
-        } else {
-            this.camera = pan(this.camera, this.width || 1, this.height || 1, from, to);
-        }
-        this.requestDraw();
+        this.moveCamera(mode === "orbit"
+            ? orbit(this.camera, to[0] - from[0], to[1] - from[1])
+            : pan(this.camera, this.width || 1, this.height || 1, from, to));
     }
 
     /** The wheel, or a pinch: zoom by `factor` about a canvas point. */
     zoomBy(at: [number, number], factor: number): void {
-        this.camera = zoomAt(this.camera, this.width || 1, this.height || 1, at[0], at[1], factor);
+        this.moveCamera(zoomAt(this.camera, this.width || 1, this.height || 1, at[0], at[1], factor));
+    }
+
+    /** Takes a camera a pointer or the wheel moved to; one that moved nothing (a pointer event where the last one was, a zoom at its limit) draws nothing. */
+    private moveCamera(camera: Camera): void {
+        if (sameCamera(camera, this.camera)) {
+            return;
+        }
+        this.camera = camera;
+        this.stir();
         this.requestDraw();
+    }
+
+    /** A drag (of the view, or along the cut order) moved the picture of a large job: it is drawn coarser until it stands still. */
+    private stir(): void {
+        if (this.jobPoints() <= COARSE_POINTS) {
+            return;
+        }
+        this.moving = true;
+        if (this.settleTimer !== null) {
+            clearTimeout(this.settleTimer);
+        }
+        // A drag's next event waits for the frame being drawn, so a timer
+        // shorter than two frames would find a slow drag still and draw a
+        // full picture between every two coarse ones.
+        this.settleTimer = setTimeout(() => {
+            this.settleTimer = null;
+            this.moving = false;
+            this.requestDraw();
+        }, Math.max(SETTLE_MS, 2 * this.drawMs));
+    }
+
+    /** How many points the job draws, counted once a job. */
+    private jobPoints(): number {
+        const memo = this.pointsMemo;
+        if (memo && memo.job === this.job) {
+            return memo.points;
+        }
+        let points = 0;
+        const count = (paths: readonly Line[]): void => {
+            for (const path of paths) {
+                points += path.length;
+            }
+        };
+        if (this.job) {
+            count(this.job.copper);
+            count(this.job.outline);
+            for (const group of this.job.groups) {
+                count(group.paths);
+                count(group.moves ?? []);
+            }
+        }
+        this.pointsMemo = { job: this.job, points };
+        return points;
     }
 
     resize(): void {
@@ -1014,6 +1309,11 @@ export class Preview {
     }
 
     dispose(): void {
+        if (this.settleTimer !== null) {
+            clearTimeout(this.settleTimer);
+            this.settleTimer = null;
+        }
+        this.moving = false;
         for (const dispose of this.disposers) {
             dispose();
         }
@@ -1039,10 +1339,13 @@ export class Preview {
         if (!ctx || this.hidden || this.width === 0) {
             return;
         }
+        const started = now();
         const colors = this.colors();
         const { width, height, dpr, camera } = this;
         const reach = this.reach();
+        this.detail = this.moving ? COARSE_DETAIL_PX : DETAIL_PX;
         const frame = frameOf(camera);
+        const view = new Projector(frame, width, height);
         const scale = pxPerMm(camera, height);
         const cartesian = this.limits.kinematics === "cartesian";
         const extent = Math.max(reach * 1.5, 10);
@@ -1053,14 +1356,14 @@ export class Preview {
         // the board in view.
         const layout = gridLayout(scale, visibleBox(camera, width, height, extent), !grid);
 
-        const scene = this.stillScene(colors, reach, scale, extent, layout);
+        const scene = this.stillScene(view, colors, reach, scale, extent, layout);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         if (scene) {
             this.blit(ctx, scene.under);
         } else {
-            this.drawBoard(ctx, frame, colors, layout, scale);
+            this.drawBoard(ctx, view, colors, layout, scale);
         }
 
         // The rail, floating at the head's height: along +X from the axis
@@ -1073,18 +1376,18 @@ export class Preview {
         if (cartesian) {
             const through = this.headBoard ?? { x: 0, y: 0 };
             const along = turned({ x: extent, y: 0 }, this.head?.a ?? 0);
-            this.polyline(ctx, frame, [
+            this.polyline(ctx, view, [
                 [through.x - along.x, through.y - along.y, headHeight],
                 [through.x + along.x, through.y + along.y, headHeight],
             ]);
         } else {
-            this.polyline(ctx, frame, [[0, 0, headHeight], [extent, 0, headHeight]]);
+            this.polyline(ctx, view, [[0, 0, headHeight], [extent, 0, headHeight]]);
         }
         ctx.setLineDash([]);
         // The column from the axis up to the rail, so the height reads.
         ctx.globalAlpha = 0.4;
         ctx.lineWidth = 1;
-        this.polyline(ctx, frame, [[0, 0, 0], [0, 0, headHeight]]);
+        this.polyline(ctx, view, [[0, 0, 0], [0, 0, headHeight]]);
         ctx.globalAlpha = 1;
 
         let exaggeration: number | null;
@@ -1092,7 +1395,7 @@ export class Preview {
             this.blit(ctx, scene.over);
             exaggeration = scene.exaggeration;
         } else {
-            exaggeration = this.drawWork(ctx, frame, colors, reach, scale, extent);
+            exaggeration = this.drawWork(ctx, view, colors, reach, scale, extent);
         }
 
         // Trail and head.
@@ -1100,7 +1403,7 @@ export class Preview {
             ctx.strokeStyle = colors.trail;
             ctx.lineWidth = 2;
             ctx.globalAlpha = 0.7;
-            this.polyline(ctx, frame, this.trail.map(([x, y]) => [x, y, 0] as Vec3));
+            this.polyline(ctx, view, this.trail.map(([x, y]) => [x, y, 0] as Vec3));
             ctx.globalAlpha = 1;
         }
         if (this.head && this.headBoard) {
@@ -1112,12 +1415,12 @@ export class Preview {
             // cartesian machine is no joint of it.
             if (!cartesian) {
                 ctx.globalAlpha = 0.5;
-                this.polyline(ctx, frame, [[0, 0, 0], [board.x, board.y, 0]]);
+                this.polyline(ctx, view, [[0, 0, 0], [board.x, board.y, 0]]);
                 ctx.globalAlpha = 1;
             }
             // The beam from the head down to the board.
             ctx.globalAlpha = 0.6;
-            this.polyline(ctx, frame, [[board.x, board.y, 0], [board.x, board.y, headHeight]]);
+            this.polyline(ctx, view, [[board.x, board.y, 0], [board.x, board.y, headHeight]]);
             ctx.globalAlpha = 1;
             const spot = at(board.x, board.y, 0);
             if (spot) {
@@ -1235,6 +1538,7 @@ export class Preview {
             ctx.strokeRect(Math.min(band.x0, band.x1), Math.min(band.y0, band.y1), Math.abs(band.x1 - band.x0), Math.abs(band.y1 - band.y0));
             ctx.restore();
         }
+        this.drawMs = now() - started;
     }
 
     /** The farthest thing drawn, as `jobReach` has it, worked out once per job and limit rather than per frame. */
@@ -1254,7 +1558,7 @@ export class Preview {
      * something in them changed; null where offscreen canvases cannot be
      * had, and the layers are then drawn straight onto the canvas.
      */
-    private stillScene(colors: Colors, reach: number, scale: number, extent: number, layout: GridLayout): Scene | null {
+    private stillScene(view: Projector, colors: Colors, reach: number, scale: number, extent: number, layout: GridLayout): Scene | null {
         if (this.noLayers) {
             return null;
         }
@@ -1277,6 +1581,7 @@ export class Preview {
             colors,
             limits: this.limits,
             angle: this.limits.kinematics === "cartesian" ? this.head?.a ?? 0 : null,
+            coarse: this.moving,
         };
         const scene = this.scene;
         if (scene && sameSceneKey(scene.key, key)) {
@@ -1291,11 +1596,10 @@ export class Preview {
             this.scene = null;
             return null;
         }
-        const frame = frameOf(this.camera);
         this.beginLayer(under, underCtx);
-        this.drawBoard(underCtx, frame, colors, layout, scale);
+        this.drawBoard(underCtx, view, colors, layout, scale);
         this.beginLayer(over, overCtx);
-        const exaggeration = this.drawWork(overCtx, frame, colors, reach, scale, extent);
+        const exaggeration = this.drawWork(overCtx, view, colors, reach, scale, extent);
         this.scene = { key, under, over, exaggeration };
         return this.scene;
     }
@@ -1332,6 +1636,57 @@ export class Preview {
         ctx.restore();
     }
 
+    /** The scratch layer, sized and wiped; null where offscreen canvases cannot be had. */
+    private scratchLayer(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+        if (this.noLayers) {
+            return null;
+        }
+        if (this.scratch === null) {
+            const canvas = this.layerCanvas();
+            const ctx = canvas?.getContext("2d");
+            if (!canvas || !ctx) {
+                return null;
+            }
+            this.scratch = { canvas, ctx };
+        }
+        this.beginLayer(this.scratch.canvas, this.scratch.ctx);
+        return this.scratch;
+    }
+
+    /**
+     * Strokes board lines in `ink` with a `Pen`. Translucent lines of more
+     * than one batch are stroked opaque on the scratch layer and laid on
+     * with their alpha, so where they cross they are no darker than where
+     * they run alone, as one stroke draws them.
+     */
+    private strokeLines(ctx: CanvasRenderingContext2D, view: Projector, lines: readonly Line[], ink: Ink): void {
+        let points = 0;
+        for (const line of lines) {
+            points += line.length;
+        }
+        if (points === 0) {
+            return;
+        }
+        const scratch = ink.alpha < 1 && points > BATCH_POINTS ? this.scratchLayer() : null;
+        const target = scratch?.ctx ?? ctx;
+        target.strokeStyle = ink.color;
+        target.lineWidth = ink.width;
+        target.globalAlpha = scratch ? 1 : ink.alpha;
+        const pen = new Pen(target, view, ink.width / 2 + 1, this.detail);
+        for (const line of lines) {
+            pen.line(line);
+        }
+        pen.end();
+        if (scratch && pen.stroked) {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = ink.alpha;
+            ctx.drawImage(scratch.canvas, 0, 0);
+            ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+    }
+
     /**
      * The board: the background, and the rings about the axis or a square
      * grid over the part of it in view, the finer lines faint and every
@@ -1339,7 +1694,7 @@ export class Preview {
      * its chords within a third of a pixel of the circle, so it stays round
      * however far in the view is zoomed.
      */
-    private drawBoard(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, layout: GridLayout, scale: number): void {
+    private drawBoard(ctx: CanvasRenderingContext2D, view: Projector, colors: Colors, layout: GridLayout, scale: number): void {
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, this.width, this.height);
         const { step, box } = layout;
@@ -1357,12 +1712,12 @@ export class Preview {
             let drawn = false;
             for (const line of lines) {
                 if (line.major === major) {
-                    drawn = this.tracePolyline(ctx, frame, [[line.from[0], line.from[1], 0], [line.to[0], line.to[1], 0]], false) || drawn;
+                    drawn = this.tracePolyline(ctx, view, [[line.from[0], line.from[1], 0], [line.to[0], line.to[1], 0]], false) || drawn;
                 }
             }
             for (const ring of rings?.rings ?? []) {
                 if (ring.major === major) {
-                    drawn = this.tracePolyline(ctx, frame, arcPoints(ring.radius, rings!.from, rings!.to, tolerance), false) || drawn;
+                    drawn = this.tracePolyline(ctx, view, arcPoints(ring.radius, rings!.from, rings!.to, tolerance), false) || drawn;
                 }
             }
             if (drawn) {
@@ -1377,19 +1732,19 @@ export class Preview {
      * copper, paths and outline, the probe grid and the axis cross. Returns
      * the stretch of the probed heights, or null when no surface was drawn.
      */
-    private drawWork(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number, scale: number, extent: number): number | null {
+    private drawWork(ctx: CanvasRenderingContext2D, view: Projector, colors: Colors, reach: number, scale: number, extent: number): number | null {
         const limit = limitShape(this.limits, this.head?.a ?? 0, extent);
         if (limit) {
             ctx.strokeStyle = colors.rmax;
             ctx.lineWidth = 1.5;
             ctx.setLineDash([4, 4]);
             if (limit.kind === "circle") {
-                this.polyline(ctx, frame, circlePoints(limit.radius, 96), true);
+                this.polyline(ctx, view, circlePoints(limit.radius, 96), true);
             } else if (limit.kind === "outline") {
-                this.polyline(ctx, frame, limit.points.map(([x, y]) => [x, y, 0] as Vec3), true);
+                this.polyline(ctx, view, limit.points.map(([x, y]) => [x, y, 0] as Vec3), true);
             } else {
                 for (const [[x0, y0], [x1, y1]] of limit.lines) {
-                    this.polyline(ctx, frame, [[x0, y0, 0], [x1, y1, 0]]);
+                    this.polyline(ctx, view, [[x0, y0, 0], [x1, y1, 0]]);
                 }
             }
             ctx.setLineDash([]);
@@ -1400,25 +1755,23 @@ export class Preview {
             if (job.copper.length > 0) {
                 ctx.fillStyle = colors.copper;
                 ctx.globalAlpha = 0.35;
-                this.fillPaths(ctx, frame, job.copper);
+                this.fillPaths(ctx, view, job.copper);
                 ctx.globalAlpha = 1;
             }
             const spot = job.spot > 0 ? job.spot : 0.1;
+            // The spot's width, but at least 1.2 px to be read; a device
+            // pixel while a large job's view moves.
+            const width = Math.max(spot * scale, this.moving ? 1 / this.dpr : 1.2);
             // The picked paths: a halo a few px wider than the line, under it.
             if (this.selection.length > 0) {
-                ctx.strokeStyle = colors.select;
-                ctx.fillStyle = colors.select;
-                ctx.globalAlpha = 0.45;
-                ctx.lineWidth = Math.max(spot * scale, 1.2) + 7;
                 const picked = this.selection
                     .map(([g, p]) => job.groups[g]?.paths[p])
                     .filter((path): path is Path => path !== undefined);
-                this.strokePaths(ctx, frame, picked);
-                ctx.globalAlpha = 1;
+                this.strokeLines(ctx, view, picked, { color: colors.select, width: width + 7, alpha: 0.45 });
             }
             const speeds = this.speedOn ? this.speeds() : null;
             if (speeds !== null) {
-                this.drawSpeeds(ctx, frame, colors, job, speeds, Math.max(spot * scale, 1.2));
+                this.drawSpeeds(ctx, view, colors, job, speeds, width);
             }
             // With the cut order scrubbed, the paths cut so far are drawn,
             // the last of them marked, and the rest faint.
@@ -1429,92 +1782,70 @@ export class Preview {
                 const last = this.orderOf().order[scrub - 1];
                 const path = last && last[1] >= 0 ? job.groups[last[0]]?.paths[last[1]] : undefined;
                 if (path) {
-                    ctx.strokeStyle = colors.head;
-                    ctx.fillStyle = colors.head;
-                    ctx.globalAlpha = 0.5;
-                    ctx.lineWidth = Math.max(spot * scale, 1.2) + 8;
                     if (path.length === 1) {
-                        this.fillDot(ctx, frame, path[0]!, Math.max(spot, 6 / scale), scale);
+                        ctx.fillStyle = colors.head;
+                        ctx.globalAlpha = 0.5;
+                        this.fillDots(ctx, view, [[path[0]!, Math.max(spot, 6 / scale)]], scale);
+                        ctx.globalAlpha = 1;
                     } else {
-                        this.strokePaths(ctx, frame, [path]);
+                        this.strokeLines(ctx, view, [path], { color: colors.head, width: width + 8, alpha: 0.5 });
                     }
-                    ctx.globalAlpha = 1;
                 }
             }
             job.groups.forEach((group, index) => {
-                if (speeds !== null && !(group.moves && group.moves.length > 0) && group.paths.some((path) => path.length > 1)) {
+                const color = colors.groups[index % colors.groups.length] ?? colors.axis;
+                const alpha = group.enabled ? 0.9 : 0.25;
+                // A path of one point is a dot: a drill, or a dot of paste
+                // the size of its pad.
+                const dots = (keep: (p: number) => boolean): [Point, number][] => group.paths.flatMap((path, p): [Point, number][] =>
+                    path.length === 1 && keep(p) ? [[path[0]!, dotRadius(group.areas?.[p], spot)]] : []);
+                const fill = (list: [Point, number][], dotAlpha: number): void => {
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = dotAlpha;
+                    this.fillDots(ctx, view, list, scale);
+                    ctx.globalAlpha = 1;
+                };
+                const carved = (group.moves?.length ?? 0) > 0;
+                if (speeds !== null && !carved && group.paths.some((path) => path.length > 1)) {
                     // Drawn by speed above; its dots still follow.
-                    group.paths.forEach((path, dot) => {
-                        if (path.length === 1) {
-                            ctx.fillStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
-                            ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
-                            this.fillDot(ctx, frame, path[0]!, dotRadius(group.areas?.[dot], spot), scale);
-                        }
-                    });
+                    fill(dots(() => true), alpha);
                     return;
                 }
-                const color = colors.groups[index % colors.groups.length] ?? colors.axis;
-                ctx.strokeStyle = color;
-                ctx.fillStyle = color;
-                ctx.globalAlpha = group.enabled ? 0.9 : 0.25;
+                let movesAlpha = alpha;
                 if (order !== null) {
                     const drawnAs = (p: number): boolean => group.enabled && done(index, p);
-                    const lines = group.paths.map((path, p) => [path, p] as const).filter(([path]) => path.length !== 1);
-                    ctx.lineWidth = Math.max(spot * scale, 1.2);
-                    if (group.moves && group.moves.length > 0) {
-                        ctx.globalAlpha = drawnAs(-1) ? 0.9 : 0.12;
+                    if (carved) {
+                        movesAlpha = drawnAs(-1) ? 0.9 : 0.12;
                     } else {
-                        ctx.globalAlpha = 0.12;
-                        this.strokePaths(ctx, frame, lines.filter(([, p]) => !drawnAs(p)).map(([path]) => path));
-                        ctx.globalAlpha = 0.9;
-                        this.strokePaths(ctx, frame, lines.filter(([, p]) => drawnAs(p)).map(([path]) => path));
-                        group.paths.forEach((path, dot) => {
-                            if (path.length === 1) {
-                                ctx.globalAlpha = drawnAs(dot) ? 0.9 : 0.12;
-                                this.fillDot(ctx, frame, path[0]!, dotRadius(group.areas?.[dot], spot), scale);
-                            }
-                        });
+                        const lines = group.paths.map((path, p) => [path, p] as const).filter(([path]) => path.length !== 1);
+                        this.strokeLines(ctx, view, lines.filter(([, p]) => !drawnAs(p)).map(([path]) => path), { color, width, alpha: 0.12 });
+                        this.strokeLines(ctx, view, lines.filter(([, p]) => drawnAs(p)).map(([path]) => path), { color, width, alpha: 0.9 });
+                        fill(dots((p) => !drawnAs(p)), 0.12);
+                        fill(dots(drawnAs), 0.9);
                         return;
                     }
                 }
-                if (group.moves && group.moves.length > 0) {
+                if (carved) {
                     // A model's toolpaths are too dense to draw a tool
                     // wide: thin lines, at their depth under the board.
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    let drawn = false;
-                    for (const run of cutRuns(group.moves)) {
-                        drawn = this.tracePolyline(ctx, frame, run, false) || drawn;
-                    }
-                    if (drawn) {
-                        ctx.stroke();
-                    }
+                    this.strokeLines(ctx, view, cachedRuns(group.moves!), { color, width: 1, alpha: movesAlpha });
                     return;
                 }
-                ctx.lineWidth = Math.max(spot * scale, 1.2);
-                this.strokePaths(ctx, frame, group.paths.filter((path) => path.length !== 1));
-                // A path of one point is a dot: a drill, or a dot of paste
-                // the size of its pad.
-                group.paths.forEach((path, dot) => {
-                    if (path.length === 1) {
-                        this.fillDot(ctx, frame, path[0]!, dotRadius(group.areas?.[dot], spot), scale);
-                    }
-                });
+                this.strokeLines(ctx, view, group.paths.filter((path) => path.length !== 1), { color, width, alpha });
+                fill(dots(() => true), alpha);
             });
             ctx.globalAlpha = 1;
             if (job.outline.length > 0) {
-                ctx.strokeStyle = colors.outline;
                 // A model's outline and block, and the shape a Plot page
                 // operation cuts, are where it lies, not a cut: a thin line,
                 // so the toolpaths under it show.
                 const thin = job.source === "mill" || job.groups.some((group) => (group.moves?.length ?? 0) > 0);
-                ctx.lineWidth = thin ? 1 : Math.max(spot * scale / 2, 1);
-                this.strokePaths(ctx, frame, job.outline);
+                this.strokeLines(ctx, view, job.outline, { color: colors.outline, width: thin ? 1 : Math.max(spot * scale / 2, 1), alpha: 1 });
             }
-            this.drawHighlight(ctx, frame, colors, job, spot, scale);
+            this.drawHighlight(ctx, view, colors, job, spot, scale);
         }
 
-        const exaggeration = this.heights ? this.drawProbe(ctx, frame, colors, reach) : null;
+        const exaggeration = this.heights ? this.drawProbe(ctx, view, colors, reach) : null;
 
         // The markers: a diagonal cross and a ring, eight px whatever the
         // zoom, so they read apart from the axis cross.
@@ -1523,17 +1854,17 @@ export class Preview {
         ctx.lineWidth = 1.5;
         for (const marker of this.markers) {
             const { x, y } = marker;
-            this.polyline(ctx, frame, [[x - size, y - size, 0], [x + size, y + size, 0]]);
-            this.polyline(ctx, frame, [[x - size, y + size, 0], [x + size, y - size, 0]]);
-            this.polyline(ctx, frame, circlePoints(size * 0.7, 16).map(([cx, cy]) => [x + cx, y + cy, 0] as Vec3), true);
+            this.polyline(ctx, view, [[x - size, y - size, 0], [x + size, y + size, 0]]);
+            this.polyline(ctx, view, [[x - size, y + size, 0], [x + size, y - size, 0]]);
+            this.polyline(ctx, view, circlePoints(size * 0.7, 16).map(([cx, cy]) => [x + cx, y + cy, 0] as Vec3), true);
         }
 
         // Axis cross, ten px wide whatever the zoom.
         const cross = 10 / scale;
         ctx.strokeStyle = colors.axis;
         ctx.lineWidth = 1.5;
-        this.polyline(ctx, frame, [[-cross, 0, 0], [cross, 0, 0]]);
-        this.polyline(ctx, frame, [[0, -cross, 0], [0, cross, 0]]);
+        this.polyline(ctx, view, [[-cross, 0, 0], [cross, 0, 0]]);
+        this.polyline(ctx, view, [[0, -cross, 0], [0, cross, 0]]);
         return exaggeration;
     }
 
@@ -1542,7 +1873,7 @@ export class Preview {
      * the highlight color, and with a point named, the segments either side
      * of it thicker still and the point as a ring.
      */
-    private drawHighlight(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, job: Job, spot: number, scale: number): void {
+    private drawHighlight(ctx: CanvasRenderingContext2D, view: Projector, colors: Colors, job: Job, spot: number, scale: number): void {
         const place = this.highlight;
         if (!place) {
             return;
@@ -1552,23 +1883,20 @@ export class Preview {
         if (!path || path.length === 0) {
             return;
         }
-        ctx.strokeStyle = colors.highlight;
-        ctx.fillStyle = colors.highlight;
-        ctx.globalAlpha = 0.9;
-        ctx.lineWidth = Math.max(spot * scale, 1.2) + 3;
-        this.strokePaths(ctx, frame, [path]);
+        const width = Math.max(spot * scale, 1.2);
+        this.strokeLines(ctx, view, [path], { color: colors.highlight, width: width + 3, alpha: 0.9 });
         if (place.point !== null && path[place.point]) {
             const i = place.point;
             const around = path.slice(Math.max(0, i - 1), Math.min(path.length, i + 2));
-            ctx.lineWidth = Math.max(spot * scale, 1.2) + 7;
-            this.strokePaths(ctx, frame, [around]);
+            this.strokeLines(ctx, view, [around], { color: colors.highlight, width: width + 7, alpha: 0.9 });
             const [x, y] = path[i]!;
-            const p = project(frame, this.width, this.height, [x, y, 0]);
-            if (p) {
+            const p = new Float64Array(2);
+            if (view.into(x, y, 0, p)) {
+                ctx.strokeStyle = colors.highlight;
                 ctx.lineWidth = 2;
                 ctx.globalAlpha = 1;
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+                ctx.arc(p[0]!, p[1]!, 7, 0, Math.PI * 2);
                 ctx.stroke();
             }
         }
@@ -1649,6 +1977,7 @@ export class Preview {
             return;
         }
         this.scrubAt = at;
+        this.stir();
         this.requestDraw();
     }
 
@@ -1657,40 +1986,20 @@ export class Preview {
     }
 
     /** The speed view's cuts: every path faint in its group's color, then each move by its speed, a red halo under the capped ones. */
-    private drawSpeeds(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, job: Job, map: SpeedMap, width: number): void {
-        ctx.globalAlpha = 0.12;
+    private drawSpeeds(ctx: CanvasRenderingContext2D, view: Projector, colors: Colors, job: Job, map: SpeedMap, width: number): void {
         job.groups.forEach((group, index) => {
-            ctx.strokeStyle = colors.groups[index % colors.groups.length] ?? colors.axis;
-            ctx.lineWidth = width;
-            this.strokePaths(ctx, frame, group.paths.filter((path) => path.length > 1));
+            const color = colors.groups[index % colors.groups.length] ?? colors.axis;
+            this.strokeLines(ctx, view, group.paths.filter((path) => path.length > 1), { color, width, alpha: 0.12 });
         });
-        const trace = (segments: SpeedMap["segments"]): void => {
-            ctx.beginPath();
-            let drawn = false;
-            for (const segment of segments) {
-                drawn = this.tracePolyline(ctx, frame, [[segment.from[0], segment.from[1], 0], [segment.to[0], segment.to[1], 0]], false) || drawn;
-            }
-            if (drawn) {
-                ctx.stroke();
-            }
-        };
-        const capped = map.segments.filter(isCapped);
+        const { capped, buckets } = speedLines(map);
+        // Narrower while a large job's view moves: wide strokes are what
+        // the rasterizer spends its time on.
         if (capped.length > 0) {
-            ctx.globalAlpha = 0.45;
-            ctx.strokeStyle = colors.rmax;
-            ctx.lineWidth = width + 6;
-            trace(capped);
+            this.strokeLines(ctx, view, capped, { color: colors.rmax, width: width + (this.moving ? 2 : 6), alpha: 0.45 });
         }
-        const buckets: SpeedMap["segments"][] = SPEED_COLORS.map(() => []);
-        for (const segment of map.segments) {
-            buckets[speedBucket(segment.speed, map.slowest, map.fastest)]!.push(segment);
-        }
-        ctx.globalAlpha = 1;
-        ctx.lineWidth = Math.max(width, 2);
-        buckets.forEach((segments, bucket) => {
-            if (segments.length > 0) {
-                ctx.strokeStyle = SPEED_COLORS[bucket]!;
-                trace(segments);
+        buckets.forEach((lines, bucket) => {
+            if (lines.length > 0) {
+                this.strokeLines(ctx, view, lines, { color: SPEED_COLORS[bucket]!, width: Math.max(width, this.moving ? 1 / this.dpr : 2), alpha: 1 });
             }
         });
     }
@@ -1885,7 +2194,7 @@ export class Preview {
      * mesh with each point colored below or above the mean. Returns the
      * stretch, or null when no surface was drawn.
      */
-    private drawProbe(ctx: CanvasRenderingContext2D, frame: Frame, colors: Colors, reach: number): number | null {
+    private drawProbe(ctx: CanvasRenderingContext2D, view: Projector, colors: Colors, reach: number): number | null {
         const map = this.probeMap;
         const draft = this.probeDraft;
         const grids: { grid: Grid; heights: (number | null)[][] | null }[] = [];
@@ -1896,13 +2205,14 @@ export class Preview {
             grids.push({ grid: map.grid, heights: map.heights });
         }
         let exaggeration: number | null = null;
+        const dot = new Float64Array(2);
         ctx.lineWidth = 1.2;
         for (const { grid, heights } of grids) {
             ctx.strokeStyle = colors.probe;
             ctx.fillStyle = colors.probe;
             ctx.setLineDash(heights === null ? [5, 4] : []);
             ctx.globalAlpha = heights === null ? 0.7 : 0.9;
-            this.polyline(ctx, frame, [[grid.x0, grid.y0, 0], [grid.x1, grid.y0, 0], [grid.x1, grid.y1, 0], [grid.x0, grid.y1, 0]], true);
+            this.polyline(ctx, view, [[grid.x0, grid.y0, 0], [grid.x1, grid.y0, 0], [grid.x1, grid.y1, 0], [grid.x0, grid.y1, 0]], true);
             ctx.setLineDash([]);
             const points = gridPoints(grid);
             const spread = map !== null && heights !== null ? heightSpread(map) : null;
@@ -1919,10 +2229,10 @@ export class Preview {
                 exaggeration = stretch;
                 // Rows, then columns, pen up where a point is not probed.
                 for (let iy = 0; iy < grid.ny; iy++) {
-                    this.polyline(ctx, frame, Array.from({ length: grid.nx }, (_, ix) => raised(iy * grid.nx + ix)));
+                    this.polyline(ctx, view, Array.from({ length: grid.nx }, (_, ix) => raised(iy * grid.nx + ix)));
                 }
                 for (let ix = 0; ix < grid.nx; ix++) {
-                    this.polyline(ctx, frame, Array.from({ length: grid.ny }, (_, iy) => raised(iy * grid.nx + ix)));
+                    this.polyline(ctx, view, Array.from({ length: grid.ny }, (_, iy) => raised(iy * grid.nx + ix)));
                 }
             }
             // A pad map's points are the pads probed, not the grid's cells:
@@ -1933,12 +2243,11 @@ export class Preview {
                 pads.points.forEach(([x, y], index) => {
                     const height = padHeights[index] ?? null;
                     const top: Vec3 = height !== null && spread ? [x, y, (height - spread.mean) * stretch] : [x, y, 0];
-                    const p = project(frame, this.width, this.height, top);
-                    if (!p) {
+                    if (!view.into(top[0], top[1], top[2], dot)) {
                         return;
                     }
                     ctx.beginPath();
-                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                    ctx.arc(dot[0]!, dot[1]!, 3, 0, Math.PI * 2);
                     if (height !== null) {
                         ctx.fillStyle = top[2] !== 0 ? (top[2] < 0 ? colors.low : colors.high) : colors.probe;
                         ctx.fill();
@@ -1950,12 +2259,12 @@ export class Preview {
                 points.forEach(([x, y], index) => {
                     const top = raised(index);
                     const probed = heights !== null && (heights[Math.floor(index / grid.nx)]?.[index % grid.nx] ?? null) !== null;
-                    const p = project(frame, this.width, this.height, top ?? [x, y, 0]);
-                    if (!p) {
+                    const [px, py, pz] = top ?? [x, y, 0];
+                    if (!view.into(px, py, pz, dot)) {
                         return;
                     }
                     ctx.beginPath();
-                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                    ctx.arc(dot[0]!, dot[1]!, 3, 0, Math.PI * 2);
                     if (probed) {
                         ctx.fillStyle = top && top[2] !== 0 ? (top[2] < 0 ? colors.low : colors.high) : colors.probe;
                         ctx.fill();
@@ -1970,85 +2279,105 @@ export class Preview {
     }
 
     /** Strokes world points as one line, the pen up across a point behind the eye or a null; `closed` joins the last to the first. */
-    private polyline(ctx: CanvasRenderingContext2D, frame: Frame, points: (Vec3 | null)[], closed = false): void {
+    private polyline(ctx: CanvasRenderingContext2D, view: Projector, points: (Vec3 | null)[], closed = false): void {
         ctx.beginPath();
-        if (this.tracePolyline(ctx, frame, points, closed)) {
+        if (this.tracePolyline(ctx, view, points, closed)) {
             ctx.stroke();
         }
     }
 
-    private tracePolyline(ctx: CanvasRenderingContext2D, frame: Frame, points: (Vec3 | null)[], closed: boolean): boolean {
+    private tracePolyline(ctx: CanvasRenderingContext2D, view: Projector, points: (Vec3 | null)[], closed: boolean): boolean {
+        const at = new Float64Array(2);
         let pen = false;
         let drawn = false;
         let broken = false;
-        let first: { x: number; y: number } | null = null;
+        let started = false;
+        let firstX = 0;
+        let firstY = 0;
         for (const point of points) {
-            const p = point ? project(frame, this.width, this.height, point) : null;
-            if (!p) {
+            if (!point || !view.into(point[0], point[1], point[2], at)) {
                 // Closing across a gap would draw a chord through the view.
                 pen = false;
                 broken = true;
                 continue;
             }
             if (!pen) {
-                ctx.moveTo(p.x, p.y);
+                ctx.moveTo(at[0]!, at[1]!);
                 pen = true;
-                first = first ?? p;
+                if (!started) {
+                    started = true;
+                    firstX = at[0]!;
+                    firstY = at[1]!;
+                }
             } else {
-                ctx.lineTo(p.x, p.y);
+                ctx.lineTo(at[0]!, at[1]!);
                 drawn = true;
             }
         }
-        if (closed && pen && first && !broken) {
-            ctx.lineTo(first.x, first.y);
+        if (closed && pen && started && !broken) {
+            ctx.lineTo(firstX, firstY);
             drawn = true;
         }
         return drawn;
     }
 
-    /** A filled circle on the board at `point`, `radius` mm across the board but at least a couple of pixels. */
-    private fillDot(ctx: CanvasRenderingContext2D, frame: Frame, point: Point, radius: number, scale: number): void {
-        const p = project(frame, this.width, this.height, [point[0], point[1], 0]);
-        if (!p) {
-            return;
-        }
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, Math.max(radius * scale, 1.5), 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    private strokePaths(ctx: CanvasRenderingContext2D, frame: Frame, paths: Path[]): void {
+    /**
+     * Filled circles on the board, each at a point with a radius in mm but
+     * at least a couple of pixels, in the fill style of the moment and one
+     * fill; those off the canvas are left out.
+     */
+    private fillDots(ctx: CanvasRenderingContext2D, view: Projector, dots: readonly [Point, number][], scale: number): void {
+        const at = new Float64Array(2);
         ctx.beginPath();
         let drawn = false;
-        for (const path of paths) {
-            // A path of one point is a drill: the round cap of a zero
-            // length stroke draws it as a dot of the spot's width.
-            const points = path.length === 1 ? [path[0]!, path[0]!] : path;
-            drawn = this.tracePolyline(ctx, frame, points.map(([x, y]) => [x, y, 0] as Vec3), false) || drawn;
-        }
-        if (drawn) {
-            ctx.stroke();
-        }
-    }
-
-    /** Fills closed board shapes, even-odd so holes stay holes; a path with a point behind the eye is left out. */
-    private fillPaths(ctx: CanvasRenderingContext2D, frame: Frame, paths: Path[]): void {
-        ctx.beginPath();
-        let drawn = false;
-        for (const path of paths) {
-            const projected: { x: number; y: number }[] = [];
-            for (const [x, y] of path) {
-                const p = project(frame, this.width, this.height, [x, y, 0]);
-                if (!p) {
-                    break;
-                }
-                projected.push(p);
-            }
-            if (projected.length < path.length || projected.length < 3) {
+        for (const [[x, y], radius] of dots) {
+            if (!view.into(x, y, 0, at)) {
                 continue;
             }
-            projected.forEach((p, index) => (index === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
-            ctx.closePath();
+            const r = Math.max(radius * scale, 1.5);
+            const px = at[0]!;
+            const py = at[1]!;
+            if (px < -r || py < -r || px > view.width + r || py > view.height + r) {
+                continue;
+            }
+            ctx.moveTo(px + r, py);
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            drawn = true;
+        }
+        if (drawn) {
+            ctx.fill();
+        }
+    }
+
+    /**
+     * Fills closed board shapes, even-odd so holes stay holes, in the fill
+     * style of the moment; a path with a point behind the eye is left out,
+     * and so is one wholly off the canvas, which encloses nothing on it. A
+     * fill closes each shape itself: `closePath` would cost Chromium a walk
+     * of the whole path so far per shape, a tenth of a second for a board's
+     * few thousand pads.
+     */
+    private fillPaths(ctx: CanvasRenderingContext2D, view: Projector, paths: Path[]): void {
+        ctx.beginPath();
+        let drawn = false;
+        for (const path of paths) {
+            const n = path.length;
+            if (n < 3 || projectLine(view, path, 1) !== "whole") {
+                continue;
+            }
+            let lastX = lineXY[0]!;
+            let lastY = lineXY[1]!;
+            ctx.moveTo(lastX, lastY);
+            for (let i = 1; i < n; i++) {
+                const x = lineXY[2 * i]!;
+                const y = lineXY[2 * i + 1]!;
+                if (i < n - 1 && Math.abs(x - lastX) < this.detail && Math.abs(y - lastY) < this.detail) {
+                    continue;
+                }
+                ctx.lineTo(x, y);
+                lastX = x;
+                lastY = y;
+            }
             drawn = true;
         }
         if (drawn) {
@@ -2063,12 +2392,12 @@ export class Preview {
      * them stand.
      */
     private colors(): Colors {
-        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-        if (this.palette && now - this.paletteAt < PALETTE_MS) {
+        const at = now();
+        if (this.palette && at - this.paletteAt < PALETTE_MS) {
             return this.palette;
         }
         const read = readColors(this.canvas);
-        this.paletteAt = now;
+        this.paletteAt = at;
         if (!this.palette || !sameColors(this.palette, read)) {
             this.palette = read;
         }
@@ -2175,6 +2504,11 @@ export class Preview {
             this.disposers.push(() => media.removeEventListener?.("change", handler));
         }
     }
+}
+
+/** A clock in ms, for the palette's age and how long a draw takes. */
+function now(): number {
+    return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 /** A dot's radius on the board, mm: that of a circle of its pad's area, or half the spot without one. */
