@@ -126,8 +126,11 @@ export function lockFieldset(fieldset: HTMLFieldSetElement, locked: boolean, rea
 }
 
 /** A button that stays disabled while the promise its handler returns is pending, so a second click cannot submit again. */
-export function button(label: string, onClick: ClickHandler, className = "btn"): HTMLButtonElement {
+export function button(label: string, onClick: ClickHandler, className = "btn", title?: string): HTMLButtonElement {
     const node = el("button", { type: "button", class: className }, label);
+    if (title) {
+        node.title = title;
+    }
     node.addEventListener("click", (event) => {
         if (node.disabled) {
             return;
@@ -464,6 +467,9 @@ export function fileDrop(zone: HTMLElement, input: HTMLInputElement, take: (file
  */
 export function foldPanel(key: string, head: HTMLElement, body: HTMLElement, onToggle?: (open: boolean) => void): HTMLDetailsElement {
     const fold = el("details", { class: "panel-fold", open: readStored(key) !== "0" }, head, body);
+    if (!head.title) {
+        head.title = "fold or unfold";
+    }
     fold.addEventListener("toggle", () => {
         writeStored(key, fold.open ? "1" : "0");
         onToggle?.(fold.open);

@@ -62,7 +62,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         const names = [DEFAULT_PRESET, ...panels.presetNames()];
         const options = names.map((name) => el("option", { value: name }, name));
         if (current === null) {
-            options.push(el("option", { value: UNKEPT, disabled: true }, "this layout (not kept)"));
+            options.push(el("option", { value: UNKEPT, disabled: true }, "(not kept)"));
         }
         replace(select, ...options);
         select.value = current ?? UNKEPT;
@@ -110,7 +110,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         const prefs = readTabPrefs();
         const start = el("select", { class: "field", title: "the tab shown when the page is opened" }) as HTMLSelectElement;
         replace(start,
-            el("option", { value: "last" }, "the last one shown"),
+            el("option", { value: "last" }, "last shown"),
             ...PAGES.map((page) => el("option", { value: page.id }, page.label)),
         );
         start.value = prefs.start;
@@ -191,7 +191,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
 
         const hidden = panels.hiddenPanels();
         const hiddenList = hidden.length === 0
-            ? el("p", { class: "muted hint" }, "No panel is hidden.")
+            ? el("p", { class: "muted hint" }, "None.")
             : el("ul", { class: "page-settings-hidden" }, ...hidden.map((panel) => {
                 const show = el("button", { type: "button", class: "btn btn-small" }, "Show");
                 show.addEventListener("click", () => panels.showPanel(panel.id));
@@ -204,7 +204,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
             el("div", { class: "stack" },
                 el("h3", {}, "Tabs"),
                 labeled("Open on", start, "labeled inline"),
-                el("label", { class: "check", title: "the bar opens on hover, or on a press of the strip" }, fold, " Fold the tab bar to a strip"),
+                el("label", { class: "check", title: "the bar opens on hover, or on a press of the strip" }, fold, " Fold the tab bar"),
                 el("div", { class: "page-settings-tabs", title: "a tab left out opens from More at the bar's end" }, ...shownTabs),
                 el("h3", {}, "Panels"),
                 el("div", { class: "button-row" }, labeled("Layout", layout, "labeled inline"), remove),

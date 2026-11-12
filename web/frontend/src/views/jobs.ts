@@ -254,8 +254,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     showMode();
     const list = el("ul", { class: "job-list" });
     const details = el("div", { class: "job-details" });
-    const saveButton = button("Save job", () => saveJob(), "btn btn-quiet btn-small");
-    const deleteAllButton = button("Delete all", () => removeAll(), "btn btn-quiet btn-small");
+    const saveButton = button("Save job", () => saveJob(), "btn btn-quiet btn-small", "download the job as JSON");
+    const deleteAllButton = button("Delete all", () => removeAll(), "btn btn-quiet btn-small", "delete every job");
     // The jobs checked to be made one, in the order they were checked,
     // which is the order they are cut in.
     let combining: string[] = [];
@@ -470,7 +470,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             // A small drawing of the job; its address changes with what it
             // shows, so an unchanged job's is not asked for again.
             const thumb = el("img", { class: "job-thumb", src: ctx.api.jobThumbUrl(job), alt: "", loading: "lazy", decoding: "async" });
-            const pick = el("button", { type: "button", class: "job-pick", onclick: () => void ctx.selectJob(job.id) },
+            const pick = el("button", { type: "button", class: "job-pick", title: "pick this job", onclick: () => void ctx.selectJob(job.id) },
                 thumb,
                 el("span", { class: "job-text" },
                     el("span", { class: "job-name" }, job.name),
@@ -478,7 +478,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                     job.stats ? el("span", { class: "muted job-stat" }, ` ${formatLength(job.stats.length_mm)}, ${formatDuration(job.stats.seconds)}`) : null,
                 ),
             );
-            const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small");
+            const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small", "delete this job");
             item.append(check, pick, remove);
             return item;
         }));
@@ -554,8 +554,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     const pickedLabel = el("input", { type: "text", class: "field", "aria-label": "New group name", placeholder: "new group name", spellcheck: "false" }) as HTMLInputElement;
     const pickedMove = button("Move", () => movePicked(), "btn btn-small");
     pickedMove.title = "move to the chosen group; a new one copies the first source group's settings, off if any source is off";
-    const pickedDelete = button("Delete paths", () => deletePicked(), "btn btn-quiet btn-small");
-    const pickedClear = button("Clear", () => ctx.store.set({ selection: null }), "btn btn-quiet btn-small");
+    const pickedDelete = button("Delete paths", () => deletePicked(), "btn btn-quiet btn-small", "delete the paths picked");
+    const pickedClear = button("Clear", () => ctx.store.set({ selection: null }), "btn btn-quiet btn-small", "unpick the paths");
     const pickedArray = button("Array", () => toggleArray(), "btn btn-quiet btn-small btn-toggle");
     pickedArray.title = "copy the picked paths in a row or around a center";
     pickedArray.setAttribute("aria-pressed", "false");
@@ -597,8 +597,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     const circularFields = el("div", { class: "field-row" }, labeled("Center x mm", arrayCx), labeled("Center y mm", arrayCy), arrayMiddle, arrayAxis, labeled("Sweep deg", arraySweep));
     circularFields.title = "360 spreads copies evenly; less ends at the sweep; positive is counterclockwise";
     const arrayNote = el("p", { class: "muted hint" });
-    const arrayMake = button("Make array", () => makeArray(), "btn btn-primary btn-small");
-    const arrayCancel = button("Cancel", () => closeArray(), "btn btn-quiet btn-small");
+    const arrayMake = button("Make array", () => makeArray(), "btn btn-primary btn-small", "add the copies to the job");
+    const arrayCancel = button("Cancel", () => closeArray(), "btn btn-quiet btn-small", "close the array without copies");
     const arrayBox = el("div", { class: "array-box hidden" },
         arrayKinds,
         el("div", { class: "field-row" }, labeled("Count", arrayCount)),
@@ -1024,7 +1024,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         const field = numberField({ value: job.spot, min: 0.001, step: 0.01, width: "5.5rem" });
         field.setAttribute("aria-label", milling ? "Tool width" : "Spot width");
         widthField = field;
-        const apply = button(mode === "remake" ? "Re-cut" : "Set", () => applyWidth(), "btn btn-quiet");
+        const apply = button(mode === "remake" ? "Re-cut" : "Set", () => applyWidth(), "btn btn-quiet", mode === "remake" ? "cut the job again with this value" : "set this value");
         const note = el("span", { class: "muted job-width-note" },
             mode === "remake" ? "re-cuts the paths where the job is now"
                 : mode === "width" ? "paths stay as they are"
@@ -1158,7 +1158,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         return el("div", { class: "goto-row" },
             el("span", { class: "choice-label" }, "Offset"),
             x, y,
-            button("Move", () => apply(), "btn btn-quiet"),
+            button("Move", () => apply(), "btn btn-quiet", "move the paths picked"),
             el("span", { class: "choice-label" }, "Turn"),
             angle, about, ccw, cw,
             rotation,

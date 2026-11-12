@@ -95,7 +95,7 @@ export function mountPreviewPanel(
 ): Preview {
     const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board" });
     const preview = new Preview(canvas);
-    const lock = button(LOCK_LABEL, () => showLock(preview.toggleRotationLock()), "btn btn-quiet btn-small btn-toggle");
+    const lock = button(LOCK_LABEL, () => showLock(preview.toggleRotationLock()), "btn btn-quiet btn-small btn-toggle", "drag pans instead of orbiting");
     const showLock = (locked: boolean): void => {
         lock.setAttribute("aria-pressed", locked ? "true" : "false");
         lock.textContent = locked ? LOCKED_LABEL : LOCK_LABEL;
@@ -207,8 +207,8 @@ export function mountPreviewPanel(
                 viewButton("Top view", "look straight down", () => preview.lookDown()),
                 viewButton("CCW 90", "turn the view a quarter counterclockwise", () => preview.turnView(-1)),
                 viewButton("CW 90", "turn the view a quarter clockwise", () => preview.turnView(1)),
-                button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small"),
-                button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small"),
+                button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small", "the overview again"),
+                button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small", "forget the head's trail"),
             ),
         ),
         el("div", { class: "preview-box" }, canvas),

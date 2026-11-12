@@ -461,6 +461,57 @@ input[type="checkbox"] {
     box-shadow: var(--shadow-lg);
 }
 
+/* The feature search: a box under the bar's tools, its matches under it. */
+.search-sheet.panel {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    right: 0;
+    z-index: 10;
+    width: min(28rem, calc(100vw - 2 * var(--gap)));
+    box-shadow: var(--shadow-lg);
+}
+
+.search-input.field {
+    width: 100%;
+}
+
+.search-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: min(28rem, 60vh);
+    overflow-y: auto;
+}
+
+.search-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 0.75rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.search-item[aria-selected="true"],
+.search-item:hover {
+    background: var(--btn);
+}
+
+.search-label {
+    color: var(--strong);
+    font-weight: 600;
+}
+
+.search-where {
+    font-size: 0.8rem;
+}
+
+.search-none {
+    padding: 0.45rem 0.6rem;
+}
+
 .page-settings-tabs {
     display: flex;
     flex-wrap: wrap;
@@ -3096,7 +3147,7 @@ table.pnp-parts tr.dnp td {
     position: relative;
     display: inline-flex;
     align-items: center;
-    cursor: help;
+    cursor: pointer;
 }
 
 .info-tip-mark {
@@ -3126,13 +3177,13 @@ table.pnp-parts tr.dnp td {
     stroke-width: 3;
 }
 
+/* Fixed to the window and placed by the page under the mark, so no
+   panel that scrolls or clips its content cuts the drawing off. */
 .info-tip-pop {
     display: none;
-    position: absolute;
+    position: fixed;
     z-index: 30;
-    top: calc(100% + 0.4rem);
-    right: 0;
-    width: min(20rem, 80vw);
+    width: min(20rem, calc(100vw - 1rem));
     padding: 0.6rem;
     color: var(--text);
     font-size: 0.8rem;
@@ -3147,8 +3198,7 @@ table.pnp-parts tr.dnp td {
     box-shadow: var(--shadow-lg);
 }
 
-.info-tip:hover .info-tip-pop,
-.info-tip:focus .info-tip-pop {
+.info-tip[data-open] .info-tip-pop {
     display: block;
 }
 

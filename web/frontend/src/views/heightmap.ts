@@ -559,7 +559,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return;
         }
         showGrid(grid);
-    }, "btn btn-quiet");
+    }, "btn btn-quiet", "size the grid to the job");
 
     // --- how to probe ---
     const settingFields = {
@@ -619,9 +619,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
         setUnlessFocused(queueField, value === undefined ? "" : String(value), document.activeElement);
     };
 
-    const probeButton = button("Probe", () => startProbe(), "btn btn-primary");
-    const continueButton = button("Continue", () => continueProbe(), "btn");
-    const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger");
+    const probeButton = button("Probe", () => startProbe(), "btn btn-primary", "probe the grid and build the height map");
+    const continueButton = button("Continue", () => continueProbe(), "btn", "go on from where probing stopped");
+    const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger", "stop probing");
     const probeNote = el("p", { class: "muted hint" });
     // The pads: for a probe that must land on copper, the board is probed
     // at the selected job's pads instead of a grid.
@@ -629,9 +629,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     minAreaField.setAttribute("aria-label", "Least pad area");
     const maxPointsField = numberField({ value: PADS_MAX_POINTS, min: 2, max: 2500, step: 1, width: "5.5rem" });
     maxPointsField.setAttribute("aria-label", "Most pads probed");
-    const padsPlanButton = button("Plan", () => planPads(), "btn btn-quiet");
-    const padsProbeButton = button("Probe pads", () => startPads(false), "btn btn-primary");
-    const padsContinueButton = button("Continue", () => startPads(true), "btn hidden");
+    const padsPlanButton = button("Plan", () => planPads(), "btn btn-quiet", "show the pads that would be probed");
+    const padsProbeButton = button("Probe pads", () => startPads(false), "btn btn-primary", "probe the board's pads");
+    const padsContinueButton = button("Continue", () => startPads(true), "btn hidden", "go on from where probing stopped");
     const padsNote = el("span", { class: "muted hm-pads-note" });
     const padsRequest = (resume: boolean): PadProbeRequest | string => {
         const job = ctx.store.get().job;
@@ -650,9 +650,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     };
     // One probe under the head: the map tied to the frame in use after a
     // power cycle or a position set, or the surface made H 0 without a map.
-    const probeHereMap = button("Probe here: tie map", () => probeHere("map"), "btn btn-quiet");
-    const probeNearestMap = button("Probe nearest: tie map", () => probeNearest(), "btn btn-quiet");
-    const probeHereZero = button("Probe here: set H 0", () => probeHere("zero"), "btn btn-quiet");
+    const probeHereMap = button("Probe here: tie map", () => probeHere("map"), "btn btn-quiet", "probe under the head and tie the map to it");
+    const probeNearestMap = button("Probe nearest: tie map", () => probeNearest(), "btn btn-quiet", "probe the nearest probed point and tie the map to it");
+    const probeHereZero = button("Probe here: set H 0", () => probeHere("zero"), "btn btn-quiet", "probe under the head and call it H 0");
     const PROBE_HERE_HINT = "Tie map re-aligns the map after a power cycle, restart or Set position: put the tip over"
         + " copper the map covers, not in a cut. Probe nearest finds such a point. Set H 0 makes the surface H 0,"
         + " for milling without a map.";
@@ -681,9 +681,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             return undefined;
         }
         return applyFocus(offset);
-    }, "btn btn-quiet");
+    }, "btn btn-quiet", "set the focus offset typed");
     focusField.addEventListener("keydown", onEnter(setFocus));
-    const focusHere = button("Focus here", () => applyFocus(null), "btn");
+    const focusHere = button("Focus here", () => applyFocus(null), "btn", "take the head's height as focus");
     const focusLabel = labeled("Focus offset mm", focusField, "labeled inline");
     const loadInput = el("input", { type: "file", accept: ".json,application/json", class: "hidden" }) as HTMLInputElement;
     loadInput.addEventListener("change", () => {
@@ -693,9 +693,9 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             void loadMap(file);
         }
     });
-    const saveButton = button("Save map", () => saveMap(), "btn btn-quiet");
-    const loadButton = button("Load map", () => loadInput.click(), "btn btn-quiet");
-    const clearButton = button("Clear", () => clearMap(), "btn btn-quiet");
+    const saveButton = button("Save map", () => saveMap(), "btn btn-quiet", "download the height map");
+    const loadButton = button("Load map", () => loadInput.click(), "btn btn-quiet", "load a height map file");
+    const clearButton = button("Clear", () => clearMap(), "btn btn-quiet", "forget the height map");
 
     body.append(
         el("div", { class: "field-grid hm-grid-fields" },
@@ -707,7 +707,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
             labeled("Points Y", gridFields.ny),
         ),
         el("details", { class: "hm-probe-settings" },
-            el("summary", {}, "Probe"),
+            el("summary", { title: "fold or unfold",}, "Probe"),
             el("div", { class: "field-grid" },
                 labeled("Depth mm", settingFields.depth),
                 labeled("Feed mm/min", settingFields.feed),

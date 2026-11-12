@@ -1,4 +1,4 @@
-// A small "i" beside a group of settings that shows, on hover or focus, a
+// A small "i" beside a group of settings that shows, when pressed, a
 // drawing of what they mean: the heights the nozzle works at, a feeder's
 // places, the top camera's offset from the nozzle, the up camera's place
 // and scale, how references place the board, and the nozzle's runout.
@@ -87,7 +87,8 @@ function drawing(topic: InfoTopic): SVGElement {
             root.append(
                 rect(20, 20, 110, 80, "tip-faint"), line(75, 20, 75, 100, "tip-dash"), line(20, 60, 130, 60, "tip-dash"),
                 circle(88, 52, 7, "tip-mark"), text(75, 114, "the up camera's picture", "middle"),
-                arrow(88, 52, 77, 59), text(150, 40, "the nozzle seen off"), text(150, 54, "center: the head"), text(150, 68, "moves until it sits"), text(150, 82, "on the crosshair"),
+                arrow(88, 52, 77, 59),
+                text(136, 34, "the nozzle, seen"), text(136, 46, "off center: the"), text(136, 58, "head moves until"), text(136, 70, "it sits on the"), text(136, 82, "crosshair"),
             );
             break;
         case "references":
@@ -110,16 +111,90 @@ function drawing(topic: InfoTopic): SVGElement {
     return root;
 }
 
-/** The "i" that shows the drawing of `topic` with its caption while hovered or focused. */
+/** The tip open now: one at a time. */
+let openTip: { tip: HTMLElement; close: () => void } | null = null;
+
+/** Closes the tip open, if any. */
+export function closeInfoTip(): void {
+    openTip?.close();
+}
+
+/**
+ * Places a pop under (or over, when there is no room) the mark it opens
+ * from, inside the window: it is fixed to the window, so a panel that
+ * scrolls or clips its content cannot cut it off.
+ */
+function placePop(pop: HTMLElement, mark: Element): void {
+    const at = mark.getBoundingClientRect();
+    const room = { width: document.documentElement.clientWidth || window.innerWidth, height: window.innerHeight };
+    const box = pop.getBoundingClientRect();
+    const gap = 6;
+    const left = Math.max(gap, Math.min(at.right - box.width, room.width - box.width - gap));
+    const below = at.bottom + gap;
+    const top = below + box.height <= room.height - gap ? below : Math.max(gap, at.top - gap - box.height);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+}
+
+/** The "i" that shows the drawing of `topic` with its caption when pressed, until pressed again or anything else is. */
 export function infoTip(topic: InfoTopic): HTMLSpanElement {
     // The mark is drawn, not a box with a letter in it: a circle with an i.
     const mark = svg("svg", { class: "info-tip-mark", viewBox: "0 0 20 20", "aria-hidden": "true" },
         svg("circle", { cx: 10, cy: 10, r: 8.5 }),
         svg("text", { x: 10, y: 14.5, "text-anchor": "middle" }, "i"),
     );
-    const tip = el("span", { class: "info-tip", tabindex: "0", role: "button", "aria-label": `What this means: ${topic}` },
+    const pop = el("span", { class: "info-tip-pop", role: "tooltip" }, drawing(topic), el("span", { class: "info-tip-caption" }, CAPTIONS[topic]));
+    const tip = el("span", { class: "info-tip", tabindex: "0", role: "button", "aria-expanded": "false", "aria-label": `What this means: ${topic}`, title: "what this means: press for a drawing" },
         mark,
-        el("span", { class: "info-tip-pop", role: "tooltip" }, drawing(topic), el("span", { class: "info-tip-caption" }, CAPTIONS[topic])),
+        pop,
     ) as HTMLSpanElement;
+    const close = (): void => {
+        tip.removeAttribute("data-open");
+        tip.setAttribute("aria-expanded", "false");
+        document.removeEventListener("pointerdown", outside, true);
+        document.removeEventListener("keydown", escape, true);
+        globalThis.removeEventListener?.("scroll", close, true);
+        if (openTip?.tip === tip) {
+            openTip = null;
+        }
+    };
+    const outside = (event: Event): void => {
+        if (!tip.contains(event.target as Node | null)) {
+            close();
+        }
+    };
+    const escape = (event: KeyboardEvent): void => {
+        if (event.key === "Escape") {
+            event.stopPropagation();
+            close();
+        }
+    };
+    const open = (): void => {
+        openTip?.close();
+        tip.setAttribute("data-open", "");
+        tip.setAttribute("aria-expanded", "true");
+        placePop(pop, mark);
+        openTip = { tip, close };
+        document.addEventListener("pointerdown", outside, true);
+        document.addEventListener("keydown", escape, true);
+        // A scroll moves the mark away from the pop, which is fixed.
+        globalThis.addEventListener?.("scroll", close, true);
+    };
+    const toggle = (event: Event): void => {
+        // In a disclosure's summary a press would also fold the panel.
+        event.preventDefault();
+        event.stopPropagation();
+        if (tip.hasAttribute("data-open")) {
+            close();
+        } else {
+            open();
+        }
+    };
+    mark.addEventListener("click", toggle);
+    tip.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+            toggle(event);
+        }
+    });
     return tip;
 }

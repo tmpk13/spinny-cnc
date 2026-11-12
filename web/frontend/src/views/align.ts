@@ -58,11 +58,11 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
     const within = numberField({ value: 5, min: 0.1, max: 100, step: 0.5, width: "5rem" });
     within.setAttribute("aria-label", "Within mm");
     const withinLabel = labeled("Within mm", within, "labeled inline");
-    const markButton = button("Mark here", () => markHere(), "btn btn-primary");
-    const captureButton = button("Capture from camera", () => capture(), "btn");
+    const markButton = button("Mark here", () => markHere(), "btn btn-primary", "take the head's place as this mark");
+    const captureButton = button("Capture from camera", () => capture(), "btn", "take the marks from the camera's pose");
     const fitLine = el("p", { class: "muted align-fit" }, fitText(null));
-    const applyButton = button("Apply", () => apply(), "btn btn-primary");
-    const clearButton = button("Clear", () => clear(), "btn btn-quiet");
+    const applyButton = button("Apply", () => apply(), "btn btn-primary", "move the job onto the marks");
+    const clearButton = button("Clear", () => clear(), "btn btn-quiet", "forget the marks");
     const note = el("p", { class: "muted hint" });
     const showPick = (): void => {
         const point = pick.value === "point";
@@ -227,7 +227,7 @@ export function mountAlign(root: HTMLElement, ctx: Ctx): void {
                 el("td", {}, kind!),
                 el("td", {}, distance!),
                 el("td", {}, residual!),
-                el("td", {}, button("Remove", () => remove(index), "btn btn-quiet btn-small")),
+                el("td", {}, button("Remove", () => remove(index), "btn btn-quiet btn-small", "remove this mark")),
             ));
         replace(table,
             el("thead", {}, el("tr", {},

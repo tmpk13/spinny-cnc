@@ -33,13 +33,13 @@ export const MILL_KEY = "spinny.mill";
 /** How long typing pauses before the operation is planned again, ms. */
 export const PLAN_DELAY_MS = 250;
 
-export const MILL_KINDS: { kind: MillKind; label: string }[] = [
-    { kind: "drill", label: "Drill" },
-    { kind: "holes", label: "Holes" },
-    { kind: "line", label: "Line" },
-    { kind: "face", label: "Face" },
-    { kind: "pocket", label: "Pocket" },
-    { kind: "profile", label: "Profile" },
+export const MILL_KINDS: { kind: MillKind; label: string; tip: string }[] = [
+    { kind: "drill", label: "Drill", tip: "holes at points" },
+    { kind: "holes", label: "Holes", tip: "the board's holes" },
+    { kind: "line", label: "Line", tip: "a cut along a line" },
+    { kind: "face", label: "Face", tip: "flatten an area" },
+    { kind: "pocket", label: "Pocket", tip: "clear an area to a depth" },
+    { kind: "profile", label: "Profile", tip: "cut around a shape" },
 ];
 
 const SHAPES: { shape: MillShape; label: string }[] = [
@@ -371,7 +371,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const kinds = choiceRow(MILL_KINDS.map((entry) => entry.kind), kind, (picked) => {
         kind = picked;
         changed();
-    }, (value) => MILL_KINDS.find((entry) => entry.kind === value)!.label);
+    }, (value) => MILL_KINDS.find((entry) => entry.kind === value)!.label, undefined, (value) => MILL_KINDS.find((entry) => entry.kind === value)!.tip);
     kinds.classList.add("choice-wrap");
     kinds.setAttribute("aria-label", "Operation");
     const shapes = choiceRow(SHAPES.map((entry) => entry.shape), shape, (picked) => {
@@ -402,11 +402,11 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
         for (const marker of ctx.store.get().markers) {
             appendPoint(fromBoard(marker.x, marker.y));
         }
-    }, "btn btn-quiet btn-small");
+    }, "btn btn-quiet btn-small", "add every marker as a point");
     const clearPoints = button("Clear", () => {
         points.value = "";
         changed();
-    }, "btn btn-quiet btn-small");
+    }, "btn btn-quiet btn-small", "forget the points");
     const closedLabel = el("label", { class: "muted" }, closed, " back to the first point");
 
     const pointsLabel = labeled("Points, board mm", points);
@@ -752,7 +752,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
             const up = button("Up", () => move(index), "btn btn-quiet btn-small");
             up.title = "cut before the operation above";
             setLocked(up, index === 0, "the first operation cuts first already");
-            const remove = button("Remove", () => removeOp(index), "btn btn-quiet btn-small");
+            const remove = button("Remove", () => removeOp(index), "btn btn-quiet btn-small", "remove this operation");
             const row = el("li", { class: "plot-op" }, edit, el("span", { class: "button-row" }, up, remove));
             row.classList.toggle("editing", index === editing);
             return row;

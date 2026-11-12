@@ -166,9 +166,9 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     const pick = el("select", { class: "field", "aria-label": "CAM profile" });
     const newId = el("input", { type: "text", class: "field", placeholder: "new id", "aria-label": "New profile id", autocomplete: "off" });
     newId.style.width = "8rem";
-    const create = button("New", () => createProfile(), "btn");
-    const remove = button("Delete", () => removeProfile(), "btn btn-quiet");
-    const reload = button("Reload", () => refresh(), "btn btn-quiet btn-small");
+    const create = button("New", () => createProfile(), "btn", "start a new CAM profile");
+    const remove = button("Delete", () => removeProfile(), "btn btn-quiet", "delete this profile");
+    const reload = button("Reload", () => refresh(), "btn btn-quiet btn-small", "read the profiles again from disk");
     const summary = el("p", { class: "muted cam-summary" });
     const problems = el("ul", { class: "cam-problems hidden" });
     const axesBox = el("div", { class: "groups-scroll" });
@@ -185,11 +185,11 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         el("label", { class: "btn btn-quiet" }, "pick files", fileInput),
     );
     const notes = el("ul", { class: "cam-notes muted hidden" });
-    const open = button("Show in Jobs", () => showPage("jobs"), "btn btn-quiet btn-small");
+    const open = button("Show in Jobs", () => showPage("jobs"), "btn btn-quiet btn-small", "open the Jobs tab");
 
     // --- gcode ---
     const jobPick = el("select", { class: "field", "aria-label": "Job to write" });
-    const exportButton = button("Export gcode", () => exportGcode(), "btn btn-primary");
+    const exportButton = button("Export gcode", () => exportGcode(), "btn btn-primary", "download the job as G-code for this profile");
     const reportBox = el("div", { class: "cam-report" });
 
     root.append(
@@ -216,8 +216,8 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
 
     // --- the file ---
     const fileEditor = codeEditor("Profile file");
-    const save = button("Save", () => saveText(), "btn btn-primary");
-    const revert = button("Revert", () => revertText(), "btn btn-quiet");
+    const save = button("Save", () => saveText(), "btn btn-primary", "save the profile");
+    const revert = button("Revert", () => revertText(), "btn btn-quiet", "drop the edits");
     const fileStatus = el("span", { class: "muted cam-status" });
     const editor = el("div", { class: "panel-body" },
         el("div", { class: "button-row" }, save, revert, fileStatus),

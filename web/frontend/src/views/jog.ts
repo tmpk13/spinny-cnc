@@ -250,7 +250,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     };
 
     /** A jog button that moves by a step when pressed, or while held under Hold to move. */
-    function jogButton(label: string, step: () => Promise<unknown>, piece: (seconds: number) => Promise<unknown>): HTMLButtonElement {
+    function jogButton(label: string, step: () => Promise<unknown>, piece: (seconds: number) => Promise<unknown>, title: string): HTMLButtonElement {
         let held = false;
         const press = button(label, () => {
             // The click that ends a hold is not a step of its own.
@@ -259,7 +259,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
                 return undefined;
             }
             return step();
-        }, "btn btn-axis");
+        }, "btn btn-axis", title);
         press.addEventListener("pointerdown", (event) => {
             if (!smooth || event.button !== 0 || press.disabled) {
                 return;
@@ -321,7 +321,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             picks.set(id, value);
             typed.delete(id);
             custom.value = "";
-        }, format);
+        }, format, undefined, (value) => `jog by ${format(value)}`);
         const existing = typed.get(id);
         if (existing !== undefined) {
             custom.value = String(existing);
@@ -346,8 +346,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             ),
             el("div", { class: "axis-bar-steps" }, row, custom),
             el("div", { class: "axis-bar-buttons" },
-                jogButton(buttons[0], () => onMove(-1), onHold(-1)),
-                jogButton(buttons[1], () => onMove(1), onHold(1)),
+                jogButton(buttons[0], () => onMove(-1), onHold(-1), `${title}: back by the step`),
+                jogButton(buttons[1], () => onMove(1), onHold(1), `${title}: on by the step`),
             ),
             zero,
         );
@@ -482,7 +482,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             el("span", { class: "choice-label" }, "Joint"),
             ...fields.map((field) => field.input),
             fields.length > 0 ? go : null,
-            center ? button("Center", () => ctx.call(ctx.api.goto({ kind: "joint", ...center } as GotoRequest)), "btn btn-quiet") : null,
+            center ? button("Center", () => ctx.call(ctx.api.goto({ kind: "joint", ...center } as GotoRequest)), "btn btn-quiet", "go to the machine file's center") : null,
         );
     }
 
@@ -514,7 +514,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
                 return;
             }
             await ctx.call(ctx.api.setPosition(Object.fromEntries(given)));
-        }, "btn btn-quiet");
+        }, "btn btn-quiet", "declare where the head is, without moving it");
         const last = button("Last known", () => {
             const snapshot = ctx.store.get().snapshot;
             const reported = snapshot.position ?? null;
@@ -566,7 +566,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             );
         }
         for (const axis of controls.axes) {
-            const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small") : null;
+            const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small", `call this place ${axis.letter} 0`) : null;
             bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, axis.buttons, (sign) => jogAxis(axis, sign), (sign) => holdAxis(axis, sign), zero));
         }
 
@@ -594,7 +594,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             rows.push(travelRow());
         }
 
-        motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
+        motors = button("Motors", () => toggleMotors(), "btn btn-quiet", "power the motors on or off");
         // Only a machine with an endstop reports what is homed, and only
         // that one has anything to home; a G-code machine homes as its file says.
         home = button("Home", () => ctx.call(ctx.api.home()), "btn btn-quiet hidden");
@@ -602,7 +602,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         const bottom = el("div", { class: "button-row" },
             motors,
             home,
-            gcode ? null : button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet"),
+            gcode ? null : button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet", "clear an alarm so the machine moves again"),
         );
         replace(body, bars, ...rows, bottom);
         show(ctx.store.get());

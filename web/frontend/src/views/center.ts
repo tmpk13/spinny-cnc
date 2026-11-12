@@ -150,7 +150,7 @@ export function centerTest(ctx: Ctx): HTMLElement {
     }
 
     const panel = el("details", { class: "center-test" },
-        el("summary", {}, "Centering test"),
+        el("summary", { title: "fold or unfold",}, "Centering test"),
         el("p", { class: "muted" },
             "Lines and a ring that show where the rotation axis really is. The fine pattern"
             + " magnifies the error. Cut it in constant power mode (Mode const)."),
@@ -169,7 +169,7 @@ export function centerTest(ctx: Ctx): HTMLElement {
             labeled("Speed mm/min", speed),
             labeled("Spot mm", spot),
         ),
-        button("Make test job", () => make(), "btn"),
+        button("Make test job", () => make(), "btn", "make the centering test as a job"),
         output,
     );
     // Only a machine whose file asks for it (a polar one, by default) has

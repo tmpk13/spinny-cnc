@@ -54,6 +54,7 @@ export function choiceRow<T>(
     onPick: (value: T) => void,
     format: (value: T) => string,
     label?: string,
+    tip: (value: T) => string = (value) => `${label ? `${label.toLowerCase()} ` : "use "}${format(value)}`,
 ): HTMLDivElement {
     const row = document.createElement("div");
     row.className = "choice-row";
@@ -69,6 +70,7 @@ export function choiceRow<T>(
         button.type = "button";
         button.className = "btn btn-choice";
         button.textContent = format(value);
+        button.title = tip(value);
         button.setAttribute("aria-pressed", value === initial ? "true" : "false");
         button.addEventListener("click", () => {
             for (const other of buttons) {

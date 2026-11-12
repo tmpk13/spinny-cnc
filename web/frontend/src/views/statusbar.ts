@@ -44,14 +44,20 @@ export function visiblePorts(ports: Port[], hideSystem: boolean): Port[] {
     return hideSystem ? ports.filter((port) => port.kind !== "system") : ports;
 }
 
-/** What the select says for a port: the G-code machine it is, what it is, then where. */
+/**
+ * What the select says for a port, short: the G-code machine it is, else
+ * what it is, then its device node (the long by-id url is the field's).
+ */
 export function portLabel(port: Port): string {
     const name = port.product || port.description;
-    const machine = port.machine_name ? `${port.machine_name}: ` : "";
+    const where = port.device && port.device !== port.url ? port.device : port.url;
     if (port.kind === "machine") {
         return `${port.machine_name ?? port.description}: ${port.url}`;
     }
-    return name ? `${machine}${name}  ${port.url}` : `${machine}${port.url}`;
+    if (port.machine_name) {
+        return `${port.machine_name}: ${where}`;
+    }
+    return name ? `${name} (${where})` : where;
 }
 
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {

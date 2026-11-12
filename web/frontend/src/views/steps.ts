@@ -196,7 +196,7 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] | ((stat
     // How far the setup has got, in the head, which shows while folded.
     const count = el("span", { class: "badge roadmap-count" });
     root.append(foldPanel(`${key}.open`,
-        el("summary", { class: "panel-head" }, el("h2", {}, "Setup"), count),
+        el("summary", { title: "fold or unfold", class: "panel-head" }, el("h2", {}, "Setup"), count),
         el("div", { class: "panel-body" }, el("div", { class: "button-row" }, pick), list, next),
     ));
 

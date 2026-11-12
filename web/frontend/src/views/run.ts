@@ -142,9 +142,9 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     });
     // What Run does with the map, or what the run under way does with it.
     const mapChip = el("span", { class: "badge map-use" });
-    const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn");
-    const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn");
-    const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger");
+    const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn", "pause the job");
+    const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn", "go on with the job");
+    const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger", "stop the job");
     // Why a dispenser would refuse the job, beside the run button.
     const runNote = el("span", { class: "muted run-note hidden" });
     const runRow = el("div", { class: "run-row" }, runButton, compensate, mapChip, holdButton, resumeButton, stopButton, runNote);
@@ -164,8 +164,8 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     const pickupLine = numberField({ min: 0, step: 1, width: "7rem" });
     const pickupRewind = el("input", { type: "checkbox" }) as HTMLInputElement;
     pickupRewind.checked = true;
-    const pickupPlanButton = button("Plan", () => planPickup(), "btn btn-quiet btn-small");
-    const pickupButton = button("Resume from line", () => pickup(), "btn btn-primary btn-small");
+    const pickupPlanButton = button("Plan", () => planPickup(), "btn btn-quiet btn-small", "show where a pickup would start");
+    const pickupButton = button("Resume from line", () => pickup(), "btn btn-primary btn-small", "run the job from the line picked");
     const pickupNote = el("p", { class: "muted hint" });
     const pickupPosition = el("p", { class: "muted hint" });
     const pickupBox = el("div", { class: "pickup hidden" },
@@ -296,7 +296,7 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         const refusal = dispenseRefusal(job, isDispensing(state.snapshot));
         runNote.textContent = refusal;
         runNote.classList.toggle("hidden", refusal === "");
-        runButton.title = refusal;
+        runButton.title = refusal || "start the job";
         lockFor(runButton, [!connected, "connect first"], [active, "a run is under way"], [!job, "pick a job first"], [refusal !== "", refusal]);
         lockFor(holdButton, [!connected, "connect first"], [!active, "no run under way"], [progress?.state !== "running", "the run is held already"]);
         lockFor(resumeButton, [!connected, "connect first"], [!active, "no run under way"], [progress?.state !== "hold", "only a held run resumes"]);

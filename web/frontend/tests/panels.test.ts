@@ -171,7 +171,7 @@ describe("the panel menu", () => {
         pick("Move up");
         expect(ids(app.querySelector(".column")!)).toEqual(["p-steps", "p-dro", "p-laser"]);
         openMenuOf("p-laser");
-        pick("Unstick from above");
+        pick("Unstick");
         expect(app.querySelector("#p-laser")!.hasAttribute("data-join-up")).toBe(false);
     });
 

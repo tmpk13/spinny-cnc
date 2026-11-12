@@ -20,14 +20,14 @@ import type { AppState, Store } from "../state.ts";
 
 export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection";
 
-export const PAGES: { id: PageId; label: string }[] = [
-    { id: "jobs", label: "Jobs" },
-    { id: "plot", label: "Plot" },
-    { id: "cam", label: "CAM" },
-    { id: "pnp", label: "PNP" },
-    { id: "auto", label: "Auto" },
-    { id: "config", label: "Config" },
-    { id: "connection", label: "Connection" },
+export const PAGES: { id: PageId; label: string; tip: string }[] = [
+    { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs" },
+    { id: "plot", label: "Plot", tip: "operations drawn by hand" },
+    { id: "cam", label: "CAM", tip: "CAM profiles and their G-code" },
+    { id: "pnp", label: "PNP", tip: "pick and place" },
+    { id: "auto", label: "Auto", tip: "a model that makes jobs" },
+    { id: "config", label: "Config", tip: "machine files and settings" },
+    { id: "connection", label: "Connection", tip: "the port and the machine connected" },
 ];
 
 const PAGE_KEY = "spinny.page";
@@ -168,6 +168,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
             type: "button",
             class: "tab",
             role: "tab",
+            title: page.tip,
             "data-page": page.id,
             onclick: () => {
                 showPage(page.id);

@@ -635,7 +635,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             entries.push({ label: "Unstack", run: () => apply(unstack(layout, id)) });
         }
         entries.push(stuck
-            ? { label: "Unstick from above", run: () => apply(unstick(layout, id)) }
+            ? { label: "Unstick", run: () => apply(unstick(layout, id)) }
             : { label: "Stick to above", run: () => apply(stick(layout, id, shown)), disabled: before ? undefined : "no panel above" });
         if (blocks[where.block]!.length > 1) {
             const row = isRow(layout, id);

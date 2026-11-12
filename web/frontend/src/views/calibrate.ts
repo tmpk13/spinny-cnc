@@ -109,13 +109,13 @@ export function calibrationTest(ctx: Ctx): HTMLElement {
     const intro = el("p", { class: "muted" });
     const output = el("div", { class: "center-test-output" });
     const panel = el("details", { class: "center-test calibrate-test" },
-        el("summary", {}, "Calibration test"),
+        el("summary", { title: "fold or unfold",}, "Calibration test"),
         whichLabel,
         intro,
         material,
         focus,
         depth,
-        button("Make test job", () => make(), "btn"),
+        button("Make test job", () => make(), "btn", "make the calibration test as a job"),
         output,
     );
 

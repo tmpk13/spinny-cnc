@@ -355,9 +355,15 @@ which a layout does not carry. All of this is kept in the browser, not
 on the machine; a phone keeps the one-column order until its panels are
 moved, and has no size handles.
 
-A disabled button shows on hover what it does and why it is off
-("connect first"), and a key in the Config tab's machine file shows what
-it sets.
+Every button shows on hover what it does, a disabled one also why it is
+off ("connect first"), and a key in the Config tab's machine file shows
+what it sets. The small "i" beside some settings opens a drawing of what
+they mean when pressed (not on hover), until pressed again, anything else
+is pressed, or Escape. The magnifier in the tab bar (or "/" or Ctrl+K
+with no field in use) finds a feature by a few letters of its name, in
+order ("hmprb" finds the Height map's Probe), among every page, panel and
+button: Enter or a press shows its page and panel, unfolded and pulsing,
+and gives a button the focus without pressing it.
 
 ### The travel height
 

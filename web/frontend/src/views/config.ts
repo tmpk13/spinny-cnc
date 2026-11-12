@@ -76,9 +76,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     const pick = el("select", { class: "field", "aria-label": "Machine file" });
     const newId = el("input", { type: "text", class: "field", placeholder: "new id", "aria-label": "New machine id", autocomplete: "off" });
     newId.style.width = "8rem";
-    const create = button("New", () => createFile(), "btn");
-    const remove = button("Delete", () => removeFile(), "btn btn-quiet");
-    const reload = button("Reload", () => reloadAll(), "btn btn-quiet btn-small");
+    const create = button("New", () => createFile(), "btn", "start a new machine file");
+    const remove = button("Delete", () => removeFile(), "btn btn-quiet", "delete this machine file");
+    const reload = button("Reload", () => reloadAll(), "btn btn-quiet btn-small", "read the files again from disk");
     const note = el("p", { class: "muted config-note" });
     const load = button("Write to board", () => loadMachine(), "btn btn-primary");
     load.title = "write every setting to the board and its flash, [host] values to the host";
@@ -88,9 +88,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     flash.title = "keep the board's current settings over a restart";
     const loadNote = el("span", { class: "muted config-board" });
     const editor = codeEditor("Machine file");
-    const check = button("Check", () => checkText(), "btn");
-    const save = button("Save", () => saveText(), "btn btn-primary");
-    const revert = button("Revert", () => revertText(), "btn btn-quiet");
+    const check = button("Check", () => checkText(), "btn", "check the file without saving");
+    const save = button("Save", () => saveText(), "btn btn-primary", "save the file");
+    const revert = button("Revert", () => revertText(), "btn btn-quiet", "drop the edits");
     const status = el("span", { class: "muted config-status" });
     const problems = el("ul", { class: "config-problems hidden" });
     // What a read from the board wrote, key by key.

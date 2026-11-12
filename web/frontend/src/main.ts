@@ -25,6 +25,7 @@ import { mountMarkers } from "./views/markers.ts";
 import { mountMill } from "./views/mill.ts";
 import { mountConnection } from "./views/connection.ts";
 import { mountPageSettings } from "./views/pagesettings.ts";
+import { mountSearch } from "./views/search.ts";
 import { mountPanels } from "./views/panels.ts";
 import { mountPnp } from "./views/pnp.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
@@ -333,6 +334,7 @@ function main(): void {
     // adds its controls to the heads and puts the panels where the
     // operator left them.
     mountPageSettings(tabTools, mountPanels(panel("app")));
+    mountSearch(tabTools);
     mountTooltips();
 
     // Leaving with edits not applied asks first; the browser words it.
