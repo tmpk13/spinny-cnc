@@ -113,6 +113,9 @@ size_tolerance = 0.3
 offset = [23.544, 65.188]
 fiducial = "bright"
 within = 2.0
+# The LumenPnP's homing fiducial, drawn on the virtual bed; a home leaves
+# the virtual head a little off (--home-error) for Home by fiducial.
+home_fiducial = [60.91, 175.23]
 
 [bus]
 send = "M485 {packet}"

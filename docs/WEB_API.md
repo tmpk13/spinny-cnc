@@ -927,6 +927,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/top/start`, `.../stop` | starts or stops its pcbv |
 | `GET /api/pnp/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
 | `POST /api/pnp/top/mark` | the nozzle's tip is over a mark: the head's place is kept as `mark_at` |
+| `POST /api/pnp/top/home` | homes the machine (the file's home line), then looks for the bed's homing fiducial (`[top_camera] home_fiducial`, the nozzle's place over it) within `within` mm, centers it in the top camera's picture and declares the head's X Y (G92) so the controller's numbers put it where the file says. Kind `home`; 400 when the file has no `home_fiducial` or home line, or the top camera's offset is not measured |
 | `POST /api/pnp/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the file's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
 | `POST /api/pnp/top/look` | the `mark_spot` spot nearest the picture's center found once, no move, kept as `top.look` (as the bottom camera's) |
 | `POST /api/pnp/top/board` | `{"job": "a1b2"}`: pcbv looks for the job's board (front, masked) and the backend reads its poses into `top.board_look` (Board look, under Camera) until unloaded, the camera stopped or started again; `{"job": null}` unloads it. 400 with the camera stopped or a job without its board file |

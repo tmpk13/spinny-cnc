@@ -59,7 +59,7 @@ class DeviceUpCamera:
         return -axis if self.cw else axis
 
     def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
-        return self.spot_at(self.fake.position, self.fake.angle, polarity)
+        return self.spot_at(self.fake.bed_position, self.fake.angle, polarity)
 
     def spot_at(self, position, axis: float, polarity: str):
         """What the camera sees with the head at `position` and the rotation axis at `axis`."""
@@ -94,7 +94,7 @@ class LaggingUpCamera(DeviceUpCamera):
         self.lag = lag
         self.period = period
         self.started = time.monotonic()
-        self.history: list[tuple[float, tuple, float]] = [(self.started - 1.0, fake.position, fake.angle)]
+        self.history: list[tuple[float, tuple, float]] = [(self.started - 1.0, fake.bed_position, fake.angle)]
         self._watch = threading.Thread(target=self._sample, daemon=True)
         self._watch.start()
 
@@ -102,8 +102,8 @@ class LaggingUpCamera(DeviceUpCamera):
         while self.running:
             now = time.monotonic()
             last = self.history[-1]
-            if self.fake.position != last[1] or self.fake.angle != last[2]:
-                self.history.append((now, self.fake.position, self.fake.angle))
+            if self.fake.bed_position != last[1] or self.fake.angle != last[2]:
+                self.history.append((now, self.fake.bed_position, self.fake.angle))
             time.sleep(0.002)
 
     def _newest(self) -> float:
@@ -140,7 +140,7 @@ class DeviceTopCamera:
         self.device = "/dev/video4"
 
     def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
-        center = (self.fake.position[0] + self.offset[0], self.fake.position[1] + self.offset[1])
+        center = (self.fake.bed_position[0] + self.offset[0], self.fake.bed_position[1] + self.offset[1])
         best = None
         for shade, x, y, length, width in self.things:
             if shade != polarity:
@@ -237,7 +237,7 @@ class BoardTopCamera(DeviceTopCamera):
         self.frames += 1
         if self.loaded is None:
             return {"state": "none", "frame": self.frames, "age_ms": 0, "width": 1280, "height": 720}
-        center = (self.fake.position[0] + self.offset[0], self.fake.position[1] + self.offset[1])
+        center = (self.fake.bed_position[0] + self.offset[0], self.fake.bed_position[1] + self.offset[1])
         return self.seen.pose(center, self.roll, self.mirror, self.scale, 1280, 720, self.frames)
 
 

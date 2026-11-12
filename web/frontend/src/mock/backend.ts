@@ -1947,6 +1947,9 @@ function refusePowerWithFocus(job: Job, mode: string): void {
 }
 
 /** The fake backend: the Api and the EventFeed in one object. */
+/** How far off its numbers the mock's home leaves the head, mm: what Home by fiducial finds and declares away. */
+const MOCK_HOME_ERROR: [number, number] = [0.2, -0.15];
+
 export class MockBackend implements Api, EventFeed {
     readonly machine = new MockMachine(MOCK_MACHINE_SETTINGS);
     connected = false;
@@ -2054,7 +2057,7 @@ export class MockBackend implements Api, EventFeed {
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
     private topRoutine: TopRoutine | null = null;
-    private topSession: { kind: "offset" | "fiducials" | "search"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
+    private topSession: { kind: "offset" | "fiducials" | "search" | "home"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
     private topFiducials: TopState["fiducials"] = null;
     /** The alignment marks, kept for one job at a time. */
     private alignJob: string | null = null;
@@ -7400,7 +7403,7 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    private beginTop(kind: "offset" | "fiducials" | "search", steps: string[], device: MockDevice, job: string | null): void {
+    private beginTop(kind: "offset" | "fiducials" | "search" | "home", steps: string[], device: MockDevice, job: string | null): void {
         if (!this.deviceLink.connected) {
             throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
@@ -7425,6 +7428,22 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "put the nozzle's tip over a mark and press Nozzle on mark first");
         }
         this.beginTop("offset", ["lifting", "moving", "lowering", "scale", "centering", "done"], device, null);
+        return this.placingStateOf();
+    }
+
+    /** Home by fiducial, as the backend's top_home: home, find the bed's fiducial, declare the head's place. */
+    async topHome(): Promise<PlacingState> {
+        const device = this.gcodeIdle();
+        if (!device.top?.home_fiducial) {
+            throw new ApiError(400, `${device.name}'s file has no [top_camera] home_fiducial`);
+        }
+        if (!device.home) {
+            throw new ApiError(400, `${device.name}'s file has no [gcode] home command`);
+        }
+        if (!this.topMeasured()) {
+            throw new ApiError(400, "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
+        }
+        this.beginTop("home", ["homing", "looking", "declaring", "done"], device, null);
         return this.placingStateOf();
     }
 
@@ -7946,7 +7965,19 @@ export class MockBackend implements Api, EventFeed {
             session.progress.state = "done";
             session.progress.spot = { dx: 0, dy: 0, mm: 0 };
             this.topSession = null;
-            if (session.kind === "offset") {
+            if (session.kind === "home") {
+                // The mock's switches leave the head MOCK_HOME_ERROR off the
+                // numbers; the fiducial seen there is declared away.
+                const fiducial = session.device.top!.home_fiducial!;
+                const [ox, oy] = this.topConfig.offset ?? TOP_TRUTH.offset;
+                const head: [number, number] = [fiducial[0] - ox, fiducial[1] - oy];
+                this.deviceLine(session.device, session.device.home);
+                this.deviceLine(session.device, xyLine(session.device, head[0], head[1]));
+                const [ex, ey] = MOCK_HOME_ERROR;
+                this.deviceLine(session.device, `G92 ${session.device.axes[0]}${gnum(head[0] + ex)} ${session.device.axes[1]}${gnum(head[1] + ey)}`);
+                const signed = (value: number): string => `${value >= 0 ? "+" : ""}${value.toFixed(3)}`;
+                this.message("info", `homed by the fiducial: the head was ${signed(-ex)}, ${signed(-ey)} mm off the switches' home (mock)`);
+            } else if (session.kind === "offset") {
                 const mark = this.topConfig.mark_at ?? [0, 0];
                 const [ox, oy] = TOP_TRUTH.offset;
                 this.deviceLine(session.device, xyLine(session.device, mark[0] - ox, mark[1] - oy));

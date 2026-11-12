@@ -217,10 +217,17 @@ class VirtualMarlin:
         no_parts_near: Point | None = None,
         miss_every: int = 0,
         seed: int = 1,
+        home_error: Point = (0.0, 0.0),
     ) -> None:
         self.out: queue.Queue[bytes] = queue.Queue()
         self.lines: list[str] = []
         self._place = [float(position[0]), float(position[1]), float(position[2]), 0.0, 0.0]
+        # Where the controller's numbers are from where the head truly is on
+        # the bed: the head is at its numbers plus this. G92 changes the
+        # numbers, not the head; a home puts the head `home_error` off the
+        # place its numbers say, as homing switches do.
+        self.origin = [0.0, 0.0, 0.0, 0.0, 0.0]
+        self.home_error = (float(home_error[0]), float(home_error[1]))
         self.relative = False
         self.feed = DEFAULT_FEED
         self.timed = timed
@@ -338,6 +345,19 @@ class VirtualMarlin:
                     return tuple(a + (b - a) * part for a, b in zip(segment.start, segment.end))
             return tuple(self._place)
 
+    def bed(self, now: float | None = None) -> tuple[float, ...]:
+        """Where the head truly is on the bed now (what the cameras see),
+        X Y Z A B: where its numbers put it, plus the origin."""
+        here = self.head(now)
+        with self._lock:
+            return tuple(value + shift for value, shift in zip(here, self.origin))
+
+    @property
+    def bed_position(self) -> tuple[float, float, float]:
+        """Where the moves sent so far leave the head on the bed: X, Y, Z."""
+        with self._lock:
+            return (self._place[0] + self.origin[0], self._place[1] + self.origin[1], self._place[2] + self.origin[2])
+
     def nozzle_turn(self, degrees: float) -> float:
         """The nozzle's turn counterclockwise seen from above for an A of `degrees`."""
         return -degrees if self.cw else degrees
@@ -413,7 +433,10 @@ class VirtualMarlin:
             with self._lock:
                 for letter, value in fields.items():
                     if letter in AXES and value:
-                        self._place[AXES.index(letter)] = float(value)
+                        # The numbers change; the head stays where it is.
+                        index = AXES.index(letter)
+                        self.origin[index] += self._place[index] - float(value)
+                        self._place[index] = float(value)
             self._answer("ok\r\n")
         elif word == "M400":
             hold = self.hold
@@ -517,6 +540,8 @@ class VirtualMarlin:
         if self.home_place is None:
             return
         with self._lock:
+            # The switches set the numbers again, a little off the bed.
+            self.origin = [self.home_error[0], self.home_error[1], 0.0, 0.0, 0.0]
             target = list(self._place)
         target[0], target[1], target[2] = self.home_place
         self._queue_move(target, HOMING_FEED)
@@ -529,7 +554,7 @@ class VirtualMarlin:
         something (or the tip comes down on something with it on), and let
         go when the suction stops."""
         with self._lock:
-            place = tuple(self._place)
+            place = tuple(value + shift for value, shift in zip(self._place, self.origin))
         if not self.suction:
             self._tried = False
             if self.held is not None:
@@ -709,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--feeders", type=int, default=3, help="Photon feeders on the bus, at addresses 1 and up (default: 3)")
     parser.add_argument("--miss-every", type=int, default=0, metavar="N", help="every Nth pick finds no part (default: never)")
+    parser.add_argument("--home-error", type=_point, default=(0.2, -0.15), metavar="DX,DY", help="how far off its numbers a home leaves the head on the bed, mm, for Home by fiducial to find (default: 0.2,-0.15)")
     parser.add_argument("--seed", type=int, default=1, help="the seed of the small errors a pick leaves (default: 1)")
     args = parser.parse_args(argv)
 
@@ -737,6 +763,7 @@ def main(argv: list[str] | None = None) -> int:
         no_parts_near=world.bottom.place,
         miss_every=args.miss_every,
         seed=args.seed,
+        home_error=args.home_error,
     )
     machine.report_angle = True
     machine.light = 0

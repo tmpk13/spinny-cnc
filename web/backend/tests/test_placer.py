@@ -512,6 +512,30 @@ def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     assert r2["at"] == pytest.approx(list(rough), abs=0.01) and r2["by"] == "camera"
 
 
+def test_home_by_fiducial_homes_then_ties_the_numbers_to_the_bed(client):
+    fiducial = (60.0, 170.0)
+    job_id = rig(client, profile(rest=TOP + f"home_fiducial = [{fiducial[0]}, {fiducial[1]}]\n"))
+    with_top_camera(client, job_id, extra=[("bright", *fiducial, 1.0, 1.0)])
+    measured_offset(client)
+    # The switches put the head 0.2, -0.15 mm off the place its numbers say.
+    client.fake.home_place = (0.0, 0.0, 5.0)
+    client.fake.home_error = (0.2, -0.15)
+    before = len(client.fake.lines)
+    response = client.post("/api/pnp/top/home")
+    assert response.status_code == 200, response.text
+    routine = routine_done(client, "/api/pnp/placing")
+    assert routine["state"] == "done", routine
+    sent = client.fake.lines[before:]
+    assert sent[0] == "G28" and any(line.startswith("G92 X") for line in sent)
+    # The numbers and the bed agree again, to the centering's tolerance.
+    assert client.fake.bed_position[:2] == pytest.approx(client.fake.position[:2], abs=0.02)
+    # A file without the fiducial says so.
+    client.backend.machine_store.directory.joinpath("rig.toml").write_text(gcode_file(profile(rest=TOP)), encoding="utf-8")
+    connect(client, "rig")
+    refused = client.post("/api/pnp/top/home")
+    assert refused.status_code == 400 and "home_fiducial" in refused.json()["detail"]
+
+
 def test_a_run_finds_the_fiducials_first_and_places_on_them(client):
     job_id = rig(client, profile(rest=TOP))
     with_top_camera(client, job_id)

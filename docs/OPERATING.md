@@ -654,7 +654,13 @@ file) is set up in its panel: pick it and Start, jog the nozzle's tip
 onto a mark it can see (a dot on paper, a hole) and press *Nozzle on
 mark*, then *Measure offset*: the head moves so the camera should see the
 mark (by the file's `offset`, or from where it stands when there is
-none), measures the picture and centers the mark. *Find fiducials* (or
+none), measures the picture and centers the mark. *Home by fiducial*
+(with `home_fiducial` in the file's `[top_camera]`, which the OpenPnP
+import reads from the head's homing fiducial) homes the machine, then
+finds that fiducial on the bed with the top camera, centers it, and
+declares where the head is (G92) so the numbers put the fiducial where
+the file says: the switches find home to a few hundredths, the fiducial
+ties the numbers to the bed itself. *Find fiducials* (or
 *find fiducials first* on a run) fits the board on its fiducials,
 footprints FID* or named Fiducial, from where the references put them.
 Its Board part finds a board with no references at all: *Look for board*
@@ -727,7 +733,11 @@ pick them from the list). pcbv reads them as it reads a Pi's camera.
   *Nozzle on mark* and *Measure offset*, the parts let go, and a board
   given with `--board board.kicad_pcb@X,Y[,ANGLE]` (its origin at X, Y,
   turned ANGLE): its outline dark and its fiducials bright, for *Find
-  fiducials*. Its offset is a few tenths off the file's.
+  fiducials*, and the file's homing fiducial, bright. Its offset is a few
+  tenths off the file's.
+- A home (G28) leaves the virtual head 0.2, -0.15 mm off the place its
+  numbers say (`--home-error DX,DY`), and G92 changes the numbers, not
+  the head, so *Home by fiducial* has something to find.
 - With the light off both pictures are dim.
 
 A spot is read from a picture taken after it was asked for: a snapshot

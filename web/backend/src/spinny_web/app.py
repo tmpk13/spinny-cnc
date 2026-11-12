@@ -4342,6 +4342,10 @@ def create_app(
     def top_place(body: BoardPlaceBody):
         return guarded(lambda: backend.top_place(body))
 
+    @app.post("/api/pnp/top/home")
+    def top_home():
+        return guarded(backend.top_home)
+
     @app.post("/api/pnp/top/abort")
     def top_abort():
         return guarded(backend.top_abort)

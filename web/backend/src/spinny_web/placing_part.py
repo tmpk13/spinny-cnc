@@ -26,6 +26,7 @@ from spinny_laser.machines import GCODE
 from .boardlook import PictureFrame, found_text, search, search_box, search_stops
 from .feederbus import BusError, FeederBus, slot_place
 from .gcode_link import GcodeLinkError, GcodeMover
+from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
 from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, move_line, plan, safe_line
 from .placer import Placement, PlaceSetup, fiducial_fit
@@ -373,6 +374,29 @@ class PlacingPart:
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         profile = machine.top
         self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
+        return self.placing_state()
+
+    def top_home(self) -> dict:
+        """Homes the machine, then finds the bed's homing fiducial with the
+        top camera and declares where the head is from it (visual homing,
+        OpenPnP's head homing fiducial)."""
+        machine = self._placing_idle()
+        profile = machine.top
+        if profile is None or profile.home_fiducial is None:
+            raise ValueError(f"{machine.name}'s file has no [top_camera] home_fiducial")
+        if not machine.home:
+            raise ValueError(f"{machine.name}'s file has no [gcode] home command")
+        mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
+        x, y = machine.axes[0], machine.axes[1]
+
+        def home() -> None:
+            self.gcode.command(machine.home, machine.timeout * HOME_TIMEOUTS)
+            self.gcode.homed = True
+
+        def declare(head: tuple[float, float]) -> None:
+            self.gcode.command(f"G92 {x}{num(head[0])} {y}{num(head[1])}", machine.timeout)
+
+        self.top.home_by_fiducial(mover, profile.home_fiducial, profile.fiducial, profile.within, profile.z, home, declare)
         return self.placing_state()
 
     def top_look(self) -> dict:

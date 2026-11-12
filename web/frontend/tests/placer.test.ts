@@ -162,6 +162,13 @@ describe("the cameras and the vacuum on the mock's G-code machine", () => {
         const top = (await backend.placingState()).top!;
         expect(top.offset).toEqual(TOP_TRUTH.offset);
         expect(topCameraText(top)).toContain("Top camera looks from X 35.000 Y -10.000");
+        // Home by fiducial needs the file's fiducial; with one, it homes and declares the place.
+        await expect(backend.topHome()).rejects.toMatchObject({ status: 400 });
+        await backend.saveMachineFile("openpnp-marlin", text.replace("within = 2\n", "within = 2\nhome_fiducial = [60.0, 170.0]\n"));
+        await backend.topHome();
+        await routines(backend);
+        const homed = (await backend.placingState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        expect(homed.slice(-3)).toEqual(["G28", "G0 X25 Y180 F6000", "G92 X25.2 Y179.85"]);
         // A rough reference, then the fiducials found and kept in its place.
         await backend.pnpReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
         await backend.pnpFiducials(job.id);

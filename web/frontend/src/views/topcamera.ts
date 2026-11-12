@@ -62,8 +62,10 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     step.setAttribute("aria-label", "Top camera step mm");
     const measure = button("Measure offset", () => measureOffset(), "btn");
     measure.title = "move the top camera over the mark to measure its offset from the nozzle";
+    const homeFiducial = button("Home by fiducial", () => into(ctx, "placing", ctx.api.topHome()), "btn",
+        "home, then find the bed's homing fiducial and correct where the head is from it");
     const abort = button("Abort", () => into(ctx, "placing", ctx.api.topAbort()), "btn btn-danger");
-    abort.title = "stop the top camera's routine (Measure offset, Find fiducials or Search) and the machine";
+    abort.title = "stop the top camera's routine (Measure offset, Home by fiducial, Find fiducials or Search) and the machine";
     const routineLine = el("p", { class: "muted vision-routine" });
     const log = el("div", { class: "camlog-box" });
     mountCameraLog(log, ctx, "top");
@@ -84,7 +86,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             lookLine,
             controls.root,
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
-            el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, abort),
+            el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, homeFiducial, abort),
             routineLine,
             el("h3", {}, "Board"),
             el("div", { class: "button-row" }, boardLook, boardSearch, boardPlace, boardUnload),
@@ -180,6 +182,12 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         setLocked(apply, busy, "a routine is under way");
         lockFor(markHere, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"]);
         lockFor(measure, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
+        lockFor(homeFiducial,
+            [!state.placing?.document?.top?.home_fiducial, "the machine file has no [top_camera] home_fiducial"],
+            [!connected, "connect the machine first"],
+            [running || moving || busy, "the machine is busy"],
+            [top?.running !== true, "start the top camera first"],
+            [!(top?.mm_per_px && top.mm_per_px > 0), "the top camera's offset is not measured: Measure offset first"]);
         setLocked(abort, !busy, "no routine under way");
         offsetLine.textContent = topCameraText(top);
         routineLine.textContent = topRoutineText(top);

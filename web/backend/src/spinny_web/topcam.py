@@ -113,7 +113,7 @@ class TopCamera(PickCamera):
     Settings = TopCameraSettings
     places = ("mark_at", "offset")
     clearable = ("mark_at", "offset")
-    routines = {"offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board"}
+    routines = {"offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board", "home": "homing by the fiducial"}
 
     def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
         super().__init__(store, save, publish, message)
@@ -258,6 +258,46 @@ class TopCamera(PickCamera):
             self._message("info", done(found))
 
         self._begin("fiducials", steps, mover, body)
+
+    def home_by_fiducial(
+        self,
+        mover: Mover,
+        fiducial: Point,
+        shade: str,
+        within: float,
+        z: float | None,
+        home: Callable[[], None],
+        declare: Callable[[Point], None],
+    ) -> None:
+        """Starts the visual home on its own thread: the machine homed
+        (`home`, the file's home line), the bed's homing fiducial looked for
+        within `within` mm of `fiducial` (the nozzle's place over it, as
+        the file has it) and centered in the picture, then the head's X Y
+        declared (`declare`, a G92) so the controller's numbers put the
+        fiducial where the file says. The switches find home to a few
+        hundredths; the fiducial ties the numbers to the bed itself."""
+        if not self.settings().measured:
+            raise ValueError("the top camera's offset is not measured: put the nozzle on a mark, then Measure offset")
+        if not self.client.running:
+            raise ValueError("the top camera is not running: start it first")
+
+        def body(progress: RoutineProgress) -> None:
+            self._step(progress, "homing")
+            home()
+            mover.begin()
+            self._step(progress, "looking")
+            seen = self.look_at(mover, fiducial, shade, within, z, center=True, routine="homing by fiducial", step="fiducial", progress=progress)
+            if seen is None:
+                raise PnpError(f"no fiducial within {within:g} mm of X {fiducial[0]:.3f} Y {fiducial[1]:.3f}: check [top_camera] home_fiducial, or widen within")
+            self._step(progress, "declaring")
+            # The numbers put the fiducial at `seen`; it is at `fiducial`.
+            shift = (seen[0] - fiducial[0], seen[1] - fiducial[1])
+            here = mover.here()
+            declare((round(here[0] - shift[0], 4), round(here[1] - shift[1], 4)))
+            mover.begin()
+            self._message("info", f"homed by the fiducial: the head was {shift[0]:+.3f}, {shift[1]:+.3f} mm off the switches' home")
+
+        self._begin("home", ("homing", "looking", "declaring", "done"), mover, body)
 
     def _offset(self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, guess: Point | None) -> None:
         settings = self.settings()

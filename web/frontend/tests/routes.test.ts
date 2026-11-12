@@ -94,6 +94,7 @@ describe("HttpApi G-code machine and placing routes", () => {
         await api.topStop();
         await api.topMark();
         await api.topOffset(1.5);
+        await api.topHome();
         await api.topAbort();
         await api.pnpPark();
         await api.pnpOverCamera();
@@ -131,6 +132,7 @@ describe("HttpApi G-code machine and placing routes", () => {
             ["POST", "/api/pnp/top/stop", null],
             ["POST", "/api/pnp/top/mark", null],
             ["POST", "/api/pnp/top/offset", { step: 1.5 }],
+            ["POST", "/api/pnp/top/home", null],
             ["POST", "/api/pnp/top/abort", null],
             ["POST", "/api/pnp/park", null],
             ["POST", "/api/pnp/over-camera", null],

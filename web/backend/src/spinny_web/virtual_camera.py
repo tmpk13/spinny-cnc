@@ -49,6 +49,8 @@ DIM = 0.3
 TIP = 0.5
 # The mark the top camera's offset is measured from, mm across.
 MARK = 1.0
+# The homing fiducial on the bed, mm across: OpenPnP's calibration fiducials are 1 mm.
+HOME_FIDUCIAL = 1.0
 # Where a board's edge lies when its file draws none: this far out of its parts, mm.
 BOARD_MARGIN = 3.0
 # How far off the machine file the cameras sit, so the routines have
@@ -296,7 +298,7 @@ class BottomCamera(Camera):
         machine = self.world.machine
         if machine is None:
             return raster
-        at = machine.head()
+        at = machine.bed()
         self.draw(raster, disk(machine.tip(at), TIP / 2.0), self.place, round(DARK * light))
         part = machine.held_part(at)
         if part is not None:
@@ -315,7 +317,7 @@ class TopCamera(Camera):
         machine = self.world.machine
         if machine is None:
             return raster
-        at = machine.head()
+        at = machine.bed()
         center = (at[0] + self.offset[0], at[1] + self.offset[1])
         reach = math.hypot(self.width, self.height) / 2.0 * self.scale
 
@@ -332,6 +334,9 @@ class TopCamera(Camera):
                     self.draw(raster, disk(place, across / 2.0), center, round(COPPER * light))
         if math.dist(self.world.mark, center) < reach + MARK:
             self.draw(raster, disk(self.world.mark, MARK / 2.0), center, round(DARK * light))
+        fiducial = self.world.home_fiducial
+        if fiducial is not None and math.dist(fiducial, center) < reach + HOME_FIDUCIAL:
+            self.draw(raster, disk(fiducial, HOME_FIDUCIAL / 2.0), center, round(COPPER * light))
         for part in machine.lying:
             if math.dist(part.center, center) < reach + max(part.size):
                 self.draw(raster, rectangle(part.center, part.size, part.angle), center, round(PART * light))
@@ -344,6 +349,8 @@ class World:
     boards on the bed, and the two cameras as they truly sit."""
 
     mark: Point = (150.0, 150.0)
+    # The bed's homing fiducial, bright, where the machine file says.
+    home_fiducial: Point | None = None
     touch_z: float | None = None
     runout: Point = RUNOUT
     machine: VirtualMarlin | None = None
@@ -364,6 +371,7 @@ class World:
         world.bottom.place = (place[0] + BOTTOM_ERROR[0], place[1] + BOTTOM_ERROR[1])
         offset = machine.top.offset if machine.top is not None and machine.top.offset is not None else (0.0, 0.0)
         world.top.offset = (offset[0] + TOP_ERROR[0], offset[1] + TOP_ERROR[1])
+        world.home_fiducial = machine.top.home_fiducial if machine.top is not None else None
         return world
 
     def add_board(self, path: Path, at: Point, angle: float = 0.0) -> Board:
