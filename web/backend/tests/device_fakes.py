@@ -53,14 +53,19 @@ class DeviceUpCamera:
         self.running = True
         self.device = "/dev/video1"
 
-    def nozzle_angle(self) -> float:
-        return -self.fake.angle if self.cw else self.fake.angle
+    def nozzle_angle(self, axis: float | None = None) -> float:
+        axis = self.fake.angle if axis is None else axis
+        return -axis if self.cw else axis
 
     def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
-        angle = self.nozzle_angle()
+        return self.spot_at(self.fake.position, self.fake.angle, polarity)
+
+    def spot_at(self, position, axis: float, polarity: str):
+        """What the camera sees with the head at `position` and the rotation axis at `axis`."""
+        angle = self.nozzle_angle(axis)
         arm = self.runout if polarity == "dark" else (self.runout[0] + self.part[0], self.runout[1] + self.part[1])
         swung = turn(arm, angle)
-        mm = (self.fake.position[0] - self.where[0] + swung[0], self.fake.position[1] - self.where[1] + swung[1])
+        mm = (position[0] - self.where[0] + swung[0], position[1] - self.where[1] + swung[1])
         u, v = to_picture(mm, self.roll, self.mirror, self.scale)
         if math.hypot(u, v) > 350.0:
             return {"found": False}
@@ -75,6 +80,46 @@ class DeviceUpCamera:
 
     def close(self):
         self.running = False
+
+
+class LaggingUpCamera(DeviceUpCamera):
+    """An up camera whose pictures come late, as a USB camera's do: a frame
+    reaches pcbv every `period` s and shows the head where it was `lag` s
+    before that, so a look taken at once after a move sees the head where
+    it stood before it. The fake's places are sampled as they change."""
+
+    def __init__(self, fake: FakeMarlin, where, roll: float, mirror: bool, lag: float = 0.08, period: float = 0.04, **extra) -> None:
+        super().__init__(fake, where, roll, mirror, **extra)
+        self.lag = lag
+        self.period = period
+        self.started = time.monotonic()
+        self.history: list[tuple[float, tuple, float]] = [(self.started - 1.0, fake.position, fake.angle)]
+        self._watch = threading.Thread(target=self._sample, daemon=True)
+        self._watch.start()
+
+    def _sample(self) -> None:
+        while self.running:
+            now = time.monotonic()
+            last = self.history[-1]
+            if self.fake.position != last[1] or self.fake.angle != last[2]:
+                self.history.append((now, self.fake.position, self.fake.angle))
+            time.sleep(0.002)
+
+    def _newest(self) -> float:
+        """When the newest frame reached pcbv."""
+        now = time.monotonic()
+        return self.started + math.floor((now - self.started) / self.period) * self.period
+
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
+        shown = self._newest() - self.lag
+        position, angle = self.history[0][1], self.history[0][2]
+        for at, place, turned in self.history:
+            if at <= shown:
+                position, angle = place, turned
+        return self.spot_at(position, angle, polarity)
+
+    def pose(self):
+        return {**super().pose(), "age_ms": int((time.monotonic() - self._newest()) * 1000.0)}
 
 
 class DeviceTopCamera:

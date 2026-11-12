@@ -13,10 +13,12 @@ from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, create_app
-from spinny_web.camera import picture_to_machine
+from spinny_web import camera as camera_module
+from spinny_web.camera import picture_to_machine, wait_settled
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.link import Link
 from spinny_web.pnp import UpCameraSettings, calibrate, footprints_of, job_components, parse_sexp
+from spinny_web.vision import VisionError
 
 REPO = Path(__file__).resolve().parents[3]
 BOARD_SAMPLE = REPO / "toolpath" / "tests" / "data" / "board.kicad_pcb"
@@ -329,3 +331,44 @@ def test_the_parts_route_and_a_goto_to_a_part(client, fake):
     body = client.get(f"/api/jobs/{drawing.id}/components").json()
     assert body["components"] == [] and "kicad_pcb" in body["note"]
     assert client.get("/api/jobs/nope/components").status_code == 404
+
+
+def test_unequal_or_skewed_moves_in_the_picture_are_refused():
+    # The Y step half shown, as a picture taken while the head still moved does.
+    with pytest.raises(ValueError, match="lagged a move"):
+        calibrate((50.0, 0.0), (25.0, -24.0), 1.0)
+    # Both moves seen the same way: the spot is not the one the head moves.
+    with pytest.raises(ValueError, match="lagged a move"):
+        calibrate((50.0, 0.0), (49.0, 8.0), 1.0)
+    # Equal and square, mirrored, is taken.
+    scale, roll, mirror = calibrate((-50.0, 0.0), (0.0, -50.0), 1.0)
+    assert mirror is True and scale == pytest.approx(0.02) and roll == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_look_waits_for_a_picture_taken_after_the_head_came_to_rest(monkeypatch):
+    class Clocked:
+        """Frames every 50 ms, the newest one's age as pcbv says it."""
+
+        def __init__(self) -> None:
+            self.start = time.monotonic()
+            self.poses = 0
+
+        def pose(self):
+            self.poses += 1
+            now = time.monotonic()
+            newest = self.start + math.floor((now - self.start) / 0.05) * 0.05
+            return {"state": "none", "frame": 1, "age_ms": int((now - newest) * 1000.0)}
+
+    monkeypatch.setattr(camera_module, "SETTLE_SECONDS", 0.12)
+    client = Clocked()
+    since = time.monotonic()
+    wait_settled(client, since)
+    assert time.monotonic() - since >= 0.12 and client.poses >= 1
+
+    class Frozen:
+        def pose(self):
+            return {"state": "none", "frame": 1, "age_ms": 60000}
+
+    monkeypatch.setattr(camera_module, "FRESH_SECONDS", 0.1)
+    with pytest.raises(VisionError, match="no picture taken after"):
+        wait_settled(Frozen())

@@ -45,6 +45,17 @@ DEFAULT_STEP = 2.0
 MAX_STEP = 20.0
 # The settings pcbv captures with: a running camera given others starts again.
 CAPTURE_KEYS = ("device", "size", "fps", "pcbv")
+# How long after the head comes to rest a picture is trusted, s. A USB
+# camera's frame reaches pcbv a frame or two after its exposure began, and
+# the machine shakes a little once a move ends, so the newest frame read at
+# once after a move's wait can show the head still moving, or where it
+# was: a look waits for a frame captured this long after it began.
+SETTLE_SECONDS = 0.25
+# How long a look waits for such a frame before it gives up, s.
+FRESH_SECONDS = 3.0
+# The fields of pcbv's spot reply that tell its place and shape, kept so a
+# page can draw what was found.
+SHAPE_KEYS = ("x", "y", "area", "major", "minor", "angle", "contrast")
 
 
 class CameraError(Exception):
@@ -93,9 +104,74 @@ class Spot:
     dx: float
     dy: float
     mm: float = 0.0
+    # The rest of pcbv's reply: where in the full size picture (x, y), its
+    # area, its equivalent ellipse (major, minor, angle), its contrast and
+    # the rectangle around it (rect), as far as pcbv said them.
+    shape: dict | None = None
+    # How far from the picture's center the spot was looked for, px of the
+    # full size picture; None for pcbv's own reach (a third of the height).
+    radius: float | None = None
 
     def to_dict(self) -> dict:
-        return {"dx": round(self.dx, 2), "dy": round(self.dy, 2), "mm": round(self.mm, 4)}
+        return {
+            "dx": round(self.dx, 2),
+            "dy": round(self.dy, 2),
+            "mm": round(self.mm, 4),
+            **(self.shape or {}),
+            "radius": round(self.radius, 1) if self.radius is not None else None,
+        }
+
+
+def spot_of(reply: dict, radius: float | None = None) -> Spot:
+    """A spot pcbv found, with its shape for the page to draw."""
+    shape = {key: round(float(reply[key]), 2) for key in SHAPE_KEYS if isinstance(reply.get(key), (int, float)) and not isinstance(reply.get(key), bool)}
+    rect = reply.get("rect")
+    if isinstance(rect, dict) and all(isinstance(rect.get(key), (int, float)) for key in ("length", "width", "angle")):
+        shape["rect"] = {key: round(float(rect[key]), 2) for key in ("length", "width", "angle")}
+    return Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)), shape=shape or None, radius=radius)
+
+
+def look_dict(reply: dict, polarity: str, radius: float | None = None) -> dict:
+    """A look taken by hand, as the page draws it: what was asked for and
+    what was found (its place and shape), or found false."""
+    found = bool(reply.get("found"))
+    out: dict = {"found": found, "polarity": polarity, "radius": round(radius, 1) if radius is not None else None}
+    if found:
+        out.update({key: value for key, value in spot_of(reply, radius).to_dict().items() if key not in ("mm", "radius")})
+    return out
+
+
+def wait_settled(client: VisionClient, since: float | None = None) -> None:
+    """Waits until pcbv's newest frame was captured SETTLE_SECONDS after
+    `since` (time.monotonic(), now by default), so a look after a move sees
+    the head at rest; refuses a camera whose pictures stop coming. pcbv
+    says how old its frame is (`age_ms`), from which its capture is told on
+    this clock: a reply that took long only makes the frame seem older."""
+    settle = SETTLE_SECONDS
+    if settle <= 0.0:
+        return
+    wanted = (time.monotonic() if since is None else since) + settle
+    deadline = wanted + FRESH_SECONDS
+    while True:
+        now = time.monotonic()
+        if now < wanted:
+            time.sleep(wanted - now)
+            continue
+        try:
+            raw = client.pose()
+        except VisionError as exc:
+            if "no frame" not in str(exc):
+                raise
+            raw = {}
+        age = raw.get("age_ms")
+        if not isinstance(age, (int, float)) and raw:
+            # A pcbv that tells no age: the settle time alone.
+            return
+        if isinstance(age, (int, float)) and time.monotonic() - float(age) / 1000.0 >= wanted:
+            return
+        if time.monotonic() > deadline:
+            raise VisionError(f"the camera gave no picture taken after the head came to rest within {FRESH_SECONDS:g} s")
+        time.sleep(0.03)
 
 
 @dataclass
@@ -435,6 +511,7 @@ class Camera:
     def _spot(self, progress: RoutineProgress, mm_per_px: float, roll: float) -> Spot:
         if self._abort.is_set():
             raise CameraError("stopped")
+        wait_settled(self.client)
         reply = self.client.spot()
         if self.camlog is not None:
             # Kept before a miss is refused: a look that found nothing is
@@ -443,7 +520,7 @@ class Camera:
             self.camlog.look(self.client, "head", "finding the mark", progress.step, spot=reply, note=f"look {self._looks}", pose=self.board_job is not None)
         if not reply.get("found"):
             raise CameraError("no mark in the picture: jog the camera over the mark by hand and find again")
-        spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))
+        spot = spot_of(reply)
         if mm_per_px > 0.0:
             spot.mm = math.hypot(*picture_to_machine(spot.dx, spot.dy, mm_per_px, roll))
         progress.spot = spot

@@ -532,6 +532,11 @@ class PnpNozzleBody(Finite):
     step: float = 1.0
 
 
+class PnpLookBody(Finite):
+    # Which of the up camera's spots to look for once: the nozzle's or a part's.
+    spot: Literal["nozzle", "part"] = "nozzle"
+
+
 class PnpAngleBody(Finite):
     # Degrees the board is turned on the machine, for a fit from one reference.
     angle: float | None = None
@@ -692,6 +697,7 @@ def editing_job(method):
             return method(self, job_id, *args, **kwargs)
 
     return wrapped
+
 
 
 class Backend(GcodePart, PlacingPart, ProbingPart):
@@ -3027,6 +3033,13 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.pnp.measure_part(self._pnp_mover(link))
         return self.pnp.state()
 
+    def pnp_look(self, spot: str) -> dict:
+        """The up camera's nozzle or part spot found once, no move: kept in
+        its state for the page to draw over the picture."""
+        settings = self.pnp.settings()
+        self.pnp.look_once(settings.nozzle_spot if spot == "nozzle" else settings.part_spot)
+        return self.pnp.state()
+
     def pnp_abort(self) -> dict:
         self.pnp.abort()
         if self.pnp.target == "gcode":
@@ -3998,6 +4011,10 @@ def create_app(
     @app.post("/api/pnp/part")
     def pnp_part():
         return guarded(backend.pnp_part)
+
+    @app.post("/api/pnp/look")
+    def pnp_look(body: PnpLookBody | None = None):
+        return guarded(lambda: backend.pnp_look((body or PnpLookBody()).spot))
 
     @app.post("/api/pnp/abort")
     def pnp_abort():

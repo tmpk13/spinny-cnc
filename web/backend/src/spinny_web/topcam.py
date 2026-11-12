@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
 
-from .camera import Spot, picture_to_machine
+from .camera import Spot, picture_to_machine, spot_of
 from .openpnp import SHADES
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
 
@@ -170,13 +170,14 @@ class TopCamera(PickCamera):
         for _ in range(1 + (LOOK_TRIES if center else 0)):
             if mover.stopped():
                 raise PnpError("stopped")
-            reply = self.client.spot(radius=within / scale, polarity=shade, **limits)
+            reply = self._find_spot(radius=within / scale, polarity=shade, **limits)
             self._log_look(routine, step, reply, shade)
             if not reply.get("found"):
                 return None
             off = picture_to_machine(float(reply.get("dx", 0.0)), float(reply.get("dy", 0.0)), scale, settings.roll, settings.mirror)
             if progress is not None:
-                progress.spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)), mm=math.hypot(*off))
+                progress.spot = spot_of(reply, within / scale)
+                progress.spot.mm = math.hypot(*off)
                 self._publish()
             seen = (head[0] + offset[0] + off[0], head[1] + offset[1] + off[1])
             if not center or math.hypot(*off) <= CENTER_TOLERANCE:
@@ -309,11 +310,11 @@ class TopCamera(PickCamera):
     def _spot(self, mover: Mover, progress: RoutineProgress, shade: str, scale: float, roll: float, mirror: bool, missing: str) -> Spot:
         if mover.stopped():
             raise PnpError("stopped")
-        reply = self.client.spot(polarity=shade)
+        reply = self._find_spot(polarity=shade)
         self._log_look("measuring the top camera's offset", progress.step, reply, shade)
         if not reply.get("found"):
             raise PnpError(missing)
-        spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))
+        spot = spot_of(reply)
         if scale > 0.0:
             spot.mm = math.hypot(*picture_to_machine(spot.dx, spot.dy, scale, roll, mirror))
         progress.spot = spot

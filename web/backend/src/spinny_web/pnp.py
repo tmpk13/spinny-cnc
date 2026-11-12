@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict
 
 from spinny_laser import machines as machine_files
 
-from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, picture_to_machine
+from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, look_dict, picture_to_machine, spot_of, wait_settled
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import LinkError, idle_status, settle
 from .log import log
@@ -56,6 +56,12 @@ RUNOUT_VISIBLE_MM = 0.01
 # A part whose long side is not this much longer than its short one gives
 # no angle from its equivalent ellipse.
 ELONGATED = 1.3
+# The two moves that measure the picture are as long as each other and at
+# right angles on the machine, so the spot's moves in the picture are too:
+# lengths further apart than this ratio, or an angle between them further
+# than this from a right angle, degrees, say the measure went wrong.
+SQUARE_RATIO = 1.25
+SQUARE_DEGREES = 15.0
 # The head is moved until the nozzle is this close to the picture's
 # center, mm, at most this many times.
 CENTER_TOLERANCE = 0.02
@@ -353,6 +359,17 @@ def calibrate(moved_x: Point, moved_y: Point, step: float) -> tuple[float, float
     cross = w1[0] * w2[1] - w1[1] * w2[0]
     if math.hypot(*w1) < 1e-6 or math.hypot(*w2) < 1e-6 or abs(cross) < 1e-9:
         raise ValueError("the spot did not move with the head: is the nozzle over the up camera?")
+    # Equal moves at right angles show as equal moves at right angles: a
+    # picture that lagged a move, or a spot that is not the one the head
+    # holds (or that stays put while the head moves), shows otherwise.
+    l1, l2 = math.hypot(*w1), math.hypot(*w2)
+    between = math.degrees(math.acos(max(-1.0, min(1.0, (w1[0] * w2[0] + w1[1] * w2[1]) / (l1 * l2)))))
+    if max(l1, l2) / min(l1, l2) > SQUARE_RATIO or abs(between - 90.0) > SQUARE_DEGREES:
+        raise ValueError(
+            f"the spot moved {l1:.0f} px for the step along X and {l2:.0f} px for the one along Y, {between:.0f} degrees apart,"
+            " where equal steps at right angles were made: the picture lagged a move, or the spot found is not the one"
+            " the steps moved (Look once shows what the finder takes)"
+        )
     mirror = cross < 0.0
     f1 = (-w1[0], w1[1]) if mirror else w1
     f2 = (-w2[0], w2[1]) if mirror else w2
@@ -617,6 +634,9 @@ class PickCamera:
         self.camlog = None
         self._looks = 0
         self.progress: RoutineProgress | None = None
+        # The last look taken by hand (Look once): what was asked for and
+        # what was found, for the page to draw over the picture.
+        self.look: dict | None = None
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
         self._lock = threading.Lock()
@@ -710,7 +730,28 @@ class PickCamera:
             **dump,
             "frame": frame,
             "routine": progress.to_dict() if progress is not None else None,
+            "look": self.look,
         }
+
+    def look_once(self, polarity: str, radius: float | None = None) -> dict:
+        """The spot of `polarity` the finder takes in the picture now, found
+        once with no move, kept for the page to draw: a wrong polarity or a
+        size the finder refuses shows before a routine trusts it."""
+        if polarity not in SHADES:
+            raise ValueError("the spot is dark or bright")
+        if not self.client.running:
+            raise PnpError(f"the {self.label} is not running: start it first")
+        reply = self.client.spot(radius=radius, polarity=polarity)
+        self._log_look("a look by hand", "look", reply, polarity)
+        self.look = look_dict(reply, polarity, radius)
+        self._publish()
+        return self.look
+
+    def _find_spot(self, **fields) -> dict:
+        """pcbv's spot in a picture taken once the head came to rest after
+        the move before it."""
+        wait_settled(self.client)
+        return self.client.spot(**fields)
 
     def shutdown(self) -> None:
         self._abort.set()
@@ -936,7 +977,7 @@ class UpCamera(PickCamera):
             limits = {"min_area": area * 0.25, "max_area": area * 4.0}
         if crop is not None and place.mm_per_px > 0.0:
             limits["radius"] = crop / place.mm_per_px
-        reply = self.client.spot(polarity=settings.part_spot, **limits)
+        reply = self._find_spot(polarity=settings.part_spot, **limits)
         self._log_look("looking at the part" if progress is not None else "placing: looking at the part", "looking", reply, settings.part_spot)
         if not reply.get("found"):
             raise NoSpot("no part in the picture: is one on the nozzle, and is the part spot the right polarity?")
@@ -946,7 +987,8 @@ class UpCamera(PickCamera):
         dx, dy = float(reply.get("dx", 0.0)), float(reply.get("dy", 0.0))
         off = picture_to_machine(dx, dy, place.mm_per_px, place.roll, place.mirror)
         if progress is not None:
-            progress.spot = Spot(dx=dx, dy=dy, mm=math.hypot(*off))
+            progress.spot = spot_of(reply)
+            progress.spot.mm = math.hypot(*off)
         rect = reply.get("rect")
         direction = None
         if isinstance(rect, dict) and all(isinstance(rect.get(key), (int, float)) for key in ("length", "width", "angle")):
@@ -1034,12 +1076,12 @@ class UpCamera(PickCamera):
     def _spot(self, mover: Mover, progress: RoutineProgress, polarity: str, place: CameraPlace, missing: str) -> Spot:
         if mover.stopped():
             raise PnpError("stopped")
-        reply = self.client.spot(polarity=polarity)
+        reply = self._find_spot(polarity=polarity)
         routine = {"nozzle": "centering the nozzle", "runout": "measuring the runout"}.get(progress.kind, "looking at the part")
         self._log_look(routine, progress.step, reply, polarity)
         if not reply.get("found"):
             raise PnpError(missing)
-        spot = Spot(dx=float(reply.get("dx", 0.0)), dy=float(reply.get("dy", 0.0)))
+        spot = spot_of(reply)
         if place.mm_per_px > 0.0:
             spot.mm = math.hypot(*picture_to_machine(spot.dx, spot.dy, place.mm_per_px, place.roll, place.mirror))
         progress.spot = spot

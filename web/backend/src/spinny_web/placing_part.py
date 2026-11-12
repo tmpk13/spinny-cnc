@@ -250,6 +250,12 @@ class PlacingPart:
         self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
         return self.placing_state()
 
+    def top_look(self) -> dict:
+        """The top camera's mark spot found once, no move: kept in its state
+        for the page to draw over the picture."""
+        self.top.look_once(self.top.settings().mark_spot)
+        return self.publish_placing()
+
     def top_abort(self) -> dict:
         self.top.abort()
         # The routine waits on a move and its wait command: the machine is
@@ -649,3 +655,4 @@ class PlacingPart:
             taken.pop(body.feeder, None)
         self._save_config()
         return self.publish_placing()
+

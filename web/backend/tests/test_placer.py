@@ -7,14 +7,16 @@ from __future__ import annotations
 
 import math
 import re
+import time
 
 import pytest
-from device_fakes import DeviceTopCamera, DeviceUpCamera, FakeMarlin, turn, wait_for
+from device_fakes import DeviceTopCamera, DeviceUpCamera, FakeMarlin, LaggingUpCamera, turn, wait_for
 from fastapi.testclient import TestClient
 from gcode_rig import connect, gcode_file, rig_backend
 
 from spinny_laser.machines import MachineError
 from spinny_web.app import create_app
+from spinny_web import camera as camera_module
 from spinny_web.camera import picture_to_machine
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, board_fit, plan, tip_shift, wrap
@@ -327,6 +329,46 @@ def centered(client, camera: DeviceUpCamera) -> None:
     response = client.post("/api/pnp/nozzle", json={"step": 1.0})
     assert response.status_code == 200, response.text
     assert routine_done(client)["state"] == "done"
+
+
+def test_a_camera_whose_pictures_lag_the_moves_is_waited_for(client, monkeypatch):
+    rig(client, VISION)
+    camera = LaggingUpCamera(client.fake, where=(150.0, 30.0), roll=3.0, mirror=True, lag=0.08, period=0.04)
+    client.backend.pnp.client = camera
+    client.post("/api/command", json={"line": "G0 X150.4 Y29.7"})
+    # Looked at the moment each move ends, the picture still shows the
+    # nozzle where it was: the measure refuses what it sees.
+    time.sleep(0.2)
+    assert client.post("/api/pnp/nozzle", json={"step": 1.0}).status_code == 200
+    routine = routine_done(client)
+    assert routine["state"] == "error" and ("did not move" in routine["error"] or "lagged a move" in routine["error"]), routine
+    # Each look waits for a picture taken after the head came to rest.
+    monkeypatch.setattr(camera_module, "SETTLE_SECONDS", 0.15)
+    client.post("/api/command", json={"line": "G0 X150.4 Y29.7"})
+    time.sleep(0.2)
+    assert client.post("/api/pnp/nozzle", json={"step": 1.0}).status_code == 200
+    routine = routine_done(client)
+    assert routine["state"] == "done", routine
+    assert client.get("/api/pnp/placing").json()["camera"]["position"] == pytest.approx([150.0, 30.0], abs=0.005)
+    # The spot the routine saw last is kept with its shape for the page to draw.
+    assert {"x", "y", "major", "minor"} <= set(routine["spot"])
+    camera.close()
+
+
+def test_a_look_once_finds_the_spot_without_a_move_and_keeps_its_shape(client):
+    rig(client, VISION)
+    camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True)
+    client.backend.pnp.client = camera
+    client.post("/api/command", json={"line": "G0 X150.5 Y30"})
+    sent = len(client.fake.lines)
+    response = client.post("/api/pnp/look", json={"spot": "nozzle"})
+    assert response.status_code == 200, response.text
+    look = response.json()["look"]
+    assert look["found"] is True and look["polarity"] == "dark" and look["dx"] == pytest.approx(-50.0, abs=0.01)
+    assert len(client.fake.lines) == sent
+    # Far off, nothing: said, not refused.
+    client.post("/api/command", json={"line": "G0 X160 Y30"})
+    assert client.post("/api/pnp/look", json={"spot": "part"}).json()["look"] == {"found": False, "polarity": "dark", "radius": None}
 
 
 def test_the_runout_is_measured_over_the_up_camera_and_a_reversed_axis_named(client):
