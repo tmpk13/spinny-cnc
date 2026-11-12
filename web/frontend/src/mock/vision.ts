@@ -6,7 +6,7 @@
 // center, x right and y down; a board vector lands at its turn by the roll.
 
 import { turned } from "../kinematics.ts";
-import type { Board, CameraPose, CameraSettings, DetectedCamera, Job, Path } from "../types.ts";
+import type { Board, CameraControl, CameraPose, CameraSettings, DetectedCamera, Job, Path } from "../types.ts";
 import { svgUrl } from "./camlog.ts";
 import { round4 } from "./jobs.ts";
 import { CAMERA_FINISHES, CAMERA_SIDES, CAMERA_SIZE } from "./machines.ts";
@@ -264,4 +264,42 @@ export function frameSvg(scene: PictureScene, width: number, overlay: boolean): 
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join("")}</svg>`;
     return svgUrl(svg);
+}
+
+/**
+ * The V4L2 controls the mock's cameras answer, as v4l2-ctl lists a laptop
+ * camera's (without `kept`, which each camera adds from its own values).
+ */
+export const MOCK_CONTROLS: Omit<CameraControl, "kept">[] = [
+    { name: "brightness", section: "User Controls", kind: "int", min: 0, max: 255, step: 1, default: 128, value: 128, inactive: false },
+    { name: "contrast", section: "User Controls", kind: "int", min: 0, max: 255, step: 1, default: 32, value: 32, inactive: false },
+    { name: "saturation", section: "User Controls", kind: "int", min: 0, max: 100, step: 1, default: 64, value: 64, inactive: false },
+    { name: "white_balance_automatic", section: "User Controls", kind: "bool", min: 0, max: 1, step: 1, default: 1, value: 1, inactive: false },
+    {
+        name: "power_line_frequency", section: "User Controls", kind: "menu", min: 0, max: 2, step: 1, default: 1, value: 1, inactive: false,
+        items: [{ value: 0, label: "Disabled" }, { value: 1, label: "50 Hz" }, { value: 2, label: "60 Hz" }],
+    },
+    { name: "white_balance_temperature", section: "User Controls", kind: "int", min: 2800, max: 6500, step: 1, default: 4600, value: 4600, inactive: true },
+    { name: "sharpness", section: "User Controls", kind: "int", min: 0, max: 7, step: 1, default: 3, value: 3, inactive: false },
+    {
+        name: "auto_exposure", section: "Camera Controls", kind: "menu", min: 0, max: 3, step: 1, default: 3, value: 3, inactive: false,
+        items: [{ value: 1, label: "Manual Mode" }, { value: 3, label: "Aperture Priority Mode" }],
+    },
+    { name: "exposure_time_absolute", section: "Camera Controls", kind: "int", min: 4, max: 1250, step: 1, default: 157, value: 157, inactive: true },
+    { name: "focus_absolute", section: "Camera Controls", kind: "int", min: 0, max: 250, step: 5, default: 0, value: 0, inactive: true },
+    { name: "focus_automatic_continuous", section: "Camera Controls", kind: "bool", min: 0, max: 1, step: 1, default: 1, value: 1, inactive: false },
+];
+
+/** Why a camera's device has no controls here, as the backend says it; null for a V4L2 node, which has. */
+export function controlsNote(device: string): string | null {
+    if (device.startsWith("/dev/")) {
+        return null;
+    }
+    if (device.startsWith("http://") || device.startsWith("https://")) {
+        return "a camera reached over HTTP (a bridge Pi's snapshots) has no controls here: they are set on the computer it is plugged into";
+    }
+    if (device.startsWith("socket://")) {
+        return "a pcbv serving over TCP has no controls here: its camera's are set on the computer it runs on";
+    }
+    return "pictures replayed from files have no controls";
 }

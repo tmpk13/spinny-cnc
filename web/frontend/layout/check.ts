@@ -229,7 +229,10 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         },
     },
     {
-        name: "placing with a G-code machine", pages: ["pnp", "connection"], enter: async (page) => {
+        // The LumenPnP connected on the Connection tab by the port its file
+        // claims, its cameras running, the top one looking for the board
+        // with a look taken once by each, and the controls unfolded.
+        name: "placing with a G-code machine, its cameras looking", pages: ["pnp", "connection"], enter: async (page) => {
             await tab(page, "connection");
             await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
@@ -238,6 +241,30 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
             await tab(page, "pnp");
+            await page.click("#pnp-camera button:has-text('Start')");
+            await page.click("#pnp-top button:has-text('Start')");
+            await page.waitForTimeout(300);
+            await page.click("#pnp-camera button:has-text('Look once')");
+            await page.click("#pnp-top button:has-text('Look once')");
+            // A job without its board file leaves the button locked.
+            await page.click("#pnp-top button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
+            await page.waitForTimeout(800);
+        },
+    },
+    {
+        name: "the head camera's picture and look", pages: ["jobs"], enter: async (page) => {
+            await tab(page, "connection");
+            await page.click("#connection button:has-text('Disconnect')");
+            await page.waitForTimeout(300);
+            await page.locator("#connection select").selectOption({ index: await page.evaluate(() =>
+                Array.from(document.querySelectorAll("#connection select option")).findIndex((option) => /spinny/i.test(option.textContent ?? ""))) });
+            await page.click("#connection button:has-text('Connect')");
+            await page.waitForTimeout(500);
+            await tab(page, "jobs");
+            await page.click("#camera button:has-text('Start')");
+            await page.waitForTimeout(300);
+            await page.click("#camera button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
+            await page.waitForTimeout(800);
         },
     },
     {

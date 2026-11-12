@@ -237,3 +237,32 @@ describe("HttpApi Auto tab routes", () => {
         ]);
     });
 });
+
+describe("HttpApi camera look, search and control routes", () => {
+    test("methods, paths and bodies follow the contract", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.cameraSearch([1, 2, 3, 4]);
+        await api.cameraSearch(null);
+        await api.cameraControls("up");
+        await api.setCameraControls("top", { gain: 4, exposure_time_absolute: null });
+        await api.pnpLook("part");
+        await api.topLook();
+        await api.topBoard("a1");
+        await api.topBoard(null);
+        await api.topSearch([0, 0, 50, 40]);
+        await api.topPlace("a1");
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["POST", "/api/camera/search", { box: [1, 2, 3, 4] }],
+            ["POST", "/api/camera/search", {}],
+            ["GET", "/api/cameras/controls?camera=up", null],
+            ["PUT", "/api/cameras/controls", { camera: "top", values: { gain: 4, exposure_time_absolute: null } }],
+            ["POST", "/api/pnp/look", { spot: "part" }],
+            ["POST", "/api/pnp/top/look", null],
+            ["POST", "/api/pnp/top/board", { job: "a1" }],
+            ["POST", "/api/pnp/top/board", { job: null }],
+            ["POST", "/api/pnp/top/search", { box: [0, 0, 50, 40] }],
+            ["POST", "/api/pnp/top/place", { job: "a1" }],
+        ]);
+    });
+});

@@ -15,7 +15,7 @@ import { Preview, type Dimension } from "../preview.ts";
 import type { SpeedLimits } from "../speed.ts";
 import { type PathRef, boxedAfter, pickedAfter } from "../regroup.ts";
 import type { AppState } from "../state.ts";
-import type { Job } from "../types.ts";
+import type { BoardEstimate, Job, Point } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 export const LOCK_LABEL = "Lock rotation";
@@ -60,6 +60,14 @@ export function scrubText(at: number, total: number, label: string | null): stri
 }
 
 /** The selected job, with the copies an array would add while its fields are open, or its edit in the JSON panel while one is typed. */
+/** A job's outline where a camera's looks put the board: each point turned and shifted by the estimate, board mm. */
+export function estimatedOutline(job: Job, estimate: BoardEstimate): Point[][] {
+    const radians = (estimate.rotation * Math.PI) / 180;
+    const c = Math.cos(radians);
+    const s = Math.sin(radians);
+    return job.outline.map((path) => path.map(([x, y]) => [x * c - y * s + estimate.shift[0], x * s + y * c + estimate.shift[1]] as Point));
+}
+
 export function shownJob(state: AppState): Job | null {
     const array = state.arrayDraft;
     if (array !== null && state.job !== null && array.id === state.job.id) {
@@ -243,6 +251,12 @@ export function mountPreviewPanel(
     ctx.store.subscribe((state) => {
         preview.setMarkers(state.markers);
     }, ["markers"]);
+    // The board's outline where the head camera's looks put it, for the job shown.
+    ctx.store.subscribe((state) => {
+        const job = show(state);
+        const look = state.camera?.board_look;
+        preview.setEstimate(job && look?.job === job.id && look.estimate ? estimatedOutline(job, look.estimate) : []);
+    }, ["camera", "job", "millPlan", "jobDraft", "arrayDraft"]);
     if (dims) {
         ctx.store.subscribe((state) => preview.setDimensions(dims(state)), ["millDims"]);
         preview.setDimensions(dims(ctx.store.get()));

@@ -11,9 +11,11 @@ import type {
     CalibrateRequest,
     CalibrateResponse,
     CameraPose,
+    CameraControls,
     CameraSettings,
     CamerasResponse,
     CameraState,
+    ControlledCamera,
     CamGcodeResponse,
     CamJobResponse,
     CamLogEntry,
@@ -253,6 +255,12 @@ export interface Api {
     /** Finds the mark in the picture and centers the picture on it, measuring the offset, the scale and the roll; on its own thread. */
     cameraFind(step: number): Promise<CameraState>;
     cameraAbort(): Promise<CameraState>;
+    /** Moves the head camera over a box (board frame mm; null: the board's size about where it looks now) until enough looks agree on the board loaded. */
+    cameraSearch(box: [number, number, number, number] | null): Promise<CameraState>;
+    /** A camera's V4L2 controls as its device has them now, with the values it keeps. */
+    cameraControls(camera: ControlledCamera): Promise<CameraControls>;
+    /** Sets control values now and keeps them, to be set at each start; null forgets a kept one. */
+    setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls>;
 
     align(): Promise<AlignState>;
     /** A mark from the tool's point now. */
@@ -279,6 +287,8 @@ export interface Api {
     /** Looks at the part on the nozzle over the up camera. */
     pnpPart(): Promise<PnpState>;
     pnpAbort(): Promise<PnpState>;
+    /** The nozzle's or a part's spot found once over the up camera, no move: kept as the state's look. */
+    pnpLook(spot: "nozzle" | "part"): Promise<PnpState>;
     /** The nozzle over a part's place at the travel height. */
     pnpGoto(request: PnpGotoRequest): Promise<void>;
     /** The parts of a board job; none for a job that keeps no board file. */
@@ -330,6 +340,14 @@ export interface Api {
     /** Measures where the top camera looks from the nozzle, from the mark; `step` 0 keeps the scale. */
     topOffset(step: number): Promise<PlacingState>;
     topAbort(): Promise<PlacingState>;
+    /** The top camera's mark spot found once, no move. */
+    topLook(): Promise<PlacingState>;
+    /** The job's board loaded into the top camera's pcbv, its poses read into `top.board_look`; null unloads it. */
+    topBoard(jobId: string | null): Promise<PlacingState>;
+    /** Moves the top camera over a box (machine X Y; null: the board's size about where it looks now) until enough looks agree. */
+    topSearch(box: [number, number, number, number] | null): Promise<PlacingState>;
+    /** The board's place the look found kept as the job's references. */
+    topPlace(jobId: string): Promise<PlacingState>;
 
     /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
     autoSettings(): Promise<AutoSettings>;
@@ -846,6 +864,18 @@ export class HttpApi implements Api {
         return this.request<CameraState>("POST", "/api/camera/abort");
     }
 
+    cameraSearch(box: [number, number, number, number] | null): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/search", box ? { box } : {});
+    }
+
+    cameraControls(camera: ControlledCamera): Promise<CameraControls> {
+        return this.request<CameraControls>("GET", `/api/cameras/controls?camera=${encodeURIComponent(camera)}`);
+    }
+
+    setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls> {
+        return this.request<CameraControls>("PUT", "/api/cameras/controls", { camera, values });
+    }
+
     align(): Promise<AlignState> {
         return this.request<AlignState>("GET", "/api/align");
     }
@@ -900,6 +930,10 @@ export class HttpApi implements Api {
 
     pnpPart(): Promise<PnpState> {
         return this.request<PnpState>("POST", "/api/pnp/part");
+    }
+
+    pnpLook(spot: "nozzle" | "part"): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/look", { spot });
     }
 
     pnpAbort(): Promise<PnpState> {
@@ -1022,6 +1056,22 @@ export class HttpApi implements Api {
 
     topAbort(): Promise<PlacingState> {
         return this.request<PlacingState>("POST", "/api/pnp/top/abort");
+    }
+
+    topLook(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/look");
+    }
+
+    topBoard(jobId: string | null): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/board", { job: jobId });
+    }
+
+    topSearch(box: [number, number, number, number] | null): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/search", box ? { box } : {});
+    }
+
+    topPlace(jobId: string): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/place", { job: jobId });
     }
 
     autoSettings(): Promise<AutoSettings> {

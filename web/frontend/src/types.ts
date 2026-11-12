@@ -1161,6 +1161,9 @@ export interface PnpState extends PnpSettings {
     frame: { width: number; height: number; age_ms: number | null; fps: number | null } | null;
     routine: PnpRoutine | null;
     part_offset: PartOffset | null;
+    /** The last Look once; null before any. */
+    look?: SpotLook | null;
+    controls?: Record<string, number>;
 }
 
 /** A part of a board job: its footprint's place and angle in the job's frame. */
@@ -1311,7 +1314,8 @@ export interface PnpReference {
     job: string;
     ref: string;
     at: [number, number];
-    by?: "nozzle" | "camera" | "fiducial";
+    /** How the place was read: the nozzle over it, the top camera over it, a fiducial found, or the top camera's board look. */
+    by?: "nozzle" | "camera" | "fiducial" | "look";
 }
 
 export interface PlacingRun {
@@ -1359,7 +1363,7 @@ export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 
 /** The top camera's routine: its offset measured, or the board's fiducials found (a step per fiducial). */
 export interface TopRoutine {
-    kind: "offset" | "fiducials";
+    kind: "offset" | "fiducials" | "search";
     target?: "machine" | "gcode";
     state: RoutineState;
     step: TopStep;
@@ -1376,6 +1380,11 @@ export interface TopState extends TopSettings {
     routine: TopRoutine | null;
     /** The fiducials last found: the job, where each is on the machine, and the fit made of them. */
     fiducials: { job: string; found: { ref: string; at: [number, number] }[]; fit: AlignFit } | null;
+    /** The last Look once; null before any. */
+    look?: SpotLook | null;
+    /** The look for the board loaded. */
+    board_look?: BoardLook;
+    controls?: Record<string, number>;
 }
 
 /**
@@ -1510,17 +1519,103 @@ export interface CameraPose {
 
 export type RoutineState = "running" | "done" | "stopped" | "error";
 
-/** Where the camera offset routine is: lifting, moving over the mark, measuring the scale, centering on it, or done. */
-export type RoutineStep = "lifting" | "moving" | "scale" | "centering" | "done";
+/** Where the camera's routine is: the offset routine lifting, moving over the mark, measuring the scale, centering on it; the board search searching; or done. */
+export type RoutineStep = "lifting" | "moving" | "scale" | "centering" | "searching" | "done";
 
-/** The last spot the routine found: its distance from the picture's center in pixels and in mm. */
-export interface RoutineSpot {
+/** The rectangle around a spot's pixels: its long and short sides, px, and the long side's direction, degrees from the picture's +x toward its +y. */
+export interface SpotRect {
+    length: number;
+    width: number;
+    angle: number;
+}
+
+/** What the finder said of a spot besides its place: where in the full size picture, its area, its equivalent ellipse, contrast and rectangle. */
+export interface SpotShape {
+    x?: number;
+    y?: number;
+    area?: number;
+    major?: number;
+    minor?: number;
+    angle?: number;
+    contrast?: number;
+    rect?: SpotRect;
+}
+
+/** The last spot the routine found: its distance from the picture's center in pixels and in mm, its shape, and how far from the center it was looked for (null: a third of the picture's height). */
+export interface RoutineSpot extends SpotShape {
     dx: number;
     dy: number;
     mm: number;
+    radius?: number | null;
+}
+
+/** A look taken by hand (Look once): the polarity asked for, the reach (null: a third of the picture's height), and the spot found, or found false. */
+export interface SpotLook extends SpotShape {
+    found: boolean;
+    polarity: SpotPolarity;
+    radius: number | null;
+    dx?: number;
+    dy?: number;
+}
+
+/** Where looks at a board put it on the machine: the turn and shift that take the job's frame onto the machine's, its middle there, and the fit's rms. */
+export interface BoardEstimate {
+    rotation: number;
+    shift: [number, number];
+    center: [number, number];
+    rms: number;
+}
+
+/** A camera's look for a board: the job loaded, the poses read and locked, how many in a row agree out of the needed, the agreed estimate, the newest picture's corners and center in the job's frame, and why the newest locked pose was not used. */
+export interface BoardLook {
+    job: string | null;
+    looks?: number;
+    locked?: number;
+    pose?: PoseState | null;
+    agree?: number;
+    need?: number;
+    found?: boolean;
+    spread_mm?: number | null;
+    spread_deg?: number | null;
+    estimate?: BoardEstimate | null;
+    view?: [number, number][] | null;
+    seen?: [number, number] | null;
+    problem?: string | null;
+}
+
+/** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */
+export interface CameraControl {
+    name: string;
+    section: string;
+    kind: "int" | "bool" | "menu" | "intmenu";
+    min: number;
+    max: number;
+    step: number;
+    default: number;
+    value: number;
+    inactive: boolean;
+    kept: number | null;
+    items?: { value: number; label: string }[];
+}
+
+/** Which camera's controls: the head camera, the up camera, or a G-code machine's top camera. */
+export type ControlledCamera = "head" | "up" | "top";
+
+export interface CameraControls {
+    camera: ControlledCamera;
+    device: string;
+    /** The device is a V4L2 node on the backend's computer; otherwise `note` says why there are none. */
+    local: boolean;
+    note: string | null;
+    controls: CameraControl[];
+    kept: Record<string, number>;
+    /** What the device refused of the values just set, each with why. */
+    refused?: string[];
 }
 
 export interface CameraRoutine {
+    /** The find routine (the mark) or the board search. */
+    kind?: "find" | "search";
     state: RoutineState;
     step: RoutineStep;
     done: number;
@@ -1542,6 +1637,10 @@ export interface CameraState extends CameraSettings {
     pose: CameraPose | null;
     /** The find routine's progress; null before any. */
     routine: CameraRoutine | null;
+    /** The look for the board loaded. */
+    board_look?: BoardLook;
+    /** V4L2 control values set at each start. */
+    controls?: Record<string, number>;
 }
 
 /** Make a mark with the tool where it stands (a spindle machine), or only record the tool's point as the mark. */

@@ -2476,24 +2476,12 @@ table.cam-table input[type="checkbox"] {
     white-space: nowrap;
 }
 
-/* Camera panel: the picture at the panel's width, the sensor's aspect kept. */
-
-.vision-picture-box {
-    width: 100%;
-    border-radius: var(--radius);
-    overflow: hidden;
-    border: thin solid var(--border);
-    background: var(--base03);
-}
-
-.vision-picture {
-    display: block;
-    width: 100%;
-    height: auto;
-}
+/* Camera panel: the lines on the pose, the routine and the look. */
 
 .vision-pose,
-.vision-routine {
+.vision-routine,
+.vision-look,
+.pnp-look-line {
     margin: 0;
     font-size: 0.82rem;
     flex: 1 1 12rem;
@@ -2515,15 +2503,36 @@ table.cam-table input[type="checkbox"] {
     font-size: 0.82rem;
 }
 
-.badge[data-camera="locked"] {
+/* A camera's badge: green while it runs, filled green on a lock or a
+   board found, yellow while it still looks for one, blue under a routine. */
+.badge[data-camera="running"] { --tone: var(--jog); }
+.badge[data-camera="looking"] { --tone: var(--hold); }
+
+.badge[data-camera="locked"],
+.badge[data-camera="found"] {
+    --tone: var(--jog);
     background: var(--jog);
     color: var(--on-fill);
 }
 
-.badge[data-camera="running"],
-.badge[data-camera="finding mark"] {
+.badge[data-camera="finding mark"],
+.badge[data-camera="searching"] {
+    --tone: var(--run);
     background: var(--run);
     color: var(--on-fill);
+}
+
+.badge[data-camera="locked"]::before,
+.badge[data-camera="found"]::before,
+.badge[data-camera="finding mark"]::before,
+.badge[data-camera="searching"]::before {
+    background: var(--on-fill);
+}
+
+.badge[data-camera="looking"]::before,
+.badge[data-camera="finding mark"]::before,
+.badge[data-camera="searching"]::before {
+    animation: pulse 1.2s ease-in-out infinite;
 }
 
 /* Align panel: the marks table scrolls sideways on a narrow panel. */
@@ -3005,6 +3014,29 @@ table.pnp-parts tr.dnp td {
     text-anchor: start;
 }
 
+/* A label that would crowd another at this zoom. */
+.pnp-board text.crowded {
+    display: none;
+}
+
+/* What a camera looking for the board sees of it. */
+.pnp-board .pnp-look polygon {
+    fill: color-mix(in oklab, var(--cyan) 12%, transparent);
+    stroke: var(--cyan);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke;
+}
+
+.pnp-board .pnp-look.found polygon {
+    stroke: var(--green);
+    fill: color-mix(in oklab, var(--green) 12%, transparent);
+}
+
+.pnp-board .pnp-look text {
+    fill: var(--cyan);
+}
+
 /* PNP page: a G-code machine's panels. */
 .device-references,
 .device-skipped {
@@ -3084,62 +3116,140 @@ table.pnp-parts tr.dnp td {
     overflow-wrap: anywhere;
 }
 
-/* The PNP page's camera view: one picture, or two side by side. */
-.camera-view-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
-    gap: 0.5rem;
-}
-
-.camera-view {
+/* A camera's picture (views/picture.ts): a box the picture is fitted in,
+   at the picture's own shape or at the height its grip was dragged to,
+   the page's marks drawn over it in the picture's own pixels. */
+.picture-view {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
     margin: 0;
 }
 
-.camera-view-stage {
+.picture-box {
     position: relative;
+    width: 100%;
+    min-height: 6rem;
     overflow: hidden;
     border: thin solid var(--border);
     border-radius: var(--radius);
     background: var(--base03);
+}
+
+.picture-stage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
     cursor: grab;
     touch-action: none;
     user-select: none;
 }
 
-.camera-view-stage.dragging {
+.picture-stage.dragging {
     cursor: grabbing;
 }
 
-.camera-view-picture {
+.picture-stage.boxing {
+    cursor: crosshair;
+}
+
+.picture-img {
     display: block;
     width: 100%;
-    height: auto;
-    min-height: 6rem;
+    height: 100%;
     transform-origin: center center;
     pointer-events: none;
 }
 
-/* The circle a part is looked for within, about the crosshair. */
-.camera-view-ring {
+.picture-marks {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    border: 0.125rem dashed var(--cyan);
-    border-radius: 50%;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
     pointer-events: none;
 }
 
-.camera-view-caption {
+.picture-marks .mark {
+    fill: none;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+}
+
+.picture-marks .mark-center { stroke: var(--orange); }
+.picture-marks .mark-ring { stroke: var(--cyan); stroke-dasharray: 6 4; }
+.picture-marks .mark-spot { stroke: var(--green); }
+.picture-marks .mark-look { stroke: var(--magenta); }
+.picture-marks .mark-miss { stroke: var(--red); }
+.picture-marks .mark-box { stroke: var(--yellow); stroke-dasharray: 8 4; stroke-width: 2; }
+.picture-marks .mark-board { stroke: var(--cyan); stroke-dasharray: 3 3; stroke-width: 2; }
+.picture-marks .mark-drag { stroke: var(--orange); stroke-width: 2; }
+
+/* The grip under a picture: drag it to make the picture's box taller or
+   shorter. */
+.picture-grip {
+    height: 0.45rem;
+    border-radius: var(--radius);
+    background: var(--border);
+    cursor: ns-resize;
+    touch-action: none;
+}
+
+.picture-grip:hover {
+    background: var(--accent);
+}
+
+.picture-caption {
     font-size: 0.8rem;
 }
 
-.camera-view-label {
-    flex: 1 1 auto;
+.picture-box-line {
+    flex: 1 1 12rem;
+}
+
+/* A camera's controls, folded under its settings: a row a control. */
+.camera-controls > summary {
+    cursor: pointer;
     font-weight: 600;
+}
+
+.camera-controls-list {
+    display: grid;
+    gap: 0.3rem;
+}
+
+.camera-controls-section {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+.camera-control {
+    display: grid;
+    grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 2fr) 3.5rem auto;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.camera-control.inactive {
+    opacity: 0.6;
+}
+
+.camera-control.kept .camera-control-name {
+    font-weight: 700;
+}
+
+.camera-control-slider {
+    width: 100%;
+    accent-color: var(--accent);
+}
+
+.camera-control-value {
+    text-align: right;
 }
 
 /* An "i" beside settings that shows a drawing of what they mean. */
@@ -4105,13 +4215,13 @@ button:disabled {
    nothing shown in it rather than leaving it standing empty. */
 :is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
     .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
-    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > * {
+    .cam-report, .mill-section, .camlog, .auto-tool, .camera-controls, .stack) > * {
     margin-block: 0;
 }
 
 :is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
     .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
-    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(:not(.hidden, [hidden], :is(p, ul, ol, div):empty:not(.console-log, .json-where)))
+    .cam-report, .mill-section, .camlog, .auto-tool, .camera-controls, .stack) > :where(:not(.hidden, [hidden], :is(p, ul, ol, div):empty:not(.console-log, .json-where)))
     ~ :where(:not(:is(p, ul, ol, div):empty:not(.console-log, .json-where))) {
     margin-top: var(--flow);
 }
@@ -4120,13 +4230,13 @@ button:disabled {
    above it, as a section does. */
 :is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
     .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
-    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(h3) + :where(:not(:is(p, ul, ol, div):empty:not(.console-log, .json-where))) {
+    .cam-report, .mill-section, .camlog, .auto-tool, .camera-controls, .stack) > :where(h3) + :where(:not(:is(p, ul, ol, div):empty:not(.console-log, .json-where))) {
     margin-top: var(--flow-tight);
 }
 
 :is(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
     .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
-    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(:not(.hidden, [hidden], :is(p, ul, ol, div):empty:not(.console-log, .json-where)))
+    .cam-report, .mill-section, .camlog, .auto-tool, .camera-controls, .stack) > :where(:not(.hidden, [hidden], :is(p, ul, ol, div):empty:not(.console-log, .json-where)))
     ~ :where(h3, .cam-section) {
     margin-top: var(--flow-wide);
 }
@@ -4135,6 +4245,6 @@ button:disabled {
    inline element takes no margin above it. */
 :where(.panel, .panel-body, .panel-fold, .center-test, .center-test-output,
     .hm-probe-settings, .json-panel, .job-details, .tool-laser, .cam-section,
-    .cam-report, .mill-section, .camlog, .auto-tool, .stack) > :where(label, span, a) {
+    .cam-report, .mill-section, .camlog, .auto-tool, .camera-controls, .stack) > :where(label, span, a) {
     display: inline-block;
 }

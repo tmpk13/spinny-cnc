@@ -205,11 +205,15 @@ describe("the mock camera", () => {
         await ctx.refreshState();
         await ctx.refreshJobs();
         await ctx.refreshCamera();
-        const panel = mountVision(root, ctx);
+        const viewRoot = document.createElement("section");
+        document.body.append(viewRoot);
+        const panel = mountVision(root, ctx, viewRoot);
         try {
             expect(root.querySelector(".vision-badge")?.textContent).toBe("stopped");
             expect(root.querySelector(".vision-pose")?.textContent).toBe("camera stopped");
-            const img = root.querySelector("img.vision-picture") as HTMLImageElement;
+            // The picture is a panel of its own.
+            expect(root.querySelector("img.picture-img")).toBeNull();
+            const img = viewRoot.querySelector("img.picture-img") as HTMLImageElement;
             expect(img.getAttribute("src")).toBeNull();
             click(root, "Start");
             await settle();

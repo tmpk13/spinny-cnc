@@ -1,28 +1,27 @@
-// The Camera panel: the picture from the camera on the head, refreshed
-// while the panel shows and the camera runs, the pose pcbv reads off the
-// board, the camera's settings (its device picked from the cameras found
-// attached, or typed) and its measured values, the board it looks for, and
-// the camera offset routine, which finds a mark made with the tool in the
-// picture and centers the picture on it. The file is vision.ts: camera.ts
-// is the 3D preview's camera.
+// The Camera panel: the camera on the head's settings (its device picked
+// from the cameras found attached, or typed), its picture controls and
+// measured values, the pose pcbv reads off the board, the board it looks
+// for and the search for it, and the camera offset routine, which finds a
+// mark made with the tool in the picture and centers the picture on it.
+// Its picture is a panel of its own (Camera view), refreshed while it
+// shows and the camera runs, with the routine's spot, the search box and
+// the board where the looks put it drawn over it. The file is vision.ts:
+// camera.ts is the 3D preview's camera.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, foldPanel, labeled, numberField, setLocked, Tracked } from "../dom.ts";
+import { activePage, button, el, foldPanel, labeled, lockFor, numberField, setLocked, Tracked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
-import type { CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
+import type { BoardLook, CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
+import { mountCameraControls } from "./cameracontrols.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
+import { boardMarks, foundMarks, frameSize } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
+import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
 
-/**
- * How often a camera's picture is asked for while it shows, ms, and the
- * width it is asked at, pixels: the head camera's here, and the up and top
- * cameras' on the PNP page.
- */
-export const FRAME_INTERVAL_MS = 250;
-export const FRAME_WIDTH = 640;
+export { FRAME_INTERVAL_MS } from "./picture.ts";
 /** How often this panel asks for the camera's state while it shows, ms. */
 export const POLL_INTERVAL_MS = 333;
 
@@ -69,9 +68,105 @@ export function cameraBadge(state: CameraState | null): string {
         return "stopped";
     }
     if (state.routine?.state === "running") {
-        return "finding mark";
+        return state.routine.kind === "search" ? "searching" : "finding mark";
     }
-    return state.pose?.state === "locked" ? "locked" : "running";
+    if (state.board_look?.found) {
+        return "found";
+    }
+    if (state.pose?.state === "locked") {
+        return "locked";
+    }
+    return state.board ? "looking" : "running";
+}
+
+/**
+ * One line on a camera's look for a board: whether enough looks agree, how
+ * many in a row do of how many needed, how far apart, and where the board
+ * is; or why the newest pose was not used. Empty with no board loaded.
+ */
+export function lookText(look: BoardLook | null | undefined, name: string | null = null): string {
+    if (!look || look.job === null) {
+        return "";
+    }
+    const what = name ?? look.job;
+    const need = look.need ?? 5;
+    const spread = look.spread_mm !== null && look.spread_mm !== undefined && look.spread_deg !== null && look.spread_deg !== undefined
+        ? ` within ${formatFixed(look.spread_mm, 2)} mm and ${formatFixed(look.spread_deg, 2)} deg`
+        : "";
+    const estimate = look.estimate;
+    const place = estimate ? `; middle at ${formatFixed(estimate.center[0], 2)}, ${formatFixed(estimate.center[1], 2)}, turned ${formatFixed(estimate.rotation, 2)} deg` : "";
+    if (look.found) {
+        return `${what} found: ${look.agree ?? need} looks in a row agree${spread}${place}`;
+    }
+    const pose = look.pose ? look.pose : "no pose yet";
+    const why = look.problem ? ` (${look.problem})` : "";
+    return `looking for ${what}: ${look.agree ?? 0} of ${need} looks in a row agree, ${look.locked ?? 0} of ${look.looks ?? 0} locked, now ${pose}${why}${place}`;
+}
+
+/** The head camera's calibration, once its scale is measured: its roll from board +X, never mirrored. */
+function headCalibration(state: AppState): Calibration | null {
+    const camera = state.camera;
+    return camera && camera.mm_per_px > 0 ? { mmPerPx: camera.mm_per_px, roll: camera.roll, mirror: false } : null;
+}
+
+/** The board point under the head camera's picture's center: the tool's point plus the offset. */
+function headCenter(state: AppState): [number, number] | null {
+    const board = state.snapshot.connected ? state.snapshot.machine?.board ?? null : null;
+    const offset = state.camera?.offset;
+    return board && offset ? [board.x + offset[0], board.y + offset[1]] : null;
+}
+
+/** The head camera's picture as a panel of its own, with the pose and the look under it. */
+export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => boolean): PictureView {
+    const picture = mountPicture({
+        key: "head",
+        label: "Head camera",
+        rides: true,
+        running: (state) => state.camera?.running === true,
+        frameUrl: (width, overlay) => ctx.api.cameraFrameUrl(width, overlay),
+        pcbvOverlay: (state) => (state.camera?.board ?? null) !== null,
+        size: (state) => frameSize(state.camera?.frame, state.camera?.size),
+        calibration: headCalibration,
+        center: headCenter,
+        marks: (state) => {
+            const camera = state.camera;
+            const size = frameSize(camera?.frame, camera?.size) ?? [1280, 720];
+            const look = camera?.board_look;
+            const job = look?.job && state.job?.id === look.job ? state.job : null;
+            return [
+                ...foundMarks(camera?.routine, null, size),
+                ...boardMarks(job, look?.estimate ?? null, headCenter(state), headCalibration(state), size),
+            ];
+        },
+        move: async (mm) => {
+            if (Math.hypot(mm[0], mm[1]) >= 0.001) {
+                await ctx.call(ctx.api.jog({ kind: "board", dx: Number(mm[0].toFixed(4)), dy: Number(mm[1].toFixed(4)) }));
+            }
+        },
+        noScale: "the camera's scale is not measured yet: Find mark first",
+        visible,
+        boxes: true,
+    }, ctx);
+    const empty = el("p", { class: "muted camera-view-empty" }, "The camera is not running: start it in the Camera panel.");
+    const lookLine = el("p", { class: "muted vision-look" });
+    root.append(
+        el("div", { class: "panel-head" }, el("h2", {}, "Camera view")),
+        el("div", { class: "panel-body" },
+            picture.root,
+            empty,
+            lookLine,
+            el("p", { class: "muted hint" }, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to."),
+        ),
+    );
+    ctx.store.subscribe((state) => {
+        picture.render(state);
+        empty.classList.toggle("hidden", state.camera?.running === true);
+        const look = state.camera?.board_look;
+        lookLine.textContent = lookText(look, look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null);
+        lookLine.classList.toggle("hidden", lookLine.textContent === "");
+    }, ["camera", "snapshot", "job", "jobs"]);
+    picture.render(ctx.store.get());
+    return picture;
 }
 
 export interface VisionPanel {
@@ -79,22 +174,22 @@ export interface VisionPanel {
     stop(): void;
 }
 
-export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
+/**
+ * The Camera panel in `root`, and its picture in `viewRoot` (the Camera
+ * view panel); without one the picture goes in a box of its own appended
+ * to `root`.
+ */
+export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement): VisionPanel {
     const badge = el("span", { class: "badge vision-badge" }, "stopped");
-    const picture = el("img", { class: "vision-picture", alt: "Camera picture with a center crosshair" }) as HTMLImageElement;
-    const pictureBox = el("div", { class: "vision-picture-box" }, picture);
-    const overlay = button("Overlay", () => showOverlay(!overlayOn), "btn btn-quiet btn-small btn-toggle");
-    overlay.title = "draw the spots and the pose on the picture";
-    let overlayOn = true;
-    const showOverlay = (on: boolean): void => {
-        overlayOn = on;
-        overlay.setAttribute("aria-pressed", on ? "true" : "false");
-        refreshFrame(true);
-    };
+    const pictureRoot = viewRoot ?? el("div", { class: "stack" });
+    // The fold, once made: the picture asks whether it is open.
+    let folded: HTMLDetailsElement | null = null;
+    const view = mountVisionView(pictureRoot, ctx, () => visibleView());
     const poseLine = el("p", { class: "muted vision-pose" }, poseText(null));
     const start = button("Start", () => startCamera(), "btn btn-primary");
     start.title = "start the camera with these settings";
     const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn");
+    stop.title = "stop the camera";
 
     // The settings: what the camera is read with, and how it sits against
     // the tool, which the routine below measures and Apply writes back.
@@ -130,7 +225,12 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
 
     const lookButton = button("Look for board", () => lookForBoard(), "btn");
     const unloadButton = button("Unload", () => into(ctx, "camera", ctx.api.cameraBoard(null)), "btn btn-quiet");
+    unloadButton.title = "stop looking for the board";
+    const searchButton = button("Search", () => into(ctx, "camera", ctx.api.cameraSearch(view.box())), "btn");
+    searchButton.title = "move the camera over the search box (Shift and a drag on the picture), or the board's size about where it looks, until enough looks agree on the board";
     const boardNote = el("span", { class: "muted" });
+    const lookLine = el("p", { class: "muted vision-look" });
+    const controls = mountCameraControls(ctx, "head", "the head camera");
 
     // The camera offset routine: a mark made with the tool, found in the
     // picture, and the picture's center put on it.
@@ -140,7 +240,11 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const hereButton = button("Mark is here", () => into(ctx, "camera", ctx.api.cameraMark({ here: true })), "btn");
     const step = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     const findButton = button("Find mark", () => findMark(), "btn btn-primary");
+    findButton.title = "lift the head, center the camera on the mark and measure the offset, scale and roll";
     const abortButton = button("Abort", () => into(ctx, "camera", ctx.api.cameraAbort()), "btn btn-danger");
+    abortButton.title = "stop the camera's routine (Find mark or Search)";
+    markButton.title = "drill a mark at the tool to measure the camera against";
+    hereButton.title = "a mark or a hole is under the tool already: keep the tool's point as the mark";
     const routineLine = el("p", { class: "muted vision-routine" });
     const markNote = el("span", { class: "muted" });
 
@@ -148,8 +252,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
     const logBox = el("div", { class: "camlog-box" });
     mountCameraLog(logBox, ctx, "head");
     const body = el("fieldset", { class: "panel-body" },
-        pictureBox,
-        el("div", { class: "button-row" }, start, stop, overlay, poseLine),
+        ...(viewRoot ? [] : [pictureRoot]),
+        el("div", { class: "button-row" }, start, stop, poseLine),
         pick.row,
         pick.note,
         el("div", { class: "field-grid" },
@@ -160,6 +264,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             labeled("Finish", finish),
         ),
         el("div", { class: "button-row" }, applySettings, pendingChips[0]),
+        controls.root,
         el("div", { class: "field-grid" },
             labeled("Offset x mm", offsetX),
             labeled("Offset y mm", offsetY),
@@ -167,7 +272,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             labeled("mm per px", scale),
         ),
         el("div", { class: "button-row" }, applyMeasured, pendingChips[1], el("span", { class: "muted" }, "set by Find mark; copy them into the machine file to keep them")),
-        el("div", { class: "button-row" }, lookButton, unloadButton, boardNote),
+        el("div", { class: "button-row" }, lookButton, searchButton, unloadButton, boardNote),
+        lookLine,
         el("div", { class: "button-row" },
             labeled("Depth mm", depth, "labeled inline"),
             labeled("Plunge mm/min", plunge, "labeled inline"),
@@ -186,9 +292,10 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
             "Make mark drills a mark at the tool; Mark is here uses a mark or hole already under it."
             + " Find mark lifts the head, centers the camera on the mark and measures the offset, scale and roll."),
     );
-    // Unfolded, the picture is asked for at once rather than at the next tick.
-    const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => refreshFrame(true));
+    // Unfolded, the picture (when it is in this panel) is asked for at once rather than at the next tick.
+    const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => view.refresh(true));
     root.append(fold);
+    folded = fold;
 
     // The settings fields follow the state until typed in.
     const settingsFields = new Tracked([device, size, fps, side, finish], () => showPending());
@@ -305,25 +412,19 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         return fold.open && activePage() === "jobs" && document.visibilityState !== "hidden";
     }
 
-    let lastFrame = 0;
-    function refreshFrame(force = false): void {
-        const camera = ctx.store.get().camera;
-        if (!visible() || !camera?.running) {
-            return;
+    /** The picture is in view: on the Jobs page in its own panel, or in this one while it is open. */
+    function visibleView(): boolean {
+        if (activePage() !== "jobs" || document.visibilityState === "hidden") {
+            return false;
         }
-        const now = Date.now();
-        if (!force && now - lastFrame < FRAME_INTERVAL_MS - 10) {
-            return;
-        }
-        lastFrame = now;
-        picture.src = ctx.api.cameraFrameUrl(FRAME_WIDTH, overlayOn);
+        return viewRoot ? !viewRoot.hasAttribute("data-collapsed") && !viewRoot.classList.contains("hidden") : folded?.open === true;
     }
 
     // The pose is read when the state is asked for: polled while the panel
-    // shows, straight from the API so a backend gone quiet is not a toast
-    // three times a second.
+    // or the picture shows, straight from the API so a backend gone quiet
+    // is not a toast three times a second.
     async function poll(): Promise<void> {
-        if (!visible()) {
+        if (!visible() && !visibleView()) {
             return;
         }
         try {
@@ -334,7 +435,6 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         }
     }
     const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
-    const frameTimer = setInterval(() => refreshFrame(), FRAME_INTERVAL_MS);
 
     function render(state: AppState): void {
         const camera = state.camera;
@@ -346,12 +446,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         badge.setAttribute("data-camera", cameraBadge(camera));
         poseLine.textContent = poseText(camera);
         routineLine.textContent = routineText(camera);
-        pictureBox.classList.toggle("hidden", !running);
-        if (!running) {
-            picture.removeAttribute("src");
-        }
-        setLocked(start, running);
-        setLocked(stop, !running || finding);
+        setLocked(start, running, "the camera is running");
+        lockFor(stop, [!running, "the camera is not running"], [finding, "a routine is under way: abort it first"]);
         if (camera) {
             settingsFields.follow(device, camera.device);
             settingsFields.follow(size, camera.size);
@@ -367,29 +463,34 @@ export function mountVision(root: HTMLElement, ctx: Ctx): VisionPanel {
         showPending();
         const job = state.job;
         const hasBoard = job?.design?.board === true;
-        setLocked(lookButton, !job || !hasBoard || finding);
-        lookButton.title = job && !hasBoard ? "the camera needs a job uploaded as .kicad_pcb" : "";
-        setLocked(unloadButton, !camera?.board || finding);
+        lockFor(lookButton, [!job, "select a job first"], [!hasBoard, "the camera needs a job uploaded as .kicad_pcb"], [finding, "a routine is under way"]);
+        lookButton.title = "load the selected job's board: pcbv looks for it in every picture until Unload";
+        lockFor(unloadButton, [!camera?.board, "no board loaded"], [finding, "a routine is under way"]);
         const looking = camera?.board ? state.jobs.find((entry) => entry.id === camera.board)?.name ?? camera.board : null;
         boardNote.textContent = looking ? `looking for ${looking}` : "no board loaded";
+        lockFor(searchButton,
+            [!camera?.board, "load a board first: Look for board"],
+            [!connected || !idle, "the machine must be connected and Idle"],
+            [finding, "a routine is under way"],
+            [!(camera?.mm_per_px && camera.mm_per_px > 0) && camera?.pose?.state !== "locked", "the camera's scale is not measured: Find mark first"]);
+        lookLine.textContent = lookText(camera?.board_look, looking);
+        lookLine.classList.toggle("hidden", lookLine.textContent === "");
         const milling = isMilling(state.snapshot);
         const busy = !connected || !idle || finding;
         setLocked(markButton, busy || !milling || !state.snapshot.profile?.h_axis);
         markButton.title = milling ? "" : "needs a spindle; use Mark is here over a mark made by hand";
         setLocked(hereButton, busy);
-        setLocked(findButton, busy || !running || !camera?.mark);
-        setLocked(abortButton, !finding);
+        lockFor(findButton, [busy, "the machine must be connected, Idle and free"], [!running, "start the camera first"], [!camera?.mark, "no mark recorded: Make mark or Mark is here first"]);
+        setLocked(abortButton, !finding, "no routine under way");
         markNote.textContent = camera?.mark ? `mark at X ${formatFixed(camera.mark[0], 3)} Y ${formatFixed(camera.mark[1], 3)}` : "no mark recorded";
-        refreshFrame();
     }
 
     ctx.store.subscribe((state) => render(state), ["camera", "snapshot", "job", "jobs"]);
-    showOverlay(true);
     render(ctx.store.get());
     return {
         stop() {
             clearInterval(pollTimer);
-            clearInterval(frameTimer);
+            view.stop();
             pick.stop();
         },
     };

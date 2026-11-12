@@ -292,7 +292,7 @@ function main(): void {
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountJobJson(panel("jobjson"), ctx);
-    mountVision(panel("camera"), ctx);
+    mountVision(panel("camera"), ctx, panel("camera-view"));
     mountAlign(panel("align"), ctx);
     mountConsole(panel("console"), ctx);
     // The Plot page: the position, the jog and the spindle again beside
@@ -318,6 +318,7 @@ function main(): void {
         head: panel("pnp-head"),
         jog: panel("pnp-jog"),
         view: panel("pnp-view"),
+        topView: panel("pnp-top-view"),
         top: panel("pnp-top"),
         refs: panel("pnp-refs"),
         feeders: panel("pnp-feeders"),

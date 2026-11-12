@@ -84,6 +84,7 @@ import {
     upPicturePoint,
 } from "./pnp.ts";
 import { MockCameraLog, svgUrl } from "./camlog.ts";
+import { LOOK_SAMPLE_SECONDS, MockBoardLook, SEARCH_STOP_SECONDS, applyEstimate, estimateOf, jobSize, onBoard, searchStops, type SearchBox } from "./boardlook.ts";
 import { MockAuto } from "./auto.ts";
 import { decodePacket, encodePacket, idBytes, slotPlace, type BusPacket } from "../feederbus.ts";
 import {
@@ -115,6 +116,8 @@ import {
     CAMERA_TRUTH,
     CAPTURE_KEYS,
     MOCK_CAMERAS,
+    MOCK_CONTROLS,
+    controlsNote,
     POSE_AGE_MS,
     POSE_FPS,
     boardPose,
@@ -131,6 +134,10 @@ import {
 } from "./vision.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
+    BoardEstimate,
+    CameraControls,
+    ControlledCamera,
+    SpotLook,
     AlignFit,
     AlignMark,
     AutoConversation,
@@ -1974,6 +1981,16 @@ export class MockBackend implements Api, EventFeed {
     private placements = new Map<string, Placement>();
     private routine: CameraRoutine | null = null;
     private finding: FindSession | null = null;
+    /** The head and top cameras' looks for a board, the head camera's search under way, and the stops of the top camera's. */
+    private readonly headLook = new MockBoardLook();
+    private readonly topBoardLook = new MockBoardLook();
+    private headSearch: { stops: Board[]; index: number; elapsed: number; progress: CameraRoutine } | null = null;
+    private topSearchStops: Board[] = [];
+    /** The last look taken by hand with the up and the top camera. */
+    private upLookOnce: SpotLook | null = null;
+    private topLookOnce: SpotLook | null = null;
+    /** The V4L2 control values each camera keeps. */
+    private keptControls: Record<ControlledCamera, Record<string, number>> = { head: {}, up: {}, top: {} };
     /** The up camera of the PNP page: its settings, whether it runs, its routine, and the part last looked at. */
     pnpConfig: PnpSettings = { ...PNP_DEFAULTS };
     pnpRunning = false;
@@ -2037,7 +2054,7 @@ export class MockBackend implements Api, EventFeed {
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
     private topRoutine: TopRoutine | null = null;
-    private topSession: { kind: "offset" | "fiducials"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
+    private topSession: { kind: "offset" | "fiducials" | "search"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
     private topFiducials: TopState["fiducials"] = null;
     /** The alignment marks, kept for one job at a time. */
     private alignJob: string | null = null;
@@ -2171,6 +2188,7 @@ export class MockBackend implements Api, EventFeed {
             this.serviceRun(dt);
             this.serviceProbe(dt);
             this.serviceFind(dt);
+            this.serviceHeadSearch(dt);
             this.servicePnp(dt);
             const period = wasMoving || this.machine.moving() ? 0.1 : 0.2;
             this.stateClock += dt;
@@ -2183,6 +2201,7 @@ export class MockBackend implements Api, EventFeed {
         this.serviceDevice(dt);
         this.serviceDeviceRoutine(dt);
         this.serviceTopRoutine(dt);
+        this.serviceLooks(dt);
         // So is the Auto tab, which moves nothing.
         this.auto.step(dt);
     }
@@ -2363,6 +2382,9 @@ export class MockBackend implements Api, EventFeed {
         this.refuseWhileProbing();
         if (this.finding) {
             throw new ApiError(409, "the camera offset routine is running");
+        }
+        if (this.headSearch) {
+            throw new ApiError(409, "a camera routine is moving the head");
         }
         if (this.pnpSession) {
             throw new ApiError(409, "the up camera routine is moving the head");
@@ -5925,6 +5947,8 @@ export class MockBackend implements Api, EventFeed {
             frame: this.cameraRunning ? { width, height, age_ms: POSE_AGE_MS, fps: POSE_FPS } : null,
             pose: this.poseOf(),
             routine: this.routine ? structuredClone(this.routine) : null,
+            board_look: this.headLook.state(),
+            controls: { ...this.keptControls.head },
         };
     }
 
@@ -5973,7 +5997,7 @@ export class MockBackend implements Api, EventFeed {
         // A running camera starts again on other capture settings, as the
         // backend's does, but not under the find routine.
         const restart = this.cameraRunning && CAPTURE_KEYS.some((key) => next[key] !== this.cameraConfig[key]);
-        if (restart && this.finding) {
+        if (restart && (this.finding || this.headSearch)) {
             throw new ApiError(409, "the camera is finding the mark: abort that first");
         }
         this.cameraConfig = next;
@@ -5992,10 +6016,12 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async cameraStop(): Promise<CameraState> {
-        if (this.finding) {
+        if (this.finding || this.headSearch) {
             throw new ApiError(409, "the camera offset routine is running: abort it first");
         }
         this.cameraRunning = false;
+        this.cameraJob = null;
+        this.headLook.stop();
         this.emitCamera();
         return this.cameraStateOf();
     }
@@ -6034,6 +6060,7 @@ export class MockBackend implements Api, EventFeed {
         if (jobId === null) {
             this.cameraJob = null;
             this.placement = null;
+            this.headLook.stop();
             this.emitCamera();
             return this.cameraStateOf();
         }
@@ -6055,6 +6082,7 @@ export class MockBackend implements Api, EventFeed {
         }
         this.cameraJob = jobId;
         this.placement = placement;
+        this.headLook.start(jobId);
         this.emitCamera();
         return this.cameraStateOf();
     }
@@ -6153,6 +6181,15 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async cameraAbort(): Promise<CameraState> {
+        const search = this.headSearch;
+        if (search) {
+            this.headSearch = null;
+            search.progress.state = "stopped";
+            search.progress.error = "stopped";
+            this.halt();
+            this.emitCamera();
+            return this.cameraStateOf();
+        }
         const session = this.finding;
         if (!session) {
             throw new ApiError(409, "no camera offset routine is running");
@@ -6553,6 +6590,8 @@ export class MockBackend implements Api, EventFeed {
             frame: this.pnpRunning ? { width, height, age_ms: POSE_AGE_MS, fps: POSE_FPS } : null,
             routine: this.pnpRoutine ? { ...this.pnpRoutine } : null,
             part_offset: this.pnpPartOffset ? { ...this.pnpPartOffset } : null,
+            look: this.upLookOnce ? { ...this.upLookOnce } : null,
+            controls: { ...this.keptControls.up },
         };
     }
 
@@ -7294,6 +7333,9 @@ export class MockBackend implements Api, EventFeed {
             frame: this.topRunning ? { width, height, age_ms: POSE_AGE_MS, fps: POSE_FPS } : null,
             routine: this.topRoutine ? { ...this.topRoutine } : null,
             fiducials: this.topFiducials,
+            look: this.topLookOnce ? { ...this.topLookOnce } : null,
+            board_look: this.topBoardLook.state(),
+            controls: { ...this.keptControls.top },
         };
     }
 
@@ -7358,7 +7400,7 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    private beginTop(kind: "offset" | "fiducials", steps: string[], device: MockDevice, job: string | null): void {
+    private beginTop(kind: "offset" | "fiducials" | "search", steps: string[], device: MockDevice, job: string | null): void {
         if (!this.deviceLink.connected) {
             throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
@@ -7419,6 +7461,447 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
+    // --- the looks for a board, looks once and the cameras' controls ------------
+
+    /** Where the head camera's loaded board really lies: the job's frame taken onto the board frame through the board's real placement. */
+    private headTruth(job: Job, placement: Placement): BoardEstimate {
+        return estimateOf((point) => placedPoint(designPoint(point, jobPlacement(job)), placement), jobSize(job).middle);
+    }
+
+    /** An estimate moved by how far the offset in force is from the camera's real one: what the backend makes of exact poses through it. */
+    private offBy(estimate: BoardEstimate, dx: number, dy: number): BoardEstimate {
+        return {
+            ...estimate,
+            shift: [round4(estimate.shift[0] + dx), round4(estimate.shift[1] + dy)],
+            center: [round4(estimate.center[0] + dx), round4(estimate.center[1] + dy)],
+        };
+    }
+
+    /** The head camera's picture corners and center in the job's frame, the board lying at `placement`. */
+    private headView(job: Job, placement: Placement): { view: [number, number][]; seen: [number, number] } {
+        const [width, height] = parseSize(this.cameraConfig.size);
+        const center = this.pictureCenter();
+        const toJob = (board: Board): [number, number] => {
+            const point = placedPoint(designPoint(board, placement), jobPlacement(job));
+            return [round4(point.x), round4(point.y)];
+        };
+        const corner = (dx: number, dy: number): [number, number] => {
+            const v = boardVector(dx, dy, CAMERA_TRUTH.roll, CAMERA_TRUTH.mmPerPx);
+            return toJob({ x: center.x + v.x, y: center.y + v.y });
+        };
+        return { view: [corner(-width / 2, -height / 2), corner(width / 2, -height / 2), corner(width / 2, height / 2), corner(-width / 2, height / 2)], seen: toJob(center) };
+    }
+
+    /** One pose of the head camera's look: locked while its picture is over the board, used once the machine stands Idle. */
+    private headLookOnce(): boolean {
+        const job = this.headLook.job !== null ? this.jobStore.get(this.headLook.job) : undefined;
+        const placement = this.placement;
+        if (!this.cameraRunning || !job || !placement) {
+            return false;
+        }
+        const pose = boardPose(this.pictureCenter(), job, placement, CAMERA_TRUTH, this.cameraConfig.size);
+        const locked = pose.state === "locked";
+        const { view, seen } = this.headView(job, placement);
+        if (this.machine.state !== "Idle") {
+            this.headLook.see(locked, null, view, seen, "the head is moving");
+            return locked;
+        }
+        const config = this.cameraConfig.offset;
+        const estimate = this.offBy(this.headTruth(job, placement), config[0] - CAMERA_TRUTH.offset[0], config[1] - CAMERA_TRUTH.offset[1]);
+        this.headLook.see(locked, locked ? estimate : null, view, seen);
+        return locked;
+    }
+
+    /** Where the board lies on the G-code machine: as its references put it, else a little off a place of the mock's own. */
+    private topTruth(jobId: string): BoardEstimate {
+        const job = this.requireJob(jobId);
+        const middle = jobSize(job).middle;
+        let fit: { rotation: number; shift: [number, number] } = { rotation: 0.8, shift: [100, 60] };
+        try {
+            const found = this.deviceFitOf(jobId, mockComponents(job));
+            fit = { rotation: found.rotation, shift: [found.shift[0], found.shift[1]] };
+        } catch {
+            // No references: the mock's own place.
+        }
+        return estimateOf((point) => {
+            const t = turned(point, fit.rotation);
+            return { x: t.x + fit.shift[0], y: t.y + fit.shift[1] };
+        }, middle);
+    }
+
+    /** The top camera's picture center on the machine, really. */
+    private topPictureCenter(): Board {
+        return { x: this.deviceLink.position.x + TOP_TRUTH.offset[0], y: this.deviceLink.position.y + TOP_TRUTH.offset[1] };
+    }
+
+    /** One pose of the top camera's look: locked while its picture's center is over the board. */
+    private topLookSample(): boolean {
+        const jobId = this.topBoardLook.job;
+        const job = jobId !== null ? this.jobStore.get(jobId) : undefined;
+        if (!this.topRunning || !job || jobId === null) {
+            return false;
+        }
+        const truth = this.topTruth(jobId);
+        const toJob = (machine: Board): [number, number] => {
+            const t = turned({ x: machine.x - truth.shift[0], y: machine.y - truth.shift[1] }, -truth.rotation);
+            return [round4(t.x), round4(t.y)];
+        };
+        const center = this.topPictureCenter();
+        const seen = toJob(center);
+        const locked = onBoard(job, { x: seen[0], y: seen[1] });
+        const [width, height] = parseSize(this.topConfig.size);
+        const half = [(width / 2) * TOP_TRUTH.mmPerPx, (height / 2) * TOP_TRUTH.mmPerPx];
+        const view = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([sx, sy]) => toJob({ x: center.x + sx! * half[0]!, y: center.y + sy! * half[1]! }));
+        const offset = this.topConfig.offset;
+        if (offset === null) {
+            this.topBoardLook.see(locked, null, view, seen, "the top camera's offset is not known: Measure offset first");
+            return locked;
+        }
+        const estimate = this.offBy(truth, offset[0] - TOP_TRUTH.offset[0], offset[1] - TOP_TRUTH.offset[1]);
+        this.topBoardLook.see(locked, locked ? estimate : null, view, seen);
+        return locked;
+    }
+
+    /** The looks read a pose every so often while a board is loaded and no search reads them itself. */
+    private serviceLooks(dt: number): void {
+        for (const [look, sample, emit, busy] of [
+            [this.headLook, () => this.headLookOnce(), () => this.emitCamera(), this.headSearch !== null],
+            [this.topBoardLook, () => this.topLookSample(), () => this.emitPlacing(), this.topSession !== null],
+        ] as [MockBoardLook, () => boolean, () => void, boolean][]) {
+            if (look.job === null || busy) {
+                look.elapsed = 0;
+                continue;
+            }
+            look.elapsed += dt;
+            let read = false;
+            while (look.elapsed >= LOOK_SAMPLE_SECONDS) {
+                look.elapsed -= LOOK_SAMPLE_SECONDS;
+                sample();
+                read = true;
+            }
+            if (read) {
+                emit();
+            }
+        }
+    }
+
+    async cameraSearch(box: SearchBox | null): Promise<CameraState> {
+        this.requireConnected();
+        const jobId = this.headLook.job;
+        if (jobId === null || jobId !== this.cameraJob) {
+            throw new ApiError(400, "no board loaded: press Look for board first");
+        }
+        if (!this.cameraRunning) {
+            throw new ApiError(400, "the camera is not running: start it first");
+        }
+        this.notOwned();
+        if (this.machine.state !== "Idle" || this.outbox.length > 0) {
+            throw new ApiError(409, `the machine is ${statusLine(this.machine)}, not Idle`);
+        }
+        const scale = this.cameraConfig.mm_per_px > 0 ? this.cameraConfig.mm_per_px : this.poseOf()?.state === "locked" ? CAMERA_TRUTH.mmPerPx : 0;
+        if (!(scale > 0)) {
+            throw new ApiError(400, "the camera's scale is not measured: measure it first, so the search knows how far its picture reaches");
+        }
+        const [width, height] = parseSize(this.cameraConfig.size);
+        const tool = this.machine.headBoard();
+        const here = { x: tool.x + this.cameraConfig.offset[0], y: tool.y + this.cameraConfig.offset[1] };
+        const { diagonal } = jobSize(this.requireJob(jobId));
+        let stops: Board[];
+        try {
+            stops = searchStops(box ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * scale, height * scale], here);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const progress: CameraRoutine = { kind: "search", state: "running", step: "lifting", done: 0, total: stops.length + 1, error: null, spot: null };
+        this.routine = progress;
+        this.headSearch = { stops, index: 0, elapsed: 0, progress };
+        this.headLook.restart();
+        this.jogTracked = false;
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    /** Puts the tool's board point at `target` at once, as the find routine moves; false when the machine refused. */
+    private searchMoveTo(target: Board): boolean {
+        const machine = this.machine;
+        const over = this.jointOver(target, machine.joint);
+        const joint: ProbeJoint = machine.cartesian() ? { r: over.r, a: machine.joint.a, z: over.z } : { r: over.r, a: over.a };
+        const line = `go ${jointWords(joint.r, joint.a, joint.z)}`;
+        this.line("tx", line);
+        try {
+            this.probeGo(joint, null);
+        } catch (error) {
+            if (!(error instanceof MachineError)) {
+                throw error;
+            }
+            this.line("rx", error.message);
+            return false;
+        }
+        this.line("rx", "ok");
+        return true;
+    }
+
+    /** The head camera's search on the mock's clock: a stop at a time, the board found at the first stop whose picture is over it. */
+    private serviceHeadSearch(dt: number): void {
+        const search = this.headSearch;
+        if (!search) {
+            return;
+        }
+        search.elapsed += dt;
+        while (this.headSearch === search && search.elapsed >= SEARCH_STOP_SECONDS) {
+            search.elapsed -= SEARCH_STOP_SECONDS;
+            const progress = search.progress;
+            const end = (state: CameraRoutine["state"], error: string | null): void => {
+                this.headSearch = null;
+                progress.state = state;
+                progress.error = error;
+                if (state === "done") {
+                    progress.step = "done";
+                    progress.done = progress.total;
+                } else {
+                    this.message("error", `looking for the board failed: ${error}`);
+                }
+                this.emitCamera();
+            };
+            if (search.index >= search.stops.length) {
+                end("error", `no board found: ${search.stops.length} stops of the camera's picture looked at without enough looks agreeing; a box over where the board lies, or the board's side and finish checked`);
+                return;
+            }
+            const stop = search.stops[search.index]!;
+            const offset = this.cameraConfig.offset;
+            search.index += 1;
+            progress.step = "searching";
+            progress.done = search.index;
+            if (!this.searchMoveTo({ x: stop.x - offset[0], y: stop.y - offset[1] })) {
+                end("error", "the machine refused a move of the search");
+                return;
+            }
+            if (this.headLookOnce()) {
+                const job = this.requireJob(this.headLook.job!);
+                const placement = this.placement!;
+                const estimate = this.offBy(this.headTruth(job, placement), offset[0] - CAMERA_TRUTH.offset[0], offset[1] - CAMERA_TRUTH.offset[1]);
+                const { view, seen } = this.headView(job, placement);
+                this.headLook.settle(estimate, view, seen);
+                this.searchMoveTo({ x: estimate.center[0] - offset[0], y: estimate.center[1] - offset[1] });
+                this.message("info", `board found: its middle at ${formatFixed(estimate.center[0], 3)}, ${formatFixed(estimate.center[1], 3)} mm, turned ${formatFixed(estimate.rotation, 3)} degrees (mock)`);
+                end("done", null);
+                return;
+            }
+            this.emitCamera();
+        }
+    }
+
+    async topBoard(jobId: string | null): Promise<PlacingState> {
+        this.placingDevice();
+        if (jobId === null) {
+            this.topBoardLook.stop();
+            this.emitPlacing();
+            return this.placingStateOf();
+        }
+        if (!this.topRunning) {
+            throw new ApiError(400, "the top camera is not running: start it first");
+        }
+        const job = this.requireJob(jobId);
+        if (!job.design?.board) {
+            throw new ApiError(400, "the job was not imported from a KiCad board file kept here: the camera has nothing to look for");
+        }
+        this.topBoardLook.start(jobId);
+        this.emitPlacing();
+        return this.placingStateOf();
+    }
+
+    async topSearch(box: SearchBox | null): Promise<PlacingState> {
+        const device = this.gcodeIdle();
+        const jobId = this.topBoardLook.job;
+        if (jobId === null) {
+            throw new ApiError(400, "no board loaded: press Look for board first");
+        }
+        const offset = this.topConfig.offset ?? device.top?.offset ?? null;
+        if (offset === null) {
+            throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset");
+        }
+        if (!(this.topConfig.mm_per_px > 0)) {
+            throw new ApiError(400, "the camera's scale is not measured: measure it first, so the search knows how far its picture reaches");
+        }
+        const [width, height] = parseSize(this.topConfig.size);
+        const head = this.deviceHere(device);
+        const here = { x: head.x + offset[0], y: head.y + offset[1] };
+        const { diagonal } = jobSize(this.requireJob(jobId));
+        let stops: Board[];
+        try {
+            stops = searchStops(box ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * this.topConfig.mm_per_px, height * this.topConfig.mm_per_px], here);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        this.topSearchStops = stops;
+        this.topBoardLook.restart();
+        this.beginTop("search", ["lifting", ...stops.map((_, index) => `stop ${index + 1}`), "done"], device, jobId);
+        return this.placingStateOf();
+    }
+
+    /** The top camera's search on the mock's clock: a stop at a time, the board found at the first stop whose picture is over it. */
+    private serviceTopSearch(session: NonNullable<MockBackend["topSession"]>, dt: number): void {
+        session.elapsed += dt;
+        const progress = session.progress;
+        progress.seconds = Math.round(session.elapsed * 10) / 10;
+        const stops = this.topSearchStops;
+        const reached = Math.floor(session.elapsed / SEARCH_STOP_SECONDS);
+        const offset = this.topConfig.offset ?? session.device.top?.offset ?? [0, 0];
+        while (this.topSession === session && progress.done < Math.min(reached, stops.length + 1)) {
+            const index = progress.done;
+            if (index >= stops.length) {
+                this.topSession = null;
+                progress.state = "error";
+                progress.error = `no board found: ${stops.length} stops of the camera's picture looked at without enough looks agreeing; a box over where the board lies, or the board's side and finish checked`;
+                this.message("error", `looking for the board failed: ${progress.error}`);
+                break;
+            }
+            const stop = stops[index]!;
+            progress.done = index + 1;
+            progress.step = `stop ${index + 1}`;
+            this.deviceLine(session.device, xyLine(session.device, stop.x - offset[0], stop.y - offset[1]));
+            if (this.topLookSample()) {
+                const estimate = this.offBy(this.topTruth(session.job!), offset[0] - TOP_TRUTH.offset[0], offset[1] - TOP_TRUTH.offset[1]);
+                const state = this.topBoardLook.state();
+                this.topBoardLook.settle(estimate, state.view ?? null, state.seen ?? null);
+                this.deviceLine(session.device, xyLine(session.device, estimate.center[0] - offset[0], estimate.center[1] - offset[1]));
+                this.topSession = null;
+                progress.state = "done";
+                progress.step = "done";
+                progress.done = progress.total;
+                this.message("info", `board found: its middle at ${formatFixed(estimate.center[0], 3)}, ${formatFixed(estimate.center[1], 3)} mm, turned ${formatFixed(estimate.rotation, 3)} degrees (mock)`);
+            }
+        }
+        this.emitPlacing();
+    }
+
+    async topPlace(jobId: string): Promise<PlacingState> {
+        const best = this.topBoardLook.best;
+        if (this.topBoardLook.job !== jobId || best === null || !this.topBoardLook.found) {
+            throw new ApiError(400, "the top camera has not found this job's board: Look for board, then Search, until enough looks agree");
+        }
+        const parts = mockComponents(this.requireJob(jobId));
+        if (parts.length < 2) {
+            throw new ApiError(400, "the board needs two parts to take its place from");
+        }
+        const fiducials = parts.filter((part) => part.fiducial);
+        const pool = fiducials.length >= 2 ? fiducials : parts;
+        let pair: [Component, Component] = [pool[0]!, pool[1]!];
+        let far = -1;
+        for (let i = 0; i < pool.length; i++) {
+            for (let j = i + 1; j < pool.length; j++) {
+                const d = (pool[i]!.x - pool[j]!.x) ** 2 + (pool[i]!.y - pool[j]!.y) ** 2;
+                if (d > far) {
+                    far = d;
+                    pair = [pool[i]!, pool[j]!];
+                }
+            }
+        }
+        const refs = new Set(pair.map((part) => part.ref));
+        const placing = this.placing();
+        placing.references = placing.references.filter((entry) => !(entry.job === jobId && (refs.has(entry.ref) || entry.by === "look")));
+        for (const part of pair) {
+            const at = applyEstimate(best, { x: part.x, y: part.y });
+            placing.references.push({ job: jobId, ref: part.ref, at: [round4(at.x), round4(at.y)], by: "look" });
+        }
+        this.emitPlacing();
+        return this.placingStateOf();
+    }
+
+    /** A spot of a look once: its place in the picture and a round shape `across` px wide. */
+    private spotLook(polarity: SpotLook["polarity"], at: { px: number; py: number } | null, size: string, across = 24): SpotLook {
+        if (at === null) {
+            return { found: false, polarity, radius: null };
+        }
+        const [width, height] = parseSize(size);
+        const dx = Math.round(at.px * 100) / 100;
+        const dy = Math.round(at.py * 100) / 100;
+        return {
+            found: true, polarity, radius: null, dx, dy, x: width / 2 + dx, y: height / 2 + dy,
+            area: Math.round((Math.PI * across * across) / 4), major: across, minor: across * 0.9, angle: 12, contrast: 70, rect: { length: across * 0.96, width: across * 0.88, angle: 10 },
+        };
+    }
+
+    async pnpLook(spot: "nozzle" | "part"): Promise<PnpState> {
+        if (!this.pnpRunning) {
+            throw new ApiError(409, "the up camera is not running: start it first");
+        }
+        const polarity = spot === "nozzle" ? this.pnpConfig.nozzle_spot : this.pnpConfig.part_spot;
+        const mm: [number, number] = this.gcodeId !== null
+            ? [this.deviceLink.position.x - DEVICE_CAMERA_WHERE[0], this.deviceLink.position.y - DEVICE_CAMERA_WHERE[1]]
+            : this.nozzleFromCamera();
+        const seen = upInPicture(mm, UP_TRUTH, this.pnpConfig.size) && (spot === "nozzle" || this.pnpHolding);
+        this.upLookOnce = this.spotLook(polarity, seen ? upPicturePoint(mm, UP_TRUTH) : null, this.pnpConfig.size);
+        this.emitPnp();
+        return this.pnpStateOf();
+    }
+
+    async topLook(): Promise<PlacingState> {
+        if (!this.topRunning) {
+            throw new ApiError(409, "the top camera is not running: start it first");
+        }
+        // The mock's picture shows a bright fiducial in a dark ring 75 px
+        // right of and 50 px above its center (topFrameSvg).
+        this.topLookOnce = this.spotLook(this.topConfig.mark_spot, { px: 75, py: -50 }, this.topConfig.size, this.topConfig.mark_spot === "bright" ? 50 : 100);
+        this.emitPlacing();
+        return this.placingStateOf();
+    }
+
+    private controlledDevice(camera: ControlledCamera): string {
+        if (camera === "head") {
+            return this.cameraConfig.device;
+        }
+        if (camera === "up") {
+            return this.pnpConfig.device;
+        }
+        this.placingDevice();
+        return this.topConfig.device;
+    }
+
+    async cameraControls(camera: ControlledCamera): Promise<CameraControls> {
+        const device = this.controlledDevice(camera);
+        const note = controlsNote(device);
+        const kept = this.keptControls[camera];
+        return {
+            camera,
+            device,
+            local: note === null,
+            note,
+            controls: note === null ? MOCK_CONTROLS.map((control) => ({ ...control, items: control.items?.map((item) => ({ ...item })), value: kept[control.name] ?? control.value, kept: kept[control.name] ?? null })) : [],
+            kept: { ...kept },
+        };
+    }
+
+    async setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls> {
+        const device = this.controlledDevice(camera);
+        const kept = { ...this.keptControls[camera] };
+        for (const [name, value] of Object.entries(values)) {
+            if (!/^[a-z0-9_]{1,64}$/.test(name)) {
+                throw new ApiError(400, `'${name}' is not a camera control's name`);
+            }
+            if (value !== null && !Number.isInteger(value)) {
+                throw new ApiError(400, `the control ${name} takes a whole number`);
+            }
+            if (value === null) {
+                delete kept[name];
+            } else {
+                kept[name] = value;
+            }
+        }
+        this.keptControls[camera] = kept;
+        const refused = controlsNote(device) === null
+            ? Object.entries(values).filter(([name, value]) => value !== null && !MOCK_CONTROLS.some((control) => control.name === name)).map(([name]) => `${name}: v4l2-ctl: unknown control '${name}'`)
+            : [];
+        if (camera === "head") {
+            this.emitCamera();
+        } else if (camera === "up") {
+            this.emitPnp();
+        } else {
+            this.emitPlacing();
+        }
+        return { ...(await this.cameraControls(camera)), refused };
+    }
+
     /**
      * The mock board lies on the machine exactly where the references put
      * it: the fiducials found there become its references when two or more
@@ -7448,6 +7931,10 @@ export class MockBackend implements Api, EventFeed {
     private serviceTopRoutine(dt: number): void {
         const session = this.topSession;
         if (!session) {
+            return;
+        }
+        if (session.kind === "search") {
+            this.serviceTopSearch(session, dt);
             return;
         }
         session.elapsed += dt;

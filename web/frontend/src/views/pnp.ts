@@ -11,10 +11,11 @@ import { activePage, button, el, labeled, lockFor, numberField, readStored, repl
 import { formatFixed, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
-import type { Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
+import type { BoardLook, Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
+import { mountCameraControls } from "./cameracontrols.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
-import { mountCameraView } from "./camview.ts";
+import { mountCameraViews } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
 import { mountPnpFeeders } from "./pnpfeeders.ts";
@@ -207,6 +208,82 @@ export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { ro
     return { root, box };
 }
 
+/** The board drawing's labels and dots, rem on the screen whatever the zoom. */
+export const LABEL_REM = 0.7;
+export const DOT_REM = 0.22;
+
+/**
+ * Which labels to keep so none overlaps another: each one's box on the
+ * screen (its anchor in the middle of its bottom edge, `width` and
+ * `height` px), the first ones kept first (the part picked comes first).
+ */
+export function uncrowded(labels: { x: number; y: number; width: number; height: number }[]): boolean[] {
+    const kept: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    return labels.map((label) => {
+        const box = { x0: label.x - label.width / 2, y0: label.y - label.height, x1: label.x + label.width / 2, y1: label.y };
+        if (kept.some((other) => box.x0 < other.x1 && box.x1 > other.x0 && box.y0 < other.y1 && box.y1 > other.y0)) {
+            return false;
+        }
+        kept.push(box);
+        return true;
+    });
+}
+
+/**
+ * The drawing's dots, labels and marks at one size on the screen for the
+ * view shown, and the labels that would crowd others dropped: `unit` is
+ * the drawing's units per screen px, `rem` px per rem.
+ */
+export function fitLabels(root: SVGElement, box: Box, view: Box, unit: number, rem: number): void {
+    const font = LABEL_REM * rem * unit;
+    const dot = DOT_REM * rem * unit;
+    const sy = (y: number): number => box.y1 - y;
+    const labels: { node: SVGElement; x: number; y: number; width: number; height: number; first: boolean }[] = [];
+    for (const group of Array.from(root.querySelectorAll<SVGElement>(".pnp-part"))) {
+        const circle = group.querySelector("circle");
+        const text = group.querySelector("text");
+        if (!circle || !text) {
+            continue;
+        }
+        const chosen = group.classList.contains("selected");
+        const cx = Number(circle.getAttribute("cx"));
+        const cy = Number(circle.getAttribute("cy"));
+        circle.setAttribute("r", (chosen ? dot * 2 : dot).toFixed(4));
+        text.setAttribute("font-size", font.toFixed(4));
+        text.setAttribute("y", (cy - dot * 2.2).toFixed(4));
+        // In the view's screen px, for the crowding.
+        const x = (cx + box.x0 - view.x0) / unit;
+        const y = (cy - dot * 2.2 - (sy(view.y1))) / unit;
+        const inside = cx + box.x0 >= view.x0 && cx + box.x0 <= view.x1 && sy(cy) >= view.y0 && sy(cy) <= view.y1;
+        const length = (text.textContent ?? "").length;
+        labels.push({ node: text, x: inside ? x : -1e9, y: inside ? y : -1e9, width: length * LABEL_REM * rem * 0.62, height: LABEL_REM * rem, first: chosen });
+    }
+    const order = labels.map((_, index) => index).sort((a, b) => Number(labels[b]!.first) - Number(labels[a]!.first));
+    const keep = uncrowded(order.map((index) => labels[index]!));
+    order.forEach((index, at) => labels[index]!.node.classList.toggle("crowded", !keep[at]));
+    for (const mark of Array.from(root.querySelectorAll<SVGElement>(".pnp-head, .pnp-camera-mark, .pnp-look"))) {
+        mark.querySelectorAll("text").forEach((text) => text.setAttribute("font-size", font.toFixed(4)));
+    }
+}
+
+/** The picture a camera's board look sees, on the board drawing: its corners and center in the job's frame; taken out for none. */
+export function placeLookView(root: SVGElement, box: Box, look: BoardLook | null | undefined, label: string): void {
+    root.querySelector(".pnp-look")?.remove();
+    if (!look || !look.view || look.view.length !== 4) {
+        return;
+    }
+    const sx = (x: number): string => (x - box.x0).toFixed(3);
+    const sy = (y: number): string => (box.y1 - y).toFixed(3);
+    const group = svg("g", { class: `pnp-look${look.found ? " found" : ""}` },
+        svg("title", {}, `${label}: what its picture shows of the board${look.found ? ", the board found" : ""}`),
+        svg("polygon", { points: look.view.map(([x, y]) => `${sx(x)},${sy(y)}`).join(" ") }),
+    );
+    if (look.seen) {
+        group.append(svg("text", { x: sx(look.seen[0]), y: sy(look.seen[1]) }, label));
+    }
+    root.append(group);
+}
+
 /** A cross with a ring and a label at a board point, sized to the drawing. */
 function crossMark(at: { x: number; y: number }, box: Box, kind: string, label: string): SVGElement {
     const size = Math.max(box.x1 - box.x0, box.y1 - box.y0);
@@ -250,6 +327,18 @@ export function clampBox(view: Box, limit: Box): Box {
     const x0 = Math.min(Math.max(view.x0, limit.x0), Math.max(limit.x0, limit.x1 - width));
     const y0 = Math.min(Math.max(view.y0, limit.y0), Math.max(limit.y0, limit.y1 - height));
     return { x0, y0, x1: x0 + width, y1: y0 + height };
+}
+
+/** One line on the last Look once: what it looked for and what it found, px from the center and its size. */
+export function lookOnceText(look: { found: boolean; polarity: string; dx?: number; dy?: number; major?: number; minor?: number } | null): string {
+    if (!look) {
+        return "";
+    }
+    if (!look.found) {
+        return `look once: no ${look.polarity} spot found: try the other polarity, or bring the spot nearer the center`;
+    }
+    const size = look.major !== undefined && look.minor !== undefined ? `, ${formatFixed(look.major, 1)} by ${formatFixed(look.minor, 1)} px` : "";
+    return `look once: a ${look.polarity} spot ${formatFixed(look.dx ?? 0, 1)}, ${formatFixed(look.dy ?? 0, 1)} px from the center${size}`;
 }
 
 /** One line on the routine: which, where it is, and how it ended. */
@@ -328,8 +417,10 @@ export interface PnpRoots {
     head: HTMLElement;
     /** The jog of the machine connected. */
     jog: HTMLElement;
-    /** The cameras' pictures. */
+    /** The bottom camera's picture. */
     view: HTMLElement;
+    /** A G-code machine's top camera's picture. */
+    topView: HTMLElement;
     /** A G-code machine's top camera. */
     top: HTMLElement;
     /** The board's place on a G-code machine. */
@@ -355,8 +446,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     mountPnpRefs(roots.refs, ctx);
     mountPnpFeeders(roots.feeders, ctx);
     mountPnpRun(roots.run, ctx);
-    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()));
-    mountCameraView(roots.view, ctx);
+    const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
+    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), () => views.top.box());
 
     // --- the jog: the machine connected's, whichever it is; the panel is
     // the jog panel itself, one head and its buttons, as on the Jobs page ---
@@ -419,7 +510,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     fit.title = "the whole board again";
     roots.board.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Board"), fit),
-        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; the wheel zooms, a drag pans, a double-click fits. Hollow dots are on the back.")),
+        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back; the dashed box is what a camera looking for the board sees of it.")),
     );
 
     // --- the up camera ---
@@ -442,6 +533,13 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         visible: () => visible(),
     });
     const cameraApply = button("Apply", () => applySettings(), "btn");
+    cameraApply.title = "send the fields marked as not applied";
+    const lookSpot = el("select", { class: "field", "aria-label": "Spot to look for once" },
+        el("option", { value: "nozzle" }, "nozzle spot"), el("option", { value: "part" }, "part spot")) as HTMLSelectElement;
+    const lookOnce = button("Look once", () => into(ctx, "pnp", ctx.api.pnpLook(lookSpot.value as "nozzle" | "part")), "btn");
+    lookOnce.title = "find the spot once, with no move, and draw what was found over the picture: a wrong polarity or size shows before a routine trusts it";
+    const lookLine = el("p", { class: "muted pnp-look-line" });
+    const upControls = mountCameraControls(ctx, "up", "the bottom camera");
     // The pictures the nozzle and part routines looked at, and photos by hand.
     const upLog = el("div", { class: "camlog-box" });
     mountCameraLog(upLog, ctx, "up");
@@ -489,6 +587,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
                 labeled("Part spot", partSpot),
             ),
             el("div", { class: "button-row" }, cameraApply, cameraChip),
+            el("div", { class: "button-row" }, labeled("Look for", lookSpot, "labeled inline"), lookOnce),
+            lookLine,
+            upControls.root,
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
             deviceCalibration,
             upLog,
@@ -842,6 +943,28 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     function setView(next: Box): void {
         view = next;
         drawn?.root.setAttribute("viewBox", `${(next.x0 - (drawn?.box.x0 ?? 0)).toFixed(3)} ${((drawn?.box.y1 ?? 0) - next.y1).toFixed(3)} ${(next.x1 - next.x0).toFixed(3)} ${(next.y1 - next.y0).toFixed(3)}`);
+        fitDrawing();
+    }
+
+    /** The labels and dots at one screen size for the view shown, the crowded labels dropped. */
+    function fitDrawing(): void {
+        if (!drawn || !view) {
+            return;
+        }
+        const rect = drawn.root.getBoundingClientRect();
+        const width = view.x1 - view.x0;
+        const height = view.y1 - view.y0;
+        // The drawing is scaled to fit its element, the smaller way.
+        const scale = rect.width > 0 && rect.height > 0 ? Math.min(rect.width / width, rect.height / height) : 0;
+        if (!(scale > 0)) {
+            return;
+        }
+        const rem = parseFloat(globalThis.getComputedStyle?.(document.documentElement).fontSize ?? "") || 16;
+        fitLabels(drawn.root, drawn.box, view, 1 / scale, rem);
+    }
+    const Observer = globalThis.ResizeObserver;
+    if (Observer) {
+        new Observer(() => fitDrawing()).observe(drawing);
     }
 
     function resetView(): void {
@@ -869,12 +992,21 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         if (drawn) {
             placeHead(drawn.root, drawn.box, !gcodePlacing(state) && state.snapshot.connected && machine ? machine.board : null);
+            // What a camera looking for this board sees of it: the top
+            // camera's on a G-code machine, else the head camera's.
+            const job = state.job?.id ?? null;
+            const top = state.placing?.top?.board_look;
+            const head = state.camera?.board_look;
+            const look = gcodePlacing(state) ? (top?.job === job ? top : null) : (head?.job === job ? head : null);
+            placeLookView(drawn.root, drawn.box, look, gcodePlacing(state) ? "top camera" : "camera");
+            fitDrawing();
         }
     }
 
-    // The drawing zooms about the pointer and pans by a drag.
+    // The drawing zooms about the pointer with Ctrl and the wheel (a pinch
+    // on a touchpad), and pans by a drag; the plain wheel scrolls the page.
     drawing.addEventListener("wheel", (event) => {
-        if (!drawn || !view) {
+        if (!drawn || !view || !event.ctrlKey) {
             return;
         }
         event.preventDefault();
@@ -953,6 +1085,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         cameraPick.render();
         showPending();
+        lockFor(lookOnce, [!running, "start the camera first"]);
+        lookLine.textContent = lookOnceText(pnp?.look ?? null);
+        lookLine.classList.toggle("hidden", lookLine.textContent === "");
         routineLine.textContent = state.pnp?.routine?.target === "gcode" ? "" : pnpRoutineText(pnp);
         partLine.textContent = partOffsetText(pnp);
         // The up camera on a G-code machine.
@@ -1027,7 +1162,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         renderCamera(state);
         renderActions(state);
         renderBoard(state);
-    }, ["pnp", "snapshot", "placing"]);
+    }, ["pnp", "snapshot", "placing", "camera"]);
     // The nozzle panel of a machine on this project's firmware, or a G-code
     // machine's panels for placing: whichever is connected, or with none
     // connected the G-code machine there is to place with.

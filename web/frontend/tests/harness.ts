@@ -113,6 +113,7 @@ export function pnpRoots() {
         head: document.createElement("section"),
         jog: document.createElement("section"),
         view: document.createElement("section"),
+        topView: document.createElement("section"),
         top: document.createElement("section"),
         refs: document.createElement("section"),
         feeders: document.createElement("section"),

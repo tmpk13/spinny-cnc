@@ -912,6 +912,8 @@ export class Preview {
     private head: Joint | null = null;
     private headBoard: Board | null = null;
     private trail: Point[] = [];
+    /** The board's outline where a camera's looks put it, board mm; none drawn when empty. */
+    private estimate: Point[][] = [];
     private probeMap: HeightMap | null = null;
     private probeDraft: Grid | null = null;
     private markers: Marker[] = [];
@@ -1073,6 +1075,14 @@ export class Preview {
     }
 
     /** The saved positions to mark on the board, each with its name. */
+    /** The board's outline where the head camera's looks put it, drawn dashed over the job; empty for none. */
+    setEstimate(paths: Point[][]): void {
+        if (paths !== this.estimate && (paths.length > 0 || this.estimate.length > 0)) {
+            this.estimate = paths;
+            this.requestDraw();
+        }
+    }
+
     setMarkers(markers: Marker[]): void {
         if (markers !== this.markers) {
             this.markers = markers;
@@ -1396,6 +1406,18 @@ export class Preview {
             exaggeration = scene.exaggeration;
         } else {
             exaggeration = this.drawWork(ctx, view, colors, reach, scale, extent);
+        }
+
+        // The board where the camera's looks put it: dashed, so it reads
+        // apart from the job's own outline under it.
+        if (this.estimate.length > 0) {
+            ctx.strokeStyle = colors.marker;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 4]);
+            for (const path of this.estimate) {
+                this.polyline(ctx, view, path.map(([x, y]) => [x, y, 0] as Vec3));
+            }
+            ctx.setLineDash([]);
         }
 
         // Trail and head.
