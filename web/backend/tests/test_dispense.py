@@ -135,7 +135,7 @@ def wait_run(client, timeout: float = 20.0) -> dict:
 
 
 def test_the_profile_and_the_controls_say_dispenser(client, fake):
-    assert profile_of({"cartesian": 1, "dispenser": 1}) == {"kinematics": "cartesian", "tool": "dispenser", "h_axis": False, "r_max": 0.0, "z_max": 0.0}
+    assert profile_of({"cartesian": 1, "dispenser": 1}) == {"kinematics": "cartesian", "tool": "dispenser", "h_axis": False, "r_max": 0.0, "z_max": 0.0, "controller": "spinny"}
     assert profile_of({"cartesian": 0, "dispenser": 1})["tool"] == "laser"
     assert profile_of({"cartesian": 1, "dispenser": 1, "spindle": 1})["tool"] == "spindle"
     state = client.get("/api/state").json()

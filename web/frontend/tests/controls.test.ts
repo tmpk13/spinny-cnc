@@ -22,10 +22,12 @@ const SHIPPED: [string, Profile][] = [
 describe("default controls", () => {
     test("are the backend's for every kind of machine", () => {
         const kinds = Object.keys(fixture);
-        // Two kinematics by two tools by two focus axes, and the cartesian dispenser with and without the axis.
-        expect(kinds).toHaveLength(10);
+        // Two kinematics by two tools by two focus axes, the cartesian
+        // dispenser with and without the axis, and a G-code machine's nozzle.
+        expect(kinds).toHaveLength(11);
         expect(kinds).toContain("cartesian-dispenser");
         expect(kinds).toContain("cartesian-dispenser-focus");
+        expect(kinds).toContain("cartesian-nozzle-focus");
         for (const kind of kinds) {
             // polar-laser, cartesian-spindle-focus: the kinematics, the tool and whether a focus axis is fitted.
             const [kinematics, tool, focus] = kind.split("-");

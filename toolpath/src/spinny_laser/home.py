@@ -2,11 +2,11 @@
 
 Run from a checkout of the repository, the files are where the repository
 has them: the runtime files (jobs, config, height map, gcode out) in
-`var/`, the machine files in `machines/`, the CAM profiles in `cam/` and
-the pick and place devices in `pnp/`, all at the root.
+`var/`, the machine files in `machines/` (a G-code pick and place
+machine's among them) and the CAM profiles in `cam/`, all at the root.
 
 Installed anywhere else (a release bundle, a wheel) there is no repository
-around the package, so the same four live under one home directory
+around the package, so the same three live under one home directory
 instead: SPINNY_HOME when it is set, else the platform's directory for a
 user's data (`~/.local/share/spinny` on Linux). SPINNY_HOME wins in a
 checkout too.
@@ -52,7 +52,7 @@ def user_data(environ: Mapping[str, str] = os.environ, platform: str = sys.platf
 
 
 def root(environ: Mapping[str, str] = os.environ, repo: Path | None = None) -> Path:
-    """The directory var/, machines/, cam/ and pnp/ are in."""
+    """The directory var/, machines/ and cam/ are in."""
     named = environ.get(ENV, "").strip()
     if named:
         return Path(named).expanduser()

@@ -256,6 +256,6 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] | ((stat
         }
     }
 
-    ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components", "device", "pnpTarget"]);
+    ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components", "placing"]);
     render(ctx.store.get());
 }

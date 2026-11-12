@@ -1,9 +1,9 @@
 """The backend's probing part: the height map and its probe settings, a
 map probed over a grid or at pads, a single touch that sets the copper's
 height or ties the map, focus here and keep focus, and which compensation
-a run follows. Backend is made of this part, the G-code device part and
-its own: the methods use the backend's link, settings and publishing as
-theirs."""
+a run follows. Backend is made of this part, the G-code part, the
+placing part and its own: the methods use the backend's link, settings
+and publishing as theirs."""
 
 from __future__ import annotations
 

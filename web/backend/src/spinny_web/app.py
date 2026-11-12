@@ -48,10 +48,11 @@ from .camlog import CAMERAS, CameraLog
 from .files import write_whole
 from .cameras import detect as detect_cameras
 from .backend_shared import _check_frame_width, _s_max, _setting, _soft_limits
-from .device_part import DevicePart
-from .gcode_device import DeviceLinkError, GcodeDevice
-from .openpnp import DeviceStore
-from .openpnp import NotFound as DeviceNotFound
+from .gcode_link import GcodeLink, GcodeLinkError
+from .gcode_part import POLL_SECONDS as GCODE_POLL_SECONDS
+from .gcode_part import GcodePart
+from .openpnp import machine_of
+from .placing_part import PlacingPart
 from .probing_part import ProbingPart
 from .pnp import MachineMover, PnpError, UpCamera, job_components
 from .topcam import TopCamera
@@ -126,30 +127,18 @@ from .runner import DONE, HOLD, RUNNING, Runner, RunnerError, halt
 from .tools import ToolBox
 from .vision import VisionError
 
-# The runtime files (jobs, config, height map) and the machine, CAM and pick
-# and place files: the repository's var/, machines/, cam/ and pnp/ in a
-# checkout, else the same under the user's spinny home (spinny_laser.home).
+# The runtime files (jobs, config, height map) and the machine and CAM
+# files: the repository's var/, machines/ and cam/ in a checkout, else the
+# same under the user's spinny home (spinny_laser.home).
 HOME = home.root()
 DATA_DIR = HOME / "var"
 MACHINES_DIR = HOME / "machines"
 CAM_DIR = HOME / "cam"
-PNP_DIR = HOME / "pnp"
-# A release puts the built page and the shipped machine, CAM and pick and
-# place files inside this package; a checkout has the page's build beside
-# it, and no shipped copies (its own directories are the files).
+# A release puts the built page and the shipped machine and CAM files
+# inside this package; a checkout has the page's build beside it, and no
+# shipped copies (its own directories are the files).
 PACKAGE_DIR = Path(__file__).resolve().parent
 SHIPPED_DIR = PACKAGE_DIR / "defaults"
-# What a new device profile starts as: the profile for OpenPnP's Marlin, as
-# a release ships it, else as the checkout has it.
-DEVICE_TEMPLATE_NAME = "openpnp-marlin.toml"
-
-
-def device_template() -> str:
-    for folder in (SHIPPED_DIR / "pnp", PNP_DIR):
-        path = folder / DEVICE_TEMPLATE_NAME
-        if path.is_file():
-            return path.read_text(encoding="utf-8")
-    raise ValueError(f"no {DEVICE_TEMPLATE_NAME} to start a profile from: give its text")
 FRONTEND_DIST = PACKAGE_DIR / "page" if (PACKAGE_DIR / "page").is_dir() else PACKAGE_DIR.parents[2] / "frontend" / "dist"
 SETTINGS_CACHE_SECONDS = 1.0
 # The widest chord tolerance a run may be planned with: past this a board
@@ -299,6 +288,10 @@ class MarginBody(BaseModel):
 
 class ConnectBody(BaseModel):
     url: str
+    # The machine file to connect as, for a G-code machine on a port its
+    # file does not claim; left out, the file that claims the port, else
+    # this project's firmware.
+    machine: str | None = None
 
 
 class CombineBody(Finite):
@@ -539,94 +532,58 @@ class PnpNozzleBody(Finite):
     step: float = 1.0
 
 
-class DeviceSelectBody(Finite):
-    profile: str | None = None
-    # Degrees the board is turned on the device, for a fit from one reference.
+class PnpAngleBody(Finite):
+    # Degrees the board is turned on the machine, for a fit from one reference.
     angle: float | None = None
     clear_angle: bool = False
-    # The port to talk to instead of the profile's [port] url; "" goes back
-    # to the profile's.
-    url: str | None = None
 
 
-class DeviceNewBody(BaseModel):
-    # The new profile's text; left out, a copy of the shipped template.
-    text: str | None = None
-
-
-class DevicePatchBody(BaseModel):
+class MachinePatchBody(BaseModel):
     # The table and the key: ["motion", "place_z"], ["feeder", 0, "at"];
     # null takes the key out.
     path: list[str | int]
     value: Any = None
 
 
-class DeviceIdentifyBody(BaseModel):
-    url: str
-
-
-class DeviceJogBody(Finite):
-    axis: Literal["x", "y", "z", "rotation"]
-    # mm, or degrees counterclockwise from above for the rotation; signed.
-    step: float
-
-
-class DeviceMoveBody(Finite):
-    # The head's X and Y (across at the safe height), then Z, and the
-    # nozzle's turn in degrees; each one left out stays as it is.
-    x: float | None = None
-    y: float | None = None
-    z: float | None = None
-    rotation: float | None = None
-
-
-class DeviceSwapBody(BaseModel):
+class PnpSwapBody(BaseModel):
     # Which of the two goes over the point the other one is over.
     to: Literal["nozzle", "camera"]
 
 
-class DeviceCameraBody(Finite):
-    # The up camera's place on the device: typed, the head's place now
+class PnpCameraBody(Finite):
+    # The up camera's place on the machine: typed, the head's place now
     # with the nozzle over it by eye (`here`), or forgotten (`clear`).
     position: tuple[float, float] | None = None
     here: bool = False
     clear: bool = False
 
 
-class DeviceBusFeedBody(BaseModel):
-    # The profile's feeder to advance once.
+class PnpBusFeedBody(BaseModel):
+    # The machine file's feeder to advance once.
     feeder: str
 
 
-class DeviceLightBody(BaseModel):
+class PnpLightBody(BaseModel):
     on: bool
 
 
-class DeviceVacuumBody(BaseModel):
+class PnpVacuumBody(BaseModel):
     # The vacuum switched on or off first, when given; then the sensor read
     # when asked.
     on: bool | None = None
     read: bool = False
 
 
-class DeviceTextBody(BaseModel):
-    text: str
-
-
-class DeviceLineBody(BaseModel):
-    line: str
-
-
-class DeviceReferenceBody(Finite):
+class PnpReferenceBody(Finite):
     job: str
     ref: str
-    # Where the part's place is on the device; left out, the device is asked.
+    # Where the part's place is on the machine; left out, the machine is asked.
     at: tuple[float, float] | None = None
     # The place is under the top camera's picture's center, not the nozzle.
     camera: bool = False
 
 
-class DevicePlanBody(BaseModel):
+class PnpPlanBody(BaseModel):
     job: str
     # The parts to place; left out, every one that can be.
     refs: list[str] | None = None
@@ -634,7 +591,7 @@ class DevicePlanBody(BaseModel):
     fiducials: bool = False
 
 
-class DeviceFiducialsBody(BaseModel):
+class PnpFiducialsBody(BaseModel):
     job: str
 
 
@@ -659,20 +616,7 @@ class TopOffsetBody(Finite):
     step: float = 2.0
 
 
-class DeviceGotoBody(BaseModel):
-    job: str
-    ref: str
-    # The top camera's picture center over the part, not the nozzle.
-    camera: bool = False
-
-
-class DeviceNozzleBody(Finite):
-    # How far the head moves along X and Y to measure the picture; 0 keeps
-    # the scale, roll and mirror measured before.
-    step: float = 1.0
-
-
-class DeviceFeederBody(BaseModel):
+class PnpFeederBody(BaseModel):
     # The feeder to count from its first part again; left out, every one.
     feeder: str | None = None
 
@@ -681,8 +625,11 @@ class PnpGotoBody(Finite):
     job: str
     ref: str
     # Put the part's center, as the up camera last saw it on the nozzle,
-    # over the place rather than the nozzle's.
+    # over the place rather than the nozzle's: on this project's firmware.
     correct: bool = False
+    # The top camera's picture center over the part, not the nozzle: on a
+    # G-code machine.
+    camera: bool = False
 
 
 class AlignMarkBody(Finite):
@@ -747,7 +694,7 @@ def editing_job(method):
     return wrapped
 
 
-class Backend(DevicePart, ProbingPart):
+class Backend(GcodePart, PlacingPart, ProbingPart):
     def __init__(
         self,
         root: Path,
@@ -756,7 +703,6 @@ class Backend(DevicePart, ProbingPart):
         config_path: Path | None = None,
         machines_dir: Path | None = None,
         cam_dir: Path | None = None,
-        pnp_dir: Path | None = None,
     ) -> None:
         self.root = root
         # Saves of the config from the request threads and from the run,
@@ -764,9 +710,6 @@ class Backend(DevicePart, ProbingPart):
         self._config_lock = threading.Lock()
         self.machine_store = MachineStore(machines_dir if machines_dir is not None else MACHINES_DIR)
         self.cam = ProfileStore(cam_dir if cam_dir is not None else CAM_DIR)
-        # A pick and place machine of its own, driven with G-code: the
-        # profiles that say how.
-        self.pnp_devices = DeviceStore(pnp_dir if pnp_dir is not None else PNP_DIR)
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
         self.store = JobStore(jobs_dir if jobs_dir is not None else root / "jobs")
@@ -790,7 +733,7 @@ class Backend(DevicePart, ProbingPart):
         # The camera on the head, through pcbv.
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
-        self.top = TopCamera(self._device_config, self._save_config, self.publish_pnp_device, self.publish_message)
+        self.top = TopCamera(self._placing_config, self._save_config, self.publish_placing, self.publish_message)
         # The pictures the cameras' routines looked at, kept while logging
         # is on, and photos taken by hand.
         self.camlog = CameraLog(
@@ -801,8 +744,14 @@ class Backend(DevicePart, ProbingPart):
         self.camera.camlog = self.camlog
         self.pnp.camlog = self.camlog
         self.top.camlog = self.camlog
-        # The link to the G-code pick and place machine connected.
-        self.pnp_device = GcodeDevice(self.publish_pnp_device)
+        # The link to a machine whose own controller takes G-code, open in
+        # place of `link` while one is connected, and the machine file it
+        # was opened as.
+        self.gcode = GcodeLink(self.publish_placing, on_line=self._gcode_line, on_lost=self._gcode_lost)
+        self._gcode_id: str | None = None
+        # How often the head's place is read while the G-code machine is
+        # left alone, s; 0 reads it only when a request needs it.
+        self.gcode_poll_seconds = GCODE_POLL_SECONDS
         # The marks that line a job up with the board.
         self.alignment = Alignment()
         self.rates = Rates()
@@ -877,6 +826,7 @@ class Backend(DevicePart, ProbingPart):
         if not isinstance(data, dict):
             data = {}
         data.setdefault("tolerance", DEFAULT_TOLERANCE)
+        _move_device_config(data)
         return data
 
     def _save_config(self) -> None:
@@ -1011,7 +961,10 @@ class Backend(DevicePart, ProbingPart):
 
     # --- connection -----------------------------------------------------------
 
-    def connect(self, url: str) -> dict:
+    def connect(self, url: str, machine: str | None = None) -> dict:
+        """Opens the machine on `url`: a G-code machine when `machine` names
+        one's file or a G-code machine file claims the port (by its url, or
+        words in the port's USB names), else this project's firmware."""
         url = url.strip()
         if not url:
             raise ValueError("url is empty")
@@ -1019,9 +972,17 @@ class Backend(DevicePart, ProbingPart):
             check_url(url)
         except LinkError as exc:
             raise ValueError(str(exc)) from exc
+        if machine is not None:
+            if self.machine_store.get(machine).controller != machine_files.GCODE:
+                raise ValueError(f"{machine} is a machine on this project's firmware: connect to its board without naming a file")
+            return self._gcode_connect(url, machine)
+        claimant = self.gcode_claimant(url, self._port_names(url))
+        if claimant is not None:
+            return self._gcode_connect(url, claimant)
         with self._lock:
             if self.link is not None and self.link.is_open and self.link.url == url:
                 return self.snapshot()
+            self._close_gcode()
             self._close_link()
             link = self.link_factory(url)
             link.subscribe(self._on_link_event)
@@ -1077,6 +1038,9 @@ class Backend(DevicePart, ProbingPart):
         with self._lock:
             if self.link is not None:
                 log.info("link closed by the operator: %s", self.link.url)
+            if self.gcode.url is not None:
+                log.info("G-code link closed by the operator: %s", self.gcode.url)
+            self._close_gcode()
             self._close_link()
             # An operator who closed the link does not want it opened again
             # behind their back; the next connect lifts this.
@@ -1180,12 +1144,14 @@ class Backend(DevicePart, ProbingPart):
         self.camera.shutdown()
         self.pnp.shutdown()
         self.top.shutdown()
-        self.pnp_device.disconnect()
         self.disconnect()
 
     def require_link(self) -> Link:
         link = self.link
         if link is None or not link.is_open:
+            if self.gcode.connected:
+                name = self._gcode_snapshot()["profile"]["name"]
+                raise HTTPException(status_code=409, detail=f"{name} is a G-code machine: this is for a machine on this project's firmware")
             raise HTTPException(status_code=409, detail="not connected")
         return link
 
@@ -1206,7 +1172,7 @@ class Backend(DevicePart, ProbingPart):
         routine moving it."""
         if self.camera.routine_active:
             raise HTTPException(status_code=409, detail="the camera is finding the mark")
-        if self.pnp.routine_active and self.pnp.target == "machine":
+        if self.pnp.routine_active:
             raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
 
     def move_start(self, link: Link, streamer: Streamer, status=None) -> tuple[tuple[float, float], bool]:
@@ -1278,6 +1244,8 @@ class Backend(DevicePart, ProbingPart):
                 raise ValueError(f"out of reach: Z{joint[1]:.3f} is past the soft limit z_max={z_limit:g}")
 
     def snapshot(self) -> dict:
+        if self.gcode.connected or self._gcode_id is not None:
+            return self._gcode_snapshot()
         link = self.link
         connected = link is not None and link.is_open
         firmware = None
@@ -1533,11 +1501,6 @@ class Backend(DevicePart, ProbingPart):
         self.broadcast.publish_threadsafe({"type": "pnp", **state})
         return state
 
-    def publish_pnp_device(self) -> dict:
-        state = self.device_state()
-        self.broadcast.publish_threadsafe({"type": "pnp_device", **state})
-        return state
-
     def publish_align(self) -> dict:
         state = self.alignment.state()
         self.broadcast.publish_threadsafe({"type": "align", **state})
@@ -1562,6 +1525,8 @@ class Backend(DevicePart, ProbingPart):
         # Checked under both locks, as a position set is: a run or probing
         # claims the machine under the first, so it cannot start between
         # this check and the line going out.
+        if self.gcode.connected:
+            return self._gcode_jog(body)
         with self._owner_lock, self._move_lock:
             link = self._movable()
             return self._jog(link, body)
@@ -1604,6 +1569,8 @@ class Backend(DevicePart, ProbingPart):
         # Checked under both locks, as a position set is: a run or probing
         # claims the machine under the first, so it cannot start between
         # this check and the line going out.
+        if self.gcode.connected:
+            return self._gcode_goto(body)
         with self._owner_lock, self._move_lock:
             link = self._movable()
             return self._goto(link, body)
@@ -1683,6 +1650,8 @@ class Backend(DevicePart, ProbingPart):
     def set_position(self, body: PositionBody) -> dict:
         # Checked under both locks: a run or probing that starts meanwhile
         # plans from the position this would renumber.
+        if self.gcode.connected:
+            return self._gcode_set_position(body)
         with self._owner_lock, self._move_lock:
             link = self._movable()
             return self._set_position(link, body)
@@ -1722,6 +1691,8 @@ class Backend(DevicePart, ProbingPart):
         return self.snapshot()
 
     def realtime(self, action: str) -> dict:
+        if self.gcode.connected:
+            return self._gcode_realtime(action)
         link = self.require_link()
         if action == "hold":
             # A running job's hold goes through the runner so the run's own
@@ -1760,6 +1731,8 @@ class Backend(DevicePart, ProbingPart):
         return self.snapshot()
 
     def command(self, line: str) -> dict:
+        if self.gcode.connected:
+            return self._gcode_command(line)
         link = self.require_link()
         text = line.strip()
         # A realtime byte typed on its own goes out as one, outside the
@@ -1925,6 +1898,8 @@ class Backend(DevicePart, ProbingPart):
         return self.snapshot()
 
     def motors(self, enabled: bool) -> dict:
+        if self.gcode.connected:
+            return self._gcode_motors(enabled)
         link = self.require_link()
         if enabled:
             link.request_ok("enable")
@@ -1961,6 +1936,8 @@ class Backend(DevicePart, ProbingPart):
         for word in words:
             if not re.fullmatch(r"[RAHZrahz][-+]?", word):
                 raise ValueError(f"not an axis to home: {word!r}; give R, A, H or Z, each with an optional - or +")
+        if self.gcode.connected:
+            return self._gcode_home(axes)
         line = " ".join(["home", *(word.upper() for word in words)])
         with self._owner_lock, self._move_lock:
             link = self._movable()
@@ -1984,7 +1961,10 @@ class Backend(DevicePart, ProbingPart):
     def read_settings(self, force: bool = False) -> dict:
         """The settings as the page has them: the values with their
         schema, the host's own, and the machine file they are with the
-        controls the page draws."""
+        controls the page draws; a G-code machine has none of the
+        firmware's settings, only its file's controls."""
+        if self.gcode.connected:
+            return self._gcode_settings()
         return self._settings_response(self._values(force))
 
     def _values(self, force: bool = False) -> dict:
@@ -2127,7 +2107,9 @@ class Backend(DevicePart, ProbingPart):
         file's. A file that cannot be read is named with its problem."""
         found, problems = self.machine_list()
         current = None
-        if self.link is not None and self.link.is_open:
+        if self.gcode.connected:
+            current = self._gcode_id
+        elif self.link is not None and self.link.is_open:
             try:
                 current = self.read_settings()["machine"]
             except (LinkError, HTTPException):
@@ -2140,6 +2122,12 @@ class Backend(DevicePart, ProbingPart):
         saved: what it reads as, the keys written and the settings it still
         does not give the board's value for."""
         self.machine_store.path(machine_id)
+        try:
+            controller = machine_files.parse(text, machine_id, f"{machine_id}.toml").controller
+        except machine_files.MachineError:
+            controller = machine_files.SPINNY
+        if controller != machine_files.SPINNY:
+            raise ValueError("a G-code machine's file takes nothing from a board: its controller keeps its own settings")
         values = self._values(force=True)
         read = machine_keys.from_board(text, values, self.host_settings(), f"{machine_id}.toml")
         return {**self.machine_store.check(machine_id, read.text), "text": read.text, "changes": read.changes, "left": read.left}
@@ -2152,8 +2140,12 @@ class Backend(DevicePart, ProbingPart):
 
     def apply_machine(self, machine_id: str, save: bool = False) -> dict:
         """Writes a machine file's every setting and its host values, all or
-        nothing as a settings write is, and saves them to flash if asked."""
+        nothing as a settings write is, and saves them to flash if asked.
+        A G-code machine's file has none to write: its controller keeps its
+        own, and connecting to it is what makes it the machine."""
         machine = self.machine(machine_id)
+        if machine.controller != machine_files.SPINNY:
+            raise ValueError(f"{machine.name} is a G-code machine: its controller keeps its own settings; connect to it from the top bar")
         # A controller that lists none of a file's settings runs firmware
         # older than the file: name them all, not just the first refused.
         known = self._values(force=True)
@@ -2280,7 +2272,7 @@ class Backend(DevicePart, ProbingPart):
 
     # --- ports and jobs --------------------------------------------------------------
 
-    def ports(self) -> dict:
+    def ports(self, claims: bool = True) -> dict:
         """The serial ports on this host, the controller's own first.
 
         A USB port is listed under its stable `/dev/serial/by-id` name when
@@ -2288,6 +2280,12 @@ class Backend(DevicePart, ProbingPart):
         it from ttyACM0 to ttyACM1. `kind` tells the page what to hide:
         `usb` for a device with a vendor id, `system` for a built-in port
         such as ttyS0, which is never the controller.
+
+        With `claims`, a port a G-code machine file claims (its url, or
+        words in the port's USB names) names that file in `machine`, which
+        Connect opens it as; and a G-code machine whose file names a url no
+        port is listed under (a socket, a port not plugged in) comes as an
+        entry of kind `machine` of its own.
         """
         from serial.tools import list_ports
 
@@ -2337,7 +2335,46 @@ class Backend(DevicePart, ProbingPart):
                     "spinny": False,
                 }
             )
+        if claims:
+            self._claim_ports(found)
         return {"ports": found}
+
+    def _claim_ports(self, found: list[dict]) -> None:
+        """Names the G-code machine each listed port is, and lists the G-code
+        machines whose own url is not among the ports."""
+        machines, _ = self.machine_store.list()
+        gcode = []
+        for machine in machines:
+            if machine.controller != machine_files.GCODE:
+                continue
+            try:
+                gcode.append(self.machine_store.gcode(machine.id))
+            except (ValueError, LookupError):
+                continue
+        for entry in found:
+            names = " ".join(str(entry.get(key) or "") for key in ("product", "manufacturer", "description", "url", "device"))
+            owner = next((machine for machine in gcode if machine.claims(str(entry["url"]), names) or machine.claims(str(entry.get("device") or ""), names)), None)
+            entry["machine"] = owner.id if owner is not None else None
+            entry["machine_name"] = owner.name if owner is not None else None
+        listed = {str(entry["url"]) for entry in found} | {str(entry.get("device") or "") for entry in found}
+        for machine in gcode:
+            if machine.url and machine.url not in listed:
+                found.append(
+                    {
+                        "url": machine.url,
+                        "device": machine.url,
+                        "description": machine.name,
+                        "product": "",
+                        "manufacturer": "",
+                        "serial": "",
+                        "vid": None,
+                        "pid": None,
+                        "kind": "machine",
+                        "spinny": False,
+                        "machine": machine.id,
+                        "machine_name": machine.name,
+                    }
+                )
 
     def import_upload(self, filename: str, data: bytes, options: ImportOptions) -> Job:
         import tempfile
@@ -2920,12 +2957,20 @@ class Backend(DevicePart, ProbingPart):
         return MachineMover(access, self.pnp.aborting, self.publish_message)
 
     def pnp_nozzle(self, step: float) -> dict:
+        """Centers the nozzle of the machine connected over the up camera:
+        a G-code machine's place is kept with what the PNP tab keeps of it,
+        this project's machine's in the up camera's settings."""
+        if self.gcode.connected:
+            self.gcode_nozzle(step)
+            return self.pnp.state()
         with self._owner_lock:
             link = self._movable()
             self.pnp.center_nozzle(self._pnp_mover(link), step)
         return self.pnp.state()
 
     def pnp_part(self) -> dict:
+        if self.gcode.connected:
+            raise ValueError("a G-code machine looks at each part over the up camera as it places it: mark its feeder's parts for vision")
         with self._owner_lock:
             link = self._movable()
             self.pnp.measure_part(self._pnp_mover(link))
@@ -2933,10 +2978,10 @@ class Backend(DevicePart, ProbingPart):
 
     def pnp_abort(self) -> dict:
         self.pnp.abort()
-        if self.pnp.target == "device":
-            # The routine waits on a move and its wait command: the device
+        if self.pnp.target == "gcode":
+            # The routine waits on a move and its wait command: the machine
             # is told to stop at once, not once that move has run out.
-            self._stop_device()
+            self._stop_gcode()
         return self.pnp.state()
 
     def job_parts(self, job_id: str) -> dict:
@@ -2951,7 +2996,11 @@ class Backend(DevicePart, ProbingPart):
     def pnp_goto(self, body: PnpGotoBody) -> dict:
         """The nozzle over a part's place, by a goto (so at the travel height
         first); with `correct`, the part's center as the up camera last saw
-        it on the nozzle goes over the place instead."""
+        it on the nozzle goes over the place instead. On a G-code machine
+        the place is where the board's references put it, and `camera`
+        takes the top camera's picture center there instead."""
+        if self.gcode.connected:
+            return self.gcode_goto_part(body)
         part = self._part(body.job, body.ref)
         target = (float(part["x"]), float(part["y"]))
         with self._owner_lock, self._move_lock:
@@ -3091,6 +3140,58 @@ def _setting_text(name: str, value) -> str:
     return text
 
 
+def move_device_profiles(pnp_dir: Path, machines_dir: Path) -> list[str]:
+    """G-code device profiles a backend from before kept in `pnp_dir`,
+    written into `machines_dir` as G-code machine files (the profile's
+    text with `controller = "gcode"` and its [camera] table, the up
+    camera's, called [up_camera]), each one only when no machine file has
+    its id, and only when it reads that way. What was done, a line each."""
+    done: list[str] = []
+    if not pnp_dir.is_dir():
+        return done
+    for path in sorted(pnp_dir.glob("*.toml")):
+        target = machines_dir / path.name
+        if target.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            done.append(f"{path}: not moved to {machines_dir}: {exc}")
+            continue
+        text = re.sub(r"^\[camera\]", "[up_camera]", text, flags=re.MULTILINE)
+        text = 'controller = "gcode"\n' + text
+        try:
+            machine_of(machine_files.parse(text, path.stem, str(target)))
+        except machine_files.MachineError as exc:
+            done.append(f"{path}: not moved to {machines_dir}: {exc}")
+            continue
+        try:
+            machines_dir.mkdir(parents=True, exist_ok=True)
+            write_whole(target, text)
+        except OSError as exc:
+            done.append(f"{path}: not moved to {machines_dir}: {exc}")
+            continue
+        done.append(f"{path}: written as the G-code machine file {target}")
+    return done
+
+
+def _move_device_config(config: dict) -> None:
+    """What a backend from before G-code machines were machine files kept of
+    its G-code device (under `pnp_device`, for the profile picked) moved to
+    where it is kept now: under `placing`, by the machine file's id, which
+    is the profile's (its file moved from pnp/ to machines/)."""
+    old = config.pop("pnp_device", None)
+    if not isinstance(old, dict):
+        return
+    machine_id = old.get("profile")
+    if not isinstance(machine_id, str) or not machine_id:
+        return
+    placing = config.setdefault("placing", {})
+    if isinstance(placing, dict) and machine_id not in placing:
+        placing[machine_id] = {key: value for key, value in old.items() if key in ("angle", "references", "taken", "boards", "camera", "top")}
+    config.setdefault("placing_machine", machine_id)
+
+
 def profile_of(values: dict) -> dict:
     """What the machine is, from its settings: how the head moves over the
     board, what is on the output, and the limits a page draws."""
@@ -3107,6 +3208,7 @@ def profile_of(values: dict) -> dict:
         "h_axis": bool(_setting(values, "h_axis")),
         "r_max": r_max,
         "z_max": z_max,
+        "controller": machine_files.SPINNY,
     }
 
 
@@ -3305,9 +3407,9 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except (NotFound, DeviceNotFound) as exc:
+        except NotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except DeviceLinkError as exc:
+        except GcodeLinkError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (CameraError, PnpError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -3338,7 +3440,7 @@ def create_app(
 
     @app.post("/api/connect")
     def connect(body: ConnectBody):
-        return guarded(lambda: backend.connect(body.url))
+        return guarded(lambda: backend.connect(body.url, body.machine))
 
     @app.post("/api/disconnect")
     def disconnect():
@@ -3440,8 +3542,19 @@ def create_app(
 
     @app.delete("/api/machines/{machine_id}")
     def machine_delete(machine_id: str):
-        guarded(lambda: backend.machine_store.remove(machine_id))
+        def remove():
+            if backend.gcode.connected and backend._gcode_id == machine_id:
+                raise HTTPException(status_code=409, detail="disconnect the machine before removing its file")
+            backend.machine_store.remove(machine_id)
+
+        guarded(remove)
         return {"deleted": machine_id}
+
+    @app.patch("/api/machines/{machine_id}")
+    def machine_patch(machine_id: str, body: MachinePatchBody):
+        result = guarded(lambda: backend.machine_store.patch(machine_id, body.path, body.value))
+        backend.publish_placing()
+        return result
 
     @app.post("/api/machines/{machine_id}/apply")
     def apply_machine(machine_id: str, body: ApplyMachineBody | None = None):
@@ -3825,197 +3938,115 @@ def create_app(
     def job_components_route(job_id: str):
         return guarded(lambda: backend.job_parts(job_id))
 
-    # --- a G-code pick and place machine ---
+    # --- placing with a G-code machine ---
 
-    @app.get("/api/pnp/devices")
-    def device_profiles():
-        return guarded(backend.pnp_devices.list)
+    @app.get("/api/pnp/placing")
+    def placing_state():
+        return guarded(backend.placing_state)
 
-    @app.get("/api/pnp/devices/{device_id}")
-    def device_profile(device_id: str):
-        return guarded(lambda: backend.pnp_devices.document(device_id))
+    @app.put("/api/pnp/placing")
+    def placing_angle(body: PnpAngleBody):
+        return guarded(lambda: backend.placing_angle(body))
 
-    @app.put("/api/pnp/devices/{device_id}")
-    def device_profile_save(device_id: str, body: DeviceTextBody):
-        result = guarded(lambda: backend.pnp_devices.save(device_id, body.text))
-        backend.publish_pnp_device()
-        return result
+    @app.post("/api/pnp/references")
+    def pnp_reference(body: PnpReferenceBody):
+        return guarded(lambda: backend.pnp_reference(body))
 
-    @app.post("/api/pnp/devices/{device_id}/check")
-    def device_profile_check(device_id: str, body: DeviceTextBody):
-        return guarded(lambda: backend.pnp_devices.check(device_id, body.text))
+    @app.delete("/api/pnp/references")
+    def pnp_drop_references(job: str, ref: str | None = None):
+        return guarded(lambda: backend.pnp_drop_references(job, ref))
 
-    @app.patch("/api/pnp/devices/{device_id}")
-    def device_profile_patch(device_id: str, body: DevicePatchBody):
-        result = guarded(lambda: backend.pnp_devices.patch(device_id, body.path, body.value))
-        backend.publish_pnp_device()
-        return result
+    @app.post("/api/pnp/plan")
+    def pnp_plan(body: PnpPlanBody):
+        return guarded(lambda: backend.pnp_plan(body))
 
-    @app.post("/api/pnp/devices/{device_id}")
-    def device_profile_new(device_id: str, body: DeviceNewBody | None = None):
-        def make():
-            text = (body.text if body is not None else None) or device_template()
-            return backend.pnp_devices.create(device_id, text)
-
-        return guarded(make)
-
-    @app.delete("/api/pnp/devices/{device_id}")
-    def device_profile_delete(device_id: str):
-        def remove():
-            if backend._device_config().get("profile") == device_id and backend.pnp_device.connected:
-                raise HTTPException(status_code=409, detail="disconnect the device before removing its profile")
-            backend.pnp_devices.remove(device_id)
-            return backend.pnp_devices.list()
-
-        return guarded(remove)
-
-    @app.get("/api/pnp/device")
-    def device_state():
-        return guarded(backend.device_state)
-
-    @app.put("/api/pnp/device")
-    def device_select(body: DeviceSelectBody):
-        return guarded(lambda: backend.device_select(body))
-
-    @app.post("/api/pnp/device/connect")
-    def device_connect():
-        return guarded(backend.device_connect)
-
-    @app.post("/api/pnp/device/disconnect")
-    def device_disconnect():
-        return guarded(backend.device_disconnect)
-
-    @app.post("/api/pnp/device/command")
-    def device_command(body: DeviceLineBody):
-        return guarded(lambda: backend.device_command(body.line))
-
-    @app.post("/api/pnp/device/home")
-    def device_home():
-        return guarded(backend.device_home)
-
-    @app.post("/api/pnp/device/position")
-    def device_position():
-        return guarded(backend.device_position)
-
-    @app.post("/api/pnp/device/references")
-    def device_reference(body: DeviceReferenceBody):
-        return guarded(lambda: backend.device_reference(body))
-
-    @app.delete("/api/pnp/device/references")
-    def device_drop_references(job: str, ref: str | None = None):
-        return guarded(lambda: backend.device_drop_references(job, ref))
-
-    @app.post("/api/pnp/device/plan")
-    def device_plan(body: DevicePlanBody):
-        return guarded(lambda: backend.device_plan(body))
-
-    @app.get("/api/pnp/device/program.gcode")
-    def device_program(job: str, refs: str | None = None):
+    @app.get("/api/pnp/program.gcode")
+    def pnp_program(job: str, refs: str | None = None):
         wanted = [ref for ref in refs.split(",") if ref] if refs else None
-        text = guarded(lambda: backend.device_program(job, wanted))
+        text = guarded(lambda: backend.pnp_program(job, wanted))
         return Response(content=text, media_type="text/plain", headers={"Content-Disposition": 'attachment; filename="placement.gcode"', "Cache-Control": "no-store"})
 
-    @app.post("/api/pnp/device/run")
-    def device_run(body: DevicePlanBody):
-        return guarded(lambda: backend.device_run(body))
+    @app.post("/api/pnp/run")
+    def pnp_run(body: PnpPlanBody):
+        return guarded(lambda: backend.pnp_run(body))
 
-    @app.post("/api/pnp/device/stop")
-    def device_stop():
-        return guarded(backend.device_stop)
+    @app.post("/api/pnp/run/stop")
+    def pnp_run_stop():
+        return guarded(backend.pnp_run_stop)
 
-    @app.post("/api/pnp/device/goto")
-    def device_goto(body: DeviceGotoBody):
-        return guarded(lambda: backend.device_goto(body))
+    @app.post("/api/pnp/park")
+    def pnp_park():
+        return guarded(backend.pnp_park)
 
-    @app.post("/api/pnp/device/identify")
-    def device_identify(body: DeviceIdentifyBody):
-        return guarded(lambda: backend.device_identify(body.url))
+    @app.post("/api/pnp/over-camera")
+    def pnp_over_camera():
+        return guarded(backend.pnp_over_camera)
 
-    @app.post("/api/pnp/device/jog")
-    def device_jog(body: DeviceJogBody):
-        return guarded(lambda: backend.device_jog(body))
+    @app.post("/api/pnp/swap")
+    def pnp_swap(body: PnpSwapBody):
+        return guarded(lambda: backend.pnp_swap(body))
 
-    @app.post("/api/pnp/device/move")
-    def device_move(body: DeviceMoveBody):
-        return guarded(lambda: backend.device_move(body))
+    @app.put("/api/pnp/camera")
+    def pnp_camera_place(body: PnpCameraBody):
+        return guarded(lambda: backend.pnp_camera_place(body))
 
-    @app.post("/api/pnp/device/park")
-    def device_park():
-        return guarded(backend.device_park)
+    @app.post("/api/pnp/light")
+    def pnp_light(body: PnpLightBody):
+        return guarded(lambda: backend.pnp_light(body.on))
 
-    @app.post("/api/pnp/device/over-camera")
-    def device_over_camera():
-        return guarded(backend.device_over_camera)
+    @app.post("/api/pnp/vacuum")
+    def pnp_vacuum(body: PnpVacuumBody):
+        return guarded(lambda: backend.pnp_vacuum(body))
 
-    @app.post("/api/pnp/device/swap")
-    def device_swap(body: DeviceSwapBody):
-        return guarded(lambda: backend.device_swap(body))
+    @app.post("/api/pnp/boards/reset")
+    def pnp_boards_reset():
+        return guarded(backend.pnp_boards_reset)
 
-    @app.put("/api/pnp/device/camera")
-    def device_camera(body: DeviceCameraBody):
-        return guarded(lambda: backend.device_camera(body))
+    @app.post("/api/pnp/bus/scan")
+    def pnp_bus_scan():
+        return guarded(backend.pnp_bus_scan)
 
-    @app.post("/api/pnp/device/light")
-    def device_light(body: DeviceLightBody):
-        return guarded(lambda: backend.device_light(body.on))
+    @app.post("/api/pnp/bus/feed")
+    def pnp_bus_feed(body: PnpBusFeedBody):
+        return guarded(lambda: backend.pnp_bus_feed(body.feeder))
 
-    @app.post("/api/pnp/device/vacuum")
-    def device_vacuum(body: DeviceVacuumBody):
-        return guarded(lambda: backend.device_vacuum(body))
+    @app.post("/api/pnp/feeders/reset")
+    def pnp_reset_feeders(body: PnpFeederBody | None = None):
+        return guarded(lambda: backend.pnp_reset_feeders(body or PnpFeederBody()))
 
-    @app.post("/api/pnp/device/boards/reset")
-    def device_boards_reset():
-        return guarded(backend.device_boards_reset)
+    @app.post("/api/pnp/runout")
+    def pnp_runout():
+        return guarded(backend.pnp_runout)
 
-    @app.post("/api/pnp/device/bus/scan")
-    def device_bus_scan():
-        return guarded(backend.device_bus_scan)
+    @app.post("/api/pnp/fiducials")
+    def pnp_fiducials(body: PnpFiducialsBody):
+        return guarded(lambda: backend.pnp_fiducials(body))
 
-    @app.post("/api/pnp/device/bus/feed")
-    def device_bus_feed(body: DeviceBusFeedBody):
-        return guarded(lambda: backend.device_bus_feed(body.feeder))
-
-    @app.post("/api/pnp/device/nozzle")
-    def device_nozzle(body: DeviceNozzleBody | None = None):
-        return guarded(lambda: backend.device_nozzle((body or DeviceNozzleBody()).step))
-
-    @app.post("/api/pnp/device/feeders/reset")
-    def device_reset_feeders(body: DeviceFeederBody | None = None):
-        return guarded(lambda: backend.device_reset_feeders(body or DeviceFeederBody()))
-
-    @app.post("/api/pnp/device/runout")
-    def device_runout():
-        return guarded(backend.device_runout)
-
-    @app.post("/api/pnp/device/fiducials")
-    def device_fiducials(body: DeviceFiducialsBody):
-        return guarded(lambda: backend.device_fiducials(body))
-
-    @app.put("/api/pnp/device/top")
+    @app.put("/api/pnp/top")
     def top_settings(body: TopSettingsBody):
         return guarded(lambda: backend.top_settings(body))
 
-    @app.post("/api/pnp/device/top/start")
+    @app.post("/api/pnp/top/start")
     def top_start():
         return guarded(backend.top_start)
 
-    @app.post("/api/pnp/device/top/stop")
+    @app.post("/api/pnp/top/stop")
     def top_stop():
         return guarded(backend.top_stop)
 
-    @app.get("/api/pnp/device/top/frame.jpg")
+    @app.get("/api/pnp/top/frame.jpg")
     def top_frame(width: int = FRAME_DEFAULT_WIDTH, overlay: int = 1):
         return jpeg(lambda: backend.top_frame(width, bool(overlay)), PnpError)
 
-    @app.post("/api/pnp/device/top/mark")
+    @app.post("/api/pnp/top/mark")
     def top_mark():
         return guarded(backend.top_mark)
 
-    @app.post("/api/pnp/device/top/offset")
+    @app.post("/api/pnp/top/offset")
     def top_offset(body: TopOffsetBody | None = None):
         return guarded(lambda: backend.top_offset((body or TopOffsetBody()).step))
 
-    @app.post("/api/pnp/device/top/abort")
+    @app.post("/api/pnp/top/abort")
     def top_abort():
         return guarded(backend.top_abort)
 
@@ -4156,12 +4187,6 @@ def main(argv: list[str] | None = None) -> int:
         help=f"directory of CAM profiles, one TOML file per machine and tool set (default: {CAM_DIR})",
     )
     parser.add_argument(
-        "--pnp",
-        type=Path,
-        default=PNP_DIR,
-        help=f"directory of pick and place device profiles, one TOML file per G-code machine (default: {PNP_DIR})",
-    )
-    parser.add_argument(
         "--connect",
         metavar="URL",
         help="keep a link open to this port without a page: a url, or `auto` for the port that announces"
@@ -4178,12 +4203,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_log(args.data, level=args.log_level)
     log.info("spinny-web %s starting on %s:%d, files in %s", __version__, args.host, args.port, args.data)
-    # A release's first start: the machine, CAM and pick and place files it
-    # ships fill whichever of these directories does not exist yet.
-    for directory, name in ((args.machines, "machines"), (args.cam, "cam"), (args.pnp, "pnp")):
+    # A release's first start: the machine and CAM files it ships fill
+    # whichever of these directories does not exist yet.
+    for directory, name in ((args.machines, "machines"), (args.cam, "cam")):
         if home.seed(directory, SHIPPED_DIR / name):
             log.info("%s: the shipped %s files copied in", directory, name)
-    backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam, pnp_dir=args.pnp)
+    for moved in move_device_profiles(HOME / "pnp", args.machines):
+        log.info("%s", moved)
+    backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam)
     backend.autoconnect = args.connect
     # Where this backend is reached from the same machine, for the MCP
     # server the Auto tab's Claude Code provider starts.

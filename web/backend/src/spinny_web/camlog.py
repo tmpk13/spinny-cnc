@@ -5,7 +5,7 @@ With logging on, every look a routine takes keeps three things: the
 camera's picture as it was, the same picture with what the look found drawn
 over it, and a line saying what was asked and what came back. The looks
 are the head camera finding its mark; the up camera centering the nozzle,
-measuring its runout and looking at a part, a G-code device's run looking
+measuring its runout and looking at a part, a G-code machine's run looking
 at each part it picked; and the top camera measuring its offset, finding a
 board's fiducials and a feeder's marks, and looking at a pocket before its
 pick. A look that found nothing is kept too, since that is the one to see.

@@ -412,7 +412,7 @@ class UpCameraSettings(BaseModel):
 class RoutineProgress:
     kind: str
     steps: tuple[str, ...]
-    # The machine the routine moves: this one, or a G-code device.
+    # The machine the routine moves: one on this project's firmware (machine), or a G-code machine (gcode).
     target: str = "machine"
     state: str = RUNNING
     step: str = ""
@@ -466,7 +466,7 @@ class CameraPlace:
 
 
 class Mover:
-    """What a routine moves: this machine's head or a G-code device's, to
+    """What a routine moves: the head of a machine on this project's firmware or a G-code machine's, to
     absolute places in that machine's own frame, each move waited out
     before the next. `name` says which machine, `letters` what its two
     axes are called."""
@@ -494,9 +494,9 @@ class Mover:
         raise NotImplementedError
 
     def lift(self) -> None:
-        """To the height the head travels at: up from below it on this
-        machine, to it from either side on a device (a seesaw Z lowers its
-        other nozzle above it)."""
+        """To the height the head travels at: up from below it on a machine
+        on this project's firmware, to it from either side on a G-code
+        machine (a seesaw Z lowers its other nozzle above it)."""
         raise NotImplementedError
 
     def go(self, point: Point) -> None:
@@ -587,7 +587,7 @@ class MachineMover(Mover):
 
 
 class PickCamera:
-    """What the up camera and a G-code device's top camera share: settings
+    """What the up camera and a G-code machine's top camera share: settings
     kept in a dict of the backend's config under `key` (checked whole on
     every change; a running camera given another device, size, rate or
     program starts again on them), pcbv behind them, one routine at a time
@@ -780,8 +780,9 @@ class PickCamera:
 
 class UpCamera(PickCamera):
     """The up camera's settings and state, pcbv behind them, and the routines.
-    The camera may sit on this machine or on a G-code device: a routine is
-    given the mover of the one it is on and that one's calibration."""
+    The camera may sit on a machine on this project's firmware or on a G-code
+    machine: a routine is given the mover of the one connected and that one's
+    calibration."""
 
     label = "up camera"
     log_name = "up"
@@ -922,7 +923,7 @@ class UpCamera(PickCamera):
         and the direction of its long side in the machine's frame, degrees
         (`angle`; None when the picture tells none). `size`, the length and
         width expected, keeps the finder to spots of about that area. Also
-        what a G-code device's run calls between a pick and its place;
+        what a G-code machine's placing run calls between a pick and its place;
         `crop`, mm, keeps the look within that far of the picture's center."""
         settings = self.settings()
         self._over_camera(mover, progress, place, angle, head)
@@ -972,7 +973,7 @@ class UpCamera(PickCamera):
         gives how far the tip sits off the turning axis. `rotation_cw` is
         what the profile says of the axis, checked against the turn seen."""
         if not mover.can_turn:
-            raise ValueError("this machine does not turn its nozzle: the runout is measured on a G-code device")
+            raise ValueError("this machine does not turn its nozzle: the runout is measured on a G-code machine")
         if not place.measured:
             raise ValueError("the nozzle is not centered over the up camera yet: center it first")
         self._begin("runout", RUNOUT_STEPS, mover, lambda progress: self._runout(mover, progress, place, keep, rotation_cw))

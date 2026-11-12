@@ -51,7 +51,7 @@ export interface EventSocketOptions {
 
 /** The event types the page reads; a frame of any other type is passed over. */
 const EVENT_TYPES = new Set<string>([
-    "state", "console", "progress", "heightmap", "message", "camera", "align", "pnp", "pnp_device", "markers", "camlog", "auto",
+    "state", "console", "progress", "heightmap", "message", "camera", "align", "pnp", "placing", "markers", "camlog", "auto",
 ] satisfies WsEvent["type"][]);
 
 /** Reads an event frame; `data`, `payload` or the flattened fields carry the payload. */

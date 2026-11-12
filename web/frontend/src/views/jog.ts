@@ -90,8 +90,9 @@ export function travelText(travel: number | null | undefined): string {
 /** `page` is the page whose panel this is: its keys jog only while that page shows. */
 /**
  * Mounts the jog panel in `root` for the page `page`, whose arrow keys it
- * answers; `active` says when they are its at all (the PNP page jogs a
- * G-code device instead while that one places).
+ * answers; `active` says when they are its at all. The panel jogs the
+ * machine connected, whichever it is: a G-code machine's file draws its
+ * bars as any other machine file does.
  */
 export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () => boolean = () => true): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
@@ -109,6 +110,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     // The tool the bars were drawn for: the table bar's unit is mm once
     // the joint is a dispenser's plunger.
     let drawnTool: Tool | null = null;
+    let drawnController = "spinny";
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
     // The travel height, a host value: written when the field changes, and
@@ -346,11 +348,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         for (const field of fields) {
             field.input.addEventListener("keydown", onEnter(set));
         }
+        // A G-code machine keeps no last position across a reconnect: its
+        // own home is where it counts from.
+        const gcode = profileOf(ctx.store.get().snapshot).controller === "gcode";
         return el("div", { class: "position-row" },
             el("span", { class: "choice-label" }, "Here is"),
             ...fields.flatMap((field) => [el("span", { class: "muted position-letter" }, field.axis.letter), field.input]),
             set,
-            last,
+            gcode ? null : last,
         );
     }
 
@@ -358,6 +363,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         drawn = controls;
         const profile = profileOf(ctx.store.get().snapshot);
         drawnTool = profile.tool;
+        drawnController = profile.controller ?? "spinny";
         const bars = el("div", { class: "axis-bars" });
         if (controls.pad) {
             bars.append(
@@ -384,18 +390,22 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         if (controls.axes.length > 0) {
             rows.push(positionRow(controls.axes));
         }
-        if (profile.h_axis) {
+        // A G-code machine goes across at its file's safe height, not the
+        // travel height, and has no alarm to unlock.
+        const gcode = profile.controller === "gcode";
+        if (profile.h_axis && !gcode) {
             rows.push(travelRow());
         }
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet");
         // Only a machine with an endstop reports what is homed, and only
-        // that one has anything to home.
+        // that one has anything to home; a G-code machine homes as its file says.
         home = button("Home", () => ctx.call(ctx.api.home()), "btn btn-quiet hidden");
+        home.title = gcode ? "home the machine (its file's home line, G28)" : "home every axis with an endstop";
         const bottom = el("div", { class: "button-row" },
             motors,
             home,
-            button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet"),
+            gcode ? null : button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet"),
         );
         replace(body, bars, ...rows, bottom);
         show(ctx.store.get());
@@ -408,14 +418,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
         }
         if (home) {
-            home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string");
+            home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && profileOf(state.snapshot).controller !== "gcode");
         }
         showTravel(state);
     }
 
     ctx.store.subscribe((state) => {
         const next = controlsOf(state);
-        if (drawn === null || !sameControls(drawn, next) || drawnTool !== profileOf(state.snapshot).tool) {
+        if (drawn === null || !sameControls(drawn, next) || drawnTool !== profileOf(state.snapshot).tool || drawnController !== (profileOf(state.snapshot).controller ?? "spinny")) {
             controls = next;
             draw();
         } else {

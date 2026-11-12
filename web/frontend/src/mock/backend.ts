@@ -53,6 +53,7 @@ import {
     MACHINE_ID_PATTERN,
     MICROSTEPS,
     MOCK_MACHINE_TEXTS,
+    gcodeMachineOf,
     PIN_MAX,
     PROBE_MS_MAX,
     RESERVED_PINS,
@@ -84,18 +85,16 @@ import {
 } from "./pnp.ts";
 import { MockCameraLog, svgUrl } from "./camlog.ts";
 import { MockAuto } from "./auto.ts";
-import openpnpMarlinText from "../../../../pnp/openpnp-marlin.toml" with { type: "text" };
-import lumenText from "../../../../pnp/opulo-lumen-rev5.toml" with { type: "text" };
 import { decodePacket, encodePacket, idBytes, slotPlace, type BusPacket } from "../feederbus.ts";
 import {
-    DEVICE_ID,
     angleWord,
     codeOf,
+    type AxisName,
     deviceDocument,
     deviceFit,
-    deviceGotoLines,
     gnum,
-    parseDevice,
+    gotoLines,
+    moveLine,
     placeLines,
     planDevice,
     planSummary,
@@ -166,18 +165,13 @@ import type {
     Compensate,
     Component,
     ComponentsResponse,
-    DeviceCheck,
-    DeviceIdentity,
-    DeviceFile,
-    DevicePlan,
-    DeviceReference,
-    DeviceRun,
+    PlacingPlan,
+    PnpReference,
+    PlacingRun,
     TopRoutine,
     TopSettings,
     TopState,
-    DeviceState,
-    DeviceSummary,
-    DevicesResponse,
+    PlacingState,
     GotoRequest,
     Grid,
     Group,
@@ -1509,7 +1503,7 @@ const CENTERING_MOVES = 3;
 const DEFAULT_FIND_STEP = 2;
 /** Mock time one step of an up camera routine takes, s. */
 export const PNP_STEP_SECONDS = 0.4;
-/** How fast the mock's G-code device takes a program's lines. */
+/** How fast the mock's G-code machine takes a placing run's lines. */
 export const DEVICE_LINES_PER_SECOND = 40;
 
 function clamp(value: number, low: number, high: number): number {
@@ -1894,20 +1888,27 @@ function checkProfileId(id: string): void {
     }
 }
 
-/** Refuses an id no device profile may have, in the backend's words. */
-/** Refuses anything but a device path or a socket url, in the backend's words. */
-function checkPortUrl(url: string): void {
-    const device = /^(\/dev\/[A-Za-z0-9_.:@,+-]+(\/[A-Za-z0-9_.:@,+-]+)*|COM[0-9]+)$/;
-    const socket = /^(socket:\/\/[A-Za-z0-9_.-]+(:[0-9]{1,5})|socket:\/\/\[[0-9A-Fa-f:.]+\]:[0-9]{1,5})$/;
-    if (!device.test(url) && !socket.test(url)) {
-        throw new ApiError(400, `not a serial device path or a socket://host:port url: '${url}'`);
-    }
+/** What the PNP tab keeps of one G-code machine. */
+interface MockPlacing {
+    angle: number | null;
+    references: PnpReference[];
+    taken: Record<string, number>;
+    boards: number;
+    /** Where the up camera sits on the machine, as centering the nozzle over it measured, and the tip's runout. */
+    upPlace: { position: [number, number] | null; mm_per_px: number; roll: number; mirror: boolean; runout: [number, number] | null };
 }
 
-function checkDeviceId(id: string): void {
-    if (!DEVICE_ID.test(id)) {
-        throw new ApiError(400, `'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
+/** The port at `url` is this G-code machine's: its url is the file's, or the port's USB names hold one of the file's words. */
+function claims(machine: MockDevice, url: string, names: string): boolean {
+    if (machine.url && url === machine.url) {
+        return true;
     }
+    const hay = names.toLowerCase();
+    return hay !== "" && machine.match.some((word) => hay.includes(word.toLowerCase()));
+}
+
+function newPlacing(): MockPlacing {
+    return { angle: null, references: [], taken: {}, boards: 0, upPlace: { position: null, mm_per_px: 0, roll: 0, mirror: true, runout: null } };
 }
 
 export interface MockOptions {
@@ -1978,16 +1979,20 @@ export class MockBackend implements Api, EventFeed {
     private pnpPartOffset: PartOffset | null = null;
     /** Whether a part hangs on the mock's nozzle: from the first look at one on. */
     private pnpHolding = false;
-    /** The G-code device: its profiles by id, what the backend keeps of it, and a link that answers every line `ok`. */
-    private deviceTexts = new Map<string, string>([["openpnp-marlin", openpnpMarlinText], ["opulo-lumen-rev5", lumenText]]);
-    private deviceConfig: { profile: string | null; angle: number | null; references: DeviceReference[]; taken: Record<string, number>; url: string | null; boards: number } = {
-        profile: null,
-        angle: null,
-        references: [],
-        taken: {},
-        url: null,
-        boards: 0,
-    };
+    /**
+     * What the PNP tab keeps of each G-code machine, by its file's id: the
+     * board's turn and references, the feeders' counts, the boards
+     * finished, and the up camera's place on it; and the G-code machine
+     * connected and the one last connected, which the tab places with
+     * while none is.
+     */
+    private placings = new Map<string, MockPlacing>();
+    private gcodeId: string | null = null;
+    private lastGcode: string | null = null;
+    /** Whether the G-code machine's motors were last switched on, and what its firmware said it is. */
+    private gcodeMotors = true;
+    private gcodeFirmware: string | null = null;
+    /** The connected G-code machine's link: a fake controller that answers every line `ok`, its head's place, and what it was told. */
     private deviceLink: {
         connected: boolean;
         url: string | null;
@@ -2008,26 +2013,18 @@ export class MockBackend implements Api, EventFeed {
         vacuumSwitched: null,
     };
     private devicePositionRead = false;
-    private deviceProgress: DeviceRun | null = null;
+    private deviceProgress: PlacingRun | null = null;
     private deviceSession: {
         lines: { code: string; block: MockBlock | null; look?: MockBlock; picked?: MockBlock; advance?: MockFeeder }[];
         next: number;
         elapsed: number;
         device: MockDevice;
-        progress: DeviceRun;
+        progress: PlacingRun;
         /** Each part's value, for the steps in words. */
         values: Map<string, string>;
     } | null = null;
-    /** Where the up camera sits on the device, as centering the nozzle over it there measured, and the tip's runout. */
-    private upPlace: { position: [number, number] | null; mm_per_px: number; roll: number; mirror: boolean; runout: [number, number] | null } = {
-        position: null,
-        mm_per_px: 0,
-        roll: 0,
-        mirror: true,
-        runout: null,
-    };
     private deviceRoutine: { kind: "nozzle" | "runout"; elapsed: number; device: MockDevice; progress: PnpRoutine } | null = null;
-    /** Whether the device's vacuum is on, as its pick and place commands left it. */
+    /** Whether the G-code machine's vacuum is on, as its pick and place commands left it. */
     private deviceVacuumOn = false;
     /** The fake feeder bus: the feeders initialized, the status asks a feed has left, and the next packet's number. */
     private busReady = new Set<number>();
@@ -2179,7 +2176,7 @@ export class MockBackend implements Api, EventFeed {
                 this.emit({ type: "state", data: this.snapshot() });
             }
         }
-        // The G-code device is a machine of its own, connected or not with this one.
+        // A G-code machine's placing run and camera routines, on the same clock.
         this.serviceDevice(dt);
         this.serviceDeviceRoutine(dt);
         this.serviceTopRoutine(dt);
@@ -2213,6 +2210,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     snapshot(): Snapshot {
+        if (this.gcodeId !== null) {
+            return this.gcodeSnapshot(this.gcodeId);
+        }
         return {
             connected: this.connected,
             url: this.url,
@@ -2315,6 +2315,7 @@ export class MockBackend implements Api, EventFeed {
     // Connection.
 
     private requireConnected(): void {
+        this.notGcode();
         if (!this.connected) {
             throw new ApiError(409, "not connected");
         }
@@ -2421,13 +2422,56 @@ export class MockBackend implements Api, EventFeed {
         if (this.lastSocket) {
             ports.push({ url: this.lastSocket, device: this.lastSocket, description: "last used", kind: "last", spinny: false });
         }
+        // The G-code machine each port is, by its file's url or words, and
+        // the files whose own url no port is listed under.
+        const machines = this.gcodeIds().map((id) => this.gcodeOf(id));
+        for (const port of ports) {
+            const names = [port.product, port.manufacturer, port.description, port.url, port.device].filter(Boolean).join(" ");
+            const owner = machines.find((machine) => claims(machine, port.url, names) || claims(machine, port.device ?? "", names)) ?? null;
+            port.machine = owner?.id ?? null;
+            port.machine_name = owner?.name ?? null;
+        }
+        const listed = new Set(ports.flatMap((port) => [port.url, port.device ?? ""]));
+        for (const machine of machines) {
+            if (machine.url && !listed.has(machine.url)) {
+                ports.push({ url: machine.url, device: machine.url, description: machine.name, kind: "machine", spinny: false, machine: machine.id, machine_name: machine.name });
+            }
+        }
         return ports;
     }
 
-    async connect(url: string): Promise<Snapshot> {
+    /** The G-code machine file a port is: one whose url it is, or whose words its USB names hold; null for this project's firmware. */
+    private claimant(url: string): string | null {
+        return this.gcodeIds().find((id) => claims(this.gcodeOf(id), url, this.portNames(url))) ?? null;
+    }
+
+    /** The USB names of the mock's listed port at `url`. */
+    private portNames(url: string): string {
+        if (url.includes("LUMEN") || url === "/dev/ttyACM1") {
+            return "MARLIN_OPULO_LUMEN_REV5 CDC in FS Mode STMicroelectronics";
+        }
+        if (url.includes("spinny") || url === "/dev/ttyACM0") {
+            return "spinny laser controller";
+        }
+        return "";
+    }
+
+    async connect(url: string, machine: string | null = null): Promise<Snapshot> {
         if (!url) {
             throw new ApiError(400, "no port given");
         }
+        if (machine !== null) {
+            const document = this.machineRead(machine, this.machineText(machine)).document;
+            if (document?.controller !== "gcode") {
+                throw new ApiError(400, `${machine} is a machine on this project's firmware: connect to its board without naming a file`);
+            }
+            return this.gcodeConnect(url, machine);
+        }
+        const claimed = this.claimant(url);
+        if (claimed !== null) {
+            return this.gcodeConnect(url, claimed);
+        }
+        this.gcodeClose();
         if (url.startsWith("socket://")) {
             this.lastSocket = url;
         }
@@ -2449,6 +2493,12 @@ export class MockBackend implements Api, EventFeed {
      * its USB host goes away: a reset, so nothing keeps moving unattended.
      */
     async disconnect(): Promise<Snapshot> {
+        if (this.gcodeId !== null) {
+            this.gcodeClose();
+            const snapshot = this.snapshot();
+            this.emit({ type: "state", data: snapshot });
+            return snapshot;
+        }
         this.outbox = [];
         const session = this.session;
         if (session) {
@@ -2600,6 +2650,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async jog(request: JogRequest): Promise<void> {
+        if (this.gcodeId !== null) {
+            return this.gcodeJog(request);
+        }
         this.requireMovable();
         const feed = request.feed ?? null;
         this.checkFeed(feed);
@@ -2642,6 +2695,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async goto(request: GotoRequest): Promise<void> {
+        if (this.gcodeId !== null) {
+            return this.gcodeGoto(request);
+        }
         this.requireMovable();
         const feed = request.feed ?? null;
         this.checkFeed(feed);
@@ -2695,6 +2751,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async setPosition(request: PositionRequest): Promise<void> {
+        if (this.gcodeId !== null) {
+            return this.gcodeSetPosition(request);
+        }
         this.requireMovable();
         const words = [
             request.r !== undefined ? `R${gnum(request.r)}` : "",
@@ -2724,6 +2783,17 @@ export class MockBackend implements Api, EventFeed {
 
     /** Motors on at any time; off only while nothing owns the machine, since the focus axis would sink with the rest. */
     async motors(enabled: boolean): Promise<void> {
+        if (this.gcodeId !== null) {
+            const device = this.gcodeIdle();
+            const line = enabled ? device.motors_on : device.motors_off;
+            if (!line) {
+                throw new ApiError(400, `${device.name}'s file has no [gcode] motors_${enabled ? "on" : "off"} line`);
+            }
+            this.deviceLine(device, line);
+            this.gcodeMotors = enabled;
+            this.emit({ type: "state", data: this.snapshot() });
+            return;
+        }
         if (enabled) {
             this.exchange("enable", () => {
                 this.machine.enabled = true;
@@ -2739,10 +2809,27 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async unlock(): Promise<void> {
+        this.notGcode();
         this.exchange("unlock", () => this.machine.unlock());
     }
 
     async home(axes = ""): Promise<void> {
+        if (this.gcodeId !== null) {
+            const device = this.gcodeIdle();
+            const letters = (axes.trim() === "" ? [] : axes.trim().split(/\s+/)).map((word) => {
+                const index = ["r", "z", "h", "a"].indexOf(word.replace(/[+-]$/, "").toLowerCase());
+                if (index < 0) {
+                    throw new ApiError(400, `not an axis to home: '${word}'; give R, A, H or Z`);
+                }
+                return device.axes[[0, 1, 2, 3][index]!]!;
+            });
+            this.deviceLine(device, [device.home, ...letters].join(" "));
+            this.deviceLink.homed = true;
+            this.deviceHere(device);
+            this.emit({ type: "state", data: this.snapshot() });
+            this.emitPlacing();
+            return;
+        }
         const words = axes.trim() === "" ? [] : axes.trim().split(/\s+/);
         this.exchange(["home", ...words].join(" "), () => {
             for (const found of this.machine.home(axes)) {
@@ -2752,6 +2839,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async realtime(action: RealtimeAction): Promise<void> {
+        if (this.gcodeId !== null) {
+            return this.gcodeRealtime(action);
+        }
         this.requireConnected();
         const machine = this.machine;
         switch (action) {
@@ -2804,6 +2894,18 @@ export class MockBackend implements Api, EventFeed {
      * does, since the lines behind would go on with the output stopped.
      */
     async command(line: string): Promise<string[]> {
+        if (this.gcodeId !== null) {
+            const device = this.gcodeOf(this.gcodeId);
+            if (!/^[\x20-\x7e]*$/.test(line) || line.trim() === "") {
+                throw new ApiError(400, "a line is one line of printable ASCII");
+            }
+            if (this.deviceSession !== null) {
+                throw new ApiError(409, "a placing run is under way: its lines go out one at a time");
+            }
+            const reply = this.deviceLine(device, line.trim());
+            this.emit({ type: "state", data: this.snapshot() });
+            return reply;
+        }
         this.requireConnected();
         const text = line.trim();
         if (text === "?") {
@@ -3218,6 +3320,20 @@ export class MockBackend implements Api, EventFeed {
     // Settings.
 
     async settings(): Promise<SettingsResponse> {
+        if (this.gcodeId !== null) {
+            // A G-code machine has none of the firmware's settings: its file and its controls.
+            const document = this.machineRead(this.gcodeId, this.machineText(this.gcodeId)).document;
+            return {
+                values: {},
+                schema: [],
+                host: this.hostSettings(),
+                machine: this.gcodeId,
+                unsaved: [],
+                controls_from: this.gcodeId,
+                controls: document?.controls ?? defaultControls({ kinematics: "cartesian", tool: "nozzle", h_axis: true, r_max: 0, z_max: 0 }),
+                controller: "gcode",
+            };
+        }
         const found = this.machineOf();
         // The controls: the file the settings are, else the file for this
         // kind of machine, else the defaults for what the settings say it is.
@@ -3293,7 +3409,7 @@ export class MockBackend implements Api, EventFeed {
         const { documents, problems } = this.machineDocuments();
         return {
             machines: documents.map((document) => machineSummaryOf(document)),
-            current: this.connected ? this.machineOf()?.id ?? null : null,
+            current: this.gcodeId !== null ? this.gcodeId : this.connected ? this.machineOf()?.id ?? null : null,
             problems,
         };
     }
@@ -3329,6 +3445,9 @@ export class MockBackend implements Api, EventFeed {
     /** The text with the board's values written into it, not saved, as the backend reads it. */
     async machineFromBoard(id: string, text: string): Promise<MachineFromBoard> {
         checkMachineId(id);
+        if (this.machineRead(id, text).document?.controller === "gcode") {
+            throw new ApiError(400, "a G-code machine's file takes nothing from a board: its controller keeps its own settings");
+        }
         this.requireConnected();
         let read: FromBoard;
         try {
@@ -3353,6 +3472,9 @@ export class MockBackend implements Api, EventFeed {
 
     async deleteMachineFile(id: string): Promise<void> {
         this.machineText(id);
+        if (this.gcodeId === id) {
+            throw new ApiError(409, "disconnect the machine before removing its file");
+        }
         this.machineTexts.delete(id);
     }
 
@@ -3361,6 +3483,9 @@ export class MockBackend implements Api, EventFeed {
         const read = this.machineRead(id, this.machineText(id));
         if (!read.document) {
             throw new ApiError(404, `no machine file '${id}'`);
+        }
+        if (read.document.controller === "gcode") {
+            throw new ApiError(400, `${read.document.name} is a G-code machine: its controller keeps its own settings; connect to it from the top bar`);
         }
         await this.updateSettings({ values: { ...read.document.settings }, host: { tolerance: this.tolerance, ...read.document.host } });
         this.loaded = id;
@@ -6473,6 +6598,12 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async pnpNozzle(step: number): Promise<PnpState> {
+        if (this.gcodeId !== null) {
+            // The G-code machine's place over the camera is kept with what
+            // the PNP tab keeps of it, as the backend's gcode_nozzle does.
+            this.gcodeNozzle(step);
+            return this.pnpStateOf();
+        }
         if (!(Number.isFinite(step) && step >= 0 && step <= 10)) {
             throw new ApiError(400, "the step must be 0 to 10 mm");
         }
@@ -6486,6 +6617,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async pnpPart(): Promise<PnpState> {
+        if (this.gcodeId !== null) {
+            throw new ApiError(400, "a G-code machine looks at each part over the up camera as it places it: mark its feeder's parts for vision");
+        }
         if (!this.pnpConfig.position || !(this.pnpConfig.mm_per_px > 0)) {
             throw new ApiError(400, "the nozzle is not centered over the up camera yet: center it first");
         }
@@ -6494,6 +6628,19 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async pnpAbort(): Promise<PnpState> {
+        const routine = this.deviceRoutine;
+        if (routine) {
+            // The routine waits on a move: the machine is told to stop at once.
+            routine.progress.state = "stopped";
+            routine.progress.error = "stopped";
+            this.deviceRoutine = null;
+            if (routine.device.stop) {
+                this.deviceNote("tx", routine.device.stop);
+            }
+            this.emitPnp();
+            this.emitPlacing();
+            return this.pnpStateOf();
+        }
         const session = this.pnpSession;
         if (!session) {
             throw new ApiError(409, "no up camera routine is under way");
@@ -6562,6 +6709,10 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async pnpGoto(request: PnpGotoRequest): Promise<void> {
+        if (this.gcodeId !== null) {
+            this.gcodeGotoPart(request.job, request.ref, request.camera === true);
+            return;
+        }
         const { components } = await this.components(request.job);
         const part = components.find((entry) => entry.ref === request.ref);
         if (!part) {
@@ -6585,45 +6736,87 @@ export class MockBackend implements Api, EventFeed {
 
     // --- a G-code pick and place machine -------------------------------------------
 
-    private deviceOf(id: string): MockDevice {
-        checkDeviceId(id);
-        const text = this.deviceTexts.get(id);
-        if (text === undefined) {
-            throw new ApiError(404, `no device profile '${id}'`);
-        }
+    /** A G-code machine's file read as the mock's G-code machine; 400 for one that does not read, or is no G-code machine's. */
+    private gcodeOf(id: string): MockDevice {
+        const text = this.machineText(id);
         try {
-            return parseDevice(text, id);
+            return gcodeMachineOf(text, id);
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
     }
 
-    private pickedDevice(): MockDevice {
-        if (this.deviceConfig.profile === null) {
-            throw new ApiError(400, "no device profile is picked: pick one of pnp/*.toml");
-        }
-        return this.deviceOf(this.deviceConfig.profile);
+    /** The G-code machine files that read, by id. */
+    private gcodeIds(): string[] {
+        return this.machineDocuments().documents.filter((document) => document.controller === "gcode").map((document) => document.id);
     }
 
-    private deviceStateOf(): DeviceState {
+    /**
+     * The G-code machine the PNP tab works with: the one connected, else the
+     * one last connected, else the only G-code machine file; null for none.
+     */
+    private placingId(): string | null {
+        if (this.gcodeId !== null && this.deviceLink.connected) {
+            return this.gcodeId;
+        }
+        const ids = this.gcodeIds();
+        if (this.lastGcode !== null && ids.includes(this.lastGcode)) {
+            return this.lastGcode;
+        }
+        return ids.length === 1 ? ids[0]! : null;
+    }
+
+    /** What the tab keeps of the placing machine; with none, a fresh one that goes nowhere. */
+    private placing(): MockPlacing {
+        const id = this.placingId();
+        if (id === null) {
+            return newPlacing();
+        }
+        let kept = this.placings.get(id);
+        if (!kept) {
+            kept = newPlacing();
+            this.placings.set(id, kept);
+        }
+        return kept;
+    }
+
+    /** The placing machine's file, read; 409 with no G-code machine to place with. */
+    private placingDevice(): MockDevice {
+        const id = this.placingId();
+        if (id === null) {
+            throw new ApiError(409, 'no G-code machine to place with: connect one, or add a machine file with controller = "gcode"');
+        }
+        return this.gcodeOf(id);
+    }
+
+    private placingStateOf(): PlacingState {
         const link = this.deviceLink;
+        const id = this.placingId();
+        let device: MockDevice | null = null;
+        try {
+            device = id !== null ? this.gcodeOf(id) : null;
+        } catch {
+            device = null;
+        }
+        const placing = this.placing();
         const position = this.deviceCameraPosition();
         return {
-            profile: this.deviceConfig.profile,
-            port: this.deviceConfig.url,
-            angle: this.deviceConfig.angle,
-            references: this.deviceConfig.references.map((entry) => ({ ...entry, at: [entry.at[0], entry.at[1]] })),
-            taken: { ...this.deviceConfig.taken },
-            boards: this.deviceConfig.boards,
+            machine: id,
+            name: device?.name ?? null,
+            document: device ? deviceDocument(device) : null,
+            angle: placing.angle,
+            references: placing.references.map((entry) => ({ ...entry, at: [entry.at[0], entry.at[1]] })),
+            taken: { ...placing.taken },
+            boards: placing.boards,
             camera: {
-                ...this.upPlace,
+                ...placing.upPlace,
                 position: position ? [...position] : null,
-                runout: this.upPlace.runout ? [...this.upPlace.runout] : null,
-                height: this.deviceCameraZ(),
-                measured: this.upPlace.position !== null,
+                runout: placing.upPlace.runout ? [...placing.upPlace.runout] : null,
+                height: device?.camera_z ?? null,
+                measured: placing.upPlace.position !== null,
             },
             top: this.topStateOf(),
-            connected: link.connected,
+            connected: link.connected && this.gcodeId !== null && this.gcodeId === id,
             url: link.url,
             lost: null,
             running: this.deviceSession !== null,
@@ -6643,26 +6836,227 @@ export class MockBackend implements Api, EventFeed {
         };
     }
 
-    /** Where the up camera is on the device: as measured or set, else as the profile has it. */
+    /** Opens the G-code machine `id` on `url`, as the backend does: its init lines, then what it is and where its head is. */
+    private gcodeConnect(url: string, id: string): Snapshot {
+        const device = this.gcodeOf(id);
+        if (this.gcodeId === id && this.deviceLink.connected && this.deviceLink.url === url) {
+            return this.snapshot();
+        }
+        if (this.connected) {
+            // The board on this project's firmware lets go of its port first.
+            this.machine.reset();
+            this.connected = false;
+            this.url = null;
+        }
+        this.gcodeClose();
+        this.gcodeId = id;
+        this.lastGcode = id;
+        this.url = url;
+        this.deviceLink = { ...this.deviceLink, connected: true, url, homed: false, light: null, reading: null, vacuumSwitched: null };
+        this.gcodeMotors = true;
+        this.deviceNote("info", `connected to ${url} at ${device.baud} baud (mock)`);
+        for (const line of device.init) {
+            this.deviceLine(device, line);
+        }
+        const answer = this.deviceLine(device, "M115").join(" ");
+        this.gcodeFirmware = /FIRMWARE_NAME:\s*(.+?)(?:\s+[A-Z_]+:|$)/.exec(answer)?.[1]?.trim() ?? null;
+        this.deviceHere(device);
+        this.message("info", `connected to ${url}: ${device.name}${this.gcodeFirmware ? `, ${this.gcodeFirmware}` : ""} (mock)`);
+        const snapshot = this.snapshot();
+        this.emit({ type: "state", data: snapshot });
+        this.emitPlacing();
+        return snapshot;
+    }
+
+    /** Lets the G-code machine's port go, a placing run on it stopped first. */
+    private gcodeClose(): void {
+        if (this.gcodeId === null) {
+            return;
+        }
+        if (this.deviceSession !== null) {
+            const session = this.deviceSession;
+            session.progress.state = "stopped";
+            session.progress.error = "stopped";
+            this.deviceSession = null;
+        }
+        if (this.deviceLink.url !== null) {
+            this.deviceNote("info", `disconnected from ${this.deviceLink.url}`);
+        }
+        this.deviceLink = { ...this.deviceLink, connected: false, url: null };
+        this.gcodeId = null;
+        this.url = null;
+        this.emitPlacing();
+    }
+
+    /** The snapshot of a G-code machine: its head's place as the readout's joints, as the backend's _gcode_snapshot. */
+    private gcodeSnapshot(id: string): Snapshot {
+        let name = id;
+        try {
+            name = this.gcodeOf(id).name;
+        } catch {
+            // A file broken since the connect keeps its id for a name.
+        }
+        const link = this.deviceLink;
+        const busy = this.deviceSession !== null || this.deviceRoutine !== null || this.topSession !== null;
+        const position = link.position;
+        return {
+            connected: link.connected,
+            url: this.url,
+            firmware: link.connected ? { version: this.gcodeFirmware ?? "", lines: 1, blocks: 0, name: this.gcodeFirmware ?? name } : null,
+            machine: link.connected
+                ? {
+                    state: busy ? "Run" : "Idle",
+                    alarm: null,
+                    joint: { r: position.x, a: position.rotation, z: position.y, h: position.z },
+                    probe: null,
+                    homed: null,
+                    board: { x: round4(position.x), y: round4(position.y) },
+                    rate: 0,
+                    laser: 0,
+                    mode: "dyn",
+                    enabled: this.gcodeMotors,
+                    queue: { planner: 0, lines: 0 },
+                    age: 0,
+                }
+                : null,
+            profile: { kinematics: "cartesian", tool: "nozzle", h_axis: true, r_max: 0, z_max: 0, controller: "gcode", machine: id, name },
+            run: null,
+            resume: null,
+            position: null,
+        };
+    }
+
+    /** Refuses what only a machine on this project's firmware does, with the reason, while a G-code machine is connected. */
+    private notGcode(): void {
+        if (this.gcodeId !== null) {
+            const name = this.gcodeSnapshot(this.gcodeId).profile?.name ?? this.gcodeId;
+            throw new ApiError(409, `${name} is a G-code machine: this is for a machine on this project's firmware`);
+        }
+    }
+
+    /** A jog from where the controller says the head is: queued, as the backend's _gcode_jog. */
+    private async gcodeJog(request: JogRequest): Promise<void> {
+        this.checkFeed(request.feed ?? null);
+        const device = this.gcodeIdle();
+        const steps: Partial<Record<AxisName, number>> = {};
+        if (request.kind === "joint") {
+            const { dr, dz, dh, da } = request as { dr?: number; dz?: number; dh?: number; da?: number };
+            Object.assign(steps, dr ? { x: dr } : {}, dz ? { y: dz } : {}, dh ? { z: dh } : {}, da ? { rotation: da } : {});
+        } else {
+            Object.assign(steps, request.dx ? { x: request.dx } : {}, request.dy ? { y: request.dy } : {});
+        }
+        if (Object.keys(steps).length === 0) {
+            throw new ApiError(400, "a jog moves at least one axis");
+        }
+        for (const [name, value] of Object.entries(steps)) {
+            const limit = name === "rotation" ? 3600 : 1000;
+            if (Math.abs(value) > limit) {
+                throw new ApiError(400, `a jog's step is at most ${limit} ${name === "rotation" ? "degrees" : "mm"} either way`);
+            }
+        }
+        const here = this.deviceHere(device);
+        const target: Partial<Record<AxisName, number>> = {};
+        for (const [name, value] of Object.entries(steps) as [AxisName, number][]) {
+            target[name] = here[name] + value;
+        }
+        const feed = request.feed !== undefined && request.feed !== null && (target.x !== undefined || target.y !== undefined) ? request.feed : null;
+        this.deviceLine(device, moveLine(device, target, feed));
+        this.emit({ type: "state", data: this.snapshot() });
+    }
+
+    /** A goto: across at the safe height only when X or Y changes, the height last, run to its end; as the backend's _gcode_goto. */
+    private async gcodeGoto(request: GotoRequest): Promise<void> {
+        this.checkFeed(request.feed ?? null);
+        const device = this.gcodeIdle();
+        const want: Partial<Record<AxisName, number>> = {};
+        if (request.kind === "joint") {
+            const { r, z, h, a } = request as { r?: number; z?: number; h?: number; a?: number };
+            Object.assign(want, r !== undefined ? { x: r } : {}, z !== undefined ? { y: z } : {}, h !== undefined ? { z: h } : {}, a !== undefined ? { rotation: a } : {});
+        } else {
+            if (request.x === undefined && request.y === undefined) {
+                throw new ApiError(400, "a board goto needs x and/or y");
+            }
+            Object.assign(want, request.x !== undefined ? { x: request.x } : {}, request.y !== undefined ? { y: request.y } : {});
+        }
+        if (Object.keys(want).length === 0) {
+            throw new ApiError(400, "give at least one axis to go to");
+        }
+        const here = this.deviceHere(device);
+        this.headLines(device, gotoLines(device, here, want, request.feed ?? null));
+    }
+
+    /** Declares where the head is (G92), as the backend's _gcode_set_position. */
+    private async gcodeSetPosition(request: PositionRequest): Promise<void> {
+        const device = this.gcodeIdle();
+        const given: [number, number][] = [];
+        (["r", "z", "h", "a"] as const).forEach((joint, index) => {
+            const value = request[joint];
+            if (value !== undefined) {
+                given.push([index, value]);
+            }
+        });
+        if (given.length === 0) {
+            throw new ApiError(400, "give r, a, h and/or z");
+        }
+        this.deviceLine(device, `G92 ${given.map(([index, value]) => `${device.axes[index]}${gnum(value)}`).join(" ")}`);
+        const position = this.deviceLink.position;
+        for (const [index, value] of given) {
+            position[(["x", "y", "z", "rotation"] as const)[index]!] = value;
+        }
+        this.deviceHere(device);
+        this.emit({ type: "state", data: this.snapshot() });
+    }
+
+    /** The console's and the jog panel's realtime buttons on a G-code machine, as the backend's _gcode_realtime. */
+    private async gcodeRealtime(action: RealtimeAction): Promise<void> {
+        const device = this.gcodeOf(this.gcodeId!);
+        if (action === "reset" || action === "cancel") {
+            this.deviceRoutine = null;
+            this.topSession = null;
+            if (this.deviceSession !== null) {
+                this.deviceSession.progress.state = "stopped";
+                this.deviceSession.progress.error = "stopped";
+                this.deviceSession = null;
+            }
+            if (device.stop) {
+                this.deviceNote("tx", device.stop);
+            }
+        } else if (action === "status") {
+            if (this.deviceSession === null) {
+                this.deviceHere(device);
+            }
+        } else {
+            throw new ApiError(400, `${device.name} takes no hold: Stop stops it (${device.stop || "no stop line in its file"})`);
+        }
+        this.emit({ type: "state", data: this.snapshot() });
+        this.emitPlacing();
+    }
+
+    /** Where the up camera is on the machine: as measured or set, else as its file has it. */
     private deviceCameraPosition(): [number, number] | null {
-        if (this.upPlace.position !== null) {
-            return this.upPlace.position;
+        const placing = this.placing();
+        if (placing.upPlace.position !== null) {
+            return placing.upPlace.position;
         }
         try {
-            return this.deviceConfig.profile !== null ? this.pickedDevice().camera_position : null;
+            return this.placingId() !== null ? this.placingDevice().camera_position : null;
         } catch {
             return null;
         }
     }
 
-    private emitDevice(): void {
-        this.emit({ type: "pnp_device", data: this.deviceStateOf() });
+    private emitPlacing(): void {
+        this.emit({ type: "placing", data: this.placingStateOf() });
     }
 
+    /** A line to or from the G-code machine: in its link's log, and the console's as every machine's lines are. */
     private deviceNote(dir: string, text: string): void {
         this.deviceLink.log.push({ dir, text });
         if (this.deviceLink.log.length > 200) {
             this.deviceLink.log.splice(0, this.deviceLink.log.length - 200);
+        }
+        if (dir === "tx" || dir === "rx") {
+            this.line(dir, text);
         }
     }
 
@@ -6673,7 +7067,7 @@ export class MockBackend implements Api, EventFeed {
             return [];
         }
         if (!this.deviceLink.connected) {
-            throw new ApiError(502, "the device is not connected");
+            throw new ApiError(502, "the machine is not connected");
         }
         this.deviceNote("tx", code);
         const reply: string[] = [];
@@ -6697,7 +7091,7 @@ export class MockBackend implements Api, EventFeed {
         } else if (device.place.includes(code)) {
             this.deviceVacuumOn = false;
         } else if (code === "M115") {
-            reply.push("FIRMWARE_NAME:Marlin 2.1.2 (mock) MACHINE_TYPE:mock device EXTRUDER_COUNT:0");
+            reply.push("FIRMWARE_NAME:Marlin 2.1.2 (mock) MACHINE_TYPE:mock machine EXTRUDER_COUNT:0");
         } else if (device.bus !== null && code.startsWith(device.bus.send.split("{packet}")[0]!)) {
             const prefix = device.bus.send.split("{packet}")[0]!;
             reply.push(this.busAnswer(device, code.slice(prefix.length).split(/\s/)[0] ?? ""));
@@ -6717,34 +7111,28 @@ export class MockBackend implements Api, EventFeed {
         return reply;
     }
 
-    private deviceIdle(): MockDevice {
+    /** The connected G-code machine, for a request that sends it lines: refused while a run or a camera routine has it. */
+    private gcodeIdle(): MockDevice {
+        if (this.gcodeId === null || !this.deviceLink.connected) {
+            throw new ApiError(409, "no G-code machine is connected: connect one from the top bar");
+        }
         if (this.deviceSession !== null) {
-            throw new ApiError(409, "a program is being sent to the device");
+            throw new ApiError(409, "a placing run is under way");
         }
         if (this.deviceRoutine !== null) {
-            throw new ApiError(409, "the up camera routine is moving the device");
+            throw new ApiError(409, "the up camera routine is moving the head");
         }
         if (this.topSession !== null) {
-            throw new ApiError(409, "the top camera routine is moving the device");
+            throw new ApiError(409, "the top camera routine is moving the head");
         }
-        return this.pickedDevice();
+        return this.gcodeOf(this.gcodeId);
     }
 
-    private deviceCameraZ(): number | null {
-        try {
-            return this.deviceConfig.profile !== null ? this.pickedDevice().camera_z : null;
-        } catch {
-            return null;
-        }
-    }
-
-    async deviceNozzle(step: number): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    /** Centers the G-code machine's nozzle over the up camera, as the backend's gcode_nozzle does. */
+    private gcodeNozzle(step: number): void {
+        const device = this.gcodeIdle();
         if (!(Number.isFinite(step) && step >= 0 && step <= 10)) {
             throw new ApiError(400, "the step must be 0 to 10 mm");
-        }
-        if (!this.deviceLink.connected) {
-            throw new ApiError(400, "the device is not connected");
         }
         if (!this.pnpRunning) {
             throw new ApiError(400, "the up camera is not running: start it first");
@@ -6753,24 +7141,23 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "an up camera routine is already under way");
         }
         const at = this.deviceLink.position;
-        if (!this.upPlace.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
+        if (!this.placing().upPlace.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
             throw new ApiError(400, "no nozzle in the picture: jog it over the up camera and center again");
         }
-        const progress: PnpRoutine = { kind: "nozzle", target: "device", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, seconds: 0 };
+        const progress: PnpRoutine = { kind: "nozzle", target: "gcode", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, seconds: 0 };
         this.pnpRoutine = progress;
         this.deviceRoutine = { kind: "nozzle", elapsed: 0, device, progress };
         this.emitPnp();
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
     }
 
-    async deviceRunout(): Promise<DeviceState> {
-        const device = this.deviceIdle();
-        if (!this.upPlace.position || !(this.upPlace.mm_per_px > 0)) {
+    async pnpRunout(): Promise<PlacingState> {
+        const device = this.gcodeIdle();
+        if (!this.placing().upPlace.position || !(this.placing().upPlace.mm_per_px > 0)) {
             throw new ApiError(400, "the nozzle is not centered over the up camera yet: center it first");
         }
         if (!this.deviceLink.connected) {
-            throw new ApiError(400, "the device is not connected");
+            throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
         if (!this.pnpRunning) {
             throw new ApiError(400, "the up camera is not running: start it first");
@@ -6778,12 +7165,12 @@ export class MockBackend implements Api, EventFeed {
         if (this.pnpSession) {
             throw new ApiError(409, "an up camera routine is already under way");
         }
-        const progress: PnpRoutine = { kind: "runout", target: "device", state: "running", step: "lifting", done: 0, total: 4, error: null, spot: null, seconds: 0 };
+        const progress: PnpRoutine = { kind: "runout", target: "gcode", state: "running", step: "lifting", done: 0, total: 4, error: null, spot: null, seconds: 0 };
         this.pnpRoutine = progress;
         this.deviceRoutine = { kind: "runout", elapsed: 0, device, progress };
         this.emitPnp();
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     private topStateOf(): TopState {
@@ -6803,7 +7190,9 @@ export class MockBackend implements Api, EventFeed {
         return this.topConfig.offset !== null && this.topConfig.mm_per_px > 0;
     }
 
-    async topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<DeviceState> {
+    async topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<PlacingState> {
+        // Kept with what the tab keeps of a G-code machine: there must be one.
+        this.placingDevice();
         const { clear, ...rest } = patch;
         const next: TopSettings = { ...this.topConfig };
         for (const [key, value] of Object.entries(rest)) {
@@ -6824,44 +7213,43 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "the top camera routine is under way: abort it first");
         }
         this.topConfig = next;
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async topStart(): Promise<DeviceState> {
+    async topStart(): Promise<PlacingState> {
         if (this.topRunning) {
             throw new ApiError(409, "the top camera is already running");
         }
         this.topRunning = true;
         this.message("info", `top camera started on ${this.topConfig.device} (mock)`);
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async topStop(): Promise<DeviceState> {
+    async topStop(): Promise<PlacingState> {
         if (this.topSession) {
             throw new ApiError(409, "the top camera routine is under way: abort it first");
         }
         this.topRunning = false;
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     topFrameUrl(width: number, overlay: boolean): string {
         return topFrameSvg(this.topConfig.size, frameWidth(width), overlay);
     }
 
-    async topMark(): Promise<DeviceState> {
-        await this.devicePosition();
-        const at = this.deviceLink.position;
+    async topMark(): Promise<PlacingState> {
+        const at = this.deviceHere(this.gcodeIdle());
         this.topConfig = { ...this.topConfig, mark_at: [at.x, at.y] };
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     private beginTop(kind: "offset" | "fiducials", steps: string[], device: MockDevice, job: string | null): void {
         if (!this.deviceLink.connected) {
-            throw new ApiError(400, "the device is not connected");
+            throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
         if (!this.topRunning) {
             throw new ApiError(400, "the top camera is not running: start it first");
@@ -6869,14 +7257,14 @@ export class MockBackend implements Api, EventFeed {
         if (this.topSession) {
             throw new ApiError(409, "a top camera routine is already under way");
         }
-        const progress: TopRoutine = { kind, target: "device", state: "running", step: steps[0]!, done: 0, total: steps.length - 1, error: null, spot: null, seconds: 0 };
+        const progress: TopRoutine = { kind, target: "gcode", state: "running", step: steps[0]!, done: 0, total: steps.length - 1, error: null, spot: null, seconds: 0 };
         this.topRoutine = progress;
         this.topSession = { kind, steps, elapsed: 0, device, job, progress };
-        this.emitDevice();
+        this.emitPlacing();
     }
 
-    async topOffset(step: number): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async topOffset(step: number): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         if (!(Number.isFinite(step) && step >= 0 && step <= 20)) {
             throw new ApiError(400, "the step must be 0 to 20 mm");
         }
@@ -6884,13 +7272,13 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "put the nozzle's tip over a mark and press Nozzle on mark first");
         }
         this.beginTop("offset", ["lifting", "moving", "lowering", "scale", "centering", "done"], device, null);
-        return this.deviceStateOf();
+        return this.placingStateOf();
     }
 
-    async deviceFiducials(job: string): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async pnpFiducials(job: string): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         if (!device.top) {
-            throw new ApiError(400, "the device profile has no [top_camera] section");
+            throw new ApiError(400, "the machine file has no [top_camera] section");
         }
         const parts = mockComponents(this.requireJob(job));
         const fiducials = parts.filter((entry) => entry.fiducial);
@@ -6902,10 +7290,10 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
         }
         this.beginTop("fiducials", ["lifting", ...fiducials.map((entry) => entry.ref), "fitting", "done"], device, job);
-        return this.deviceStateOf();
+        return this.placingStateOf();
     }
 
-    async topAbort(): Promise<DeviceState> {
+    async topAbort(): Promise<PlacingState> {
         const session = this.topSession;
         if (!session) {
             throw new ApiError(409, "no top camera routine is under way");
@@ -6916,12 +7304,12 @@ export class MockBackend implements Api, EventFeed {
         if (session.device.stop) {
             this.deviceNote("tx", session.device.stop);
         }
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     /**
-     * The mock board lies on the device exactly where the references put
+     * The mock board lies on the machine exactly where the references put
      * it: the fiducials found there become its references when two or more
      * were found, and what the run and the panel show of them is kept.
      */
@@ -6935,14 +7323,14 @@ export class MockBackend implements Api, EventFeed {
             return { ref: entry.ref, at: [round4(x + tx), round4(y + ty)] as [number, number] };
         });
         const refs = new Set(found.map((entry) => entry.ref));
-        this.deviceConfig.references = this.deviceConfig.references.filter(
+        this.placing().references = this.placing().references.filter(
             (entry) => !(entry.job === job && (refs.has(entry.ref) || (found.length > 1 && entry.by !== "fiducial"))),
         );
         for (const entry of found) {
-            this.deviceConfig.references.push({ job, ref: entry.ref, at: entry.at, by: "fiducial" });
+            this.placing().references.push({ job, ref: entry.ref, at: entry.at, by: "fiducial" });
         }
         this.topFiducials = { job, found, fit: { ...fit, marks: found.length } };
-        return `${found.length} fiducials found: the board is turned ${fit.rotation >= 0 ? "+" : ""}${fit.rotation.toFixed(3)} degrees on the device (mock)`;
+        return `${found.length} fiducials found: the board is turned ${fit.rotation >= 0 ? "+" : ""}${fit.rotation.toFixed(3)} degrees on the machine (mock)`;
     }
 
     /** The top camera's routine on the mock's clock, a step at a time. */
@@ -6970,7 +7358,7 @@ export class MockBackend implements Api, EventFeed {
                 this.message("info", this.keepFiducials(session.job));
             }
         }
-        this.emitDevice();
+        this.emitPlacing();
     }
 
     // The Auto tab: the backend's routes, with the scripted provider besides its own.
@@ -7013,163 +7401,43 @@ export class MockBackend implements Api, EventFeed {
         routine.progress.done = index;
         if (index === steps.length - 1 && routine.kind === "runout") {
             this.deviceLine(routine.device, `${routine.device.move} ${angleWord(routine.device, 0)} F${gnum(routine.device.feed_xy, 0)}`);
-            this.upPlace = { ...this.upPlace, runout: [...DEVICE_RUNOUT] };
+            this.placing().upPlace = { ...this.placing().upPlace, runout: [...DEVICE_RUNOUT] };
             routine.progress.state = "done";
             this.deviceRoutine = null;
             this.message("info", `nozzle runout ${Math.round(Math.hypot(...DEVICE_RUNOUT) * 1000)} um (turns counterclockwise as the profile says) (mock)`);
-            this.emitDevice();
+            this.emitPlacing();
         } else if (index === steps.length - 1) {
             const [x, y] = DEVICE_CAMERA_WHERE;
             const z = routine.device.camera_z ?? routine.device.safe_z;
             this.deviceLine(routine.device, xyLine(routine.device, x, y));
             this.deviceLine(routine.device, zLine(routine.device, z));
             // The runout is the nozzle's own and outlasts a new center.
-            this.upPlace = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, runout: this.upPlace.runout };
+            this.placing().upPlace = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, runout: this.placing().upPlace.runout };
             routine.progress.state = "done";
             routine.progress.spot = { dx: 0, dy: 0, mm: 0 };
             this.deviceRoutine = null;
             this.message("info", `nozzle centered over the up camera at X ${gnum(x)} Y ${gnum(y)} (mock)`);
-            this.emitDevice();
+            this.emitPlacing();
         }
         this.emitPnp();
     }
 
-    async devices(): Promise<DevicesResponse> {
-        const devices: DeviceSummary[] = [];
-        const problems: { id: string; problem: string }[] = [];
-        for (const [id, text] of [...this.deviceTexts.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-            try {
-                const device = parseDevice(text, id);
-                devices.push({ id, name: device.name, description: device.description, url: device.url, feeders: device.feeders.length });
-            } catch (error) {
-                problems.push({ id, problem: errorText(error) });
-            }
-        }
-        return { devices, problems };
+    async placingState(): Promise<PlacingState> {
+        return this.placingStateOf();
     }
 
-    async deviceFile(id: string): Promise<DeviceFile> {
-        const device = this.deviceOf(id);
-        return { document: deviceDocument(device), text: this.deviceTexts.get(id)! };
-    }
-
-    async saveDeviceFile(id: string, text: string): Promise<DeviceFile> {
-        // The text is read first, which refuses an id that is not a device's.
-        let device: MockDevice;
-        try {
-            device = parseDevice(text, id);
-        } catch (error) {
-            throw new ApiError(400, errorText(error));
-        }
-        const kept = text.endsWith("\n") ? text : `${text}\n`;
-        this.deviceTexts.set(id, kept);
-        this.emitDevice();
-        return { document: deviceDocument(device), text: kept };
-    }
-
-    async checkDeviceFile(id: string, text: string): Promise<DeviceCheck> {
-        try {
-            return { document: deviceDocument(parseDevice(text, id)), problems: [] };
-        } catch (error) {
-            return { document: null, problems: [errorText(error)] };
-        }
-    }
-
-    async deviceState(): Promise<DeviceState> {
-        return this.deviceStateOf();
-    }
-
-    async deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean; url?: string }): Promise<DeviceState> {
-        if (patch.profile !== undefined) {
-            if (this.deviceLink.connected && patch.profile !== this.deviceConfig.profile) {
-                throw new ApiError(409, "disconnect the device before picking another profile");
-            }
-            this.deviceOf(patch.profile);
-            this.deviceConfig.profile = patch.profile;
-        }
+    async placingAngle(patch: { angle?: number; clear_angle?: boolean }): Promise<PlacingState> {
+        this.placingDevice();
         if (patch.clear_angle) {
-            this.deviceConfig.angle = null;
+            this.placing().angle = null;
         } else if (patch.angle !== undefined) {
             if (!(Number.isFinite(patch.angle) && Math.abs(patch.angle) <= 360)) {
                 throw new ApiError(400, "the board's turn must be within 360 degrees");
             }
-            this.deviceConfig.angle = patch.angle;
+            this.placing().angle = patch.angle;
         }
-        if (patch.url !== undefined) {
-            const url = patch.url.trim();
-            if (this.deviceLink.connected && url !== (this.deviceConfig.url ?? "")) {
-                throw new ApiError(409, "disconnect the device before picking another port");
-            }
-            if (url) {
-                checkPortUrl(url);
-                if (this.connected && this.url === url) {
-                    throw new ApiError(400, `${url} is this machine's own port`);
-                }
-            }
-            this.deviceConfig.url = url || null;
-        }
-        this.emitDevice();
-        return this.deviceStateOf();
-    }
-
-    async deviceConnect(): Promise<DeviceState> {
-        const device = this.pickedDevice();
-        if (this.deviceLink.connected) {
-            throw new ApiError(502, "the device is already connected: disconnect first");
-        }
-        const url = this.deviceConfig.url ?? device.url;
-        if (url && this.connected && this.url === url) {
-            throw new ApiError(400, `${url} is this machine's own port: pick the device's`);
-        }
-        if (!url) {
-            throw new ApiError(502, "the device profile names no port: set [port] url");
-        }
-        this.deviceLink = { ...this.deviceLink, connected: true, url, homed: false, light: null, reading: null, vacuumSwitched: null };
-        this.devicePositionRead = false;
-        this.deviceNote("info", `connected to ${url} at ${device.baud} baud (mock)`);
-        for (const line of device.init) {
-            this.deviceLine(device, line);
-        }
-        this.emitDevice();
-        return this.deviceStateOf();
-    }
-
-    async deviceDisconnect(): Promise<DeviceState> {
-        if (this.deviceSession !== null) {
-            throw new ApiError(409, "a program is being sent to the device: stop it first");
-        }
-        if (this.deviceLink.url !== null) {
-            this.deviceNote("info", `disconnected from ${this.deviceLink.url}`);
-        }
-        this.deviceLink = { ...this.deviceLink, connected: false, url: null };
-        this.emitDevice();
-        return this.deviceStateOf();
-    }
-
-    async deviceCommand(line: string): Promise<DeviceState & { reply: string[] }> {
-        const device = this.deviceIdle();
-        if (!/^[\x20-\x7e]*$/.test(line) || line.trim() === "") {
-            throw new ApiError(400, "a line is one line of printable ASCII");
-        }
-        const reply = this.deviceLine(device, line);
-        this.emitDevice();
-        return { reply, ...this.deviceStateOf() };
-    }
-
-    async deviceHome(): Promise<DeviceState> {
-        const device = this.deviceIdle();
-        this.deviceLine(device, device.home);
-        this.deviceLink.homed = true;
-        this.emitDevice();
-        return this.deviceStateOf();
-    }
-
-    async devicePosition(): Promise<DeviceState> {
-        const device = this.deviceIdle();
-        this.deviceLine(device, device.position);
-        this.devicePositionRead = true;
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     private devicePart(jobId: string, ref: string): Component {
@@ -7180,7 +7448,7 @@ export class MockBackend implements Api, EventFeed {
         return part;
     }
 
-    async deviceReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<DeviceState> {
+    async pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState> {
         this.devicePart(request.job, request.ref);
         let at = request.at;
         if (at === undefined) {
@@ -7191,56 +7459,56 @@ export class MockBackend implements Api, EventFeed {
                 }
                 offset = this.topConfig.offset;
             }
-            await this.devicePosition();
-            at = [this.deviceLink.position.x + offset[0], this.deviceLink.position.y + offset[1]];
+            const here = this.deviceHere(this.gcodeIdle());
+            at = [here.x + offset[0], here.y + offset[1]];
         } else if (!at.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {
             throw new ApiError(400, "a reference's place must be within 10000 mm");
         }
-        this.deviceConfig.references = this.deviceConfig.references.filter((entry) => !(entry.job === request.job && entry.ref === request.ref));
-        this.deviceConfig.references.push({ job: request.job, ref: request.ref, at: [round4(at[0]), round4(at[1])], by: request.camera ? "camera" : "nozzle" });
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.placing().references = this.placing().references.filter((entry) => !(entry.job === request.job && entry.ref === request.ref));
+        this.placing().references.push({ job: request.job, ref: request.ref, at: [round4(at[0]), round4(at[1])], by: request.camera ? "camera" : "nozzle" });
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceDropReferences(job: string, ref?: string): Promise<DeviceState> {
-        this.deviceConfig.references = this.deviceConfig.references.filter((entry) => !(entry.job === job && (ref === undefined || entry.ref === ref)));
-        this.emitDevice();
-        return this.deviceStateOf();
+    async pnpDropReferences(job: string, ref?: string): Promise<PlacingState> {
+        this.placing().references = this.placing().references.filter((entry) => !(entry.job === job && (ref === undefined || entry.ref === ref)));
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     /** Where the board lies on the device: two fiducials or more found by the top camera outdo the references given by hand. */
     private deviceFitOf(jobId: string, parts: Component[]): AlignFit {
         const byRef = new Map(parts.map((part) => [part.ref, part]));
-        const entries = this.deviceConfig.references.filter((entry) => entry.job === jobId && byRef.has(entry.ref));
+        const entries = this.placing().references.filter((entry) => entry.job === jobId && byRef.has(entry.ref));
         const found = entries.filter((entry) => entry.by === "fiducial");
         const pairs: [[number, number], [number, number]][] = (found.length > 1 ? found : entries).map((entry) => {
             const part = byRef.get(entry.ref)!;
             return [[part.x, part.y], [entry.at[0], entry.at[1]]];
         });
         try {
-            return deviceFit(pairs, this.deviceConfig.angle);
+            return deviceFit(pairs, this.placing().angle);
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
     }
 
     private devicePlanOf(jobId: string, refs: string[] | null): { device: MockDevice; plan: ReturnType<typeof planDevice> } {
-        const device = this.deviceSession === null ? this.foundSlots(this.pickedDevice()) : this.pickedDevice();
+        const device = this.deviceSession === null ? this.foundSlots(this.placingDevice()) : this.placingDevice();
         const job = this.requireJob(jobId);
         const parts = mockComponents(job);
         if (parts.length === 0) {
             throw new ApiError(400, "only a .kicad_pcb upload keeps the board its parts are read from");
         }
         const fit = this.deviceFitOf(jobId, parts);
-        const ready = this.upPlace.position !== null && this.upPlace.mm_per_px > 0;
-        return { device, plan: planDevice(device, parts, fit, this.deviceConfig.taken, refs, job.name, ready, this.upPlace.runout ?? [0, 0]) };
+        const ready = this.placing().upPlace.position !== null && this.placing().upPlace.mm_per_px > 0;
+        return { device, plan: planDevice(device, parts, fit, this.placing().taken, refs, job.name, ready, this.placing().upPlace.runout ?? [0, 0]) };
     }
 
-    async devicePlan(job: string, refs?: string[]): Promise<DevicePlan> {
+    async pnpPlan(job: string, refs?: string[]): Promise<PlacingPlan> {
         return planSummary(this.devicePlanOf(job, refs ?? null).plan);
     }
 
-    deviceProgramUrl(job: string, refs?: string[]): string {
+    pnpProgramUrl(job: string, refs?: string[]): string {
         try {
             return `data:text/plain;charset=utf-8,${encodeURIComponent(planText(this.devicePlanOf(job, refs ?? null).plan))}`;
         } catch {
@@ -7248,22 +7516,22 @@ export class MockBackend implements Api, EventFeed {
         }
     }
 
-    async deviceRun(job: string, refs?: string[], fiducials = false): Promise<DevicePlan & DeviceState> {
+    async pnpRun(job: string, refs?: string[], fiducials = false): Promise<PlacingPlan & PlacingState> {
         if (this.deviceSession !== null) {
-            throw new ApiError(409, "a program is already being sent to the device");
+            throw new ApiError(409, "a placing run is already under way");
         }
-        const picked = this.deviceIdle();
+        const picked = this.gcodeIdle();
         if (fiducials) {
             if (!mockComponents(this.requireJob(job)).some((entry) => entry.fiducial)) {
                 throw new ApiError(400, "the board has no fiducials to find: footprints whose reference starts FID or whose name says Fiducial");
             }
             if (!picked.top) {
-                throw new ApiError(400, "the device profile has no [top_camera] to find the fiducials with");
+                throw new ApiError(400, "the machine file has no [top_camera] to find the fiducials with");
             }
         }
         let { device, plan } = this.devicePlanOf(job, refs ?? null);
         if (!this.deviceLink.connected) {
-            throw new ApiError(502, "the device is not connected");
+            throw new ApiError(502, "no G-code machine is connected: connect one from the top bar");
         }
         if (plan.blocks.length === 0) {
             throw new ApiError(502, "the program places no part");
@@ -7310,17 +7578,17 @@ export class MockBackend implements Api, EventFeed {
         for (const line of plan.tail) {
             lines.push({ code: codeOf(line), block: null });
         }
-        const progress: DeviceRun = { state: "running", sent: 0, total: planSummary(plan).lines, part: null, placed: [], failed: [], doing: null, job, error: null, seconds: 0, steps: [] };
+        const progress: PlacingRun = { state: "running", sent: 0, total: planSummary(plan).lines, part: null, placed: [], failed: [], doing: null, job, error: null, seconds: 0, steps: [] };
         progress.steps!.push({ t: 0, ref: null, text: `placing ${plan.blocks.length} parts on ${device.name}`, level: "info" });
         const values = new Map(mockComponents(this.requireJob(job)).map((part) => [part.ref, part.value]));
         this.deviceProgress = progress;
         this.deviceSession = { lines, next: 0, elapsed: 0, device, progress, values };
-        this.emitDevice();
-        return { ...planSummary(plan), ...this.deviceStateOf() };
+        this.emitPlacing();
+        return { ...planSummary(plan), ...this.placingStateOf() };
     }
 
     /** A step of a run in words, as the backend keeps its last 300. */
-    private deviceStep(progress: DeviceRun, text: string, ref: string | null, level: "info" | "warning" | "error" = "info"): void {
+    private deviceStep(progress: PlacingRun, text: string, ref: string | null, level: "info" | "warning" | "error" = "info"): void {
         const steps = (progress.steps ??= []);
         steps.push({ t: progress.seconds, ref, text, level });
         if (steps.length > 300) {
@@ -7350,7 +7618,7 @@ export class MockBackend implements Api, EventFeed {
                     session.progress.state = "error";
                     session.progress.error = errorText(error);
                     this.deviceSession = null;
-                    this.emitDevice();
+                    this.emitPlacing();
                     return;
                 }
                 continue;
@@ -7368,7 +7636,7 @@ export class MockBackend implements Api, EventFeed {
             }
             if (picked) {
                 session.progress.part = picked.ref;
-                this.deviceConfig.taken[picked.feeder] = Math.max(this.deviceConfig.taken[picked.feeder] ?? 0, picked.index + 1);
+                this.placing().taken[picked.feeder] = Math.max(this.placing().taken[picked.feeder] ?? 0, picked.index + 1);
                 const value = session.values.get(picked.ref) ?? "";
                 this.deviceStep(session.progress, `picking ${value} from ${picked.feeder} #${picked.index + 1}`.replace("  ", " "), picked.ref);
             }
@@ -7381,11 +7649,11 @@ export class MockBackend implements Api, EventFeed {
             session.progress.state = "done";
             session.progress.part = null;
             this.deviceStep(session.progress, `done: ${session.progress.placed.length} placed`, null);
-            this.deviceConfig.boards += 1;
+            this.placing().boards += 1;
             this.deviceSession = null;
             this.message("info", `placing on ${session.device.name} done: ${session.progress.placed.length} parts placed (mock)`);
         }
-        this.emitDevice();
+        this.emitPlacing();
     }
 
     /**
@@ -7397,8 +7665,8 @@ export class MockBackend implements Api, EventFeed {
      * sit true to their angle, so one look does.
      */
     private deviceLook(device: MockDevice, block: MockBlock): { code: string; block: MockBlock | null }[] {
-        const camera = this.upPlace.position ?? DEVICE_CAMERA_WHERE;
-        const runout = this.upPlace.runout ?? [0, 0];
+        const camera = this.placing().upPlace.position ?? DEVICE_CAMERA_WHERE;
+        const runout = this.placing().upPlace.runout ?? [0, 0];
         const axis: [number, number] = [camera[0] + runout[0], camera[1] + runout[1]];
         const [swungX, swungY] = turnPoint(runout, block.turn);
         const head: [number, number] = [axis[0] - swungX, axis[1] - swungY];
@@ -7424,7 +7692,7 @@ export class MockBackend implements Api, EventFeed {
         ];
     }
 
-    async deviceStop(): Promise<DeviceState> {
+    async pnpRunStop(): Promise<PlacingState> {
         const session = this.deviceSession;
         if (session) {
             session.progress.state = "stopped";
@@ -7434,24 +7702,23 @@ export class MockBackend implements Api, EventFeed {
                 this.deviceNote("tx", session.device.stop);
             }
         }
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceGoto(job: string, ref: string, camera = false): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    /** The nozzle, or the top camera's picture center, over a part's place on the G-code machine: up to the safe height, then across. */
+    private gcodeGotoPart(job: string, ref: string, camera = false): void {
+        const device = this.gcodeIdle();
         const part = this.devicePart(job, ref);
         const { plan } = this.devicePlanOf(job, []);
+        const [tx, ty] = turnPoint([part.x, part.y], plan.fit.rotation);
+        let [x, y] = [tx + plan.fit.shift[0], ty + plan.fit.shift[1]];
         if (camera) {
             const offset = this.topOffsetOf(device);
-            const [tx, ty] = turnPoint([part.x, part.y], plan.fit.rotation);
-            const [x, y] = [tx + plan.fit.shift[0], ty + plan.fit.shift[1]];
-            this.deviceLines(device, [safeLine(device), xyLine(device, x - offset[0], y - offset[1])]);
-        } else {
-            this.deviceLines(device, deviceGotoLines(device, plan.fit, part));
+            [x, y] = [x - offset[0], y - offset[1]];
         }
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.headLines(device, [safeLine(device), moveLine(device, { x, y })]);
+        this.emitPlacing();
     }
 
     /** Where the top camera's picture center is from the nozzle: as measured, else as the profile's design has it. */
@@ -7471,144 +7738,94 @@ export class MockBackend implements Api, EventFeed {
         }
     }
 
-    /** The head's place read off the device. */
+    /** Moves of the head run to their end (the file's wait), the place read after, as the backend's _head_lines. */
+    private headLines(device: MockDevice, lines: string[]): void {
+        if (lines.length === 0) {
+            return;
+        }
+        this.deviceLines(device, device.wait ? [...lines, device.wait] : lines);
+        this.deviceHere(device);
+        this.emit({ type: "state", data: this.snapshot() });
+    }
+
+    /** The head's place read off the G-code machine. */
     private deviceHere(device: MockDevice): { x: number; y: number; z: number; rotation: number } {
         this.deviceLine(device, device.position);
         this.devicePositionRead = true;
         return { ...this.deviceLink.position };
     }
 
-    async deviceIdentify(url: string): Promise<DeviceIdentity> {
-        checkPortUrl(url.trim());
-        if (this.connected && this.url === url.trim()) {
-            throw new ApiError(400, `${url.trim()} is this machine's own port`);
-        }
-        // The mock's LumenPnP answers as Opulo's Marlin; any other port says nothing.
-        const lines = /LUMEN|deviceport/i.test(url)
-            ? ["FIRMWARE_NAME:Marlin 2.1.2 (Opulo, mock) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin MACHINE_TYPE:LumenPnP EXTRUDER_COUNT:0", "ok"]
-            : [];
-        return { url: url.trim(), lines, firmware: lines.length ? "Marlin 2.1.2 (Opulo, mock)" : null, machine: lines.length ? "LumenPnP" : null };
-    }
-
-    async deviceJog(axis: "x" | "y" | "z" | "rotation", step: number): Promise<DeviceState> {
-        const device = this.deviceIdle();
-        const limit = axis === "rotation" ? 360 : 500;
-        if (!(Number.isFinite(step) && step !== 0 && Math.abs(step) <= limit)) {
-            throw new ApiError(400, `step: up to ${limit} ${axis === "rotation" ? "degrees" : "mm"} either way`);
-        }
-        const here = this.deviceHere(device);
-        let line: string;
-        if (axis === "rotation") {
-            const value = here.rotation + (device.rotation_cw ? -step : step);
-            line = `${device.move} ${device.axes[3]}${gnum(value)} F${gnum(device.feed_xy, 0)}`;
-        } else if (axis === "z") {
-            line = zLine(device, here.z + step);
-        } else {
-            line = axis === "x" ? xyLine(device, here.x + step, here.y) : xyLine(device, here.x, here.y + step);
-        }
-        this.deviceLine(device, line);
-        this.emitDevice();
-        return this.deviceStateOf();
-    }
-
-    async deviceMove(target: { x?: number; y?: number; z?: number; rotation?: number }): Promise<DeviceState> {
-        const device = this.deviceIdle();
-        if (target.x === undefined && target.y === undefined && target.z === undefined && target.rotation === undefined) {
-            throw new ApiError(400, "give x, y, z or rotation");
-        }
-        if ([target.x, target.y, target.z].some((value) => value !== undefined && !(Number.isFinite(value) && Math.abs(value) <= 10000))) {
-            throw new ApiError(400, "a place must be within 10000 mm");
-        }
-        const lines: string[] = [];
-        if (target.x !== undefined || target.y !== undefined) {
-            const here = target.x === undefined || target.y === undefined ? this.deviceHere(device) : null;
-            lines.push(safeLine(device), xyLine(device, target.x ?? here!.x, target.y ?? here!.y, target.rotation));
-        } else if (target.rotation !== undefined) {
-            lines.push(`${device.move} ${angleWord(device, target.rotation)} F${gnum(device.feed_xy, 0)}`);
-        }
-        if (target.z !== undefined) {
-            lines.push(zLine(device, target.z));
-        }
-        this.deviceLines(device, lines);
-        this.devicePositionRead = true;
-        this.emitDevice();
-        return this.deviceStateOf();
-    }
-
-    async devicePark(): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async pnpPark(): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         if (device.park === null) {
-            throw new ApiError(400, "the device profile has no [motion] park place");
+            throw new ApiError(400, `${device.name}'s file has no [motion] park place`);
         }
-        this.deviceLines(device, [safeLine(device), xyLine(device, device.park[0], device.park[1])]);
-        this.devicePositionRead = true;
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.headLines(device, gotoLines(device, this.deviceHere(device), { x: device.park[0], y: device.park[1], z: device.safe_z }));
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceOverCamera(): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async pnpOverCamera(): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         const position = this.deviceCameraPosition();
         if (position === null) {
-            throw new ApiError(400, "the up camera's place on the device is not known: set it, or Center nozzle over it");
+            throw new ApiError(400, "the up camera's place on the machine is not known: set it, or Center nozzle over it");
         }
-        const lines = [safeLine(device), xyLine(device, position[0], position[1], 0)];
-        if (device.camera_z !== null) {
-            lines.push(zLine(device, device.camera_z));
-        }
+        const lines: string[] = [];
         if (device.light_on.length > 0 && this.deviceLink.light !== true) {
-            lines.unshift(...device.light_on);
+            lines.push(...device.light_on);
             this.deviceLink.light = true;
         }
-        this.deviceLines(device, lines);
-        this.devicePositionRead = true;
-        this.emitDevice();
-        return this.deviceStateOf();
+        const here = this.deviceHere(device);
+        lines.push(...gotoLines(device, here, { x: position[0], y: position[1], rotation: 0, z: device.camera_z ?? device.safe_z }));
+        this.headLines(device, lines);
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceSwap(to: "nozzle" | "camera"): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async pnpSwap(to: "nozzle" | "camera"): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         const offset = this.topOffsetOf(device);
         const here = this.deviceHere(device);
         const sign = to === "nozzle" ? 1 : -1;
-        this.deviceLines(device, [safeLine(device), xyLine(device, here.x + sign * offset[0], here.y + sign * offset[1])]);
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.headLines(device, gotoLines(device, here, { x: here.x + sign * offset[0], y: here.y + sign * offset[1] }));
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceCamera(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<DeviceState> {
-        const device = request.here ? this.deviceIdle() : this.pickedDevice();
+    async pnpCameraPlace(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<PlacingState> {
+        const device = request.here ? this.gcodeIdle() : this.placingDevice();
         if (request.clear) {
-            this.upPlace.position = null;
+            this.placing().upPlace.position = null;
         } else if (request.here) {
             const here = this.deviceHere(device);
-            this.upPlace.position = [round4(here.x), round4(here.y)];
+            this.placing().upPlace.position = [round4(here.x), round4(here.y)];
         } else if (request.position !== undefined) {
             if (!request.position.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {
                 throw new ApiError(400, "the up camera's place must be within 10000 mm");
             }
-            this.upPlace.position = [request.position[0], request.position[1]];
+            this.placing().upPlace.position = [request.position[0], request.position[1]];
         } else {
             throw new ApiError(400, "give a position, here or clear");
         }
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceLight(on: boolean): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async pnpLight(on: boolean): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         const lines = on ? device.light_on : device.light_off;
         if (lines.length === 0) {
-            throw new ApiError(400, `the device profile has no [gcode] light_${on ? "on" : "off"}`);
+            throw new ApiError(400, `the machine file has no [gcode] light_${on ? "on" : "off"}`);
         }
         this.deviceLines(device, lines);
         this.deviceLink.light = on;
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }> {
-        const device = this.deviceIdle();
+    async pnpVacuum(request: { on?: boolean; read?: boolean }): Promise<PlacingState & { reply: string[] }> {
+        const device = this.gcodeIdle();
         if (request.on === undefined && !request.read) {
             throw new ApiError(400, "give on, or read");
         }
@@ -7620,7 +7837,7 @@ export class MockBackend implements Api, EventFeed {
         if (request.read) {
             const vacuum = device.vacuum;
             if (vacuum === null) {
-                throw new ApiError(400, "the device profile has no [vacuum] read lines");
+                throw new ApiError(400, "the machine file has no [vacuum] read lines");
             }
             for (const line of vacuum.read) {
                 reply = this.deviceLine(device, line);
@@ -7631,8 +7848,8 @@ export class MockBackend implements Api, EventFeed {
             }
             this.deviceLink.reading = value;
         }
-        this.emitDevice();
-        return { reply, ...this.deviceStateOf() };
+        this.emitPlacing();
+        return { reply, ...this.placingStateOf() };
     }
 
     /** The feeders on the mock's bus: the profile's, each at its slot, or at the first address no other takes. */
@@ -7779,10 +7996,10 @@ export class MockBackend implements Api, EventFeed {
         return { ...device, feeders };
     }
 
-    async deviceBusScan(): Promise<DeviceState & { feeders: BusFeeder[] }> {
-        const device = this.deviceIdle();
+    async pnpBusScan(): Promise<PlacingState & { feeders: BusFeeder[] }> {
+        const device = this.gcodeIdle();
         if (device.bus === null) {
-            throw new ApiError(400, "the device profile has no [bus] section");
+            throw new ApiError(400, "the machine file has no [bus] section");
         }
         const found: BusFeeder[] = [];
         for (let address = 1; address <= device.bus.max_address; address++) {
@@ -7792,12 +8009,12 @@ export class MockBackend implements Api, EventFeed {
                 found.push({ address, id, feeder: device.feeders.find((feeder) => feeder.bus_id === id)?.id ?? null, slot: device.slots.some((slot) => slot.address === address) });
             }
         }
-        this.emitDevice();
-        return { feeders: found, ...this.deviceStateOf() };
+        this.emitPlacing();
+        return { feeders: found, ...this.placingStateOf() };
     }
 
-    async deviceBusFeed(feederId: string): Promise<DeviceState> {
-        const device = this.deviceIdle();
+    async pnpBusFeed(feederId: string): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         const feeder = device.feeders.find((entry) => entry.id === feederId);
         if (!feeder) {
             throw new ApiError(404, `the profile has no feeder '${feederId}'`);
@@ -7806,22 +8023,23 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `feeder ${feederId} is not on the bus`);
         }
         if (device.bus === null) {
-            throw new ApiError(400, "the device profile has no [bus] section");
+            throw new ApiError(400, "the machine file has no [bus] section");
         }
         const address = this.busAdvance(device, feeder);
         this.message("info", `feeder ${feederId} advanced ${gnum(feeder.advance)} mm (bus address ${address})`);
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async deviceBoardsReset(): Promise<DeviceState> {
-        this.deviceConfig.boards = 0;
-        this.emitDevice();
-        return this.deviceStateOf();
+    async pnpBoardsReset(): Promise<PlacingState> {
+        this.placing().boards = 0;
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
-    async patchDeviceFile(id: string, path: CamPath, value: CamValue): Promise<DeviceFile> {
-        let text = this.deviceOf(id) && this.deviceTexts.get(id)!;
+    /** One value of a machine file changed in its text, comments and all; a plain table not there yet is added at its end. */
+    async patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse> {
+        let text = this.machineText(id);
         const table = path.slice(0, -1);
         if (table.length === 1 && typeof table[0] === "string" && value !== null && !new RegExp(`^\\s*\\[${table[0]}\\]\\s*(#.*)?$`, "m").test(text)) {
             text = `${text.replace(/\n+$/, "")}\n\n[${table[0]}]\n`;
@@ -7832,37 +8050,19 @@ export class MockBackend implements Api, EventFeed {
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
-        return this.saveDeviceFile(id, changed);
+        const saved = await this.saveMachineFile(id, changed);
+        this.emitPlacing();
+        return saved;
     }
 
-    async newDeviceFile(id: string, text?: string): Promise<DeviceFile> {
-        checkDeviceId(id);
-        if (this.deviceTexts.has(id)) {
-            throw new ApiError(400, `a device profile '${id}' is there already`);
-        }
-        return this.saveDeviceFile(id, text ?? openpnpMarlinText);
-    }
-
-    async deleteDeviceFile(id: string): Promise<DevicesResponse> {
-        checkDeviceId(id);
-        if (!this.deviceTexts.has(id)) {
-            throw new ApiError(404, `no device profile '${id}'`);
-        }
-        if (this.deviceConfig.profile === id && this.deviceLink.connected) {
-            throw new ApiError(409, "disconnect the device before removing its profile");
-        }
-        this.deviceTexts.delete(id);
-        return this.devices();
-    }
-
-    async deviceResetFeeders(feeder?: string): Promise<DeviceState> {
+    async pnpResetFeeders(feeder?: string): Promise<PlacingState> {
         if (feeder === undefined) {
-            this.deviceConfig.taken = {};
+            this.placing().taken = {};
         } else {
-            delete this.deviceConfig.taken[feeder];
+            delete this.placing().taken[feeder];
         }
-        this.emitDevice();
-        return this.deviceStateOf();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 }
 

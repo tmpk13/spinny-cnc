@@ -64,108 +64,86 @@ describe("HttpApi pick and place routes", () => {
     });
 });
 
-describe("HttpApi G-code device routes", () => {
+describe("HttpApi G-code machine and placing routes", () => {
     test("methods, paths and bodies follow the contract", async () => {
         const { calls, fetchFn } = fakeFetch();
         const api = new HttpApi("http://host", fetchFn);
-        await api.devices();
-        await api.deviceFile("marlin");
-        await api.saveDeviceFile("marlin", "name = 1");
-        await api.checkDeviceFile("marlin", "x");
-        await api.deviceState();
-        await api.deviceSelect({ profile: "marlin", angle: 90 });
-        await api.deviceConnect();
-        await api.deviceDisconnect();
-        await api.deviceCommand("M114");
-        await api.deviceHome();
-        await api.devicePosition();
-        await api.deviceReference({ job: "a1", ref: "R1" });
-        await api.deviceDropReferences("a1", "R 1");
-        await api.deviceDropReferences("a1");
-        await api.devicePlan("a1");
-        await api.devicePlan("a1", ["R1", "C2"]);
-        await api.deviceRun("a1");
-        await api.deviceStop();
-        await api.deviceGoto("a1", "R1");
-        await api.deviceResetFeeders("tape");
-        await api.deviceResetFeeders();
-        await api.deviceNozzle(0.5);
-        await api.deviceRun("a1", ["R1"], true);
-        await api.deviceReference({ job: "a1", ref: "FID1", camera: true });
-        await api.deviceRunout();
-        await api.deviceFiducials("a1");
+        await api.connect("/dev/ttyACM1", "opulo-lumen-rev5");
+        await api.connect("/dev/ttyACM0");
+        await api.patchMachineFile("marlin", ["motion", "place_z"], 12.5);
+        await api.placingState();
+        await api.placingAngle({ angle: 90 });
+        await api.placingAngle({ clear_angle: true });
+        await api.pnpReference({ job: "a1", ref: "R1" });
+        await api.pnpDropReferences("a1", "R 1");
+        await api.pnpDropReferences("a1");
+        await api.pnpPlan("a1");
+        await api.pnpPlan("a1", ["R1", "C2"]);
+        await api.pnpRun("a1");
+        await api.pnpRunStop();
+        await api.pnpGoto({ job: "a1", ref: "R1", camera: true });
+        await api.pnpResetFeeders("tape");
+        await api.pnpResetFeeders();
+        await api.pnpNozzle(0.5);
+        await api.pnpRun("a1", ["R1"], true);
+        await api.pnpReference({ job: "a1", ref: "FID1", camera: true });
+        await api.pnpRunout();
+        await api.pnpFiducials("a1");
         await api.topSettings({ device: "/dev/video2", clear: ["offset"] });
         await api.topStart();
         await api.topStop();
         await api.topMark();
         await api.topOffset(1.5);
         await api.topAbort();
-        await api.patchDeviceFile("marlin", ["motion", "place_z"], 12.5);
-        await api.newDeviceFile("lumen");
-        await api.deleteDeviceFile("lumen");
-        await api.deviceSelect({ url: "/dev/ttyACM1" });
-        await api.deviceIdentify("/dev/ttyACM1");
-        await api.deviceJog("x", -1);
-        await api.deviceMove({ x: 10, y: 20 });
-        await api.devicePark();
-        await api.deviceOverCamera();
-        await api.deviceSwap("camera");
-        await api.deviceCamera({ here: true });
-        await api.deviceLight(true);
-        await api.deviceVacuum({ on: false, read: true });
-        await api.deviceBoardsReset();
-        await api.deviceGoto("a1", "R1", true);
+        await api.pnpPark();
+        await api.pnpOverCamera();
+        await api.pnpSwap("camera");
+        await api.pnpCameraPlace({ here: true });
+        await api.pnpLight(true);
+        await api.pnpVacuum({ on: false, read: true });
+        await api.pnpBoardsReset();
+        await api.pnpBusScan();
+        await api.pnpBusFeed("tape");
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
-            ["GET", "/api/pnp/devices", null],
-            ["GET", "/api/pnp/devices/marlin", null],
-            ["PUT", "/api/pnp/devices/marlin", { text: "name = 1" }],
-            ["POST", "/api/pnp/devices/marlin/check", { text: "x" }],
-            ["GET", "/api/pnp/device", null],
-            ["PUT", "/api/pnp/device", { profile: "marlin", angle: 90 }],
-            ["POST", "/api/pnp/device/connect", null],
-            ["POST", "/api/pnp/device/disconnect", null],
-            ["POST", "/api/pnp/device/command", { line: "M114" }],
-            ["POST", "/api/pnp/device/home", null],
-            ["POST", "/api/pnp/device/position", null],
-            ["POST", "/api/pnp/device/references", { job: "a1", ref: "R1" }],
-            ["DELETE", "/api/pnp/device/references?job=a1&ref=R%201", null],
-            ["DELETE", "/api/pnp/device/references?job=a1", null],
-            ["POST", "/api/pnp/device/plan", { job: "a1" }],
-            ["POST", "/api/pnp/device/plan", { job: "a1", refs: ["R1", "C2"] }],
-            ["POST", "/api/pnp/device/run", { job: "a1", fiducials: false }],
-            ["POST", "/api/pnp/device/stop", null],
-            ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1", camera: false }],
-            ["POST", "/api/pnp/device/feeders/reset", { feeder: "tape" }],
-            ["POST", "/api/pnp/device/feeders/reset", {}],
-            ["POST", "/api/pnp/device/nozzle", { step: 0.5 }],
-            ["POST", "/api/pnp/device/run", { job: "a1", refs: ["R1"], fiducials: true }],
-            ["POST", "/api/pnp/device/references", { job: "a1", ref: "FID1", camera: true }],
-            ["POST", "/api/pnp/device/runout", null],
-            ["POST", "/api/pnp/device/fiducials", { job: "a1" }],
-            ["PUT", "/api/pnp/device/top", { device: "/dev/video2", clear: ["offset"] }],
-            ["POST", "/api/pnp/device/top/start", null],
-            ["POST", "/api/pnp/device/top/stop", null],
-            ["POST", "/api/pnp/device/top/mark", null],
-            ["POST", "/api/pnp/device/top/offset", { step: 1.5 }],
-            ["POST", "/api/pnp/device/top/abort", null],
-            ["PATCH", "/api/pnp/devices/marlin", { path: ["motion", "place_z"], value: 12.5 }],
-            ["POST", "/api/pnp/devices/lumen", {}],
-            ["DELETE", "/api/pnp/devices/lumen", null],
-            ["PUT", "/api/pnp/device", { url: "/dev/ttyACM1" }],
-            ["POST", "/api/pnp/device/identify", { url: "/dev/ttyACM1" }],
-            ["POST", "/api/pnp/device/jog", { axis: "x", step: -1 }],
-            ["POST", "/api/pnp/device/move", { x: 10, y: 20 }],
-            ["POST", "/api/pnp/device/park", null],
-            ["POST", "/api/pnp/device/over-camera", null],
-            ["POST", "/api/pnp/device/swap", { to: "camera" }],
-            ["PUT", "/api/pnp/device/camera", { here: true }],
-            ["POST", "/api/pnp/device/light", { on: true }],
-            ["POST", "/api/pnp/device/vacuum", { on: false, read: true }],
-            ["POST", "/api/pnp/device/boards/reset", null],
-            ["POST", "/api/pnp/device/goto", { job: "a1", ref: "R1", camera: true }],
+            ["POST", "/api/connect", { url: "/dev/ttyACM1", machine: "opulo-lumen-rev5" }],
+            ["POST", "/api/connect", { url: "/dev/ttyACM0" }],
+            ["PATCH", "/api/machines/marlin", { path: ["motion", "place_z"], value: 12.5 }],
+            ["GET", "/api/pnp/placing", null],
+            ["PUT", "/api/pnp/placing", { angle: 90 }],
+            ["PUT", "/api/pnp/placing", { clear_angle: true }],
+            ["POST", "/api/pnp/references", { job: "a1", ref: "R1" }],
+            ["DELETE", "/api/pnp/references?job=a1&ref=R%201", null],
+            ["DELETE", "/api/pnp/references?job=a1", null],
+            ["POST", "/api/pnp/plan", { job: "a1" }],
+            ["POST", "/api/pnp/plan", { job: "a1", refs: ["R1", "C2"] }],
+            ["POST", "/api/pnp/run", { job: "a1", fiducials: false }],
+            ["POST", "/api/pnp/run/stop", null],
+            ["POST", "/api/pnp/goto", { job: "a1", ref: "R1", camera: true }],
+            ["POST", "/api/pnp/feeders/reset", { feeder: "tape" }],
+            ["POST", "/api/pnp/feeders/reset", {}],
+            ["POST", "/api/pnp/nozzle", { step: 0.5 }],
+            ["POST", "/api/pnp/run", { job: "a1", refs: ["R1"], fiducials: true }],
+            ["POST", "/api/pnp/references", { job: "a1", ref: "FID1", camera: true }],
+            ["POST", "/api/pnp/runout", null],
+            ["POST", "/api/pnp/fiducials", { job: "a1" }],
+            ["PUT", "/api/pnp/top", { device: "/dev/video2", clear: ["offset"] }],
+            ["POST", "/api/pnp/top/start", null],
+            ["POST", "/api/pnp/top/stop", null],
+            ["POST", "/api/pnp/top/mark", null],
+            ["POST", "/api/pnp/top/offset", { step: 1.5 }],
+            ["POST", "/api/pnp/top/abort", null],
+            ["POST", "/api/pnp/park", null],
+            ["POST", "/api/pnp/over-camera", null],
+            ["POST", "/api/pnp/swap", { to: "camera" }],
+            ["PUT", "/api/pnp/camera", { here: true }],
+            ["POST", "/api/pnp/light", { on: true }],
+            ["POST", "/api/pnp/vacuum", { on: false, read: true }],
+            ["POST", "/api/pnp/boards/reset", null],
+            ["POST", "/api/pnp/bus/scan", null],
+            ["POST", "/api/pnp/bus/feed", { feeder: "tape" }],
         ]);
-        expect(api.deviceProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/device/program.gcode?job=a1&refs=R1%2CC2");
-        expect(api.topFrameUrl(640, true)).toMatch(/^http:\/\/host\/api\/pnp\/device\/top\/frame\.jpg\?width=640&overlay=1&t=\d+$/);
+        expect(api.pnpProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/program.gcode?job=a1&refs=R1%2CC2");
+        expect(api.topFrameUrl(640, true)).toMatch(/^http:\/\/host\/api\/pnp\/top\/frame\.jpg\?width=640&overlay=1&t=\d+$/);
     });
 });
 

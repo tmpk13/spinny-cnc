@@ -1,11 +1,11 @@
 // The PNP page: the parts of the selected board job in a list (sorted by
 // any column, grouped by value and footprint) and on a drawing of the
 // board that zooms and pans; a board picked or uploaded right here; the
-// jog of whichever machine places (this one, or a G-code device); the
-// cameras' pictures; the up camera's settings with where it sits on the
-// machine; and for a G-code device its own panels (the device, the top
-// camera, the board's place on it, and placing). Its own setup steps
-// lead through all of it.
+// jog of the machine connected; the cameras' pictures; the up camera's
+// settings with where it sits on the machine; and when the machine is a
+// G-code one (its file says controller = "gcode") its panels for placing:
+// the head, the top camera, the board's place on it, the feeders, and the
+// run. Its own setup steps lead through all of it.
 
 import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
@@ -16,25 +16,18 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { mountCameraView } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
-import { DEVICE_SETUP, deviceCameraText, mountDevice } from "./device.ts";
-import { mountDeviceFeeders } from "./devicefeeders.ts";
-import { mountDeviceJog } from "./devicejog.ts";
-import { mountDeviceRefs } from "./devicerefs.ts";
-import { mountDeviceRun } from "./devicerun.ts";
+import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
+import { mountPnpFeeders } from "./pnpfeeders.ts";
+import { mountPnpRefs } from "./pnprefs.ts";
+import { mountPnpRun } from "./pnprun.ts";
 import { infoTip } from "./infotip.ts";
 import { mountJog } from "./jog.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
 import { mountTopCamera } from "./topcamera.ts";
 
-const TARGET_KEY = "spinny.pnp.target";
 const SIDE_KEY = "spinny.pnp.side";
 const SORT_KEY = "spinny.pnp.sort";
 const GROUP_KEY = "spinny.pnp.group";
-
-/** Which machine places the parts, as remembered in this browser: this one unless a G-code device was picked. */
-export function readTarget(): "machine" | "device" {
-    return readStored(TARGET_KEY) === "device" ? "device" : "machine";
-}
 
 /** How often the up camera's state is asked for while the page shows, ms. */
 const POLL_MS = 500;
@@ -331,19 +324,19 @@ export interface PnpRoots {
     board: HTMLElement;
     camera: HTMLElement;
     nozzle: HTMLElement;
-    /** The G-code device's panel. */
-    device: HTMLElement;
-    /** The jog of the machine that places. */
+    /** A G-code machine's head: lights, vacuum, its places, its file's values. */
+    head: HTMLElement;
+    /** The jog of the machine connected. */
     jog: HTMLElement;
     /** The cameras' pictures. */
     view: HTMLElement;
-    /** The device's top camera. */
+    /** A G-code machine's top camera. */
     top: HTMLElement;
-    /** The board's place on the device. */
+    /** The board's place on a G-code machine. */
     refs: HTMLElement;
-    /** The device's feeders, and its feeder bus. */
+    /** A G-code machine's feeders, and its feeder bus. */
     feeders: HTMLElement;
-    /** Placing with the device. */
+    /** Placing with a G-code machine. */
     run: HTMLElement;
 }
 
@@ -357,30 +350,18 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     let loading = false;
 
     // The steps follow the machine the parts are placed with.
-    mountSteps(roots.steps, ctx, (state) => [state.pnpTarget === "device" ? DEVICE_SETUP : PNP_SETUP], "spinny.steps.pnp");
-    mountDevice(roots.device, ctx);
-    mountDeviceRefs(roots.refs, ctx);
-    mountDeviceFeeders(roots.feeders, ctx);
-    mountDeviceRun(roots.run, ctx);
-    mountTopCamera(roots.top, ctx, () => visible() && ctx.store.get().pnpTarget === "device");
+    mountSteps(roots.steps, ctx, (state) => [gcodePlacing(state) ? PLACING_SETUP : PNP_SETUP], "spinny.steps.pnp");
+    mountHead(roots.head, ctx);
+    mountPnpRefs(roots.refs, ctx);
+    mountPnpFeeders(roots.feeders, ctx);
+    mountPnpRun(roots.run, ctx);
+    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()));
     mountCameraView(roots.view, ctx);
-    const target = el("select", { class: "field", "aria-label": "Place with" },
-        el("option", { value: "machine" }, "this machine"),
-        el("option", { value: "device" }, "a G-code device (OpenPnP compatible)"),
-    ) as HTMLSelectElement;
-    target.addEventListener("change", () => {
-        const value = target.value === "device" ? "device" : "machine";
-        writeStored(TARGET_KEY, value);
-        ctx.store.set({ pnpTarget: value });
-    });
-    ctx.store.set({ pnpTarget: readTarget() });
 
-    // --- the jog: this machine's panel, or the device's bars ---
+    // --- the jog: the machine connected's, whichever it is ---
     const machineJog = el("div", { class: "stack pnp-machine-jog" });
-    const deviceJog = el("div", { class: "stack pnp-device-jog" });
-    roots.jog.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog")), el("div", { class: "panel-body" }, machineJog, deviceJog));
-    mountJog(machineJog, ctx, "pnp", () => ctx.store.get().pnpTarget === "machine");
-    mountDeviceJog(deviceJog, ctx, () => ctx.store.get().pnpTarget === "device");
+    roots.jog.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog")), el("div", { class: "panel-body" }, machineJog));
+    mountJog(machineJog, ctx, "pnp", () => true);
 
     // --- the parts ---
     const jobPick = el("select", { class: "field", "aria-label": "Board job" }) as HTMLSelectElement;
@@ -400,12 +381,11 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const withCamera = el("input", { type: "checkbox", "aria-label": "Go with the top camera" }) as HTMLInputElement;
     const withCameraLabel = el("label", { class: "muted", title: "the top camera's crosshair goes over the part instead of the nozzle" }, withCamera, " with the top camera");
     const gotoButton = button("Go to part", () => gotoPart(), "btn btn-primary");
-    gotoButton.title = "X and Y over the picked part, at the safe height (Travel H here, safe Z on a device); Z stays up";
+    gotoButton.title = "X and Y over the picked part, at the safe height (Travel H on this project's firmware, safe Z on a G-code machine); Z stays up";
     const chosenLine = el("p", { class: "muted pnp-chosen" });
     roots.parts.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Parts")),
         el("fieldset", { class: "panel-body" },
-            el("div", { class: "button-row" }, labeled("Place with", target, "labeled inline")),
             el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), uploadButton, upload),
             el("div", { class: "button-row" }, filter, sidePick, el("label", { class: "muted" }, grouped, " group")),
             el("div", { class: "button-row" }, gotoButton, correctLabel, withCameraLabel),
@@ -467,28 +447,28 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const upLog = el("div", { class: "camlog-box" });
     mountCameraLog(upLog, ctx, "up");
     const cameraChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
-    // Where the up camera sits on a G-code device: typed, taken by eye, or measured.
+    // Where the up camera sits on a G-code machine: typed, taken by eye, or measured.
     const placeX = numberField({ step: 0.01, width: "6rem" });
     placeX.setAttribute("aria-label", "Up camera place X");
     const placeY = numberField({ step: 0.01, width: "6rem" });
     placeY.setAttribute("aria-label", "Up camera place Y");
     const placeSet = button("Set", () => setPlace(), "btn btn-quiet btn-small");
     placeSet.title = "keep the typed place as the up camera's";
-    const placeHere = button("Camera is here", () => into(ctx, "device", ctx.api.deviceCamera({ here: true })), "btn");
+    const placeHere = button("Camera is here", () => into(ctx, "placing", ctx.api.pnpCameraPlace({ here: true })), "btn");
     placeHere.title = "the nozzle is over the up camera's center by eye: keep where the head is as its place";
-    const placeForget = button("Forget", () => into(ctx, "device", ctx.api.deviceCamera({ clear: true })), "btn btn-quiet btn-small");
-    placeForget.title = "forget the place kept: the profile's again";
+    const placeForget = button("Forget", () => into(ctx, "placing", ctx.api.pnpCameraPlace({ clear: true })), "btn btn-quiet btn-small");
+    placeForget.title = "forget the place kept: the machine file's again";
     const deviceStep = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
-    deviceStep.setAttribute("aria-label", "Device centering step mm");
+    deviceStep.setAttribute("aria-label", "Centering step mm");
     const deviceCenter = button("Center nozzle", () => centerOnDevice(), "btn");
     deviceCenter.title = "find where the up camera is and its picture's scale, roll and mirror, by moving the nozzle over it until it sits on the crosshair";
-    const runout = button("Measure runout", () => into(ctx, "device", ctx.api.deviceRunout()), "btn");
+    const runout = button("Measure runout", () => into(ctx, "placing", ctx.api.pnpRunout()), "btn");
     runout.title = "turn the nozzle over the up camera to measure how far its tip runs off its turning axis";
     const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
     const deviceCameraLine = el("p", { class: "muted" });
     const deviceRoutineLine = el("p", { class: "muted vision-routine" });
     const deviceCalibration = el("div", { class: "stack pnp-camera-device" },
-        el("h3", {}, "On the device"),
+        el("h3", {}, "On the G-code machine"),
         deviceCameraLine,
         el("div", { class: "button-row" }, labeled("X", placeX, "labeled inline"), labeled("Y", placeY, "labeled inline"), placeSet, placeForget),
         el("div", { class: "button-row" }, placeHere, infoTip("upcam")),
@@ -689,8 +669,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.toast("error", "step: 0 to 10 mm");
             return;
         }
-        await into(ctx, "device", ctx.api.deviceNozzle(value));
-        await ctx.refreshPnp();
+        await into(ctx, "pnp", ctx.api.pnpNozzle(value));
+        await ctx.refreshPlacing();
     }
 
     async function setPlace(): Promise<void> {
@@ -700,7 +680,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.toast("error", "place: an X and a Y");
             return;
         }
-        await into(ctx, "device", ctx.api.deviceCamera({ position: [x, y] }));
+        await into(ctx, "placing", ctx.api.pnpCameraPlace({ position: [x, y] }));
     }
 
     async function gotoPart(): Promise<void> {
@@ -710,8 +690,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             ctx.toast("error", "pick a part first");
             return;
         }
-        if (state.pnpTarget === "device") {
-            await into(ctx, "device", ctx.api.deviceGoto(job.id, selected, withCamera.checked));
+        if (gcodePlacing(state)) {
+            await ctx.call(ctx.api.pnpGoto({ job: job.id, ref: selected, camera: withCamera.checked }));
+            await ctx.refreshPlacing();
             return;
         }
         await ctx.call(ctx.api.pnpGoto({ job: job.id, ref: selected, correct: correct.checked }));
@@ -841,14 +822,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     /** The goto's button and boxes, which follow the machine and the cameras. */
     function renderActions(state: AppState): void {
-        const onDevice = state.pnpTarget === "device";
-        const busy = onDevice ? state.device?.running === true : state.pnp?.routine?.state === "running";
+        const onDevice = gcodePlacing(state);
+        const busy = onDevice ? state.placing?.running === true : state.pnp?.routine?.state === "running";
         const chosen = selected !== null && partsOf(state).some((part) => part.ref === selected);
-        const linked = onDevice ? state.device?.connected === true : state.snapshot.connected;
-        lockFor(gotoButton, [!linked, onDevice ? "connect the device first" : "connect first"], [busy, onDevice ? "the device is busy" : "a camera routine is under way"], [!chosen, "pick a part first"]);
+        const linked = onDevice ? state.placing?.connected === true : state.snapshot.connected;
+        lockFor(gotoButton, [!linked, "connect first"], [busy, onDevice ? "the machine is placing" : "a camera routine is under way"], [!chosen, "pick a part first"]);
         correctLabel.classList.toggle("hidden", onDevice);
         withCameraLabel.classList.toggle("hidden", !onDevice);
-        const offsetKnown = (state.device?.top?.offset ?? null) !== null || (state.deviceDoc?.document.top?.offset ?? null) !== null;
+        const offsetKnown = (state.placing?.top?.offset ?? null) !== null || (state.placing?.document?.top?.offset ?? null) !== null;
         withCamera.disabled = !offsetKnown;
         if (withCamera.disabled) {
             withCamera.checked = false;
@@ -872,7 +853,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     function renderBoard(state: AppState): void {
         const machine = state.snapshot.machine;
-        const camera = state.pnpTarget === "machine" && isCartesian(state.snapshot) ? cameraOnBoard(state.pnp?.position ?? null, machine?.joint.a ?? 0) : null;
+        const camera = !gcodePlacing(state) && isCartesian(state.snapshot) ? cameraOnBoard(state.pnp?.position ?? null, machine?.joint.a ?? 0) : null;
         const parts = sideParts(state);
         const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, loading]);
         if (key !== boardKey) {
@@ -888,7 +869,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             }
         }
         if (drawn) {
-            placeHead(drawn.root, drawn.box, state.pnpTarget === "machine" && state.snapshot.connected && machine ? machine.board : null);
+            placeHead(drawn.root, drawn.box, !gcodePlacing(state) && state.snapshot.connected && machine ? machine.board : null);
         }
     }
 
@@ -973,25 +954,25 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         cameraPick.render();
         showPending();
-        routineLine.textContent = state.pnp?.routine?.target === "device" ? "" : pnpRoutineText(pnp);
+        routineLine.textContent = state.pnp?.routine?.target === "gcode" ? "" : pnpRoutineText(pnp);
         partLine.textContent = partOffsetText(pnp);
-        // The up camera on a G-code device.
-        const deviceState = state.device;
+        // The up camera on a G-code machine.
+        const deviceState = state.placing;
         const linked = deviceState?.connected === true && !deviceState.running && deviceState.top?.routine?.state !== "running";
-        const moving = busy && pnp?.routine?.target === "device";
-        deviceCameraLine.textContent = deviceCameraText(deviceState);
+        const moving = busy && pnp?.routine?.target === "gcode";
+        deviceCameraLine.textContent = upCameraText(deviceState);
         const place = deviceState?.camera.position ?? null;
         for (const [field, value] of [[placeX, place?.[0]], [placeY, place?.[1]]] as const) {
             if (field !== document.activeElement) {
                 field.value = value === undefined ? "" : String(value);
             }
         }
-        lockFor(placeHere, [!linked, "connect the device first"], [busy, "a routine is under way"]);
-        lockFor(placeForget, [deviceState?.camera.measured !== true, "no place kept: the profile's is used"], [busy, "a routine is under way"]);
-        lockFor(deviceCenter, [!linked, "connect the device first"], [busy, "a routine is under way"], [!running, "start the up camera first"]);
-        lockFor(runout, [!linked, "connect the device first"], [busy, "a routine is under way"], [!running, "start the up camera first"], [!(deviceState?.camera.mm_per_px && deviceState.camera.position), "center the nozzle over the up camera first"]);
-        setLocked(deviceAbort, !moving, "no routine under way on the device");
-        deviceRoutineLine.textContent = pnp?.routine?.target === "device" ? pnpRoutineText(pnp) : "";
+        lockFor(placeHere, [!linked, "connect the machine first"], [busy, "a routine is under way"]);
+        lockFor(placeForget, [deviceState?.camera.measured !== true, "no place kept: the machine file's is used"], [busy, "a routine is under way"]);
+        lockFor(deviceCenter, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the up camera first"]);
+        lockFor(runout, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the up camera first"], [!(deviceState?.camera.mm_per_px && deviceState.camera.position), "center the nozzle over the up camera first"]);
+        setLocked(deviceAbort, !moving, "no routine under way on the machine");
+        deviceRoutineLine.textContent = pnp?.routine?.target === "gcode" ? pnpRoutineText(pnp) : "";
     }
 
     // The parts of the selected job, asked for once it changes.
@@ -1047,23 +1028,27 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         renderCamera(state);
         renderActions(state);
         renderBoard(state);
-    }, ["pnp", "snapshot", "device", "deviceDoc"]);
-    // This machine's camera and nozzle, or the G-code device.
+    }, ["pnp", "snapshot", "placing"]);
+    // The nozzle panel of a machine on this project's firmware, or a G-code
+    // machine's panels for placing: whichever is connected, or with none
+    // connected the G-code machine there is to place with.
+    let shownGcode: boolean | null = null;
     const showTarget = (state: AppState): void => {
-        const onDevice = state.pnpTarget === "device";
-        target.value = state.pnpTarget;
-        // The up camera serves either machine; the nozzle panel is this machine's.
+        const onDevice = gcodePlacing(state);
+        if (onDevice === shownGcode) {
+            return;
+        }
+        shownGcode = onDevice;
+        // The up camera serves either machine; the nozzle panel is this project's machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        for (const root of [roots.device, roots.refs, roots.feeders, roots.run, roots.top]) {
+        for (const root of [roots.head, roots.refs, roots.feeders, roots.run, roots.top]) {
             root.classList.toggle("hidden", !onDevice);
         }
         deviceCalibration.classList.toggle("hidden", !onDevice);
-        machineJog.classList.toggle("hidden", onDevice);
-        deviceJog.classList.toggle("hidden", !onDevice);
         renderActions(state);
         renderBoard(state);
     };
-    ctx.store.subscribe(showTarget, ["pnpTarget", "device"]);
+    ctx.store.subscribe(showTarget, ["snapshot", "placing"]);
     showTarget(ctx.store.get());
     const now = ctx.store.get();
     renderJobs(now);

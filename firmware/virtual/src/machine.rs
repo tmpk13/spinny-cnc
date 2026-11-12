@@ -32,9 +32,30 @@ const ENDSTOPS: [&str; 4] = ["none", "min", "max", "both"];
 pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     let top: Table = text.parse().map_err(|e| format!("{e}"))?;
     let mut writes: Vec<(String, String)> = Vec::new();
-    let mut known_top =
-        vec!["name", "description", "kinematics", "tool", "probe", "output", "enable", "drivers", "host", "controls", "camera"];
+    let mut known_top = vec![
+        "name",
+        "description",
+        "controller",
+        "kinematics",
+        "tool",
+        "probe",
+        "output",
+        "enable",
+        "drivers",
+        "host",
+        "controls",
+        "camera",
+    ];
 
+    // A machine on a G-code controller of its own (a pick and place
+    // machine's Marlin) has none of this firmware's settings.
+    match top.get("controller").map(|v| v.as_str()) {
+        None | Some(Some("spinny")) => {}
+        Some(Some("gcode")) => {
+            return Err("controller = \"gcode\": a G-code machine runs its own firmware, not this one".into())
+        }
+        Some(_) => return Err("controller must be one of spinny, gcode".into()),
+    }
     if let Some(value) = top.get("name") {
         value.as_str().ok_or("name must be a string")?;
     }
@@ -565,6 +586,16 @@ mod tests {
             assert_eq!(apply(&mut Settings::default(), text).unwrap_err(), "tool = dispenser needs kinematics = cartesian", "{text}");
         }
         assert!(apply(&mut Settings::default(), "tool = \"glue\"\n").unwrap_err().contains("laser, spindle, dispenser"));
+    }
+
+    #[test]
+    fn a_g_code_machine_is_not_this_firmware() {
+        let mut settings = Settings::default();
+        let refused = apply(&mut settings, &shipped("opulo-lumen-rev5")).unwrap_err();
+        assert!(refused.contains("runs its own firmware"), "{refused}");
+        assert_eq!(settings, Settings::default());
+        assert_eq!(applied("controller = \"spinny\"\n"), Settings::default());
+        assert!(apply(&mut settings, "controller = \"grbl\"\n").unwrap_err().contains("controller must be"));
     }
 
     #[test]

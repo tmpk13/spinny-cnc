@@ -1,6 +1,7 @@
-"""A placement run on a G-code device as the cameras and the vacuum sensor
-steer it: the profile's new words, the plan they make, and runs against a
-fake device with an up camera, a top camera and a vacuum sensor."""
+"""A placement run on a G-code machine as the cameras and the vacuum
+sensor steer it: the machine file's words, the plan they make, and runs
+against a fake machine with an up camera, a top camera and a vacuum
+sensor."""
 
 from __future__ import annotations
 
@@ -10,12 +11,14 @@ import re
 import pytest
 from device_fakes import DeviceTopCamera, DeviceUpCamera, FakeMarlin, turn, wait_for
 from fastapi.testclient import TestClient
+from gcode_rig import connect, gcode_file, rig_backend
 
-from spinny_web.app import Backend, create_app
+from spinny_laser.machines import MachineError
+from spinny_web.app import create_app
 from spinny_web.camera import picture_to_machine
-from spinny_web.gcode_device import GcodeDevice
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, DeviceError, board_fit, parse, plan, tip_shift, wrap
+from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, board_fit, plan, tip_shift, wrap
+from spinny_web.openpnp import parse as parse_file
 from spinny_web.pnp import fit_circle, footprints_of, picture_angle_to_machine
 
 BASE = """name = "rig"
@@ -49,6 +52,11 @@ def profile(gcode: str = "", motion: str = "", feeder: str = "", rest: str = "")
     return BASE.format(gcode=gcode, motion=motion, feeder=feeder, rest=rest)
 
 
+def parse(text: str, machine_id: str):
+    """A profile as the tests write it, read as the G-code machine file it makes."""
+    return parse_file(gcode_file(text), machine_id)
+
+
 VACUUM = '[vacuum]\nread = "M105"\npart_on = [50, 100]\npart_off = [0, 10]\n'
 CAMERA = "[camera]\nz = -4\n"
 TOP = '[top_camera]\nz = 0\noffset = [34.0, -9.0]\nfiducial = "bright"\nwithin = 2\n'
@@ -58,7 +66,7 @@ def part(ref: str, x: float, y: float, rotation: float = 0.0, **extra) -> dict:
     return {"ref": ref, "value": "10k", "footprint": "R_0603", "side": "front", "x": x, "y": y, "rotation": rotation, "dnp": False, **extra}
 
 
-# --- the profile's new words -------------------------------------------------------
+# --- the machine file's words -------------------------------------------------------
 
 
 def test_the_vacuum_reads_with_marlins_pattern_or_openpnps_named_group():
@@ -90,7 +98,7 @@ def test_a_sensor_without_ranges_is_read_by_hand_only_and_reads_over_several_lin
         (profile(rest='[vacuum]\nread = "M105"\npattern = "T:[0-9]+"\npart_on = [1, 2]\n'), "[vacuum] pattern must hold a group"),
         (profile(rest='[vacuum]\nread = "M105"\npattern = "T:("\npart_on = [1, 2]\n'), "[vacuum] pattern is not a regular expression"),
         (profile(rest='[vacuum]\nread = "M105"\npart_on = [9, 2]\n'), "must be the low reading, then the high one"),
-        (profile(feeder='pocket = "bright"'), "[feeder 1] pocket looks with the top camera: add a [top_camera] section"),
+        (profile(feeder='pocket = "bright"'), "[feeder 1] pocket looks with the top camera: add a [top_camera] table"),
         (profile(feeder="marks = [[1, 2], [3, 4], [5, 6]]", rest=TOP), "[feeder 1] marks must be a list of at most 2 places"),
         (profile(feeder="size = [1.6, -1]"), "[feeder 1] size must be a length and a width over 0"),
         (profile(feeder='pocket = "grey"', rest=TOP), "[feeder 1] pocket must be dark or bright"),
@@ -99,7 +107,7 @@ def test_a_sensor_without_ranges_is_read_by_hand_only_and_reads_over_several_lin
     ],
 )
 def test_a_new_word_that_does_not_read_names_its_key(text, words):
-    with pytest.raises(DeviceError) as error:
+    with pytest.raises(MachineError) as error:
         parse(text, "rig")
     assert words in str(error.value)
 
@@ -155,7 +163,7 @@ def test_a_board_file_gives_its_fiducials_whatever_their_flags_and_its_parts_bod
     assert by_ref["R1"].body == (1.6, 0.8) and by_ref["R2"].body is None
 
 
-# --- runs on a fake device --------------------------------------------------------------
+# --- runs on a fake machine --------------------------------------------------------------
 
 BOARD = """(kicad_pcb
 \t(footprint "Fiducial:Fiducial_1mm_Mask2mm"
@@ -199,25 +207,19 @@ BOARD = """(kicad_pcb
 
 @pytest.fixture
 def client(tmp_path):
-    pnp_dir = tmp_path / "pnp"
-    pnp_dir.mkdir()
-    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json", pnp_dir=pnp_dir)
     fake = FakeMarlin(position=(100.0, 50.0, 0.0))
-    backend.pnp_device = GcodeDevice(backend.publish_pnp_device, opener=lambda url, baud: fake)
+    backend = rig_backend(tmp_path, {}, lambda url, baud: fake)
     app = create_app(backend, frontend=tmp_path / "no-dist")
     with TestClient(app) as client:
         client.backend = backend
         client.fake = fake
-        client.pnp_dir = pnp_dir
         yield client
 
 
 def rig(client, text: str) -> str:
-    """The profile saved and picked, the device connected, a board job added: its id."""
-    (client.pnp_dir / "rig.toml").write_text(text, encoding="utf-8")
-    assert client.put("/api/pnp/device", json={"profile": "rig"}).status_code == 200
-    response = client.post("/api/pnp/device/connect")
-    assert response.status_code == 200, response.text
+    """The machine file saved, the machine connected, a board job added: its id."""
+    (client.backend.machine_store.directory / "rig.toml").write_text(gcode_file(text), encoding="utf-8")
+    connect(client, "rig")
     job = Job(name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])], design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True))
     client.backend.store.add(job)
     client.backend.store.keep_board(job.id, BOARD.encode())
@@ -225,11 +227,11 @@ def rig(client, text: str) -> str:
 
 
 def run(client, body: dict) -> dict:
-    """A run sent and waited out: the device's state after it."""
-    response = client.post("/api/pnp/device/run", json=body)
+    """A run sent and waited out: the placing state after it."""
+    response = client.post("/api/pnp/run", json=body)
     assert response.status_code == 200, response.text
-    wait_for(lambda: not client.get("/api/pnp/device").json()["running"])
-    return client.get("/api/pnp/device").json()
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    return client.get("/api/pnp/placing").json()
 
 
 def routine_done(client, path: str = "/api/pnp") -> dict:
@@ -254,7 +256,7 @@ def moves(lines: list[str]) -> list[tuple[float, float]]:
 
 def test_a_pick_the_vacuum_finds_empty_is_let_go_at_the_discard_place_and_the_next_pocket_taken(client):
     job_id = rig(client, profile(motion="discard = [0.0, 0.0, -1.5]", rest=VACUUM))
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     # The first pick holds nothing (and the nozzle reads empty once let go
     # at the discard place), the second a part, which lets go.
     client.fake.readings = [20.0, 5.0, 80.0, 5.0]
@@ -272,7 +274,7 @@ def test_a_pick_the_vacuum_finds_empty_is_let_go_at_the_discard_place_and_the_ne
 
 def test_a_part_that_stays_on_the_nozzle_stops_the_run(client):
     job_id = rig(client, profile(rest=VACUUM))
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     client.fake.readings = [80.0, 60.0]
     state = run(client, {"job": job_id, "refs": ["R1", "R2"]})
     assert state["progress"]["state"] == "error" and "may still be on the nozzle" in state["progress"]["error"]
@@ -281,7 +283,7 @@ def test_a_part_that_stays_on_the_nozzle_stops_the_run(client):
 
 def test_a_part_still_on_the_nozzle_after_a_discard_stops_the_run(client):
     job_id = rig(client, profile(rest=VACUUM))
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     # A pick read as failed whose part then will not let go.
     client.fake.readings = [20.0, 60.0]
     state = run(client, {"job": job_id, "refs": ["R1"]})
@@ -293,7 +295,7 @@ def test_parts_of_a_feeder_that_ran_out_are_left_out_and_the_run_goes_on(client)
     # A strip of two: the first pick fails, the second places R1, and R2
     # finds the strip empty, which is no setup fault.
     job_id = rig(client, profile(rest=VACUUM).replace("count = 10", "count = 2"))
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     client.fake.readings = [20.0, 5.0, 80.0, 5.0]
     state = run(client, {"job": job_id})
     progress = state["progress"]
@@ -303,7 +305,7 @@ def test_parts_of_a_feeder_that_ran_out_are_left_out_and_the_run_goes_on(client)
 
 def test_two_parts_in_a_row_left_out_stop_the_run(client):
     job_id = rig(client, profile(rest=VACUUM))
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     # Every pick holds nothing; each let go reads empty.
     client.fake.readings = [20.0, 5.0] * 6
     state = run(client, {"job": job_id})
@@ -321,8 +323,8 @@ def centered(client, camera: DeviceUpCamera) -> None:
     """The nozzle jogged near the up camera and centered over it."""
     client.backend.pnp.client = camera
     client.put("/api/pnp/settings", json={"part_spot": "bright"})
-    client.post("/api/pnp/device/command", json={"line": f"G0 X{camera.where[0] + 0.4} Y{camera.where[1] - 0.3}"})
-    response = client.post("/api/pnp/device/nozzle", json={"step": 1.0})
+    client.post("/api/command", json={"line": f"G0 X{camera.where[0] + 0.4} Y{camera.where[1] - 0.3}"})
+    response = client.post("/api/pnp/nozzle", json={"step": 1.0})
     assert response.status_code == 200, response.text
     assert routine_done(client)["state"] == "done"
 
@@ -332,19 +334,19 @@ def test_the_runout_is_measured_over_the_up_camera_and_a_reversed_axis_named(cli
     camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=3.0, mirror=True, runout=(0.08, -0.03))
     centered(client, camera)
     # Centered at 0, the tip (not the axis) is over the picture's center.
-    assert client.get("/api/pnp/device").json()["camera"]["position"] == pytest.approx([149.92, 30.03], abs=0.005)
-    assert client.post("/api/pnp/device/runout").status_code == 200
+    assert client.get("/api/pnp/placing").json()["camera"]["position"] == pytest.approx([149.92, 30.03], abs=0.005)
+    assert client.post("/api/pnp/runout").status_code == 200
     routine = routine_done(client)
     assert routine["state"] == "done", routine
-    kept = client.get("/api/pnp/device").json()["camera"]
+    kept = client.get("/api/pnp/placing").json()["camera"]
     assert kept["runout"] == pytest.approx([0.08, -0.03], abs=0.003) and kept["position"] == pytest.approx([149.92, 30.03], abs=0.005)
     # The nozzle is back at 0, and a center again keeps the runout.
     assert client.fake.angle == 0.0
     centered(client, camera)
-    assert client.get("/api/pnp/device").json()["camera"]["runout"] == pytest.approx([0.08, -0.03], abs=0.003)
+    assert client.get("/api/pnp/placing").json()["camera"]["runout"] == pytest.approx([0.08, -0.03], abs=0.003)
     # An axis wired the other way: the tip goes round clockwise.
     camera.cw = True
-    client.post("/api/pnp/device/runout")
+    client.post("/api/pnp/runout")
     routine = routine_done(client)
     assert routine["state"] == "error" and "rotation_cw = true" in routine["error"]
 
@@ -355,11 +357,11 @@ def test_a_part_turned_off_its_angle_is_corrected_and_lands_on_its_place(client)
     # which runs 0.05 off the axis.
     camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=-2.0, mirror=True, runout=(0.05, 0.0), part=(0.1, 0.05), part_angle=3.0, rect=True)
     centered(client, camera)
-    client.post("/api/pnp/device/runout")
+    client.post("/api/pnp/runout")
     assert routine_done(client)["state"] == "done"
     # The board turned 30 degrees on the device: R1 goes down at 30.
-    client.put("/api/pnp/device", json={"angle": 30.0})
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.put("/api/pnp/placing", json={"angle": 30.0})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     before = len(client.fake.lines)
     state = run(client, {"job": job_id, "refs": ["R1"]})
     assert state["progress"]["state"] == "done", state["progress"]
@@ -381,8 +383,8 @@ def test_a_nozzle_turning_the_other_way_leaves_parts_out_and_says_why(client):
     job_id = rig(client, VISION)
     camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True, part_angle=3.0, rect=True, cw=True)
     centered(client, camera)
-    client.put("/api/pnp/device", json={"angle": 30.0})
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.put("/api/pnp/placing", json={"angle": 30.0})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     state = run(client, {"job": job_id, "refs": ["R1"]})
     (failed,) = state["progress"]["failed"]
     assert "degrees off its angle" in failed["reason"] and "check [gcode] rotation_cw" in failed["reason"]
@@ -392,7 +394,7 @@ def test_a_part_of_the_wrong_size_is_put_back_and_left_out(client):
     job_id = rig(client, VISION)
     camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True, size=(2.0, 1.25), rect=True)
     centered(client, camera)
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     state = run(client, {"job": job_id, "refs": ["R1"]})
     assert state["progress"]["state"] == "done" and state["progress"]["placed"] == []
     (failed,) = state["progress"]["failed"]
@@ -428,11 +430,11 @@ def with_top_camera(client, job_id: str, extra=()) -> DeviceTopCamera:
 
 def measured_offset(client) -> None:
     """The nozzle over the mark, Nozzle on mark, Measure offset."""
-    client.post("/api/pnp/device/command", json={"line": "G0 X120 Y80"})
-    assert client.post("/api/pnp/device/top/mark").json()["top"]["mark_at"] == [120.0, 80.0]
-    response = client.post("/api/pnp/device/top/offset", json={"step": 1.0})
+    client.post("/api/command", json={"line": "G0 X120 Y80"})
+    assert client.post("/api/pnp/top/mark").json()["top"]["mark_at"] == [120.0, 80.0]
+    response = client.post("/api/pnp/top/offset", json={"step": 1.0})
     assert response.status_code == 200, response.text
-    routine = routine_done(client, "/api/pnp/device")
+    routine = routine_done(client, "/api/pnp/placing")
     assert routine["state"] == "done", routine
 
 
@@ -440,29 +442,29 @@ def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     job_id = rig(client, profile(rest=TOP))
     with_top_camera(client, job_id)
     measured_offset(client)
-    top = client.get("/api/pnp/device").json()["top"]
+    top = client.get("/api/pnp/placing").json()["top"]
     assert top["offset"] == pytest.approx(list(CAMERA_OFFSET), abs=0.01)
     assert top["mm_per_px"] == pytest.approx(0.02, rel=0.01) and top["roll"] == pytest.approx(1.5, abs=0.1) and top["mirror"] is False
     places = job_places(client, job_id)
     # A rough reference by hand, 0.5 mm off, the board's turn unknown.
     rough = true_place(places["R1"])
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [rough[0] + 0.4, rough[1] - 0.3]})
-    response = client.post("/api/pnp/device/fiducials", json={"job": job_id})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [rough[0] + 0.4, rough[1] - 0.3]})
+    response = client.post("/api/pnp/fiducials", json={"job": job_id})
     assert response.status_code == 200, response.text
-    routine = routine_done(client, "/api/pnp/device")
+    routine = routine_done(client, "/api/pnp/placing")
     assert routine["state"] == "done", routine
-    state = client.get("/api/pnp/device").json()
+    state = client.get("/api/pnp/placing").json()
     found = {entry["ref"]: entry for entry in state["references"]}
     # Two fiducials outdo the reference by hand.
     assert set(found) == {"FID1", "FID2"} and all(entry["by"] == "fiducial" for entry in found.values())
     for ref in ("FID1", "FID2"):
         assert found[ref]["at"] == pytest.approx(list(true_place(places[ref])), abs=0.01)
-    planned = client.post("/api/pnp/device/plan", json={"job": job_id, "refs": ["R1"]}).json()
+    planned = client.post("/api/pnp/plan", json={"job": job_id, "refs": ["R1"]}).json()
     assert planned["fit"]["rotation"] == pytest.approx(TRUE_TURN, abs=0.02)
     assert state["top"]["fiducials"]["job"] == job_id
     # Camera here: the reference is where the camera's center is.
-    client.post("/api/pnp/device/command", json={"line": f"G0 X{rough[0] - CAMERA_OFFSET[0]} Y{rough[1] - CAMERA_OFFSET[1]}"})
-    state = client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R2", "camera": True}).json()
+    client.post("/api/command", json={"line": f"G0 X{rough[0] - CAMERA_OFFSET[0]} Y{rough[1] - CAMERA_OFFSET[1]}"})
+    state = client.post("/api/pnp/references", json={"job": job_id, "ref": "R2", "camera": True}).json()
     r2 = next(entry for entry in state["references"] if entry["ref"] == "R2")
     assert r2["at"] == pytest.approx(list(rough), abs=0.01) and r2["by"] == "camera"
 
@@ -473,7 +475,7 @@ def test_a_run_finds_the_fiducials_first_and_places_on_them(client):
     measured_offset(client)
     places = job_places(client, job_id)
     rough = true_place(places["R1"])
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [rough[0] - 0.6, rough[1] + 0.2]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [rough[0] - 0.6, rough[1] + 0.2]})
     before = len(client.fake.lines)
     state = run(client, {"job": job_id, "refs": ["R1"], "fiducials": True})
     assert state["progress"]["state"] == "done", state["progress"]
@@ -491,7 +493,7 @@ def test_the_top_camera_finds_a_feeders_marks_passes_an_empty_pocket_and_picks_w
     with_top_camera(client, job_id, extra)
     # The calibration mark stays out of the feeder's way.
     measured_offset(client)
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     before = len(client.fake.lines)
     state = run(client, {"job": job_id, "refs": ["R1"]})
     assert state["progress"]["state"] == "done", state["progress"]
@@ -503,8 +505,8 @@ def test_the_top_camera_finds_a_feeders_marks_passes_an_empty_pocket_and_picks_w
 
 def test_a_run_that_looks_with_the_top_camera_needs_it_running(client):
     job_id = rig(client, profile(feeder='pocket = "bright"', rest=TOP))
-    client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
-    response = client.post("/api/pnp/device/run", json={"job": job_id, "refs": ["R1"]})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    response = client.post("/api/pnp/run", json={"job": job_id, "refs": ["R1"]})
     assert response.status_code == 400 and "top camera is not running" in response.text
-    response = client.post("/api/pnp/device/fiducials", json={"job": job_id})
+    response = client.post("/api/pnp/fiducials", json={"job": job_id})
     assert response.status_code == 400 and "offset is not measured" in response.text

@@ -25,7 +25,7 @@ SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" view
 
 # The routes a tool may call: each makes, changes or reads data, and none
 # moves the machine, lights the laser, turns the spindle, probes, starts a
-# camera routine, moves a pick and place device or writes the firmware's
+# camera routine, moves a pick and place machine or writes the firmware's
 # settings or a machine or CAM file. A tool that needs a route not listed
 # here fails the test until someone has looked at what the route does.
 ALLOWED = {
@@ -39,8 +39,7 @@ ALLOWED = {
     ("GET", "/api/cam/{profile_id}"),
     ("GET", "/api/markers"),
     ("PUT", "/api/markers"),
-    ("GET", "/api/pnp/device"),
-    ("GET", "/api/pnp/devices"),
+    ("GET", "/api/pnp/placing"),
     ("POST", "/api/jobs"),
     ("PATCH", "/api/jobs/{job_id}"),
     ("PUT", "/api/jobs/{job_id}"),
@@ -52,11 +51,11 @@ ALLOWED = {
     ("POST", "/api/jobs/combine"),
     ("POST", "/api/cam/{profile_id}/jobs"),
     ("POST", "/api/cam/{profile_id}/gcode"),
-    ("PUT", "/api/pnp/device"),
-    ("POST", "/api/pnp/device/references"),
-    ("DELETE", "/api/pnp/device/references"),
-    ("POST", "/api/pnp/device/plan"),
-    ("GET", "/api/pnp/device/program.gcode"),
+    ("PUT", "/api/pnp/placing"),
+    ("POST", "/api/pnp/references"),
+    ("DELETE", "/api/pnp/references"),
+    ("POST", "/api/pnp/plan"),
+    ("GET", "/api/pnp/program.gcode"),
 }
 
 # Routes that move or light something, or write the machine's own setup:
@@ -108,16 +107,15 @@ FORBIDDEN = {
     ("POST", "/api/pnp/nozzle"),
     ("POST", "/api/pnp/part"),
     ("POST", "/api/pnp/goto"),
-    ("PUT", "/api/pnp/devices/{device_id}"),
-    ("POST", "/api/pnp/device/connect"),
-    ("POST", "/api/pnp/device/disconnect"),
-    ("POST", "/api/pnp/device/command"),
-    ("POST", "/api/pnp/device/home"),
-    ("POST", "/api/pnp/device/position"),
-    ("POST", "/api/pnp/device/run"),
-    ("POST", "/api/pnp/device/stop"),
-    ("POST", "/api/pnp/device/goto"),
-    ("POST", "/api/pnp/device/nozzle"),
+    ("PATCH", "/api/machines/{machine_id}"),
+    ("POST", "/api/pnp/run"),
+    ("POST", "/api/pnp/run/stop"),
+    ("POST", "/api/pnp/park"),
+    ("POST", "/api/pnp/over-camera"),
+    ("POST", "/api/pnp/swap"),
+    ("POST", "/api/pnp/light"),
+    ("POST", "/api/pnp/vacuum"),
+    ("POST", "/api/pnp/bus/feed"),
     ("POST", "/api/align/mark"),
     ("POST", "/api/align/capture"),
     ("POST", "/api/align/apply"),
@@ -138,7 +136,6 @@ SAMPLES = {
     "list_markers": {},
     "list_board_parts": {"job_id": "a1b2"},
     "get_placement": {},
-    "list_pnp_devices": {},
     "make_job": {"filename": "square.svg", "content": SVG, "power": 300, "anchor": "keep"},
     "change_job": {"job_id": "a1b2", "name": "x", "groups": [{"index": 0, "power": 200}]},
     "replace_job": {"job_id": "a1b2", "job": {"name": "x", "groups": []}},
@@ -153,7 +150,7 @@ SAMPLES = {
     "delete_marker": {"name": "corner"},
     "make_cam_job": {"profile_id": "mill-3axis", "files": [{"name": "a.svg", "content": SVG}]},
     "export_gcode": {"profile_id": "mill-3axis", "job_id": "a1b2"},
-    "set_placement_device": {"profile": "openpnp-marlin", "angle": 90},
+    "set_placement_angle": {"angle": 90},
     "set_placement_reference": {"job_id": "a1b2", "ref": "R1", "x": 10, "y": 20},
     "drop_placement_references": {"job_id": "a1b2", "ref": "R1"},
     "plan_placement": {"job_id": "a1b2", "refs": ["R1"]},
@@ -229,7 +226,7 @@ def test_walking_every_tool_reaches_only_its_own_routes():
                     assert any(route.matches(request.method, request.url.path) for route in tool.routes), (tool.name, request.method, request.url.path)
                     assert (request.method, next(r.path for r in tool.routes if r.matches(request.method, request.url.path))) in ALLOWED
                 if tool.name == "set_placement_reference":
-                    # Always with the place: left out, the backend would ask the device.
+                    # Always with the place: left out, the backend would ask the machine.
                     assert json.loads(seen[0].content) == {"job": "a1b2", "ref": "R1", "at": [10, 20]}
 
     asyncio.run(walk())

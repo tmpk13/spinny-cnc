@@ -1125,7 +1125,7 @@ describe("machine files", () => {
         mountConfig(root, ctx, document.createElement("section"));
         await settle();
         const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
-        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]);
+        expect(Array.from(pick.options).map((option) => option.value)).toEqual(["cartesian-laser", "cartesian-mill", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser"]);
         const load = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Write to board")!;
         const flash = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Save to flash")!;
         const text = root.querySelector("textarea") as HTMLTextAreaElement;

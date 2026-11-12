@@ -2006,7 +2006,9 @@ describe("machine files in the mock", () => {
         const backend = new MockBackend({ timers: false });
         await backend.connect("/dev/ttyACM0");
         const listed = await backend.machines();
-        expect(listed.machines.map((m) => m.id)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser"]);
+        expect(listed.machines.map((m) => m.id)).toEqual(["cartesian-laser", "cartesian-mill", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser"]);
+        // The pick and place machines on their own G-code controllers say so.
+        expect(listed.machines.filter((m) => m.controller === "gcode").map((m) => m.id)).toEqual(["openpnp-marlin", "opulo-lumen-rev5"]);
         expect(listed.problems).toEqual([]);
         // The mock boots with its focus axis fitted and all else at the defaults.
         expect(listed.current).toBe("polar-laser-focus");
@@ -2061,7 +2063,10 @@ describe("machine files read, checked, saved and removed in the mock", () => {
         const saved = await backend.saveMachineFile("rig", 'name = "Rig"\n[output]\npin = 23\n[enable]\nfitted = true\npin = 20');
         expect(saved.text.endsWith("\n")).toBe(true);
         expect([saved.document?.settings["laser_pin"], saved.document?.settings["tool_out"], saved.document?.settings["tool_pin"]]).toEqual([23, 1, 20]);
-        expect((await backend.machines()).machines.map((m) => m.id)).toEqual(["cartesian-laser", "cartesian-mill", "polar-laser-focus", "polar-laser", "rig"]);
+        expect((await backend.machines()).machines.map((m) => m.id)).toEqual(["cartesian-laser", "cartesian-mill", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser", "rig"]);
+        // A G-code machine's tables in a file of this project's firmware say what is missing.
+        expect((await backend.checkMachineFile("rig", '[gcode]\nmove = "G1"\n')).problems[0]).toContain('add controller = "gcode"');
+        expect((await backend.checkMachineFile("rig", 'controller = "gcode"\n[rail]\nmax_rate = 100\n')).problems[0]).toContain("rail is for a machine on this project's firmware");
         // Two settings on one pin are refused where the whole file is seen.
         expect((await backend.checkMachineFile("rig", "[probe]\npin = 20\n")).problems[0]).toContain("[probe] pin 20 (FAN3) is the [output] pin too");
         expect((await backend.checkMachineFile("rig", "[output]\npin = 11\n")).problems[0]).toContain("[output] pin 11 is a driver socket's");

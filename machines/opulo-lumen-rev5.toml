@@ -1,8 +1,9 @@
 # An Opulo LumenPnP with the Rev05 motherboard running Opulo's Marlin,
 # as Opulo's stock OpenPnP configuration drives it (openpnp/machine.xml in
 # github.com/opulo-inc/lumenpnp, November 2026). On USB it is a CDC serial
-# port named MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode: pick it in the
-# G-code device panel.
+# port named MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode, which [port]
+# match finds: the top bar names the port after this file, and Connect
+# talks to it in G-code.
 #
 # The places here are the head's X and Y with the left nozzle (N1) over a
 # point. OpenPnP places its top camera at the head and N1 at -23.544,
@@ -14,9 +15,11 @@
 # across goes there first, whether Z stands above it or below.
 name = "Opulo LumenPnP (Rev05, Marlin)"
 description = "LumenPnP, left nozzle N1: Opulo's stock OpenPnP commands, safe Z 31.5"
+controller = "gcode"     # its own Marlin, sent G-code a line at a time
 
 [port]
-url = ""                 # picked in the G-code device panel
+url = ""                 # left empty: the port whose USB names hold a match word
+match = ["lumen"]        # MARLIN_OPULO_LUMEN_REV5
 baud = 115200            # a USB CDC port takes any
 wait_ms = 2000
 timeout = 60
@@ -54,6 +57,8 @@ dwell = "G4 P{ms}"
 home = "G28"
 position = "M114"        # answers X: Y: Z: A: B:
 stop = "M410"
+motors_on = "M17"        # the jog panel's Motors
+motors_off = "M18"
 light_on = ["M150 P255 R255 U255 B255"]   # the ring lights both cameras share
 light_off = ["M150 P0"]
 
@@ -71,6 +76,36 @@ pick_tries = 3
 park = [42.328, 411.916]   # Opulo's park place
 # discard = [105.996, 221.582, 5.5]  # Opulo's discard place, for N1; left out, a failed part goes back in its pocket
 
+# The jog panel's bars: a G-code machine's defaults (X and Y on the pad and
+# as bars, Z, the turn), with the seesaw said on Z.
+[[controls.axes]]
+axis = "r"
+letter = "X"
+label = "X"
+
+[[controls.axes]]
+axis = "z"
+letter = "Y"
+label = "Y"
+
+[[controls.axes]]
+axis = "h"
+letter = "Z"
+label = "Nozzle height"
+steps = [0.1, 1, 10]
+buttons = ["N1 down", "N1 up"]
+zero = false
+note = "A seesaw: N1 goes down below 31.5 and N2 above it; 31.5 has both up"
+
+[[controls.axes]]
+axis = "a"
+letter = "A"
+label = "N1 turn"
+steps = [1, 10, 90]
+buttons = ["Turn -", "Turn +"]
+zero = false
+note = "Degrees, as Marlin counts them"
+
 # VAC1's sensor (XGZP6857D through the I2C mux): the reading is the
 # pressure's top byte, lower with more vacuum. Press Read vacuum with the
 # nozzle open and then with a part (or a finger) on it before setting the
@@ -86,7 +121,7 @@ pattern = "^.*data:(?<Value>.*)"
 # 38.376, 154.632 seen by N1, its tip sharp at Z 4. Center nozzle measures
 # the place again; the Z is Opulo's, so check the tip clears the camera's
 # window by jogging down to it once.
-[camera]
+[up_camera]
 position = [61.92, 219.82]
 z = 4.0
 max_offset = 1.0

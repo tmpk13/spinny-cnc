@@ -1,4 +1,7 @@
 // Connection selector, machine state, firmware version and the event link.
+// A port a G-code machine file claims (its url, or words in the port's USB
+// names) is named after that machine and opens as it: the same Connect
+// serves this project's board and a pick and place machine's own Marlin.
 
 import { button, el, readStored, replace, writeStored } from "../dom.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
@@ -13,16 +16,24 @@ const HIDE_SYSTEM_KEY = "spinny.hideSystemPorts";
 /** A report older than this, s, is a machine that has gone quiet; the link gives it up a little later. */
 export const STALE_SECONDS = 1.5;
 
-/** The port to offer first: the controller by name, then the url last used, then any USB device, then anything. */
+/**
+ * The port to offer first: the controller by name, then the url last used,
+ * then a G-code machine's port its file claims, then any USB device that
+ * does not look like an unclaimed G-code controller, then anything.
+ */
 export function defaultPort(ports: Port[]): Port | null {
-    // A pick and place controller's port (a LumenPnP's Marlin) is the PNP
-    // page's to pick, never offered for this machine.
-    const usb = ports.filter((port) => port.kind === "usb" && !gcodePort(port));
+    const usb = ports.filter((port) => port.kind === "usb" && (port.machine || !gcodePort(port)));
     return ports.find((port) => port.spinny)
         ?? ports.find((port) => port.kind === "last")
+        ?? ports.find((port) => port.machine)
         ?? usb[0]
         ?? ports.find((port) => !gcodePort(port))
         ?? null;
+}
+
+/** The G-code machine file a url opens as: the one the port listed under it names; null for this project's firmware. */
+export function machineOfPort(ports: Port[], url: string): string | null {
+    return ports.find((port) => port.url === url || port.device === url)?.machine ?? null;
 }
 
 /** The ports shown: without the built-in ones when asked, which are never the controller. */
@@ -30,10 +41,14 @@ export function visiblePorts(ports: Port[], hideSystem: boolean): Port[] {
     return hideSystem ? ports.filter((port) => port.kind !== "system") : ports;
 }
 
-/** What the select says for a port: what it is, then where. */
+/** What the select says for a port: the G-code machine it is, what it is, then where. */
 export function portLabel(port: Port): string {
     const name = port.product || port.description;
-    return name ? `${name}  ${port.url}` : port.url;
+    const machine = port.machine_name ? `${port.machine_name}: ` : "";
+    if (port.kind === "machine") {
+        return `${port.machine_name ?? port.description}: ${port.url}`;
+    }
+    return name ? `${machine}${name}  ${port.url}` : `${machine}${port.url}`;
 }
 
 function readHideSystem(): boolean {
@@ -93,7 +108,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
                 ctx.toast("error", "pick a port or type a url");
                 return;
             }
-            const next = await ctx.call(ctx.api.connect(url));
+            const next = await ctx.call(ctx.api.connect(url, machineOfPort(ctx.store.get().ports, url)));
             if (next) {
                 ctx.store.set({ snapshot: next });
                 if (next.connected) {
@@ -158,7 +173,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
             stateBadge.setAttribute("data-state", machine.state);
             stateBadge.toggleAttribute("data-stale", stale);
         }
-        firmware.textContent = snapshot.firmware ? `v${snapshot.firmware.version}` : "";
+        firmware.textContent = snapshot.firmware ? snapshot.firmware.name ?? `v${snapshot.firmware.version}` : "";
         const badgeName = snapshot.connected ? profileBadge(profileOf(snapshot)) : "";
         profile.textContent = badgeName;
         profile.classList.toggle("hidden", badgeName === "");

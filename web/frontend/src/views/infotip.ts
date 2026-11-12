@@ -46,7 +46,7 @@ const CAPTIONS: Record<InfoTopic, string> = {
     feeder: "A feeder's first part is at `at`; the next ones follow by `pitch`. A tray goes `columns` across, then on by `row_pitch` to the next row.",
     offset: "The top camera rides on the head: its picture's center is the offset away from the nozzle's tip. Camera here and Go to with the camera use it.",
     upcam: "The up camera is fixed and looks up. Its place is the head's X Y with the nozzle over its picture's center; Center nozzle finds that place and the picture's scale, roll and mirror by moving the nozzle over it.",
-    references: "Each reference pairs a part on the board with the place it was found on the device. One gives the shift (with the typed turn); two or more give the shift and the turn. Every part is placed by that fit.",
+    references: "Each reference pairs a part on the board with the place it was found on the machine. One gives the shift (with the typed turn); two or more give the shift and the turn. Every part is placed by that fit.",
     runout: "A bent tip swings round its turning axis. Measure runout turns the nozzle over the up camera and fits the circle, so each place keeps the tip, not the axis, on its point.",
 };
 
@@ -95,7 +95,7 @@ function drawing(topic: InfoTopic): SVGElement {
                 rect(15, 30, 70, 50, "tip-faint"), text(50, 24, "board", "middle"),
                 circle(30, 45, 4, "tip-mark"), circle(70, 65, 4, "tip-mark"), text(30, 94, "R1"), text(62, 94, "C2"),
                 svg("g", { transform: "rotate(-12 160 55)" }, rect(125, 30, 70, 50, "tip-faint"), circle(140, 45, 4, "tip-mark"), circle(180, 65, 4, "tip-mark")),
-                text(160, 24, "on the device", "middle"),
+                text(160, 24, "on the machine", "middle"),
                 arrow(36, 45, 132, 50), arrow(76, 65, 170, 72), text(110, 112, "shift + turn", "middle"),
             );
             break;

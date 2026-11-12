@@ -202,9 +202,9 @@ def test_a_spindle_config_is_checked():
 
 
 def test_the_profile_follows_the_settings():
-    assert profile_of({}) == {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0}
+    assert profile_of({}) == {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0, "controller": "spinny"}
     profile = profile_of({"cartesian": 1, "spindle": 1, "h_axis": 1, "r_max": 60, "z_max": 8.5})
-    assert profile == {"kinematics": "cartesian", "tool": "spindle", "h_axis": True, "r_max": 60.0, "z_max": 8.5}
+    assert profile == {"kinematics": "cartesian", "tool": "spindle", "h_axis": True, "r_max": 60.0, "z_max": 8.5, "controller": "spinny"}
 
 
 def test_the_probe_tip_goes_over_the_point_in_the_cartesian_frame():

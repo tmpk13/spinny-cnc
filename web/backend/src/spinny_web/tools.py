@@ -4,11 +4,11 @@ client by `spinny-mcp` and to the Auto tab's agent inside the backend.
 A tool is a thin call on the backend's own HTTP API, so it can do nothing
 a page could not do, and the list holds only tools that make, change or
 read data: jobs, Plot page jobs, markers, the references and plans of a
-pick and place device, CAM jobs, and the state, machine files and CAM
+pick and place machine, CAM jobs, and the state, machine files and CAM
 profiles to read. No tool connects or disconnects the machine, jogs, goes
 to a point, homes, runs, holds or stops a job, lights the laser, starts
 the spindle, probes, starts a camera routine, moves a pick and place
-device, or writes the firmware's settings or a machine or CAM file. Every
+machine, or writes the firmware's settings or a machine or CAM file. Every
 tool names the routes it calls; a request to any other route is refused
 before it leaves the client, and the tests hold the routes against a list
 of routes that move nothing.
@@ -48,13 +48,15 @@ JOBS, MARKERS, PLACEMENT = "jobs", "markers", "placement"
 GUIDE = """\
 The machine cuts printed circuit boards and parts: a laser over a rotary
 table (polar), or an X/Y machine with a laser, a spindle or a solder paste
-dispenser. These tools make and change its data: jobs, Plot page jobs,
-markers, the references and plans of a pick and place device, and CAM
-jobs; and they read its state, its machine files and its CAM profiles.
+dispenser; or, connected in its place, a pick and place machine on its own
+G-code controller (a machine file with controller = "gcode"). These tools
+make and change its data: jobs, Plot page jobs, markers, the references
+and plans of a pick and place machine, and CAM jobs; and they read its
+state, its machine files and its CAM profiles.
 
 What they cannot do, by design: connect or disconnect the machine, move
 it, home it, run, hold or stop a job, light the laser, start the spindle,
-probe, start a camera routine, move a pick and place device, or change the
+probe, start a camera routine, move a pick and place machine, or change the
 firmware's settings or a machine or CAM file. When one of these is wanted,
 make what it needs and tell the operator what to press on the page: a job
 runs from the Jobs tab (a Plot job from the Plot tab too), a placement
@@ -320,11 +322,7 @@ async def _list_board_parts(api: ToolApi, args: dict) -> Any:
 
 
 async def _get_placement(api: ToolApi, args: dict) -> Any:
-    return await api.get("/api/pnp/device")
-
-
-async def _list_pnp_devices(api: ToolApi, args: dict) -> Any:
-    return await api.get("/api/pnp/devices")
+    return await api.get("/api/pnp/placing")
 
 
 # --- jobs ---------------------------------------------------------------------
@@ -422,36 +420,36 @@ async def _export_gcode(api: ToolApi, args: dict) -> Any:
 # --- pick and place -----------------------------------------------------------------
 
 
-async def _set_placement_device(api: ToolApi, args: dict) -> Any:
-    return await api.put("/api/pnp/device", {key: args[key] for key in ("profile", "angle", "clear_angle") if key in args})
+async def _set_placement_angle(api: ToolApi, args: dict) -> Any:
+    return await api.put("/api/pnp/placing", {key: args[key] for key in ("angle", "clear_angle") if key in args})
 
 
 async def _set_placement_reference(api: ToolApi, args: dict) -> Any:
     # The place is always given: left out, the backend would ask the
-    # device where its nozzle is, which is talking to the machine.
+    # machine where its nozzle is, which is talking to the machine.
     body = {"job": args["job_id"], "ref": args["ref"], "at": [args["x"], args["y"]]}
-    return await api.post("/api/pnp/device/references", body)
+    return await api.post("/api/pnp/references", body)
 
 
 async def _drop_placement_references(api: ToolApi, args: dict) -> Any:
     params = {"job": args["job_id"]}
     if args.get("ref"):
         params["ref"] = args["ref"]
-    return await api.delete("/api/pnp/device/references", params=params)
+    return await api.delete("/api/pnp/references", params=params)
 
 
 async def _plan_placement(api: ToolApi, args: dict) -> Any:
     body: dict = {"job": args["job_id"]}
     if args.get("refs") is not None:
         body["refs"] = args["refs"]
-    return await api.post("/api/pnp/device/plan", body)
+    return await api.post("/api/pnp/plan", body)
 
 
 async def _get_placement_program(api: ToolApi, args: dict) -> Any:
     params = {"job": args["job_id"]}
     if args.get("refs"):
         params["refs"] = ",".join(args["refs"])
-    return await api.get("/api/pnp/device/program.gcode", params=params)
+    return await api.get("/api/pnp/program.gcode", params=params)
 
 
 # --- the schemas of the larger tools --------------------------------------------------
@@ -605,7 +603,9 @@ def _tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_machine_files",
-            "The machine files (machines/*.toml): each machine's kind, tool and axes, and the files that do not read.",
+            "The machine files (machines/*.toml): each machine's kind, tool, axes and controller (spinny, this project's"
+            " firmware, or gcode, a machine such as a pick and place machine on its own G-code controller), and the"
+            " files that do not read.",
             NO_ARGUMENTS,
             (Route(get, "/api/machines"),),
             _list_machine_files,
@@ -655,20 +655,13 @@ def _tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_placement",
-            "The pick and place device's state as kept: the device profile picked, the board's turn on it, the"
-            " references (a part's place in a job paired with where it is on the device), the feeders' counts,"
-            " and whether the device is connected.",
+            "The pick and place state of the G-code machine the PNP tab places with (a machine file with"
+            ' controller = "gcode"): which machine, its file read (feeders, heights), the board\'s turn on it,'
+            " the references (a part's place in a job paired with where it is on the machine), the feeders'"
+            " counts, and whether it is connected.",
             NO_ARGUMENTS,
-            (Route(get, "/api/pnp/device"),),
+            (Route(get, "/api/pnp/placing"),),
             _get_placement,
-            read_only=True,
-        ),
-        Tool(
-            "list_pnp_devices",
-            "The pick and place device profiles (pnp/*.toml): name, port and feeders of each.",
-            NO_ARGUMENTS,
-            (Route(get, "/api/pnp/devices"),),
-            _list_pnp_devices,
             read_only=True,
         ),
         Tool(
@@ -818,54 +811,53 @@ def _tools() -> tuple[Tool, ...]:
             read_only=True,
         ),
         Tool(
-            "set_placement_device",
-            "Pick the pick and place device profile, and the board's turn on the device in degrees (for a fit"
-            " from one reference). Refused while the device is connected and another profile is asked for.",
+            "set_placement_angle",
+            "The board's turn on the pick and place machine in degrees, for a fit from one reference; or"
+            " take the typed turn away. Needs a G-code machine to place with (get_placement names it).",
             obj(
                 {
-                    "profile": text("the device profile's id, as list_pnp_devices gives it", pattern=PROFILE_ID),
-                    "angle": number("degrees the board is turned on the device", minimum=-360, maximum=360),
+                    "angle": number("degrees the board is turned on the machine", minimum=-360, maximum=360),
                     "clear_angle": flag("take the typed turn away"),
                 }
             ),
-            (Route(put, "/api/pnp/device"),),
-            _set_placement_device,
+            (Route(put, "/api/pnp/placing"),),
+            _set_placement_angle,
             changes=(PLACEMENT,),
         ),
         Tool(
             "set_placement_reference",
-            "Pair a part's place in a board job with where that place is on the pick and place device, mm in"
-            " the device's coordinates: two references give the board's turn and shift on the device. The"
-            " operator reads these off the device; never guess them.",
-            obj({"job_id": JOB, "ref": REF, "x": number("device X, mm"), "y": number("device Y, mm")}, ("job_id", "ref", "x", "y")),
-            (Route(post, "/api/pnp/device/references"),),
+            "Pair a part's place in a board job with where that place is on the pick and place machine, mm in"
+            " the machine's coordinates: two references give the board's turn and shift on the machine. The"
+            " operator reads these off the machine; never guess them.",
+            obj({"job_id": JOB, "ref": REF, "x": number("machine X, mm"), "y": number("machine Y, mm")}, ("job_id", "ref", "x", "y")),
+            (Route(post, "/api/pnp/references"),),
             _set_placement_reference,
             changes=(PLACEMENT,),
         ),
         Tool(
             "drop_placement_references",
-            "Forget a board job's references on the pick and place device: one part's, or all of them.",
+            "Forget a board job's references on the pick and place machine: one part's, or all of them.",
             obj({"job_id": JOB, "ref": REF}, ("job_id",)),
-            (Route(delete, "/api/pnp/device/references"),),
+            (Route(delete, "/api/pnp/references"),),
             _drop_placement_references,
             destructive=True,
             changes=(PLACEMENT,),
         ),
         Tool(
             "plan_placement",
-            "Plan placing a board job's parts with the pick and place device: what is placed from which feeder,"
+            "Plan placing a board job's parts with the pick and place machine: what is placed from which feeder,"
             " in what order, and what is left out and why. Changes nothing and moves nothing.",
             obj({"job_id": JOB, "refs": REFS}, ("job_id",)),
-            (Route(post, "/api/pnp/device/plan"),),
+            (Route(post, "/api/pnp/plan"),),
             _plan_placement,
             read_only=True,
         ),
         Tool(
             "get_placement_program",
-            "The G-code program that places a board job's parts on the pick and place device as planned before a run;"
+            "The G-code program that places a board job's parts on the pick and place machine as planned before a run;"
             " a run changes it where a camera or the vacuum sensor says otherwise. Answers the text; sends nothing.",
             obj({"job_id": JOB, "refs": REFS}, ("job_id",)),
-            (Route(get, "/api/pnp/device/program.gcode"),),
+            (Route(get, "/api/pnp/program.gcode"),),
             _get_placement_program,
             read_only=True,
         ),

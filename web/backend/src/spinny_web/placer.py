@@ -1,7 +1,7 @@
-"""A placement run on a G-code device: a board's parts placed one at a
+"""A placement run on a G-code machine: a board's parts placed one at a
 time, each next line made from what the cameras and the vacuum sensor say.
 
-On the device's run thread:
+On the machine's run thread:
 
 1. The profile's init lines.
 2. With fiducials asked for, the top camera finds the board's fiducials
@@ -22,7 +22,7 @@ On the device's run thread:
    stops the run: it would be let go somewhere else.
 4. The tail lines.
 
-Places on the device are the head's with the nozzle's tip turned to 0
+Places on the machine are the head's with the nozzle's tip turned to 0
 over a point. The up camera's place is the head's with that tip over the
 picture's center, and its runout `e` how far the tip sits off the turning
 axis at 0. Looking at a part turned to `a`, the head stands at the axis'
@@ -41,11 +41,11 @@ from typing import Callable
 from spinny_laser.align import Fit, fit_rigid, turn
 
 from .feederbus import BusError, FeederBus
-from .gcode_device import DeviceLinkError, DeviceMover, GcodeDevice, RunContext
+from .gcode_link import GcodeLinkError, GcodeMover, GcodeLink, RunContext
 from .kinematics import num
 from .openpnp import (
     Block,
-    Device,
+    GcodeMachine,
     Feeder,
     Plan,
     check_lines,
@@ -79,7 +79,7 @@ class Rejected(Exception):
 
 
 def fiducial_fit(found: list[Found], angle: float) -> Fit:
-    """The board's place on the device from the fiducials found: a shift
+    """The board's place on the machine from the fiducials found: a shift
     turned by `angle` from one, a turn and a shift from more; PnpError when
     they disagree."""
     pairs = [(entry.job, entry.seen) for entry in found]
@@ -96,7 +96,7 @@ def fiducial_fit(found: list[Found], angle: float) -> Fit:
 
 @dataclass
 class PlaceSetup:
-    """What a run is placed with besides the device and its link."""
+    """What a run is placed with besides the machine and its link."""
 
     up: UpCamera
     up_place: CameraPlace
@@ -114,8 +114,8 @@ class Placement:
 
     def __init__(
         self,
-        device: Device,
-        link: GcodeDevice,
+        machine: GcodeMachine,
+        link: GcodeLink,
         parts: list[dict],
         fit: Fit,
         taken: dict[str, int],
@@ -124,7 +124,7 @@ class Placement:
         setup: PlaceSetup,
         fiducials: bool = False,
     ) -> None:
-        self.device = device
+        self.machine = machine
         self.link = link
         self.parts = {part["ref"]: part for part in parts}
         self.all_parts = parts
@@ -133,13 +133,13 @@ class Placement:
         self.refs = refs
         self.title = title
         self.setup = setup
-        self.feeders = {feeder.id: feeder for feeder in device.feeders}
+        self.feeders = {feeder.id: feeder for feeder in machine.feeders}
         self.feeder_fits: dict[str, Fit] = {}
         self.fiducials = [part for part in parts if part.get("fiducial")] if fiducials else []
         if fiducials and not self.fiducials:
             raise ValueError("the board has no fiducials to find: footprints whose reference starts FID or whose name says Fiducial")
-        if fiducials and device.top is None:
-            raise ValueError("the device profile has no [top_camera] to find the fiducials with")
+        if fiducials and machine.top is None:
+            raise ValueError("the machine file has no [top_camera] to find the fiducials with")
         self.program = self._plan(fit)
         self._no_angle_said = False
         self._failed_in_a_row = 0
@@ -150,7 +150,7 @@ class Placement:
     def _plan(self, fit: Fit) -> Plan:
         place = self.setup.up_place
         return plan(
-            self.device, self.all_parts, fit, self.taken, self.refs, title=self.title,
+            self.machine, self.all_parts, fit, self.taken, self.refs, title=self.title,
             vision_ready=place.measured, runout=place.runout or (0.0, 0.0),
         )
 
@@ -160,9 +160,9 @@ class Placement:
     # --- the run -----------------------------------------------------------------
 
     def __call__(self, ctx: RunContext) -> None:
-        device = self.device
-        mover = DeviceMover(self.link, device, send=ctx.send)
-        ctx.progress.note(f"placing {len(self.program.blocks)} parts on {device.name}")
+        machine = self.machine
+        mover = GcodeMover(self.link, machine, send=ctx.send)
+        ctx.progress.note(f"placing {len(self.program.blocks)} parts on {machine.name}")
         for line in self.program.head:
             ctx.send(line)
         if self.fiducials:
@@ -184,8 +184,8 @@ class Placement:
         ctx.progress.doing = what
         ctx.publish()
 
-    def _find_fiducials(self, ctx: RunContext, mover: DeviceMover) -> None:
-        top = self.device.top
+    def _find_fiducials(self, ctx: RunContext, mover: GcodeMover) -> None:
+        top = self.machine.top
         assert top is not None
         self._doing(ctx, "finding the fiducials")
         guess = self.fit
@@ -194,18 +194,18 @@ class Placement:
             found = self.setup.top.locate_fiducials(mover, self.fiducials, guess.apply, top.fiducial, top.within, top.z)
             fit = fiducial_fit(found, guess.rotation)
         except (PnpError, VisionError) as exc:
-            raise DeviceLinkError(f"finding the fiducials: {exc}") from exc
+            raise GcodeLinkError(f"finding the fiducials: {exc}") from exc
         self.setup.on_fiducials(found, fit)
         self.fit = fit
         self.program = self._plan(fit)
         rms = f", {fit.rms * 1000.0:.0f} um rms" if len(found) > 1 else ""
-        said = f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the device{rms}"
+        said = f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the machine{rms}"
         self.setup.message("info", said)
         ctx.progress.note(said)
         self._doing(ctx, None)
 
-    def _place(self, ctx: RunContext, mover: DeviceMover, block: Block) -> None:
-        device = self.device
+    def _place(self, ctx: RunContext, mover: GcodeMover, block: Block) -> None:
+        machine = self.machine
         feeder = self.feeders[block.feeder]
         part = self.parts[block.ref]
         ctx.progress.part = block.ref
@@ -214,7 +214,7 @@ class Placement:
             self._find_marks(ctx, mover, feeder)
         reason = ""
         emptied = False
-        for tries in range(1, device.pick_tries + 1):
+        for tries in range(1, machine.pick_tries + 1):
             index = self.taken.get(feeder.id, 0)
             if feeder.count > 0 and index >= feeder.count:
                 reason = f"feeder {feeder.id} is empty"
@@ -231,7 +231,7 @@ class Placement:
                     continue
                 point = (seen[0], seen[1], point[2])
             if tries > 1:
-                self._doing(ctx, f"try {tries} of {device.pick_tries}")
+                self._doing(ctx, f"try {tries} of {machine.pick_tries}")
             if feeder.bus_id is not None:
                 try:
                     self._advance(ctx, feeder, block.ref)
@@ -239,7 +239,7 @@ class Placement:
                     reason = f"feeder {feeder.id} did not advance: {exc}"
                     break
             ctx.progress.note(f"picking {part.get('value', '')} from {feeder.id} #{index + 1}".replace("  ", " "), block.ref)
-            for line in pick_lines(device, feeder, pick_label(part, feeder, index), point):
+            for line in pick_lines(machine, feeder, pick_label(part, feeder, index), point):
                 ctx.send(line)
             self._take(feeder, index)
             try:
@@ -248,7 +248,7 @@ class Placement:
             except Rejected as exc:
                 reason = str(exc)
                 where = self._discard(ctx, point)
-                more = "trying the next pocket" if tries < device.pick_tries else "left out"
+                more = "trying the next pocket" if tries < machine.pick_tries else "left out"
                 self.setup.message("warning", f"{block.ref}: {reason}; {where}, {more}")
                 ctx.progress.note(f"{reason}; {where}, {more}", block.ref, "warning")
                 continue
@@ -269,11 +269,11 @@ class Placement:
             return
         self._failed_in_a_row += 1
         if self._failed_in_a_row >= FAILED_IN_A_ROW:
-            raise DeviceLinkError(f"{FAILED_IN_A_ROW} parts in a row were left out, the last as {reason}: check the setup before going on")
+            raise GcodeLinkError(f"{FAILED_IN_A_ROW} parts in a row were left out, the last as {reason}: check the setup before going on")
 
     def _advance(self, ctx: RunContext, feeder: Feeder, ref: str) -> None:
         """A feeder on the bus moves its tape on by one part before its pick."""
-        bus_profile = self.device.bus
+        bus_profile = self.machine.bus
         assert bus_profile is not None and feeder.bus_id is not None
         if self._bus is None:
             self._bus = FeederBus(bus_profile, send=ctx.send, stopped=lambda: self.link.stopping)
@@ -294,8 +294,8 @@ class Placement:
 
     # --- the top camera ----------------------------------------------------------------
 
-    def _find_marks(self, ctx: RunContext, mover: DeviceMover, feeder: Feeder) -> None:
-        top = self.device.top
+    def _find_marks(self, ctx: RunContext, mover: GcodeMover, feeder: Feeder) -> None:
+        top = self.machine.top
         assert top is not None
         self._doing(ctx, f"finding feeder {feeder.id}'s marks")
         pairs = []
@@ -306,12 +306,12 @@ class Placement:
                     mover, mark, feeder.mark, top.within, top.z, center=True, routine="finding a feeder's marks", step=feeder.id
                 )
                 if seen is None:
-                    raise DeviceLinkError(
+                    raise GcodeLinkError(
                         f"feeder {feeder.id}'s mark at X {num(mark[0])} Y {num(mark[1])} is not within {top.within:g} mm of there"
                     )
                 pairs.append((mark, seen))
         except (PnpError, VisionError) as exc:
-            raise DeviceLinkError(f"finding feeder {feeder.id}'s marks: {exc}") from exc
+            raise GcodeLinkError(f"finding feeder {feeder.id}'s marks: {exc}") from exc
         fit = fit_rigid(pairs, 0.0 if len(pairs) == 1 else None)
         self.feeder_fits[feeder.id] = fit
         turn = f", turned {fit.rotation:+.2f} degrees" if len(pairs) > 1 else ""
@@ -320,8 +320,8 @@ class Placement:
         ctx.progress.note(said)
         self._doing(ctx, None)
 
-    def _look_in_pocket(self, ctx: RunContext, mover: DeviceMover, feeder: Feeder, block: Block, point, index: int) -> Point | None:
-        top = self.device.top
+    def _look_in_pocket(self, ctx: RunContext, mover: GcodeMover, feeder: Feeder, block: Block, point, index: int) -> Point | None:
+        top = self.machine.top
         assert top is not None and feeder.pocket is not None
         self._doing(ctx, f"looking at pocket #{index + 1} of {feeder.id}")
         try:
@@ -331,26 +331,26 @@ class Placement:
                 routine="looking at a pocket", step=f"{feeder.id} #{index + 1}",
             )
         except (PnpError, VisionError) as exc:
-            raise DeviceLinkError(f"looking at pocket #{index + 1} of {feeder.id}: {exc}") from exc
+            raise GcodeLinkError(f"looking at pocket #{index + 1} of {feeder.id}: {exc}") from exc
 
     # --- the vacuum ------------------------------------------------------------------
 
     def _read(self, ctx: RunContext, held: bool) -> float | None:
-        vacuum = self.device.vacuum
+        vacuum = self.machine.vacuum
         reply: list[str] = []
-        lines = check_lines(self.device, held)
+        lines = check_lines(self.machine, held)
         if vacuum is None or not lines:
             return None
         for line in lines:
             reply = ctx.send(line)
         value = vacuum.reading(reply)
         if value is None:
-            raise DeviceLinkError(f"'{vacuum.read[-1]}' answered no reading its pattern finds: {' | '.join(reply) or 'nothing'}")
+            raise GcodeLinkError(f"'{vacuum.read[-1]}' answered no reading its pattern finds: {' | '.join(reply) or 'nothing'}")
         return value
 
     def _check_held(self, ctx: RunContext) -> None:
         value = self._read(ctx, held=True)
-        vacuum = self.device.vacuum
+        vacuum = self.machine.vacuum
         if value is None or vacuum is None or vacuum.part_on is None:
             return
         low, high = vacuum.part_on
@@ -363,12 +363,12 @@ class Placement:
         in words); a part still on it stops the run, as the next pick would
         read as held whatever it took."""
         value = self._read(ctx, held=False)
-        vacuum = self.device.vacuum
+        vacuum = self.machine.vacuum
         if value is None or vacuum is None or vacuum.part_off is None:
             return
         low, high = vacuum.part_off
         if not low <= value <= high:
-            raise DeviceLinkError(
+            raise GcodeLinkError(
                 f"the vacuum read {num(value)} after {what} ({num(low)} to {num(high)} empty):"
                 " the part may still be on the nozzle, so the run stops before it is let go somewhere else"
             )
@@ -376,24 +376,24 @@ class Placement:
     def _discard(self, ctx: RunContext, pocket: tuple[float, float, float]) -> str:
         """Lets a held part go at the discard place, or back in its pocket;
         what was done, in words."""
-        device = self.device
-        target, where = (device.discard, "let go at the discard place") if device.discard is not None else (pocket, "put back in its pocket")
+        machine = self.machine
+        target, where = (machine.discard, "let go at the discard place") if machine.discard is not None else (pocket, "put back in its pocket")
         # Put down as a place is, with the nozzle turned back to 0.
-        for line in [safe_line(device), *place_lines(device, (target[0], target[1]), 0.0, target[2])]:
+        for line in [safe_line(machine), *place_lines(machine, (target[0], target[1]), 0.0, target[2])]:
             ctx.send(line)
         self._check_released(ctx, f"a part was {where}")
         return where
 
     # --- the up camera -----------------------------------------------------------------
 
-    def _look(self, ctx: RunContext, mover: DeviceMover, block: Block, feeder: Feeder) -> list[str]:
+    def _look(self, ctx: RunContext, mover: GcodeMover, block: Block, feeder: Feeder) -> list[str]:
         """Over the up camera with the part just picked, turned to the angle
         it goes down at: the place lines that put its center on the place,
         its angle corrected; Rejected for a part that will not do."""
-        device = self.device
+        machine = self.machine
         place = self.setup.up_place
         if place.position is None:
-            raise DeviceLinkError("the up camera's place on the device is not measured: center the nozzle over it")
+            raise GcodeLinkError("the up camera's place on the machine is not measured: center the nozzle over it")
         runout = place.runout or (0.0, 0.0)
         axis = (place.position[0] + runout[0], place.position[1] + runout[1])
         angle = block.turn
@@ -407,20 +407,20 @@ class Placement:
             except NoSpot as exc:
                 raise Rejected("nothing on the nozzle over the up camera") from exc
             except (PnpError, VisionError) as exc:
-                raise DeviceLinkError(f"looking at {block.ref} over the up camera: {exc}") from exc
+                raise GcodeLinkError(f"looking at {block.ref} over the up camera: {exc}") from exc
             self.setup.up.part_offset = seen
             self.setup.publish_up()
             angle_said = f", long side at {num(float(seen['angle']), 1)} deg" if isinstance(seen.get("angle"), (int, float)) else ""
             ctx.progress.note(f"seen over the up camera {num(float(seen['mm']))} mm off the nozzle{angle_said}", block.ref)
             self._check_size(block, seen)
             off = (float(seen["dx"]), float(seen["dy"]))
-            if math.hypot(*off) > device.max_offset:
-                raise Rejected(f"it sits {math.hypot(*off):.3f} mm off the nozzle's center (at most {device.max_offset:g})")
+            if math.hypot(*off) > machine.max_offset:
+                raise Rejected(f"it sits {math.hypot(*off):.3f} mm off the nozzle's center (at most {machine.max_offset:g})")
             delta = self._angle_error(block, feeder, seen, angle)
             settled = abs(delta) <= ANGLE_SETTLED
             if before is not None and abs(before) > 1.0 and abs(delta) > abs(before) * 1.5:
-                fix = "false" if device.rotation_cw else "true"
-                raise DeviceLinkError(
+                fix = "false" if machine.rotation_cw else "true"
+                raise GcodeLinkError(
                     f"turning {block.ref} by {-before:+.2f} degrees took it {delta - before:+.2f} further off:"
                     f" the rotation axis turns the other way; set [gcode] rotation_cw = {fix} in the profile"
                 )
@@ -429,13 +429,13 @@ class Placement:
                 # The part's center off the axis, turned on to the final angle.
                 arm = turn((off[0] + axis[0] - head[0], off[1] + axis[1] - head[1]), final - angle)
                 target = (block.target[0] + runout[0] - arm[0], block.target[1] + runout[1] - arm[1])
-                return [safe_line(device), *place_lines(device, target, final, block.place_z)]
+                return [safe_line(machine), *place_lines(machine, target, final, block.place_z)]
             before = delta
             angle = angle - delta
         raise AssertionError("the last look always places")
 
     def _check_size(self, block: Block, seen: dict) -> None:
-        tolerance = self.device.size_tolerance
+        tolerance = self.machine.size_tolerance
         if block.size is None or tolerance <= 0.0:
             return
         length, width = float(seen.get("length", 0.0)), float(seen.get("width", 0.0))
@@ -455,7 +455,7 @@ class Placement:
                 self.setup.message("warning", "the up camera tells no part's angle (pcb-vision before b4d1299): turns are not corrected")
             return 0.0
         delta = wrap(float(direction) - block.angle, 90.0)
-        limit = self.device.max_turn
+        limit = self.machine.max_turn
         if abs(delta) > limit:
             # Had the axis turned the other way, the part would sit at its
             # feeder's angle less the turn; the two can be told apart unless

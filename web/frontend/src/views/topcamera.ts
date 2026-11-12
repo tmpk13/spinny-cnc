@@ -1,4 +1,4 @@
-// The G-code device's top camera, on its head and looking down: its
+// A G-code machine's top camera, on its head and looking down: its
 // device picked from the cameras found or typed, its size, rate and the
 // shade of a mark, and its offset from the nozzle measured from a mark the
 // nozzle's tip was put on. Its picture shows in the Cameras panel; the
@@ -11,7 +11,7 @@ import type { SpotPolarity, TopSettings } from "../types.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { into, type Ctx } from "./context.ts";
-import { topCameraText, topRoutineText } from "./device.ts";
+import { topCameraText, topRoutineText } from "./placing.ts";
 import { infoTip } from "./infotip.ts";
 import { polaritySelect } from "./pnp.ts";
 
@@ -19,7 +19,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     const badge = el("span", { class: "badge" }, "stopped");
     const start = button("Start", () => startTop(), "btn btn-primary");
     start.title = "start the top camera with these settings";
-    const stop = button("Stop", () => into(ctx, "device", ctx.api.topStop()), "btn");
+    const stop = button("Stop", () => into(ctx, "placing", ctx.api.topStop()), "btn");
     const device = el("input", { type: "text", class: "field", "aria-label": "Top camera device", placeholder: "/dev/video2", spellcheck: "false" }) as HTMLInputElement;
     const size = el("input", { type: "text", class: "field", "aria-label": "Top camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
     const fps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
@@ -35,13 +35,13 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     });
     const apply = button("Apply", () => applyTop(), "btn");
     const offsetLine = el("p", { class: "muted" });
-    const markHere = button("Nozzle on mark", () => into(ctx, "device", ctx.api.topMark()), "btn");
+    const markHere = button("Nozzle on mark", () => into(ctx, "placing", ctx.api.topMark()), "btn");
     markHere.title = "the nozzle's tip is on a mark: keep its place for Measure offset";
     const step = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Top camera step mm");
     const measure = button("Measure offset", () => measureOffset(), "btn");
     measure.title = "move the top camera over the mark to measure its offset from the nozzle";
-    const abort = button("Abort", () => into(ctx, "device", ctx.api.topAbort()), "btn btn-danger");
+    const abort = button("Abort", () => into(ctx, "placing", ctx.api.topAbort()), "btn btn-danger");
     const routineLine = el("p", { class: "muted vision-routine" });
     const log = el("div", { class: "camlog-box" });
     mountCameraLog(log, ctx, "top");
@@ -71,7 +71,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     const tracked = new Tracked(fields.map(([field]) => field));
 
     function patchOf(): Partial<TopSettings> {
-        const top = ctx.store.get().device?.top;
+        const top = ctx.store.get().placing?.top;
         const patch: Partial<TopSettings> = {};
         if (device.value.trim() !== "" && device.value.trim() !== top?.device) {
             patch.device = device.value.trim();
@@ -97,14 +97,14 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         const state = await ctx.call(ctx.api.topSettings(patch));
         if (state) {
             tracked.reset();
-            ctx.store.set({ device: state });
+            ctx.store.set({ placing: state });
         }
         return state !== undefined;
     }
 
     async function startTop(): Promise<void> {
         if (await applyTop()) {
-            await into(ctx, "device", ctx.api.topStart());
+            await into(ctx, "placing", ctx.api.topStart());
         }
     }
 
@@ -114,15 +114,15 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             ctx.toast("error", "step: 0 to 20 mm");
             return;
         }
-        await into(ctx, "device", ctx.api.topOffset(value));
+        await into(ctx, "placing", ctx.api.topOffset(value));
     }
 
     function render(state: AppState): void {
-        const top = state.device?.top ?? null;
-        const connected = state.device?.connected === true;
-        const running = state.device?.running === true;
+        const top = state.placing?.top ?? null;
+        const connected = state.placing?.connected === true;
+        const running = state.placing?.running === true;
         const routine = state.pnp?.routine;
-        const moving = routine?.state === "running" && routine.target === "device";
+        const moving = routine?.state === "running" && routine.target === "gcode";
         const busy = top?.routine?.state === "running";
         for (const [field, key] of fields) {
             tracked.follow(field, top ? String(top[key] ?? "") : "");
@@ -131,8 +131,8 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         lockFor(start, [top?.running === true, "the top camera is running"], [busy, "a routine is under way"]);
         lockFor(stop, [top?.running !== true, "the top camera is not running"], [busy, "a routine is under way: abort it first"]);
         setLocked(apply, busy, "a routine is under way");
-        lockFor(markHere, [!connected, "connect the device first"], [running || moving || busy, "the device is busy"]);
-        lockFor(measure, [!connected, "connect the device first"], [running || moving || busy, "the device is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
+        lockFor(markHere, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"]);
+        lockFor(measure, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
         setLocked(abort, !busy, "no routine under way");
         offsetLine.textContent = topCameraText(top);
         routineLine.textContent = topRoutineText(top);
@@ -140,6 +140,6 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     }
 
     globalThis.addEventListener?.("pagehide", () => pick.stop());
-    ctx.store.subscribe((state) => render(state), ["device", "pnp", "cameras"]);
+    ctx.store.subscribe((state) => render(state), ["placing", "pnp", "cameras"]);
     render(ctx.store.get());
 }

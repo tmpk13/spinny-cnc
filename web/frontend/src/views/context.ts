@@ -18,7 +18,7 @@ export interface Ctx {
     refreshCamera(): Promise<void>;
     refreshAlign(): Promise<void>;
     refreshPnp(): Promise<void>;
-    refreshDevice(): Promise<void>;
+    refreshPlacing(): Promise<void>;
     refreshMarkers(): Promise<void>;
     /** The Auto tab's conversation as the backend has it. */
     refreshAuto(): Promise<void>;

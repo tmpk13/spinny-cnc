@@ -837,5 +837,95 @@
                 "note": "Up is positive, H 0 at the board surface"
             }
         ]
+    },
+    "cartesian-nozzle-focus": {
+        "pad": true,
+        "pad_steps": [
+            0.1,
+            1.0,
+            10.0
+        ],
+        "pad_step": 1.0,
+        "feed": true,
+        "center": {},
+        "centering": false,
+        "axes": [
+            {
+                "axis": "r",
+                "letter": "X",
+                "label": "X",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "X-",
+                    "X+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Declares the head's X here (G92) until the machine is homed again.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "z",
+                "letter": "Y",
+                "label": "Y",
+                "steps": null,
+                "step": null,
+                "buttons": [
+                    "Y-",
+                    "Y+"
+                ],
+                "feed": true,
+                "goto": true,
+                "zero": true,
+                "zero_hint": "Declares the head's Y here (G92) until the machine is homed again.",
+                "keys": [],
+                "note": ""
+            },
+            {
+                "axis": "h",
+                "letter": "Z",
+                "label": "Nozzle height",
+                "steps": [
+                    0.1,
+                    1.0,
+                    10.0
+                ],
+                "step": 1.0,
+                "buttons": [
+                    "Down",
+                    "Up"
+                ],
+                "feed": false,
+                "goto": true,
+                "zero": false,
+                "zero_hint": "",
+                "keys": [],
+                "note": "The controller's Z: moves across go at the safe height first"
+            },
+            {
+                "axis": "a",
+                "letter": "A",
+                "label": "Nozzle turn",
+                "steps": [
+                    1.0,
+                    10.0,
+                    90.0
+                ],
+                "step": 10.0,
+                "buttons": [
+                    "Turn -",
+                    "Turn +"
+                ],
+                "feed": false,
+                "goto": true,
+                "zero": false,
+                "zero_hint": "",
+                "keys": [],
+                "note": "Degrees, as the controller counts them"
+            }
+        ]
     }
 }

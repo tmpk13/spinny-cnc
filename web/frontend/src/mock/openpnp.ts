@@ -1,15 +1,15 @@
 // The in-page mock's twin of the backend's G-code pick and place machine:
-// a device profile read and checked with the backend's words, the board's
-// fit from reference parts, and the placement program, line for line what
-// the backend makes for the same profile and parts (the plan before a run:
-// the vacuum reads, the notes where a camera looks, the nozzle's runout
-// made up for, the rotation axis's sign).
+// a G-code machine file's own tables read and checked with the backend's
+// words, the board's fit from reference parts, and the placement program,
+// line for line what the backend makes for the same file and parts (the
+// plan before a run: the vacuum reads, the notes where a camera looks, the
+// nozzle's runout made up for, the rotation axis's sign).
 
 import { fitRigid, turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
-import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
+import { type TomlTable, type TomlValue } from "../toml.ts";
 import { HEADER_FIELDS, slotPlace } from "../feederbus.ts";
-import type { AlignFit, Component, DeviceDocument, DevicePlan, SpotPolarity } from "../types.ts";
+import type { AlignFit, Component, GcodeDocument, PlacingPlan, SpotPolarity } from "../types.ts";
 
 export const DEVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const AXIS = /^[A-Z]$/;
@@ -111,6 +111,8 @@ export interface MockDevice {
     name: string;
     description: string;
     url: string;
+    /** Words in a port's USB names that make it this machine's. */
+    match: string[];
     baud: number;
     wait_ms: number;
     timeout: number;
@@ -126,6 +128,9 @@ export interface MockDevice {
     home: string;
     position: string;
     stop: string;
+    /** The motors switched on and off by the jog panel; empty for no button. */
+    motors_on: string;
+    motors_off: string;
     feed_xy: number;
     feed_z: number;
     safe_z: number;
@@ -278,19 +283,14 @@ class Reader {
     }
 }
 
-/** A device profile from its TOML text, checked as the backend checks it; throws with its words. */
-export function parseDevice(text: string, id: string): MockDevice {
+/**
+ * A G-code machine's own tables, read off its machine file (the TOML read
+ * whole by the machine file's reader, which checked its top level, name,
+ * description and controls), as the backend's openpnp.machine_of reads
+ * them; throws with its words.
+ */
+export function parseGcodeTables(top: TomlTable, id: string, name: string, description: string): MockDevice {
     const where = `${id}.toml`;
-    if (!DEVICE_ID.test(id)) {
-        throw new Error(`'${id}' is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64`);
-    }
-    let top: TomlTable;
-    try {
-        top = parseToml(text);
-    } catch (error) {
-        // A TomlError already says its line.
-        throw new Error(`${where}: ${errorText(error)}`);
-    }
     const read = new Reader(where);
     const port = read.table(top, "port");
     const baud = read.integer(port, "baud", "port", 115200, 1200, 2000000);
@@ -299,14 +299,15 @@ export function parseDevice(text: string, id: string): MockDevice {
     }
     const device: Partial<MockDevice> = {
         id,
-        name: read.text(top, "name", null, id) || id,
-        description: read.text(top, "description", null, ""),
+        name: name || id,
+        description,
         url: read.text(port, "url", "port", ""),
+        match: read.lines(port, "match", "port", [], true),
         baud,
         wait_ms: read.integer(port, "wait_ms", "port", 2000, 0, 30000),
         timeout: read.number(port, "timeout", "port", 60, 1, 600),
     };
-    read.done(port, "port", ["url", "baud", "wait_ms", "timeout"]);
+    read.done(port, "port", ["url", "match", "baud", "wait_ms", "timeout"]);
     const gcode = read.table(top, "gcode");
     device.init = read.lines(gcode, "init", "gcode", ["G21", "G90"]);
     device.end = read.lines(gcode, "end", "gcode", []);
@@ -345,8 +346,13 @@ export function parseDevice(text: string, id: string): MockDevice {
     device.home = read.text(gcode, "home", "gcode", "G28");
     device.position = read.text(gcode, "position", "gcode", "M114");
     device.stop = read.text(gcode, "stop", "gcode", "M410");
+    device.motors_on = read.text(gcode, "motors_on", "gcode", "M17");
+    device.motors_off = read.text(gcode, "motors_off", "gcode", "M18");
     device.rotation_cw = read.flag(gcode, "rotation_cw", "gcode", false);
-    read.done(gcode, "gcode", ["init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop", "light_on", "light_off"]);
+    read.done(gcode, "gcode", [
+        "init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop",
+        "motors_on", "motors_off", "light_on", "light_off",
+    ]);
     const motion = read.table(top, "motion");
     device.feed_xy = read.number(motion, "feed_xy", "motion", 6000, 1, FEED_LIMIT);
     device.feed_z = read.number(motion, "feed_z", "motion", 1200, 1, FEED_LIMIT);
@@ -435,7 +441,7 @@ export function parseDevice(text: string, id: string): MockDevice {
     (slotTables as TomlTable[]).forEach((table, offset) => {
         const section = `slot ${offset + 1}`;
         if (device.bus === null) {
-            throw read.fail(section, "address", "is a feeder bus's slot: add a [bus] section");
+            throw read.fail(section, "address", "is a feeder bus's slot: add a [bus] table");
         }
         const address = read.integer(table, "address", section, 0, 1, 254);
         if (slots.some((other) => other.address === address)) {
@@ -483,7 +489,7 @@ export function parseDevice(text: string, id: string): MockDevice {
         const pocket = "pocket" in table ? read.shade(table, "pocket", section, "dark") : null;
         const marks = read.places(table, "marks", section, 2);
         if ((pocket !== null || marks.length > 0) && device.top === null) {
-            throw read.fail(section, pocket !== null ? "pocket" : "marks", "looks with the top camera: add a [top_camera] section");
+            throw read.fail(section, pocket !== null ? "pocket" : "marks", "looks with the top camera: add a [top_camera] table");
         }
         let rotation = read.number(table, "rotation", section, 0, -360, 360);
         let busId: string | null = null;
@@ -493,7 +499,7 @@ export function parseDevice(text: string, id: string): MockDevice {
         let at: [number, number, number] | null;
         if ("bus_id" in table) {
             if (device.bus === null) {
-                throw read.fail(section, "bus_id", "is a feeder on the bus: add a [bus] section");
+                throw read.fail(section, "bus_id", "is a feeder on the bus: add a [bus] table");
             }
             const id = read.text(table, "bus_id", section, "").toUpperCase();
             if (!/^[0-9A-F]{24}$/.test(id)) {
@@ -551,15 +557,14 @@ export function parseDevice(text: string, id: string): MockDevice {
         ]);
     });
     device.feeders = feeders;
-    const camera = read.table(top, "camera");
-    device.camera_z = "z" in camera ? read.number(camera, "z", "camera", null) : null;
-    device.camera_position = "position" in camera ? (read.point(camera, "position", "camera", 2, null) as [number, number]) : null;
-    device.crop = "crop" in camera ? read.number(camera, "crop", "camera", null, 0.1, 100) : null;
-    device.max_offset = read.number(camera, "max_offset", "camera", 1, 0.01, 20);
-    device.max_turn = read.number(camera, "max_turn", "camera", 15, 0.1, 45);
-    device.size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0, 1);
-    read.done(camera, "camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance"]);
-    read.done(top, null, ["name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera", "bus", "slot"]);
+    const camera = read.table(top, "up_camera");
+    device.camera_z = "z" in camera ? read.number(camera, "z", "up_camera", null) : null;
+    device.camera_position = "position" in camera ? (read.point(camera, "position", "up_camera", 2, null) as [number, number]) : null;
+    device.crop = "crop" in camera ? read.number(camera, "crop", "up_camera", null, 0.1, 100) : null;
+    device.max_offset = read.number(camera, "max_offset", "up_camera", 1, 0.01, 20);
+    device.max_turn = read.number(camera, "max_turn", "up_camera", 15, 0.1, 45);
+    device.size_tolerance = read.number(camera, "size_tolerance", "up_camera", 0.3, 0, 1);
+    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance"]);
     return device as MockDevice;
 }
 
@@ -586,12 +591,13 @@ export function vacuumReading(vacuum: MockVacuum, reply: string[]): number | nul
 }
 
 /** What the backend sends of a profile. */
-export function deviceDocument(device: MockDevice): DeviceDocument {
+export function deviceDocument(device: MockDevice): GcodeDocument {
     return {
         id: device.id,
         name: device.name,
         description: device.description,
         url: device.url,
+        match: [...device.match],
         baud: device.baud,
         wait_ms: device.wait_ms,
         timeout: device.timeout,
@@ -695,10 +701,10 @@ export function wrapAngle(degrees: number): number {
     return turned;
 }
 
-/** Where the board lies on the device, from reference parts: a shift (and a typed turn) from one, a turn and a shift from more. */
+/** Where the board lies on the machine, from reference parts: a shift (and a typed turn) from one, a turn and a shift from more. */
 export function deviceFit(pairs: [[number, number], [number, number]][], angle: number | null): AlignFit {
     if (pairs.length === 0) {
-        throw new Error("the board has no reference on the device: put the nozzle over a part's place and press Here");
+        throw new Error("the board has no reference on the machine: put the nozzle over a part's place and press Here");
     }
     const fit = fitRigid(pairs.map(([design, machine]) => ({ design, machine })), pairs.length === 1 ? angle ?? 0 : null);
     return { ...fit, marks: pairs.length };
@@ -721,7 +727,7 @@ export interface MockBlock {
     /** The vacuum read with the part held, and once it let go. */
     check: string[];
     release: string[];
-    /** The part's angle on the device. */
+    /** The part's angle on the machine. */
     angle: number;
 }
 
@@ -749,7 +755,7 @@ export function codeOf(line: string): string {
 }
 
 /** What the backend answers for a plan. */
-export function planSummary(plan: MockPlan): DevicePlan {
+export function planSummary(plan: MockPlan): PlacingPlan {
     const text = planText(plan);
     return {
         parts: plan.blocks.map((block) => ({ ref: block.ref, feeder: block.feeder, index: block.index, vision: block.vision })),
@@ -783,6 +789,62 @@ export function xyLine(device: MockDevice, x: number, y: number, turn?: number):
 /** The nozzle up to the safe height. */
 export function safeLine(device: MockDevice): string {
     return zLine(device, device.safe_z);
+}
+
+/** A G-code machine's axes by the names its place is kept under. */
+export type AxisName = "x" | "y" | "z" | "rotation";
+const AXIS_NAMES: AxisName[] = ["x", "y", "z", "rotation"];
+
+/**
+ * One move to the controller's own values in `target` (the rotation as the
+ * controller counts it, not turned for rotation_cw), at `feed`, else at the
+ * Z feed for a height alone and the X/Y feed for anything else: the
+ * backend's openpnp.move_line.
+ */
+export function moveLine(device: MockDevice, target: Partial<Record<AxisName, number>>, feed: number | null = null): string {
+    const words = [device.move];
+    AXIS_NAMES.forEach((name, index) => {
+        const value = target[name];
+        if (value !== undefined) {
+            words.push(`${device.axes[index]}${gnum(value)}`);
+        }
+    });
+    const names = Object.keys(target);
+    const rate = feed ?? (names.length === 1 && names[0] === "z" ? device.feed_z : device.feed_xy);
+    words.push(`F${gnum(rate, 0)}`);
+    return words.join(" ");
+}
+
+/**
+ * The lines that take the head from `here` to `want`: up to the safe
+ * height only for a move across (X or Y changing), from either side of it,
+ * the turn with the move across, the height last and only when it
+ * changes. The backend's openpnp.goto_lines.
+ */
+export function gotoLines(device: MockDevice, here: Partial<Record<AxisName, number>>, want: Partial<Record<AxisName, number>>, feed: number | null = null): string[] {
+    const across: Partial<Record<AxisName, number>> = {};
+    for (const name of ["x", "y"] as const) {
+        const value = want[name];
+        const now = here[name];
+        if (value !== undefined && (now === undefined || Math.abs(value - now) > 1e-6)) {
+            across[name] = value;
+        }
+    }
+    const lines: string[] = [];
+    let z = here.z;
+    if (Object.keys(across).length > 0) {
+        if (z === undefined || Math.abs(z - device.safe_z) > 1e-6) {
+            lines.push(safeLine(device));
+            z = device.safe_z;
+        }
+        lines.push(moveLine(device, want.rotation !== undefined ? { ...across, rotation: want.rotation } : across, feed));
+    } else if (want.rotation !== undefined) {
+        lines.push(moveLine(device, { rotation: want.rotation }, feed));
+    }
+    if (want.z !== undefined && (z === undefined || Math.abs(want.z - z) > 1e-6)) {
+        lines.push(moveLine(device, { z: want.z }));
+    }
+    return lines;
 }
 
 /** How far the head moves to keep the nozzle's tip on a point as the nozzle turns from 0 to `degrees`, the tip `runout` off the axis at 0. */
@@ -928,7 +990,7 @@ export function planDevice(
     return { head, blocks, tail: [...(device.wait ? [device.wait] : []), ...device.end], skipped, fit };
 }
 
-/** The nozzle up to the safe height and over a part's place on the device. */
+/** The nozzle up to the safe height and over a part's place on the machine. */
 export function deviceGotoLines(device: MockDevice, fit: AlignFit, part: Component): string[] {
     const [tx, ty] = turnPoint([part.x, part.y], fit.rotation);
     return [

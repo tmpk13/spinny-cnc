@@ -2895,7 +2895,7 @@ table.pnp-parts tr.dnp td {
     text-anchor: start;
 }
 
-/* PNP page: the G-code device. */
+/* PNP page: a G-code machine's panels. */
 .device-references,
 .device-skipped {
     margin: 0;

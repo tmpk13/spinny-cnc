@@ -1,13 +1,16 @@
-"""Placing a board's parts on another machine: one whose controller takes
-the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
+"""Placing a board's parts with a G-code machine: one whose own controller
+takes the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
 RepRapFirmware, Grbl), a line at a time, each answered `ok`.
 
-A device profile (`pnp/*.toml`) says how to talk to that machine: its
-port, the words of its dialect (the move word and axis letters, the
-vacuum's on and off, the wait for the moves queued, a dwell, home and
-stop), the heights it works at and its feeders. Where the board lies on
-the machine is fitted from reference parts whose places were read off it
-(one gives a shift, with a typed turn; two or more a turn and a shift).
+Its machine file (`machines/*.toml` with `controller = "gcode"`) says how
+to talk to it: its port and the words that find the port, the words of its
+dialect (the move word and axis letters, the vacuum's on and off, the wait
+for the moves queued, a dwell, home, stop and the motors), the heights it
+works at, its cameras and its feeders. `spinny_laser.machines` reads the
+file's name, controls and kind and keeps these tables; `machine_of` reads
+them. Where the board lies on the machine is fitted from reference parts
+whose places were read off it (one gives a shift, with a typed turn; two
+or more a turn and a shift).
 
 A placement program picks each part from the first feeder whose words
 its value and footprint all hold, at the feeder's next place (along a
@@ -22,7 +25,7 @@ it is placed at, and placed where its center lands, its angle corrected.
 A nozzle whose tip runs out of true as it turns is placed where its tip
 is at that angle.
 
-Every place on the device is a place of the nozzle's tip turned to 0:
+Every place on the machine is a place of the nozzle's tip turned to 0:
 the head's X and Y with the tip over that point. The program here is the
 plan as it stands before the run; the run (`placer.py`) changes it where
 a camera or the vacuum sensor says otherwise.
@@ -32,20 +35,17 @@ from __future__ import annotations
 
 import math
 import re
-import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
 
+from spinny_laser import machines as machine_files
 from spinny_laser.align import Fit, fit_rigid, turn
-from spinny_laser.cam import set_value
-from spinny_laser.machines import is_id
+from spinny_laser.machines import GCODE, Machine, MachineError, is_id
 
 from .feederbus import HEADER_FIELDS, BusProfile, check_id as check_bus_id, slot_place
 from .kinematics import num
-from .stores import TomlStore
 
 AXIS = re.compile(r"^[A-Z]$")
-# A G-code line as a profile may give it: printable, one line.
+# A G-code line as a machine file may give it: printable, one line.
 LINE = re.compile(r"^[\x20-\x7e]*$")
 BAUDS = (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 250000, 460800, 500000, 921600, 1000000, 2000000)
 COORD_LIMIT = 10000.0
@@ -58,18 +58,8 @@ DEFAULT_VACUUM_PATTERN = r"T:\s*(-?[0-9]+(?:\.[0-9]+)?)"
 JAVA_GROUP = re.compile(r"\(\?<(?![=!])")
 
 
-class DeviceError(ValueError):
-    """A profile that does not read, or a plan that cannot be made."""
-
-
-class NotFound(LookupError):
-    """No device profile of that id."""
-
-
-def check_id(device_id: str) -> str:
-    if not is_id(device_id):
-        raise DeviceError(f"{device_id!r} is not a device id: lower case letters, digits, - and _, starting with a letter or digit, at most 64")
-    return device_id
+class PlanError(ValueError):
+    """A plan that cannot be made: a board with no reference, a feeder whose place is not known."""
 
 
 @dataclass(frozen=True)
@@ -100,18 +90,18 @@ class Feeder:
     # The shade of a part in its pocket to the top camera, which then
     # looks at each pocket before its pick; None picks at the place.
     pocket: str | None = None
-    # Marks on the feeder (a hole, a dot) where the profile puts them,
+    # Marks on the feeder (a hole, a dot) where the file puts them,
     # found with the top camera before the first pick from it in a run:
     # its places follow them, shifted by one and turned as well by two.
     marks: tuple[tuple[float, float], ...] = ()
     mark: str = "dark"
     # How far from the up camera's center its parts are looked for, mm;
-    # None takes the profile's [camera] crop.
+    # None takes the machine's [up_camera] crop.
     crop: float | None = None
     # The parts it holds by their references, which outdo the words: an
     # OpenPnP job names each placement's part, so its import knows them.
     refs: tuple[str, ...] = ()
-    # A feeder on the profile's bus: its id there, its address (its slot;
+    # A feeder on the machine's bus: its id there, its address (its slot;
     # None until found by its id), its pick place from the slot's place,
     # and how far its tape moves on per part, mm.
     bus_id: str | None = None
@@ -127,7 +117,7 @@ class Feeder:
 
     def place_of(self, index: int) -> tuple[float, float, float]:
         if self.at is None:
-            raise DeviceError(f"feeder {self.id}'s place is not known: its slot is found on the feeder bus when a run starts")
+            raise PlanError(f"feeder {self.id}'s place is not known: its slot is found on the feeder bus when a run starts")
         if self.columns > 0:
             column, row = index % self.columns, index // self.columns
             return (
@@ -182,7 +172,7 @@ class Vacuum:
 
 @dataclass(frozen=True)
 class TopCameraProfile:
-    """The camera on the device's head looking down: the height the head
+    """The camera on the machine's head looking down: the height the head
     stands at for it to see the board sharp (None keeps the safe height),
     where its picture's center is from the nozzle's tip as the head's
     design has it (a first guess; the measured one wins), the shade of a
@@ -196,8 +186,9 @@ class TopCameraProfile:
 
 
 @dataclass(frozen=True)
-class Device:
-    """A device profile, read and checked."""
+class GcodeMachine:
+    """A G-code machine's file, read and checked: its own tables, with the
+    name, description and controls `spinny_laser.machines` read."""
 
     id: str
     name: str
@@ -264,9 +255,32 @@ class Device:
     # The bus smart feeders are on, and where each address's feeder sits.
     bus: BusProfile | None = None
     slots: tuple[Slot, ...] = ()
+    # Words a port's USB names hold (product, maker, description, any case)
+    # that make it this machine's port.
+    match: tuple[str, ...] = ()
+    # The motors switched on and off by the jog panel; empty for no button.
+    motors_on: str = ""
+    motors_off: str = ""
+    # The page's controls, as spinny_laser.controls lays them out.
+    controls: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
-        return {"id": self.id, "name": self.name, "description": self.description, "url": self.url, "feeders": len(self.feeders)}
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "url": self.url,
+            "match": list(self.match),
+            "feeders": len(self.feeders),
+        }
+
+    def claims(self, url: str, names: str = "") -> bool:
+        """The port at `url` is this machine's: its url is the file's, or the
+        port's USB names (`names`) hold one of the file's words."""
+        if self.url and url == self.url:
+            return True
+        hay = names.lower()
+        return bool(hay) and any(word.lower() in hay for word in self.match)
 
     def angle_word(self, degrees: float) -> str:
         """An angle of the nozzle, counterclockwise from above, as the
@@ -348,9 +362,9 @@ class _Reader:
     def __init__(self, where: str) -> None:
         self.where = where
 
-    def fail(self, section: str | None, key: str, what: str) -> DeviceError:
+    def fail(self, section: str | None, key: str, what: str) -> MachineError:
         place = f"[{section}] {key}" if section else key
-        return DeviceError(f"{self.where}: {place} {what}")
+        return MachineError(f"{self.where}: {place} {what}")
 
     def table(self, top: dict, name: str) -> dict:
         value = top.get(name, {})
@@ -449,25 +463,32 @@ class _Reader:
             raise self.fail(section, unknown[0], "is not a key here")
 
 
-def parse(text: str, device_id: str, where: str | None = None) -> Device:
-    """A device profile from its TOML text; DeviceError naming the key for anything amiss."""
-    where = where or f"{device_id}.toml"
-    check_id(device_id)
-    try:
-        top = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise DeviceError(f"{where}: {exc}") from None
+def parse(text: str, machine_id: str, where: str | None = None) -> GcodeMachine:
+    """A G-code machine file from its TOML text; MachineError naming the key for anything amiss."""
+    where = where or f"{machine_id}.toml"
+    return machine_of(machine_files.parse(text, machine_id, where), where)
+
+
+def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
+    """A G-code machine's own tables read off its machine file as
+    `spinny_laser.machines` read it; MachineError for a file of this
+    project's firmware, or a key amiss."""
+    where = where or f"{machine.id}.toml"
+    if machine.controller != GCODE:
+        raise MachineError(f'{where}: is not a G-code machine: its controller is {machine.controller}, not "gcode"')
+    top = machine.gcode
     read = _Reader(where)
-    name = read.text(top, "name", None, device_id)
-    description = read.text(top, "description", None, "")
+    name = machine.name
+    description = machine.description
     port = read.table(top, "port")
     url = read.text(port, "url", "port", "")
+    port_words = read.lines(port, "match", "port", (), one=True)
     baud = read.integer(port, "baud", "port", 115200, 1200, 2000000)
     if baud not in BAUDS:
         raise read.fail("port", "baud", f"must be one of {', '.join(str(b) for b in BAUDS)}")
     wait_ms = read.integer(port, "wait_ms", "port", 2000, 0, 30000)
     timeout = read.number(port, "timeout", "port", 60.0, 1.0, 600.0)
-    read.done(port, "port", {"url", "baud", "wait_ms", "timeout"})
+    read.done(port, "port", {"url", "match", "baud", "wait_ms", "timeout"})
 
     gcode = read.table(top, "gcode")
     init = read.lines(gcode, "init", "gcode", ("G21", "G90"))
@@ -499,11 +520,16 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     home = read.text(gcode, "home", "gcode", "G28")
     position = read.text(gcode, "position", "gcode", "M114")
     stop = read.text(gcode, "stop", "gcode", "M410")
+    motors_on = read.text(gcode, "motors_on", "gcode", "M17")
+    motors_off = read.text(gcode, "motors_off", "gcode", "M18")
     rotation_cw = read.flag(gcode, "rotation_cw", "gcode", False)
     read.done(
         gcode,
         "gcode",
-        {"init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop", "light_on", "light_off"},
+        {
+            "init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop",
+            "motors_on", "motors_off", "light_on", "light_off",
+        },
     )
 
     motion = read.table(top, "motion")
@@ -588,7 +614,7 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
     for number, table in enumerate(slot_tables, start=1):
         section = f"slot {number}"
         if bus is None:
-            raise read.fail(section, "address", "is a feeder bus's slot: add a [bus] section")
+            raise read.fail(section, "address", "is a feeder bus's slot: add a [bus] table")
         address = read.integer(table, "address", section, 0, 1, 254)
         if any(other.address == address for other in slots):
             raise read.fail(section, "address", f"{address} is another slot's too")
@@ -625,7 +651,7 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         pocket = read.optional_shade(table, "pocket", section)
         marks = read.places(table, "marks", section, 2)
         if (pocket is not None or marks) and top_camera is None:
-            raise read.fail(section, "pocket" if pocket is not None else "marks", "looks with the top camera: add a [top_camera] section")
+            raise read.fail(section, "pocket" if pocket is not None else "marks", "looks with the top camera: add a [top_camera] table")
         rotation = read.number(table, "rotation", section, 0.0, -360.0, 360.0)
         bus_id = None
         slot = None
@@ -633,7 +659,7 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         advance = 4.0
         if "bus_id" in table:
             if bus is None:
-                raise read.fail(section, "bus_id", "is a feeder on the bus: add a [bus] section")
+                raise read.fail(section, "bus_id", "is a feeder on the bus: add a [bus] table")
             try:
                 bus_id = check_bus_id(read.text(table, "bus_id", section, ""))
             except ValueError as exc:
@@ -689,18 +715,17 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
                 "pocket", "marks", "mark", "crop", "bus_id", "slot", "offset", "advance",
             },
         )
-    camera = read.table(top, "camera")
-    camera_z = read.number(camera, "z", "camera", None) if "z" in camera else None
-    camera_position = read.point(camera, "position", "camera", 2, None) if "position" in camera else None
-    crop = read.number(camera, "crop", "camera", None, 0.1, 100.0) if "crop" in camera else None
-    max_offset = read.number(camera, "max_offset", "camera", 1.0, 0.01, 20.0)
-    max_turn = read.number(camera, "max_turn", "camera", 15.0, 0.1, 45.0)
-    size_tolerance = read.number(camera, "size_tolerance", "camera", 0.3, 0.0, 1.0)
-    read.done(camera, "camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance"})
-    read.done(top, None, {"name", "description", "port", "gcode", "motion", "vacuum", "top_camera", "feeder", "camera", "bus", "slot"})
-    return Device(
-        id=device_id,
-        name=name or device_id,
+    camera = read.table(top, "up_camera")
+    camera_z = read.number(camera, "z", "up_camera", None) if "z" in camera else None
+    camera_position = read.point(camera, "position", "up_camera", 2, None) if "position" in camera else None
+    crop = read.number(camera, "crop", "up_camera", None, 0.1, 100.0) if "crop" in camera else None
+    max_offset = read.number(camera, "max_offset", "up_camera", 1.0, 0.01, 20.0)
+    max_turn = read.number(camera, "max_turn", "up_camera", 15.0, 0.1, 45.0)
+    size_tolerance = read.number(camera, "size_tolerance", "up_camera", 0.3, 0.0, 1.0)
+    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance"})
+    return GcodeMachine(
+        id=machine.id,
+        name=name or machine.id,
         description=description,
         url=url,
         baud=baud,
@@ -740,39 +765,11 @@ def parse(text: str, device_id: str, where: str | None = None) -> Device:
         crop=crop,
         bus=bus,
         slots=tuple(slots),
+        match=port_words,
+        motors_on=motors_on,
+        motors_off=motors_off,
+        controls=machine.controls,
     )
-
-
-class DeviceStore(TomlStore):
-    """The device profiles in one directory."""
-
-    noun = "device profile"
-    error = DeviceError
-    missing = NotFound
-
-    def check_id(self, item_id: str) -> None:
-        check_id(item_id)
-
-    def parse(self, text: str, item_id: str, where: str | None = None) -> Device:
-        return parse(text, item_id, Path(where).name if where else None)
-
-    def list(self) -> dict:
-        devices, problems = self.read_all()
-        return {"devices": [device.summary() for device in devices], "problems": [{"id": item_id, "problem": problem} for item_id, problem in problems]}
-
-    def patch(self, device_id: str, path: list, value) -> dict:
-        """One value of a profile changed in its text, comments and all, and
-        saved once the whole profile reads. A plain table not in the file
-        yet ([vacuum], [camera]) is added at its end; `None` takes the key
-        out."""
-        with self._writing:
-            text = self.text(device_id)
-            table = path[:-1]
-            if len(table) == 1 and isinstance(table[0], str) and value is not None:
-                header = re.compile(rf"^\s*\[{re.escape(table[0])}\]\s*(#.*)?$", re.MULTILINE)
-                if not header.search(text):
-                    text = text.rstrip("\n") + f"\n\n[{table[0]}]\n"
-            return self.save(device_id, set_value(text, tuple(path), value))
 
 
 # --- the program -------------------------------------------------------------------
@@ -792,14 +789,14 @@ def wrap(degrees: float, period: float = 360.0) -> float:
 
 
 def board_fit(references: list[tuple[tuple[float, float], tuple[float, float]]], angle: float | None) -> Fit:
-    """Where the board lies on the device: the job frame's points taken to
-    the device's, from reference parts whose places were read off it."""
+    """Where the board lies on the machine: the job frame's points taken to
+    the machine's, from reference parts whose places were read off it."""
     if not references:
-        raise DeviceError("the board has no reference on the device: put the nozzle over a part's place and press Here")
+        raise PlanError("the board has no reference on the machine: put the nozzle over a part's place and press Here")
     try:
         return fit_rigid(references, angle if len(references) == 1 else None)
     except ValueError as exc:
-        raise DeviceError(str(exc)) from exc
+        raise PlanError(str(exc)) from exc
 
 
 VISION_NOTE = "; looked at over the up camera: placed where its center lands"
@@ -822,7 +819,7 @@ class Block:
     vacuum once it let go, and what the place lines are made from, so a
     look at the part can make them again where its center lands. `target`
     is the place with the tip turned to 0 over it, `angle` the part's angle
-    on the device there, `turn` the nozzle's turn from the feeder's angle
+    on the machine there, `turn` the nozzle's turn from the feeder's angle
     to it, and `size` the length and width the up camera should see, when
     known."""
 
@@ -883,31 +880,75 @@ def count_code(lines: list[str]) -> int:
     return sum(1 for line in lines if code_of(line))
 
 
-def dwell_line(device: Device, ms: int) -> list[str]:
-    if ms <= 0 or not device.dwell:
+def dwell_line(machine: GcodeMachine, ms: int) -> list[str]:
+    if ms <= 0 or not machine.dwell:
         return []
-    return [device.dwell.replace("{ms}", str(ms)).replace("{s}", num(ms / 1000.0))]
+    return [machine.dwell.replace("{ms}", str(ms)).replace("{s}", num(ms / 1000.0))]
 
 
-def move_z(device: Device, z: float) -> str:
+def move_z(machine: GcodeMachine, z: float) -> str:
     """The nozzle to the height `z`, at the Z feed."""
-    return f"{device.move} {device.axes[2]}{num(z)} F{num(device.feed_z, 0)}"
+    return f"{machine.move} {machine.axes[2]}{num(z)} F{num(machine.feed_z, 0)}"
 
 
-def move_xy(device: Device, point: tuple[float, float] | None, degrees: float | None = None) -> str:
+def move_xy(machine: GcodeMachine, point: tuple[float, float] | None, degrees: float | None = None) -> str:
     """A move at the X/Y feed: the head over `point` when given, the nozzle
     turned to `degrees` (counterclockwise from above) when given."""
-    words = [device.move]
+    words = [machine.move]
     if point is not None:
-        words += [f"{device.axes[0]}{num(point[0])}", f"{device.axes[1]}{num(point[1])}"]
+        words += [f"{machine.axes[0]}{num(point[0])}", f"{machine.axes[1]}{num(point[1])}"]
     if degrees is not None:
-        words.append(device.angle_word(degrees))
-    words.append(f"F{num(device.feed_xy, 0)}")
+        words.append(machine.angle_word(degrees))
+    words.append(f"F{num(machine.feed_xy, 0)}")
     return " ".join(words)
 
 
-def safe_line(device: Device) -> str:
-    return move_z(device, device.safe_z)
+def safe_line(machine: GcodeMachine) -> str:
+    return move_z(machine, machine.safe_z)
+
+
+AXIS_NAMES = ("x", "y", "z", "rotation")
+
+
+def move_line(machine: GcodeMachine, target: dict[str, float], feed: float | None = None) -> str:
+    """One move to the controller's own values in `target` (x, y, z, and the
+    rotation as the controller counts it, not turned for rotation_cw), at
+    `feed`, else at the Z feed for a height alone and the X/Y feed for
+    anything else."""
+    words = [machine.move]
+    for name, letter in zip(AXIS_NAMES, machine.axes):
+        if name in target:
+            words.append(f"{letter}{num(target[name])}")
+    if feed is None:
+        feed = machine.feed_z if set(target) == {"z"} else machine.feed_xy
+    words.append(f"F{num(feed, 0)}")
+    return " ".join(words)
+
+
+def goto_lines(machine: GcodeMachine, here: dict[str, float], want: dict[str, float], feed: float | None = None) -> list[str]:
+    """The lines that take the head from `here` to `want` (x, y, z and the
+    rotation, as the controller counts them; an axis left out stays where
+    it is). Only a move across, X or Y changing, goes up to the safe height
+    first, from either side of it (on a seesaw Z a height above it lowers
+    the other nozzle); the turn goes with the move across, and the height
+    comes last, so a nozzle goes down only over where it is going. `feed`
+    is for the move across; the height goes at the Z feed."""
+    across = {name: want[name] for name in ("x", "y") if name in want and (name not in here or abs(want[name] - here[name]) > 1e-6)}
+    lines: list[str] = []
+    z = here.get("z")
+    if across:
+        if z is None or abs(z - machine.safe_z) > 1e-6:
+            lines.append(safe_line(machine))
+            z = machine.safe_z
+        flat = dict(across)
+        if "rotation" in want:
+            flat["rotation"] = want["rotation"]
+        lines.append(move_line(machine, flat, feed))
+    elif "rotation" in want:
+        lines.append(move_line(machine, {"rotation": want["rotation"]}, feed))
+    if "z" in want and (z is None or abs(want["z"] - z) > 1e-6):
+        lines.append(move_line(machine, {"z": want["z"]}))
+    return lines
 
 
 def pick_label(part: dict, feeder: Feeder, index: int) -> str:
@@ -916,7 +957,7 @@ def pick_label(part: dict, feeder: Feeder, index: int) -> str:
     return f"{part['ref']} {part.get('value', '')} from {feeder.id} #{index + 1}"
 
 
-def pick_lines(device: Device, feeder: Feeder, label: str, point: tuple[float, float, float]) -> list[str]:
+def pick_lines(machine: GcodeMachine, feeder: Feeder, label: str, point: tuple[float, float, float]) -> list[str]:
     """The lines that take a part from its pocket: a comment saying which,
     the feeder's own lines, up to the safe height, over the pocket with the
     nozzle turned to 0, down, the vacuum on, and back up."""
@@ -925,21 +966,21 @@ def pick_lines(device: Device, feeder: Feeder, label: str, point: tuple[float, f
         f"; {label}".rstrip(),
         *advance,
         *feeder.feed,
-        safe_line(device),
-        move_xy(device, (point[0], point[1]), 0.0),
-        move_z(device, point[2]),
-        *([device.wait] if device.wait else []),
-        *device.pick,
-        *dwell_line(device, device.pick_dwell_ms),
-        safe_line(device),
+        safe_line(machine),
+        move_xy(machine, (point[0], point[1]), 0.0),
+        move_z(machine, point[2]),
+        *([machine.wait] if machine.wait else []),
+        *machine.pick,
+        *dwell_line(machine, machine.pick_dwell_ms),
+        safe_line(machine),
     ]
 
 
-def check_lines(device: Device, held: bool) -> list[str]:
+def check_lines(machine: GcodeMachine, held: bool) -> list[str]:
     """The vacuum sensor read with the head at rest: after a pick, a part
     should be held; after a place, the nozzle should be empty (read only
     when the profile says what empty reads)."""
-    vacuum = device.vacuum
+    vacuum = machine.vacuum
     if vacuum is None:
         return []
     span = vacuum.part_on if held else vacuum.part_off
@@ -947,30 +988,30 @@ def check_lines(device: Device, held: bool) -> list[str]:
         return []
     what = "a part held" if held else "an empty nozzle"
     *first, last = vacuum.read
-    return [*([device.wait] if device.wait else []), *first, f"{last} ; vacuum: {what} reads {num(span[0])} to {num(span[1])}"]
+    return [*([machine.wait] if machine.wait else []), *first, f"{last} ; vacuum: {what} reads {num(span[0])} to {num(span[1])}"]
 
 
-def place_lines(device: Device, point: tuple[float, float], turn: float, place_z: float) -> list[str]:
+def place_lines(machine: GcodeMachine, point: tuple[float, float], turn: float, place_z: float) -> list[str]:
     """The lines that put a held part down: across at the safe height,
     turned to its angle, down, the vacuum off, and back up."""
     return [
-        move_xy(device, point, turn),
-        move_z(device, place_z),
-        *([device.wait] if device.wait else []),
-        *device.place,
-        *dwell_line(device, device.place_dwell_ms),
-        safe_line(device),
+        move_xy(machine, point, turn),
+        move_z(machine, place_z),
+        *([machine.wait] if machine.wait else []),
+        *machine.place,
+        *dwell_line(machine, machine.place_dwell_ms),
+        safe_line(machine),
     ]
 
 
-def feeder_for(device: Device, part: dict) -> Feeder | None:
+def feeder_for(machine: GcodeMachine, part: dict) -> Feeder | None:
     """The feeder a part comes from: the first that names it among its
     refs, else the first whose words its value and footprint hold."""
     ref = str(part.get("ref", ""))
-    named = next((f for f in device.feeders if f.refs and ref in f.refs), None)
+    named = next((f for f in machine.feeders if f.refs and ref in f.refs), None)
     if named is not None:
         return named
-    return next((f for f in device.feeders if not f.refs and f.holds(str(part.get("value", "")), str(part.get("footprint", "")))), None)
+    return next((f for f in machine.feeders if not f.refs and f.holds(str(part.get("value", "")), str(part.get("footprint", "")))), None)
 
 
 def expected_size(feeder: Feeder, part: dict) -> tuple[float, float] | None:
@@ -985,7 +1026,7 @@ def expected_size(feeder: Feeder, part: dict) -> tuple[float, float] | None:
 
 
 def plan(
-    device: Device,
+    machine: GcodeMachine,
     parts: list[dict],
     fit: Fit,
     taken: dict[str, int],
@@ -994,10 +1035,10 @@ def plan(
     vision_ready: bool = False,
     runout: tuple[float, float] = (0.0, 0.0),
 ) -> Plan:
-    """The placement program for a board job's parts on the device.
+    """The placement program for a board job's parts on the machine.
 
     `parts` are the job's components (job frame), `fit` takes them to the
-    device, `taken` is how many parts each feeder has given already, and
+    machine, `taken` is how many parts each feeder has given already, and
     `refs` the parts to place, every one that can be by default. A part on
     the back, one not to be fitted, one no feeder holds (or whose feeder is
     empty), and one whose feeder wants the up camera while the nozzle has
@@ -1027,7 +1068,7 @@ def plan(
         if part.get("side") == "back":
             skipped.append({"ref": ref, "reason": "on the back"})
             continue
-        feeder = feeder_for(device, part)
+        feeder = feeder_for(machine, part)
         if feeder is None:
             skipped.append({"ref": ref, "reason": "no feeder holds it"})
             continue
@@ -1045,8 +1086,8 @@ def plan(
         qx, qy = fit.apply((float(part["x"]), float(part["y"])))
         angle = wrap(float(part.get("rotation", 0.0)) + fit.rotation)
         turn = wrap(angle - feeder.rotation)
-        place_z = feeder.place_z if feeder.place_z is not None else device.place_z
-        pick = pick_lines(device, feeder, pick_label(part, feeder, index), feeder.place_of(index if feeder.count > 0 else 0))
+        place_z = feeder.place_z if feeder.place_z is not None else machine.place_z
+        pick = pick_lines(machine, feeder, pick_label(part, feeder, index), feeder.place_of(index if feeder.count > 0 else 0))
         notes = []
         if feeder.marks and feeder.id not in marked:
             marked.add(feeder.id)
@@ -1060,26 +1101,26 @@ def plan(
                 feeder=feeder.id,
                 index=index,
                 pick=[pick[0], *notes, *pick[1:]],
-                place=place_lines(device, (qx + shift[0], qy + shift[1]), turn, place_z),
+                place=place_lines(machine, (qx + shift[0], qy + shift[1]), turn, place_z),
                 target=(qx, qy),
                 turn=turn,
                 place_z=place_z,
                 vision=feeder.vision,
-                check=check_lines(device, held=True),
-                release=check_lines(device, held=False),
+                check=check_lines(machine, held=True),
+                release=check_lines(machine, held=False),
                 angle=angle,
                 size=expected_size(feeder, part),
-                crop=feeder.crop if feeder.crop is not None else device.crop,
+                crop=feeder.crop if feeder.crop is not None else machine.crop,
             )
         )
-    head = [f"; {title or 'placement'} on {device.name}: {len(blocks)} parts", *device.init]
-    tail = [*([device.wait] if device.wait else []), *device.end]
+    head = [f"; {title or 'placement'} on {machine.name}: {len(blocks)} parts", *machine.init]
+    tail = [*([machine.wait] if machine.wait else []), *machine.end]
     return Plan(head=head, blocks=blocks, tail=tail, skipped=skipped, fit=fit)
 
 
-def board_goto(device: Device, fit: Fit, part: dict) -> list[str]:
-    """The nozzle up to the safe height and over a part's place on the device."""
-    return [safe_line(device), move_xy(device, fit.apply((float(part["x"]), float(part["y"]))))]
+def board_goto(machine: GcodeMachine, fit: Fit, part: dict) -> list[str]:
+    """The nozzle up to the safe height and over a part's place on the machine."""
+    return [safe_line(machine), move_xy(machine, fit.apply((float(part["x"]), float(part["y"]))))]
 
 
 POSITION = re.compile(r"\b([A-Z]):\s*(-?\d+(?:\.\d+)?)")

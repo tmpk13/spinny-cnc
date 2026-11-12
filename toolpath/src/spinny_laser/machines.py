@@ -31,6 +31,16 @@ The sections and keys, with the firmware setting each one sets:
               dwell_ms: the host's own settings, not the firmware's
     [camera]  device, size, fps, pcbv, side, finish, offset, roll, mm_per_px: a camera on the head, the backend's
     [controls] the page's jog panel and readout (spinny_laser.controls); left out, drawn from the kinematics, tool and focus axis
+
+A machine whose own controller takes G-code (a pick and place machine's
+Marlin, Smoothieware, RepRapFirmware or Grbl) is a file too, with
+`controller = "gcode"`: an X/Y machine with the nozzle's height as Z and
+its turn as A, the tool a vacuum nozzle. None of this project's firmware
+settings are its; its own tables say how to talk to it and how it places
+parts, and the backend reads them (spinny_web.openpnp):
+
+    controller = "gcode", and kinematics (cartesian) and tool (nozzle) only as those
+    [port] [gcode] [motion] [vacuum] [up_camera] [top_camera] [bus] [[slot]] [[feeder]], and [controls]
 """
 
 from __future__ import annotations
@@ -45,6 +55,16 @@ from spinny_laser.controls import parse_controls
 
 KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle", "dispenser")
+# Who drives the machine: this project's firmware, or the machine's own
+# controller taking G-code a line at a time.
+SPINNY = "spinny"
+GCODE = "gcode"
+CONTROLLERS = (SPINNY, GCODE)
+# A G-code machine's tool: a vacuum nozzle that picks and places parts.
+NOZZLE = "nozzle"
+# The tables of a G-code machine file the backend reads; this module keeps
+# them as written.
+GCODE_SECTIONS = ("port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder")
 
 # The firmware's defaults, in the order it lists them. A file sets what it
 # names and leaves the rest here, so a machine is always all 83 settings.
@@ -191,6 +211,11 @@ class Machine:
     controls: dict
     # What the file says of the camera, only the keys it names.
     camera: dict = field(default_factory=dict)
+    # This project's firmware (spinny), or a controller of the machine's own
+    # taking G-code (gcode), whose settings are none of the firmware's.
+    controller: str = SPINNY
+    # A G-code machine's own tables (GCODE_SECTIONS) as the file has them.
+    gcode: dict = field(default_factory=dict)
 
     def summary(self) -> dict:
         return {
@@ -200,6 +225,7 @@ class Machine:
             "kinematics": self.kinematics,
             "tool": self.tool,
             "focus": self.focus,
+            "controller": self.controller,
         }
 
     def document(self) -> dict:
@@ -232,6 +258,12 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     top = dict(data)
     name = reader.text(top, "name", machine_id)
     description = reader.text(top, "description", "")
+    controller = reader.choice(top, "controller", CONTROLLERS, SPINNY)
+    if controller == GCODE:
+        return _parse_gcode_machine(reader, top, machine_id, name, description)
+    for section in GCODE_SECTIONS:
+        if section in top:
+            raise reader.fail(None, section, 'is a G-code machine\'s: add controller = "gcode" for a machine whose own controller takes G-code')
     kinematics = reader.choice(top, "kinematics", KINEMATICS, "polar")
     tool = reader.choice(top, "tool", TOOLS, "laser")
     settings["cartesian"] = int(kinematics == "cartesian")
@@ -402,7 +434,9 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     reader.done(host_table, "host", {*HOST_KEYS, "speed_control"})
     camera = _parse_camera(reader, reader.table(top, "camera"))
     controls = parse_controls(reader, top, kinematics, tool, bool(settings["h_axis"]))
-    reader.done(top, None, {"name", "description", "kinematics", "tool", *AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"})
+    reader.done(
+        top, None, {"name", "description", "controller", "kinematics", "tool", *AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"}
+    )
 
     return Machine(
         id=machine_id,
@@ -415,6 +449,34 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         host=host,
         controls=controls,
         camera=camera,
+    )
+
+
+def _parse_gcode_machine(reader: "_Reader", top: dict, machine_id: str, name: str, description: str) -> Machine:
+    """A machine whose own controller takes G-code: an X/Y machine with the
+    nozzle's height as Z (the focus joint) and its turn as A. This
+    project's firmware sections mean nothing to it and are refused; its
+    own tables are kept for the backend to read, and its controls are
+    read here like any machine's."""
+    kinematics = reader.choice(top, "kinematics", ("cartesian",), "cartesian")
+    tool = reader.choice(top, "tool", (NOZZLE,), NOZZLE)
+    for section in (*AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera"):
+        if section in top:
+            raise reader.fail(None, section, "is for a machine on this project's firmware: a G-code machine's own controller keeps its settings")
+    controls = parse_controls(reader, top, kinematics, tool, True)
+    reader.done(top, None, {"name", "description", "controller", "kinematics", "tool", "controls", *GCODE_SECTIONS})
+    return Machine(
+        id=machine_id,
+        name=name,
+        description=description,
+        kinematics=kinematics,
+        tool=tool,
+        focus=True,
+        settings={},
+        host={},
+        controls=controls,
+        controller=GCODE,
+        gcode={section: top[section] for section in GCODE_SECTIONS if section in top},
     )
 
 
@@ -566,7 +628,11 @@ def close(a: float, b: float) -> bool:
 
 
 def matches(machine: Machine, values: dict) -> bool:
-    """The live settings are this machine's, every one of them."""
+    """The live settings are this machine's, every one of them. A G-code
+    machine has none of this project's firmware settings, so no board's
+    are its."""
+    if machine.controller != SPINNY:
+        return False
     for name, expected in machine.settings.items():
         value = values.get(name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not close(float(value), float(expected)):
@@ -585,8 +651,8 @@ def matching(machines: list[Machine], values: dict) -> Machine | None:
 
 def alike(machine: Machine, kinematics: str, tool: str, focus: bool) -> bool:
     """The file describes this kind of machine: the kinematics, the tool
-    and whether a focus axis is fitted."""
-    return machine.kinematics == kinematics and machine.tool == tool and machine.focus == focus
+    and whether a focus axis is fitted, on this project's firmware."""
+    return machine.controller == SPINNY and machine.kinematics == kinematics and machine.tool == tool and machine.focus == focus
 
 
 def controls_file(machines: list[Machine], values: dict, kinematics: str, tool: str, focus: bool, loaded: str | None = None) -> Machine | None:
@@ -610,6 +676,8 @@ def cli_defaults(machine: Machine) -> dict:
     """What a machine file says for the gcode tools' machine options: the
     axis rates for the estimate, the power scale, and the host's chord
     tolerance when it names one."""
+    if machine.controller != SPINNY:
+        raise MachineError(f"{machine.id} is a G-code machine: the gcode tools' options are a machine's on this project's firmware")
     defaults = {
         "rotary_max_rate": float(machine.settings["a_rate"]),
         "rotary_rapid": float(machine.settings["a_rate"]),

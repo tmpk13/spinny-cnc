@@ -1,8 +1,8 @@
-// The G-code device's feeders, as its profile has them: where each one
+// A G-code machine's feeders, as its machine file has them: where each one
 // presents its parts, how many it has given, a count started again, and,
 // for a feeder on the bus (Opulo's Photon feeders), one advance to see its
-// tape move. With a [bus] in the profile, a scan lists the feeders that
-// answer by address and id: a profile feeder found at an address takes it
+// tape move. With a [bus] in the file, a scan lists the feeders that
+// answer by address and id: a file's feeder found at an address takes it
 // as its slot, and a slot's place is taken with the nozzle over the point
 // a feeder there presents its part at.
 
@@ -10,9 +10,8 @@ import { askConfirm } from "../confirm.ts";
 import { button, el, lockFor, replace } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BusFeeder, DeviceDocument, FeederSummary } from "../types.ts";
+import type { BusFeeder, GcodeDocument, FeederSummary } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
-import { loadDeviceDoc } from "./device.ts";
 
 /** Where a feeder presents its parts, in words. */
 export function feederPlaceText(feeder: FeederSummary): string {
@@ -23,8 +22,8 @@ export function feederPlaceText(feeder: FeederSummary): string {
     return "slot found on the bus when a run starts";
 }
 
-/** The profile's text with a [[slot]] for an address at a place: the one there changed, else a new one at the end. */
-export function withSlot(text: string, doc: DeviceDocument, address: number, at: [number, number, number]): string {
+/** The machine file's text with a [[slot]] for an address at a place: the one there changed, else a new one at the end. */
+export function withSlot(text: string, doc: GcodeDocument, address: number, at: [number, number, number]): string {
     const place = `at = [${at.map((value) => formatFixed(value, 3)).join(", ")}]`;
     const index = (doc.slots ?? []).findIndex((slot) => slot.address === address);
     if (index < 0) {
@@ -53,7 +52,7 @@ export function withSlot(text: string, doc: DeviceDocument, address: number, at:
     return text;
 }
 
-export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
+export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     const list = el("table", { class: "pnp-parts device-feeders" });
     const scan = button("Scan bus", () => scanBus(), "btn");
     scan.title = "ask every address on the feeder bus which feeder is there";
@@ -70,11 +69,11 @@ export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
     const feedButtons = new Map<string, HTMLButtonElement>();
 
     async function scanBus(): Promise<void> {
-        const answer = await ctx.call(ctx.api.deviceBusScan());
+        const answer = await ctx.call(ctx.api.pnpBusScan());
         if (answer) {
             const { feeders, ...state } = answer;
             found = feeders;
-            ctx.store.set({ device: state });
+            ctx.store.set({ placing: state });
             drawScan(ctx.store.get());
             if (feeders.length === 0) {
                 ctx.toast("info", "no feeder answered on the bus");
@@ -83,36 +82,39 @@ export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
     }
 
     async function keepSlot(index: number, address: number): Promise<void> {
-        const id = ctx.store.get().device?.profile;
+        const id = ctx.store.get().placing?.machine;
         if (!id) {
             return;
         }
-        const file = await ctx.call(ctx.api.patchDeviceFile(id, ["feeder", index, "slot"], address));
-        if (file) {
-            ctx.store.set({ deviceDoc: { id, ...file } });
+        if (await ctx.call(ctx.api.patchMachineFile(id, ["feeder", index, "slot"], address))) {
+            await ctx.refreshPlacing();
         }
     }
 
     async function slotHere(address: number): Promise<void> {
         const state = ctx.store.get();
-        const doc = state.deviceDoc;
-        const id = state.device?.profile;
+        const doc = state.placing?.document ?? null;
+        const id = state.placing?.machine;
         if (!doc || !id) {
             return;
         }
         if (!(await askConfirm(`Is the nozzle over the point the feeder at address ${address} presents its part at? Its slot's place is taken from where the head is.`, "Take it"))) {
             return;
         }
-        const read = await ctx.call(ctx.api.devicePosition());
-        const position = read?.position;
-        if (!read || position?.x === undefined || position.y === undefined) {
+        // The head's place read now, the readout's joints: r is X, z is Y, h is Z.
+        if ((await ctx.call(ctx.api.realtime("status").then(() => true))) !== true) {
             return;
         }
-        ctx.store.set({ device: read });
-        const text = withSlot(doc.text, doc.document, address, [position.x, position.y, position.z ?? 0]);
-        const file = await ctx.call(ctx.api.saveDeviceFile(id, text));
-        if (file) {
-            ctx.store.set({ deviceDoc: { id, ...file } });
+        const snapshot = await ctx.call(ctx.api.state());
+        const joint = snapshot?.machine?.joint;
+        const file = await ctx.call(ctx.api.machineFile(id));
+        if (!snapshot || !joint || !file) {
+            return;
+        }
+        ctx.store.set({ snapshot });
+        const text = withSlot(file.text, doc, address, [joint.r, joint.z, joint.h ?? 0]);
+        if (await ctx.call(ctx.api.saveMachineFile(id, text))) {
+            await ctx.refreshPlacing();
         }
     }
 
@@ -120,7 +122,7 @@ export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
     // changes, so a press on its buttons is not lost to a rebuild.
     let scanKey = "";
     function drawScan(state: AppState): void {
-        const doc = state.deviceDoc?.document;
+        const doc = state.placing?.document;
         const feeders = doc?.feeders ?? [];
         const key = JSON.stringify([found, feeders.map((feeder) => [feeder.id, feeder.bus_id, feeder.slot]), doc?.slots ?? []]);
         if (key === scanKey) {
@@ -135,14 +137,14 @@ export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
                 actions.push(button(`Keep slot ${entry.address}`, () => keepSlot(index, entry.address), "btn btn-quiet btn-small"));
             }
             actions.push(button(entry.slot ? "Slot here again" : "Slot here", () => slotHere(entry.address), "btn btn-quiet btn-small"));
-            return el("li", {}, `address ${entry.address}: ${entry.id}${feeder ? `, feeder ${feeder.id}` : ", no feeder in the profile has this id"}${entry.slot ? "" : ", no slot place yet"} `, ...actions);
+            return el("li", {}, `address ${entry.address}: ${entry.id}${feeder ? `, feeder ${feeder.id}` : ", no feeder in the machine file has this id"}${entry.slot ? "" : ", no slot place yet"} `, ...actions);
         }));
     }
 
     let drawn = "";
     function render(state: AppState): void {
-        const doc = state.deviceDoc?.document ?? null;
-        const device = state.device;
+        const doc = state.placing?.document ?? null;
+        const device = state.placing;
         const feeders = doc?.feeders ?? [];
         const key = JSON.stringify([feeders, device?.taken ?? {}, doc?.bus ?? false]);
         if (key !== drawn) {
@@ -153,14 +155,14 @@ export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
                 el("tbody", {}, ...feeders.map((feeder) => {
                     const actions: HTMLElement[] = [];
                     if (feeder.bus_id) {
-                        const feed = button("Feed", () => into(ctx, "device", ctx.api.deviceBusFeed(feeder.id)), "btn btn-quiet btn-small");
+                        const feed = button("Feed", () => into(ctx, "placing", ctx.api.pnpBusFeed(feeder.id)), "btn btn-quiet btn-small");
                         feed.title = `advance its tape ${feeder.advance ?? 4} mm`;
                         feedButtons.set(feeder.id, feed);
                         actions.push(feed);
                     }
                     actions.push(button("Count again", async () => {
                         if (await askConfirm(`Count feeder ${feeder.id} from its first part again?`, "Count again")) {
-                            await into(ctx, "device", ctx.api.deviceResetFeeders(feeder.id));
+                            await into(ctx, "placing", ctx.api.pnpResetFeeders(feeder.id));
                         }
                     }, "btn btn-quiet btn-small"));
                     return el("tr", {},
@@ -173,22 +175,21 @@ export function mountDeviceFeeders(root: HTMLElement, ctx: Ctx): void {
                 })),
             );
         }
-        note.textContent = !doc ? "Pick a device profile." : feeders.length === 0 ? "The profile has no feeders: add [[feeder]] tables on the Config page." : "";
+        note.textContent = !doc ? "No G-code machine to place with: connect one from the top bar." : feeders.length === 0 ? "Its machine file has no feeders: add [[feeder]] tables on the Config page." : "";
         note.classList.toggle("hidden", note.textContent === "");
         listBox.classList.toggle("hidden", feeders.length === 0);
         busBox.classList.toggle("hidden", doc?.bus !== true);
         const connected = device?.connected === true;
         const busy = device?.running === true || state.pnp?.routine?.state === "running" || device?.top?.routine?.state === "running";
-        lockFor(scan, [!connected, "connect the device first"], [busy, "the device is busy"]);
+        lockFor(scan, [!connected, "connect the machine first"], [busy, "the machine is busy"]);
         for (const feed of feedButtons.values()) {
-            lockFor(feed, [!connected, "connect the device first"], [busy, "the device is busy"]);
+            lockFor(feed, [!connected, "connect the machine first"], [busy, "the machine is busy"]);
         }
     }
 
     ctx.store.subscribe((state) => {
         render(state);
         drawScan(state);
-    }, ["device", "deviceDoc", "pnp"]);
+    }, ["placing", "pnp"]);
     render(ctx.store.get());
-    void loadDeviceDoc(ctx);
 }

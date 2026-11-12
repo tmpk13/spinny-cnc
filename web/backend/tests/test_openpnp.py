@@ -1,5 +1,5 @@
-"""A G-code pick and place machine: its profile, the board's fit on it,
-the placement program, the link that sends it, and the routes."""
+"""A G-code pick and place machine: its machine file, the board's fit on
+it, the placement program, the link that sends it, and the routes."""
 
 from __future__ import annotations
 
@@ -11,14 +11,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from device_fakes import DeviceUpCamera, FakeMarlin, wait_for
+from gcode_rig import connect, gcode_file, rig_backend
 
-from spinny_web.app import Backend, create_app
-from spinny_web.gcode_device import DeviceLinkError, GcodeDevice, RunContext
+from spinny_laser.machines import MachineError, check_id
+from spinny_web.app import create_app
+from spinny_web.gcode_link import GcodeLink, GcodeLinkError, RunContext
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import VISION_NOTE, DeviceError, board_fit, check_id, count_code, parse, plan, read_position, wrap
+from spinny_web.machines import MachineStore
+from spinny_web.openpnp import VISION_NOTE, PlanError, board_fit, count_code, parse, plan, read_position, wrap
 
 REPO = Path(__file__).resolve().parents[3]
-SHIPPED = REPO / "pnp" / "openpnp-marlin.toml"
+SHIPPED = REPO / "machines" / "openpnp-marlin.toml"
 
 PROFILE = """name = "test machine"
 [port]
@@ -53,17 +56,17 @@ feed = "M600 N1"
 
 
 def device():
-    return parse(PROFILE, "test")
+    return parse(gcode_file(PROFILE), "test")
 
 
 def part(ref: str, value: str, footprint: str, x: float, y: float, rotation: float = 0.0, **extra) -> dict:
     return {"ref": ref, "value": value, "footprint": footprint, "side": "front", "x": x, "y": y, "rotation": rotation, "dnp": False, **extra}
 
 
-# --- the profile -------------------------------------------------------------------
+# --- the machine file -------------------------------------------------------------------
 
 
-def test_the_shipped_profile_reads():
+def test_the_shipped_file_reads():
     shipped = parse(SHIPPED.read_text(encoding="utf-8"), "openpnp-marlin")
     assert shipped.axes == ("X", "Y", "Z", "A") and shipped.wait == "M400" and shipped.pick == ("M106",)
     assert shipped.feeders and shipped.feeders[0].count == 50
@@ -84,23 +87,30 @@ def test_the_shipped_profile_reads():
         (('at = [30.0, 20.0, -2.5]', 'at = [30.0, 20.0]'), "[feeder 2] at must be 3 numbers"),
     ],
 )
-def test_a_profile_that_does_not_read_names_the_key(change, words):
+def test_a_file_that_does_not_read_names_the_key(change, words):
     old, new = change
     assert old in PROFILE
-    text = PROFILE.replace(old, new, 1)
+    text = gcode_file(PROFILE.replace(old, new, 1))
     if words is None:
         parse(text, "test")
         return
-    with pytest.raises(DeviceError) as error:
+    with pytest.raises(MachineError) as error:
         parse(text, "test")
     assert words in str(error.value)
 
 
-def test_a_device_id_is_the_whole_text():
+def test_a_machine_id_is_the_whole_text():
     # A line break after an id is not part of a file name.
     assert check_id("openpnp-marlin") == "openpnp-marlin"
-    with pytest.raises(DeviceError, match="not a device id"):
+    with pytest.raises(MachineError):
         check_id("openpnp-marlin\n")
+
+
+def test_a_file_of_this_projects_firmware_is_no_g_code_machine():
+    with pytest.raises(MachineError, match="is not a G-code machine"):
+        parse('name = "laser"\n', "laser")
+    with pytest.raises(MachineError, match='add controller = "gcode"'):
+        parse(PROFILE, "test")
 
 
 def test_a_position_reads_from_each_firmwares_answer():
@@ -115,7 +125,7 @@ def test_the_board_lies_on_the_device_by_its_references():
     assert one.apply((10.0, 0.0)) == pytest.approx((100.0, 60.0))
     two = board_fit([((0.0, 0.0), (100.0, 50.0)), ((10.0, 0.0), (100.0, 60.0))], None)
     assert two.rotation == pytest.approx(90.0) and two.apply((0.0, 10.0)) == pytest.approx((90.0, 50.0))
-    with pytest.raises(DeviceError):
+    with pytest.raises(PlanError):
         board_fit([], None)
     assert wrap(270.0) == -90.0 and wrap(-180.0) == 180.0 and wrap(180.0) == 180.0
 
@@ -176,8 +186,8 @@ def test_the_program_picks_from_the_feeders_and_places_on_the_fitted_board():
 # --- the link --------------------------------------------------------------------------
 
 
-def connected(fake: FakeMarlin) -> GcodeDevice:
-    link = GcodeDevice(lambda: None, opener=lambda url, baud: fake)
+def connected(fake: FakeMarlin) -> GcodeLink:
+    link = GcodeLink(lambda: None, opener=lambda url, baud: fake)
     link.connect("socket://127.0.0.1:9", 115200, 0, ("G21", "G90"), 2.0)
     return link
 
@@ -187,14 +197,14 @@ def test_a_line_and_its_answer_and_a_refusal_that_does_not_answer_the_next_line(
     link = connected(fake)
     assert fake.lines == ["G21", "G90"]
     assert link.command("M114", 2.0)[0].startswith("X:12.50")
-    with pytest.raises(DeviceLinkError, match="Unknown command"):
+    with pytest.raises(GcodeLinkError, match="Unknown command"):
         link.command("BAD 1", 2.0)
     # The ok that came after the refusal was taken with it.
     assert link.command("M114", 2.0)[-1] == "ok" and len(link.command("G28", 2.0)) == 2
     # Comments go nowhere; a quiet device times out.
     assert link.command("; just words", 2.0) == []
     fake.silent = True
-    with pytest.raises(DeviceLinkError, match="no answer"):
+    with pytest.raises(GcodeLinkError, match="no answer"):
         link.command("G4 P1", 0.3)
     link.disconnect()
     assert fake.closed and not link.connected
@@ -242,12 +252,8 @@ def test_a_stop_ends_the_program_after_the_line_in_flight_and_sends_the_quicksto
 
 @pytest.fixture
 def client(tmp_path):
-    pnp_dir = tmp_path / "pnp"
-    pnp_dir.mkdir()
-    (pnp_dir / "test.toml").write_text(PROFILE, encoding="utf-8")
-    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json", pnp_dir=pnp_dir)
     fake = FakeMarlin(position=(100.0, 50.0, 0.0))
-    backend.pnp_device = GcodeDevice(backend.publish_pnp_device, opener=lambda url, baud: fake)
+    backend = rig_backend(tmp_path, {"test": PROFILE}, lambda url, baud: fake)
     app = create_app(backend, frontend=tmp_path / "no-dist")
     with TestClient(app) as client:
         client.backend = backend
@@ -281,63 +287,60 @@ def board_job(client) -> str:
     return job.id
 
 
-def test_the_profiles_are_listed_read_checked_and_saved(client, tmp_path):
-    listing = client.get("/api/pnp/devices").json()
-    assert [device["id"] for device in listing["devices"]] == ["test"] and listing["problems"] == []
-    assert client.get("/api/pnp/devices/test").json()["document"]["name"] == "test machine"
-    checked = client.post("/api/pnp/devices/test/check", json={"text": PROFILE.replace("safe_z = 5", "")}).json()
+def test_the_files_are_listed_read_checked_and_saved(client, tmp_path):
+    listing = client.get("/api/machines").json()
+    assert [machine["id"] for machine in listing["machines"]] == ["test"] and listing["problems"] == []
+    assert client.get("/api/machines/test").json()["document"]["name"] == "test machine"
+    checked = client.post("/api/machines/test/check", json={"text": gcode_file(PROFILE.replace("safe_z = 5", ""))}).json()
     assert checked["document"] is None and "safe_z is needed" in checked["problems"][0]
-    assert client.put("/api/pnp/devices/test", json={"text": "nope = 1"}).status_code == 400
-    assert client.put("/api/pnp/devices/test", json={"text": PROFILE.replace("test machine", "renamed")}).status_code == 200
-    assert "renamed" in (tmp_path / "pnp" / "test.toml").read_text()
-    assert client.get("/api/pnp/devices/none").status_code == 404
+    assert client.put("/api/machines/test", json={"text": 'controller = "gcode"\nnope = 1'}).status_code == 400
+    assert client.put("/api/machines/test", json={"text": gcode_file(PROFILE.replace("test machine", "renamed"))}).status_code == 200
+    assert "renamed" in (tmp_path / "machines" / "test.toml").read_text()
+    assert client.get("/api/machines/none").status_code == 404
 
 
 def test_a_board_is_referenced_planned_sent_and_its_feeders_counted(client):
     job_id = board_job(client)
-    assert client.post("/api/pnp/device/connect").status_code == 400
-    assert client.put("/api/pnp/device", json={"profile": "test"}).json()["profile"] == "test"
-    response = client.post("/api/pnp/device/connect")
-    assert response.status_code == 200, response.text
-    assert response.json()["connected"] is True and client.fake.lines == ["G21", "G90"]
+    assert connect(client, "test")["connected"] is True and client.fake.lines == ["G21", "G90", "M115", "M114"]
     # No reference yet: nothing can be placed.
-    assert "reference" in client.post("/api/pnp/device/plan", json={"job": job_id}).json()["detail"]
-    # R1 is where the device's nozzle is (it reports X100 Y50), R2 typed.
-    state = client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R1"}).json()
+    assert "reference" in client.post("/api/pnp/plan", json={"job": job_id}).json()["detail"]
+    # R1 is where the machine's nozzle is (it reports X100 Y50), R2 typed.
+    state = client.post("/api/pnp/references", json={"job": job_id, "ref": "R1"}).json()
     assert state["references"] == [{"job": job_id, "ref": "R1", "at": [100.0, 50.0], "by": "nozzle"}] and state["position"]["x"] == 100.0
-    state = client.post("/api/pnp/device/references", json={"job": job_id, "ref": "R2", "at": [100.0, 60.0]}).json()
+    state = client.post("/api/pnp/references", json={"job": job_id, "ref": "R2", "at": [100.0, 60.0]}).json()
     assert len(state["references"]) == 2
-    planned = client.post("/api/pnp/device/plan", json={"job": job_id}).json()
+    planned = client.post("/api/pnp/plan", json={"job": job_id}).json()
     assert [entry["ref"] for entry in planned["parts"]] == ["R1", "R2"] and planned["fit"]["rotation"] == pytest.approx(90.0)
-    # R2 is turned 90 on the board and the board 90 on the device; the feeder holds parts at 90.
+    # R2 is turned 90 on the board and the board 90 on the machine; the feeder holds parts at 90.
     assert "G0 X100 Y60 A90 F3000" in planned["text"]
-    download = client.get(f"/api/pnp/device/program.gcode?job={job_id}&refs=R2")
+    download = client.get(f"/api/pnp/program.gcode?job={job_id}&refs=R2")
     assert download.headers["content-disposition"].startswith("attachment") and "R1" not in download.text and "; R2 10k" in download.text
     # Sent: both parts, and the feeder has given two.
     before = len(client.fake.lines)
-    assert client.post("/api/pnp/device/run", json={"job": job_id}).status_code == 200
+    assert client.post("/api/pnp/run", json={"job": job_id}).status_code == 200
     deadline = time.monotonic() + 5.0
-    while client.get("/api/pnp/device").json()["running"] and time.monotonic() < deadline:
+    while client.get("/api/pnp/placing").json()["running"] and time.monotonic() < deadline:
         time.sleep(0.02)
-    state = client.get("/api/pnp/device").json()
+    state = client.get("/api/pnp/placing").json()
     assert state["progress"]["state"] == "done" and state["progress"]["placed"] == ["R1", "R2"]
     assert state["taken"] == {"res": 2} and len(client.fake.lines) > before
     # The strip is used up; counted from its first part again, it plans.
-    assert client.post("/api/pnp/device/plan", json={"job": job_id}).json()["parts"] == []
-    assert client.post("/api/pnp/device/feeders/reset", json={"feeder": "res"}).json()["taken"] == {}
+    assert client.post("/api/pnp/plan", json={"job": job_id}).json()["parts"] == []
+    assert client.post("/api/pnp/feeders/reset", json={"feeder": "res"}).json()["taken"] == {}
     # Over a part, a home, a raw line, and a refusal.
     lines = len(client.fake.lines)
-    assert client.post("/api/pnp/device/goto", json={"job": job_id, "ref": "R2"}).status_code == 200
-    assert client.fake.lines[lines:] == ["G0 Z5 F600", "G0 X100 Y60 F3000"]
-    assert client.post("/api/pnp/device/home").json()["homed"] is True
-    assert client.post("/api/pnp/device/command", json={"line": "M114"}).json()["reply"][-1] == "ok"
-    assert client.post("/api/pnp/device/command", json={"line": "BAD"}).status_code == 502
-    assert client.post("/api/pnp/device/command", json={"line": "G0\nG28"}).status_code == 400
-    assert client.delete(f"/api/pnp/device/references?job={job_id}&ref=R2").json()["references"] == [{"job": job_id, "ref": "R1", "at": [100.0, 50.0], "by": "nozzle"}]
-    assert client.post("/api/pnp/device/disconnect").json()["connected"] is False
+    assert client.post("/api/pnp/goto", json={"job": job_id, "ref": "R2"}).status_code == 200
+    assert client.fake.lines[lines:] == ["G0 Z5 F600", "G0 X100 Y60 F3000", "M400", "M114"]
+    client.post("/api/home", json={})
+    assert client.get("/api/pnp/placing").json()["homed"] is True
+    assert client.post("/api/command", json={"line": "M114"}).json()["lines"][-1] == "ok"
+    assert client.post("/api/command", json={"line": "BAD"}).status_code == 502
+    assert client.post("/api/command", json={"line": "G0\nG28"}).status_code == 400
+    assert client.delete(f"/api/pnp/references?job={job_id}&ref=R2").json()["references"] == [{"job": job_id, "ref": "R1", "at": [100.0, 50.0], "by": "nozzle"}]
+    assert client.post("/api/disconnect").json()["connected"] is False
 
 
-# --- trays, feeders told to advance, and the up camera on the device ---------------------
+# --- trays, feeders told to advance, and the up camera on the machine ---------------------
 
 TRAY = PROFILE.replace(
     'feed = "M600 N1"',
@@ -347,14 +350,14 @@ TRAY = PROFILE.replace(
 
 
 def test_a_tray_is_taken_row_by_row_and_a_feeder_told_to_advance_gets_every_line():
-    device = parse(TRAY, "test")
+    device = parse(gcode_file(TRAY), "test")
     ic = device.feeders[2]
     assert [ic.place_of(index)[:2] for index in (0, 2, 3, 5)] == [(50.0, 10.0), (70.0, 10.0), (50.0, 22.0), (70.0, 22.0)]
     assert device.feeders[1].feed == ("M600 N1", "M400") and device.camera_z == -4.0
-    with pytest.raises(DeviceError, match="needs its count"):
-        parse(TRAY.replace("count = 6\n", ""), "test")
-    with pytest.raises(DeviceError, match="row_pitch is for a tray"):
-        parse(TRAY.replace("columns = 3\n", ""), "test")
+    with pytest.raises(MachineError, match="needs its count"):
+        parse(gcode_file(TRAY.replace("count = 6\n", "")), "test")
+    with pytest.raises(MachineError, match="row_pitch is for a tray"):
+        parse(gcode_file(TRAY.replace("columns = 3\n", "")), "test")
     fit = board_fit([((0.0, 0.0), (100.0, 50.0))], None)
     parts = [part("C1", "100n", "C_0402", 5.0, 6.0), part("U1", "STM32", "LQFP-32", 2.0, 3.0, 90.0)]
     # Without the camera centered, a part its feeder wants looked at is left.
@@ -369,8 +372,7 @@ def test_a_tray_is_taken_row_by_row_and_a_feeder_told_to_advance_gets_every_line
 
 
 def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(client):
-    pnp_dir = client.backend.pnp_devices.directory
-    (pnp_dir / "tray.toml").write_text(TRAY, encoding="utf-8")
+    (client.backend.machine_store.directory / "tray.toml").write_text(gcode_file(TRAY), encoding="utf-8")
     job = Job(
         name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
         design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True),
@@ -380,35 +382,34 @@ def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(
     client.backend.store.keep_board(job.id, board.encode())
     camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=4.0, mirror=True)
     client.backend.pnp.client = camera
-    assert client.put("/api/pnp/device", json={"profile": "tray"}).status_code == 200
-    assert client.post("/api/pnp/device/connect").status_code == 200
+    connect(client, "tray")
     # The nozzle jogged roughly over the camera, then centered.
-    client.post("/api/pnp/device/command", json={"line": "G0 X150.6 Y29.7"})
-    response = client.post("/api/pnp/device/nozzle", json={"step": 1.0})
+    client.post("/api/command", json={"line": "G0 X150.6 Y29.7"})
+    response = client.post("/api/pnp/nozzle", json={"step": 1.0})
     assert response.status_code == 200, response.text
     wait_for(lambda: client.get("/api/pnp").json()["routine"]["state"] != "running")
     assert client.get("/api/pnp").json()["routine"]["state"] == "done", client.get("/api/pnp").json()["routine"]
-    placed = client.get("/api/pnp/device").json()["camera"]
+    placed = client.get("/api/pnp/placing").json()["camera"]
     assert placed["position"] == pytest.approx([150.0, 30.0], abs=0.02) and placed["mirror"] is True
     assert placed["mm_per_px"] == pytest.approx(0.01, rel=0.01) and placed["height"] == -4.0
-    # The machine's own routines are free meanwhile: the camera was on the device.
-    assert client.backend.pnp.target == "device"
+    # The routine moved the G-code machine.
+    assert client.backend.pnp.target == "gcode"
     # A reference, then a run: U1 (from the tray, looked at) lands where
     # its center does, the offset turned with the nozzle.
-    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "R2", "at": [100.0, 60.0]})
-    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "R2", "at": [100.0, 60.0]})
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "R1", "at": [100.0, 50.0]})
     # The stand-in shows the part as the bright spot.
     assert client.put("/api/pnp/settings", json={"part_spot": "bright"}).status_code == 200
     # A part to be looked at needs the up camera running.
     camera.running = False
-    response = client.post("/api/pnp/device/run", json={"job": job.id, "refs": ["R1"]})
+    response = client.post("/api/pnp/run", json={"job": job.id, "refs": ["R1"]})
     assert response.status_code == 400 and "up camera is not running" in response.text
     camera.running = True
     lines_before = len(client.fake.lines)
-    response = client.post("/api/pnp/device/run", json={"job": job.id, "refs": ["R1"]})
+    response = client.post("/api/pnp/run", json={"job": job.id, "refs": ["R1"]})
     assert response.status_code == 200, response.text
-    wait_for(lambda: not client.get("/api/pnp/device").json()["running"])
-    state = client.get("/api/pnp/device").json()
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    state = client.get("/api/pnp/placing").json()
     assert state["progress"]["state"] == "done", state["progress"]
     sent = client.fake.lines[lines_before:]
     # R1 is at (1, 0) in the job, (100, 50) on the device, turned 90 with
@@ -428,7 +429,7 @@ def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(
 
 def test_a_lost_link_can_be_connected_again():
     ports = [FakeMarlin(), FakeMarlin()]
-    link = GcodeDevice(lambda: None, opener=lambda url, baud: ports.pop(0))
+    link = GcodeLink(lambda: None, opener=lambda url, baud: ports.pop(0))
     link.connect("socket://127.0.0.1:9", 115200, 0, (), 2.0)
     first = link._port
 
@@ -447,8 +448,7 @@ def test_any_axis_letter_reads_from_a_position():
 
 
 def test_a_part_never_seen_on_the_nozzle_is_retried_from_the_next_pockets_then_left_out(client):
-    pnp_dir = client.backend.pnp_devices.directory
-    (pnp_dir / "tray.toml").write_text(TRAY, encoding="utf-8")
+    (client.backend.machine_store.directory / "tray.toml").write_text(gcode_file(TRAY), encoding="utf-8")
     job = Job(
         name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
         design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True),
@@ -457,18 +457,17 @@ def test_a_part_never_seen_on_the_nozzle_is_retried_from_the_next_pockets_then_l
     client.backend.store.keep_board(job.id, BOARD.replace('"10k"', '"STM32"', 1).encode())
     camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True)
     client.backend.pnp.client = camera
-    client.put("/api/pnp/device", json={"profile": "tray"})
-    client.post("/api/pnp/device/connect")
-    client.backend._device_config()["camera"] = {"position": [150.0, 30.0], "mm_per_px": 0.01, "roll": 0.0, "mirror": True}
-    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "R1", "at": [100.0, 50.0]})
+    connect(client, "tray")
+    client.backend._placing_config()["camera"] = {"position": [150.0, 30.0], "mm_per_px": 0.01, "roll": 0.0, "mirror": True}
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "R1", "at": [100.0, 50.0]})
     # The part is nowhere in the picture: each pick happened, no place did;
     # each part went back into its pocket and the next pocket was tried.
     camera.part = (50.0, 50.0)
     client.put("/api/pnp/settings", json={"part_spot": "bright"})
     lines_before = len(client.fake.lines)
-    assert client.post("/api/pnp/device/run", json={"job": job.id, "refs": ["R1"]}).status_code == 200
-    wait_for(lambda: not client.get("/api/pnp/device").json()["running"])
-    state = client.get("/api/pnp/device").json()
+    assert client.post("/api/pnp/run", json={"job": job.id, "refs": ["R1"]}).status_code == 200
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    state = client.get("/api/pnp/placing").json()
     assert state["progress"]["state"] == "done" and state["progress"]["placed"] == []
     assert state["progress"]["failed"] == [{"ref": "R1", "reason": "nothing on the nozzle over the up camera"}]
     assert state["taken"] == {"ic": 3}
@@ -480,19 +479,17 @@ def test_a_part_never_seen_on_the_nozzle_is_retried_from_the_next_pockets_then_l
     assert sent.count("M107") == 3
 
 
-def test_an_abort_of_a_routine_on_the_device_stops_it_at_once(client):
-    pnp_dir = client.backend.pnp_devices.directory
-    (pnp_dir / "tray.toml").write_text(TRAY, encoding="utf-8")
+def test_an_abort_of_a_routine_on_the_machine_stops_it_at_once(client):
+    (client.backend.machine_store.directory / "tray.toml").write_text(gcode_file(TRAY), encoding="utf-8")
     client.backend.pnp.client = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=0.0, mirror=True)
-    client.put("/api/pnp/device", json={"profile": "tray"})
-    client.post("/api/pnp/device/connect")
-    client.post("/api/pnp/device/command", json={"line": "G0 X150 Y30"})
-    # The device holds the routine's first wait as a long move would.
+    connect(client, "tray")
+    client.post("/api/command", json={"line": "G0 X150 Y30"})
+    # The machine holds the routine's first wait as a long move would.
     client.fake.hold = threading.Event()
-    assert client.post("/api/pnp/device/nozzle", json={"step": 1.0}).status_code == 200
+    assert client.post("/api/pnp/nozzle", json={"step": 1.0}).status_code == 200
     wait_for(lambda: "M400" in client.fake.lines)
     assert client.post("/api/pnp/abort").status_code == 200
-    # The stop went out while the routine still waited on the device.
+    # The stop went out while the routine still waited on the machine.
     assert "M410" in client.fake.lines and client.backend.pnp.routine_active
     client.fake.hold.set()
     wait_for(lambda: not client.backend.pnp.routine_active)
@@ -518,10 +515,8 @@ def test_a_config_save_reads_the_config_again_when_another_thread_changed_it(cli
     assert calls["n"] == 2 and '"travel": 7.5' in (tmp_path / "config.json").read_text()
 
 
-def test_two_saves_of_one_device_profile_at_once_both_succeed(tmp_path):
-    from spinny_web.openpnp import DeviceStore
-
-    store = DeviceStore(tmp_path / "pnp")
+def test_two_saves_of_one_machine_file_at_once_both_succeed(tmp_path):
+    store = MachineStore(tmp_path / "machines")
     text = SHIPPED.read_text(encoding="utf-8")
     failures: list[Exception] = []
     for round_ in range(20):
@@ -540,4 +535,4 @@ def test_two_saves_of_one_device_profile_at_once_both_succeed(tmp_path):
         for thread in threads:
             thread.join()
     assert failures == []
-    assert sorted(path.name for path in (tmp_path / "pnp").iterdir()) == ["rig.toml"]
+    assert sorted(path.name for path in (tmp_path / "machines").iterdir()) == ["rig.toml"]

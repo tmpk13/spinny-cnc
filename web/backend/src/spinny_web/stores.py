@@ -1,5 +1,5 @@
 """The TOML files the page edits, one kind to a directory: machine files
-(`machines/`), CAM profiles (`cam/`) and G-code device profiles (`pnp/`).
+(`machines/`, a G-code machine's among them) and CAM profiles (`cam/`).
 
 Each kind is read afresh on every call so an edit by hand shows at once,
 saved whole only once its text parses (a text that does not leaves the
@@ -47,6 +47,10 @@ class TomlStore:
     def parse(self, text: str, item_id: str, where: str | None = None) -> Any:
         """The file's text read as its kind; `error` naming the key for anything amiss."""
         raise NotImplementedError
+
+    def describe(self, parsed: Any) -> dict:
+        """What a file read as, for the page."""
+        return parsed.document()
 
     # --- the files ---------------------------------------------------------------------
 
@@ -102,13 +106,13 @@ class TomlStore:
 
     def document(self, item_id: str) -> dict:
         text = self.text(item_id)
-        return {"document": self.parse(text, item_id).document(), "text": text}
+        return {"document": self.describe(self.parse(text, item_id)), "text": text}
 
     def check(self, item_id: str, text: str) -> dict:
         """What a text would read as, and what is wrong with it, without writing it."""
         self.check_id(item_id)
         try:
-            return {"document": self.parse(text, item_id).document(), "problems": []}
+            return {"document": self.describe(self.parse(text, item_id)), "problems": []}
         except self.error as exc:
             return {"document": None, "problems": [str(exc)]}
 
@@ -127,7 +131,7 @@ class TomlStore:
                 write_whole(path, text)
         except OSError as exc:
             raise self.error(f"cannot write {path}: {exc.strerror or exc}") from exc
-        return {"document": parsed.document(), "text": text}
+        return {"document": self.describe(parsed), "text": text}
 
     def patch(self, item_id: str, path: list, value) -> dict:
         """One value changed in the file's text, comments and all, then saved

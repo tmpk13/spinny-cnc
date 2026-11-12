@@ -110,7 +110,7 @@ export function pnpRoots() {
         board: document.createElement("section"),
         camera: document.createElement("section"),
         nozzle: document.createElement("section"),
-        device: document.createElement("section"),
+        head: document.createElement("section"),
         jog: document.createElement("section"),
         view: document.createElement("section"),
         top: document.createElement("section"),

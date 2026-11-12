@@ -8,7 +8,6 @@ import math
 
 from spinny_laser.align import turn
 
-from .link import LinkError, check_url
 
 FRAME_MIN_WIDTH, FRAME_MAX_WIDTH = 160, 4096
 
@@ -55,12 +54,3 @@ def _tip_point(status, offset: tuple[float, float], cartesian: bool, table_angle
     plunger). On the polar machine the head sits on the rail (across 0),
     on a cartesian one at the cross slide's position."""
     return turn((status.r + offset[0], (status.z if cartesian else 0.0) + offset[1]), table_angle)
-
-
-def _check_port(url: str) -> None:
-    """A port typed for the G-code device: a device path or a socket url,
-    refused as a bad request otherwise."""
-    try:
-        check_url(url)
-    except LinkError as exc:
-        raise ValueError(str(exc)) from None

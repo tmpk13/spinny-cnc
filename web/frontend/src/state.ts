@@ -15,8 +15,7 @@ import type {
     Compensate,
     ComponentsResponse,
     ConsoleLine,
-    DeviceFile,
-    DeviceState,
+    PlacingState,
     Grid,
     HeightMapState,
     Job,
@@ -124,12 +123,8 @@ export interface AppState {
     components: ComponentsResponse | null;
     /** The part picked on the PNP page, by its reference. */
     pnpPart: string | null;
-    /** Which machine the PNP page places with: this one, or a G-code device. */
-    pnpTarget: "machine" | "device";
-    /** The G-code device; null until read. */
-    device: DeviceState | null;
-    /** The picked device profile's text and what it reads as; null until read, or with none picked. */
-    deviceDoc: (DeviceFile & { id: string }) | null;
+    /** What the PNP tab keeps of the G-code machine it places with, and that machine's link; null until read. */
+    placing: PlacingState | null;
     /** The saved positions on the board, as the backend keeps them. */
     markers: Marker[];
     /** The Auto tab's conversation and whether a turn is under way; null until read. */
@@ -181,9 +176,7 @@ export function initialState(mock: boolean): AppState {
         camlog: null,
         components: null,
         pnpPart: null,
-        pnpTarget: "machine",
-        device: null,
-        deviceDoc: null,
+        placing: null,
         markers: [],
         auto: null,
         autoSettings: null,

@@ -1,4 +1,4 @@
-"""Feeders on a bus: smart feeders the device's controller relays packets
+"""Feeders on a bus: smart feeders a G-code machine's controller relays packets
 to, each told to advance its tape before a pick, as Opulo's Photon feeders
 are over the LumenPnP's RS-485 through Marlin's M485.
 
@@ -7,7 +7,7 @@ sent as hex in a G-code line and answered in a line a pattern finds; the
 first payload byte of a command is its code, and of an answer how it
 went. A feeder is found by its id (a broadcast answered from its
 address), initialized with its id, told to feed a number of tenths of a
-millimeter, and asked until the feed is done. The profile's `[bus]` gives
+millimeter, and asked until the feed is done. The machine file's `[bus]` gives
 the specifics: the lines, the header's bytes and their order, the
 addresses, and every code; `[[slot]]` gives where the feeder at each
 address presents its part.

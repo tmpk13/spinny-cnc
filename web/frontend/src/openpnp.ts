@@ -1,15 +1,15 @@
-// Reading an OpenPnP setup into a device profile: its machine.xml (the
+// Reading an OpenPnP setup into a G-code machine file: its machine.xml (the
 // GcodeDriver's commands, the axes, a nozzle and its vacuum, the cameras,
 // the park and discard places, the nozzle tips' dwells and vacuum levels,
 // and the feeders), and a job with its boards (where each placement's part
 // lies on the machine, which becomes a reference, and which part each
 // placement takes, which tells the feeders their parts). Every value read
-// is an item the page shows with a box to keep or leave it; the profile is
-// written from the items kept over the shipped profile's defaults.
+// is an item the page shows with a box to keep or leave it; the file is
+// written from the items kept over the shipped generic file's defaults.
 //
 // OpenPnP keeps its places as the points the tools are over: the head's
 // cameras and nozzles each sit at their head offset from the head's place,
-// the controller's X and Y. A device profile keeps the head's place with
+// the controller's X and Y. A G-code machine file keeps the head's place with
 // the nozzle over a point, so each place read here loses the nozzle's head
 // offset; the top camera's offset from the nozzle is the camera's head
 // offset less the nozzle's.
@@ -196,7 +196,7 @@ function plain(lines: string[]): string[] {
         .filter((line) => line !== "" && !/\{[A-Za-z]+:/.test(line));
 }
 
-/** OpenPnP's regular expression as the profile takes it: Java's (?<Value>...) reads in both. */
+/** OpenPnP's regular expression as the machine file takes it: Java's (?<Value>...) reads in both. */
 function pattern(text: string): string {
     return text.trim();
 }
@@ -523,9 +523,9 @@ export function readMachine(text: string): OpenPnpMachine {
     };
 }
 
-// --- the profile written ------------------------------------------------------------------
+// --- the machine file written ------------------------------------------------------------------
 
-/** A device profile's values, as the importer fills them and the writer writes them. */
+/** A G-code machine file's values, as the importer fills them and the writer writes them. */
 export interface ProfileData {
     name: string;
     description: string;
@@ -581,7 +581,7 @@ export interface ProfileFeeder {
     advance?: number;
 }
 
-/** What a profile starts as before anything is kept: the shipped profile's defaults. */
+/** What a file starts as before anything is kept: the shipped generic file's defaults. */
 export function defaultProfile(name: string): ProfileData {
     return {
         name,
@@ -629,7 +629,7 @@ const quote = (text: string): string => JSON.stringify(text);
 const list = (lines: string[]): string => `[${lines.map(quote).join(", ")}]`;
 const pair = (point: readonly number[]): string => `[${point.map(fixed).join(", ")}]`;
 
-/** A feeder id the profile takes: lower case letters, digits, - and _. */
+/** A feeder id the file takes: lower case letters, digits, - and _. */
 export function feederId(name: string, taken: Set<string>): string {
     const base = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "feeder";
     let id = /^[a-z0-9]/.test(base) ? base : `f${base}`;
@@ -640,16 +640,19 @@ export function feederId(name: string, taken: Set<string>): string {
     return id;
 }
 
-/** The profile's TOML text: every section, with a line on where its values came from. */
+/** The machine file's TOML text: every section, with a line on where its values came from. */
 export function profileText(data: ProfileData): string {
     const lines: string[] = [
-        "# Read from an OpenPnP machine.xml by the PNP page's import. Places are",
-        "# the head's X and Y with the nozzle over a point.",
+        "# Read from an OpenPnP machine.xml by the Config page's import. Places are",
+        "# the head's X and Y with the nozzle over a point. The machine's port is",
+        "# named by url, or by words its USB names hold (match).",
         `name = ${quote(data.name)}`,
         `description = ${quote(data.description)}`,
+        'controller = "gcode"',
         "",
         "[port]",
         `url = ${quote(data.url)}`,
+        "match = []",
         `baud = ${data.baud}`,
         "wait_ms = 2000",
         "timeout = 60",
@@ -709,7 +712,7 @@ export function profileText(data: ProfileData): string {
         }
     }
     if (data.cameraPosition || data.cameraZ !== null) {
-        lines.push("", "[camera]");
+        lines.push("", "[up_camera]");
         if (data.cameraPosition) {
             lines.push(`position = ${pair(data.cameraPosition)}`);
         }
@@ -770,7 +773,7 @@ export interface ImportItem {
     value: string;
     /** Kept unless the operator leaves it out. */
     keep: boolean;
-    /** Kept whatever: the profile cannot do without it. */
+    /** Kept whatever: the file cannot do without it. */
     needed?: boolean;
     note?: string;
     apply(data: ProfileData): void;
@@ -1059,7 +1062,7 @@ export function jobItems(
     if (references.length > 0) {
         items.push({
             id: "references", group: "Job", label: "References", value: `${references.length} of ${job.placements.length} placements match the board job's parts`, keep: true,
-            note: "where OpenPnP's job puts each part: they map the board on the device",
+            note: "where OpenPnP's job puts each part: they map the board on the machine",
             apply: () => undefined,
         });
     }
@@ -1090,7 +1093,7 @@ export function jobItems(
     return { items, references };
 }
 
-/** The profile of the items kept, over the defaults. */
+/** The machine file of the items kept, over the defaults. */
 export function buildProfile(name: string, items: ImportItem[], kept: Set<string>): string {
     const data = defaultProfile(name);
     // The feeders first, so the job's items can tell them their parts.

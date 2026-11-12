@@ -27,12 +27,8 @@ import type {
     CommandResponse,
     Compensate,
     ComponentsResponse,
-    DeviceCheck,
-    DeviceFile,
-    DevicePlan,
-    DeviceIdentity,
-    DevicesResponse,
-    DeviceState,
+    PlacingPlan,
+    PlacingState,
     GotoRequest,
     HeightMap,
     HeightMapState,
@@ -99,7 +95,8 @@ export interface Api {
     /** Puts the whole list of markers in place of the one kept; answers it as kept. */
     setMarkers(markers: Marker[]): Promise<Marker[]>;
     ports(): Promise<Port[]>;
-    connect(url: string): Promise<Snapshot>;
+    /** Opens the machine on a port: a G-code machine when `machine` names its file or a G-code machine file claims the port, else this project's firmware. */
+    connect(url: string, machine?: string | null): Promise<Snapshot>;
     disconnect(): Promise<Snapshot>;
     state(): Promise<Snapshot>;
 
@@ -137,6 +134,8 @@ export interface Api {
     /** The text with the connected board's values written into it, not saved. */
     machineFromBoard(id: string, text: string): Promise<MachineFromBoard>;
     deleteMachineFile(id: string): Promise<void>;
+    /** One value of a machine file changed in its text, comments and all; a plain table not there yet is added. */
+    patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse>;
     /** The CAM profiles in cam/, and the files that could not be read. */
     camProfiles(): Promise<CamProfilesResponse>;
     camProfile(id: string): Promise<CamProfileResponse>;
@@ -212,7 +211,7 @@ export interface Api {
     /** The points probing the pads would visit, how many pads were under the area and about how long, without moving anything. */
     planPads(request: PadProbeRequest): Promise<PadProbePlan>;
 
-    /** The cameras attached, for the head camera's, the up camera's or the G-code device's top camera's device to be picked from. */
+    /** The cameras attached, for the head camera's, the up camera's or a G-code machine's top camera's device to be picked from. */
     cameras(): Promise<CamerasResponse>;
     /** The camera state: its settings, whether it runs, the board it looks for, the mark, the newest pose and the find routine. */
     camera(): Promise<CameraState>;
@@ -275,77 +274,52 @@ export interface Api {
     /** The parts of a board job; none for a job that keeps no board file. */
     components(jobId: string): Promise<ComponentsResponse>;
 
-    /** The G-code device profiles in `pnp/`, and the ones that do not read. */
-    devices(): Promise<DevicesResponse>;
-    deviceFile(id: string): Promise<DeviceFile>;
-    saveDeviceFile(id: string, text: string): Promise<DeviceFile>;
-    checkDeviceFile(id: string, text: string): Promise<DeviceCheck>;
-    /** One value of a profile changed in its text, comments and all; a plain table not there yet is added. */
-    patchDeviceFile(id: string, path: CamPath, value: CamValue): Promise<DeviceFile>;
-    /** A new profile: the text given, else a copy of the shipped template. */
-    newDeviceFile(id: string, text?: string): Promise<DeviceFile>;
-    deleteDeviceFile(id: string): Promise<DevicesResponse>;
-    /** The G-code device: the profile picked, the board's references, the feeders' counts, the link and a program being sent. */
-    deviceState(): Promise<DeviceState>;
-    /** The profile, the board's typed turn, and the port picked (`url`, "" for the profile's). */
-    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean; url?: string }): Promise<DeviceState>;
-    /** What the firmware on a port says it is (M115); nothing moves. */
-    deviceIdentify(url: string): Promise<DeviceIdentity>;
-    /** One axis moved by a step from where the device says it is: mm, or degrees for the rotation. */
-    deviceJog(axis: "x" | "y" | "z" | "rotation", step: number): Promise<DeviceState>;
-    /** The head to a place: across at the safe height for X or Y, then Z. */
-    deviceMove(target: { x?: number; y?: number; z?: number; rotation?: number }): Promise<DeviceState>;
-    devicePark(): Promise<DeviceState>;
+    /** What the PNP tab keeps of the G-code machine it places with: the board's references, the feeders' counts, the machine's link and a run. */
+    placingState(): Promise<PlacingState>;
+    /** The board's typed turn on the machine, for a fit from one reference. */
+    placingAngle(patch: { angle?: number; clear_angle?: boolean }): Promise<PlacingState>;
+    pnpPark(): Promise<PlacingState>;
     /** The nozzle over the up camera, turned to 0, at the height it is sharp at. */
-    deviceOverCamera(): Promise<DeviceState>;
+    pnpOverCamera(): Promise<PlacingState>;
     /** The nozzle over the point the top camera looks at, or the camera over the nozzle's. */
-    deviceSwap(to: "nozzle" | "camera"): Promise<DeviceState>;
-    /** The up camera's place on the device: typed, the head's now, or forgotten. */
-    deviceCamera(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<DeviceState>;
-    deviceLight(on: boolean): Promise<DeviceState>;
+    pnpSwap(to: "nozzle" | "camera"): Promise<PlacingState>;
+    /** The up camera's place on the machine: typed, the head's now, or forgotten. */
+    pnpCameraPlace(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<PlacingState>;
+    pnpLight(on: boolean): Promise<PlacingState>;
     /** The vacuum switched, and/or the sensor read. */
-    deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }>;
+    pnpVacuum(request: { on?: boolean; read?: boolean }): Promise<PlacingState & { reply: string[] }>;
     /** The count of boards finished back to 0. */
-    deviceBoardsReset(): Promise<DeviceState>;
+    pnpBoardsReset(): Promise<PlacingState>;
     /** The feeders that answer on the feeder bus, with their ids. */
-    deviceBusScan(): Promise<DeviceState & { feeders: BusFeeder[] }>;
+    pnpBusScan(): Promise<PlacingState & { feeders: BusFeeder[] }>;
     /** One advance of a feeder on the bus. */
-    deviceBusFeed(feeder: string): Promise<DeviceState>;
-    deviceConnect(): Promise<DeviceState>;
-    deviceDisconnect(): Promise<DeviceState>;
-    deviceCommand(line: string): Promise<DeviceState & { reply: string[] }>;
-    deviceHome(): Promise<DeviceState>;
-    devicePosition(): Promise<DeviceState>;
-    /** A reference for a part: where it is on the device, read off it when `at` is left out. */
-    deviceReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<DeviceState>;
-    deviceDropReferences(job: string, ref?: string): Promise<DeviceState>;
-    devicePlan(job: string, refs?: string[]): Promise<DevicePlan>;
+    pnpBusFeed(feeder: string): Promise<PlacingState>;
+    /** A reference for a part: where it is on the machine, read off it when `at` is left out. */
+    pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState>;
+    pnpDropReferences(job: string, ref?: string): Promise<PlacingState>;
+    pnpPlan(job: string, refs?: string[]): Promise<PlacingPlan>;
     /** Where the program's G-code downloads from. */
-    deviceProgramUrl(job: string, refs?: string[]): string;
+    pnpProgramUrl(job: string, refs?: string[]): string;
     /** Places the parts; with `fiducials` the top camera finds the board's fiducials first. */
-    deviceRun(job: string, refs?: string[], fiducials?: boolean): Promise<DevicePlan & DeviceState>;
-    deviceStop(): Promise<DeviceState>;
-    /** The nozzle, or the top camera with `camera`, over a part's place at the safe height. */
-    deviceGoto(job: string, ref: string, camera?: boolean): Promise<DeviceState>;
+    pnpRun(job: string, refs?: string[], fiducials?: boolean): Promise<PlacingPlan & PlacingState>;
+    pnpRunStop(): Promise<PlacingState>;
     /** Counts a feeder (or every one) from its first part again. */
-    deviceResetFeeders(feeder?: string): Promise<DeviceState>;
-    /** Centers the device's nozzle over the up camera, measuring where the camera is on the device; `step` 0 keeps the scale. */
-    deviceNozzle(step: number): Promise<DeviceState>;
-    /** Measures how far the device's nozzle tip runs off its turning axis, over the up camera. */
-    deviceRunout(): Promise<DeviceState>;
+    pnpResetFeeders(feeder?: string): Promise<PlacingState>;
+    /** Measures how far the nozzle tip runs off its turning axis, over the up camera. */
+    pnpRunout(): Promise<PlacingState>;
     /** The top camera finds the job's fiducials where the references put them, and keeps them as its references. */
-    deviceFiducials(job: string): Promise<DeviceState>;
+    pnpFiducials(job: string): Promise<PlacingState>;
     /** Keeps the top camera's settings; `clear` takes the mark's place or the offset back to none. */
-    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<DeviceState>;
-    topStart(): Promise<DeviceState>;
-    topStop(): Promise<DeviceState>;
+    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<PlacingState>;
+    topStart(): Promise<PlacingState>;
+    topStop(): Promise<PlacingState>;
     /** The top camera's picture. */
     topFrameUrl(width: number, overlay: boolean): string;
-    /** The nozzle's tip is over a mark: the device's place is kept for Measure offset. */
-    topMark(): Promise<DeviceState>;
+    /** The nozzle's tip is over a mark: the head's place is kept for Measure offset. */
+    topMark(): Promise<PlacingState>;
     /** Measures where the top camera looks from the nozzle, from the mark; `step` 0 keeps the scale. */
-    topOffset(step: number): Promise<DeviceState>;
-    topAbort(): Promise<DeviceState>;
+    topOffset(step: number): Promise<PlacingState>;
+    topAbort(): Promise<PlacingState>;
 
     /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
     autoSettings(): Promise<AutoSettings>;
@@ -450,8 +424,8 @@ export class HttpApi implements Api {
         return response.ports ?? [];
     }
 
-    connect(url: string): Promise<Snapshot> {
-        return this.request<Snapshot>("POST", "/api/connect", { url });
+    connect(url: string, machine: string | null = null): Promise<Snapshot> {
+        return this.request<Snapshot>("POST", "/api/connect", machine ? { url, machine } : { url });
     }
 
     disconnect(): Promise<Snapshot> {
@@ -557,6 +531,10 @@ export class HttpApi implements Api {
 
     async deleteMachineFile(id: string): Promise<void> {
         await this.request("DELETE", `/api/machines/${encodeURIComponent(id)}`);
+    }
+
+    patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse> {
+        return this.request<MachineResponse>("PATCH", `/api/machines/${encodeURIComponent(id)}`, { path, value });
     }
 
     camProfiles(): Promise<CamProfilesResponse> {
@@ -910,182 +888,114 @@ export class HttpApi implements Api {
         return this.request<ComponentsResponse>("GET", `/api/jobs/${encodeURIComponent(jobId)}/components`);
     }
 
-    devices(): Promise<DevicesResponse> {
-        return this.request<DevicesResponse>("GET", "/api/pnp/devices");
+    placingState(): Promise<PlacingState> {
+        return this.request<PlacingState>("GET", "/api/pnp/placing");
     }
 
-    deviceFile(id: string): Promise<DeviceFile> {
-        return this.request<DeviceFile>("GET", `/api/pnp/devices/${encodeURIComponent(id)}`);
+    placingAngle(patch: { angle?: number; clear_angle?: boolean }): Promise<PlacingState> {
+        return this.request<PlacingState>("PUT", "/api/pnp/placing", patch);
     }
 
-    saveDeviceFile(id: string, text: string): Promise<DeviceFile> {
-        return this.request<DeviceFile>("PUT", `/api/pnp/devices/${encodeURIComponent(id)}`, { text });
+    pnpPark(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/park");
     }
 
-    checkDeviceFile(id: string, text: string): Promise<DeviceCheck> {
-        return this.request<DeviceCheck>("POST", `/api/pnp/devices/${encodeURIComponent(id)}/check`, { text });
+    pnpOverCamera(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/over-camera");
     }
 
-    patchDeviceFile(id: string, path: CamPath, value: CamValue): Promise<DeviceFile> {
-        return this.request<DeviceFile>("PATCH", `/api/pnp/devices/${encodeURIComponent(id)}`, { path, value });
+    pnpSwap(to: "nozzle" | "camera"): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/swap", { to });
     }
 
-    newDeviceFile(id: string, text?: string): Promise<DeviceFile> {
-        return this.request<DeviceFile>("POST", `/api/pnp/devices/${encodeURIComponent(id)}`, text !== undefined ? { text } : {});
+    pnpCameraPlace(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<PlacingState> {
+        return this.request<PlacingState>("PUT", "/api/pnp/camera", request);
     }
 
-    deleteDeviceFile(id: string): Promise<DevicesResponse> {
-        return this.request<DevicesResponse>("DELETE", `/api/pnp/devices/${encodeURIComponent(id)}`);
+    pnpLight(on: boolean): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/light", { on });
     }
 
-    deviceState(): Promise<DeviceState> {
-        return this.request<DeviceState>("GET", "/api/pnp/device");
+    pnpVacuum(request: { on?: boolean; read?: boolean }): Promise<PlacingState & { reply: string[] }> {
+        return this.request<PlacingState & { reply: string[] }>("POST", "/api/pnp/vacuum", request);
     }
 
-    deviceSelect(patch: { profile?: string; angle?: number; clear_angle?: boolean; url?: string }): Promise<DeviceState> {
-        return this.request<DeviceState>("PUT", "/api/pnp/device", patch);
+    pnpBoardsReset(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/boards/reset");
     }
 
-    deviceIdentify(url: string): Promise<DeviceIdentity> {
-        return this.request<DeviceIdentity>("POST", "/api/pnp/device/identify", { url });
+    pnpBusScan(): Promise<PlacingState & { feeders: BusFeeder[] }> {
+        return this.request<PlacingState & { feeders: BusFeeder[] }>("POST", "/api/pnp/bus/scan");
     }
 
-    deviceJog(axis: "x" | "y" | "z" | "rotation", step: number): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/jog", { axis, step });
+    pnpBusFeed(feeder: string): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/bus/feed", { feeder });
     }
 
-    deviceMove(target: { x?: number; y?: number; z?: number; rotation?: number }): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/move", target);
+    pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/references", request);
     }
 
-    devicePark(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/park");
-    }
-
-    deviceOverCamera(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/over-camera");
-    }
-
-    deviceSwap(to: "nozzle" | "camera"): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/swap", { to });
-    }
-
-    deviceCamera(request: { position?: [number, number]; here?: boolean; clear?: boolean }): Promise<DeviceState> {
-        return this.request<DeviceState>("PUT", "/api/pnp/device/camera", request);
-    }
-
-    deviceLight(on: boolean): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/light", { on });
-    }
-
-    deviceVacuum(request: { on?: boolean; read?: boolean }): Promise<DeviceState & { reply: string[] }> {
-        return this.request<DeviceState & { reply: string[] }>("POST", "/api/pnp/device/vacuum", request);
-    }
-
-    deviceBoardsReset(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/boards/reset");
-    }
-
-    deviceBusScan(): Promise<DeviceState & { feeders: BusFeeder[] }> {
-        return this.request<DeviceState & { feeders: BusFeeder[] }>("POST", "/api/pnp/device/bus/scan");
-    }
-
-    deviceBusFeed(feeder: string): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/bus/feed", { feeder });
-    }
-
-    deviceConnect(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/connect");
-    }
-
-    deviceDisconnect(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/disconnect");
-    }
-
-    deviceCommand(line: string): Promise<DeviceState & { reply: string[] }> {
-        return this.request<DeviceState & { reply: string[] }>("POST", "/api/pnp/device/command", { line });
-    }
-
-    deviceHome(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/home");
-    }
-
-    devicePosition(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/position");
-    }
-
-    deviceReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/references", request);
-    }
-
-    deviceDropReferences(job: string, ref?: string): Promise<DeviceState> {
+    pnpDropReferences(job: string, ref?: string): Promise<PlacingState> {
         const query = `job=${encodeURIComponent(job)}${ref !== undefined ? `&ref=${encodeURIComponent(ref)}` : ""}`;
-        return this.request<DeviceState>("DELETE", `/api/pnp/device/references?${query}`);
+        return this.request<PlacingState>("DELETE", `/api/pnp/references?${query}`);
     }
 
-    devicePlan(job: string, refs?: string[]): Promise<DevicePlan> {
-        return this.request<DevicePlan>("POST", "/api/pnp/device/plan", refs !== undefined ? { job, refs } : { job });
+    pnpPlan(job: string, refs?: string[]): Promise<PlacingPlan> {
+        return this.request<PlacingPlan>("POST", "/api/pnp/plan", refs !== undefined ? { job, refs } : { job });
     }
 
-    deviceProgramUrl(job: string, refs?: string[]): string {
+    pnpProgramUrl(job: string, refs?: string[]): string {
         const query = `job=${encodeURIComponent(job)}${refs !== undefined ? `&refs=${encodeURIComponent(refs.join(","))}` : ""}`;
-        return `${this.base}/api/pnp/device/program.gcode?${query}`;
+        return `${this.base}/api/pnp/program.gcode?${query}`;
     }
 
-    deviceRun(job: string, refs?: string[], fiducials = false): Promise<DevicePlan & DeviceState> {
-        return this.request<DevicePlan & DeviceState>("POST", "/api/pnp/device/run", { job, ...(refs !== undefined ? { refs } : {}), fiducials });
+    pnpRun(job: string, refs?: string[], fiducials = false): Promise<PlacingPlan & PlacingState> {
+        return this.request<PlacingPlan & PlacingState>("POST", "/api/pnp/run", { job, ...(refs !== undefined ? { refs } : {}), fiducials });
     }
 
-    deviceStop(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/stop");
+    pnpRunStop(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/run/stop");
     }
 
-    deviceGoto(job: string, ref: string, camera = false): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/goto", { job, ref, camera });
+    pnpResetFeeders(feeder?: string): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/feeders/reset", feeder !== undefined ? { feeder } : {});
     }
 
-    deviceResetFeeders(feeder?: string): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/feeders/reset", feeder !== undefined ? { feeder } : {});
+    pnpRunout(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/runout");
     }
 
-    deviceNozzle(step: number): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/nozzle", { step });
+    pnpFiducials(job: string): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/fiducials", { job });
     }
 
-    deviceRunout(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/runout");
+    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<PlacingState> {
+        return this.request<PlacingState>("PUT", "/api/pnp/top", patch);
     }
 
-    deviceFiducials(job: string): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/fiducials", { job });
+    topStart(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/start");
     }
 
-    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<DeviceState> {
-        return this.request<DeviceState>("PUT", "/api/pnp/device/top", patch);
-    }
-
-    topStart(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/top/start");
-    }
-
-    topStop(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/top/stop");
+    topStop(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/stop");
     }
 
     topFrameUrl(width: number, overlay: boolean): string {
-        return this.frameUrl("/api/pnp/device/top/frame.jpg", width, overlay);
+        return this.frameUrl("/api/pnp/top/frame.jpg", width, overlay);
     }
 
-    topMark(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/top/mark");
+    topMark(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/mark");
     }
 
-    topOffset(step: number): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/top/offset", { step });
+    topOffset(step: number): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/offset", { step });
     }
 
-    topAbort(): Promise<DeviceState> {
-        return this.request<DeviceState>("POST", "/api/pnp/device/top/abort");
+    topAbort(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/abort");
     }
 
     autoSettings(): Promise<AutoSettings> {

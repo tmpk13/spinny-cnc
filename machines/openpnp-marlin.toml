@@ -2,12 +2,16 @@
 # GcodeDriver sends: absolute millimeters, the nozzle's turn as an axis in
 # degrees, the vacuum on a fan output. Every command below is the
 # firmware's to check: Smoothieware, RepRapFirmware and Grbl take the same
-# moves but name the vacuum, the dwell and the stop their own way.
+# moves but name the vacuum, the dwell and the stop their own way. Copy it,
+# name the copy after the machine and set its port: the top bar then names
+# that port after the file, and Connect talks to the machine in G-code.
 name = "OpenPnP Marlin"
 description = "Marlin, as OpenPnP's GcodeDriver drives it: vacuum on a fan output, rotation on A"
+controller = "gcode"     # its own firmware, sent G-code a line at a time
 
 [port]
-url = ""                 # a serial device (/dev/ttyACM1) or socket://host:port
+url = ""                 # a serial device (/dev/ttyACM1) or socket://host:port; this url is the machine's
+match = []               # words in a port's USB names (product, maker) that make it the machine's, any case
 baud = 115200
 wait_ms = 2000           # a board that resets when its port opens boots this long before the first line
 timeout = 60             # s a line may take to be answered; a home gets three times this
@@ -28,6 +32,8 @@ dwell = "G4 P{ms}"       # {ms} milliseconds or {s} seconds (Grbl's P); empty fo
 home = "G28"
 position = "M114"        # answered with X:... Y:... Z:...
 stop = "M410"            # quickstop, sent ahead of its turn; empty sends nothing
+motors_on = "M17"        # the jog panel's Motors; empty: no button
+motors_off = "M18"
 
 [motion]
 feed_xy = 6000           # mm/min
@@ -50,11 +56,12 @@ pick_tries = 3           # pockets tried for one part before it is left out
 # part_off = [0.0, 10.0]
 
 # The up camera (the PNP tab's), when it is fixed to this machine: Center
-# nozzle on the device measures where it is and Measure runout how far the
+# nozzle measures where it is and Measure runout how far the
 # tip runs off true as it turns; parts of a feeder marked `vision` are
 # looked at over it turned to their angle, and placed where their center
 # lands, their angle corrected.
-# [camera]
+# [up_camera]
+# position = [150.0, 30.0]  # the head's place with the nozzle over its picture's center, as designed
 # z = -15                 # the height the nozzle tip is seen sharp at over it
 # max_offset = 1.0        # mm a part's center may sit off the nozzle's
 # max_turn = 15           # degrees a part may sit off its angle

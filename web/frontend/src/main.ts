@@ -14,7 +14,7 @@ import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
 import { mountConsole } from "./views/console.ts";
 import { into, type Ctx } from "./views/context.ts";
-import { mountDeviceProfiles } from "./views/deviceprofiles.ts";
+import { mountOpenPnpImport } from "./views/openpnpimport.ts";
 import { mountDro } from "./views/dro.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobJson } from "./views/jobjson.ts";
@@ -94,8 +94,8 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
         async refreshPnp() {
             await into(ctx, "pnp", api.pnp());
         },
-        async refreshDevice() {
-            await into(ctx, "device", api.deviceState());
+        async refreshPlacing() {
+            await into(ctx, "placing", api.placingState());
         },
         async refreshMarkers() {
             await into(ctx, "markers", api.markers());
@@ -186,8 +186,8 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "pnp":
             store.set({ pnp: event.data });
             break;
-        case "pnp_device":
-            store.set({ device: event.data });
+        case "placing":
+            store.set({ placing: event.data });
             break;
         case "markers":
             store.set({ markers: event.data.markers });
@@ -233,7 +233,7 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshDevice(), ctx.refreshMarkers(), ctx.refreshAuto()]);
+    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshPlacing(), ctx.refreshMarkers(), ctx.refreshAuto()]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -304,14 +304,14 @@ function main(): void {
     mountCam(panel("cam"), ctx, panel("cam-file"));
     mountPreviewPanel(panel("cam-preview"), ctx);
     // The PNP page: the parts, the board, the jog, the cameras, the nozzle,
-    // and a G-code device's panels.
+    // and a G-code machine's panels.
     mountPnp({
         steps: panel("pnp-steps"),
         parts: panel("pnp-parts"),
         board: panel("pnp-board"),
         camera: panel("pnp-camera"),
         nozzle: panel("pnp-nozzle"),
-        device: panel("pnp-device"),
+        head: panel("pnp-head"),
         jog: panel("pnp-jog"),
         view: panel("pnp-view"),
         top: panel("pnp-top"),
@@ -325,7 +325,7 @@ function main(): void {
     // The Config page: the machine files beside the list of every key a
     // file can set, the file's value next to the board's.
     mountConfig(panel("machine-file"), ctx, panel("settings"));
-    mountDeviceProfiles(panel("device-file"), ctx);
+    mountOpenPnpImport(panel("openpnp-import"), ctx);
     mountToasts(panel("toasts"), ctx);
     // Last, once every view has drawn its panel's head: the layout layer
     // adds its controls to the heads and puts the panels where the

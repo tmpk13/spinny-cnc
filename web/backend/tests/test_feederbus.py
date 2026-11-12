@@ -1,4 +1,4 @@
-"""Feeders on a bus: Photon's packets, the profile's [bus] and [[slot]],
+"""Feeders on a bus: Photon's packets, the machine file's [bus] and [[slot]],
 a feeder advanced before its pick, its slot found by its id, and the
 scan and feed routes, against a fake Photon bus behind a fake Marlin."""
 
@@ -10,12 +10,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from device_fakes import FakeMarlin, FakePhotonBus
+from gcode_rig import connect, gcode_file, rig_backend
 
-from spinny_web.app import Backend, create_app
+from spinny_laser.machines import MachineError
+from spinny_web.app import create_app
 from spinny_web.feederbus import HEADER_FIELDS, BusError, FeederBus, Packet, crc8, decode, slot_place
-from spinny_web.gcode_device import GcodeDevice
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import DeviceError, parse, plan, board_fit
+from spinny_web.openpnp import board_fit, plan
+from spinny_web.openpnp import parse as parse_file
+
+
+def parse(text: str, machine_id: str):
+    """A profile as the tests write it, read as the G-code machine file it makes."""
+    return parse_file(gcode_file(text), machine_id)
 
 C100N = "0102030405060708090A0B0C"
 C1U = "AABBCCDDEEFF001122334455"
@@ -124,7 +131,7 @@ def test_the_bus_and_its_feeders_read_placed_by_their_slots_or_left_to_the_run()
 @pytest.mark.parametrize(
     "change, words",
     [
-        (("[bus]\n", "[nobus]\n"), "[slot 1] address is a feeder bus's slot: add a [bus] section"),
+        (('[bus]\nsend = "M485 {packet}"\nreply = "rs485-reply: (?<packet>[0-9A-Fa-f]*)"\npoll_ms = 10\n', ""), "[slot 1] address is a feeder bus's slot: add a [bus] table"),
         (('send = "M485 {packet}"', 'send = "M485"'), "[bus] send must hold {packet}"),
         (("poll_ms = 10", 'header = ["to", "to"]'), "[bus] header must name each of its bytes once"),
         (("slot = 3\n", "slot = 9\n"), "[feeder 1] slot 9 has no [[slot]] with its place"),
@@ -135,7 +142,7 @@ def test_the_bus_and_its_feeders_read_placed_by_their_slots_or_left_to_the_run()
 def test_a_bus_that_does_not_read_names_its_key(change, words):
     old, new = change
     assert old in PROFILE
-    with pytest.raises(DeviceError) as error:
+    with pytest.raises(MachineError) as error:
         parse(PROFILE.replace(old, new, 1), "lumen")
     assert words in str(error.value)
 
@@ -188,13 +195,9 @@ def test_a_scan_lists_the_feeders_that_answer():
 
 @pytest.fixture
 def client(tmp_path):
-    pnp_dir = tmp_path / "pnp"
-    pnp_dir.mkdir()
-    (pnp_dir / "lumen.toml").write_text(PROFILE, encoding="utf-8")
-    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json", pnp_dir=pnp_dir)
     fake = FakeMarlin(position=(100.0, 50.0, 31.5))
     fake.bus = FakePhotonBus({3: C100N, 4: C1U})
-    backend.pnp_device = GcodeDevice(backend.publish_pnp_device, opener=lambda url, baud: fake)
+    backend = rig_backend(tmp_path, {"lumen": PROFILE}, lambda url, baud: fake)
     app = create_app(backend, frontend=tmp_path / "no-dist")
     with TestClient(app) as client:
         client.backend = backend
@@ -203,26 +206,25 @@ def client(tmp_path):
 
 
 def test_the_bus_is_scanned_a_feeder_fed_and_a_run_advances_each_before_its_pick(client):
-    assert client.put("/api/pnp/device", json={"profile": "lumen"}).status_code == 200
-    assert client.post("/api/pnp/device/connect").status_code == 200
-    scan = client.post("/api/pnp/device/bus/scan").json()["feeders"]
+    connect(client, "lumen")
+    scan = client.post("/api/pnp/bus/scan").json()["feeders"]
     assert scan == [{"address": 3, "id": C100N, "feeder": "c-100n", "slot": True}, {"address": 4, "id": C1U, "feeder": "c-1u", "slot": True}]
-    assert client.post("/api/pnp/device/bus/feed", json={"feeder": "c-100n"}).status_code == 200
+    assert client.post("/api/pnp/bus/feed", json={"feeder": "c-100n"}).status_code == 200
     assert client.fake.bus.fed == [(3, 20)]
-    assert client.post("/api/pnp/device/bus/feed", json={"feeder": "nope"}).status_code == 404
+    assert client.post("/api/pnp/bus/feed", json={"feeder": "nope"}).status_code == 404
     job = Job(name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])], design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True))
     client.backend.store.add(job)
     client.backend.store.keep_board(job.id, BOARD.encode())
-    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "C1", "at": [200.0, 50.0]})
-    client.post("/api/pnp/device/references", json={"job": job.id, "ref": "C2", "at": [210.0, 50.0]})
-    # C2's feeder has no slot in the profile: connected, the plan finds it at address 4.
-    planned = client.post("/api/pnp/device/plan", json={"job": job.id}).json()
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "C1", "at": [200.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "C2", "at": [210.0, 50.0]})
+    # C2's feeder has no slot in the file: connected, the plan finds it at address 4.
+    planned = client.post("/api/pnp/plan", json={"job": job.id}).json()
     assert [entry["ref"] for entry in planned["parts"]] == ["C1", "C2"]
-    assert client.post("/api/pnp/device/run", json={"job": job.id}).status_code == 200
+    assert client.post("/api/pnp/run", json={"job": job.id}).status_code == 200
     deadline = time.monotonic() + 10.0
-    while client.get("/api/pnp/device").json()["running"] and time.monotonic() < deadline:
+    while client.get("/api/pnp/placing").json()["running"] and time.monotonic() < deadline:
         time.sleep(0.02)
-    state = client.get("/api/pnp/device").json()
+    state = client.get("/api/pnp/placing").json()
     assert state["progress"]["state"] == "done", state["progress"]
     assert state["progress"]["placed"] == ["C1", "C2"]
     assert client.fake.bus.fed[-2:] == [(3, 20), (4, 40)]

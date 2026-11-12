@@ -1,7 +1,7 @@
-"""The pick and place device's top camera: fixed to its head beside the
-nozzle and looking down, through pcb-vision like the other cameras.
+"""A G-code pick and place machine's top camera: fixed to its head beside
+the nozzle and looking down, through pcb-vision like the other cameras.
 
-Every place on the device is the head's with the nozzle's tip (turned to
+Every place on the machine is the head's with the nozzle's tip (turned to
 0) over a point. The camera's `offset` is where its picture's center is
 from the tip, so the head looks at a point from the point less the
 offset, and a spot seen there lies at the head's place plus the offset
@@ -48,7 +48,7 @@ OFFSET_LIMIT = 500.0
 @dataclass
 class Found:
     """A fiducial found: its reference, its place in the job and where it
-    is on the device."""
+    is on the machine."""
 
     ref: str
     job: Point
@@ -56,7 +56,7 @@ class Found:
 
 
 class TopCameraSettings(BaseModel):
-    """What the backend keeps of the top camera, beside the device's state."""
+    """What the backend keeps of the top camera, with what it keeps of the G-code machine."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -100,8 +100,8 @@ class TopCameraSettings(BaseModel):
 
 class TopCamera(PickCamera):
     """The top camera's settings and state, pcbv behind them, the routines,
-    and the look the device's run uses. `store` gives the dict its
-    settings live in (the device's part of the backend's config)."""
+    and the look a placing run uses. `store` gives the dict its settings
+    live in (what the backend keeps of the G-code machine placed with)."""
 
     label = "top camera"
     log_name = "top"
@@ -196,7 +196,7 @@ class TopCamera(PickCamera):
         progress: RoutineProgress | None = None,
     ) -> list[Found]:
         """Each fiducial (`ref`, `x`, `y` in the job, `diameter`) found
-        where `guess` puts it on the device, centered in the picture; a
+        where `guess` puts it on the machine, centered in the picture; a
         PnpError names the one that is not there."""
         found: list[Found] = []
         for fiducial in fiducials:

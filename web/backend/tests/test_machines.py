@@ -107,7 +107,7 @@ def test_the_files_are_listed_with_the_broken_one_named(client):
     rig = listed["machines"][1]
     assert rig == {
         "id": "rig", "name": "Rig", "description": "the fake, with the table a quarter as fast",
-        "kinematics": "cartesian", "tool": "spindle", "focus": True,
+        "kinematics": "cartesian", "tool": "spindle", "focus": True, "controller": "spinny",
     }
     # No machine connected: nothing is loaded.
     assert listed["current"] is None
@@ -247,7 +247,7 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     assert loaded["machine"] == "rig"
     # The loaded file's controls come with the settings.
     assert not loaded["controls"]["pad"] and [axis["label"] for axis in loaded["controls"]["axes"]] == ["X", "Y", "Depth axis"]
-    assert client.get("/api/state").json()["profile"] == {"kinematics": "cartesian", "tool": "spindle", "h_axis": True, "r_max": 0.0, "z_max": 25.0}
+    assert client.get("/api/state").json()["profile"] == {"kinematics": "cartesian", "tool": "spindle", "h_axis": True, "r_max": 0.0, "z_max": 25.0, "controller": "spinny"}
 
     # One setting changed by hand and it is no file's machine any more.
     assert client.put("/api/settings", json={"values": {"a_rate": 300}}).status_code == 200

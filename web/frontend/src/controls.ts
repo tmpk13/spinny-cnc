@@ -20,11 +20,15 @@ export function unitOf(axis: JointAxis, profile: Profile): "mm" | "deg" {
  * axis when cartesian, and the focus axis as a bar of its own when one is
  * fitted, called the depth axis with a spindle. A dispenser is an X/Y
  * machine whose table joint is the plunger, so it gets X, Y, the plunger
- * as E and the needle's height.
+ * as E and the needle's height. A pick and place machine on its own G-code
+ * controller gets X, Y, the nozzle's height and its turn.
  */
 export function defaultControls(profile: Profile): Controls {
     if (profile.tool === "dispenser") {
         return dispenserControls(profile.h_axis);
+    }
+    if (profile.tool === "nozzle") {
+        return nozzleControls();
     }
     const cartesian = profile.kinematics === "cartesian";
     const milling = profile.tool === "spindle";
@@ -103,6 +107,23 @@ function dispenserControls(focus: boolean): Controls {
     return { pad: true, pad_steps: [0.1, 1, 10], pad_step: 1, feed: true, center: { r: 0, z: 0 }, centering: false, axes };
 }
 
+/**
+ * A G-code pick and place machine's, its joints as the cartesian machine's:
+ * r is X, z is Y, h the nozzle's height (the controller's Z) and a its turn
+ * (the controller's rotation axis, as it counts it). Its own home is its
+ * zero: Z and the turn have no zero button.
+ */
+function nozzleControls(): Controls {
+    const axes: AxisControl[] = [
+        axis("r", "X", "X", null, ["X-", "X+"], true, true, "Declares the head's X here (G92) until the machine is homed again."),
+        axis("z", "Y", "Y", null, ["Y-", "Y+"], true, true, "Declares the head's Y here (G92) until the machine is homed again."),
+        axis("h", "Z", "Nozzle height", [0.1, 1, 10], ["Down", "Up"], false, true, "", "The controller's Z: moves across go at the safe height first", false),
+        axis("a", "A", "Nozzle turn", [1, 10, 90], ["Turn -", "Turn +"], false, true, "", "Degrees, as the controller counts them", false),
+    ];
+    // No Center: the head has no rotation axis to go back over.
+    return { pad: true, pad_steps: [0.1, 1, 10], pad_step: 1, feed: true, center: {}, centering: false, axes };
+}
+
 function axis(
     joint: JointAxis,
     letter: string,
@@ -113,6 +134,7 @@ function axis(
     goto: boolean,
     zeroHint: string,
     note = "",
+    zero = true,
 ): AxisControl {
     return {
         axis: joint,
@@ -123,7 +145,7 @@ function axis(
         buttons,
         feed,
         goto,
-        zero: true,
+        zero,
         zero_hint: zeroHint,
         keys: [],
         note,

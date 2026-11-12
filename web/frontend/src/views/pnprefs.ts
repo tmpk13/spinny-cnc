@@ -1,5 +1,5 @@
-// Where the board lies on the G-code device. A reference pairs a part of
-// the board job with the place it was found on the device: the nozzle
+// Where the board lies on the G-code machine. A reference pairs a part of
+// the board job with the place it was found on the machine: the nozzle
 // over it (Nozzle here), or the top camera's crosshair over it (Camera
 // here). The references are kept per job and map the whole board: one
 // gives the shift (turned by the typed angle), two or more the shift and
@@ -12,13 +12,13 @@ import { fitRigid, type RigidFit } from "../align.ts";
 import { button, el, labeled, lockFor, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { Component, DeviceState } from "../types.ts";
+import type { Component, PlacingState } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
-import { fiducialText, referencesOf } from "./device.ts";
+import { fiducialText, referencesOf } from "./placing.ts";
 import { infoTip } from "./infotip.ts";
 
 /** The fit the references make of a job's board, as the backend makes it, and how far each one used sits off it; null without a reference. */
-export function referenceFit(device: DeviceState | null, jobId: string | null, parts: Component[]): (RigidFit & { off: Map<string, number> }) | null {
+export function referenceFit(device: PlacingState | null, jobId: string | null, parts: Component[]): (RigidFit & { off: Map<string, number> }) | null {
     const byRef = new Map(parts.map((part) => [part.ref, part]));
     const entries = referencesOf(device, jobId).filter((entry) => byRef.has(entry.ref));
     const found = entries.filter((entry) => entry.by === "fiducial");
@@ -51,14 +51,14 @@ export function fitText(fit: RigidFit | null, count: number, angle: number | nul
     return `Mapped by ${count} references: ${turn}, shifted X ${formatFixed(fit.shift[0], 3)} Y ${formatFixed(fit.shift[1], 3)}; the worst sits ${formatFixed(worst, 3)} mm off the fit.`;
 }
 
-export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
+export function mountPnpRefs(root: HTMLElement, ctx: Ctx): void {
     const nozzleHere = button("Nozzle here", () => reference(false), "btn btn-primary");
-    nozzleHere.title = "the picked part is under the nozzle's tip: keep where the device is as its place";
+    nozzleHere.title = "the picked part is under the nozzle's tip: keep where the head is as its place";
     const cameraHere = button("Camera here", () => reference(true), "btn");
     cameraHere.title = "the picked part is under the top camera's crosshair: keep its place by the camera's offset";
     const angle = numberField({ step: 0.1, placeholder: "fitted", width: "6rem" });
-    angle.setAttribute("aria-label", "Board turned on the device");
-    angle.title = "the board's turn on the device, used with a single reference";
+    angle.setAttribute("aria-label", "Board turned on the machine");
+    angle.title = "the board's turn on the machine, used with a single reference";
     const clear = button("Clear", () => clearReferences(), "btn btn-quiet");
     const list = el("ul", { class: "device-references" });
     const fitLine = el("p", { class: "muted hint device-fit" });
@@ -67,7 +67,7 @@ export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
     const fiducialLine = el("p", { class: "muted" });
 
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Board on the device"), infoTip("references")),
+        el("div", { class: "panel-head" }, el("h2", {}, "Board on the machine"), infoTip("references")),
         el("div", { class: "panel-body" },
             el("p", { class: "muted hint" }, "Pick a part, put the nozzle or the top camera over it, and press Here. The references are kept and map the whole board."),
             el("div", { class: "button-row" }, nozzleHere, cameraHere),
@@ -88,7 +88,7 @@ export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "turn: -360 to 360 deg, or blank to fit it");
             return;
         }
-        void into(ctx, "device", ctx.api.deviceSelect(text === "" ? { clear_angle: true } : { angle: value! }));
+        void into(ctx, "placing", ctx.api.placingAngle(text === "" ? { clear_angle: true } : { angle: value! }));
     });
 
     async function reference(camera: boolean): Promise<void> {
@@ -97,13 +97,13 @@ export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a part in the Parts panel first");
             return;
         }
-        await into(ctx, "device", ctx.api.deviceReference({ job: state.job.id, ref: state.pnpPart, ...(camera ? { camera: true } : {}) }));
+        await into(ctx, "placing", ctx.api.pnpReference({ job: state.job.id, ref: state.pnpPart, ...(camera ? { camera: true } : {}) }));
     }
 
     async function clearReferences(): Promise<void> {
         const job = ctx.store.get().job;
         if (job) {
-            await into(ctx, "device", ctx.api.deviceDropReferences(job.id));
+            await into(ctx, "placing", ctx.api.pnpDropReferences(job.id));
         }
     }
 
@@ -113,27 +113,27 @@ export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a board job first");
             return;
         }
-        await into(ctx, "device", ctx.api.deviceFiducials(job.id));
+        await into(ctx, "placing", ctx.api.pnpFiducials(job.id));
     }
 
     let listKey = "";
     function render(state: AppState): void {
-        const device = state.device;
+        const device = state.placing;
         const job = state.job;
         const parts = state.components !== null && state.components.job === job?.id ? state.components.components : [];
         const refs = referencesOf(device, job?.id ?? null);
         const fit = referenceFit(device, job?.id ?? null, parts);
         const connected = device?.connected === true;
-        const busy = device?.running === true || (state.pnp?.routine?.state === "running" && state.pnp.routine.target === "device") || device?.top?.routine?.state === "running";
+        const busy = device?.running === true || (state.pnp?.routine?.state === "running" && state.pnp.routine.target === "gcode") || device?.top?.routine?.state === "running";
         const picked = state.pnpPart !== null && parts.some((part) => part.ref === state.pnpPart);
         nozzleHere.textContent = picked ? `Nozzle here: ${state.pnpPart}` : "Nozzle here";
         cameraHere.textContent = picked ? `Camera here: ${state.pnpPart}` : "Camera here";
-        lockFor(nozzleHere, [!connected, "connect the device first"], [busy, "the device is busy"], [!picked, "pick a part in the Parts panel first"]);
-        const offsetKnown = (device?.top?.offset ?? null) !== null || (state.deviceDoc?.document.top?.offset ?? null) !== null;
-        lockFor(cameraHere, [!connected, "connect the device first"], [busy, "the device is busy"], [!picked, "pick a part in the Parts panel first"], [!offsetKnown, "the top camera's offset is not known: give it in the profile or measure it"]);
+        lockFor(nozzleHere, [!connected, "connect the machine first"], [busy, "the machine is busy"], [!picked, "pick a part in the Parts panel first"]);
+        const offsetKnown = (device?.top?.offset ?? null) !== null || (state.placing?.document?.top?.offset ?? null) !== null;
+        lockFor(cameraHere, [!connected, "connect the machine first"], [busy, "the machine is busy"], [!picked, "pick a part in the Parts panel first"], [!offsetKnown, "the top camera's offset is not known: give it in the machine file or measure it"]);
         setLocked(clear, refs.length === 0, "no reference to clear");
         const measured = device?.top?.offset !== null && device?.top?.offset !== undefined && (device?.top?.mm_per_px ?? 0) > 0;
-        lockFor(findFiducials, [!connected, "connect the device first"], [busy, "the device is busy"], [device?.top?.running !== true, "start the top camera first"], [!measured, "measure the top camera's offset first"], [!job, "pick a board job first"]);
+        lockFor(findFiducials, [!connected, "connect the machine first"], [busy, "the machine is busy"], [device?.top?.running !== true, "start the top camera first"], [!measured, "measure the top camera's offset first"], [!job, "pick a board job first"]);
         fitLine.textContent = fitText(fit, refs.length, device?.angle);
         fiducialLine.textContent = fiducialText(device?.top, job?.id ?? null);
         const angleText = device?.angle === null || device?.angle === undefined ? "" : String(device.angle);
@@ -152,10 +152,10 @@ export function mountDeviceRefs(root: HTMLElement, ctx: Ctx): void {
             const residual = fit !== null && fit.off.size > 1 ? fit.off.get(entry.ref) : undefined;
             const off = residual !== undefined ? `, ${formatFixed(residual, 3)} mm off` : "";
             return el("li", {}, `${entry.ref} at X ${formatFixed(entry.at[0], 3)} Y ${formatFixed(entry.at[1], 3)}${entry.by && entry.by !== "nozzle" ? ` (${entry.by})` : ""}${off} `,
-                button("Drop", () => job ? into(ctx, "device", ctx.api.deviceDropReferences(job.id, entry.ref)) : Promise.resolve(), "btn btn-quiet btn-small"));
+                button("Drop", () => job ? into(ctx, "placing", ctx.api.pnpDropReferences(job.id, entry.ref)) : Promise.resolve(), "btn btn-quiet btn-small"));
         }));
     }
 
-    ctx.store.subscribe((state) => render(state), ["device", "deviceDoc", "job", "components", "pnpPart", "pnp"]);
+    ctx.store.subscribe((state) => render(state), ["placing", "job", "components", "pnpPart", "pnp"]);
     render(ctx.store.get());
 }

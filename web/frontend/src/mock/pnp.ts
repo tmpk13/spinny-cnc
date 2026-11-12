@@ -26,7 +26,7 @@ export interface UpTruth {
 
 export const UP_TRUTH: UpTruth = { where: [60, 20], roll: 2.5, mirror: true, mmPerPx: 0.01, part: [0.15, -0.08], partSize: [1.6, 0.8] };
 
-/** Where the up camera really sits on the mock's G-code device, its X and Y, when it is mounted there. */
+/** Where the up camera really sits on the mock's G-code machine, its X and Y, when it is mounted there. */
 export const DEVICE_CAMERA_WHERE: [number, number] = [150, 30];
 
 /** How far the mock device's nozzle tip really runs off its turning axis at 0, mm. */

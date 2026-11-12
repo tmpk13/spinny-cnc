@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
-import { blockLines, deviceFit, parseDevice, planDevice, planSummary, VISION_NOTE } from "../src/mock/openpnp.ts";
+import { blockLines, deviceFit, planDevice, planSummary, VISION_NOTE } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
-import { DEVICE_SETUP, deviceBadge, deviceRunText, referencesOf } from "../src/views/device.ts";
+import { PLACING_SETUP, placingBadge, placingRunText, referencesOf } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
+import { parseDevice } from "./gcoderig.ts";
 import { click, dialogButton, settle, setup, pnpRoots } from "./harness.ts";
 
 // The backend's test profile, word for word, so the two programs can be compared.
@@ -49,8 +50,8 @@ function runDevice(backend: MockBackend): void {
     }
 }
 
-describe("the mock's G-code device twin", () => {
-    test("a profile that does not read names the key as the backend does", () => {
+describe("the mock's G-code machine twin", () => {
+    test("a file that does not read names the key as the backend does", () => {
         expect(parseDevice(PROFILE, "test").feeders.map((feeder) => feeder.id)).toEqual(["res", "cap"]);
         expect(() => parseDevice(PROFILE.replace('dwell = "G4 S{s}"', 'dwell = "G4 P100"'), "test")).toThrow("[gcode] dwell must hold {ms} or {s}");
         expect(() => parseDevice(PROFILE.replace("safe_z = 5", ""), "test")).toThrow("[motion] safe_z is needed");
@@ -137,74 +138,101 @@ describe("trays, feeders told to advance, and the up camera in the twin", () => 
     });
 });
 
-describe("the G-code device in the mock", () => {
-    test("is picked, connected, referenced, planned and sent, and counts its feeders", async () => {
+/** The shipped generic Marlin machine file, its strip holding the mock board's test points. */
+async function marlinRig(backend: MockBackend, extra = "", vision = false): Promise<void> {
+    const file = await backend.machineFile("openpnp-marlin");
+    const text = file.text.replace('match = "10k 0603"', `match = "TestPoint"${vision ? "\nvision = true" : ""}`).replace("count = 50", "count = 2") + extra;
+    await backend.saveMachineFile("openpnp-marlin", text);
+}
+
+describe("a G-code machine in the mock", () => {
+    test("is connected from the top bar, referenced, planned and sent, and counts its feeders", async () => {
         const backend = new MockBackend({ timers: false });
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         const { components } = await backend.components(job.id);
-        await expect(backend.deviceConnect()).rejects.toMatchObject({ status: 400 });
-        await backend.deviceSelect({ profile: "openpnp-marlin" });
-        // The shipped profile names no port.
-        await expect(backend.deviceConnect()).rejects.toMatchObject({ status: 502 });
-        const file = await backend.deviceFile("openpnp-marlin");
-        const text = file.text.replace('url = ""', 'url = "/dev/ttyACM1"').replace('match = "10k 0603"', 'match = "TestPoint"').replace("count = 50", "count = 2");
-        await backend.saveDeviceFile("openpnp-marlin", text);
-        expect((await backend.deviceConnect()).connected).toBe(true);
-        await expect(backend.devicePlan(job.id)).rejects.toMatchObject({ status: 400 });
-        await backend.deviceCommand("G0 X40 Y30");
-        const referenced = await backend.deviceReference({ job: job.id, ref: components[0]!.ref });
+        // Two G-code machine files and none connected yet: nothing to place with.
+        await expect(backend.pnpPlan(job.id)).rejects.toMatchObject({ status: 409 });
+        await marlinRig(backend);
+        const snapshot = await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        expect(snapshot.connected).toBe(true);
+        expect(snapshot.profile?.controller).toBe("gcode");
+        expect(snapshot.firmware?.name).toContain("Marlin");
+        await expect(backend.pnpPlan(job.id)).rejects.toMatchObject({ status: 400 });
+        // The console sends its lines as typed; the readout follows.
+        await backend.command("G0 X40 Y30");
+        expect((await backend.state()).machine?.board).toEqual({ x: 40, y: 30 });
+        const referenced = await backend.pnpReference({ job: job.id, ref: components[0]!.ref });
         expect(referenced.references).toEqual([{ job: job.id, ref: components[0]!.ref, at: [40, 30], by: "nozzle" }]);
-        const plan = await backend.devicePlan(job.id);
+        const plan = await backend.pnpPlan(job.id);
         // Three test points, a strip of two.
         expect(plan.parts.length).toBe(2);
         expect(plan.skipped).toEqual([{ ref: components[2]!.ref, reason: "feeder r-10k-0603 is empty" }]);
-        expect(backend.deviceProgramUrl(job.id).startsWith("data:text/plain")).toBe(true);
-        await backend.deviceRun(job.id);
-        await expect(backend.deviceHome()).rejects.toMatchObject({ status: 409 });
+        expect(backend.pnpProgramUrl(job.id).startsWith("data:text/plain")).toBe(true);
+        await backend.pnpRun(job.id);
+        await expect(backend.home()).rejects.toMatchObject({ status: 409 });
         runDevice(backend);
-        const state = await backend.deviceState();
+        const state = await backend.placingState();
         expect(state.progress?.state).toBe("done");
         expect(state.progress?.placed).toEqual(plan.parts.map((entry) => entry.ref));
         expect(state.taken).toEqual({ "r-10k-0603": 2 });
         expect(state.log.some((entry) => entry.text === "M106")).toBe(true);
-        expect((await backend.deviceResetFeeders()).taken).toEqual({});
-        await backend.deviceGoto(job.id, components[1]!.ref);
+        expect((await backend.pnpResetFeeders()).taken).toEqual({});
+        await backend.pnpGoto({ job: job.id, ref: components[1]!.ref });
         expect(state.running).toBe(false);
-        expect((await backend.deviceDisconnect()).connected).toBe(false);
+        expect((await backend.disconnect()).connected).toBe(false);
+        // Disconnected, the tab still places with the machine last connected.
+        expect((await backend.placingState()).machine).toBe("openpnp-marlin");
+    });
+
+    test("jogs from where the controller says, goes across at the safe height, and stops", async () => {
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        const sent = async (): Promise<string[]> => (await backend.placingState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        let before = (await sent()).length;
+        await backend.jog({ kind: "joint", dr: 1.5 });
+        expect((await sent()).slice(before)).toEqual(["M114", "G0 X1.5 F6000"]);
+        before = (await sent()).length;
+        await backend.goto({ kind: "joint", r: 30, z: 40, h: -1 });
+        expect((await sent()).slice(before)).toEqual(["M114", "G0 X30 Y40 F6000", "G0 Z-1 F1200", "M400", "M114"]);
+        before = (await sent()).length;
+        await backend.goto({ kind: "joint", r: 30, h: -2 });
+        expect((await sent()).slice(before)).toEqual(["M114", "G0 Z-2 F1200", "M400", "M114"]);
+        before = (await sent()).length;
+        await backend.realtime("reset");
+        expect((await sent()).slice(before)).toEqual(["M410"]);
+        await expect(backend.realtime("hold")).rejects.toMatchObject({ status: 400 });
+        await expect(backend.laser(10, 100)).rejects.toMatchObject({ status: 409 });
+        const settings = await backend.settings();
+        expect(settings.controller).toBe("gcode");
+        expect(settings.controls?.axes.map((axis) => axis.letter)).toEqual(["X", "Y", "Z", "A"]);
     });
 });
 
-describe("the up camera on the mock's G-code device", () => {
+describe("the up camera on the mock's G-code machine", () => {
     test("centers the nozzle over it, then each part marked for it is placed where its center lands", async () => {
         const backend = new MockBackend({ timers: false });
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         const { components } = await backend.components(job.id);
-        await backend.deviceSelect({ profile: "openpnp-marlin" });
-        const file = await backend.deviceFile("openpnp-marlin");
-        const text = file.text
-            .replace('url = ""', 'url = "/dev/ttyACM1"')
-            .replace('match = "10k 0603"', 'match = "TestPoint"\nvision = true')
-            + "\n[camera]\nz = -10\n";
-        await backend.saveDeviceFile("openpnp-marlin", text);
-        await backend.deviceConnect();
+        await marlinRig(backend, "\n[up_camera]\nz = -10\n", true);
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
         await backend.pnpStart();
         // Out of the picture: refused; over the camera, centered.
-        await expect(backend.deviceNozzle(1)).rejects.toMatchObject({ status: 400 });
-        await backend.deviceCommand("G0 X150.5 Y29.8");
-        await backend.deviceNozzle(1);
+        await expect(backend.pnpNozzle(1)).rejects.toMatchObject({ status: 400 });
+        await backend.command("G0 X150.5 Y29.8");
+        await backend.pnpNozzle(1);
         for (let i = 0; i < 200 && (await backend.pnp()).routine?.state === "running"; i++) {
             backend.step(0.1);
         }
-        const state = await backend.deviceState();
+        const state = await backend.placingState();
         expect(state.camera.position).toEqual([150, 30]);
         expect(state.camera.height).toBe(-10);
-        expect((await backend.pnp()).routine?.target).toBe("device");
-        await backend.deviceReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
-        const plan = await backend.devicePlan(job.id, [components[0]!.ref]);
+        expect((await backend.pnp()).routine?.target).toBe("gcode");
+        await backend.pnpReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
+        const plan = await backend.pnpPlan(job.id, [components[0]!.ref]);
         expect(plan.parts[0]!.vision).toBe(true);
-        await backend.deviceRun(job.id, [components[0]!.ref]);
+        await backend.pnpRun(job.id, [components[0]!.ref]);
         runDevice(backend);
-        const done = await backend.deviceState();
+        const done = await backend.placingState();
         expect(done.progress?.state).toBe("done");
         // At the camera, down to where the nozzle is sharp, then the place
         // moved against the part's offset (0.15, -0.08), not turned here.
@@ -218,41 +246,31 @@ describe("the up camera on the mock's G-code device", () => {
     });
 });
 
-describe("the G-code device on the PNP page", () => {
-    test("takes the camera's and nozzle's place, references the picked part, plans and runs", async () => {
+describe("a G-code machine on the PNP page", () => {
+    test("shows its panels once connected, references the picked part, plans and runs", async () => {
         const { store, ctx, backend } = setup();
         const roots = pnpRoots();
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
-        const file = await backend.deviceFile("openpnp-marlin");
-        await backend.saveDeviceFile("openpnp-marlin", file.text.replace('url = ""', 'url = "/dev/ttyACM1"').replace('match = "10k 0603"', 'match = "TestPoint"'));
+        await marlinRig(backend);
         mountPnp(roots, ctx);
         await ctx.refreshJobs();
-        await ctx.refreshDevice();
         await ctx.selectJob(job.id);
         await settle();
-        const placeWith = roots.parts.querySelector('select[aria-label="Place with"]') as HTMLSelectElement;
-        placeWith.value = "device";
-        placeWith.dispatchEvent(new Event("change"));
-        expect(store.get().pnpTarget).toBe("device");
+        // Connected from the top bar: the page follows the machine.
+        store.set({ snapshot: await backend.connect("/dev/ttyACM1", "openpnp-marlin") });
+        await ctx.refreshPlacing();
+        await settle();
         expect(roots.nozzle.classList.contains("hidden")).toBe(true);
         expect(roots.camera.classList.contains("hidden")).toBe(false);
-        expect(roots.device.classList.contains("hidden")).toBe(false);
-        expect(roots.steps.querySelector(".roadmap-label")?.textContent).toBe("Profile");
-        const profile = roots.device.querySelector('select[aria-label="Device profile"]') as HTMLSelectElement;
-        profile.value = "openpnp-marlin";
-        profile.dispatchEvent(new Event("change"));
-        await settle();
-        await settle();
-        expect(store.get().device?.profile).toBe("openpnp-marlin");
-        click(roots.device, "Connect");
-        await settle();
-        expect(store.get().device?.connected).toBe(true);
+        expect(roots.head.classList.contains("hidden")).toBe(false);
+        expect(roots.steps.querySelector(".roadmap-label")?.textContent).toBe("Connect");
+        expect(store.get().placing?.connected).toBe(true);
         (roots.parts.querySelector("table.pnp-parts tbody tr") as HTMLElement).click();
         expect(store.get().pnpPart).not.toBeNull();
         click(roots.refs, `Nozzle here: ${store.get().pnpPart}`);
         await settle();
         await settle();
-        expect(referencesOf(store.get().device, job.id).length).toBe(1);
+        expect(referencesOf(store.get().placing, job.id).length).toBe(1);
         click(roots.run, "Plan");
         await settle();
         expect(roots.run.querySelector(".device-program")?.textContent).toContain("M106");
@@ -262,16 +280,14 @@ describe("the G-code device on the PNP page", () => {
         dialogButton("Run").click();
         await settle();
         await settle();
-        expect(store.get().device?.running).toBe(true);
+        expect(store.get().placing?.running).toBe(true);
         runDevice(backend);
-        await ctx.refreshDevice();
-        expect(store.get().device?.progress?.state).toBe("done");
-        expect(deviceRunText(store.get().device)).toContain("Done");
-        expect(deviceBadge(store.get().device)).toBe("connected");
+        await ctx.refreshPlacing();
+        expect(store.get().placing?.progress?.state).toBe("done");
+        expect(placingRunText(store.get().placing)).toContain("Done");
+        expect(placingBadge(store.get().placing)).toBe("connected");
         // The page counts the setup through.
-        const steps = DEVICE_SETUP.steps(store.get());
+        const steps = PLACING_SETUP.steps(store.get());
         expect(steps.find((entry) => entry.label === "Place")?.done).toBe(true);
-        // The pick is remembered in storage the other test files share.
-        localStorage.removeItem("spinny.pnp.target");
     });
 });

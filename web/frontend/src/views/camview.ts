@@ -1,5 +1,5 @@
 // The PNP page's camera view: the up camera's picture and, with a G-code
-// device, its top camera's, one at a time or side by side, swapped with a
+// machine, its top camera's, one at a time or side by side, swapped with a
 // press. Each picture zooms in on its center (the buttons, or the wheel),
 // draws the circle a part is looked for within when the camera's scale is
 // known, and moves the machine by dragging: drag what the camera sees and
@@ -11,6 +11,7 @@ import { activePage, button, el, readStored, writeStored } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
+import { gcodePlacing } from "./placing.ts";
 import { FRAME_INTERVAL_MS, FRAME_WIDTH } from "./vision.ts";
 
 export type ViewMode = "up" | "top" | "split";
@@ -45,7 +46,7 @@ export function dragMove(camera: CameraId, dx: number, dy: number, mmPerPx: numb
     return camera === "top" ? [-mx, -my] : [mx, my];
 }
 
-/** The views offered: the top camera's only with a G-code device. */
+/** The views offered: the top camera's only with a G-code machine. */
 export function viewModes(device: boolean): ViewMode[] {
     return device ? ["up", "top", "split"] : ["up"];
 }
@@ -140,14 +141,14 @@ export function mountCameraView(root: HTMLElement, ctx: Ctx): void {
     /** The calibration a camera's picture maps to the machine by, and the machine it moves. */
     function calibrationOf(camera: CameraId, state: AppState): Calibration | null {
         if (camera === "top") {
-            const topState = state.device?.top;
+            const topState = state.placing?.top;
             if (!topState || !(topState.mm_per_px > 0)) {
                 return null;
             }
             return { mmPerPx: topState.mm_per_px, roll: topState.roll, mirror: topState.mirror, width: topState.frame?.width ?? null };
         }
-        if (state.pnpTarget === "device") {
-            const place = state.device?.camera;
+        if (gcodePlacing(state)) {
+            const place = state.placing?.camera;
             if (!place || !(place.mm_per_px > 0)) {
                 return null;
             }
@@ -171,8 +172,8 @@ export function mountCameraView(root: HTMLElement, ctx: Ctx): void {
     function drawRing(camera: CameraId, state: AppState): void {
         const view = views[camera];
         const calibration = calibrationOf(camera, state);
-        const doc = state.deviceDoc?.document;
-        const mm = camera === "top" ? doc?.top?.within ?? null : state.pnpTarget === "device" ? doc?.crop ?? null : null;
+        const doc = state.placing?.document;
+        const mm = camera === "top" ? doc?.top?.within ?? null : gcodePlacing(state) ? doc?.crop ?? null : null;
         if (calibration === null || mm === null || mm === undefined) {
             view.ring.classList.add("hidden");
             return;
@@ -190,22 +191,9 @@ export function mountCameraView(root: HTMLElement, ctx: Ctx): void {
         view.ring.title = `parts are looked for within ${formatFixed(mm, 2)} mm of the center`;
     }
 
-    /** Moves the head the machine's way: a G-code device's by a jog per axis, this machine's by a joint jog. */
-    async function moveBy(camera: CameraId, mm: [number, number]): Promise<void> {
-        const state = ctx.store.get();
+    /** Moves the head by a joint jog along X (the rail, or a G-code machine's X) and Y (the cross slide, or its Y): the same on either. */
+    async function moveBy(_camera: CameraId, mm: [number, number]): Promise<void> {
         if (Math.hypot(mm[0], mm[1]) < 0.001) {
-            return;
-        }
-        if (camera === "top" || state.pnpTarget === "device") {
-            for (const [axis, step] of [["x", mm[0]], ["y", mm[1]]] as const) {
-                if (Math.abs(step) >= 0.001) {
-                    const next = await ctx.call(ctx.api.deviceJog(axis, Number(step.toFixed(4))));
-                    if (!next) {
-                        return;
-                    }
-                    ctx.store.set({ device: next });
-                }
-            }
             return;
         }
         await ctx.call(ctx.api.jog({ kind: "joint", dr: Number(mm[0].toFixed(4)), dz: Number(mm[1].toFixed(4)) }));
@@ -260,17 +248,17 @@ export function mountCameraView(root: HTMLElement, ctx: Ctx): void {
     }
 
     function running(camera: CameraId, state: AppState): boolean {
-        return camera === "up" ? state.pnp?.running === true : state.device?.top?.running === true;
+        return camera === "up" ? state.pnp?.running === true : state.placing?.top?.running === true;
     }
 
     function shown(camera: CameraId, state: AppState): boolean {
-        const modes = viewModes(state.pnpTarget === "device");
+        const modes = viewModes(gcodePlacing(state));
         const current = modes.includes(mode) ? mode : "up";
         return running(camera, state) && (current === "split" || current === camera);
     }
 
     function render(state: AppState): void {
-        const device = state.pnpTarget === "device";
+        const device = gcodePlacing(state);
         const modes = viewModes(device);
         for (const [value, press] of modeButtons) {
             press.classList.toggle("hidden", !modes.includes(value));
@@ -315,7 +303,7 @@ export function mountCameraView(root: HTMLElement, ctx: Ctx): void {
     const timer = setInterval(() => refresh(), FRAME_INTERVAL_MS);
     globalThis.addEventListener?.("pagehide", () => clearInterval(timer));
 
-    ctx.store.subscribe((state) => render(state), ["pnp", "device", "deviceDoc", "pnpTarget"]);
+    ctx.store.subscribe((state) => render(state), ["pnp", "placing", "snapshot"]);
     render(ctx.store.get());
     applyZoom("up");
     applyZoom("top");

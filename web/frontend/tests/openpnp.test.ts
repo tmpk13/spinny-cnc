@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildProfile, branch, jobItems, machineItems, parseXml, readJob, readMachine } from "../src/openpnp.ts";
-import { parseDevice } from "../src/mock/openpnp.ts";
+import { gcodeMachineOf } from "../src/mock/machines.ts";
 import type { Component } from "../src/types.ts";
 
 // A machine.xml in OpenPnP's shape, cut down from a LumenPnP's: a seesaw Z
@@ -178,12 +178,12 @@ describe("reading an OpenPnP setup", () => {
         expect(machineItems(machine, "N2").warnings[0]).toContain("seesaw");
     });
 
-    test("the profile made reads, kept values in it and left ones out", () => {
+    test("the machine file made reads, kept values in it and left ones out", () => {
         const machine = readMachine(MACHINE);
         const { items } = machineItems(machine);
         const kept = new Set(items.filter((item) => item.keep).map((item) => item.id));
         const text = buildProfile("lumen", items, kept);
-        const device = parseDevice(text, "lumen");
+        const device = gcodeMachineOf(text, "lumen");
         expect(device.safe_z).toBe(31.5);
         expect(device.pick).toEqual(["M106 P1 S180", "M106"]);
         expect(device.light_on).toEqual(["M150 P255 R255 U255 B255"]);
@@ -210,7 +210,7 @@ describe("reading an OpenPnP setup", () => {
         expect(strip.count).toBe(8);
         // The levels kept are checked.
         kept.add("levels");
-        expect(parseDevice(buildProfile("lumen", items, kept), "lumen").vacuum?.part_on).toEqual([220, 241]);
+        expect(gcodeMachineOf(buildProfile("lumen", items, kept), "lumen").vacuum?.part_on).toEqual([220, 241]);
     });
 
     test("Photon feeders come as feeders on the bus with its slots; one with no place is left out", () => {
@@ -250,7 +250,7 @@ describe("reading an OpenPnP setup", () => {
         expect(warnings.some((warning) => warning.startsWith("feeder Photon blank (C0402-1u) is left out: a Photon feeder with no hardware id"))).toBe(true);
         expect(warnings.some((warning) => warning.startsWith("feeder Bare auto (LED-0603) is left out: its place is not set"))).toBe(true);
         const kept = new Set(items.filter((item) => item.keep).map((item) => item.id));
-        const device = parseDevice(buildProfile("lumen", items, kept), "lumen");
+        const device = gcodeMachineOf(buildProfile("lumen", items, kept), "lumen");
         expect(device.bus?.send).toBe("M485 {packet}");
         // The slots lose N1's head offset: 76.456 + 23.544, 334.812 + 65.188.
         expect(device.slots.map((slot) => [slot.address, slot.at[0], slot.at[1]])).toEqual([[3, 100, 400], [4, 115, 400]]);
@@ -276,7 +276,7 @@ describe("reading an OpenPnP setup", () => {
         const { items } = machineItems(machine);
         const all = [...items, ...found.items];
         const kept = new Set(all.filter((item) => item.keep).map((item) => item.id));
-        const device = parseDevice(buildProfile("lumen", all, kept), "lumen");
+        const device = gcodeMachineOf(buildProfile("lumen", all, kept), "lumen");
         expect(device.place_z).toBeCloseTo(10.6, 6);
         expect(device.feeders.find((feeder) => feeder.id === "10k-strip")?.refs).toEqual(["R1", "R2"]);
         expect(readJob(JOB, new Map()).warnings[0]).toContain("was not given");
@@ -284,13 +284,13 @@ describe("reading an OpenPnP setup", () => {
 });
 
 describe("the import on the Config page", () => {
-    test("reads the files picked, shows each value with its box, and makes the profile", async () => {
-        const { mountDeviceProfiles } = await import("../src/views/deviceprofiles.ts");
+    test("reads the files picked, shows each value with its box, and makes the machine file", async () => {
+        const { mountOpenPnpImport } = await import("../src/views/openpnpimport.ts");
         const { setup, settle, click } = await import("./harness.ts");
         const { ctx, backend } = setup();
         const root = document.createElement("section");
         document.body.append(root);
-        mountDeviceProfiles(root, ctx);
+        mountOpenPnpImport(root, ctx);
         await settle();
         const input = root.querySelector('input[aria-label="OpenPnP files"]') as HTMLInputElement;
         Object.defineProperty(input, "files", { configurable: true, value: [new File([MACHINE], "machine.xml")] });
@@ -305,15 +305,15 @@ describe("the import on the Config page", () => {
         const levels = Array.from(root.querySelectorAll<HTMLInputElement>(".openpnp-item input")).find((box) => box.getAttribute("aria-label")?.endsWith("vacuum levels"));
         expect(levels?.checked).toBe(false);
         expect(root.querySelector(".openpnp-preview")?.textContent).toContain("safe_z = 31.5");
-        click(root, "Make profile");
+        click(root, "Make machine file");
         await settle();
         await settle();
         await settle();
-        const listing = await backend.devices();
-        expect(listing.devices.map((device) => device.id)).toContain("openpnp-import");
-        const file = await backend.deviceFile("openpnp-import");
-        expect(file.document.safe_z).toBe(31.5);
-        expect(file.document.top?.offset).toEqual([23.544, 65.188]);
+        const listing = await backend.machines();
+        expect(listing.machines.find((machine) => machine.id === "openpnp-import")?.controller).toBe("gcode");
+        const file = await backend.machineFile("openpnp-import");
+        expect(file.document?.gcode?.safe_z).toBe(31.5);
+        expect(file.document?.gcode?.top?.offset).toEqual([23.544, 65.188]);
         root.remove();
     });
 });

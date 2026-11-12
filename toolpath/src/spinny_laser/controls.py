@@ -30,7 +30,9 @@ says nothing gets the controls the page always drew for that machine.
 
 The joint letters and their units are the firmware's: `a` is in degrees
 (millimeters on a dispenser, where it is the plunger), `r`, `z` and `h`
-in millimeters. `place`, which older files say, is still
+in millimeters. A G-code machine's are its controller's axes taken as the
+cartesian machine's joints: `r` is X, `z` is Y, `h` is Z and `a` the
+nozzle's turn. `place`, which older files say, is still
 taken and means nothing: every control is a bar of its own.
 
 Run as a module, this prints the defaults for every kind of machine as
@@ -57,9 +59,12 @@ def default_controls(kinematics: str, tool: str, focus: bool) -> dict:
     the Y axis when cartesian, and the focus axis as a frame of its own when
     one is fitted, called the depth axis with a spindle. A dispenser is an
     X/Y machine whose table joint is the plunger, so it gets X, Y, the
-    plunger as E and the needle's height."""
+    plunger as E and the needle's height. A pick and place machine on its
+    own G-code controller gets X, Y, the nozzle's height and its turn."""
     if tool == "dispenser":
         return _dispenser_controls(focus)
+    if tool == "nozzle":
+        return _nozzle_controls()
     cartesian = kinematics == "cartesian"
     milling = tool == "spindle"
     axes = [
@@ -143,16 +148,43 @@ def _dispenser_controls(focus: bool) -> dict:
     }
 
 
+def _nozzle_controls() -> dict:
+    """A G-code pick and place machine's, its joints as the cartesian
+    machine's: r is X, z is Y, h the nozzle's height (the controller's Z)
+    and a its turn (the controller's rotation axis, as it counts it). Its
+    own home is its zero: Z and the turn have no zero button."""
+    axes = [
+        _axis("r", "X", "X", None, ["X-", "X+"], feed=True, goto=True,
+              zero_hint="Declares the head's X here (G92) until the machine is homed again."),
+        _axis("z", "Y", "Y", None, ["Y-", "Y+"], feed=True, goto=True,
+              zero_hint="Declares the head's Y here (G92) until the machine is homed again."),
+        _axis("h", "Z", "Nozzle height", [0.1, 1, 10], ["Down", "Up"], feed=False, goto=True,
+              zero=False, zero_hint="", note="The controller's Z: moves across go at the safe height first"),
+        _axis("a", "A", "Nozzle turn", [1, 10, 90], ["Turn -", "Turn +"], feed=False, goto=True,
+              zero=False, zero_hint="", note="Degrees, as the controller counts them"),
+    ]
+    return {
+        "pad": True,
+        "pad_steps": [0.1, 1.0, 10.0],
+        "pad_step": 1.0,
+        "feed": True,
+        # No Center: the head has no rotation axis to go back over.
+        "center": {},
+        "centering": False,
+        "axes": axes,
+    }
+
+
 def kind_id(kinematics: str, tool: str, focus: bool) -> str:
     """A name for a kind of machine: polar-laser, cartesian-spindle-focus."""
     return f"{kinematics}-{tool}" + ("-focus" if focus else "")
 
 
 # Every kind of machine the defaults are drawn for; a dispenser is only
-# ever cartesian.
+# ever cartesian, and a G-code machine's nozzle always has its height.
 KINDS = tuple(
     (kinematics, tool, focus) for kinematics in ("polar", "cartesian") for tool in ("laser", "spindle") for focus in (False, True)
-) + (("cartesian", "dispenser", False), ("cartesian", "dispenser", True))
+) + (("cartesian", "dispenser", False), ("cartesian", "dispenser", True), ("cartesian", "nozzle", True))
 
 
 def default_controls_by_kind() -> dict[str, dict]:
@@ -161,7 +193,7 @@ def default_controls_by_kind() -> dict[str, dict]:
 
 
 def _axis(axis: str, letter: str, label: str, steps: list | None, buttons: list, *,
-          feed: bool, goto: bool, zero_hint: str, note: str = "") -> dict:
+          feed: bool, goto: bool, zero_hint: str, note: str = "", zero: bool = True) -> dict:
     return {
         "axis": axis,
         "letter": letter,
@@ -171,7 +203,7 @@ def _axis(axis: str, letter: str, label: str, steps: list | None, buttons: list,
         "buttons": list(buttons),
         "feed": feed,
         "goto": goto,
-        "zero": True,
+        "zero": zero,
         "zero_hint": zero_hint,
         "keys": [],
         "note": note,

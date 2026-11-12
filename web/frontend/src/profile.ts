@@ -32,8 +32,11 @@ export function outputDuty(driven: number, settings: SettingsResponse | null): n
     return settings?.values["laser_invert"] ? 1000 - driven : driven;
 }
 
-/** A short name for a machine that is not the polar laser; empty for that one. */
+/** A short name for a machine that is not the polar laser; empty for that one. A G-code machine is named by its file. */
 export function profileBadge(profile: Profile): string {
+    if (profile.controller === "gcode") {
+        return profile.name ?? profile.machine ?? "G-code";
+    }
     const parts: string[] = [];
     if (profile.kinematics === "cartesian") {
         parts.push("X/Y");
@@ -44,4 +47,9 @@ export function profileBadge(profile: Profile): string {
         parts.push("dispenser");
     }
     return parts.join(" ");
+}
+
+/** The machine connected is a G-code machine: its own controller, driven a line at a time, a pick and place machine's. */
+export function isGcode(snapshot: Snapshot): boolean {
+    return profileOf(snapshot).controller === "gcode";
 }

@@ -1,6 +1,9 @@
-// Console log of tx/rx lines, a command line, and the realtime buttons.
+// Console log of tx/rx lines, a command line, and the realtime buttons. A
+// G-code machine takes its own lines here (M114, G0 X10); it has no hold
+// to resume from, and its Reset is its file's stop.
 
-import { button, el } from "../dom.ts";
+import { button, el, setLocked } from "../dom.ts";
+import { isGcode } from "../profile.ts";
 import { CONSOLE_LIMIT, type AppState } from "../state.ts";
 import type { ConsoleLine, LogFile } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -21,10 +24,12 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
     // default buries everything an operator or a job did.
     const polls = el("input", { type: "checkbox", id: "show-polls" });
     polls.addEventListener("change", () => ctx.store.set({ showPolls: polls.checked }));
+    const hold = button("Hold !", () => ctx.call(ctx.api.realtime("hold")), "btn btn-quiet btn-small");
+    const resume = button("Resume ~", () => ctx.call(ctx.api.realtime("resume")), "btn btn-quiet btn-small");
     const realtime = el("div", { class: "button-row" },
         button("Status ?", () => ctx.call(ctx.api.realtime("status")), "btn btn-quiet btn-small"),
-        button("Hold !", () => ctx.call(ctx.api.realtime("hold")), "btn btn-quiet btn-small"),
-        button("Resume ~", () => ctx.call(ctx.api.realtime("resume")), "btn btn-quiet btn-small"),
+        hold,
+        resume,
         button("Reset", () => ctx.call(ctx.api.realtime("reset")), "btn btn-danger btn-small"),
         button("Clear", () => { ctx.store.set({ console: [] }); }, "btn btn-quiet btn-small"),
         button("Log", () => showLog("spinny"), "btn btn-quiet btn-small"),
@@ -93,6 +98,14 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
 
     let shown: ConsoleLine[] = [];
     ctx.store.subscribe((state) => render(state), ["console"]);
+    // The words for the machine connected: its own G-code, or this project's lines.
+    ctx.store.subscribe((state) => {
+        const gcode = isGcode(state.snapshot);
+        input.placeholder = gcode ? "a G-code line, e.g. M114 or G0 X10" : "command, e.g. ? or $ or jog R1";
+        for (const press of [hold, resume]) {
+            setLocked(press, gcode, "a G-code machine takes no hold: Reset stops it");
+        }
+    }, ["snapshot"]);
 
     function lineNode(line: ConsoleLine): HTMLElement {
         const dir = el("span", { class: "dir" }, line.dir === "tx" ? "> " : "< ");

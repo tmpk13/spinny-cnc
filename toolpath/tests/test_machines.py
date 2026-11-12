@@ -87,7 +87,9 @@ def test_an_empty_file_is_the_firmware_at_its_defaults():
 
 def test_the_shipped_files_load_and_say_what_they_are():
     found = shipped()
-    assert [m.id for m in found] == ["cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "polar-laser-focus", "polar-laser"]
+    assert [m.id for m in found] == [
+        "cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser",
+    ]
     by_id = {m.id: m for m in found}
     assert by_id["polar-laser"].settings == FIRMWARE_DEFAULTS
     assert by_id["polar-laser-focus"].focus and by_id["polar-laser-focus"].settings["h_axis"] == 1
@@ -100,14 +102,21 @@ def test_the_shipped_files_load_and_say_what_they_are():
     assert mill.summary() == {
         "id": "cartesian-mill", "name": "Cartesian mill",
         "description": "X/Y machine with a spindle on the output and the focus axis as depth",
-        "kinematics": "cartesian", "tool": "spindle", "focus": True,
+        "kinematics": "cartesian", "tool": "spindle", "focus": True, "controller": "spinny",
     }
     # The slide's travel is the user's measurement, so the shipped value is
     # not the oracle: the document carries whatever the file says.
     assert mill.document()["settings"]["z_max"] == mill.settings["z_max"] > 0
     # Wired as a three axis mill: rail on X, table on E, slide on Y, depth on Z.
     assert mill.settings["sockets"] == 1423 and mill.settings["tmc_a_ma"] == 0
-    assert {m.settings["sockets"] for m in found if m.id not in ("cartesian-mill", "cartesian-dispenser", "k40")} == {1234}
+    spinny = [m for m in found if m.controller == "spinny"]
+    assert {m.settings["sockets"] for m in spinny if m.id not in ("cartesian-mill", "cartesian-dispenser", "k40")} == {1234}
+    # The pick and place machines on their own G-code controllers: none of
+    # the firmware's settings, their own tables kept, X/Y/Z/A bars.
+    lumen = by_id["opulo-lumen-rev5"]
+    assert (lumen.controller, lumen.kinematics, lumen.tool, lumen.focus, lumen.settings) == ("gcode", "cartesian", "nozzle", True, {})
+    assert sorted(lumen.gcode) == ["bus", "gcode", "motion", "port", "top_camera", "up_camera", "vacuum"]
+    assert [axis["letter"] for axis in by_id["openpnp-marlin"].controls["axes"]] == ["X", "Y", "Z", "A"]
     dispenser = by_id["cartesian-dispenser"]
     assert (dispenser.kinematics, dispenser.tool, dispenser.focus) == ("cartesian", "dispenser", True)
     assert (dispenser.settings["dispenser"], dispenser.settings["spindle"], dispenser.settings["cartesian"]) == (1, 0, 1)
@@ -386,6 +395,8 @@ def test_a_bad_or_missing_file_is_refused_by_its_name(tmp_path):
 def test_the_live_settings_name_their_machine():
     found = shipped()
     assert matching(found, FIRMWARE_DEFAULTS).id == "polar-laser" and matching(found, {}) is None
+    # A G-code machine has no settings of the firmware's, so no board's are its.
+    assert not matches(next(m for m in found if m.id == "opulo-lumen-rev5"), {})
     mill = next(m for m in found if m.id == "cartesian-mill")
     assert matching(found, mill.settings).id == "cartesian-mill"
     # As the firmware prints them: three decimals, ints for whole numbers.
@@ -394,6 +405,28 @@ def test_the_live_settings_name_their_machine():
     assert matches(mill, printed)
     assert matching(found, {**FIRMWARE_DEFAULTS, "r_rate": 561}) is None
     assert matching(found, {**FIRMWARE_DEFAULTS, "r_rate": "560"}) is None
+
+
+def test_a_g_code_machine_keeps_its_own_tables_and_refuses_the_firmwares():
+    found = parse('controller = "gcode"\nname = "pnp"\n[port]\nurl = "/dev/ttyACM1"\n[motion]\nsafe_z = 5\n', "pnp")
+    assert (found.controller, found.tool, found.kinematics, found.focus) == ("gcode", "nozzle", "cartesian", True)
+    assert found.gcode == {"port": {"url": "/dev/ttyACM1"}, "motion": {"safe_z": 5}} and found.settings == {} and found.host == {}
+    assert found.summary()["controller"] == "gcode" and found.controls["center"] is None and not found.controls["centering"]
+    assert [axis["axis"] for axis in found.controls["axes"]] == ["r", "z", "h", "a"]
+    # This project's firmware's sections mean nothing to it.
+    with pytest.raises(MachineError, match=r"rail is for a machine on this project's firmware"):
+        parse('controller = "gcode"\n[rail]\nmax_rate = 100\n', "pnp")
+    with pytest.raises(MachineError, match=r"tool must be one of nozzle"):
+        parse('controller = "gcode"\ntool = "laser"\n', "pnp")
+    with pytest.raises(MachineError, match=r"kinematics must be one of cartesian"):
+        parse('controller = "gcode"\nkinematics = "polar"\n', "pnp")
+    # And its tables in a file of this project's firmware say what is missing.
+    with pytest.raises(MachineError, match=r'gcode is a G-code machine\'s: add controller = "gcode"'):
+        parse('[gcode]\nmove = "G1"\n', "laser")
+    with pytest.raises(MachineError, match=r"controller must be one of spinny, gcode"):
+        parse('controller = "grbl"\n', "x")
+    with pytest.raises(MachineError, match="G-code machine"):
+        cli_defaults(found)
 
 
 def test_the_gcode_tools_take_their_defaults_from_a_file(tmp_path):
@@ -456,7 +489,7 @@ def test_the_default_controls_fixture_is_current():
     # The page checks its copy of the defaults against the same file.
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert fixture == default_controls_by_kind(), "the defaults changed: mise run controls-fixture"
-    assert list(fixture) == [kind_id(*kind) for kind in KINDS] and len(fixture) == 10
+    assert list(fixture) == [kind_id(*kind) for kind in KINDS] and len(fixture) == 11
     assert kind_id("cartesian", "spindle", True) == "cartesian-spindle-focus"
 
 

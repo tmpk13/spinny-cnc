@@ -6,6 +6,8 @@
 
 import cartesianLaser from "../../../../machines/cartesian-laser.toml" with { type: "text" };
 import cartesianMill from "../../../../machines/cartesian-mill.toml" with { type: "text" };
+import openpnpMarlin from "../../../../machines/openpnp-marlin.toml" with { type: "text" };
+import lumenPnp from "../../../../machines/opulo-lumen-rev5.toml" with { type: "text" };
 import polarLaserFocus from "../../../../machines/polar-laser-focus.toml" with { type: "text" };
 import polarLaser from "../../../../machines/polar-laser.toml" with { type: "text" };
 
@@ -14,18 +16,22 @@ import { defaultControls } from "../controls.ts";
 import { AXES, ENDSTOPS, SOCKETS, TUNING_KEYS, closeTo } from "../machinekeys.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
 import type { AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
+import { deviceDocument, parseGcodeTables, type MockDevice } from "./openpnp.ts";
 
 /**
- * Four of the shipped machine files, by id in the order the backend lists
+ * Six of the shipped machine files, by id in the order the backend lists
  * them: the polar laser with and without its focus axis, the cartesian
- * laser and the cartesian mill, one file for each kind of machine the
- * mock's tests read and load. The backend lists every file in machines/;
- * the K40 and the dispenser are not bundled, so this list stays the one
- * those tests expect.
+ * laser and the cartesian mill, one file for each kind of machine on this
+ * project's firmware the mock's tests read and load, and the two G-code
+ * pick and place machines (the generic Marlin one, whose feeder a plan can
+ * use, and the LumenPnP, whose port the mock lists). The backend lists
+ * every file in machines/; the K40 and the dispenser are not bundled.
  */
 export const MOCK_MACHINE_TEXTS: { id: string; text: string }[] = [
     { id: "cartesian-laser", text: cartesianLaser },
     { id: "cartesian-mill", text: cartesianMill },
+    { id: "openpnp-marlin", text: openpnpMarlin },
+    { id: "opulo-lumen-rev5", text: lumenPnp },
     { id: "polar-laser-focus", text: polarLaserFocus },
     { id: "polar-laser", text: polarLaser },
 ];
@@ -127,6 +133,9 @@ const HEADERS: Record<number, string> = {
 };
 const KINEMATICS: Kinematics[] = ["polar", "cartesian"];
 const TOOLS: Tool[] = ["laser", "spindle", "dispenser"];
+const CONTROLLERS = ["spinny", "gcode"];
+/** The tables of a G-code machine file its own reader reads (openpnp.ts parseGcodeTables). */
+export const GCODE_SECTIONS = ["port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder"];
 /** The microsteps a TMC2209 takes. */
 export const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 /** Largest value a float setting takes, as the firmware bounds them. */
@@ -320,6 +329,15 @@ export function parseMachine(text: string, id: string): MachineDocument {
     const settings: Record<string, number> = { ...DEFAULT_SETTINGS };
     const name = reader.text(top, "name", id);
     const description = reader.text(top, "description", "");
+    const controller = reader.choice(top, "controller", CONTROLLERS, "spinny");
+    if (controller === "gcode") {
+        return parseGcodeMachine(reader, top, id, name, description).document;
+    }
+    for (const section of GCODE_SECTIONS) {
+        if (section in top) {
+            throw reader.fail(null, section, `is a G-code machine's: add controller = "gcode" for a machine whose own controller takes G-code`);
+        }
+    }
     const kinematics = reader.choice(top, "kinematics", KINEMATICS, "polar");
     const tool = reader.choice(top, "tool", TOOLS, "laser");
     settings["cartesian"] = kinematics === "cartesian" ? 1 : 0;
@@ -565,8 +583,49 @@ export function parseMachine(text: string, id: string): MachineDocument {
     const camera = parseCamera(reader, reader.table(top, "camera"));
     const focus = settings["h_axis"] === 1;
     const controls = parseControls(reader, top, kinematics, tool, focus);
-    reader.done(top, null, ["name", "description", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"]);
-    return { id, name, description, kinematics, tool, focus, settings, host, camera, controls };
+    reader.done(top, null, ["name", "description", "controller", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"]);
+    return { id, name, description, kinematics, tool, focus, settings, host, camera, controls, controller: "spinny" };
+}
+
+/**
+ * A machine whose own controller takes G-code: an X/Y machine with the
+ * nozzle's height as Z and its turn as A, none of the firmware's settings,
+ * its own tables read as the backend reads them.
+ */
+function parseGcodeMachine(reader: Reader, top: TomlTable, id: string, name: string, description: string): { document: MachineDocument; machine: MockDevice } {
+    const kinematics = reader.choice(top, "kinematics", ["cartesian"], "cartesian") as Kinematics;
+    const tool = reader.choice(top, "tool", ["nozzle"], "nozzle") as Tool;
+    for (const section of [...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera"]) {
+        if (section in top) {
+            throw reader.fail(null, section, "is for a machine on this project's firmware: a G-code machine's own controller keeps its settings");
+        }
+    }
+    const controls = parseControls(reader, top, kinematics, tool, true);
+    reader.done(top, null, ["name", "description", "controller", "kinematics", "tool", "controls", ...GCODE_SECTIONS]);
+    const machine = parseGcodeTables(top, id, name, description);
+    const camera: CameraSettings = { ...CAMERA_DEFAULTS, offset: [CAMERA_DEFAULTS.offset[0], CAMERA_DEFAULTS.offset[1]] };
+    return {
+        document: { id, name, description, kinematics, tool, focus: true, settings: {}, host: {}, camera, controls, controller: "gcode", gcode: deviceDocument(machine) },
+        machine,
+    };
+}
+
+/** A G-code machine file read as the mock's G-code machine; throws with the file and the key named, and for a file of this project's firmware. */
+export function gcodeMachineOf(text: string, id: string): MockDevice {
+    const where = `${id}.toml`;
+    let top: TomlTable;
+    try {
+        top = parseToml(text);
+    } catch (error) {
+        throw new Error(`${where}: ${errorText(error)}`);
+    }
+    const reader = new Reader(where);
+    const name = reader.text(top, "name", id);
+    const description = reader.text(top, "description", "");
+    if (reader.choice(top, "controller", CONTROLLERS, "spinny") !== "gcode") {
+        throw new Error(`${where}: is not a G-code machine: its controller is spinny, not "gcode"`);
+    }
+    return parseGcodeMachine(reader, top, id, name, description).machine;
 }
 
 /**
@@ -649,11 +708,14 @@ function textChoice<T extends string>(reader: Reader, table: TomlTable, key: str
 
 export function summaryOf(document: MachineDocument): MachineSummary {
     const { id, name, description, kinematics, tool, focus } = document;
-    return { id, name, description, kinematics, tool, focus };
+    return { id, name, description, kinematics, tool, focus, controller: document.controller ?? "spinny" };
 }
 
-/** The live settings are this file's, every one of them, as far as the firmware's three decimals tell. */
+/** The live settings are this file's, every one of them, as far as the firmware's three decimals tell; a G-code machine's never are. */
 export function matches(document: MachineDocument, settings: Record<string, number>): boolean {
+    if ((document.controller ?? "spinny") !== "spinny") {
+        return false;
+    }
     return Object.entries(document.settings).every(([name, expected]) => {
         const value = settings[name];
         return value !== undefined && closeTo(value, expected);

@@ -1,4 +1,4 @@
-// Placing with the G-code device: the plan (the program made from the
+// Placing with the G-code machine: the plan (the program made from the
 // references and the feeders, shown and downloadable; nothing moves), the
 // run and its stop, the parts the last run left to place, the feeders
 // counted again after a refill, and the run's steps in words: each pick,
@@ -11,20 +11,20 @@ import { askConfirm } from "../confirm.ts";
 import { button, el, lockFor, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { DevicePlan, DeviceState, DeviceStep } from "../types.ts";
+import type { PlacingPlan, PlacingState, PlacingStep } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
-import { deviceRunText, partsLeft, planText } from "./device.ts";
+import { partsLeft, placingRunText, planText } from "./placing.ts";
 
 const REPEAT_KEY = "spinny.pnp.repeat";
 const WINDOW_KEY = "spinny.pnp.window";
 
 /** A run's step as a line of the log: its time, its part and what happened. */
-export function stepLine(step: DeviceStep): string {
+export function stepLine(step: PlacingStep): string {
     return `${formatFixed(step.t, 1).padStart(6)} s  ${step.ref ? `${step.ref}: ` : ""}${step.text}`;
 }
 
 /** A log box whose text follows its newest line only while scrolled to the bottom; scrolled up to read, it stays put. */
-export function stickyLog(box: HTMLElement): (steps: DeviceStep[]) => void {
+export function stickyLog(box: HTMLElement): (steps: PlacingStep[]) => void {
     let shown = "";
     return (steps) => {
         const key = steps.length > 0 ? `${steps.length} ${stepLine(steps[steps.length - 1]!)} ${stepLine(steps[0]!)}` : "";
@@ -40,13 +40,13 @@ export function stickyLog(box: HTMLElement): (steps: DeviceStep[]) => void {
     };
 }
 
-export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
+export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
     const planButton = button("Plan", () => planNow(), "btn");
     planButton.title = "make the placement program from the references and the feeders and show it; nothing moves";
     const download = el("a", { class: "btn btn-quiet", download: "placement.gcode" }, "Download") as HTMLAnchorElement;
     download.title = "the planned program as a file";
     const run = button("Run", () => runNow(), "btn btn-primary");
-    const stop = button("Stop", () => into(ctx, "device", ctx.api.deviceStop()), "btn btn-danger");
+    const stop = button("Stop", () => into(ctx, "placing", ctx.api.pnpRunStop()), "btn btn-danger");
     const runRest = button("Run the rest", () => runNow(true), "btn");
     runRest.title = "place the parts the last run did not, failed ones included";
     const recount = button("Count feeders again", () => recountFeeders(), "btn btn-quiet");
@@ -56,7 +56,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
     repeat.checked = readStored(REPEAT_KEY) === "1";
     repeat.addEventListener("change", () => writeStored(REPEAT_KEY, repeat.checked ? "1" : "0"));
     const boards = el("span", { class: "badge device-boards" }, "0 boards");
-    const resetBoards = button("Reset", () => into(ctx, "device", ctx.api.deviceBoardsReset()), "btn btn-quiet btn-small");
+    const resetBoards = button("Reset", () => into(ctx, "placing", ctx.api.pnpBoardsReset()), "btn btn-quiet btn-small");
     resetBoards.title = "count the boards placed from 0 again";
     const openWindow = button("Run window", () => showWindow(true), "btn btn-quiet");
     openWindow.title = "the run's progress and steps in a window over the page";
@@ -99,7 +99,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
     const windowBar = el("progress", { class: "device-run-bar", max: "1", value: "0" }) as HTMLProgressElement;
     const windowLog = el("div", { class: "device-steps", "aria-label": "Run window steps" });
     const showWindowLog = stickyLog(windowLog);
-    const windowStop = button("Stop", () => into(ctx, "device", ctx.api.deviceStop()), "btn btn-danger");
+    const windowStop = button("Stop", () => into(ctx, "placing", ctx.api.pnpRunStop()), "btn btn-danger");
     const windowClose = button("Close", () => showWindow(false), "btn btn-quiet btn-small");
     const runWindow = el("div", { class: "run-window panel hidden", role: "dialog", "aria-label": "Run window" },
         el("div", { class: "panel-head run-window-head" }, el("h2", {}, "Placing"), windowClose),
@@ -110,7 +110,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
 
     function showWindow(open: boolean): void {
         runWindow.classList.toggle("hidden", !open);
-        if (!open && ctx.store.get().device?.running) {
+        if (!open && ctx.store.get().placing?.running) {
             // Closed by hand during a run: not opened again by itself until the next run.
             windowWanted = false;
         }
@@ -139,7 +139,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
         document.addEventListener("pointerup", up);
     });
 
-    let plan: DevicePlan | null = null;
+    let plan: PlacingPlan | null = null;
     // The job the plan shown is of: the download is its program, once one planned.
     let planJob: string | null = null;
 
@@ -149,7 +149,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a board job first");
             return;
         }
-        const result = await ctx.call(ctx.api.devicePlan(job.id));
+        const result = await ctx.call(ctx.api.pnpPlan(job.id));
         if (result) {
             plan = result;
             planJob = job.id;
@@ -164,33 +164,33 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a board job first");
             return;
         }
-        const refs = rest ? partsLeft(state.device, plan, job.id) : undefined;
+        const refs = rest ? partsLeft(state.placing, plan, job.id) : undefined;
         if (rest && refs!.length === 0) {
             ctx.toast("info", "the last run placed every part");
             return;
         }
-        const planned = await ctx.call(ctx.api.devicePlan(job.id, refs));
+        const planned = await ctx.call(ctx.api.pnpPlan(job.id, refs));
         if (!planned) {
             return;
         }
         plan = planned;
         planJob = job.id;
         renderPlan();
-        const device = state.deviceDoc?.document.name ?? state.device?.profile ?? "the device";
+        const device = state.placing?.name ?? state.placing?.machine ?? "the machine";
         const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts left out (listed below).` : "";
         const first = fiducialsFirst.checked ? " Fiducials are found first." : "";
         const question = again
-            ? `Board ${(state.device?.boards ?? 0) + 1}: put the next board in place. Place ${planned.parts.length} parts on it with ${device}?${first}`
+            ? `Board ${(state.placing?.boards ?? 0) + 1}: put the next board in place. Place ${planned.parts.length} parts on it with ${device}?${first}`
             : `Place ${planned.parts.length} parts with ${device}? The head moves and the vacuum switches.${first}${left}`;
         if (!(await askConfirm(question, again ? "Place next board" : "Run"))) {
             return;
         }
-        const started = await ctx.call(ctx.api.deviceRun(job.id, refs, fiducialsFirst.checked));
+        const started = await ctx.call(ctx.api.pnpRun(job.id, refs, fiducialsFirst.checked));
         if (started) {
             const { parts, skipped: left2, fit, lines, text, ...rest2 } = started;
             plan = { parts, skipped: left2, fit, lines, text };
             renderPlan();
-            ctx.store.set({ device: rest2 as DeviceState });
+            ctx.store.set({ placing: rest2 as PlacingState });
             windowWanted = readStored(WINDOW_KEY) !== "0";
             showWindow(windowWanted);
         }
@@ -198,7 +198,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
 
     async function recountFeeders(): Promise<void> {
         if (await askConfirm("Restart every feeder at its first part? Do this after refilling.", "Count again")) {
-            await into(ctx, "device", ctx.api.deviceResetFeeders());
+            await into(ctx, "placing", ctx.api.pnpResetFeeders());
         }
     }
 
@@ -207,7 +207,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
         // would save the refusal as the file.
         const job = ctx.store.get().job;
         const ready = plan !== null && planJob !== null && job?.id === planJob;
-        download.href = ready ? ctx.api.deviceProgramUrl(planJob!) : "";
+        download.href = ready ? ctx.api.pnpProgramUrl(planJob!) : "";
         download.classList.toggle("disabled", !ready);
         planLine.textContent = plan ? planText(plan) : "";
         replace(skipped, ...(plan?.skipped ?? []).map((entry) => el("li", {}, `${entry.ref}: ${entry.reason}`)));
@@ -218,7 +218,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
     // The run last seen under way, to ask for the next board when it ends.
     let wasRunning = false;
     function render(state: AppState): void {
-        const device = state.device;
+        const device = state.placing;
         const connected = device?.connected === true;
         const running = device?.running === true;
         const job = state.job;
@@ -238,16 +238,16 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
             fiducialsFirst.checked = true;
         }
         fiducialsFirst.disabled = !measured || !hasFiducials;
-        lockFor(planButton, [!job, "pick a board job first"], [!device?.profile, "pick a device profile first"]);
-        lockFor(run, [!connected, "connect the device first"], [running, "a run is under way"], [!job, "pick a board job first"]);
+        lockFor(planButton, [!job, "pick a board job first"], [!device?.machine, "no G-code machine to place with: connect one from the top bar"]);
+        lockFor(run, [!connected, "connect the machine first"], [running, "a run is under way"], [!job, "pick a board job first"]);
         setLocked(stop, !running, "no run under way");
         setLocked(windowStop, !running, "no run under way");
-        lockFor(runRest, [!connected, "connect the device first"], [running, "a run is under way"], [partsLeft(device, plan, job?.id ?? null).length === 0, "the last run left no part of this job"]);
+        lockFor(runRest, [!connected, "connect the machine first"], [running, "a run is under way"], [partsLeft(device, plan, job?.id ?? null).length === 0, "the last run left no part of this job"]);
         setLocked(recount, running, "a run is under way");
         const count = device?.boards ?? 0;
         boards.textContent = `${count} board${count === 1 ? "" : "s"}`;
         lockFor(resetBoards, [running, "a run is under way"], [count === 0, "no board counted yet"]);
-        const text = device?.lost ? `Link lost: ${device.lost}` : deviceRunText(device);
+        const text = device?.lost ? `Link lost: ${device.lost}` : placingRunText(device);
         runLine.textContent = text;
         windowLine.textContent = text;
         const progress = device?.progress;
@@ -271,7 +271,7 @@ export function mountDeviceRun(root: HTMLElement, ctx: Ctx): void {
         wasRunning = running;
     }
 
-    ctx.store.subscribe((state) => render(state), ["device", "deviceDoc", "job", "components"]);
+    ctx.store.subscribe((state) => render(state), ["placing", "job", "components"]);
     render(ctx.store.get());
     renderPlan();
 }

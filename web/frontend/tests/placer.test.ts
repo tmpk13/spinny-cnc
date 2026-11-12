@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
-import { MARKS_NOTE, POCKET_NOTE, blockLines, checkLines, deviceFit, parseDevice, planDevice, tipShift, vacuumReading } from "../src/mock/openpnp.ts";
+import { MARKS_NOTE, POCKET_NOTE, blockLines, checkLines, deviceFit, planDevice, tipShift, vacuumReading } from "../src/mock/openpnp.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
-import type { Component, DevicePlan, DeviceState } from "../src/types.ts";
-import { deviceRunText, fiducialText, partsLeft, topCameraText } from "../src/views/device.ts";
+import type { Component, PlacingPlan, PlacingState } from "../src/types.ts";
+import { fiducialText, partsLeft, placingRunText, topCameraText } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
+import { parseDevice } from "./gcoderig.ts";
 import { settle, setup, pnpRoots } from "./harness.ts";
 
 // The backend's placer test profile, word for word, so the two plans can be compared.
@@ -70,7 +71,7 @@ describe("the twin reads the new words as the backend does", () => {
             [profile("", "", "", "[vacuum]\npart_on = [1, 2]\n"), "[vacuum] read must name the line, or lines, that read the vacuum sensor"],
             [profile("", "", "", '[vacuum]\nread = "M105"\npattern = "T:[0-9]+"\npart_on = [1, 2]\n'), "[vacuum] pattern must hold a group"],
             [profile("", "", "", '[vacuum]\nread = "M105"\npart_on = [9, 2]\n'), "must be the low reading, then the high one"],
-            [profile("", "", 'pocket = "bright"'), "[feeder 1] pocket looks with the top camera: add a [top_camera] section"],
+            [profile("", "", 'pocket = "bright"'), "[feeder 1] pocket looks with the top camera: add a [top_camera] table"],
             [profile("", "", "marks = [[1, 2], [3, 4], [5, 6]]", TOP), "[feeder 1] marks must be a list of at most 2 places"],
             [profile("", "", "size = [1.6, -1]"), "[feeder 1] size must be a length and a width over 0"],
             [profile("", "", 'pocket = "grey"', TOP), "[feeder 1] pocket must be dark or bright"],
@@ -119,7 +120,7 @@ function runDevice(backend: MockBackend): void {
 
 async function routines(backend: MockBackend): Promise<void> {
     for (let i = 0; i < 400; i++) {
-        const device = await backend.deviceState();
+        const device = await backend.placingState();
         if ((await backend.pnp()).routine?.state !== "running" && device.top?.routine?.state !== "running") {
             return;
         }
@@ -127,58 +128,56 @@ async function routines(backend: MockBackend): Promise<void> {
     }
 }
 
-describe("the cameras and the vacuum on the mock's G-code device", () => {
+describe("the cameras and the vacuum on the mock's G-code machine", () => {
     test("runout, the top camera's offset, the fiducials, then a run that finds them first and reads the vacuum", async () => {
         const backend = new MockBackend({ timers: false });
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         const { components } = await backend.components(job.id);
         const fiducials = components.filter((entry) => entry.fiducial);
         expect(fiducials.map((entry) => entry.ref)).toEqual(["FID1", "FID2"]);
-        await backend.deviceSelect({ profile: "openpnp-marlin" });
-        const file = await backend.deviceFile("openpnp-marlin");
+        const file = await backend.machineFile("openpnp-marlin");
         const text = file.text
-            .replace('url = ""', 'url = "/dev/ttyACM1"')
             .replace('match = "10k 0603"', 'match = "TestPoint"\nvision = true')
-            + `\n[camera]\nz = -10\n${VACUUM}${TOP}`;
-        await backend.saveDeviceFile("openpnp-marlin", text);
-        await backend.deviceConnect();
+            + `\n[up_camera]\nz = -10\n${VACUUM}${TOP}`;
+        await backend.saveMachineFile("openpnp-marlin", text);
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
         await backend.pnpStart();
         // Runout needs the nozzle centered first.
-        await expect(backend.deviceRunout()).rejects.toMatchObject({ status: 400 });
-        await backend.deviceCommand("G0 X150.5 Y29.8");
-        await backend.deviceNozzle(1);
+        await expect(backend.pnpRunout()).rejects.toMatchObject({ status: 400 });
+        await backend.command("G0 X150.5 Y29.8");
+        await backend.pnpNozzle(1);
         await routines(backend);
-        await backend.deviceRunout();
+        await backend.pnpRunout();
         await routines(backend);
-        const measured = await backend.deviceState();
+        const measured = await backend.placingState();
         expect(measured.camera.runout).not.toBeNull();
         expect((await backend.pnp()).routine?.kind).toBe("runout");
         // The top camera: started, the nozzle on the mark, its offset measured.
         await expect(backend.topOffset(2)).rejects.toMatchObject({ status: 400 });
         await backend.topStart();
-        await backend.deviceCommand("G0 X120 Y80");
+        await backend.command("G0 X120 Y80");
         expect((await backend.topMark()).top?.mark_at).toEqual([120, 80]);
         await backend.topOffset(2);
         await routines(backend);
-        const top = (await backend.deviceState()).top!;
+        const top = (await backend.placingState()).top!;
         expect(top.offset).toEqual(TOP_TRUTH.offset);
         expect(topCameraText(top)).toContain("Top camera looks from X 35.000 Y -10.000");
         // A rough reference, then the fiducials found and kept in its place.
-        await backend.deviceReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
-        await backend.deviceFiducials(job.id);
+        await backend.pnpReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
+        await backend.pnpFiducials(job.id);
         await routines(backend);
-        const found = await backend.deviceState();
+        const found = await backend.placingState();
         expect(found.references.filter((entry) => entry.by === "fiducial").map((entry) => entry.ref)).toEqual(["FID1", "FID2"]);
         expect(fiducialText(found.top, job.id)).toContain("Fiducials FID1, FID2 found");
         // Camera here: the reference is under the camera's crosshair.
-        await backend.deviceCommand("G0 X10 Y10");
-        const here = await backend.deviceReference({ job: job.id, ref: components[1]!.ref, camera: true });
+        await backend.command("G0 X10 Y10");
+        const here = await backend.pnpReference({ job: job.id, ref: components[1]!.ref, camera: true });
         expect(here.references.find((entry) => entry.ref === components[1]!.ref)).toMatchObject({ at: [45, 0], by: "camera" });
         // A run that finds the fiducials first, reads the vacuum, and looks at its part.
-        const started = await backend.deviceRun(job.id, [components[0]!.ref], true);
+        const started = await backend.pnpRun(job.id, [components[0]!.ref], true);
         expect(started.parts.length).toBe(1);
         runDevice(backend);
-        const done = await backend.deviceState();
+        const done = await backend.placingState();
         expect(done.progress?.state).toBe("done");
         expect(done.progress?.job).toBe(job.id);
         expect(done.progress?.sent).toBe(done.progress?.total);
@@ -187,17 +186,17 @@ describe("the cameras and the vacuum on the mock's G-code device", () => {
         expect(done.log.some((entry) => entry.dir === "rx" && entry.text.startsWith("ok T:75.00"))).toBe(true);
         // A run asked to find fiducials needs the top camera running.
         await backend.topStop();
-        await expect(backend.deviceRun(job.id, [components[1]!.ref], true)).rejects.toMatchObject({ status: 400 });
+        await expect(backend.pnpRun(job.id, [components[1]!.ref], true)).rejects.toMatchObject({ status: 400 });
     });
 });
 
-describe("the device panel's words", () => {
+describe("the placing panels' words", () => {
     test("say what a run left out, and which parts are left to run", () => {
-        const plan: DevicePlan = { parts: [{ ref: "R1", feeder: "res", index: 0, vision: false }, { ref: "R2", feeder: "res", index: 1, vision: false }], skipped: [], fit: { rotation: 0, shift: [0, 0], scale: 1, rms: 0, residuals: [], marks: 1 }, lines: 9, text: "" };
+        const plan: PlacingPlan = { parts: [{ ref: "R1", feeder: "res", index: 0, vision: false }, { ref: "R2", feeder: "res", index: 1, vision: false }], skipped: [], fit: { rotation: 0, shift: [0, 0], scale: 1, rms: 0, residuals: [], marks: 1 }, lines: 9, text: "" };
         const device = {
             progress: { state: "done", sent: 20, total: 20, part: null, placed: ["R1"], failed: [{ ref: "R2", reason: "the vacuum read 20" }], doing: null, job: "j1", error: null, seconds: 3 },
-        } as unknown as DeviceState;
-        expect(deviceRunText(device)).toBe("Done: 20 of 20 lines, 1 parts placed, 1 left out in 3 s.");
+        } as unknown as PlacingState;
+        expect(placingRunText(device)).toBe("Done: 20 of 20 lines, 1 parts placed, 1 left out in 3 s.");
         expect(partsLeft(device, plan, "j1")).toEqual(["R2"]);
         expect(partsLeft(device, plan, "j2")).toEqual([]);
         expect(topCameraText(null)).toContain("not measured");
@@ -209,15 +208,18 @@ describe("the device panel's words", () => {
         await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         mountPnp(roots, ctx);
         await ctx.refreshJobs();
-        await ctx.refreshDevice();
+        // The top camera's settings are kept for the G-code machine placed with.
+        store.set({ snapshot: await backend.connect("/dev/ttyACM1", "openpnp-marlin") });
+        await ctx.refreshPlacing();
         await settle();
+        expect(roots.top.classList.contains("hidden")).toBe(false);
         expect(roots.top.textContent).toContain("Top camera");
         expect(roots.top.textContent).toContain("Nozzle on mark");
         const all = (): HTMLButtonElement[] => Object.values(roots).flatMap((root) => Array.from(root.querySelectorAll("button")));
         for (const label of ["Measure runout", "Measure offset", "Camera here", "Find fiducials", "Run the rest", "Nozzle over camera", "Camera to nozzle spot"]) {
             expect(all().some((each) => each.textContent === label)).toBe(true);
         }
-        // Started from the panel, with the device typed in sent first.
+        // Started from the panel, with the camera's device typed in sent first.
         const deviceField = roots.top.querySelector('input[aria-label="Top camera device"]') as HTMLInputElement;
         deviceField.value = "/dev/video6";
         deviceField.dispatchEvent(new Event("input"));
@@ -225,8 +227,7 @@ describe("the device panel's words", () => {
         start.click();
         await settle();
         await settle();
-        expect(store.get().device?.top?.running).toBe(true);
-        expect(store.get().device?.top?.device).toBe("/dev/video6");
-        localStorage.removeItem("spinny.pnp.target");
+        expect(store.get().placing?.top?.running).toBe(true);
+        expect(store.get().placing?.top?.device).toBe("/dev/video6");
     });
 });

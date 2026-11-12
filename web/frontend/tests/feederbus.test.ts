@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { crc8, decodePacket, encodePacket, HEADER_FIELDS, slotPlace } from "../src/feederbus.ts";
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
-import { parseDevice, planDevice } from "../src/mock/openpnp.ts";
+import { planDevice } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
+import { connectGcode, parseDevice } from "./gcoderig.ts";
 
 const C100N = "0102030405060708090A0B0C";
 const C1U = "AABBCCDDEEFF001122334455";
@@ -87,26 +88,24 @@ describe("the feeder bus in the page and its mock", () => {
     test("the mock's bus is scanned, a feeder fed, and a run advances one before its pick", async () => {
         const mock = new MockBackend();
         // The mock's boards hold test points: the feeders hold them by their words.
-        await mock.newDeviceFile("lumen", PROFILE.replace('match = "100n"', 'match = "TestPoint"').replace('match = "1u"', 'match = "nothing here"'));
-        await mock.deviceSelect({ profile: "lumen" });
-        await mock.deviceConnect();
-        const scan = await mock.deviceBusScan();
+        await connectGcode(mock, "lumen", PROFILE.replace('match = "100n"', 'match = "TestPoint"').replace('match = "1u"', 'match = "nothing here"'));
+        const scan = await mock.pnpBusScan();
         expect(scan.feeders).toEqual([
             { address: 3, id: C100N, feeder: "c-100n", slot: true },
             { address: 4, id: C1U, feeder: "c-1u", slot: true },
         ]);
-        await mock.deviceBusFeed("c-100n");
-        const sent = (await mock.deviceState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        await mock.pnpBusFeed("c-100n");
+        const sent = (await mock.placingState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
         expect(sent.some((line) => line.startsWith("M485 0300"))).toBe(true);
-        await expect(mock.deviceBusFeed("nope")).rejects.toThrow("no feeder");
+        await expect(mock.pnpBusFeed("nope")).rejects.toThrow("no feeder");
         const job = await mock.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         const parts = (await mock.components(job.id)).components.filter((entry) => !entry.fiducial);
-        await mock.deviceReference({ job: job.id, ref: parts[0]!.ref, at: [40, 30] });
-        await mock.deviceRun(job.id, [parts[0]!.ref]);
-        for (let tick = 0; tick < 4000 && (await mock.deviceState()).running; tick++) {
+        await mock.pnpReference({ job: job.id, ref: parts[0]!.ref, at: [40, 30] });
+        await mock.pnpRun(job.id, [parts[0]!.ref]);
+        for (let tick = 0; tick < 4000 && (await mock.placingState()).running; tick++) {
             (mock as unknown as { serviceDevice(dt: number): void }).serviceDevice(1 / DEVICE_LINES_PER_SECOND);
         }
-        const state = await mock.deviceState();
+        const state = await mock.placingState();
         expect(state.progress?.state).toBe("done");
         expect(state.progress?.steps?.some((step) => step.text === "feeder c-100n advanced 2 mm (address 3)")).toBe(true);
     });

@@ -5,7 +5,9 @@
 // from it. The file is the one place a machine is described: its axes,
 // its pins, its tool, the host's values and the page's controls. Beside
 // it the list of every key a file can set shows the file's value next to
-// the board's.
+// the board's. A G-code machine's file (controller = "gcode") is edited
+// the same way; it has none of the firmware's settings to write or read,
+// and its machine is connected from the top bar.
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
@@ -32,6 +34,12 @@ export function changedBootSettings(before: Record<string, number> | undefined, 
 
 /** One line on what a file reads as. */
 export function describeMachine(document: MachineDocument): string {
+    if (document.controller === "gcode") {
+        const gcode = document.gcode;
+        const port = gcode?.url ? `port ${gcode.url}` : gcode?.match && gcode.match.length > 0 ? `a port named ${gcode.match.join(" or ")}` : "no port named yet";
+        const feeders = gcode ? `${gcode.feeders.length} feeder${gcode.feeders.length === 1 ? "" : "s"}` : "";
+        return `${document.name}: a G-code machine (its own controller), ${port}, safe Z ${gcode?.safe_z ?? "?"}, ${feeders}; ${document.controls.axes.length} joint controls`;
+    }
     const what: string[] = [document.kinematics, document.tool];
     if (document.focus) {
         what.push("focus axis");
@@ -250,9 +258,16 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             const drawn = state.settings?.controls_from ?? null;
             text += `; the jog panel draws ${drawn === null ? "the defaults" : drawn === picked ? "this file's controls" : `the controls of ${drawn}`}`;
         }
+        const gcodeFile = shown?.document?.controller === "gcode";
+        if (gcodeFile) {
+            text = state.snapshot.connected && current === picked
+                ? "this G-code machine is the one connected; its controller keeps its own settings"
+                : "a G-code machine: its controller keeps its own settings; connect it from the top bar (its port is named after this file)";
+        }
         loadNote.textContent = text;
-        lockFor(load, [!connected, "connect first"], [picked === null, "pick a machine file first"], [shown?.document === null, "the file does not parse"]);
-        lockFor(read, [!connected, "connect first"], [picked === null, "pick a machine file first"]);
+        const why = "a G-code machine's controller keeps its own settings";
+        lockFor(load, [gcodeFile, why], [!connected, "connect first"], [picked === null, "pick a machine file first"], [shown?.document === null, "the file does not parse"]);
+        lockFor(read, [gcodeFile, why], [!connected, "connect first"], [picked === null, "pick a machine file first"]);
         // Only something written past the file, at the console or by a
         // page control, leaves the board's flash behind.
         flash.classList.toggle("hidden", !connected || unsaved.length === 0);

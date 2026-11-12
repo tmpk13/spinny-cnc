@@ -1,6 +1,8 @@
-"""The link to a G-code device: a serial port or a `socket://` url, one
+"""The link to a G-code machine: a serial port or a `socket://` url, one
 line out at a time, each answered before the next goes, as OpenPnP's
-GcodeDriver talks to Marlin, Smoothieware, RepRapFirmware or Grbl.
+GcodeDriver talks to Marlin, Smoothieware, RepRapFirmware or Grbl. It is
+the backend's connection to a machine whose machine file says
+`controller = "gcode"`, opened from the top bar like any other.
 
 `ok` (with whatever it carries, as Smoothie's position) answers a line;
 `error...` or `!!` refuses it, and an `ok` that may follow the refusal is
@@ -10,7 +12,12 @@ nobody asked for (a boot banner, `echo:`, `wait`) go to the log only, and
 any left over are cleared before the next line goes out, so a late `ok`
 can never be taken for the next line's.
 
-`DeviceMover` lets the cameras' routines move the device's head: a move,
+Every line out and in goes to `on_line` for the console and the wire
+log, a poll's marked so; a link that fails on its own says why to
+`on_lost`. A poll (`poll`) goes out only when no line is in flight and no
+program is being sent, so it never waits behind a move.
+
+`GcodeMover` lets the cameras' routines move the machine's head: a move,
 then the wait command, so a picture is read with the head at rest.
 
 A run sends a job on its own thread (`run_job`): a placement that decides
@@ -34,7 +41,7 @@ import serial
 from .camera import DONE, ERROR, RUNNING, STOPPED
 from .link import check_url
 from .log import log
-from .openpnp import Device, code_of, move_xy, move_z, read_position
+from .openpnp import GcodeMachine, code_of, move_xy, move_z, read_position
 from .pnp import Mover, PnpError
 
 OK = re.compile(r"^ok\b", re.IGNORECASE)
@@ -44,66 +51,28 @@ READ_TIMEOUT = 0.05
 WRITE_TIMEOUT = 2.0
 # How long an `ok` that follows a refusal is waited for, s.
 TRAILING_OK = 0.3
-# The device's last lines in and out, which its state shows.
+# The machine's last lines in and out, which its state shows.
 LOG_LINES = 60
 # A run's last steps in words, which its progress shows.
 STEP_LINES = 300
 
 
-class DeviceLinkError(Exception):
-    """The device is not connected, went away, refused a line or did not answer."""
+class GcodeLinkError(Exception):
+    """The machine is not connected, went away, refused a line or did not answer."""
 
 
 def open_port(url: str, baud: int):
-    """A pyserial port for a device path or a `socket://host:port` url, held
+    """A pyserial port for a machine path or a `socket://host:port` url, held
     by this program alone."""
     check_url(url)
     return serial.serial_for_url(url, baudrate=baud, timeout=READ_TIMEOUT, write_timeout=WRITE_TIMEOUT, exclusive=True)
 
 
 # What a firmware says of itself (Marlin, RepRapFirmware, Smoothieware
-# answer M115 so), read off a port before it is picked.
+# answer M115 so), asked once a connection is open.
 IDENTIFY = "M115"
-IDENTIFY_SECONDS = 3.0
 FIRMWARE = re.compile(r"FIRMWARE_NAME:\s*(.+?)(?:\s+[A-Z_]+:|$)")
 MACHINE = re.compile(r"MACHINE_TYPE:\s*(.+?)(?:\s+[A-Z_]+:|$)")
-
-
-def identify(url: str, baud: int, opener: Callable[[str, int], Any] = open_port, seconds: float = IDENTIFY_SECONDS) -> dict:
-    """Asks the firmware on a port what it is: M115 out, the lines back until
-    its `ok` or `seconds`, the port closed again. Nothing moves. The firmware's
-    name and the machine's type are picked out where the answer has them."""
-    try:
-        port = opener(url, baud)
-    except (serial.SerialException, OSError, ValueError) as exc:
-        raise DeviceLinkError(f"cannot open {url}: {exc}") from exc
-    lines: list[str] = []
-    try:
-        port.write((IDENTIFY + "\n").encode("ascii"))
-        pending = b""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            chunk = port.read(256)
-            if not chunk:
-                continue
-            pending += chunk
-            done = False
-            while b"\n" in pending:
-                raw, pending = pending.split(b"\n", 1)
-                text = raw.decode("utf-8", errors="replace").strip()
-                if text:
-                    lines.append(text)
-                    done = done or bool(OK.match(text))
-            if done:
-                break
-    except (serial.SerialException, OSError) as exc:
-        raise DeviceLinkError(f"{url}: {exc}") from exc
-    finally:
-        try:
-            port.close()
-        except Exception:
-            pass
-    return {"url": url, "lines": lines, **firmware_of(lines)}
 
 
 def firmware_of(lines: list[str]) -> dict:
@@ -164,14 +133,14 @@ class RunContext:
     (counted, refused once the run is told to stop), its progress, and
     `publish` to show it."""
 
-    def __init__(self, link: "GcodeDevice", timeout: float, progress: RunProgress) -> None:
+    def __init__(self, link: "GcodeLink", timeout: float, progress: RunProgress) -> None:
         self.link = link
         self.timeout = timeout
         self.progress = progress
 
     def send(self, line: str) -> list[str]:
         if self.link._stop.is_set():
-            raise DeviceLinkError("stopped")
+            raise GcodeLinkError("stopped")
         code = code_of(line)
         if not code:
             return []
@@ -183,12 +152,23 @@ class RunContext:
         self.link._publish()
 
 
-class GcodeDevice:
-    """One G-code device, its reader, and a program being sent to it."""
+class GcodeLink:
+    """The connected G-code machine: its reader, its lines a line at a time,
+    the head's place as last read, and a program being sent to it."""
 
-    def __init__(self, publish: Callable[[], None], opener: Callable[[str, int], Any] = open_port) -> None:
+    def __init__(
+        self,
+        publish: Callable[[], None],
+        opener: Callable[[str, int], Any] = open_port,
+        on_line: Callable[[str, str, bool], None] | None = None,
+        on_lost: Callable[[str], None] | None = None,
+    ) -> None:
         self._publish = publish
         self._opener = opener
+        self._on_line = on_line or (lambda direction, text, poll: None)
+        self._on_lost = on_lost or (lambda reason: None)
+        # A poll's line is in flight: what comes back is the poll's too.
+        self._polling = False
         self._port: Any = None
         self._reader: threading.Thread | None = None
         self._replies: queue.Queue[str] = queue.Queue()
@@ -208,6 +188,13 @@ class GcodeDevice:
         self.vacuum: bool | None = None
         self.reading: float | None = None
         self.log: deque[dict] = deque(maxlen=LOG_LINES)
+        # What the backend has the machine doing outside a program: "Jog"
+        # while a goto's moves run to their end, "Home" while it homes.
+        self.busy: str | None = None
+        # The firmware's name as its answer to M115 gave it, and whether the
+        # motors were last switched on (they are at a connect).
+        self.firmware: str | None = None
+        self.motors = True
 
     # --- the port ---------------------------------------------------------------
 
@@ -228,15 +215,15 @@ class GcodeDevice:
     def connect(self, url: str, baud: int, wait_ms: int, init: tuple[str, ...], timeout: float) -> None:
         if self._port is not None:
             if self._lost is None:
-                raise DeviceLinkError("the device is already connected: disconnect first")
+                raise GcodeLinkError("the machine is already connected: disconnect first")
             # A link that was lost lets its port go before a new one opens.
             self.disconnect()
         if not url:
-            raise DeviceLinkError("the device profile names no port: set [port] url")
+            raise GcodeLinkError("the machine file names no port: set [port] url")
         try:
             port = self._opener(url, baud)
         except (serial.SerialException, OSError, ValueError) as exc:
-            raise DeviceLinkError(f"cannot open {url}: {exc}") from exc
+            raise GcodeLinkError(f"cannot open {url}: {exc}") from exc
         self._closing.clear()
         self._lost = None
         self._replies = queue.Queue()
@@ -247,7 +234,10 @@ class GcodeDevice:
         self.light = None
         self.vacuum = None
         self.reading = None
-        self._reader = threading.Thread(target=self._read_loop, args=(port,), name="gcode-device-reader", daemon=True)
+        self.busy = None
+        self.firmware = None
+        self.motors = True
+        self._reader = threading.Thread(target=self._read_loop, args=(port,), name="gcode-machine-reader", daemon=True)
         self._reader.start()
         self._note("info", f"connected to {url} at {baud} baud")
         try:
@@ -258,16 +248,11 @@ class GcodeDevice:
                 time.sleep(0.02)
             for line in init:
                 self.command(line, timeout)
-        except DeviceLinkError:
+        except GcodeLinkError:
             self.disconnect()
             raise
         finally:
             self._publish()
-
-    def identify(self, url: str, baud: int) -> dict:
-        """What the firmware on another port says it is, opened the way this
-        link opens its own."""
-        return identify(url, baud, self._opener)
 
     def disconnect(self) -> None:
         self._stop.set()
@@ -285,6 +270,7 @@ class GcodeDevice:
         if self.url is not None:
             self._note("info", f"disconnected from {self.url}")
         self.url = None
+        self.busy = None
         self._publish()
 
     def _read_loop(self, port) -> None:
@@ -294,9 +280,7 @@ class GcodeDevice:
                 chunk = port.read(256)
             except Exception as exc:
                 if not self._closing.is_set():
-                    self._lost = f"the device went away: {exc}"
-                    self._note("error", self._lost)
-                    self._publish()
+                    self._lose(f"the machine went away: {exc}")
                 return
             if not chunk:
                 continue
@@ -310,15 +294,43 @@ class GcodeDevice:
 
     def _note(self, direction: str, text: str) -> None:
         self.log.append({"dir": direction, "text": text})
+        if direction in ("tx", "rx"):
+            self._on_line(direction, text, self._polling)
+
+    def _lose(self, reason: str) -> None:
+        """The port failed on its own: nothing more goes out on it."""
+        if self._lost is not None:
+            return
+        self._lost = reason
+        self.busy = None
+        self._note("error", reason)
+        self._on_lost(reason)
+        self._publish()
 
     # --- lines -----------------------------------------------------------------
 
     def command(self, line: str, timeout: float) -> list[str]:
         """One line out and its answer: the lines that came with its `ok`.
-        DeviceLinkError for a refusal, no answer in `timeout` s, or a device
+        GcodeLinkError for a refusal, no answer in `timeout` s, or a machine
         that is gone."""
         with self._lock:
             return self._exchange(line, timeout)
+
+    def poll(self, line: str, timeout: float) -> list[str] | None:
+        """One line and its answer when nothing else is in flight and no
+        program is being sent; None when the line did not go out."""
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            if self.running or not self.connected:
+                return None
+            self._polling = True
+            try:
+                return self._exchange(line, timeout)
+            finally:
+                self._polling = False
+        finally:
+            self._lock.release()
 
     def _exchange(self, line: str, timeout: float) -> list[str]:
         code = code_of(line)
@@ -326,7 +338,7 @@ class GcodeDevice:
             return []
         port = self._port
         if port is None or self._lost is not None:
-            raise DeviceLinkError(self._lost or "the device is not connected")
+            raise GcodeLinkError(self._lost or "the machine is not connected")
         # What came unasked since the last answer is not this line's.
         while True:
             try:
@@ -337,26 +349,26 @@ class GcodeDevice:
         try:
             port.write((code + "\n").encode("ascii"))
         except Exception as exc:
-            self._lost = f"the device went away: {exc}"
-            raise DeviceLinkError(self._lost) from exc
+            self._lose(f"the machine went away: {exc}")
+            raise GcodeLinkError(self._lost or str(exc)) from exc
         reply: list[str] = []
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise DeviceLinkError(f"'{code}': no answer in {timeout:g} s")
+                raise GcodeLinkError(f"'{code}': no answer in {timeout:g} s")
             try:
                 text = self._replies.get(timeout=min(0.1, remaining))
             except queue.Empty:
                 if self._lost is not None:
-                    raise DeviceLinkError(self._lost) from None
+                    raise GcodeLinkError(self._lost) from None
                 continue
             if OK.match(text):
                 reply.append(text)
                 return reply
             if REFUSED.match(text):
                 self._take_trailing_ok()
-                raise DeviceLinkError(f"'{code}': {text}")
+                raise GcodeLinkError(f"'{code}': {text}")
             if BUSY.match(text):
                 deadline = time.monotonic() + timeout
             reply.append(text)
@@ -384,15 +396,15 @@ class GcodeDevice:
         """Sends a job on its own thread: `job` sends its lines through the
         context it is given, `total` is how many it means to send, as far
         as it can tell, and `job_id` the board job it places, if any. A job
-        raises DeviceLinkError to end in an error."""
+        raises GcodeLinkError to end in an error."""
         if not self.connected:
-            raise DeviceLinkError(self._lost or "the device is not connected")
+            raise GcodeLinkError(self._lost or "the machine is not connected")
         if self.running:
-            raise DeviceLinkError("a program is already being sent")
+            raise GcodeLinkError("a program is already being sent")
         self._stop.clear()
         self.progress = RunProgress(total=total, job=job_id)
         progress = self.progress
-        self._thread = threading.Thread(target=self._run_job, args=(job, timeout, progress, on_end), name="gcode-device-run", daemon=True)
+        self._thread = threading.Thread(target=self._run_job, args=(job, timeout, progress, on_end), name="gcode-machine-run", daemon=True)
         self._thread.start()
         self._publish()
 
@@ -403,18 +415,18 @@ class GcodeDevice:
             progress.doing = None
             progress.total = progress.sent
             progress.state = DONE
-        except DeviceLinkError as exc:
+        except GcodeLinkError as exc:
             if self._stop.is_set():
                 progress.state = STOPPED
                 progress.error = "stopped"
             else:
                 progress.state = ERROR
                 progress.error = str(exc)
-                log.warning("gcode device: %s", exc)
+                log.warning("gcode machine: %s", exc)
         except Exception as exc:
             progress.state = ERROR
             progress.error = repr(exc)
-            log.exception("gcode device run")
+            log.exception("gcode machine run")
         finally:
             progress.finished = time.monotonic()
             if on_end is not None:
@@ -433,7 +445,7 @@ class GcodeDevice:
             try:
                 port.write((code + "\n").encode("ascii"))
             except Exception as exc:
-                self._lost = f"the device went away: {exc}"
+                self._lose(f"the machine went away: {exc}")
         self._publish()
 
     def state(self) -> dict:
@@ -451,26 +463,26 @@ class GcodeDevice:
         }
 
 
-class DeviceMover(Mover):
-    """A G-code device's head: X and Y, Z as the height, every move
+class GcodeMover(Mover):
+    """A G-code machine's head: X and Y, Z as the height, every move
     followed by the wait command so a picture is read with the head at
     rest. It serves the up and top cameras' routines, and, given a run's
     `send`, the looks a run takes between a pick and a place; `aborted` is
     a routine's own stop."""
 
-    name = "device"
+    name = "gcode"
     letters = ("X", "Y")
     can_turn = True
 
     def __init__(
         self,
-        link: GcodeDevice,
-        device: Device,
+        link: GcodeLink,
+        machine: GcodeMachine,
         aborted: Callable[[], bool] | None = None,
         send: Callable[[str], list[str]] | None = None,
     ) -> None:
         self.link = link
-        self.device = device
+        self.machine = machine
         self._aborted = aborted or (lambda: False)
         # A run's own sender, which counts the lines it sends.
         self._send = send
@@ -478,21 +490,21 @@ class DeviceMover(Mover):
 
     def check(self) -> None:
         if not self.link.connected:
-            raise ValueError("the device is not connected")
+            raise ValueError("the machine is not connected")
         if self.link.running:
-            raise PnpError("a program is being sent to the device")
-        if not self.device.position:
-            raise ValueError("the device profile has no position command, which the cameras' routines need")
+            raise PnpError("a program is being sent to the machine")
+        if not self.machine.position:
+            raise ValueError("the machine file has no position command, which the cameras' routines need")
 
     def begin(self) -> None:
         # The cameras see by the profile's lights: on before the first look.
-        if self.device.light_on and self.link.light is not True:
-            for line in self.device.light_on:
+        if self.machine.light_on and self.link.light is not True:
+            for line in self.machine.light_on:
                 self._command(line)
             self.link.light = True
-        position = read_position(self._command(self.device.position), self.device.axes)
+        position = read_position(self._command(self.machine.position), self.machine.axes)
         if "x" not in position or "y" not in position:
-            raise PnpError(f"'{self.device.position}' answered no {self.device.axes[0]} and {self.device.axes[1]}")
+            raise PnpError(f"'{self.machine.position}' answered no {self.machine.axes[0]} and {self.machine.axes[1]}")
         self._at = [position["x"], position["y"], position.get("z")]
 
     def stopped(self) -> bool:
@@ -508,11 +520,11 @@ class DeviceMover(Mover):
         # To the safe height from either side: on a seesaw Z (two nozzles on
         # one motor) a Z above it lowers the other nozzle.
         z = self._at[2]
-        if z is None or abs(z - self.device.safe_z) > 1e-6:
-            self._z(self.device.safe_z)
+        if z is None or abs(z - self.machine.safe_z) > 1e-6:
+            self._z(self.machine.safe_z)
 
     def go(self, point) -> None:
-        self._command(move_xy(self.device, (point[0], point[1])))
+        self._command(move_xy(self.machine, (point[0], point[1])))
         self._wait()
         self._at[0], self._at[1] = float(point[0]), float(point[1])
 
@@ -520,20 +532,20 @@ class DeviceMover(Mover):
         self._z(height)
 
     def halt(self) -> None:
-        self.link.stop(self.device.stop)
+        self.link.stop(self.machine.stop)
 
     def turn(self, degrees: float) -> None:
-        self._command(move_xy(self.device, None, degrees))
+        self._command(move_xy(self.machine, None, degrees))
         self._wait()
 
     def _z(self, height: float) -> None:
-        self._command(move_z(self.device, height))
+        self._command(move_z(self.machine, height))
         self._wait()
         self._at[2] = height
 
     def _wait(self) -> None:
-        if self.device.wait:
-            self._command(self.device.wait)
+        if self.machine.wait:
+            self._command(self.machine.wait)
 
     def _command(self, line: str) -> list[str]:
         if self.stopped():
@@ -541,6 +553,6 @@ class DeviceMover(Mover):
         try:
             if self._send is not None:
                 return self._send(line)
-            return self.link.command(line, self.device.timeout)
-        except DeviceLinkError as exc:
+            return self.link.command(line, self.machine.timeout)
+        except GcodeLinkError as exc:
             raise PnpError(str(exc)) from exc

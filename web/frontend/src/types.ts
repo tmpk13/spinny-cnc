@@ -10,10 +10,17 @@ export interface Port {
     serial?: string;
     vid?: number | null;
     pid?: number | null;
-    /** `usb` for a device with a vendor id, `system` for a built-in port (never the controller), `last` for the url last used. */
-    kind?: "usb" | "system" | "last";
+    /**
+     * `usb` for a device with a vendor id, `system` for a built-in port
+     * (never the controller), `last` for the url last used, `machine` for a
+     * G-code machine whose file names a url no port is listed under.
+     */
+    kind?: "usb" | "system" | "last" | "machine";
     /** The device announces itself as the spinny controller. */
     spinny?: boolean;
+    /** The G-code machine file that claims the port, which Connect opens it as; null or missing for this project's firmware. */
+    machine?: string | null;
+    machine_name?: string | null;
 }
 
 export interface PortsResponse {
@@ -24,6 +31,8 @@ export interface Firmware {
     version: string;
     lines: number;
     blocks: number;
+    /** What a G-code machine's firmware says it is (its answer to M115), or the machine's name. */
+    name?: string;
 }
 
 export type MachineState = "Idle" | "Run" | "Jog" | "Hold" | "Home" | "Alarm";
@@ -89,17 +98,25 @@ export interface Machine {
 /** How the head moves over the board: the rail and the table, or the rail and the cross slide. */
 export type Kinematics = "polar" | "cartesian";
 
-/** What the output drives, or what takes the table's driver: a paste dispenser's plunger. */
-export type Tool = "laser" | "spindle" | "dispenser";
+/** What the output drives, or what takes the table's driver: a paste dispenser's plunger; or a G-code machine's vacuum nozzle. */
+export type Tool = "laser" | "spindle" | "dispenser" | "nozzle";
 
-/** What the machine is, from its settings as last read. */
+/** Who drives the machine: this project's firmware, or a controller of the machine's own taking G-code. */
+export type Controller = "spinny" | "gcode";
+
+/** What the machine is, from its settings as last read, or a G-code machine's file. */
 export interface Profile {
     kinematics: Kinematics;
     tool: Tool;
-    /** A focus axis is fitted: the depth axis of a spindle. */
+    /** A focus axis is fitted: the depth axis of a spindle; a G-code machine's Z. */
     h_axis: boolean;
     r_max: number;
     z_max: number;
+    /** Missing from a backend that predates G-code machines: this project's firmware. */
+    controller?: Controller;
+    /** A G-code machine's file: its id and its name. */
+    machine?: string | null;
+    name?: string;
 }
 
 export interface Snapshot {
@@ -272,6 +289,8 @@ export interface SettingsResponse {
     controls_from?: string | null;
     /** The page's controls: the file's, or the defaults for what the settings say the machine is. Missing from a backend that predates it. */
     controls?: Controls;
+    /** `gcode` for a G-code machine, which has none of the firmware's settings. */
+    controller?: Controller;
 }
 
 /** The firmware's joint letters: the radius, the table angle, the cross slide and the focus axis. */
@@ -327,6 +346,8 @@ export interface MachineSummary {
     tool: Tool;
     /** The file fits a focus axis. */
     focus: boolean;
+    /** This project's firmware, or a G-code controller of the machine's own; missing from an older backend: spinny. */
+    controller?: Controller;
 }
 
 export interface MachinesResponse {
@@ -349,6 +370,8 @@ export interface MachineDocument extends MachineSummary {
     /** The file's [camera], filled in from the defaults. */
     camera: CameraSettings;
     controls: Controls;
+    /** A G-code machine's own tables, read. */
+    gcode?: GcodeDocument;
 }
 
 /** A machine file as the backend sends it: what it reads as, or why it does not, and the text as written. */
@@ -914,7 +937,7 @@ export type WsEvent =
     | { type: "camera"; data: CameraState }
     | { type: "align"; data: AlignState }
     | { type: "pnp"; data: PnpState }
-    | { type: "pnp_device"; data: DeviceState }
+    | { type: "placing"; data: PlacingState }
     | { type: "markers"; data: MarkersResponse }
     | { type: "camlog"; data: CamLogState }
     | { type: "auto"; data: AutoEvent };
@@ -991,7 +1014,7 @@ export interface AutoSettingsUpdate {
 
 // --- The camera log ------------------------------------------------------------
 
-/** Which camera a log entry is from: the one on the head, the up camera, or the G-code device's top camera. */
+/** Which camera a log entry is from: the one on the head, the up camera, or a G-code machine's top camera. */
 export type LoggedCamera = "head" | "up" | "top";
 
 /** A spot finder's answer, as pcbv gives it. */
@@ -1067,8 +1090,8 @@ export type PnpStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 /** The nozzle routine (center the nozzle over the camera), the part routine (see where a part sits on it), or the runout routine (the tip at six turns of the nozzle). */
 export interface PnpRoutine {
     kind: "nozzle" | "part" | "runout";
-    /** The machine it moves: this one, or the G-code device. */
-    target?: "machine" | "device";
+    /** The machine it moves: one on this project's firmware, or a G-code machine. */
+    target?: "machine" | "gcode";
     state: RoutineState;
     step: PnpStep;
     done: number;
@@ -1126,20 +1149,13 @@ export interface ComponentsResponse {
 export interface PnpGotoRequest {
     job: string;
     ref: string;
+    /** On this project's firmware: the part's center as the up camera last saw it on the nozzle over the place. */
     correct?: boolean;
+    /** On a G-code machine: the top camera's picture center over the part, not the nozzle. */
+    camera?: boolean;
 }
 
 // --- A G-code pick and place machine ---------------------------------------------
-
-/** A device profile in `pnp/`: a machine whose controller takes the G-code OpenPnP's GcodeDriver sends. */
-export interface DeviceSummary {
-    id: string;
-    name: string;
-    description: string;
-    url: string;
-    /** How many feeders it has. */
-    feeders: number;
-}
 
 export interface FeederSummary {
     id: string;
@@ -1181,26 +1197,29 @@ export interface BusFeeder {
 }
 
 /** The vacuum sensor: the lines that read it, the pattern whose group is the reading, the readings with a part held and empty (none: read by hand only). */
-export interface DeviceVacuum {
+export interface GcodeVacuum {
     read: string[];
     pattern: string;
     part_on: [number, number] | null;
     part_off: [number, number] | null;
 }
 
-/** The camera on the device's head looking down, as the profile has it. */
-export interface DeviceTopProfile {
+/** The camera on a G-code machine's head looking down, as its file has it. */
+export interface GcodeTopCamera {
     z: number | null;
     offset: [number, number] | null;
     fiducial: SpotPolarity;
     within: number;
 }
 
-export interface DeviceDocument {
+/** A G-code machine's own tables as its file reads: port, dialect, heights, cameras, feeders. */
+export interface GcodeDocument {
     id: string;
     name: string;
     description: string;
     url: string;
+    /** Words in a port's USB names that make it this machine's. */
+    match?: string[];
     baud: number;
     wait_ms: number;
     timeout: number;
@@ -1214,62 +1233,39 @@ export interface DeviceDocument {
     place_z: number;
     pick_dwell_ms: number;
     place_dwell_ms: number;
-    /** Where the head waits out of the way; null when the profile has none. */
+    /** Where the head waits out of the way; null when the file has none. */
     park: [number, number] | null;
     /** Where the up camera is as designed, before centering measures it. */
     camera_position: [number, number] | null;
-    /** The profile switches lights for the cameras. */
+    /** The file switches lights for the cameras. */
     light: boolean;
     /** Where a part that failed a check is let go; null puts it back in its pocket. */
     discard: [number, number, number] | null;
     pick_tries: number;
-    /** The height the nozzle is seen sharp at over the up camera, when it sits on this device. */
+    /** The height the nozzle is seen sharp at over the up camera, when it sits on this machine. */
     camera_z: number | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop?: number | null;
-    /** The profile has a feeder bus, and these slots' places. */
+    /** The file has a feeder bus, and these slots' places. */
     bus?: boolean;
     slots?: { address: number; at: [number, number, number]; rotation: number }[];
     max_offset: number;
     max_turn: number;
     size_tolerance: number;
-    vacuum: DeviceVacuum | null;
-    top: DeviceTopProfile | null;
+    vacuum: GcodeVacuum | null;
+    top: GcodeTopCamera | null;
     feeders: FeederSummary[];
 }
 
-/** What the firmware on a port said it is, in answer to M115. */
-export interface DeviceIdentity {
-    url: string;
-    lines: string[];
-    firmware: string | null;
-    machine: string | null;
-}
-
-export interface DevicesResponse {
-    devices: DeviceSummary[];
-    problems: { id: string; problem: string }[];
-}
-
-export interface DeviceFile {
-    document: DeviceDocument;
-    text: string;
-}
-
-export interface DeviceCheck {
-    document: DeviceDocument | null;
-    problems: string[];
-}
-
-/** A part's place in the job paired with where it is on the device, and how it was taken: the nozzle over it, the top camera over it, or a fiducial the top camera found. */
-export interface DeviceReference {
+/** A part's place in the job paired with where it is on the machine, and how it was taken: the nozzle over it, the top camera over it, or a fiducial the top camera found. */
+export interface PnpReference {
     job: string;
     ref: string;
     at: [number, number];
     by?: "nozzle" | "camera" | "fiducial";
 }
 
-export interface DeviceRun {
+export interface PlacingRun {
     state: "running" | "done" | "stopped" | "error";
     sent: number;
     total: number;
@@ -1284,10 +1280,10 @@ export interface DeviceRun {
     error: string | null;
     seconds: number;
     /** What the run did, a line per step: seconds from its start, the part, and how it went. */
-    steps?: DeviceStep[];
+    steps?: PlacingStep[];
 }
 
-export interface DeviceStep {
+export interface PlacingStep {
     t: number;
     ref: string | null;
     text: string;
@@ -1315,7 +1311,7 @@ export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 /** The top camera's routine: its offset measured, or the board's fiducials found (a step per fiducial). */
 export interface TopRoutine {
     kind: "offset" | "fiducials";
-    target?: "machine" | "device";
+    target?: "machine" | "gcode";
     state: RoutineState;
     step: TopStep;
     done: number;
@@ -1329,30 +1325,36 @@ export interface TopState extends TopSettings {
     running: boolean;
     frame: { width: number; height: number; age_ms: number | null; fps: number | null } | null;
     routine: TopRoutine | null;
-    /** The fiducials last found: the job, where each is on the device, and the fit made of them. */
+    /** The fiducials last found: the job, where each is on the machine, and the fit made of them. */
     fiducials: { job: string; found: { ref: string; at: [number, number] }[]; fit: AlignFit } | null;
 }
 
-export interface DeviceState {
-    /** The profile picked, or null. */
-    profile: string | null;
-    /** The port picked in the panel, which wins over the profile's; null talks on the profile's. */
-    port?: string | null;
+/**
+ * What the PNP tab keeps of the G-code machine it places with (the one
+ * connected, else the one last connected), with that machine's link.
+ */
+export interface PlacingState {
+    /** The machine file's id, or null with no G-code machine to place with. */
+    machine: string | null;
+    name: string | null;
+    /** Its file's own tables, read; null with none. */
+    document: GcodeDocument | null;
     /** Boards a run finished since the count was reset. */
     boards?: number;
     /** Whether the lights were last switched on; null until switched. */
     light?: boolean | null;
     /** The vacuum as last switched and the sensor's last reading. */
     vacuum?: { on: boolean | null; reading: number | null };
-    /** Degrees the board is turned on the device, for a fit from one reference. */
+    /** Degrees the board is turned on the machine, for a fit from one reference. */
     angle: number | null;
-    references: DeviceReference[];
+    references: PnpReference[];
     /** How many parts each feeder has given. */
     taken: Record<string, number>;
-    /** Where the up camera sits on the device and how its picture lies, as centering the nozzle over it measured, and the nozzle tip's runout off its turning axis at 0, mm. */
+    /** Where the up camera sits on the machine and how its picture lies, as centering the nozzle over it measured, and the nozzle tip's runout off its turning axis at 0, mm. */
     camera: { position: [number, number] | null; height: number | null; mm_per_px: number; roll: number; mirror: boolean; runout?: [number, number] | null; measured?: boolean };
-    /** The top camera on the device's head. */
+    /** The top camera on the machine's head. */
     top?: TopState;
+    /** This machine is the one connected. */
     connected: boolean;
     url: string | null;
     /** Why the link was lost, or null. */
@@ -1360,12 +1362,12 @@ export interface DeviceState {
     running: boolean;
     homed: boolean;
     position: { x?: number; y?: number; z?: number; rotation?: number } | null;
-    progress: DeviceRun | null;
+    progress: PlacingRun | null;
     log: { dir: string; text: string }[];
 }
 
 /** A placement program: the parts it places, from which feeder, the parts it leaves, the board's fit and the G-code. */
-export interface DevicePlan {
+export interface PlacingPlan {
     /** `vision`: the part is looked at over the up camera between its pick and its place. */
     parts: { ref: string; feeder: string; index: number; vision: boolean }[];
     skipped: { ref: string; reason: string }[];

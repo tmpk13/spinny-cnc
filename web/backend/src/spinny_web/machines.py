@@ -1,13 +1,19 @@
 """Machine files for the page: the files in `machines/` listed, read,
-checked, saved and removed. The parse is `spinny_laser.machines`; this is
-the directory around it."""
+checked, saved, changed a value at a time and removed. The parse is
+`spinny_laser.machines`, and for a G-code machine its own tables are read
+by `openpnp.machine_of` as well, so a file is checked whole either way;
+this is the directory around it."""
 
 from __future__ import annotations
 
+import re
+
 from spinny_laser import machines as machine_files
-from spinny_laser.machines import Machine, MachineError
+from spinny_laser.cam import set_value
+from spinny_laser.machines import GCODE, Machine, MachineError
 
 from .cam import NotFound
+from .openpnp import GcodeMachine, machine_of
 from .stores import TomlStore
 
 
@@ -23,7 +29,26 @@ class MachineStore(TomlStore):
         machine_files.check_id(item_id)
 
     def parse(self, text: str, item_id: str, where: str | None = None) -> Machine:
-        return machine_files.parse(text, item_id, where or f"{item_id}.toml")
+        where = where or f"{item_id}.toml"
+        machine = machine_files.parse(text, item_id, where)
+        if machine.controller == GCODE:
+            # Its own tables are read now, so a file that saves is one a
+            # connect can use.
+            machine_of(machine, where)
+        return machine
+
+    def describe(self, parsed: Machine) -> dict:
+        """The file as the page shows it; a G-code machine's with its own
+        tables read (port, dialect, heights, cameras, feeders)."""
+        document = parsed.document()
+        if parsed.controller == GCODE:
+            document["gcode"] = machine_of(parsed).document()
+        return document
+
+    def gcode(self, machine_id: str) -> GcodeMachine:
+        """A G-code machine's file read; MachineError for one of this
+        project's firmware."""
+        return machine_of(self.get(machine_id))
 
     def list(self) -> tuple[list[Machine], list[dict]]:
         """Every `*.toml` that reads as a machine, and for each that does
@@ -39,3 +64,17 @@ class MachineStore(TomlStore):
 
     def save(self, machine_id: str, text: str) -> dict:
         return {**super().save(machine_id, text), "problems": []}
+
+    def patch(self, machine_id: str, path: list, value) -> dict:
+        """One value of a file changed in its text, comments and all, and
+        saved once the whole file reads. A plain table not in the file yet
+        ([vacuum], [up_camera]) is added at its end; `None` takes the key
+        out."""
+        with self._writing:
+            text = self.text(machine_id)
+            table = path[:-1]
+            if len(table) == 1 and isinstance(table[0], str) and value is not None:
+                header = re.compile(rf"^\s*\[{re.escape(table[0])}\]\s*(#.*)?$", re.MULTILINE)
+                if not header.search(text):
+                    text = text.rstrip("\n") + f"\n\n[{table[0]}]\n"
+            return self.save(machine_id, set_value(text, tuple(path), value))

@@ -10,7 +10,13 @@ from spinny_laser.machine_keys import KEYS, fixture, from_board, has_key, set_ke
 from spinny_laser.machines import FIRMWARE_DEFAULTS, MachineError, close, parse
 
 SHIPPED = Path(__file__).resolve().parents[2] / "machines"
-FILES = {path.stem: path.read_text(encoding="utf-8") for path in sorted(SHIPPED.glob("*.toml"))}
+# The files of machines on this project's firmware: a G-code machine's has
+# none of its settings, and takes nothing from a board.
+FILES = {
+    path.stem: text
+    for path in sorted(SHIPPED.glob("*.toml"))
+    if parse(text := path.read_text(encoding="utf-8"), path.stem).controller == "spinny"
+}
 
 
 def settings_of(name: str) -> dict:

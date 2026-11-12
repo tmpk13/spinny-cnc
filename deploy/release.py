@@ -57,7 +57,7 @@ USER_AGENT = "spinny-release"
 SOURCES = ["toolpath", "web", "carve", "firmware", "deploy", "docs/RELEASE.md", "pyproject.toml", "uv.lock"]
 # Committed directories shipped inside spinny_web, which seeds a new home
 # with them.
-SHIPPED = ["machines", "cam", "pnp"]
+SHIPPED = ["machines", "cam"]
 # The packages whose [project.scripts] the launchers come from.
 SCRIPTED = [REPO / "toolpath" / "pyproject.toml", REPO / "web" / "backend" / "pyproject.toml"]
 # The scripts a release has launchers for: the backend, and the serial
@@ -259,7 +259,7 @@ def build_firmware() -> Path:
 
 
 def export_shipped() -> Path:
-    """machines/, cam/ and pnp/ as committed."""
+    """machines/ and cam/ as committed."""
     out = fresh(BUILD / "shipped")
     archive = subprocess.run(["git", "archive", "--format=tar", "HEAD", *SHIPPED], cwd=REPO, check=True, capture_output=True)
     tar_path = BUILD / "shipped.tar"

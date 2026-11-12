@@ -65,7 +65,7 @@ def test_state_and_ports_before_connecting(client, tmp_path):
         "url": None,
         "firmware": None,
         "machine": None,
-        "profile": {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0},
+        "profile": {"kinematics": "polar", "tool": "laser", "h_axis": False, "r_max": 0.0, "z_max": 0.0, "controller": "spinny"},
         "run": None,
         "resume": None,
         "position": None,
