@@ -106,7 +106,7 @@ bin/spinny-virtual --machine ~/.local/share/spinny/machines/cartesian-mill.toml
 ```
 
 `bin/spinny-virtual-pnp` is a LumenPnP pick and place machine the same
-way: connect *Virtual LumenPnP* from the top bar (its machine file,
+way: connect *Virtual LumenPnP* on the Connection tab (its machine file,
 `virtual-pnp.toml`, is among the shipped ones) and give the cameras
 `http://127.0.0.1:2328/snapshot` and `http://127.0.0.1:2329/snapshot`
 ([OPERATING.md](OPERATING.md#a-virtual-lumenpnp) in the repository).

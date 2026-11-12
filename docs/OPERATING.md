@@ -646,7 +646,7 @@ the I2C mux reads as a LumenPnP's: about 254 with the pump off, 251 with
 the nozzle open, 231 with a part on it. Three Photon feeders answer on
 the bus (addresses 1 to 3; the program prints their ids for `bus_id`).
 
-Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) from the top bar.
+Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) on the Connection tab.
 Give the bottom (up) camera the device `http://127.0.0.1:2328/snapshot`
 and the top camera `http://127.0.0.1:2329/snapshot`, size 640x480 (or
 start the backend with `SPINNY_CAMERA_PORTS="2325 2326 2328 2329"` and

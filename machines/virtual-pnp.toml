@@ -1,7 +1,7 @@
 # The virtual LumenPnP: `mise run virtual-pnp` (or bin/spinny-virtual-pnp
 # in a release) plays a LumenPnP's Marlin on socket://127.0.0.1:2327 and
 # serves its two cameras, so the PNP tab can be tried with no hardware.
-# Connect it from the top bar; give the cameras' devices as
+# Connect it on the Connection tab; give the cameras' devices as
 # http://127.0.0.1:2328/snapshot (bottom) and http://127.0.0.1:2329/snapshot
 # (top). Everything else is opulo-lumen-rev5.toml's, with the vacuum's
 # ranges set (the virtual sensor reads as Opulo's do) and three Photon
