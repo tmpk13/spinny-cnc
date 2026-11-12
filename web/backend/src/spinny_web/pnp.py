@@ -32,10 +32,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
+from .cameras import apply_kept, check_controls
 from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, look_dict, picture_to_machine, spot_of, wait_settled
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import LinkError, idle_status, settle
@@ -403,10 +404,13 @@ class UpCameraSettings(BaseModel):
     mm_per_px: float = 0.0
     roll: float = 0.0
     mirror: bool = True
+    # V4L2 control values set on the device each time the camera starts.
+    controls: dict[str, int] = Field(default_factory=dict)
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the up camera device must be named")
+        check_controls(self.controls)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the up camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:
@@ -696,6 +700,9 @@ class PickCamera:
         settings = self.settings()
         self.client.start(settings.device, settings.size, settings.fps, settings.pcbv)
         log.info("%s started on %s", self.label, settings.device)
+        refused = apply_kept(settings.device, settings.controls)
+        if refused:
+            self._message("error", f"the {self.label}'s controls were not all set: {refused}")
 
     def stop(self) -> None:
         if self.routine_active:

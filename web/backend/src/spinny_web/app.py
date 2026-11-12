@@ -47,6 +47,7 @@ from .boardlook import BoardLook, BoardMover, PictureFrame, RestTracker, found_t
 from .camera import Camera, CameraError, MachineAccess, pose_summary
 from .camlog import CAMERAS, CameraLog
 from .files import write_whole
+from .cameras import ControlsError, controls_note, list_controls, set_controls
 from .cameras import detect as detect_cameras
 from .backend_shared import _check_frame_width, _s_max, _setting, _soft_limits
 from .gcode_link import GcodeLink, GcodeLinkError
@@ -521,6 +522,14 @@ class BoardSearchBody(Finite):
 
 class BoardPlaceBody(Finite):
     job: str
+
+
+class CameraControlsBody(Finite):
+    # Which camera: the head camera, the up camera, or a G-code machine's top camera.
+    camera: Literal["head", "up", "top"]
+    # Control values by v4l2-ctl's names, set now and kept to be set at
+    # every start; null forgets a kept one (the camera's own value stays).
+    values: dict[str, int | None]
 
 
 class PnpSettingsBody(Finite):
@@ -2953,6 +2962,51 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         held = tuple(client.device for client in (self.camera.client, self.pnp.client, self.top.client) if client.running and client.device)
         return detect_cameras(self.camera.settings().pcbv, held)
 
+    def _controlled(self, camera: str):
+        """A camera by its name in the controls' routes, and how to tell the page of it."""
+        if camera == "head":
+            return self.camera, self.publish_camera
+        if camera == "up":
+            return self.pnp, self.publish_pnp
+        self.placing_machine()
+        return self.top, self.publish_placing
+
+    def camera_controls(self, camera: str) -> dict:
+        """A camera's V4L2 controls as its device has them now, each with
+        the value kept for it (set at every start), or why it has none."""
+        owner, _ = self._controlled(camera)
+        settings = owner.settings()
+        kept = dict(settings.controls)
+        note = controls_note(settings.device)
+        controls: list[dict] = []
+        if note is None:
+            try:
+                controls = list_controls(settings.device)
+            except ControlsError as exc:
+                raise VisionError(str(exc)) from exc
+            for control in controls:
+                control["kept"] = kept.get(control["name"])
+        return {"camera": camera, "device": settings.device, "local": note is None, "note": note, "controls": controls, "kept": kept}
+
+    def camera_controls_set(self, body: CameraControlsBody) -> dict:
+        """Sets control values on a camera's device now and keeps them, to
+        be set again each time it starts; a null forgets a kept value."""
+        owner, publish = self._controlled(body.camera)
+        settings = owner.settings()
+        kept = dict(settings.controls)
+        wanted = {name: value for name, value in body.values.items() if value is not None}
+        for name, value in body.values.items():
+            if value is None:
+                kept.pop(name, None)
+            else:
+                kept[name] = value
+        owner.update({"controls": kept})
+        refused: list[str] = []
+        if wanted and controls_note(settings.device) is None:
+            refused = set_controls(settings.device, wanted)
+        publish()
+        return {**self.camera_controls(body.camera), "refused": refused}
+
     def camera_settings(self, body: CameraSettingsBody) -> dict:
         try:
             self.camera.update(body.model_dump(exclude_none=True))
@@ -4039,6 +4093,14 @@ def create_app(
     @app.get("/api/cameras")
     def cameras():
         return backend.cameras()
+
+    @app.get("/api/cameras/controls")
+    def camera_controls(camera: Literal["head", "up", "top"] = "head"):
+        return guarded(lambda: backend.camera_controls(camera))
+
+    @app.put("/api/cameras/controls")
+    def camera_controls_set(body: CameraControlsBody):
+        return guarded(lambda: backend.camera_controls_set(body))
 
     @app.get("/api/camera")
     def camera_state():

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import socket
 import subprocess
 import time
@@ -245,3 +247,155 @@ def detect(pcbv: str, held: tuple[str, ...] = (), ports: list[int] | None = None
                 found.append((port, camera))
     found.sort(key=lambda item: item[0])
     return {"cameras": cameras + [camera for _, camera in found], "problems": problems}
+
+
+# --- a camera's controls ----------------------------------------------------------------
+#
+# A V4L2 camera on this computer has controls (exposure, gain, focus, white
+# balance, brightness and the like) that v4l2-ctl lists and sets, also
+# while pcbv streams from it: `--list-ctrls-menus` prints each control on a
+# line, `name 0xID (type) : min=.. max=.. step=.. default=.. value=..
+# flags=..`, a menu's items on the lines under it, and a heading line over
+# each class of controls. A camera reached over HTTP (a bridge Pi's
+# snapshots) or a pcbv serving over TCP has none here: its controls are its
+# own computer's.
+
+# How long v4l2-ctl has for a listing or a setting, s.
+CONTROL_SECONDS = 5.0
+# The kinds of control the page can show and set: a number, a switch, a menu.
+CONTROL_KINDS = ("int", "bool", "menu", "intmenu")
+# Flags that say a control cannot be set now.
+FIXED_FLAGS = ("read-only", "disabled", "grabbed")
+_CONTROL = re.compile(r"^\s*(?P<name>[a-z0-9_]+)\s+0x[0-9a-f]+\s+\((?P<kind>[a-z0-9]+)\)\s*:\s*(?P<rest>.*)$")
+_MENU_ITEM = re.compile(r"^\s+(?P<value>-?\d+):\s*(?P<label>.*?)\s*$")
+_FIELD = re.compile(r"\b(min|max|step|default|value)=(-?\d+)")
+
+
+class ControlsError(Exception):
+    """v4l2-ctl is not there, or refused."""
+
+
+def local_device(device: str) -> bool:
+    """Whether a camera's device is a V4L2 node on this computer, the kind
+    whose controls v4l2-ctl reaches."""
+    return device.startswith("/dev/")
+
+
+def _v4l2(args: list[str]) -> str:
+    """v4l2-ctl run with `args`: what it printed, or a ControlsError."""
+    program = shutil.which("v4l2-ctl")
+    if program is None:
+        raise ControlsError("v4l2-ctl is not installed: install v4l-utils to set a camera's controls")
+    try:
+        done = subprocess.run([program, *args], capture_output=True, timeout=CONTROL_SECONDS)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ControlsError(f"v4l2-ctl failed: {exc}") from exc
+    if done.returncode != 0:
+        said = (done.stderr or done.stdout or b"").decode("utf-8", errors="replace").strip().splitlines()
+        raise ControlsError(f"v4l2-ctl: {said[-1] if said else f'it ended with {done.returncode}'}")
+    return done.stdout.decode("utf-8", errors="replace")
+
+
+def parse_controls(text: str) -> list[dict]:
+    """The controls of a `--list-ctrls-menus` listing that the page can
+    set: `name`, `section` (the heading it is under), `kind` (`int`,
+    `bool`, `menu`, `intmenu`), `min`, `max`, `step`, `default`, `value`,
+    `inactive` (it does nothing while another control, such as automatic
+    exposure, is on), and for a menu its `items` ({value, label})."""
+    controls: list[dict] = []
+    section = ""
+    current: dict | None = None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = _CONTROL.match(line)
+        if match:
+            current = None
+            kind = match.group("kind")
+            rest = match.group("rest")
+            flags = [flag.strip() for flag in rest.split("flags=", 1)[1].split(",")] if "flags=" in rest else []
+            if kind not in CONTROL_KINDS or any(flag in FIXED_FLAGS for flag in flags):
+                continue
+            fields = {key: int(value) for key, value in _FIELD.findall(rest)}
+            if "value" not in fields:
+                continue
+            control = {
+                "name": match.group("name"),
+                "section": section,
+                "kind": kind,
+                "min": fields.get("min", 0),
+                "max": fields.get("max", 1),
+                "step": max(1, fields.get("step", 1)),
+                "default": fields.get("default", fields["value"]),
+                "value": fields["value"],
+                "inactive": "inactive" in flags,
+            }
+            if kind in ("menu", "intmenu"):
+                control["items"] = []
+            controls.append(control)
+            current = control
+            continue
+        item = _MENU_ITEM.match(line)
+        if item and current is not None and "items" in current:
+            current["items"].append({"value": int(item.group("value")), "label": item.group("label")})
+            continue
+        if not line.startswith((" ", "\t")):
+            section = line.strip()
+            current = None
+    return controls
+
+
+def list_controls(device: str) -> list[dict]:
+    """The controls a V4L2 camera on this computer has, as it is set now."""
+    return parse_controls(_v4l2(["-d", device, "--list-ctrls-menus"]))
+
+
+def set_controls(device: str, values: dict[str, int]) -> list[str]:
+    """Sets controls on a V4L2 camera on this computer, the automatic ones
+    first (a manual exposure is taken only once automatic exposure is
+    off), each on its own so one refused does not keep the others: what
+    was refused, each with v4l2-ctl's reason."""
+    refused: list[str] = []
+    for name in sorted(values, key=lambda key: (0 if "auto" in key else 1, key)):
+        try:
+            _v4l2(["-d", device, "-c", f"{name}={int(values[name])}"])
+        except ControlsError as exc:
+            refused.append(f"{name}: {exc}")
+    return refused
+
+
+_CONTROL_NAME = re.compile(r"^[a-z0-9_]{1,64}$")
+
+
+def check_controls(controls: dict) -> None:
+    """Kept control values: names as v4l2-ctl prints them, whole numbers."""
+    if len(controls) > 64:
+        raise ValueError("a camera keeps at most 64 control values")
+    for name, value in controls.items():
+        if not isinstance(name, str) or not _CONTROL_NAME.match(name):
+            raise ValueError(f"{name!r} is not a camera control's name")
+        if isinstance(value, bool) or not isinstance(value, int) or abs(value) > 2**31:
+            raise ValueError(f"the control {name} takes a whole number")
+
+
+def controls_note(device: str) -> str | None:
+    """Why a camera's device has no controls here; None for one that has."""
+    if local_device(device):
+        return None
+    if device.startswith(("http://", "https://")):
+        return "a camera reached over HTTP (a bridge Pi's snapshots) has no controls here: they are set on the computer it is plugged into"
+    if device.startswith("socket://"):
+        return "a pcbv serving over TCP has no controls here: its camera's are set on the computer it runs on"
+    return "pictures replayed from files have no controls"
+
+
+def apply_kept(device: str, controls: dict[str, int]) -> str | None:
+    """Sets the control values a camera keeps on its device, as it starts:
+    what went wrong, or None."""
+    if not controls or not local_device(device):
+        return None
+    try:
+        refused = set_controls(device, controls)
+    except ControlsError as exc:
+        return str(exc)
+    return "; ".join(refused) if refused else None

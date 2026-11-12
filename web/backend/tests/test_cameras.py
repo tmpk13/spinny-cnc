@@ -290,3 +290,78 @@ def test_the_route_lists_with_the_cameras_program_and_what_runs(tmp_path, monkey
         response = client.get("/api/cameras")
     assert response.status_code == 200 and response.json() == {"cameras": [{"device": "/dev/video0"}], "problems": []}
     assert asked == [("/opt/pcbv", ())]
+
+
+# What v4l2-ctl --list-ctrls-menus prints for a laptop's camera.
+LISTING = """
+User Controls
+
+                     brightness 0x00980900 (int)    : min=0 max=255 step=1 default=128 value=140 flags=0x00001000
+                       contrast 0x00980901 (int)    : min=0 max=255 step=1 default=32 value=32 flags=0x00001000
+        white_balance_automatic 0x0098090c (bool)   : default=1 value=1
+           power_line_frequency 0x00980918 (menu)   : min=0 max=2 default=1 value=1 (50 Hz)
+\t\t\t\t0: Disabled
+\t\t\t\t1: 50 Hz
+\t\t\t\t2: 60 Hz
+      white_balance_temperature 0x0098091a (int)    : min=2800 max=6500 step=1 default=4600 value=4600 flags=inactive, 0x00001000
+   region_of_interest_rectangle 0x00981ae1 (unknown): type=107 value=unsupported payload type flags=has-payload, 0x00001000
+  region_of_interest_auto_ctrls 0x00981ae2 (bitmask): max=0x000000ff default=0x00000010 value=16 flags=0x00001000
+
+Camera Controls
+
+                  auto_exposure 0x009a0901 (menu)   : min=0 max=3 default=3 value=3 (Aperture Priority Mode)
+\t\t\t\t1: Manual Mode
+\t\t\t\t3: Aperture Priority Mode
+         exposure_time_absolute 0x009a0902 (int)    : min=4 max=1250 step=1 default=157 value=157 flags=inactive, 0x00001000
+                 focus_absolute 0x009a090a (int)    : min=0 max=250 step=5 default=0 value=0 flags=read-only
+"""
+
+
+def test_a_listing_gives_the_controls_the_page_can_set():
+    controls = {control["name"]: control for control in cameras_module.parse_controls(LISTING)}
+    # The region of interest (no number), the bitmask and a read-only focus are left out.
+    assert list(controls) == ["brightness", "contrast", "white_balance_automatic", "power_line_frequency", "white_balance_temperature", "auto_exposure", "exposure_time_absolute"]
+    assert controls["brightness"] == {"name": "brightness", "section": "User Controls", "kind": "int", "min": 0, "max": 255, "step": 1, "default": 128, "value": 140, "inactive": False}
+    assert controls["white_balance_automatic"]["kind"] == "bool" and controls["white_balance_automatic"]["value"] == 1
+    assert controls["auto_exposure"]["items"] == [{"value": 1, "label": "Manual Mode"}, {"value": 3, "label": "Aperture Priority Mode"}]
+    assert controls["auto_exposure"]["section"] == "Camera Controls" and controls["exposure_time_absolute"]["inactive"] is True
+
+
+def test_controls_are_listed_set_kept_and_set_again_at_a_start(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_v4l2(args):
+        calls.append(args)
+        if "--list-ctrls-menus" in args:
+            return LISTING
+        if args[-1].startswith("contrast="):
+            raise cameras_module.ControlsError("v4l2-ctl: VIDIOC_S_EXT_CTRLS: failed: Invalid argument")
+        return ""
+
+    monkeypatch.setattr(cameras_module, "_v4l2", fake_v4l2)
+    backend = Backend(root=tmp_path, jobs_dir=tmp_path / "jobs", config_path=tmp_path / "config.json")
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        listed = client.get("/api/cameras/controls", params={"camera": "head"}).json()
+        assert listed["local"] is True and listed["device"] == "/dev/video0" and listed["kept"] == {}
+        assert [control["kept"] for control in listed["controls"][:2]] == [None, None]
+        # Set now (automatic exposure first), kept, one refused and said.
+        response = client.put("/api/cameras/controls", json={"camera": "head", "values": {"exposure_time_absolute": 300, "auto_exposure": 1, "contrast": 900}})
+        assert response.status_code == 200, response.text
+        answer = response.json()
+        assert answer["kept"] == {"exposure_time_absolute": 300, "auto_exposure": 1, "contrast": 900}
+        assert answer["refused"] == ["contrast: v4l2-ctl: VIDIOC_S_EXT_CTRLS: failed: Invalid argument"]
+        sets = [args[-1] for args in calls if "-c" in args]
+        assert sets == ["auto_exposure=1", "contrast=900", "exposure_time_absolute=300"]
+        assert client.get("/api/camera").json()["controls"] == {"exposure_time_absolute": 300, "auto_exposure": 1, "contrast": 900}
+        # A null forgets a kept value; a name v4l2-ctl would not print is refused.
+        assert client.put("/api/cameras/controls", json={"camera": "head", "values": {"contrast": None}}).json()["kept"] == {"exposure_time_absolute": 300, "auto_exposure": 1}
+        assert client.put("/api/cameras/controls", json={"camera": "head", "values": {"Bad Name": 1}}).status_code == 400
+        # The kept values are set again when the camera starts.
+        calls.clear()
+        backend.camera.client.start = lambda device, size, fps, pcbv: {"version": "test"}
+        backend.camera.start()
+        assert [args[-1] for args in calls] == ["auto_exposure=1", "exposure_time_absolute=300"]
+        # A bridge Pi's snapshots have none here, and say why.
+        client.put("/api/pnp/settings", json={"device": "http://127.0.0.1:2325/snapshot"})
+        far = client.get("/api/cameras/controls", params={"camera": "up"}).json()
+        assert far["local"] is False and far["controls"] == [] and "HTTP" in far["note"]

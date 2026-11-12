@@ -25,11 +25,12 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
 from .camera import Spot, picture_to_machine, spot_of
+from .cameras import check_controls
 from .openpnp import SHADES
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
 
@@ -73,10 +74,13 @@ class TopCameraSettings(BaseModel):
     mm_per_px: float = 0.0
     roll: float = 0.0
     mirror: bool = False
+    # V4L2 control values set on the device each time the camera starts.
+    controls: dict[str, int] = Field(default_factory=dict)
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the top camera device must be named")
+        check_controls(self.controls)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the top camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:

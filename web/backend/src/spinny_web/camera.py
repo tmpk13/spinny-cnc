@@ -23,10 +23,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
+from .cameras import apply_kept, check_controls
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError, idle_status, settle
 from .log import log
@@ -77,10 +78,14 @@ class CameraSettings(BaseModel):
     offset: tuple[float, float] = (0.0, 0.0)
     roll: float = 0.0
     mm_per_px: float = 0.0
+    # V4L2 control values (exposure, gain, focus, ...) set on the device
+    # each time the camera starts, by the names v4l2-ctl gives them.
+    controls: dict[str, int] = Field(default_factory=dict)
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the camera device must be named")
+        check_controls(self.controls)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:
@@ -340,6 +345,9 @@ class Camera:
         self.board_job = None
         self._board_path = None
         log.info("camera started on %s", settings.device)
+        refused = apply_kept(settings.device, settings.controls)
+        if refused:
+            self._message("error", f"the camera's controls were not all set: {refused}")
 
     def stop(self) -> None:
         if self.routine_active:
