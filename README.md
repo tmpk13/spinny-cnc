@@ -9,7 +9,9 @@ machine with a spindle on the laser output or a solder paste dispenser's
 plunger on the table's driver. A camera on the head, read through the
 sibling [pcb-vision](https://github.com/tmpk13/pcb-vision) repository,
 lines a job up with the board, and parts are placed with a nozzle on the
-head or on another G-code machine.
+head, or by a pick and place machine on its own G-code controller (a
+LumenPnP's Marlin), described by a machine file and driven from the same
+page like the others.
 
 - `mise run web`: build the page and serve it with the backend at `http://localhost:8000`
 - `mise run dev`: the page from Bun's dev server with live reload

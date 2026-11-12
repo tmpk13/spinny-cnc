@@ -25,8 +25,8 @@ allowed, since the backend's own tools come in under them.
 
 | Method and path | Body | Returns |
 | --- | --- | --- |
-| `GET /api/ports` | | `{"ports": [{"url": "/dev/serial/by-id/usb-spinny_...", "device": "/dev/ttyACM0", "description": "...", "product": "spinny laser controller", "manufacturer": "spinny", "serial": "...", "vid": 11914, "pid": 10, "kind": "usb", "spinny": true}]}`, the controller first (`spinny`: it announces itself on the bus), then the other USB devices, then the built-in ports (`kind` `system`, never the controller), plus the url last used when it is not listed (`kind` `last`); a USB device is named by its stable `/dev/serial/by-id` link where the system gives one, so the pick survives a replug |
-| `POST /api/connect` | `{"url": "/dev/ttyACM0"}` | state snapshot; `socket://host:port` reaches the virtual firmware; anything but a device path, a `COMn` port or a `socket://` url is refused with 400 |
+| `GET /api/ports` | | `{"ports": [{"url": "/dev/serial/by-id/usb-spinny_...", "device": "/dev/ttyACM0", "description": "...", "product": "spinny laser controller", "manufacturer": "spinny", "serial": "...", "vid": 11914, "pid": 10, "kind": "usb", "spinny": true, "machine": null, "machine_name": null}]}`, the controller first (`spinny`: it announces itself on the bus), then the other USB devices, then the built-in ports (`kind` `system`, never the controller), plus the url last used when it is not listed (`kind` `last`); a USB device is named by its stable `/dev/serial/by-id` link where the system gives one, so the pick survives a replug. `machine` and `machine_name` name the G-code machine file that claims the port (its `[port] url` is the port's, or its `[port] match` words are in the port's USB names), and a G-code machine whose file names a url no port is listed under comes as an entry of its own (`kind` `machine`) |
+| `POST /api/connect` | `{"url": "/dev/ttyACM0", "machine": null}` | state snapshot; `socket://host:port` reaches the virtual firmware; anything but a device path, a `COMn` port or a `socket://` url is refused with 400. The port opens as a G-code machine when `machine` names a G-code machine file (400 for a file of this project's firmware), or when a G-code machine file claims the port; else as this project's firmware. A G-code machine's file gives the baud, the wait for a board that resets as its port opens and the init lines; the backend then asks M115 (the firmware's name) and the file's position command, and reads the position about once a second while nothing else is in flight. Connecting either kind closes the other |
 | `POST /api/disconnect` | | state snapshot; a turning spindle or a lit beam is stopped first (`laser off` on an idle machine; one that is moving or held, or does not take `laser off` at once, is held and then reset once at rest, as a run's stop does), since the firmware does not see a port close; the backend's shutdown does the same |
 | `GET /api/state` | | state snapshot |
 
@@ -84,6 +84,21 @@ the console.
 `joint.h` (the focus axis, mm, up positive) and `probe` (the probe input is
 active) are `null` on a machine without a focus axis (`$h_axis=0`).
 
+A G-code machine's snapshot has its head's place as the cartesian
+machine's joints (`r` is X, `z` is Y, `h` is Z, `a` the rotation axis as
+the controller counts it), `board` its X and Y, `state` `Idle`, `Jog`
+while a goto's moves run to their end, `Home` while it homes and `Run`
+during a placing run or a camera routine, `enabled` as its motors were
+last switched, and `age` 0; `firmware` is `{"version": "Marlin 2.1.2",
+"lines": 1, "blocks": 0, "name": "Marlin 2.1.2"}` (the M115 answer's
+FIRMWARE_NAME, else the machine's name). `profile` is
+`{"kinematics": "cartesian", "tool": "nozzle", "h_axis": true, "r_max":
+0, "z_max": 0, "controller": "gcode", "machine": "opulo-lumen-rev5",
+"name": "Opulo LumenPnP (Rev05, Marlin)"}`; a machine on this project's
+firmware says `"controller": "spinny"`. `run`, `resume` and `position`
+are null. A G-code machine's link lost on its own shows `connected`
+false with its profile kept until the next connect.
+
 ## Moving
 
 | Method and path | Body |
@@ -104,6 +119,29 @@ being probed. A board move whose
 lines would pass the firmware's `r_max` is refused whole with 400 before
 any of them goes out; a move within the limit chains from the end of the
 jog in progress. Move requests are served one at a time.
+
+On a G-code machine the same requests drive its controller, `r`, `z`, `h`
+and `a` being its X, Y, Z and rotation axis (`dx`, `dy`, `x` and `y` too
+being X and Y). A jog reads the head's place with the file's position
+command first (Marlin answers with where the queued moves end, so jogs
+pressed quickly add up) and sends one move to the place plus the step,
+answered once queued; `feed` goes with X and Y, Z moves at the file's Z
+feed. A goto moves only the axes it names: across (X or Y changing) it
+goes to the file's safe height first, from either side of it, the turn
+with the move across, and the height last and only when it changes; it is
+answered once its moves have run (the file's wait command) and the place
+read again. A position declaration is `G92` with the axes named; a home is
+the file's home line (`G28`), with the axes named when some are; `motors`
+sends the file's `motors_on` or `motors_off` (400 when it gives none).
+`realtime` `reset` and `cancel` send the file's stop (`M410`) ahead of
+anything in flight and stop a placing run or a camera routine, `status`
+reads the place, and `hold` and `resume` are refused with 400: a G-code
+controller has no hold to resume from. `command` sends the line as typed
+and returns the lines that came with its `ok`; `unlock`, the laser, the
+spindle, `mode`, settings writes, probing, runs and the camera on the
+head answer 409 naming the machine (`... is a G-code machine: this is
+for a machine on this project's firmware`). A jog step is at most 1000
+mm (3600 degrees), a goto's place within 10000 mm (3600 degrees).
 
 Board jogs and gotos are turned into joint moves on the host with the chord
 tolerance (`[host] tolerance`), so a board move through the axis becomes
@@ -150,21 +188,29 @@ rises to before a goto across the board, probing (and *Probe nearest*)
 and the camera routines move it, when it is lower; `null` (the default)
 leaves the head at the height it has. Only the keys given change.
 
+With a G-code machine connected, `GET /api/settings` answers `{"values":
+{}, "schema": [], "host": {...}, "machine": "opulo-lumen-rev5", "unsaved":
+[], "controls_from": "opulo-lumen-rev5", "controls": {...}, "controller":
+"gcode"}`: none of the firmware's settings, its file's controls.
+`PUT /api/settings` with `values` answers 409 then.
+
 ## Machines
 
 The machine files in `machines/` ([MACHINES.md](MACHINES.md)), one TOML
 file per axis arrangement, each a complete set of firmware settings plus
-the host's own.
+the host's own; or, with `controller = "gcode"`, a machine on a G-code
+controller of its own, a pick and place machine's.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser" (or `spindle`, `dispenser`), "focus": false}, ...], "current": "polar-laser", "problems": [{"id": "broken", "problem": "..."}]}`; `current` is the file the connected machine's settings are, `null` with no machine connected or settings of no file's; `problems` names each file that could not be read with what is wrong, the others are listed; such a file still opens below, to be mended |
-| `GET /api/machines/{id}` | `{"document": {...}, "problems": [], "text": "..."}`: the entry above plus `settings` (every firmware setting's value), `host`, `camera` (the file's `[camera]`, filled in from the defaults: `device`, `size`, `fps`, `pcbv`, `side`, `finish`, `offset`, `roll`, `mm_per_px`) and `controls` (the file's `[controls]`, filled in from the defaults) as `document`, and the file as written; a file that does not read answers with `document` null and the problem named, its text with it; 404 for a file that is not there, 400 for an id that is not lower case letters, digits, `-` and `_` |
+| `GET /api/machines` | returns `{"machines": [{"id": "polar-laser", "name", "description", "kinematics": "polar", "tool": "laser" (or `spindle`, `dispenser`; `nozzle` for a G-code machine), "focus": false, "controller": "spinny" (or `gcode`)}, ...], "current": "polar-laser", "problems": [{"id": "broken", "problem": "..."}]}`; `current` is the file the connected machine's settings are (a G-code machine's file when one is connected), `null` with no machine connected or settings of no file's; `problems` names each file that could not be read with what is wrong, the others are listed; such a file still opens below, to be mended |
+| `GET /api/machines/{id}` | `{"document": {...}, "problems": [], "text": "..."}`: the entry above plus `settings` (every firmware setting's value), `host`, `camera` (the file's `[camera]`, filled in from the defaults: `device`, `size`, `fps`, `pcbv`, `side`, `finish`, `offset`, `roll`, `mm_per_px`) and `controls` (the file's `[controls]`, filled in from the defaults) as `document`, and the file as written; a G-code machine's document has `settings` and `host` empty and its own tables read as `gcode` (the placing state's `document` below); a file that does not read answers with `document` null and the problem named, its text with it; 404 for a file that is not there, 400 for an id that is not lower case letters, digits, `-` and `_` |
+| `PATCH /api/machines/{id}` | `{"path": ["motion", "place_z"], "value": 12.5}`: one value changed in the file's text, comments and all, and saved once the whole file reads (a plain table not in the file yet, such as `[vacuum]`, is added at its end; `null` takes the key out); answers as `GET`; 400 for a value the file refuses, which leaves it as it was. The PNP tab tunes a G-code machine's heights, feeds and vacuum ranges with it |
 | `PUT /api/machines/{id}` | `{"text": "..."}`: writes the text as the file once it reads as a machine, creating the file when it is new; answers as `GET`; 400 names what is wrong and leaves the file as it was |
 | `POST /api/machines/{id}/check` | `{"text": "..."}`: `{"document": {...} or null, "problems": [...]}`, what the text would read as and what is wrong with it, without writing anything |
-| `POST /api/machines/{id}/from-board` | `{"text": "..."}`: the text with every key whose value differs from the connected board's written to the board's (`spinny_laser.machine_keys`), comments and order kept, nothing saved: `{"text", "document", "problems", "changes": ["[rail] max_rate = 900 (was 560)", ...], "left": [settings no key could give the board's value]}`. A scale goes in the key the section already uses, else as `full_steps_per_mm` over the board's microsteps; a `[host]` key only where the text names it (one left out keeps the host's value); a missing section goes in before `[controls]`. 400 for a text that does not read, or a board and file of which one is a dispenser and the other not; 409 not connected |
-| `DELETE /api/machines/{id}` | removes the file; `{"deleted": id}`, 404 when it is not there |
-| `POST /api/machines/{id}/apply` | `{"save": false}` (the body is optional); writes the file's settings and host values as `PUT /api/settings` does, all or nothing, and with `save` writes the flash afterwards; answers the settings response, `machine` naming the file; 404 for no such file, 409 while a run or probing owns the machine |
+| `POST /api/machines/{id}/from-board` | `{"text": "..."}` (400 for a G-code machine's text): the text with every key whose value differs from the connected board's written to the board's (`spinny_laser.machine_keys`), comments and order kept, nothing saved: `{"text", "document", "problems", "changes": ["[rail] max_rate = 900 (was 560)", ...], "left": [settings no key could give the board's value]}`. A scale goes in the key the section already uses, else as `full_steps_per_mm` over the board's microsteps; a `[host]` key only where the text names it (one left out keeps the host's value); a missing section goes in before `[controls]`. 400 for a text that does not read, or a board and file of which one is a dispenser and the other not; 409 not connected |
+| `DELETE /api/machines/{id}` | removes the file; `{"deleted": id}`, 404 when it is not there, 409 for the G-code machine connected |
+| `POST /api/machines/{id}/apply` | `{"save": false}` (the body is optional); writes the file's settings and host values as `PUT /api/settings` does, all or nothing, and with `save` writes the flash afterwards; answers the settings response, `machine` naming the file; 404 for no such file, 409 while a run or probing owns the machine, 400 for a G-code machine's file (its controller keeps its own settings; it is connected, not written) |
 
 ## CAM
 
@@ -683,7 +729,7 @@ With logging on, every look a camera routine takes keeps the picture the
 finder looked at: the head camera finding its mark, the up camera centering
 the nozzle, measuring its runout and looking at a part, the G-code
 device's top camera measuring its offset and finding fiducials, a
-feeder's marks and parts in their pockets, and a G-code device's run
+feeder's marks and parts in their pockets, and a G-code machine's run
 looking at each part it picked. A look that found nothing is kept as well. A photo can be
 taken by hand at any time, logging on or not. Each entry keeps the picture
 as it was (JPEG), the same picture with what the finder found drawn over it
@@ -695,7 +741,7 @@ entry; the oldest go past 300 entries.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/camlog?limit=100&camera=up` | `{"enabled": false, "count": n, "entries": [entry, ...]}`, the newest first, of one camera (`head`, `up` or `top`, the G-code device's) when named; 400 for another name |
+| `GET /api/camlog?limit=100&camera=up` | `{"enabled": false, "count": n, "entries": [entry, ...]}`, the newest first, of one camera (`head`, `up` or `top`, a G-code machine's) when named; 400 for another name |
 | `PUT /api/camlog` | `{"enabled": true}`: logging on or off, kept across restarts; answers as `GET` |
 | `POST /api/camlog/photo` | `{"camera": "head", "find": true}`: a photo now, kept whatever the switch says; with `find` the camera's finder looks first (the head camera for a dark mark, the up camera for a part of its polarity, the top camera for its mark's shade) and what it found is drawn; answers the entry; 409 while the camera is not running |
 | `GET /api/camlog/{name}` | a kept picture by its file name (`<id>.jpg`, `<id>.svg`, `<id>-pose.jpg`); 404 for any other name |
@@ -747,86 +793,31 @@ Up camera state:
 `moving`, `lowering`, `scale`, `centering` (the nozzle) or `looking` (a
 part), then `done`.
 
-## A G-code pick and place machine
+## Placing with a G-code machine
 
-The parts can be placed by another machine, one whose controller takes
-the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
-RepRapFirmware, Grbl): a line at a time, each answered `ok`, a refusal
-`error...` or `!!` (an `ok` that follows a refusal is taken with it),
-Marlin's `busy:` keeping a slow line alive. A device profile in `pnp/`
-(`--pnp DIR` moves it; `pnp/openpnp-marlin.toml`, every key commented,
-and `pnp/opulo-lumen-rev5.toml`, an Opulo LumenPnP, are shipped) says how to talk to it: `[port]` `url` (a serial device or
-`socket://host:port`), `baud`, `wait_ms` (a board that resets when its
-port opens boots this long first), `timeout` (s per line; a home gets
-three times it); `[gcode]` `init` and `end` (lines), `move` (the move
-word), `x`, `y`, `z`, `rotation` (axis letters), `wait` (answered once
-the moves queued have run, sent before every vacuum switch), `pick` and
-`place` (vacuum on and off, a line or a list: a pump and a valve take
-one each), `dwell` (`{ms}` or `{s}` for the time), `home`, `position`,
-`stop` (a quickstop, sent ahead of its turn), `light_on` and `light_off`
-(the cameras' lights, a line or a list; the cameras' routines switch them
-on first), `rotation_cw` (true when a positive rotation turns the nozzle
-clockwise seen from above: every angle goes out negated);
-`[motion]` `feed_xy`, `feed_z`, `safe_z` (the height moves across go at,
-gone to from above or below: on a seesaw Z the other nozzle comes down
-above it), `place_z`, `pick_dwell_ms`, `place_dwell_ms`, `discard` (X Y Z
-where a part that failed a check is let go; left out, it goes back into
-its pocket), `pick_tries` (pockets tried for one part, default 3), `park`
-(X Y where the head waits); `[vacuum]` `read` (the line, or lines, that
-read the sensor: the reading is in the last one's answer), `pattern` (a
-regular expression whose group is the reading; default Marlin's `T:` of
-M105; OpenPnP's `(?<Value>...)` reads too), `part_on` (low and high
-reading with a part held, read after each pick), `part_off` (with the
-nozzle empty, read after each place); a sensor with neither is read by
-hand only; `[camera]` `position` (where the up camera is as designed, the
-head with the nozzle over its center, until centering measures it), `z`
-(the height the nozzle is sharp at over the up camera, when it is fixed
-to this machine), `crop` (mm from the picture's center a part is looked
-for; left out, pcbv's own reach), `max_offset` (mm a
-part's center may sit off the nozzle's, default 1), `max_turn` (degrees a
-part may sit off its angle, default 15), `size_tolerance` (fraction a
-part's length or width may differ from the one expected, default 0.3; 0
-checks no size); `[top_camera]` (a camera on the head looking down) `z`
-(the height the head looks from), `offset` (its picture's center from the
-nozzle as designed, a first guess), `fiducial` (dark or bright), `within`
-(mm from where it is expected that a fiducial, mark or part is looked
-for, default 2); and `[[feeder]]`
-tables: `id`, `match` (words a part's value and footprint must all hold),
-`refs` (the parts it holds by reference, which outdo `match`), `crop` (as
-`[camera] crop`, for its parts), `bus_id` (a feeder on the bus: its id
-there, 24 hex digits; with it `slot`, the address it sits at, whose
-`[[slot]]` gives its place, found by the id when a run starts when left
-out; `offset`, X Y Z of its pick point from its slot's place, turned by
-the slot's rotation; and `advance`, the mm its tape moves for a part, 0.1
-to 25.5, default 4, sent in tenths; such a feeder has no `at`, `pitch`,
-`count` or `columns` and presents every part at one place),
-`at` (the first part's X Y Z), `pitch` (X Y from one part to the next, or
-from column to column of a tray), `count` (0 for a feeder that presents
-every part at `at`), `columns` and `row_pitch` (a tray, taken row by
-row), `rotation` (the parts' angle in it), `place_z`, `feed` (a line or a
-list of lines sent before each pick), `vision` (each part is looked at
-over the up camera between its pick and its place, turned to the angle it
-goes down at; its offset, angle and size are checked, the angle corrected
-and looked at again, and it is placed where its center lands; a part of
-such a feeder is skipped until the nozzle has been centered over the
-camera on the device, and a run needs the camera running), `size` (the
-part's length and width as the cameras see it; left out, the extent of
-its footprint's F.Fab drawing), `pocket` (dark or bright: the top camera
-looks at each pocket before its pick and picks where the part is; an
-empty pocket is passed over), `marks` (one or two places of marks on the
-feeder, found with the top camera before its first pick in a run; its
-places follow them) and `mark` (their shade). The board's place on the
-device is fitted from references, a part of the job paired with where it
-is on the device: one gives a shift, turned by the typed `angle`; two or
-more a turn and a shift. Two or more fiducials the top camera found
-(`"by": "fiducial"`) outdo references given by hand (`"nozzle"`, or
-`"camera"` for Camera here). A fiducial is a footprint whose reference
-starts with FID or whose name holds "fiducial", kept whatever its
-position-file flags; the components list marks it (`fiducial`, with its
-largest pad as `diameter`) and gives every part's `body` (its F.Fab
-extent, longer side first, or null). The backend keeps the profile
-picked, the references, the angle, how many parts each feeder has given,
-the up camera's place and runout on the device, and the top camera.
+A pick and place machine whose own controller takes the G-code OpenPnP's
+GcodeDriver sends (Marlin, Smoothieware, RepRapFirmware, Grbl) is a
+machine file with `controller = "gcode"` ([MACHINES.md](MACHINES.md#g-code-machines)
+says what it holds), connected from the top bar like any machine
+(`POST /api/connect` above): a line at a time, each answered `ok`, a
+refusal `error...` or `!!` (an `ok` that follows a refusal is taken with
+it), Marlin's `busy:` keeping a slow line alive; the jog, goto, home,
+console and stop requests above drive it. The PNP tab places with the
+G-code machine connected, or with none connected the one last connected
+(else the only G-code machine file), and the backend keeps what it knows
+of each one by its id in `var/config.json` under `placing`: the board's
+turn and references per job, how many parts each feeder has given, the
+boards finished, the up camera's place and runout on it, and its top
+camera's settings. The board's place on the machine is fitted from
+references, a part of the job paired with where it is on the machine: one
+gives a shift, turned by the typed `angle`; two or more a turn and a
+shift. Two or more fiducials the top camera found (`"by": "fiducial"`)
+outdo references given by hand (`"nozzle"`, or `"camera"` for Camera
+here). A fiducial is a footprint whose reference starts with FID or whose
+name holds "fiducial", kept whatever its position-file flags; the
+components list marks it (`fiducial`, with its largest pad as `diameter`)
+and gives every part's `body` (its F.Fab extent, longer side first, or
+null).
 
 A run (placer.py) sends the init lines; with `fiducials` it finds the
 board's fiducials where the references put them and fits the board on
@@ -840,49 +831,41 @@ place, or after a failed pick was let go, stops the run, and so do two parts lef
 program from *plan* is the plan before the run; the run changes it where
 a camera or the vacuum says otherwise.
 
+Every request below that sends the machine lines answers 409 with no
+G-code machine connected, and while a placing run, an up camera routine
+or a top camera routine moves it; one that only keeps something (a typed
+reference, the angle, a count) needs a G-code machine to keep it for.
+
 | Route | Does |
 | --- | --- |
-| `GET /api/pnp/devices` | `{"devices": [{"id", "name", "description", "url", "feeders": 1}], "problems": [{"id", "problem"}]}` |
-| `GET /api/pnp/devices/{id}` | `{"document": {...}, "text": "..."}`; 404 for none |
-| `PUT /api/pnp/devices/{id}` | `{"text": "..."}`: saved once it reads, 400 naming the key otherwise |
-| `POST /api/pnp/devices/{id}/check` | `{"text": "..."}`: `{"document" or null, "problems": [...]}` |
-| `PATCH /api/pnp/devices/{id}` | `{"path": ["motion", "place_z"], "value": 12.5}`: one value changed in the file's text, comments kept, saved once the profile reads (400 naming the key otherwise); a plain table not in the file yet is added; `null` takes the key out |
-| `POST /api/pnp/devices/{id}` | `{"text": "..."}`, or `{}` for a copy of the shipped `openpnp-marlin.toml`: a new profile; 400 when one of that id is there |
-| `DELETE /api/pnp/devices/{id}` | removes the profile's file; answers the list; 409 while it is the device's and connected |
-| `GET /api/pnp/device` | the device state, below |
-| `PUT /api/pnp/device` | `{"profile": "openpnp-marlin", "angle": 90, "clear_angle": false, "url": "/dev/ttyACM1"}`, any of them; another profile or port is 409 while connected; `url` is the port to talk on instead of the profile's (`""` goes back to the profile's), 400 for anything but a device path or a socket url, or this machine's own port |
-| `POST /api/pnp/device/identify` | `{"url": "/dev/ttyACM1"}`: opens the port only to send M115 and read the answer until its `ok` or 3 s: `{"url", "lines": [...], "firmware": "Marlin 2.1.2", "machine": "LumenPnP"}` (null where the answer names none); the device's own port is asked over its link, this machine's is refused |
-| `POST /api/pnp/device/connect`, `.../disconnect` | opens the profile's port, waits `wait_ms`, and sends `init`; 502 when the port does not open or a line is refused; a disconnect is 409 while a program is sent |
-| `POST /api/pnp/device/command` | `{"line": "M114"}`: one line and its answer, `{"reply": [...], ...state}`; 400 for anything but one printable line, 502 for a refusal or no answer |
-| `POST /api/pnp/device/home`, `.../position` | the profile's home (the state's `homed` then true), or its position command, read into `position` (`x`, `y`, `z`, `rotation` by the profile's letters) |
-| `POST /api/pnp/device/references` | `{"job", "ref", "at": [x, y], "camera": false}`: the part's place on the device; `at` left out reads the device's position, plus the top camera's offset with `camera` (the place is under the picture's center) |
-| `DELETE /api/pnp/device/references?job=ID&ref=R1` | drops a reference, or every one of the job without `ref` |
-| `POST /api/pnp/device/plan` | `{"job", "refs": ["R1"]}` (`refs` left out: every part that can be): `{"parts": [{"ref", "feeder", "index", "vision"}], "skipped": [{"ref", "reason"}], "fit": {...}, "lines": 42, "text": "..."}`; a part on the back, one not to be fitted, one no feeder holds and one whose feeder is empty are skipped, with why; 400 without a reference |
-| `GET /api/pnp/device/program.gcode?job=ID&refs=R1,C2` | the program as a file |
-| `POST /api/pnp/device/run` | `{"job", "refs", "fiducials": false}`: places the parts on its own thread as above; each pick counts against its feeder once answered; 409 while one is sent, 400 when a camera it looks with is not running |
-| `POST /api/pnp/device/stop` | sends the profile's `stop` at once and nothing after the line in flight |
-| `POST /api/pnp/device/goto` | `{"job", "ref", "camera": false}`: up to `safe_z` and the nozzle over the part's place, or with `camera` the top camera's picture center (by the measured offset, else the profile's) |
-| `POST /api/pnp/device/jog` | `{"axis": "x" \| "y" \| "z" \| "rotation", "step": -1.0}`: the position read, then that axis moved by the step (mm, or degrees counterclockwise from above) at its feed; X and Y keep the height; 502 when the position's answer lacks the axis |
-| `POST /api/pnp/device/move` | `{"x", "y", "z", "rotation"}`, any of them: X and Y across at `safe_z` (the other one kept), then Z |
-| `POST /api/pnp/device/park` | up to `safe_z`, then to `[motion] park`; 400 without one |
-| `POST /api/pnp/device/over-camera` | the lights on, up to `safe_z`, the nozzle turned to 0 over the up camera's place (measured, else the profile's `[camera] position`), down to `[camera] z` |
-| `POST /api/pnp/device/swap` | `{"to": "nozzle" \| "camera"}`: the head moved by the top camera's offset at `safe_z`, so the nozzle goes over the point the camera looked at, or the camera over the nozzle's |
-| `PUT /api/pnp/device/camera` | `{"position": [x, y]}`, `{"here": true}` (the head's place now, the nozzle over the camera by eye) or `{"clear": true}` (the profile's again): the up camera's place on the device; its scale, roll and runout stay |
-| `POST /api/pnp/device/light` | `{"on": true}`: the profile's `light_on` or `light_off` lines; 400 without them |
-| `POST /api/pnp/device/vacuum` | `{"on": true, "read": true}`, either: the vacuum switched by the profile's pick or place lines, then the sensor read by its `[vacuum] read` lines: `{"reply": [...], ...state}`, the reading in `vacuum.reading`; 502 when the pattern finds none |
-| `POST /api/pnp/device/boards/reset` | the count of boards finished back to 0 |
-| `POST /api/pnp/device/bus/scan` | every address from 1 to `max_address` asked for its feeder's id: `{"feeders": [{"address": 3, "id": "0102...", "feeder": "c-100n" or null, "slot": true}], ...state}`, `slot` saying the profile has a `[[slot]]` for that address; 400 without `[bus]` |
-| `POST /api/pnp/device/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the profile lacks, 502 when the feeder does not answer or refuses |
-| `POST /api/pnp/device/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
-| `POST /api/pnp/device/nozzle` | `{"step": 1.0}`: the up camera's nozzle routine (as `POST /api/pnp/nozzle`) on the device, the nozzle turned to 0: its moves are the profile's move word and wait command, its place read with the position command; what it measures is kept as the state's `camera`. The routine shows in the up camera state with `"target": "device"`, and other device lines are 409 meanwhile |
-| `POST /api/pnp/device/runout` | over the up camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the up camera's routine |
-| `POST /api/pnp/device/fiducials` | `{"job"}`: the top camera finds the board's fiducials where the references put them; two or more replace the hand references (`by: fiducial`); fails when one is not within `within`, or they disagree with their fit by over 0.25 mm. Kind `fiducials` in `top.routine` |
-| `PUT /api/pnp/device/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again |
-| `POST /api/pnp/device/top/start`, `.../stop` | starts or stops its pcbv |
-| `GET /api/pnp/device/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
-| `POST /api/pnp/device/top/mark` | the nozzle's tip is over a mark: the device's position is kept as `mark_at` |
-| `POST /api/pnp/device/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the profile's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
-| `POST /api/pnp/device/top/abort` | ends the top camera's routine and sends the stop command |
+| `GET /api/pnp/placing` | the placing state, below |
+| `PUT /api/pnp/placing` | `{"angle": 90, "clear_angle": false}`: the board's typed turn on the machine, within 360 degrees, or taken back |
+| `POST /api/pnp/references` | `{"job", "ref", "at": [x, y], "camera": false}`: the part's place on the machine; `at` left out reads the head's place, plus the top camera's offset with `camera` (the place is under the picture's center) |
+| `DELETE /api/pnp/references?job=ID&ref=R1` | drops a reference, or every one of the job without `ref` |
+| `POST /api/pnp/plan` | `{"job", "refs": ["R1"]}` (`refs` left out: every part that can be): `{"parts": [{"ref", "feeder", "index", "vision"}], "skipped": [{"ref", "reason"}], "fit": {...}, "lines": 42, "text": "..."}`; a part on the back, one not to be fitted, one no feeder holds and one whose feeder is empty are skipped, with why; 400 without a reference |
+| `GET /api/pnp/program.gcode?job=ID&refs=R1,C2` | the program as a file |
+| `POST /api/pnp/run` | `{"job", "refs", "fiducials": false}`: places the parts on its own thread as above; each pick counts against its feeder once answered; 409 while one is under way, 400 when a camera it looks with is not running |
+| `POST /api/pnp/run/stop` | sends the file's `stop` at once and nothing after the line in flight |
+| `POST /api/pnp/goto` | `{"job", "ref", "camera": false}`: on a G-code machine, up to `safe_z` and the nozzle over the part's place, or with `camera` the top camera's picture center (by the measured offset, else the file's); run to its end and the place read |
+| `POST /api/pnp/park` | to `[motion] park` at the safe height, as a goto; 400 without one |
+| `POST /api/pnp/over-camera` | the lights on, then as a goto: across at `safe_z` and the nozzle turned to 0 over the up camera's place (measured, else the file's `[up_camera] position`), the height last (`[up_camera] z`, else `safe_z`) |
+| `POST /api/pnp/swap` | `{"to": "nozzle" \| "camera"}`: the head moved by the top camera's offset as a goto, so the nozzle goes over the point the camera looked at, or the camera over the nozzle's |
+| `PUT /api/pnp/camera` | `{"position": [x, y]}`, `{"here": true}` (the head's place now, the nozzle over the camera by eye) or `{"clear": true}` (the file's again): the up camera's place on the machine; its scale, roll and runout stay |
+| `POST /api/pnp/light` | `{"on": true}`: the file's `light_on` or `light_off` lines; 400 without them |
+| `POST /api/pnp/vacuum` | `{"on": true, "read": true}`, either: the vacuum switched by the file's pick or place lines, then the sensor read by its `[vacuum] read` lines: `{"reply": [...], ...state}`, the reading in `vacuum.reading`; 502 when the pattern finds none |
+| `POST /api/pnp/boards/reset` | the count of boards finished back to 0 |
+| `POST /api/pnp/bus/scan` | every address from 1 to `max_address` asked for its feeder's id: `{"feeders": [{"address": 3, "id": "0102...", "feeder": "c-100n" or null, "slot": true}], ...state}`, `slot` saying the file has a `[[slot]]` for that address; 400 without `[bus]` |
+| `POST /api/pnp/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the file lacks, 502 when the feeder does not answer or refuses |
+| `POST /api/pnp/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
+| `POST /api/pnp/nozzle` | on a G-code machine, the up camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the up camera state with `"target": "gcode"` |
+| `POST /api/pnp/runout` | over the up camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the up camera's routine |
+| `POST /api/pnp/fiducials` | `{"job"}`: the top camera finds the board's fiducials where the references put them; two or more replace the hand references (`by: fiducial`); fails when one is not within `within`, or they disagree with their fit by over 0.25 mm. Kind `fiducials` in `top.routine` |
+| `PUT /api/pnp/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again |
+| `POST /api/pnp/top/start`, `.../stop` | starts or stops its pcbv |
+| `GET /api/pnp/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
+| `POST /api/pnp/top/mark` | the nozzle's tip is over a mark: the head's place is kept as `mark_at` |
+| `POST /api/pnp/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the file's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
+| `POST /api/pnp/top/abort` | ends the top camera's routine and sends the stop command |
 
 A feeder bus (`[bus]`) carries packets to smart feeders through the
 controller, Opulo's Photon feeders on a LumenPnP's RS-485 through
@@ -905,16 +888,16 @@ of a mm, and asks `status` until it answers `ok` (`busy` while feeding,
 `unreachable` for a jam), waiting at most three times the time the feed's
 answer gave, two seconds at least. A feeder that does not advance leaves
 its part out. `[[slot]]` tables give where the feeder at each `address`
-presents its part (`at`, `rotation`). Without a connected device a plan
-leaves out the parts of a feeder whose slot is found at the run. A device
-file's `document` has `bus` (true with a `[bus]`), `slots`, and each
-feeder's `bus_id`, `slot` and `advance`; a feeder whose slot is found at
-the run has `at` null there.
+presents its part (`at`, `rotation`). Without the machine connected a plan
+leaves out the parts of a feeder whose slot is found at the run. The
+placing state's `document` has `bus` (true with a `[bus]`), `slots`, and
+each feeder's `bus_id`, `slot` and `advance`; a feeder whose slot is
+found at the run has `at` null there.
 
-Device state:
+Placing state:
 
 ```json
-{"profile": "openpnp-marlin", "port": "/dev/ttyACM1", "angle": null,
+{"machine": "opulo-lumen-rev5", "name": "Opulo LumenPnP (Rev05, Marlin)", "document": {...}, "angle": null,
  "references": [{"job": "a1b2", "ref": "FID1", "at": [100.0, 50.0], "by": "fiducial"}],
  "taken": {"r-10k-0603": 2}, "boards": 3,
  "camera": {"position": [150.0, 30.0], "height": -15.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "runout": [0.04, -0.01], "measured": true},
@@ -932,6 +915,14 @@ Device state:
  "light": true, "vacuum": {"on": false, "reading": 251.0},
  "log": [{"dir": "tx", "text": "M114"}, {"dir": "rx", "text": "ok"}]}
 ```
+
+`machine` is the G-code machine placed with (null with none), `name` its
+name and `document` its file's own tables read (as `GET
+/api/machines/{id}` gives them under `gcode`): `safe_z`, `place_z`, the
+feeds, `park`, `camera_position`, `camera_z`, `light`, `vacuum`, `top`,
+`feeders` and the rest. `connected` is true while that machine is the one
+connected; `url`, `lost`, `running`, `homed`, `position`, `light`,
+`vacuum`, `progress` and `log` are its link's.
 
 ## Alignment
 
@@ -1018,14 +1009,14 @@ it does not watch then.
 | `type` | Payload |
 | --- | --- |
 | `state` | the state snapshot, at 5 Hz idle and 10 Hz while moving |
-| `console` | `{"dir": "rx" \| "tx", "text": "...", "poll": false}` every line either way; `poll` marks the status poll the backend sends several times a second and the report it brings back, which a console should hide by default or it buries everything else |
+| `console` | `{"dir": "rx" \| "tx", "text": "...", "poll": false}` every line either way; `poll` marks the status poll the backend sends several times a second and the report it brings back, which a console should hide by default or it buries everything else; a G-code machine's lines come the same way, its once-a-second position read marked `poll` |
 | `progress` | the progress object |
 | `heightmap` | what `GET /api/heightmap` returns, whenever the map, the probing or the probe settings change |
 | `message` | `{"level": "info" \| "error", "text": "..."}` |
 | `camera` | the camera state, whenever it changes: started or stopped, settings, a board loaded, a mark recorded, every step of the find routine; not for every picture, which the page asks for |
 | `align` | the alignment state (`GET /api/align`), whenever a mark is added, removed or applied |
 | `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
-| `pnp_device` | the G-code device state (`GET /api/pnp/device`), whenever it changes: connected, a line answered by a command, every part of a program, a reference or a feeder count |
+| `placing` | the placing state (`GET /api/pnp/placing`), whenever it changes: a G-code machine connected, every part of a placing run, a reference, a feeder count, its file tuned |
 | `markers` | `{"markers": [...]}` whenever the list is put |
 | `camlog` | the camera log state, as `GET /api/camlog` answers it with no query (the newest entries of every camera), after every change |
 | `auto` | `{"entry": entry or null, "busy": true, "cleared": false}`: an entry of the Auto conversation added or changed, or none when only `busy` changed (a turn ended); `cleared` when the conversation was cleared. An answer being written is sent at most ten times a second, its whole text so far each time, and once more when it is done |

@@ -15,29 +15,31 @@ board in its picture, for measuring the camera's offset from the tool and
 lining a job up with the board. For pick and place a second camera,
 fixed to the machine and looking up, is read the same way: it centers the
 nozzle and sees where a part sits on it, and a board job's parts are read
-from its KiCad file. The parts can also be placed by another machine, one
-whose controller takes the G-code OpenPnP's GcodeDriver sends (Marlin,
-Smoothieware, RepRapFirmware, Grbl): a device profile in `pnp/` says how
-to talk to it, and the backend places a line at a time, each next line
-made from what the up camera, a third camera on that machine's head
-looking down (fiducials, feeder marks, parts in their pockets) and its
-vacuum sensor say. Feeders on that machine's own bus (Opulo's Photon
-feeders) are advanced through its controller before each pick.
+from its KiCad file. A pick and place machine whose own controller takes
+the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
+RepRapFirmware, Grbl) is a machine file with `controller = "gcode"`,
+connected in this one's place from the top bar: the backend talks to it a
+line at a time and serves the page's jog, readout, goto, home, stop and
+console with it, its X, Y, Z and turn as the cartesian machine's joints,
+and places a board's parts with it, each next line made from what the up
+camera, a third camera on that machine's head looking down (fiducials,
+feeder marks, parts in their pockets) and its vacuum sensor say. Feeders
+on that machine's own bus (Opulo's Photon feeders) are advanced through
+its controller before each pick.
 
 | Part | What | Build, test, run |
 | --- | --- | --- |
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` | serial link, job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
+| `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
-| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; edited on the page's Config tab | `docs/MACHINES.md` |
+| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; or a G-code machine's port, dialect, heights, vacuum sensor, cameras and feeders; edited on the page's Config tab | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, materials, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |
-| `pnp` | device profiles in TOML for a pick and place machine driven with OpenPnP's G-code: port, dialect, heights, vacuum sensor, cameras, feeders | `docs/WEB_API.md`, the PNP tab |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
-| `deploy` | the Pi's services and `deploy-pi.sh`; `release.py`, the archives that run with nothing installed: a standalone Python with the locked packages, the page and the shipped machine, CAM and pick and place files, the Rust programs linked for glibc 2.28, the firmware | `mise run deploy-pi`, `mise run release` ([RELEASE.md](RELEASE.md)) |
+| `deploy` | the Pi's services and `deploy-pi.sh`; `release.py`, the archives that run with nothing installed: a standalone Python with the locked packages, the page and the shipped machine and CAM files, the Rust programs linked for glibc 2.28, the firmware | `mise run deploy-pi`, `mise run release` ([RELEASE.md](RELEASE.md)) |
 | [pcb-vision](https://github.com/tmpk13/pcb-vision), checked out beside this one | `pcbv`: the camera's capture and the localizer that finds a KiCad board in its picture, served to the backend over JSON lines | `mise run build-pcbv`; its own `mise run test` |
 
 The line protocol is [PROTOCOL.md](PROTOCOL.md), the web API
@@ -52,9 +54,11 @@ flowchart LR
         BE --> LS[laser_sweep: gerber, isolation]
         BE --> PROBE[probing_part: Backend's probing methods: the map probed, a touch, focus here, the compensation a run follows]
         PROBE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
-        BE --> DEVP[device_part: Backend's G-code device methods: the port, moves by hand, the cameras' places, lights and vacuum, a run]
-        DEVP --> OPNP
-        ST[stores: one TOML store for machines/, cam/ and pnp/: read, checked, saved whole, a value at a time] --> BE
+        BE --> GCP[gcode_part: Backend's G-code machine: connected from the top bar, its jog, goto, position, home, stop, motors and console, its place read once a second]
+        GCP --> GD
+        BE --> PLP[placing_part: Backend's placing with the G-code machine: references, the cameras' places, lights and vacuum, feeders, a run, kept per machine]
+        PLP --> OPNP
+        ST[stores: one TOML store for machines/ and cam/: read, checked, saved whole, a value at a time] --> BE
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
         BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
@@ -71,16 +75,15 @@ flowchart LR
         MCP --> TOOLS2[tools, over HTTP]
         TOOLS2 -->|HTTP| BE
         BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, the nozzle centered over the up camera, its runout, a part's offset, size and angle on it]
-        PNP --> OPNP[openpnp: a device profile, the board fitted from references, the program as planned]
-        OPI[page openpnp.ts: OpenPnP's machine.xml and a job read into a profile and references] -->|the profile saved, references taken| BE
-        DF[pnp/*.toml: port, G-code dialect, heights, vacuum sensor, cameras, feeders] --> OPNP
+        PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines]
+        OPI[page openpnp.ts: OpenPnP's machine.xml and a job read into a G-code machine file and references] -->|the file saved, references taken| BE
         OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
         PNP --> PLC
-        TOPC[topcam: the device's top camera, its offset from a mark, fiducials, feeder marks, pockets] --> PLC
+        TOPC[topcam: a G-code machine's top camera, its offset from a mark, fiducials, feeder marks, pockets] --> PLC
         PCAM[pnp PickCamera: one base for the up and top cameras: settings, pcbv, a routine at a time] --> TOPC
         PCAM --> PNP
-        PLC --> GD[gcode_device: a line at a time, each answered ok]
-        PLC --> FBUS[feederbus: packets to feeders on a bus, framed as the profile's bus says: a feeder found by its id, initialized, advanced, waited for]
+        PLC --> GD[gcode_link: a line at a time, each answered ok, a poll only when nothing else is in flight]
+        PLC --> FBUS[feederbus: packets to feeders on a bus, framed as the machine file's bus says: a feeder found by its id, initialized, advanced, waited for]
         FBUS -->|the bus's send line, its reply read back| GD
         GD <-->|M485 packets carried on RS-485| PHO[Photon feeders in a LumenPnP's slots]
         GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl, an Opulo LumenPnP]
@@ -94,7 +97,8 @@ flowchart LR
         BE --> FIND[cameras: the ones attached for the device lists, from pcbv cameras and from asking the forwarded ports for ustreamer state]
         FIND -.-> VID
         FIND -.-> UST
-        MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls] <--> BE
+        MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls; a G-code machine's port, dialect, heights, cameras, feeders] <--> BE
+        MF --> OPNP
         CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
         CF --> CLI[spinny-cam]
         CAM <-->|one JSON request and answer over stdin and stdout| CARVE[carve spinny-carve: an STL sliced, cleared, followed and combed; links over a stock map; a gouge check]

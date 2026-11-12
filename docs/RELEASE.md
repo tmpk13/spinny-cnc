@@ -43,10 +43,10 @@ directory `SPINNY_HOME` names), with:
 | --- | --- |
 | `machines/` | machine files, edited on the Config tab |
 | `cam/` | CAM profiles |
-| `pnp/` | pick and place device profiles |
 | `var/` | jobs, settings, the height map, logs |
 
-`machines/`, `cam/` and `pnp/` start as copies of the ones the release
+`machines/` (a G-code pick and place machine's files among them) and
+`cam/` start as copies of the ones the release
 ships; once a directory exists it is yours and a later release leaves it
 alone. To pick up the files of a newer release, delete or rename the
 directory before starting it, or copy single files from
@@ -126,7 +126,7 @@ the packages, at the versions in `uv.lock`.
   not tagged `v<version>` the commit is added (`0.1.0-g4a67b63`).
 - The source is the working tree. Uncommitted changes to anything that
   goes in are refused unless `--allow-dirty`, which adds `-dirty` to the
-  name. `machines/`, `cam/` and `pnp/` always come from HEAD, so local
+  name. `machines/` and `cam/` always come from HEAD, so local
   edits to them never ship.
 - The Rust programs are release builds for each target, stripped, in
   `dist/build/cargo`, apart from a checkout's own builds. They are linked

@@ -104,10 +104,16 @@ follows the head, and the find routine stepped on the mock's clock.
 
 The *PNP* page (`src/views/pnp.ts`) draws the selected board job's parts
 (`AppState.components`, read by the backend from its `.kicad_pcb`), the
-one picked (`AppState.pnpPart`) and the up camera (`AppState.pnp`); with
-*Place with* (`AppState.pnpTarget`) set to a G-code device, the *G-code
-device* panel (`src/views/device.ts`, `AppState.device`) takes the up
-camera and nozzle panels' place. Their use is in
+one picked (`AppState.pnpPart`) and the up camera (`AppState.pnp`). It
+works with the machine connected (`gcodePlacing` in
+`src/views/placing.ts`): with a G-code machine (or, disconnected, one to
+place with) the Head (`src/views/placing.ts`), Top camera, Board on the
+machine (`pnprefs.ts`), Feeders (`pnpfeeders.ts`) and Placing
+(`pnprun.ts`) panels, all on `AppState.placing`, take the nozzle panel's
+place. A G-code machine is connected from the top bar like any other: the
+ports carry the G-code machine file that claims them, and Connect passes
+it on (`machineOfPort` in `src/views/statusbar.ts`); its Jog panel and
+readout are the file's `[controls]`. Their use is in
 [pick and place](../../docs/OPERATING.md#pick-and-place) and
 [placing with a G-code machine](../../docs/OPERATING.md#placing-with-a-g-code-machine-openpnp-compatible).
 The mock's up camera (`src/mock/pnp.ts`) draws the nozzle where the head
@@ -169,7 +175,7 @@ one the page says to restart the board. Beside the editor, *Settings*
 (`src/views/settingslist.ts`) lists every key a file can set, the file's
 value beside the board's; nothing is edited there, and a click takes the
 editor to the key. The TOML editors (`src/views/editor.ts`: the machine
-file's, the CAM profile's and the G-code device profile's) color the text (`src/highlight.ts`) and
+file's, a G-code machine's among them, and the CAM profile's) color the text (`src/highlight.ts`) and
 read it with the page's own TOML reader (`src/toml.ts`) on every edit,
 naming the line that does not read before any save; the backend's check
 is the one that counts.
@@ -284,14 +290,15 @@ classDiagram
         MockAuto  the Auto routes and events, the scripted provider mock on the mock's clock
     }
     class mock_machines {
-        parseMachine(text, id) MachineDocument  the backend's checks and words, camera included
+        parseMachine(text, id) MachineDocument  the backend's checks and words, camera and G-code machines included
+        gcodeMachineOf(text, id) MockDevice  a G-code machine file read as the mock's machine
         DEFAULT_SETTINGS
     }
     class mock_pnp {
         UP_TRUTH TOP_TRUTH  where the up and top cameras really sit, their pictures, a board job's pads as its parts
     }
     class mock_openpnp {
-        parseDevice(text, id) MockDevice  the backend's device profile reader and placement program, line for line
+        parseGcodeTables(top, id, name, description) MockDevice  the backend's G-code machine file reader and placement program, line for line
     }
     class mock_calibrate {
         calibrateJob(id, request, milling, limits) the calibration tests

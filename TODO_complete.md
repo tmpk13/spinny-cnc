@@ -718,3 +718,9 @@
   carries Photon's values, the PNP tab a Feeders panel (Scan bus, Slot
   here, Keep slot, Feed), and the OpenPnP import brings Photon feeders
   and their slots. Untested on a LumenPnP.
+- G-code machines as machine files (2026-11-11): a pick and place machine
+  on its own G-code controller is a `machines/*.toml` with
+  `controller = "gcode"` (the LumenPnP and the generic Marlin moved there
+  from `pnp/`), connected from the top bar by the port its file claims,
+  and jogged, homed, stopped and sent lines like the others; the PNP tab
+  places with the machine connected (no Place with, no device panel).

@@ -438,7 +438,7 @@ The camera is useful once the machine knows where it looks from the tool:
 
 Both camera panels have the camera log: *log every look* keeps every
 picture the cameras' routines look at (finding the mark, centering the
-nozzle, looking at a part, a G-code device's run), each as it was and with
+nozzle, looking at a part, a G-code machine's run), each as it was and with
 what the finder found drawn on it, so a routine that went wrong can be
 followed look by look; *Photo* keeps one now with what the finder sees.
 
@@ -460,9 +460,11 @@ the picture is ustreamer's NO SIGNAL card.
 
 ### Pick and place
 
-The PNP tab is for placing parts with a nozzle on the head of an X/Y
-machine and a camera fixed to the machine, looking up at the nozzle. Its
-Setup panel leads through it:
+The PNP tab works with the machine connected. On an X/Y machine on this
+project's firmware it serves a nozzle on the head and a camera fixed to
+the machine, looking up at the nozzle; a G-code pick and place machine
+(next section) gets its own panels for placing. Its Setup panel leads
+through it:
 
 1. Start the up camera (picked in the Up camera panel's list, or its device typed in;
    the spots say whether the finder looks for something dark or bright).
@@ -484,80 +486,87 @@ driven yet.
 
 ### Placing with a G-code machine (OpenPnP compatible)
 
-*Place with: a G-code device* on the PNP tab hands the parts to another
-pick and place machine, one whose controller takes the G-code OpenPnP's
-GcodeDriver sends. Its panels: G-code device, Jog, Cameras, Top camera,
-Board on the device and Placing. Its setup steps:
+A pick and place machine whose own controller takes the G-code OpenPnP's
+GcodeDriver sends (Marlin, Smoothieware, RepRapFirmware, Grbl) is a
+machine file with `controller = "gcode"` ([MACHINES.md](MACHINES.md#g-code-machines)),
+used like the other machines: connected from the top bar, jogged and
+homed in the Jog panel, read in the readout, sent lines in the Console,
+stopped with *Reset* or the jog cancel. `machines/opulo-lumen-rev5.toml`
+is an Opulo LumenPnP (Rev05 board, Opulo's Marlin) as Opulo's stock
+OpenPnP setup drives it; `machines/openpnp-marlin.toml` is a plain Marlin
+start to copy. A file is edited on the Config page like any machine file
+(*Write to board* is locked for it: its controller keeps its own
+settings), where *Import from OpenPnP* reads OpenPnP's `machine.xml` (and
+a `.job.xml` with its `.board.xml` files) into a new one: every value read
+has a box to keep or leave it, and the file shows as it will be saved. A
+job's placements become references for the board job picked on the PNP
+page. Its setup steps:
 
-1. Pick a profile in the G-code device panel. `pnp/opulo-lumen-rev5.toml`
-   is an Opulo LumenPnP (Rev05 board, Opulo's Marlin) as Opulo's stock
-   OpenPnP setup drives it; `pnp/openpnp-marlin.toml` is a plain Marlin
-   start. The profiles are edited whole on the Config page (*PNP device
-   profile*), where *Import from OpenPnP* reads OpenPnP's `machine.xml`
-   (and a `.job.xml` with its `.board.xml` files) into a new profile:
-   every value read has a box to keep or leave it, and the profile shows
-   as it will be saved. A job's placements become references for the
-   board job picked on the PNP page.
-2. Pick the port: *Detect* lists the serial ports again and picks the
-   G-code controller among them by its USB name (a LumenPnP shows as
-   `MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode`); the list is the top
-   bar's, without this machine's port, and a url can be typed. *Identify*
-   asks the firmware what it is (M115); nothing moves.
-3. Connect, and Home.
-4. Pick or upload the board (a `.kicad_pcb`) in the Parts panel, pick a
+1. Connect: the top bar names the machine's port after its file (the
+   LumenPnP's `MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode` port by its
+   `[port] match = ["lumen"]`, another machine by its file's `url` or
+   words); pick it and press *Connect*. The status bar shows the
+   firmware's name (M115) and the machine's.
+2. Home, in the Jog panel.
+3. Pick or upload the board (a `.kicad_pcb`) in the Parts panel, pick a
    part, put the nozzle over it with the Jog panel (or the top camera,
    *with the top camera* on *Go to part*), and press *Nozzle here* or
-   *Camera here* in Board on the device. The references are kept per job
+   *Camera here* in Board on the machine. The references are kept per job
    and map the whole board: one gives the shift (with *Turned deg*), two
    or more the turn too, and the panel says how far each one sits off the
    fit.
-5. *Plan* makes the placement program from the references and the
-   feeders and shows it; nothing moves. *Run* places the parts; a run
-   window shows its progress and its steps (each pick, look, place and
-   retry) over the page, and *Stop* sends the quickstop at once. With
-   *repeat* ticked, a run that finished asks for the next board and
-   places it again; the boards are counted until *Reset*.
+4. *Plan* makes the placement program from the references and the
+   feeders and shows it; nothing moves (it works with the machine
+   disconnected too, for the one last connected). *Run* places the
+   parts; a run window shows its progress and its steps (each pick,
+   look, place and retry) over the page, and *Stop* sends the quickstop
+   at once. With *repeat* ticked, a run that finished asks for the next
+   board and places it again; the boards are counted until *Reset*.
 
-Moving the device by hand: the Jog panel's bars (X, Y, Z and the nozzle's
-turn, A) read where the device is and move one axis by the step; the
-arrow keys jog X and Y and Page Up and Page Down Z while the PNP page
-places with the device. *Go to* takes X and Y across at the safe height,
-then Z. *Park*, *Nozzle over camera* (the nozzle over the up camera at
-the height it is sharp at), and *Nozzle to camera spot* or *Camera to
-nozzle spot* (the head moved by the top camera's offset). *Go to part*
+Moving it by hand: the Jog panel draws the file's bars (X, Y, the
+nozzle's height Z and its turn A; the LumenPnP's say which way N1 goes on
+its seesaw); a jog reads where the head is (M114) and moves by the step
+from there, so jogs pressed quickly add up. A goto in the Jog panel moves
+only the axes given: it goes up to the file's safe height only to go
+across, from above or below, turns the nozzle on the way, and puts the
+height last, so the nozzle goes down only over where it is going. The
+Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the
+nozzle over the up camera at the height it is sharp at), *Nozzle to
+camera spot* and *Camera to nozzle spot* (the head moved by the top
+camera's offset), the vacuum, and *Tune the machine file*. *Go to part*
 moves X and Y only, at the safe height. The Cameras panel shows the up
 camera, the top camera or both; a drag on a picture moves the head so
 the picture follows the pointer, a double-click brings a point to the
 crosshair, and the wheel zooms. The dashed circle is how far from the
-center a part is looked for (`[camera] crop`, or a feeder's `crop`).
+center a part is looked for (`[up_camera] crop`, or a feeder's `crop`).
 
 On a seesaw Z like the LumenPnP's, both nozzles are up only at the safe
 height (31.5): every move across goes there first, from above or below.
-Measure *place_z* before the first run (the profile's 20 keeps the tip
-well above a board): jog the tip down onto the board's top, *Read
-position*, and set it to that Z plus the parts' height under *Tune the
-profile*, where the heights, feeds, dwells and the vacuum's ranges are
-set a value at a time. *Vacuum on*, *Vacuum off* and *Read vacuum* find
-the sensor's readings with the nozzle open and blocked before
-`part_on`/`part_off` are set.
+Measure *place_z* before the first run (the file's 20 keeps the tip well
+above a board): jog the tip down onto the board's top, read its Z in the
+readout, and set it to that Z plus the parts' height under *Tune the
+machine file* in the Head panel, where the heights, feeds, dwells and the
+vacuum's ranges are set a value at a time. *Vacuum on*, *Vacuum off* and
+*Read vacuum* find the sensor's readings with the nozzle open and blocked
+before `part_on`/`part_off` are set.
 
 Feeders can be tape strips, trays (`columns`, `row_pitch`) or feeders
 told to advance (`feed`, one line or several); one names its parts by
-`refs` or by the words of `match`. The up camera's place on the device
-comes from the profile, or *Camera is here* with the nozzle over it by
+`refs` or by the words of `match`. The up camera's place on the machine
+comes from its file, or *Camera is here* with the nozzle over it by
 eye, or typed; *Center nozzle* measures it with the picture's scale, roll
 and mirror, then *Measure runout*: the tip is found at six turns of the
 nozzle, its runout made up for at every look and place, and a nozzle that
-turns the other way for the profile's `rotation_cw` says so. Parts of a
+turns the other way for the file's `rotation_cw` says so. Parts of a
 feeder marked `vision = true` are looked at over the camera turned to the
 angle they go down at: their offset, size and angle are checked, the
 angle corrected, and they are placed where their center lands.
 
-The top camera (on the device's head, looking down, `[top_camera]` in the
-profile) is set up in its panel: pick it and Start, jog the nozzle's tip
+The top camera (on the machine's head, looking down, `[top_camera]` in its
+file) is set up in its panel: pick it and Start, jog the nozzle's tip
 onto a mark it can see (a dot on paper, a hole) and press *Nozzle on
 mark*, then *Measure offset*: the head moves so the camera should see the
-mark (by the profile's `offset`, or from where it stands when there is
+mark (by the file's `offset`, or from where it stands when there is
 none), measures the picture and centers the mark. *Find fiducials* (or
 *find fiducials first* on a run) fits the board on its fiducials,
 footprints FID* or named Fiducial, from where the references put them. A
@@ -565,7 +574,7 @@ feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and
 its places moved to follow them.
 
-With `part_on` in the profile's `[vacuum]`, a pick that holds nothing, a
+With `part_on` in the file's `[vacuum]`, a pick that holds nothing, a
 part not on the nozzle over the up camera, one off by too much or of the
 wrong size is let go at `[motion] discard` (or back in its pocket) and
 the next pocket tried, up to `pick_tries`; the part is then left out and
@@ -573,21 +582,21 @@ listed, and *Run the rest* places what the last run did not. A part still
 on the nozzle after its place (with `part_off`) stops the run, and so do
 two parts left out one after another.
 
-Nothing here has run against a real machine yet: check the profile's
+Nothing here has run against a real machine yet: check the file's
 commands against the firmware before the first run, with the nozzle well
 above the board. The part's angle needs pcb-vision at b4d1299 or later
 (the spot's smallest rectangle); an older pcbv places without correcting
 it and says so.
 
-Feeders on a bus, Opulo's Photon feeders on the LumenPnP: the profile's
-`[bus]` says how packets reach them (the LumenPnP profile has Photon's),
+Feeders on a bus, Opulo's Photon feeders on the LumenPnP: the file's
+`[bus]` says how packets reach them (the LumenPnP file has Photon's),
 and a feeder names its id there (`bus_id`) instead of a place. *Scan bus*
 in the Feeders panel lists the feeders that answer, by address and id. A
 feeder's pick point comes from its slot's place: put N1 over the point a
 feeder presents its part at and press *Slot here* by its address, or let
 *Import from OpenPnP* bring the slots and the feeders OpenPnP kept. A
 feeder's slot is found by its id when a run starts (*Keep slot* writes it
-into the profile instead); *Feed* moves a feeder's tape on once, to see it
+into the machine file instead); *Feed* moves a feeder's tape on once, to see it
 work. A run advances each feeder on the bus before its pick and waits for
 it; a feeder that does not answer leaves its part out. None of it has
 run on a LumenPnP yet: try *Scan bus* and *Feed* before a run.
@@ -635,15 +644,15 @@ The Auto tab's model, and any MCP client given `spinny-mcp`, works
 through one set of tools. They make, change and read data, and nothing
 else: jobs (combined jobs among them), Plot jobs (one operation, or a
 list of them, a Plot job's list replaced in place), markers, the pick and
-place device's references and plans, and CAM jobs are made and changed;
+place machine's references and plans, and CAM jobs are made and changed;
 `delete_job` takes a job out, which its description keeps to a job the
 operator asks to delete or one the model made by mistake; the state, the machine
-files, the CAM profiles and the device profiles are read. No tool
+files (G-code machines' among them) and the CAM profiles are read. No tool
 connects or disconnects the machine, jogs it or sends it anywhere, homes
 it, runs, holds, resumes or stops a job, lights the laser, starts the
-spindle, probes, starts a camera routine, moves the pick and place device
-or sends it a line, or writes the firmware's settings or a machine, CAM
-or device file. That is the tool list itself, not an instruction to the
+spindle, probes, starts a camera routine, moves the pick and place
+machine or sends it a line, or writes the firmware's settings or a
+machine or CAM file. That is the tool list itself, not an instruction to the
 model: every tool is a call on the backend's HTTP API that names the
 routes it may use, a request to any other route is refused before it
 leaves, and the tests hold every route a tool calls against a list of

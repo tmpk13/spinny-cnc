@@ -8,11 +8,14 @@ whose plunger takes the table's driver), the camera on the head, if any,
 and the controls the page draws for it. Loading a file
 writes every firmware setting, so swapping files swaps machines. The same
 files start the virtual firmware, and give the gcode tools their defaults.
+A machine whose own controller takes G-code, a pick and place machine's
+Marlin, is a file here too ([G-code machines](#g-code-machines)): it is
+connected from the top bar and jogged, homed and stopped like the others.
 
 | Where | How |
 | --- | --- |
 | Web page | The *Config* tab: pick a file, edit it in the TOML editor (read as it is typed, and whole by *Check*), *Save* it and press *Write to board*, which writes every setting and saves it to the board's flash in one step (saving an edited text first). *Read from board* writes the board's values into the text where they differ, for a look before *Save*. A line says what the board runs and whether its flash has it; *Save to flash* shows only when something written past the file (the console, a page control) left flash behind. Beside the editor, *Settings* lists every key a file can set with the file's value next to the board's, the differences marked, a fuzzy search over key, firmware setting and help; a click goes to the key in the editor, adding it with the file's value when the file leaves it out. |
-| Backend | `GET /api/machines`, `GET`, `PUT` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
+| Backend | `GET /api/machines`, `GET`, `PUT`, `PATCH` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
 | Virtual firmware | `spinny-virtual --machine machines/cartesian-mill.toml`; `--settings` after it overrides single values |
 | Gcode tools | `spinny-iso --machine machines/polar-laser.toml ...`: the axis rates, the power scale and the chord tolerance stand in for the defaults; a flag given still wins |
 | Code | `spinny_laser.machines` (Python), `firmware/virtual/src/machine.rs` (Rust); the virtual firmware's tests load the shipped files, so the two stay one schema |
@@ -22,9 +25,12 @@ spelled out), `polar-laser-focus` (the focus axis fitted),
 `cartesian-laser` (rail X, slide Y, the table holding),
 `cartesian-mill` (cartesian with a spindle and the focus axis as depth),
 `cartesian-dispenser` (the mill's axes with a paste dispenser's
-plunger on the table's socket and a camera on the head) and `k40` (a K40
+plunger on the table's socket and a camera on the head), `k40` (a K40
 CO2 laser with the board in place of its M2 Nano, its connections in
-[K40.md](K40.md)).
+[K40.md](K40.md)), and two G-code pick and place machines:
+`openpnp-marlin` (Marlin as OpenPnP's GcodeDriver drives it, every key
+commented) and `opulo-lumen-rev5` (an Opulo LumenPnP with the Rev05
+board, from Opulo's stock OpenPnP setup).
 Copy the one nearest your machine, name it, and change what differs. A
 file that cannot be read is listed by the backend as a problem and shown
 on the page; the others still load.
@@ -368,6 +374,121 @@ axis jog it by that step, and `Escape` or the jog panel's *Cancel*
 stops whatever the controls are. `place`, which older files say, is
 still taken and means nothing now. The virtual firmware checks only that
 `[controls]` is a table: the controls are the page's, not the machine's.
+
+## G-code machines
+
+A machine whose own controller takes the G-code OpenPnP's GcodeDriver
+sends (Marlin, Smoothieware, RepRapFirmware, Grbl), a line at a time,
+each answered `ok`, says `controller = "gcode"`. None of this project's
+firmware settings are its: the sections above other than `[controls]`
+are refused in it, and it is never written to a board (*Write to board*
+and *Read from board* are locked for it); it is connected instead. Its
+tool is a vacuum nozzle (`tool = "nozzle"`, the only one it takes, as
+`kinematics = "cartesian"`), and its joints are the cartesian machine's:
+`r` is X, `z` is Y, `h` is Z (the nozzle's height) and `a` the rotation
+axis as the controller counts it, so the jog panel, the readout and the
+goto rows draw and drive it as any machine, its `[controls]` (left out:
+X and Y on the pad and as bars, the nozzle's height and its turn, with no
+Center and no zero button on Z or the turn) naming the bars. Its own
+tables, read by the backend (`spinny_web.openpnp`) and the page's mock
+alike, each key checked and named when wrong:
+
+```toml
+name = "OpenPnP Marlin"
+description = "..."
+controller = "gcode"
+
+[port]
+url = ""                 # a serial device (/dev/ttyACM1) or socket://host:port that is this machine's
+match = ["lumen"]        # words in a port's USB names (product, maker, description, any case) that make it this machine's
+baud = 115200
+wait_ms = 2000           # a board that resets when its port opens boots this long before the first line
+timeout = 60             # s a line may take to be answered; a home gets three times this
+
+[gcode]
+init = ["G21", "G90"]    # sent at the connect and before a placing run
+end = []                 # sent after a run
+move = "G0"              # the move word; every move carries its F
+x = "X"                  # axis letters, four different capitals, not F
+y = "Y"
+z = "Z"
+rotation = "A"
+rotation_cw = false      # true when a positive rotation turns the nozzle clockwise seen from above
+wait = "M400"            # answered once the moves queued have run: after a goto, before every vacuum switch
+pick = "M106"            # vacuum on: a line or a list (a pump and a valve take one each)
+place = "M107"           # vacuum off
+dwell = "G4 P{ms}"       # {ms} or {s} for the time; empty for none
+home = "G28"             # the jog panel's Home, with the axes' letters when it names some
+position = "M114"        # answered with X:... Y:... Z:... (A:...): read at the connect, once a second, before a jog
+stop = "M410"            # the Stop and jog cancel, sent ahead of anything in flight; empty sends nothing
+motors_on = "M17"        # the jog panel's Motors; empty: refused
+motors_off = "M18"
+light_on = []            # the cameras' lights, a line or a list; the cameras' routines switch them on first
+light_off = []
+
+[motion]
+feed_xy = 6000           # mm/min across, and of a jog or goto without a feed of its own
+feed_z = 1200            # mm/min up and down
+safe_z = 0               # needed: the height every move across goes at, gone to from above or below (a seesaw Z lowers its other nozzle above it)
+place_z = -20            # needed: the tip with a part on it at the board's top
+pick_dwell_ms = 200
+place_dwell_ms = 150
+pick_tries = 3           # pockets tried for one part before it is left out, 1 to 20
+park = [40.0, 400.0]     # X Y where Park takes the head
+discard = [10.0, 10.0, -15.0]  # X Y Z where a part that failed a check is let go; left out, back in its pocket
+
+[vacuum]                 # a sensor: read after each pick and place when it has ranges
+read = "M105"            # the line, or lines; the reading is in the last one's answer
+pattern = "T:\\s*(-?[0-9]+(?:\\.[0-9]+)?)"  # a group around the reading; OpenPnP's (?<Value>...) reads too
+part_on = [40.0, 100.0]  # low and high with a part held; left out, read by hand only
+part_off = [0.0, 10.0]   # with the nozzle empty
+
+[up_camera]              # the PNP tab's up camera, when it is fixed to this machine
+position = [150.0, 30.0] # the head's place with the nozzle over its picture's center, as designed; Center nozzle measures it
+z = -15                  # the height the nozzle tip is seen sharp at over it; left out, the safe height
+crop = 3.0               # mm from the picture's center a part is looked for; left out, pcbv's own reach
+max_offset = 1.0         # mm a part's center may sit off the nozzle's
+max_turn = 15            # degrees a part may sit off its angle
+size_tolerance = 0.3     # fraction a part's length or width may differ from the one expected; 0 checks no size
+
+[top_camera]             # a camera on the head looking down
+z = 0                    # the height the head looks from; left out, the safe height
+offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
+fiducial = "bright"      # how a fiducial looks to it
+within = 2.0             # mm from where it is expected that a fiducial, mark or part is looked for
+
+[[feeder]]               # a part is picked from the first one whose words its value and footprint all hold
+id = "r-10k-0603"
+match = "10k 0603"       # or refs = ["R1", "R2"], the parts by reference, which outdo the words
+at = [100.0, 50.0, -22.0]  # the first part's place, X Y Z
+pitch = [4.0, 0.0]       # from one part to the next along the tape, or from column to column of a tray
+count = 50               # parts in it; 0 for one that presents every part at `at`
+columns = 0              # with row_pitch, a tray taken row by row
+rotation = 0             # the parts' angle as they sit in it
+# place_z, feed (lines before each pick), vision (looked at over the up camera), size,
+# pocket (its shade to the top camera), marks and mark, crop
+```
+
+A feeder bus (`[bus]`, `[[slot]]`, and a feeder's `bus_id`, `slot`,
+`offset` and `advance` in place of `at`, `pitch` and `count`) carries
+packets to smart feeders through the controller: its keys, and what a
+run does with them, are in [WEB_API.md](WEB_API.md#placing-with-a-g-code-machine),
+the LumenPnP file spelling out Opulo's Photon feeders.
+
+The top bar lists every serial port with the G-code machine whose file
+claims it (its `url` is the port's, or one of its `match` words is in
+the port's USB names), and a G-code machine whose `url` no port is
+listed under (a socket) as an entry of its own; Connect opens a claimed
+port as that machine, anything else as this project's firmware. The
+connect sends `init`, asks M115 for the firmware's name and reads the
+head's place. A jog reads the place first and is answered once queued, so
+jogs pressed quickly add up; a goto moves only the axes it names, rises to
+`safe_z` only to go across, puts the height last, and is answered once its
+moves have run. The console sends lines as typed; Stop sends `stop`. What
+needs this project's firmware (the laser, the spindle, runs, probing,
+settings, the head camera's routines) answers that the machine is a G-code
+one. The PNP tab places with it (see OPERATING.md), and the Config page
+imports one from OpenPnP's `machine.xml`.
 
 ## How a load works
 
