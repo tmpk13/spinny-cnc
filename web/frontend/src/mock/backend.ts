@@ -94,6 +94,7 @@ import {
     deviceFit,
     gnum,
     gotoLines,
+    liftsLeaving,
     moveLine,
     placeLines,
     planDevice,
@@ -6960,6 +6961,11 @@ export class MockBackend implements Api, EventFeed {
             target[name] = here[name] + value;
         }
         const feed = request.feed !== undefined && request.feed !== null && (target.x !== undefined || target.y !== undefined) ? request.feed : null;
+        // Leaving the up camera with the nozzle down near its lens goes up
+        // first, when the file asks for it.
+        if (liftsLeaving(device, here, target, this.deviceCameraPosition())) {
+            this.deviceLine(device, safeLine(device));
+        }
         this.deviceLine(device, moveLine(device, target, feed));
         this.emit({ type: "state", data: this.snapshot() });
     }

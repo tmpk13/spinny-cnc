@@ -482,6 +482,23 @@ describe("jog", () => {
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "board", x: 3, feed: null });
     });
 
+    test("the line under the goto rows says what a Go would move before it is pressed", async () => {
+        const { store, ctx, root, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected({ joint: { r: 5, a: 90, z: 0 }, board: { x: 0, y: 5 } }) });
+        mountJog(root, ctx);
+        const plan = root.querySelector(".goto-plan") as HTMLElement;
+        expect(plan.classList.contains("hidden")).toBe(true);
+        const x = (Array.from(root.querySelectorAll("input[placeholder]")) as HTMLInputElement[]).find((f) => f.placeholder === "x")!;
+        x.value = "3";
+        x.dispatchEvent(new Event("input"));
+        expect(plan.classList.contains("hidden")).toBe(false);
+        expect(plan.textContent).toBe("Go: X 0 to 3.");
+        x.value = "";
+        x.dispatchEvent(new Event("input"));
+        expect(plan.classList.contains("hidden")).toBe(true);
+    });
+
     test("fields that may go below zero do not ask for the keypad without a minus", () => {
         expect(numberField({ min: 0 }).getAttribute("inputmode")).toBe("decimal");
         expect(numberField({ min: 1, step: 1 }).getAttribute("inputmode")).toBe("decimal");

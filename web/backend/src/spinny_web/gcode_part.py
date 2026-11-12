@@ -33,7 +33,7 @@ from .gcode_link import IDENTIFY, GcodeLinkError, firmware_of
 from .kinematics import check_feed, num
 from .log import log, wire_line, wire_note
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, move_line, read_position
+from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, lifts_leaving, move_line, read_position, safe_line
 
 if TYPE_CHECKING:
     from .app import GotoBody, JogBody, PositionBody
@@ -303,11 +303,17 @@ class GcodePart:
                 raise GcodeLinkError(f"'{machine.position}' answered no {letter}: it cannot be jogged from where it is")
             target = {name: here[name] + value for name, value in steps.items()}
             feed = body.feed if body.feed is not None and set(target) & {"x", "y"} else None
-            line = move_line(machine, target, feed)
-            self.gcode.command(line, machine.timeout)
+            lines = [move_line(machine, target, feed)]
+            # Leaving the up camera with the nozzle down near its lens goes
+            # up first, when the file asks for it.
+            if lifts_leaving(machine, here, target, self._up_place(machine).position):
+                lines.insert(0, safe_line(machine))
+                here = {**here, "z": machine.safe_z}
+            for line in lines:
+                self.gcode.command(line, machine.timeout)
             self.gcode.position = {**here, **{name: round(value, 4) for name, value in target.items()}}
         self._publish_gcode_state()
-        return {"lines": [line]}
+        return {"lines": lines}
 
     def _gcode_goto(self, body: GotoBody) -> dict:
         check_feed(body.feed)

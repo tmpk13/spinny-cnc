@@ -127,6 +127,7 @@ z = 4.0
 max_offset = 1.0
 max_turn = 15
 size_tolerance = 0.3
+leave = 2.0        # a jog leaving the camera with the tip down goes up to Z 31.5 first
 
 # The top camera: its picture's center 23.544, 65.188 from N1 as designed;
 # Measure offset finds it on the machine.

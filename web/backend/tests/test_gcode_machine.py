@@ -324,6 +324,36 @@ def test_the_nozzle_goes_over_the_up_camera_with_the_lights_on(client):
     assert state["light"] is True and state["camera"]["position"] == [60.0, 200.0] and state["camera"]["measured"] is False
 
 
+def test_a_jog_leaving_the_up_camera_goes_up_first_when_the_file_asks(tmp_path):
+    fake = FakeMarlin(position=(60.0, 200.0, -4.0))
+    profile = PROFILE.replace("z = -4\n", "z = -4\nleave = 3\n")
+    backend = rig_backend(tmp_path, {"rig": profile}, lambda url, baud: fake)
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        client.fake = fake
+        connect(client, "rig")
+        # Small jogs over the lens stay at the height they are at.
+        start = len(fake.lines)
+        client.post("/api/jog", json={"kind": "joint", "dr": 1.0})
+        assert sent(client, start) == ["M114", "G0 X61 F3000"]
+        # The jog that takes the nozzle away rises first.
+        start = len(fake.lines)
+        client.post("/api/jog", json={"kind": "joint", "dr": 5.0})
+        assert sent(client, start) == ["M114", "G0 Z5 F600", "G0 X66 F3000"]
+        # Away from the lens, jogs go at the height they are at.
+        client.post("/api/jog", json={"kind": "joint", "dh": -2.0})
+        start = len(fake.lines)
+        client.post("/api/jog", json={"kind": "joint", "dr": 5.0})
+        assert sent(client, start) == ["M114", "G0 X71 F3000"]
+
+
+def test_without_leave_a_jog_never_rises(client):
+    connect(client, "rig")
+    client.post("/api/goto", json={"kind": "joint", "r": 60.0, "z": 200.0, "h": -4.0})
+    start = len(client.fake.lines)
+    client.post("/api/jog", json={"kind": "joint", "dr": 20.0})
+    assert sent(client, start) == ["M114", "G0 X80 F3000"]
+
+
 def test_the_camera_and_the_nozzle_swap_over_a_point(client):
     connect(client, "rig")
     start = len(client.fake.lines)

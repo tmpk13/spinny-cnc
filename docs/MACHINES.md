@@ -450,6 +450,7 @@ crop = 3.0               # mm from the picture's center a part is looked for; le
 max_offset = 1.0         # mm a part's center may sit off the nozzle's
 max_turn = 15            # degrees a part may sit off its angle
 size_tolerance = 0.3     # fraction a part's length or width may differ from the one expected; 0 checks no size
+leave = 2.0              # a jog taking the nozzle from within this many mm of the camera to farther, off the safe height, goes up to it first; left out, jogs never rise
 
 [top_camera]             # a camera on the head looking down
 z = 0                    # the height the head looks from; left out, the safe height

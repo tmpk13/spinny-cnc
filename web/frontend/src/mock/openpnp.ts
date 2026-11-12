@@ -154,6 +154,8 @@ export interface MockDevice {
     light_off: string[];
     /** Where the up camera is as designed: the head with the nozzle over its picture's center. */
     camera_position: [number, number] | null;
+    /** A jog taking the nozzle from within this many mm of the up camera to farther, off the safe height, rises first; null never. */
+    leave: number | null;
     /** Where the head waits out of the way. */
     park: [number, number] | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
@@ -564,7 +566,8 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.max_offset = read.number(camera, "max_offset", "up_camera", 1, 0.01, 20);
     device.max_turn = read.number(camera, "max_turn", "up_camera", 15, 0.1, 45);
     device.size_tolerance = read.number(camera, "size_tolerance", "up_camera", 0.3, 0, 1);
-    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance"]);
+    device.leave = "leave" in camera ? read.number(camera, "leave", "up_camera", null, 0, 1000) : null;
+    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave"]);
     return device as MockDevice;
 }
 
@@ -615,6 +618,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         discard: device.discard ? [...device.discard] : null,
         pick_tries: device.pick_tries,
         camera_z: device.camera_z,
+        leave: device.leave,
         crop: device.crop,
         bus: device.bus !== null,
         slots: device.slots.map((slot) => ({ address: slot.address, at: [...slot.at], rotation: slot.rotation })),
@@ -789,6 +793,26 @@ export function xyLine(device: MockDevice, x: number, y: number, turn?: number):
 /** The nozzle up to the safe height. */
 export function safeLine(device: MockDevice): string {
     return zLine(device, device.safe_z);
+}
+
+/**
+ * Whether a jog from `here` to `target` goes up to the safe height first:
+ * the file asks for it ([up_camera] leave), the up camera's place is
+ * known, the nozzle is off the safe height within `leave` mm of that
+ * place, and the jog ends farther than that. The backend's
+ * openpnp.lifts_leaving.
+ */
+export function liftsLeaving(device: MockDevice, here: Partial<Record<AxisName, number>>, target: Partial<Record<AxisName, number>>, camera: [number, number] | null): boolean {
+    if (device.leave === null || camera === null || (target.x === undefined && target.y === undefined)) {
+        return false;
+    }
+    const z = here.z;
+    if (z === undefined || Math.abs(z - device.safe_z) <= 1e-6 || target.z !== undefined || here.x === undefined || here.y === undefined) {
+        return false;
+    }
+    const start = Math.hypot(here.x - camera[0], here.y - camera[1]);
+    const end = Math.hypot((target.x ?? here.x) - camera[0], (target.y ?? here.y) - camera[1]);
+    return start <= device.leave + 1e-9 && end > device.leave + 1e-9;
 }
 
 /** A G-code machine's axes by the names its place is kept under. */

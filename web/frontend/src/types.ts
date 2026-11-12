@@ -1244,6 +1244,8 @@ export interface GcodeDocument {
     pick_tries: number;
     /** The height the nozzle is seen sharp at over the up camera, when it sits on this machine. */
     camera_z: number | null;
+    /** A jog taking the nozzle from within this many mm of the up camera to farther, off the safe height, rises to it first; null never. */
+    leave?: number | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop?: number | null;
     /** The file has a feeder bus, and these slots' places. */

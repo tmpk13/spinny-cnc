@@ -13,6 +13,7 @@ import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
 import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, replace, setLocked } from "../dom.ts";
 import { parseNumber } from "../format.ts";
+import { gotoPlanText, type PlanInput, type PlanWant } from "../gotoplan.ts";
 import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis, Tool } from "../types.ts";
@@ -119,6 +120,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     travelField.setAttribute("aria-label", "Travel height H");
     const travelNote = el("span", { class: "muted travel-note" });
     travelField.addEventListener("change", () => void writeTravel());
+    // Under the goto rows: what the row last typed in will move, and where.
+    const planLine = el("p", { class: "muted goto-plan hidden" });
+    let planOf: (() => PlanWant | null) | null = null;
     // Enter takes the value as leaving the field does.
     travelField.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
@@ -247,6 +251,44 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         return row;
     }
 
+    /** The row whose fields were typed in last gives the plan line its goto. */
+    function watchPlan(inputs: HTMLInputElement[], want: () => PlanWant | null): void {
+        for (const input of inputs) {
+            input.addEventListener("input", () => {
+                planOf = want;
+                showPlan(ctx.store.get());
+            });
+        }
+    }
+
+    /** What the head is and where, as the plan reads it. */
+    function planInput(state: AppState): PlanInput | null {
+        const machine = state.snapshot.machine;
+        if (!state.snapshot.connected || !machine) {
+            return null;
+        }
+        const gcode = profileOf(state.snapshot).controller === "gcode";
+        const letters = Object.fromEntries(controls.axes.map((axis) => [axis.axis, axis.letter]));
+        const joint = machine.joint;
+        return {
+            gcode,
+            height: gcode ? state.placing?.document?.safe_z ?? null : state.settings?.host.travel ?? null,
+            here: { r: joint.r, a: joint.a, z: joint.z, h: joint.h ?? null },
+            board: machine.board ? { x: machine.board.x, y: machine.board.y } : null,
+            letters,
+        };
+    }
+
+    /** The plan line: what Go would move now, from where the head is. */
+    function showPlan(state: AppState): void {
+        const want = planOf?.() ?? null;
+        const input = planInput(state);
+        planLine.classList.toggle("hidden", want === null || input === null);
+        if (want !== null && input !== null) {
+            planLine.textContent = gotoPlanText(input, want);
+        }
+    }
+
     function boardGotoRow(): HTMLDivElement {
         const x = numberField({ placeholder: "x" });
         const y = numberField({ placeholder: "y" });
@@ -264,6 +306,16 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         }, "btn btn-quiet");
         x.addEventListener("keydown", onEnter(go));
         y.addEventListener("keydown", onEnter(go));
+        const want = (): PlanWant | null => {
+            const xv = parseNumber(x.value);
+            const yv = parseNumber(y.value);
+            if (xv === null && yv === null) {
+                return null;
+            }
+            return { kind: "board", ...(xv !== null ? { x: xv } : {}), ...(yv !== null ? { y: yv } : {}) };
+        };
+        watchPlan([x, y], want);
+        go.title = "go to this board point; the line below says what moves";
         return el("div", { class: "goto-row" }, el("span", { class: "choice-label" }, "Board"), x, y, go);
     }
 
@@ -283,6 +335,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         for (const field of fields) {
             field.input.addEventListener("keydown", onEnter(go));
         }
+        const want = (): PlanWant | null => {
+            const given = fields
+                .map((field) => [field.axis.axis, parseNumber(field.input.value)] as const)
+                .filter((entry): entry is readonly [JointAxis, number] => entry[1] !== null);
+            return given.length === 0 ? null : { kind: "joint", ...Object.fromEntries(given) };
+        };
+        watchPlan(fields.map((field) => field.input), want);
+        go.title = "go to the places typed; a blank field stays where it is";
         const center = controls.center;
         return el("div", { class: "goto-row" },
             el("span", { class: "choice-label" }, "Joint"),
@@ -387,6 +447,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         if (gotoAxes.length > 0 || controls.center) {
             rows.push(jointGotoRow(gotoAxes));
         }
+        // The rows are new and empty: no goto is planned until one is typed.
+        planOf = null;
+        rows.push(planLine);
         if (controls.axes.length > 0) {
             rows.push(positionRow(controls.axes));
         }
@@ -421,6 +484,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && profileOf(state.snapshot).controller !== "gcode");
         }
         showTravel(state);
+        showPlan(state);
     }
 
     ctx.store.subscribe((state) => {
@@ -431,7 +495,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         } else {
             show(state);
         }
-    }, ["snapshot", "settings"]);
+    }, ["snapshot", "settings", "placing"]);
     draw();
 
     // One key jog at a time: a held or hammered key must not queue up moves.

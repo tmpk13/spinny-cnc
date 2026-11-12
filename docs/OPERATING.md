@@ -529,7 +529,12 @@ its seesaw); a jog reads where the head is (M114) and moves by the step
 from there, so jogs pressed quickly add up. A goto in the Jog panel moves
 only the axes given: it goes up to the file's safe height only to go
 across, from above or below, turns the nozzle on the way, and puts the
-height last, so the nozzle goes down only over where it is going. The
+height last, so the nozzle goes down only over where it is going; the
+line under the goto rows says what Go will move, from where to where, as
+soon as a field is typed in. With `leave` in the file's `[up_camera]`, a
+jog that takes the nozzle away from over the up camera with its tip off
+the safe height goes up to it first, while small jogs over the lens stay
+at the height they are at. The
 Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the
 nozzle over the up camera at the height it is sharp at), *Nozzle to
 camera spot* and *Camera to nozzle spot* (the head moved by the top

@@ -247,6 +247,12 @@ class GcodeMachine:
     # with the nozzle over its picture's center, a first guess that
     # centering the nozzle replaces.
     camera_position: tuple[float, float] | None = None
+    # A jog that takes the nozzle from over the up camera (within this
+    # many mm of its place) to farther than that, with the nozzle off the
+    # safe height, goes up to the safe height first; None never lifts a
+    # jog. Small jogs over the lens, to center the nozzle by hand, stay
+    # at the height they are at.
+    leave: float | None = None
     # Where the head waits out of the way, at the safe height.
     park: tuple[float, float] | None = None
     # How far from the up camera's picture center a part is looked for, mm;
@@ -310,6 +316,7 @@ class GcodeMachine:
             "discard": list(self.discard) if self.discard is not None else None,
             "pick_tries": self.pick_tries,
             "camera_z": self.camera_z,
+            "leave": self.leave,
             "crop": self.crop,
             "bus": self.bus is not None,
             "slots": [{"address": slot.address, "at": list(slot.at), "rotation": slot.rotation} for slot in self.slots],
@@ -722,7 +729,8 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     max_offset = read.number(camera, "max_offset", "up_camera", 1.0, 0.01, 20.0)
     max_turn = read.number(camera, "max_turn", "up_camera", 15.0, 0.1, 45.0)
     size_tolerance = read.number(camera, "size_tolerance", "up_camera", 0.3, 0.0, 1.0)
-    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance"})
+    leave = read.number(camera, "leave", "up_camera", None, 0.0, 1000.0) if "leave" in camera else None
+    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave"})
     return GcodeMachine(
         id=machine.id,
         name=name or machine.id,
@@ -761,6 +769,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         light_on=light_on,
         light_off=light_off,
         camera_position=camera_position,
+        leave=leave,
         park=park,
         crop=crop,
         bus=bus,
@@ -905,6 +914,24 @@ def move_xy(machine: GcodeMachine, point: tuple[float, float] | None, degrees: f
 
 def safe_line(machine: GcodeMachine) -> str:
     return move_z(machine, machine.safe_z)
+
+
+def lifts_leaving(machine: GcodeMachine, here: dict[str, float], target: dict[str, float], camera: tuple[float, float] | None) -> bool:
+    """Whether a jog from `here` to `target` (the controller's x, y, z)
+    goes up to the safe height first: the file asks for it ([up_camera]
+    leave), the up camera's place is known, the nozzle is off the safe
+    height and within `leave` mm of that place, and the jog ends farther
+    than that from it."""
+    if machine.leave is None or camera is None or ("x" not in target and "y" not in target):
+        return False
+    z = here.get("z")
+    if z is None or abs(z - machine.safe_z) <= 1e-6 or "z" in target:
+        return False
+    if "x" not in here or "y" not in here:
+        return False
+    start = math.hypot(here["x"] - camera[0], here["y"] - camera[1])
+    end = math.hypot(target.get("x", here["x"]) - camera[0], target.get("y", here["y"]) - camera[1])
+    return start <= machine.leave + 1e-9 and end > machine.leave + 1e-9
 
 
 AXIS_NAMES = ("x", "y", "z", "rotation")

@@ -88,6 +88,22 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         await expect(mock.jog({ kind: "joint", dz: 0 })).rejects.toThrow("at least one axis");
     });
 
+    test("a jog leaving the up camera goes up first when the file asks, as the backend's", async () => {
+        const mock = new MockBackend();
+        await connectGcode(mock, "rig", PROFILE.replace("z = -4\n", "z = -4\nleave = 3\n"));
+        await mock.command("G0 X60 Y200 Z-4");
+        let start = await txCount(mock);
+        await mock.jog({ kind: "joint", dr: 1 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 X61 F3000"]);
+        start = await txCount(mock);
+        await mock.jog({ kind: "joint", dr: 5 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 Z5 F600", "G0 X66 F3000"]);
+        await mock.jog({ kind: "joint", dh: -2 });
+        start = await txCount(mock);
+        await mock.jog({ kind: "joint", dr: 5 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 X71 F3000"]);
+    });
+
     test("a goto rises only to go across and puts the height last, and parks", async () => {
         const mock = await rig();
         let start = await txCount(mock);
