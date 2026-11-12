@@ -724,3 +724,34 @@
   from `pnp/`), connected from the top bar by the port its file claims,
   and jogged, homed, stopped and sent lines like the others; the PNP tab
   places with the machine connected (no Place with, no device panel).
+- Goto plan and leaving the camera (2026-11-12): the Jog panel says what a
+  Go will move, from where to where, before it is pressed; a G-code
+  machine file's `[up_camera] leave` lifts a jog leaving the camera with
+  the tip down (the goto fixes themselves were in fb8fe96).
+- Panels (2026-11-12): stuck panels side by side, Fit to screen, scroll
+  arrows in held panels and the tab bar, an eye to peek at hidden panels,
+  Done editing, thick scroll bars, a resizable PNP parts list.
+- Connection tab and Stop (2026-11-12): the port controls on a Connection
+  tab, only the state in the top bar, a big Stop (/api/stop) always in
+  view, one-press switching between machines connected lately.
+- Jog (2026-11-12): Hold to move, Fine (and Shift), Escape leaves a field.
+- Help (2026-11-12): drawings open on a press and are no longer cut off, a
+  tooltip on every button (checked in Chromium by the layout check), a
+  feature search (magnifier, / or Ctrl+K), shorter menu and port text.
+- Cameras (2026-11-12): pictures in panels of their own, resizable, sharp
+  at any zoom with marks drawn over them, Ctrl+wheel zoom (the wheel
+  scrolls), green running badges, a line while dragging, the finder's
+  spots drawn and Look once, settled pictures before every look (the
+  likely Center nozzle fault), V4L2 picture controls, "bottom camera".
+- Look for board (2026-11-12): on the PNP top camera too, found once
+  enough looks agree, a Search over a drawn box that always ends, the
+  place kept as references, the estimate drawn live on the Board drawing
+  and the Jobs preview; the PNP Board's labels keep one size.
+- Virtual LumenPnP (2026-11-12): `mise run virtual-pnp` with fake bottom
+  and top cameras, vacuum, Photon feeders and a homing error.
+- Camera calibration pattern (2026-11-12): a dot grid the laser marks or
+  the mill drills, and an SVG to print; measuring distortion is not built.
+- Updates from GitHub (2026-11-12): an installed release checks and
+  installs GitHub releases (Config page, `spinny-web --update`).
+- Home by fiducial (2026-11-12): the head's homing fiducial read from
+  OpenPnP, found by the top camera after a home to correct the place.
