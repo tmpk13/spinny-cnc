@@ -91,10 +91,18 @@ Jobs and Plot pages both mount); dispensing is in
 [OPERATING.md](../../docs/OPERATING.md#dispensing-solder-paste).
 
 The Jobs page's *Camera* panel (`src/views/vision.ts`; `camera.ts` is
-the preview's camera) draws `AppState.camera`, asked for again with its
-picture while the panel shows, the cameras attached from `AppState.cameras`
-(`src/views/camerapick.ts`) and the camera log from `AppState.camlog`
-(`src/views/camlog.ts`). The *Align* panel (`src/views/align.ts`) draws
+the preview's camera) draws `AppState.camera`, asked for again while it or
+its picture shows, the cameras attached from `AppState.cameras`
+(`src/views/camerapick.ts`), the camera's V4L2 controls
+(`src/views/cameracontrols.ts`, asked for when unfolded) and the camera log
+from `AppState.camlog` (`src/views/camlog.ts`); its picture is the
+*Camera view* panel. Every camera picture is `src/views/picture.ts`: the
+frame asked for at the width shown times the pixel ratio and the zoom,
+fitted in a box its grip sizes, the page's marks as SVG in the picture's
+pixels (`spotMarks`, the search box, the board where a look puts it),
+Ctrl+wheel zoom, drag to move with its line, Shift+drag for a search box
+(kept per camera in local storage). The board look (`board_look` of the
+camera and top camera states) is said by `lookText`. The *Align* panel (`src/views/align.ts`) draws
 `AppState.align`, the marks and the fit `src/align.ts` gives them. Their
 use is in [the camera and its offset](../../docs/OPERATING.md#the-camera-and-its-offset) and
 [lining a job up](../../docs/OPERATING.md#lining-a-job-up-with-the-board). The mock has a
@@ -104,7 +112,10 @@ follows the head, and the find routine stepped on the mock's clock.
 
 The *PNP* page (`src/views/pnp.ts`) draws the selected board job's parts
 (`AppState.components`, read by the backend from its `.kicad_pcb`), the
-one picked (`AppState.pnpPart`) and the up camera (`AppState.pnp`). It
+one picked (`AppState.pnpPart`), what a looking camera's picture sees of
+the board (`placeLookView`; labels one size on the screen, crowded ones
+dropped: `fitLabels`) and the up camera (`AppState.pnp`); its pictures are
+the Bottom camera view and Top camera view panels (`src/views/camview.ts`). It
 works with the machine connected (`gcodePlacing` in
 `src/views/placing.ts`): with a G-code machine (or, disconnected, one to
 place with) the Head (`src/views/placing.ts`), Top camera, Board on the
@@ -119,7 +130,9 @@ readout are the file's `[controls]`. Their use is in
 [placing with a G-code machine](../../docs/OPERATING.md#placing-with-a-g-code-machine-openpnp-compatible).
 The mock's up camera (`src/mock/pnp.ts`) draws the nozzle where the head
 is against where the camera really sits, and makes a board job's pads its
-parts; the mock's twin of the backend's profile reader and planner is
+parts; the mock's board looks and searches (`src/mock/boardlook.ts`) see
+the board where the mock lays it, exactly, and its cameras answer a laptop
+camera's controls; the mock's twin of the backend's profile reader and planner is
 `src/mock/openpnp.ts`. The *Setup* panels (`src/views/steps.ts`, on the
 Jobs and PNP pages) fill their steps in from the page's state
 ([setup steps](../../docs/OPERATING.md#setup-steps)). A panel's edits not applied yet are
@@ -232,7 +245,7 @@ classDiagram
         AppState
     }
     class views {
-        context statusbar tabs steps banner dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision camerapick camlog align pnp device auto console settingslist cam config editor toasts
+        context statusbar tabs steps banner dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals
@@ -298,6 +311,9 @@ classDiagram
     class mock_pnp {
         UP_TRUTH TOP_TRUTH  where the up and top cameras really sit, their pictures, a board job's pads as its parts
     }
+    class mock_boardlook {
+        MockBoardLook searchStops  the board looks and the search's stops, as the backend's boardlook.py
+    }
     class mock_openpnp {
         parseGcodeTables(top, id, name, description) MockDevice  the backend's G-code machine file reader and placement program, line for line
     }
@@ -335,6 +351,7 @@ classDiagram
     mock_backend --> mock_mill
     mock_backend --> mock_auto
     mock_backend --> mock_pnp
+    mock_backend --> mock_boardlook
     mock_backend --> mock_openpnp
     mock_backend --> mock_calibrate
     mock_backend --> mock_camlog

@@ -99,6 +99,10 @@ flowchart LR
         UST --> VIDPI[/dev/v4l/by-id camera on the Pi]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         BE --> FIND[cameras: the ones attached for the device lists, from pcbv cameras and from asking the forwarded ports for ustreamer state]
+        BE --> LOOK[boardlook: the head and top cameras' poses read into where the board lies, found once enough agree; the search over a box]
+        LOOK --> PV
+        LOOK --> PV3
+        FIND --> V4L[v4l2-ctl: a camera's controls listed and set, kept per camera and set at each start]
         FIND -.-> VID
         FIND -.-> UST
         MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls; a G-code machine's port, dialect, heights, cameras, feeders] <--> BE

@@ -426,10 +426,33 @@ cross-builds it for a Raspberry Pi that runs the backend and installs it
 there ([ARCHITECTURE.md](ARCHITECTURE.md#controller-on-a-raspberry-pi)),
 and a release built beside pcb-vision carries it as `bin/pcbv`
 ([RELEASE.md](RELEASE.md#the-other-programs)). The
-Camera panel on the Jobs page starts it, shows its picture with a
-crosshair at the center, and, with *Look for board* on a job imported
-from a KiCad file, where on the board the picture is and how well it is
-locked.
+Camera panel on the Jobs page starts it and holds its settings; its
+picture is the Camera view panel beside it, and with *Look for board* on
+a job imported from a KiCad file the panels say where on the board the
+picture is and how well it is locked (below).
+
+Every camera picture (the head camera's, and the PNP page's bottom and top
+cameras') works the same way. It is asked for at the size it is shown, so
+it stays sharp when zoomed: *+* and *-* under it, or Ctrl and the wheel (a
+pinch on a touchpad), zoom on its center, and the plain wheel scrolls the
+page. A drag moves the head so what the camera sees follows the pointer,
+a line showing the move; a double-click brings a point to the crosshair
+(both once the camera's scale is measured). The grip under the picture
+makes its box taller or shorter, kept per camera; a double-click on the
+grip gives the picture its own shape back. *Overlay* switches the page's
+marks over it (the crosshair, the circle a spot is looked for within, a
+spot found with its ellipse and box, a search box, the board where the
+looks put it) and pcbv's pose of a loaded board; the marks keep thin
+lines at any zoom.
+
+*Picture controls*, folded under each camera's settings, lists what the
+camera lets be set (exposure, gain, focus, white balance, brightness and
+the like, as v4l2-ctl lists them): a slider, a box or a list each. A value
+set goes to the camera at once and is kept, so it is set again whenever
+the camera starts (kept ones are bold; *Forget* leaves the camera's own).
+Automatic exposure is set before a manual exposure time; a control greyed
+out does nothing while an automatic one is on. A camera on a bridge Pi
+(an HTTP snapshot URL) has none here: they are set on the Pi.
 
 The panel's *Camera* list holds the cameras attached: the ones on the
 backend's computer, under their stable `/dev/v4l/by-id` names, and the
@@ -464,6 +487,26 @@ The camera is useful once the machine knows where it looks from the tool:
    keep them with it. A camera that is moved on the head, or a tool that
    is changed, wants the routine run again.
 
+#### Looking for the board
+
+*Look for board* loads the selected job's board into pcbv, which looks for
+it in every picture until *Unload*. The backend reads its pose about five
+times a second and, while the head stands still, turns each lock into
+where the board lies on the machine; the board is *found* once five looks
+in a row agree within half a millimeter and a degree (the badge turns
+from *looking* to *found*, and the line under the picture says how many
+agree, how far apart, and why a look was not used, such as the head
+moving). The Jobs preview draws the board's outline dashed where the looks
+put it, and *Capture* in the Align panel takes that agreed place.
+
+*Search* moves the camera over a box in steps of its picture until the
+board is found, then puts the picture's center over the board's middle;
+it ends by itself (found, or every step looked at) or with *Abort*. Draw
+the box with Shift and a drag on the picture; *Add view* grows it to take
+in what the picture shows now (jog to one corner, draw, jog to the other,
+*Add view*), and *Clear box* forgets it. With no box it searches a square
+the board's diagonal on a side about where the picture is.
+
 Both camera panels have the camera log: *log every look* keeps every
 picture the cameras' routines look at (finding the mark, centering the
 nozzle, looking at a part, a G-code machine's run), each as it was and with
@@ -494,8 +537,12 @@ the machine, looking up at the nozzle; a G-code pick and place machine
 (next section) gets its own panels for placing. Its Setup panel leads
 through it:
 
-1. Start the up camera (picked in the Up camera panel's list, or its device typed in;
+1. Start the bottom camera (picked in the Bottom camera panel's list, or its device typed in;
    the spots say whether the finder looks for something dark or bright).
+   *Look once* finds the nozzle's (or a part's) spot with no move and
+   draws it over the picture: a red circle at the center says nothing was
+   found, so check the polarity, the light and the focus before a routine
+   relies on it.
 2. Jog the nozzle over the camera until it shows in the picture and press
    *Center nozzle*: the head rises to the travel height, comes down to
    *Sharp at H* when that is set, moves the step along X and along Y to
@@ -567,11 +614,17 @@ Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the
 nozzle over the up camera at the height it is sharp at), *Nozzle to
 camera spot* and *Camera to nozzle spot* (the head moved by the top
 camera's offset), the vacuum, and *Tune the machine file*. *Go to part*
-moves X and Y only, at the safe height. The Cameras panel shows the up
-camera, the top camera or both; a drag on a picture moves the head so
+moves X and Y only, at the safe height. The Bottom camera view and Top
+camera view panels show the two pictures (stack them, or put them side
+by side, from the panels' menus); a drag on a picture moves the head so
 the picture follows the pointer, a double-click brings a point to the
-crosshair, and the wheel zooms. The dashed circle is how far from the
-center a part is looked for (`[up_camera] crop`, or a feeder's `crop`).
+crosshair, and Ctrl and the wheel zoom. The dashed circle is how far from
+the center a part is looked for (`[up_camera] crop`, or a feeder's `crop`).
+Every look a routine takes waits for a picture taken a quarter of a
+second after the head stopped, and *Center nozzle* refuses a measure
+whose two steps did not show as equal moves at right angles (a picture
+that lagged, or a spot that is not the nozzle): *Look once* and the
+camera log show what the finder took.
 
 On a seesaw Z like the LumenPnP's, both nozzles are up only at the safe
 height (31.5): every move across goes there first, from above or below.
@@ -602,7 +655,14 @@ mark*, then *Measure offset*: the head moves so the camera should see the
 mark (by the file's `offset`, or from where it stands when there is
 none), measures the picture and centers the mark. *Find fiducials* (or
 *find fiducials first* on a run) fits the board on its fiducials,
-footprints FID* or named Fiducial, from where the references put them. A
+footprints FID* or named Fiducial, from where the references put them.
+Its Board part finds a board with no references at all: *Look for board*
+with the board's job picked, *Search* (over a box drawn on the top
+camera's picture, as for the head camera), then *Use as board place*
+keeps where the looks put the board as two references (the two parts
+furthest apart), which *Find fiducials* then makes exact. The Board
+drawing shows what the camera's picture sees of the board, dashed, and
+green once found. A
 feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and
 its places moved to follow them.
@@ -763,7 +823,9 @@ with where the machine finds them, and turns and shifts the job to match
 - With a camera locked on the board: *Capture* pairs the picture's center
   with where it is on the machine, with the board's turn from the
   picture's angle and the camera's roll. One capture lines the job up;
-  two, far apart, do without the roll.
+  two, far apart, do without the roll. Once enough of the camera's looks
+  agree on the board (Looking for the board, above), *Capture* takes
+  their agreed place and turn instead of the newest picture's.
 
 *Apply* moves the job and clears the marks. Check the result in the
 preview, and probe the pads or tie the height map after a large move,
