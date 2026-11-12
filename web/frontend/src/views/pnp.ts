@@ -358,10 +358,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()));
     mountCameraView(roots.view, ctx);
 
-    // --- the jog: the machine connected's, whichever it is ---
-    const machineJog = el("div", { class: "stack pnp-machine-jog" });
-    roots.jog.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog")), el("div", { class: "panel-body" }, machineJog));
-    mountJog(machineJog, ctx, "pnp", () => true);
+    // --- the jog: the machine connected's, whichever it is; the panel is
+    // the jog panel itself, one head and its buttons, as on the Jobs page ---
+    mountJog(roots.jog, ctx, "pnp", () => true);
 
     // --- the parts ---
     const jobPick = el("select", { class: "field", "aria-label": "Board job" }) as HTMLSelectElement;
