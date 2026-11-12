@@ -143,7 +143,7 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         expect((await mock.state()).machine?.enabled).toBe(false);
     });
 
-    test("the nozzle goes over the up camera with the lights on, and the tools swap over a point", async () => {
+    test("the nozzle goes over the bottom camera with the lights on, and the tools swap over a point", async () => {
         const mock = await rig();
         let start = await txCount(mock);
         const state = await mock.pnpOverCamera();
@@ -157,7 +157,7 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         expect(await sentSince(mock, start)).toEqual(["M114", "G0 X120 Y110 F3000", "M400", "M114"]);
     });
 
-    test("the up camera's place is set by hand and forgotten back to the file's", async () => {
+    test("the bottom camera's place is set by hand and forgotten back to the file's", async () => {
         const mock = await rig();
         await mock.goto({ kind: "joint", r: 61, z: 201 });
         expect((await mock.pnpCameraPlace({ here: true })).camera.position).toEqual([61, 201]);

@@ -819,7 +819,7 @@ def board_fit(references: list[tuple[tuple[float, float], tuple[float, float]]],
         raise PlanError(str(exc)) from exc
 
 
-VISION_NOTE = "; looked at over the up camera: placed where its center lands"
+VISION_NOTE = "; looked at over the bottom camera: placed where its center lands"
 POCKET_NOTE = "; the top camera looks at the pocket first: picked where the part is"
 MARKS_NOTE = "; the feeder's marks are found with the top camera first: its places follow them"
 
@@ -1111,7 +1111,7 @@ def plan(
             skipped.append({"ref": ref, "reason": "no feeder holds it"})
             continue
         if feeder.vision and not vision_ready:
-            skipped.append({"ref": ref, "reason": f"feeder {feeder.id} wants the up camera: center the nozzle over it first"})
+            skipped.append({"ref": ref, "reason": f"feeder {feeder.id} wants the bottom camera: center the nozzle over it first"})
             continue
         if feeder.at is None:
             skipped.append({"ref": ref, "reason": f"feeder {feeder.id}'s slot is not known: scan the feeder bus, or run, which finds it"})

@@ -463,7 +463,7 @@ camera has it, else 1280x720 or the nearest below; the fps lowered only
 past what the camera gives), and *Start* sends what the fields show
 before starting. A device can still be typed into *Device* by hand.
 *Apply* on a running camera with another device, size or fps starts it
-again on them. The Up camera panel on the PNP page has the same list,
+again on them. The Bottom camera panel on the PNP page has the same list,
 and each list says which camera the other one is set to. A pcbv that
 leaves a request unanswered for 6 s (a stalled link to a Pi, a hung
 program) or whose connection fails is closed, and the panel shows the
@@ -519,7 +519,7 @@ how, and why a picture at a time): deploy with
 `mise run deploy-pi -- --camera /dev/v4l/by-id/<name> user@host`
 (the deploy lists the names it finds, the `video-index0` one is the
 picture; `<name>@640x480@15` picks another mode than 1280x720 at 30 fps;
-a second `--camera`, the up camera, gets the next port), keep
+a second `--camera`, the bottom camera, gets the next port), keep
 `mise run relay-pi -- user@host` running, and pick `stream on port 2325`
 in the Camera list (the backend looks at the ports relay-pi forwards, the
 ones in `SPINNY_CAMERA_PORTS` when that is set where the backend runs).
@@ -533,7 +533,8 @@ the picture is ustreamer's NO SIGNAL card.
 
 The PNP tab works with the machine connected. On an X/Y machine on this
 project's firmware it serves a nozzle on the head and a camera fixed to
-the machine, looking up at the nozzle; a G-code pick and place machine
+the machine, looking up at the nozzle (the bottom camera, as OpenPnP and
+Opulo call it; a machine file's `[up_camera]`); a G-code pick and place machine
 (next section) gets its own panels for placing. Its Setup panel leads
 through it:
 
@@ -550,7 +551,7 @@ through it:
    nozzle. The head's R and Z there are the camera's place, kept for the
    next time, when the routine goes there by itself.
 3. Pick a board job uploaded as a `.kicad_pcb`: its footprints are listed
-   and drawn on the board with the head and the up camera; a press on a
+   and drawn on the board with the head and the bottom camera; a press on a
    row or a dot picks one.
 4. With a part on the nozzle, *Look at part* reads where its center sits
    against the nozzle's. *Go to part* takes the nozzle over the picked
@@ -611,7 +612,7 @@ jog that takes the nozzle away from over the up camera with its tip off
 the safe height goes up to it first, while small jogs over the lens stay
 at the height they are at. The
 Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the
-nozzle over the up camera at the height it is sharp at), *Nozzle to
+nozzle over the bottom camera at the height it is sharp at), *Nozzle to
 camera spot* and *Camera to nozzle spot* (the head moved by the top
 camera's offset), the vacuum, and *Tune the machine file*. *Go to part*
 moves X and Y only, at the safe height. The Bottom camera view and Top
@@ -638,7 +639,7 @@ before `part_on`/`part_off` are set.
 
 Feeders can be tape strips, trays (`columns`, `row_pitch`) or feeders
 told to advance (`feed`, one line or several); one names its parts by
-`refs` or by the words of `match`. The up camera's place on the machine
+`refs` or by the words of `match`. The bottom camera's place on the machine
 comes from its file, or *Camera is here* with the nozzle over it by
 eye, or typed; *Center nozzle* measures it with the picture's scale, roll
 and mirror, then *Measure runout*: the tip is found at six turns of the
@@ -668,7 +669,7 @@ one is passed over), one with `marks` has its marks found once a run and
 its places moved to follow them.
 
 With `part_on` in the file's `[vacuum]`, a pick that holds nothing, a
-part not on the nozzle over the up camera, one off by too much or of the
+part not on the nozzle over the bottom camera, one off by too much or of the
 wrong size is let go at `[motion] discard` (or back in its pocket) and
 the next pocket tried, up to `pick_tries`; the part is then left out and
 listed, and *Run the rest* places what the last run did not. A part still

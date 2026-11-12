@@ -45,7 +45,7 @@ describe("picking a camera", () => {
     test("the words of the list and of the line under it", () => {
         const [head, , stream] = MOCK_CAMERAS;
         expect(cameraLabel(head!, null)).toBe("Head Camera (mock)  /dev/v4l/by-id/usb-Mock_Head_Camera_0001-video-index0");
-        expect(cameraLabel(head!, "up camera")).toBe("Head Camera (mock), set as the up camera  /dev/v4l/by-id/usb-Mock_Head_Camera_0001-video-index0");
+        expect(cameraLabel(head!, "bottom camera")).toBe("Head Camera (mock), set as the bottom camera  /dev/v4l/by-id/usb-Mock_Head_Camera_0001-video-index0");
         expect(cameraLabel({ ...stream!, online: false }, null)).toBe("stream on port 2325, 1280x720, no signal  http://127.0.0.1:2325/snapshot");
         expect(foundText(null, "/dev/video0")).toBe("Looking for cameras...");
         expect(foundText({ cameras: [], problems: ["pcbv is not built."] }, ""))

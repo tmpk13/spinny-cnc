@@ -362,7 +362,7 @@ def test_a_tray_is_taken_row_by_row_and_a_feeder_told_to_advance_gets_every_line
     parts = [part("C1", "100n", "C_0402", 5.0, 6.0), part("U1", "STM32", "LQFP-32", 2.0, 3.0, 90.0)]
     # Without the camera centered, a part its feeder wants looked at is left.
     blind = plan(device, parts, fit, {"ic": 4})
-    assert [block.ref for block in blind.blocks] == ["C1"] and "wants the up camera" in blind.skipped[0]["reason"]
+    assert [block.ref for block in blind.blocks] == ["C1"] and "wants the bottom camera" in blind.skipped[0]["reason"]
     seen = plan(device, parts, fit, {"ic": 4}, vision_ready=True)
     c1, u1 = seen.blocks
     assert c1.pick[1:3] == ["M600 N1", "M400"] and not c1.vision
@@ -403,7 +403,7 @@ def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(
     # A part to be looked at needs the up camera running.
     camera.running = False
     response = client.post("/api/pnp/run", json={"job": job.id, "refs": ["R1"]})
-    assert response.status_code == 400 and "up camera is not running" in response.text
+    assert response.status_code == 400 and "bottom camera is not running" in response.text
     camera.running = True
     lines_before = len(client.fake.lines)
     response = client.post("/api/pnp/run", json={"job": job.id, "refs": ["R1"]})
@@ -469,7 +469,7 @@ def test_a_part_never_seen_on_the_nozzle_is_retried_from_the_next_pockets_then_l
     wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
     state = client.get("/api/pnp/placing").json()
     assert state["progress"]["state"] == "done" and state["progress"]["placed"] == []
-    assert state["progress"]["failed"] == [{"ref": "R1", "reason": "nothing on the nozzle over the up camera"}]
+    assert state["progress"]["failed"] == [{"ref": "R1", "reason": "nothing on the nozzle over the bottom camera"}]
     assert state["taken"] == {"ic": 3}
     sent = client.fake.lines[lines_before:]
     # Picked from the tray's first three places, each let go where it came from.

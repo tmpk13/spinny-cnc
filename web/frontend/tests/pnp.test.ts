@@ -53,7 +53,7 @@ describe("pnp helpers", () => {
         expect(footprintName("bare")).toBe("bare");
     });
 
-    test("the up camera's place turns with the table, and the drawing's box takes in everything", () => {
+    test("the bottom camera's place turns with the table, and the drawing's box takes in everything", () => {
         expect(cameraOnBoard(null, 0)).toBeNull();
         const turned = cameraOnBoard([10, 0], 90)!;
         expect(turned.x).toBeCloseTo(0, 9);
@@ -89,7 +89,7 @@ describe("pnp helpers", () => {
 });
 
 describe("pnp in the mock", () => {
-    test("the up camera's picture shows the nozzle where the head is against the camera", () => {
+    test("the bottom camera's picture shows the nozzle where the head is against the camera", () => {
         const at = upPicturePoint([0.5, 0], UP_TRUTH);
         // Mirrored: a head move along +X shows as a spot moving left, give or take the roll.
         expect(at.px).toBeLessThan(0);
@@ -106,7 +106,7 @@ describe("pnp in the mock", () => {
         const started = await backend.pnpNozzle(1);
         expect(started.routine?.state).toBe("running");
         // The routine has the camera: no other device, size or rate under it.
-        await expect(backend.pnpSettings({ fps: 10 })).rejects.toMatchObject({ status: 409, message: "the up camera routine is under way: abort it first" });
+        await expect(backend.pnpSettings({ fps: 10 })).rejects.toMatchObject({ status: 409, message: "the bottom camera routine is under way: abort it first" });
         // Nothing else moves the head meanwhile.
         await expect(backend.goto({ kind: "joint", r: 0 })).rejects.toMatchObject({ status: 409 });
         const done = await runRoutine(backend);
@@ -168,7 +168,7 @@ describe("the pnp page", () => {
         await settle();
         expect(store.get().pnp?.running).toBe(true);
         // A field typed in is counted for the page's tab until applied.
-        const device = roots.camera.querySelector('input[aria-label="Up camera device"]') as HTMLInputElement;
+        const device = roots.camera.querySelector('input[aria-label="Bottom camera device"]') as HTMLInputElement;
         device.value = "/dev/video9";
         device.dispatchEvent(new Event("input"));
         expect(store.get().pending["pnp"]).toBe(1);
@@ -189,7 +189,7 @@ describe("the pnp page", () => {
         expect(backend.machine.queue.length + (backend.machine.state === "Jog" ? 1 : 0)).toBeGreaterThan(0);
     });
 
-    test("the up camera is picked from the cameras found, started on what the fields show, and started again on another", async () => {
+    test("the bottom camera is picked from the cameras found, started on what the fields show, and started again on another", async () => {
         localStorage.removeItem("spinny.pnp.target");
         const { store, ctx, calls } = setup();
         const roots = pnpRoots();

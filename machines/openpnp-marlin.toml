@@ -55,7 +55,7 @@ pick_tries = 3           # pockets tried for one part before it is left out
 # part_on = [40.0, 100.0]
 # part_off = [0.0, 10.0]
 
-# The up camera (the PNP tab's), when it is fixed to this machine: Center
+# The bottom camera (the PNP tab's), when it is fixed to this machine: Center
 # nozzle measures where it is and Measure runout how far the
 # tip runs off true as it turns; parts of a feeder marked `vision` are
 # looked at over it turned to their angle, and placed where their center
@@ -85,7 +85,7 @@ pitch = [4.0, 0.0]         # from one part to the next along the tape, X Y
 count = 50                 # parts in it; 0 for one that presents every part at `at`
 rotation = 0               # the parts' angle as they sit in it, degrees
 
-# A tray, row by row, its parts looked at over the up camera:
+# A tray, row by row, its parts looked at over the bottom camera:
 # [[feeder]]
 # id = "mcu-tray"
 # match = "STM32"

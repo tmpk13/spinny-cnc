@@ -35,7 +35,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         device,
         size,
         fps,
-        otherLabel: "up camera",
+        otherLabel: "bottom camera",
         otherDevice: (state) => state.pnp?.device ?? null,
         visible,
     });

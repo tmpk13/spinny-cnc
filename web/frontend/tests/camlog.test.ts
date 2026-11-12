@@ -13,7 +13,7 @@ async function settleMany(times = 6): Promise<void> {
 
 describe("the camera log", () => {
     test("marks the center, the circle searched and the spot found, or says nothing was", () => {
-        const found = overlaySvg("data:x", 1280, 720, { found: true, x: 652, y: 371, dx: 12, dy: 11, major: 20, minor: 12 }, "up camera, photo: by hand");
+        const found = overlaySvg("data:x", 1280, 720, { found: true, x: 652, y: 371, dx: 12, dy: 11, major: 20, minor: 12 }, "bottom camera, photo: by hand");
         expect(found).toContain('<rect x="642.0" y="365.0" width="20.0" height="12.0"');
         expect(found).toContain('r="240.0"');
         expect(found).toContain("found at dx +12.0 dy +11.0 px");

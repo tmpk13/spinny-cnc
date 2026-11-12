@@ -42,12 +42,12 @@ function nozzle(x: number, y: number): SVGElement {
 export type InfoTopic = "heights" | "feeder" | "offset" | "upcam" | "references" | "runout";
 
 const CAPTIONS: Record<InfoTopic, string> = {
-    heights: "Z grows upward. Moves across go at Safe Z; the tip goes down to a feeder's Z to pick, to Place Z to put a part down, and to the up camera's Z to be seen sharp.",
+    heights: "Z grows upward. Moves across go at Safe Z; the tip goes down to a feeder's Z to pick, to Place Z to put a part down, and to the bottom camera's Z to be seen sharp.",
     feeder: "A feeder's first part is at `at`; the next ones follow by `pitch`. A tray goes `columns` across, then on by `row_pitch` to the next row.",
     offset: "The top camera rides on the head: its picture's center is the offset away from the nozzle's tip. Camera here and Go to with the camera use it.",
-    upcam: "The up camera is fixed and looks up. Its place is the head's X Y with the nozzle over its picture's center; Center nozzle finds that place and the picture's scale, roll and mirror by moving the nozzle over it.",
+    upcam: "The bottom camera is fixed and looks up. Its place is the head's X Y with the nozzle over its picture's center; Center nozzle finds that place and the picture's scale, roll and mirror by moving the nozzle over it.",
     references: "Each reference pairs a part on the board with the place it was found on the machine. One gives the shift (with the typed turn); two or more give the shift and the turn. Every part is placed by that fit.",
-    runout: "A bent tip swings round its turning axis. Measure runout turns the nozzle over the up camera and fits the circle, so each place keeps the tip, not the axis, on its point.",
+    runout: "A bent tip swings round its turning axis. Measure runout turns the nozzle over the bottom camera and fits the circle, so each place keeps the tip, not the axis, on its point.",
 };
 
 function drawing(topic: InfoTopic): SVGElement {
@@ -58,7 +58,7 @@ function drawing(topic: InfoTopic): SVGElement {
                 line(10, 22, 210, 22, "tip-dash"), text(12, 18, "Safe Z"),
                 nozzle(50, 52), rect(30, 58, 40, 10), text(50, 80, "feeder", "middle"), line(28, 52, 72, 52, "tip-dash"), text(74, 55, "pick Z"),
                 nozzle(120, 86), rect(95, 92, 50, 8), text(120, 112, "board", "middle"), line(93, 86, 147, 86, "tip-dash"), text(149, 89, "Place Z"),
-                nozzle(185, 70), rect(175, 82, 20, 12), text(185, 106, "up camera", "middle"),
+                nozzle(185, 70), rect(175, 82, 20, 12), text(185, 106, "bottom camera", "middle"),
                 arrow(200, 22, 200, 66), text(203, 48, "Z"),
             );
             break;
@@ -86,7 +86,7 @@ function drawing(topic: InfoTopic): SVGElement {
         case "upcam":
             root.append(
                 rect(20, 20, 110, 80, "tip-faint"), line(75, 20, 75, 100, "tip-dash"), line(20, 60, 130, 60, "tip-dash"),
-                circle(88, 52, 7, "tip-mark"), text(75, 114, "the up camera's picture", "middle"),
+                circle(88, 52, 7, "tip-mark"), text(75, 114, "the bottom camera's picture", "middle"),
                 arrow(88, 52, 77, 59),
                 text(136, 34, "the nozzle, seen"), text(136, 46, "off center: the"), text(136, 58, "head moves until"), text(136, 70, "it sits on the"), text(136, 82, "crosshair"),
             );

@@ -393,25 +393,25 @@ class Placement:
         machine = self.machine
         place = self.setup.up_place
         if place.position is None:
-            raise GcodeLinkError("the up camera's place on the machine is not measured: center the nozzle over it")
+            raise GcodeLinkError("the bottom camera's place on the machine is not measured: center the nozzle over it")
         runout = place.runout or (0.0, 0.0)
         axis = (place.position[0] + runout[0], place.position[1] + runout[1])
         angle = block.turn
         before: float | None = None
         for look in range(LOOKS):
-            self._doing(ctx, f"looking at {block.ref} over the up camera" + (f" again ({look + 1})" if look else ""))
+            self._doing(ctx, f"looking at {block.ref} over the bottom camera" + (f" again ({look + 1})" if look else ""))
             swung = turn(runout, angle)
             head = (axis[0] - swung[0], axis[1] - swung[1])
             try:
                 seen = self.setup.up.look_at_part(mover, place, None, angle=angle, head=head, size=block.size, crop=block.crop)
             except NoSpot as exc:
-                raise Rejected("nothing on the nozzle over the up camera") from exc
+                raise Rejected("nothing on the nozzle over the bottom camera") from exc
             except (PnpError, VisionError) as exc:
-                raise GcodeLinkError(f"looking at {block.ref} over the up camera: {exc}") from exc
+                raise GcodeLinkError(f"looking at {block.ref} over the bottom camera: {exc}") from exc
             self.setup.up.part_offset = seen
             self.setup.publish_up()
             angle_said = f", long side at {num(float(seen['angle']), 1)} deg" if isinstance(seen.get("angle"), (int, float)) else ""
-            ctx.progress.note(f"seen over the up camera {num(float(seen['mm']))} mm off the nozzle{angle_said}", block.ref)
+            ctx.progress.note(f"seen over the bottom camera {num(float(seen['mm']))} mm off the nozzle{angle_said}", block.ref)
             self._check_size(block, seen)
             off = (float(seen["dx"]), float(seen["dy"]))
             if math.hypot(*off) > machine.max_offset:
@@ -452,7 +452,7 @@ class Placement:
         if not isinstance(direction, (int, float)):
             if not self._no_angle_said:
                 self._no_angle_said = True
-                self.setup.message("warning", "the up camera tells no part's angle (pcb-vision before b4d1299): turns are not corrected")
+                self.setup.message("warning", "the bottom camera tells no part's angle (pcb-vision before b4d1299): turns are not corrected")
             return 0.0
         delta = wrap(float(direction) - block.angle, 90.0)
         limit = self.machine.max_turn

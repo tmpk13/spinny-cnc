@@ -114,7 +114,7 @@ The *PNP* page (`src/views/pnp.ts`) draws the selected board job's parts
 (`AppState.components`, read by the backend from its `.kicad_pcb`), the
 one picked (`AppState.pnpPart`), what a looking camera's picture sees of
 the board (`placeLookView`; labels one size on the screen, crowded ones
-dropped: `fitLabels`) and the up camera (`AppState.pnp`); its pictures are
+dropped: `fitLabels`) and the bottom camera (`AppState.pnp`); its pictures are
 the Bottom camera view and Top camera view panels (`src/views/camview.ts`). It
 works with the machine connected (`gcodePlacing` in
 `src/views/placing.ts`): with a G-code machine (or, disconnected, one to
@@ -128,7 +128,7 @@ Connect passes it on (`machineOfPort` in `src/views/statusbar.ts`, used by
 readout are the file's `[controls]`. Their use is in
 [pick and place](../../docs/OPERATING.md#pick-and-place) and
 [placing with a G-code machine](../../docs/OPERATING.md#placing-with-a-g-code-machine-openpnp-compatible).
-The mock's up camera (`src/mock/pnp.ts`) draws the nozzle where the head
+The mock's bottom camera (`src/mock/pnp.ts`) draws the nozzle where the head
 is against where the camera really sits, and makes a board job's pads its
 parts; the mock's board looks and searches (`src/mock/boardlook.ts`) see
 the board where the mock lays it, exactly, and its cameras answer a laptop

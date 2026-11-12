@@ -1214,7 +1214,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         if self.camera.routine_active:
             raise HTTPException(status_code=409, detail="a camera routine is moving the head")
         if self.pnp.routine_active:
-            raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
+            raise HTTPException(status_code=409, detail="the bottom camera routine is moving the head")
 
     def move_start(self, link: Link, streamer: Streamer, status=None) -> tuple[tuple[float, float], bool]:
         """Where the next move starts, and whether that is certain.
@@ -3197,7 +3197,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     def pnp_part(self) -> dict:
         if self.gcode.connected:
-            raise ValueError("a G-code machine looks at each part over the up camera as it places it: mark its feeder's parts for vision")
+            raise ValueError("a G-code machine looks at each part over the bottom camera as it places it: mark its feeder's parts for vision")
         with self._owner_lock:
             link = self._movable()
             self.pnp.measure_part(self._pnp_mover(link))
@@ -3243,10 +3243,10 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 return self._goto(link, GotoBody(kind="board", x=target[0], y=target[1]))
             seen = self.pnp.part_offset
             if seen is None:
-                raise ValueError("no part has been looked at on the nozzle: measure it over the up camera first")
+                raise ValueError("no part has been looked at on the nozzle: measure it over the bottom camera first")
             streamer, _ = self._move_frame(link)
             if not streamer.cartesian:
-                raise ValueError("the up camera needs an X/Y machine ($cartesian=1)")
+                raise ValueError("the bottom camera needs an X/Y machine ($cartesian=1)")
             joint = streamer.joint_at(target)
             return self._goto(link, GotoBody(kind="joint", r=joint[0] - seen["dx"], z=joint[1] - seen["dy"]))
 

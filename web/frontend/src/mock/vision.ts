@@ -50,7 +50,7 @@ export const MOCK_CAMERAS: DetectedCamera[] = [
             "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2:1.0-video-index0",
             "/dev/video2",
         ],
-        name: "Up Camera (mock)",
+        name: "Bottom Camera (mock)",
         kind: "v4l2",
         modes: [{ size: "1280x720", fps: 30 }, { size: "640x480", fps: 60 }],
         online: null,

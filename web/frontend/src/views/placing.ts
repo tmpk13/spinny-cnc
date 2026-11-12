@@ -83,16 +83,16 @@ export function partsLeft(placing: PlacingState | null, plan: PlacingPlan | null
 export function planText(plan: PlacingPlan): string {
     const fit = plan.fit.marks > 1 ? `, board turned ${formatFixed(plan.fit.rotation, 2)} deg (rms ${formatFixed(plan.fit.rms, 3)} mm)` : "";
     const looked = plan.parts.filter((part) => part.vision).length;
-    return `${plan.parts.length} parts in ${plan.lines} lines${fit}${looked > 0 ? `, ${looked} checked on the up camera` : ""}.`;
+    return `${plan.parts.length} parts in ${plan.lines} lines${fit}${looked > 0 ? `, ${looked} checked on the bottom camera` : ""}.`;
 }
 
 /** Where the up camera sits on the G-code machine, in words. */
 export function upCameraText(placing: PlacingState | null): string {
     const camera = placing?.camera;
     if (!camera?.position) {
-        return "Up camera place not known: put the nozzle over it and press Camera is here, or type it.";
+        return "Bottom camera place not known: put the nozzle over it and press Camera is here, or type it.";
     }
-    const where = `Up camera at X ${formatFixed(camera.position[0], 3)} Y ${formatFixed(camera.position[1], 3)}${camera.measured === false ? " (the machine file's)" : ""}`;
+    const where = `Bottom camera at X ${formatFixed(camera.position[0], 3)} Y ${formatFixed(camera.position[1], 3)}${camera.measured === false ? " (the machine file's)" : ""}`;
     const sharp = camera.height !== null ? `, nozzle sharp at Z ${formatFixed(camera.height, 3)}` : "";
     if (!(camera.mm_per_px > 0)) {
         return `${where}${sharp}; scale not measured: Center nozzle.`;
@@ -204,7 +204,7 @@ export function mountHead(root: HTMLElement, ctx: Ctx): void {
     const park = button("Park", () => into(ctx, "placing", ctx.api.pnpPark()), "btn btn-quiet");
     park.title = "the head to the file's park place, across at the safe height";
     const overCamera = button("Nozzle over camera", () => into(ctx, "placing", ctx.api.pnpOverCamera()), "btn");
-    overCamera.title = "the nozzle over the up camera, turned to 0, at the height it is sharp at: across at the safe height, the height last";
+    overCamera.title = "the nozzle over the bottom camera, turned to 0, at the height it is sharp at: across at the safe height, the height last";
     const toNozzle = button("Nozzle to camera spot", () => into(ctx, "placing", ctx.api.pnpSwap("nozzle")), "btn");
     toNozzle.title = "the nozzle over the point the top camera looks at";
     const toCamera = button("Camera to nozzle spot", () => into(ctx, "placing", ctx.api.pnpSwap("camera")), "btn");

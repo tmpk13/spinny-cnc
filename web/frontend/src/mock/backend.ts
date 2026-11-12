@@ -2387,7 +2387,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "a camera routine is moving the head");
         }
         if (this.pnpSession) {
-            throw new ApiError(409, "the up camera routine is moving the head");
+            throw new ApiError(409, "the bottom camera routine is moving the head");
         }
     }
 
@@ -6621,7 +6621,7 @@ export class MockBackend implements Api, EventFeed {
         }
         const restart = this.pnpRunning && CAPTURE_KEYS.some((key) => next[key] !== this.pnpConfig[key]);
         if (restart && this.pnpSession) {
-            throw new ApiError(409, "the up camera routine is under way: abort it first");
+            throw new ApiError(409, "the bottom camera routine is under way: abort it first");
         }
         this.pnpConfig = next;
         this.emitPnp();
@@ -6630,17 +6630,17 @@ export class MockBackend implements Api, EventFeed {
 
     async pnpStart(): Promise<PnpState> {
         if (this.pnpRunning) {
-            throw new ApiError(409, "the up camera is already running");
+            throw new ApiError(409, "the bottom camera is already running");
         }
         this.pnpRunning = true;
-        this.message("info", `up camera started on ${this.pnpConfig.device} (mock)`);
+        this.message("info", `bottom camera started on ${this.pnpConfig.device} (mock)`);
         this.emitPnp();
         return this.pnpStateOf();
     }
 
     async pnpStop(): Promise<PnpState> {
         if (this.pnpSession) {
-            throw new ApiError(409, "the up camera routine is under way: abort it first");
+            throw new ApiError(409, "the bottom camera routine is under way: abort it first");
         }
         this.pnpRunning = false;
         this.emitPnp();
@@ -6723,10 +6723,10 @@ export class MockBackend implements Api, EventFeed {
     private startPnp(kind: "nozzle" | "part"): PnpState {
         this.requireMovable();
         if (!this.machine.cartesian()) {
-            throw new ApiError(400, "the up camera needs an X/Y machine ($cartesian=1): on the polar one only the rail crosses its picture");
+            throw new ApiError(400, "the bottom camera needs an X/Y machine ($cartesian=1): on the polar one only the rail crosses its picture");
         }
         if (!this.pnpRunning) {
-            throw new ApiError(400, "the up camera is not running: start it first");
+            throw new ApiError(400, "the bottom camera is not running: start it first");
         }
         if (this.machine.state !== "Idle" || this.outbox.length > 0) {
             throw new ApiError(409, `the machine is ${statusLine(this.machine)}, not Idle`);
@@ -6756,17 +6756,17 @@ export class MockBackend implements Api, EventFeed {
         // Without a place to go to, the nozzle must already be in the picture.
         if (!known && !upInPicture(this.nozzleFromCamera(), UP_TRUTH, this.pnpConfig.size)) {
             this.requireMovable();
-            throw new ApiError(400, "no nozzle in the picture: jog it over the up camera and center again");
+            throw new ApiError(400, "no nozzle in the picture: jog it over the bottom camera and center again");
         }
         return this.startPnp("nozzle");
     }
 
     async pnpPart(): Promise<PnpState> {
         if (this.gcodeId !== null) {
-            throw new ApiError(400, "a G-code machine looks at each part over the up camera as it places it: mark its feeder's parts for vision");
+            throw new ApiError(400, "a G-code machine looks at each part over the bottom camera as it places it: mark its feeder's parts for vision");
         }
         if (!this.pnpConfig.position || !(this.pnpConfig.mm_per_px > 0)) {
-            throw new ApiError(400, "the nozzle is not centered over the up camera yet: center it first");
+            throw new ApiError(400, "the nozzle is not centered over the bottom camera yet: center it first");
         }
         this.pnpHolding = true;
         return this.startPnp("part");
@@ -6788,7 +6788,7 @@ export class MockBackend implements Api, EventFeed {
         }
         const session = this.pnpSession;
         if (!session) {
-            throw new ApiError(409, "no up camera routine is under way");
+            throw new ApiError(409, "no bottom camera routine is under way");
         }
         session.progress.state = "stopped";
         session.progress.error = "stopped";
@@ -6834,7 +6834,7 @@ export class MockBackend implements Api, EventFeed {
             this.machine.jogTo(r, null, null, height, z);
             this.pnpConfig = { ...this.pnpConfig, position: [r, z], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, height };
             session.progress.spot = { dx: 0, dy: 0, mm: 0 };
-            this.message("info", `nozzle centered over the up camera at R ${gnum(r)} Z ${gnum(z)} (mock)`);
+            this.message("info", `nozzle centered over the bottom camera at R ${gnum(r)} Z ${gnum(z)} (mock)`);
         } else {
             const position = this.pnpConfig.position!;
             this.machine.jogTo(position[0], null, null, this.pnpConfig.height, position[1]);
@@ -6869,10 +6869,10 @@ export class MockBackend implements Api, EventFeed {
         }
         const seen = this.pnpPartOffset;
         if (!seen) {
-            throw new ApiError(400, "no part has been looked at on the nozzle: measure it over the up camera first");
+            throw new ApiError(400, "no part has been looked at on the nozzle: measure it over the bottom camera first");
         }
         if (!this.machine.cartesian()) {
-            throw new ApiError(400, "the up camera needs an X/Y machine ($cartesian=1)");
+            throw new ApiError(400, "the bottom camera needs an X/Y machine ($cartesian=1)");
         }
         // The board frame is the joints' turned by the table's angle.
         const joint = turned({ x: part.x, y: part.y }, -this.machine.joint.a);
@@ -7270,7 +7270,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "a placing run is under way");
         }
         if (this.deviceRoutine !== null) {
-            throw new ApiError(409, "the up camera routine is moving the head");
+            throw new ApiError(409, "the bottom camera routine is moving the head");
         }
         if (this.topSession !== null) {
             throw new ApiError(409, "the top camera routine is moving the head");
@@ -7285,14 +7285,14 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "the step must be 0 to 10 mm");
         }
         if (!this.pnpRunning) {
-            throw new ApiError(400, "the up camera is not running: start it first");
+            throw new ApiError(400, "the bottom camera is not running: start it first");
         }
         if (this.pnpSession) {
-            throw new ApiError(409, "an up camera routine is already under way");
+            throw new ApiError(409, "a bottom camera routine is already under way");
         }
         const at = this.deviceLink.position;
         if (!this.placing().upPlace.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
-            throw new ApiError(400, "no nozzle in the picture: jog it over the up camera and center again");
+            throw new ApiError(400, "no nozzle in the picture: jog it over the bottom camera and center again");
         }
         const progress: PnpRoutine = { kind: "nozzle", target: "gcode", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, seconds: 0 };
         this.pnpRoutine = progress;
@@ -7304,16 +7304,16 @@ export class MockBackend implements Api, EventFeed {
     async pnpRunout(): Promise<PlacingState> {
         const device = this.gcodeIdle();
         if (!this.placing().upPlace.position || !(this.placing().upPlace.mm_per_px > 0)) {
-            throw new ApiError(400, "the nozzle is not centered over the up camera yet: center it first");
+            throw new ApiError(400, "the nozzle is not centered over the bottom camera yet: center it first");
         }
         if (!this.deviceLink.connected) {
             throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
         if (!this.pnpRunning) {
-            throw new ApiError(400, "the up camera is not running: start it first");
+            throw new ApiError(400, "the bottom camera is not running: start it first");
         }
         if (this.pnpSession) {
-            throw new ApiError(409, "an up camera routine is already under way");
+            throw new ApiError(409, "a bottom camera routine is already under way");
         }
         const progress: PnpRoutine = { kind: "runout", target: "gcode", state: "running", step: "lifting", done: 0, total: 4, error: null, spot: null, seconds: 0 };
         this.pnpRoutine = progress;
@@ -7824,7 +7824,7 @@ export class MockBackend implements Api, EventFeed {
 
     async pnpLook(spot: "nozzle" | "part"): Promise<PnpState> {
         if (!this.pnpRunning) {
-            throw new ApiError(409, "the up camera is not running: start it first");
+            throw new ApiError(409, "the bottom camera is not running: start it first");
         }
         const polarity = spot === "nozzle" ? this.pnpConfig.nozzle_spot : this.pnpConfig.part_spot;
         const mm: [number, number] = this.gcodeId !== null
@@ -8014,7 +8014,7 @@ export class MockBackend implements Api, EventFeed {
             routine.progress.state = "done";
             routine.progress.spot = { dx: 0, dy: 0, mm: 0 };
             this.deviceRoutine = null;
-            this.message("info", `nozzle centered over the up camera at X ${gnum(x)} Y ${gnum(y)} (mock)`);
+            this.message("info", `nozzle centered over the bottom camera at X ${gnum(x)} Y ${gnum(y)} (mock)`);
             this.emitPlacing();
         }
         this.emitPnp();
@@ -8135,7 +8135,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(502, "the program places no part");
         }
         if (plan.blocks.some((block) => block.vision) && !this.pnpRunning) {
-            throw new ApiError(400, "the up camera is not running: start it, since some parts are to be looked at over it");
+            throw new ApiError(400, "the bottom camera is not running: start it, since some parts are to be looked at over it");
         }
         const used = new Set(plan.blocks.map((block) => block.feeder));
         const looks = fiducials || device.feeders.some((feeder) => used.has(feeder.id) && (feeder.pocket !== null || feeder.marks.length > 0));
@@ -8367,7 +8367,7 @@ export class MockBackend implements Api, EventFeed {
         const device = this.gcodeIdle();
         const position = this.deviceCameraPosition();
         if (position === null) {
-            throw new ApiError(400, "the up camera's place on the machine is not known: set it, or Center nozzle over it");
+            throw new ApiError(400, "the bottom camera's place on the machine is not known: set it, or Center nozzle over it");
         }
         const lines: string[] = [];
         if (device.light_on.length > 0 && this.deviceLink.light !== true) {
@@ -8400,7 +8400,7 @@ export class MockBackend implements Api, EventFeed {
             this.placing().upPlace.position = [round4(here.x), round4(here.y)];
         } else if (request.position !== undefined) {
             if (!request.position.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {
-                throw new ApiError(400, "the up camera's place must be within 10000 mm");
+                throw new ApiError(400, "the bottom camera's place must be within 10000 mm");
             }
             this.placing().upPlace.position = [request.position[0], request.position[1]];
         } else {

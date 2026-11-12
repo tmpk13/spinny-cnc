@@ -915,7 +915,7 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
         const position: [number, number] = [up.place.x - offset.x, up.place.y - offset.y];
         const z = up.place.z - offset.z;
         push({
-            id: "up_camera", group: "Cameras", label: `${up.name} (the up camera)`, value: `X ${fixed(position[0])} Y ${fixed(position[1])}, sharp at Z ${fixed(z)}`, keep: true,
+            id: "up_camera", group: "Cameras", label: `${up.name} (the bottom camera)`, value: `X ${fixed(position[0])} Y ${fixed(position[1])}, sharp at Z ${fixed(z)}`, keep: true,
             note: "a first guess: Center nozzle measures it",
             apply: (data) => { data.cameraPosition = position; data.cameraZ = z; },
         });

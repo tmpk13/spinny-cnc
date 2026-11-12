@@ -262,7 +262,7 @@ class GcodePart:
         if self.gcode.running:
             raise HTTPException(status_code=409, detail="a placing run is under way")
         if self.pnp.routine_active:
-            raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
+            raise HTTPException(status_code=409, detail="the bottom camera routine is moving the head")
         if self.top.routine_active:
             raise HTTPException(status_code=409, detail="the top camera routine is moving the head")
         return machine

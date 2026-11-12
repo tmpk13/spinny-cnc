@@ -128,7 +128,7 @@ class PlacingPart:
         if self.gcode.running:
             raise HTTPException(status_code=409, detail="a placing run is under way")
         if self.pnp.routine_active:
-            raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
+            raise HTTPException(status_code=409, detail="the bottom camera routine is moving the head")
         if self.top.routine_active:
             raise HTTPException(status_code=409, detail="the top camera routine is moving the head")
         return machine
@@ -206,7 +206,7 @@ class PlacingPart:
             place.position = (round(here["x"], 4), round(here["y"], 4))
         elif body.position is not None:
             if any(abs(value) > 10000.0 for value in body.position):
-                raise ValueError("the up camera's place must be within 10000 mm")
+                raise ValueError("the bottom camera's place must be within 10000 mm")
             place.position = (float(body.position[0]), float(body.position[1]))
         else:
             raise ValueError("give a position, here or clear")
@@ -589,7 +589,7 @@ class PlacingPart:
         if not program.blocks:
             raise GcodeLinkError("the program places no part")
         if any(block.vision for block in program.blocks) and not self.pnp.running:
-            raise ValueError("the up camera is not running: start it, since some parts are to be looked at over it")
+            raise ValueError("the bottom camera is not running: start it, since some parts are to be looked at over it")
         used = {block.feeder for block in program.blocks}
         looks = body.fiducials or any(feeder.pocket is not None or feeder.marks for feeder in machine.feeders if feeder.id in used)
         if looks and not self.top.running:
@@ -638,7 +638,7 @@ class PlacingPart:
         machine = self._placing_idle()
         place = self._up_place(machine)
         if place.position is None:
-            raise ValueError("the up camera's place on the machine is not known: set it, or Center nozzle over it")
+            raise ValueError("the bottom camera's place on the machine is not known: set it, or Center nozzle over it")
         lines: list[str] = []
         if machine.light_on and self.gcode.light is not True:
             lines += list(machine.light_on)

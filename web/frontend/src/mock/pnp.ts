@@ -115,28 +115,28 @@ const POLARITIES: SpotPolarity[] = ["dark", "bright"];
 /** The up camera settings checked as the backend checks a PUT; throws with its words. */
 export function checkPnpSettings(settings: PnpSettings): void {
     if (typeof settings.device !== "string" || settings.device.trim() === "") {
-        throw new Error("the up camera device must be named");
+        throw new Error("the bottom camera device must be named");
     }
     if (!CAMERA_SIZE.test(settings.size)) {
-        throw new Error("the up camera size must be WIDTHxHEIGHT");
+        throw new Error("the bottom camera size must be WIDTHxHEIGHT");
     }
     if (!(Number.isInteger(settings.fps) && settings.fps >= 1 && settings.fps <= 120)) {
-        throw new Error("the up camera fps must be 1 to 120");
+        throw new Error("the bottom camera fps must be 1 to 120");
     }
     if (!POLARITIES.includes(settings.nozzle_spot) || !POLARITIES.includes(settings.part_spot)) {
         throw new Error("the nozzle and part spots are dark or bright");
     }
     if (settings.position !== null && !settings.position.every((value) => Number.isFinite(value) && Math.abs(value) <= 2000)) {
-        throw new Error("the up camera position must be two numbers within 2000 mm");
+        throw new Error("the bottom camera position must be two numbers within 2000 mm");
     }
     if (settings.height !== null && !(Number.isFinite(settings.height) && Math.abs(settings.height) <= 100)) {
-        throw new Error("the up camera height must be within 100 mm");
+        throw new Error("the bottom camera height must be within 100 mm");
     }
     if (!(Number.isFinite(settings.mm_per_px) && settings.mm_per_px >= 0 && settings.mm_per_px <= 1)) {
         throw new Error("mm_per_px must be 0 to 1");
     }
     if (!(Number.isFinite(settings.roll) && Math.abs(settings.roll) <= 360)) {
-        throw new Error("the up camera roll must be within 360 degrees");
+        throw new Error("the bottom camera roll must be within 360 degrees");
     }
 }
 

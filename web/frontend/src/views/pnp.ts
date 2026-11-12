@@ -203,7 +203,7 @@ export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { ro
         root.append(group);
     }
     if (scene.camera) {
-        root.append(crossMark(scene.camera, box, "pnp-camera-mark", "up camera"));
+        root.append(crossMark(scene.camera, box, "pnp-camera-mark", "bottom camera"));
     }
     return { root, box };
 }
@@ -381,14 +381,14 @@ export const PNP_SETUP: Setup = {
             {
                 label: "X/Y machine",
                 done: state.snapshot.connected && isCartesian(state.snapshot),
-                hint: "The up camera needs an X/Y machine ($cartesian=1): pick one on the Config page and Write to board.",
+                hint: "The bottom camera needs an X/Y machine ($cartesian=1): pick one on the Config page and Write to board.",
                 panel: "machine-file",
             },
-            { label: "Up camera on", done: pnp?.running === true, hint: "Pick or type the camera in the Up camera panel, then press Start.", panel: "pnp-camera" },
+            { label: "Bottom camera on", done: pnp?.running === true, hint: "Pick or type the camera in the Bottom camera panel, then press Start.", panel: "pnp-camera" },
             {
                 label: "Nozzle centered",
                 done: pnp?.position !== null && pnp?.position !== undefined && (pnp?.mm_per_px ?? 0) > 0,
-                hint: "Jog the nozzle into the up camera's view, then press Center nozzle.",
+                hint: "Jog the nozzle into the bottom camera's view, then press Center nozzle.",
                 panel: "pnp-nozzle",
             },
             { label: "Board", done: parts > 0, hint: "Pick or upload a board (.kicad_pcb) in the Parts panel.", panel: "pnp-parts" },
@@ -515,13 +515,13 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     // --- the up camera ---
     const startButton = button("Start", () => startCamera(), "btn btn-primary");
-    startButton.title = "start the up camera with these settings";
+    startButton.title = "start the bottom camera with these settings";
     const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn");
     const cameraBadge = el("span", { class: "badge" }, "stopped");
-    const device = el("input", { type: "text", class: "field", "aria-label": "Up camera device", spellcheck: "false" }) as HTMLInputElement;
-    const size = el("input", { type: "text", class: "field", "aria-label": "Up camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
+    const device = el("input", { type: "text", class: "field", "aria-label": "Bottom camera device", spellcheck: "false" }) as HTMLInputElement;
+    const size = el("input", { type: "text", class: "field", "aria-label": "Bottom camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
     const fps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
-    fps.setAttribute("aria-label", "Up camera fps");
+    fps.setAttribute("aria-label", "Bottom camera fps");
     const nozzleSpot = polaritySelect("Nozzle spot");
     const partSpot = polaritySelect("Part spot");
     const cameraPick = mountCameraPick(ctx, {
@@ -546,21 +546,21 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const cameraChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
     // Where the up camera sits on a G-code machine: typed, taken by eye, or measured.
     const placeX = numberField({ step: 0.01, width: "6rem" });
-    placeX.setAttribute("aria-label", "Up camera place X");
+    placeX.setAttribute("aria-label", "Bottom camera place X");
     const placeY = numberField({ step: 0.01, width: "6rem" });
-    placeY.setAttribute("aria-label", "Up camera place Y");
+    placeY.setAttribute("aria-label", "Bottom camera place Y");
     const placeSet = button("Set", () => setPlace(), "btn btn-quiet btn-small");
-    placeSet.title = "keep the typed place as the up camera's";
+    placeSet.title = "keep the typed place as the bottom camera's";
     const placeHere = button("Camera is here", () => into(ctx, "placing", ctx.api.pnpCameraPlace({ here: true })), "btn");
-    placeHere.title = "the nozzle is over the up camera's center by eye: keep where the head is as its place";
+    placeHere.title = "the nozzle is over the bottom camera's center by eye: keep where the head is as its place";
     const placeForget = button("Forget", () => into(ctx, "placing", ctx.api.pnpCameraPlace({ clear: true })), "btn btn-quiet btn-small");
     placeForget.title = "forget the place kept: the machine file's again";
     const deviceStep = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     deviceStep.setAttribute("aria-label", "Centering step mm");
     const deviceCenter = button("Center nozzle", () => centerOnDevice(), "btn");
-    deviceCenter.title = "find where the up camera is and its picture's scale, roll and mirror, by moving the nozzle over it until it sits on the crosshair";
+    deviceCenter.title = "find where the bottom camera is and its picture's scale, roll and mirror, by moving the nozzle over it until it sits on the crosshair";
     const runout = button("Measure runout", () => into(ctx, "placing", ctx.api.pnpRunout()), "btn");
-    runout.title = "turn the nozzle over the up camera to measure how far its tip runs off its turning axis";
+    runout.title = "turn the nozzle over the bottom camera to measure how far its tip runs off its turning axis";
     const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
     const deviceCameraLine = el("p", { class: "muted" });
     const deviceRoutineLine = el("p", { class: "muted vision-routine" });
@@ -574,7 +574,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         el("p", { class: "muted hint" }, "Center nozzle moves the nozzle over the camera's place, finds it in the picture, measures the picture against two small moves, and moves the nozzle onto the crosshair: that place is the camera's."),
     );
     roots.camera.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Up camera"), cameraBadge),
+        el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera"), cameraBadge),
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, startButton, stopButton),
             cameraPick.row,
@@ -598,28 +598,28 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
 
     // --- the nozzle ---
     const posR = numberField({ step: 0.01, width: "6rem" });
-    posR.setAttribute("aria-label", "Up camera position R");
+    posR.setAttribute("aria-label", "Bottom camera position R");
     const posZ = numberField({ step: 0.01, width: "6rem" });
-    posZ.setAttribute("aria-label", "Up camera position Z");
+    posZ.setAttribute("aria-label", "Bottom camera position Z");
     const height = numberField({ step: 0.1, width: "6rem", placeholder: "travel" });
     height.setAttribute("aria-label", "Nozzle height H");
     const scale = numberField({ min: 0, step: 0.001, width: "6rem" });
-    scale.setAttribute("aria-label", "Up camera mm per px");
+    scale.setAttribute("aria-label", "Bottom camera mm per px");
     const roll = numberField({ step: 0.01, width: "6rem" });
-    roll.setAttribute("aria-label", "Up camera roll");
-    const mirror = el("input", { type: "checkbox", "aria-label": "Up camera mirrored" }) as HTMLInputElement;
+    roll.setAttribute("aria-label", "Bottom camera roll");
+    const mirror = el("input", { type: "checkbox", "aria-label": "Bottom camera mirrored" }) as HTMLInputElement;
     const nozzleApply = button("Apply", () => applyMeasured(), "btn");
     const nozzleChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
     const forget = button("Forget position", () => into(ctx, "pnp", ctx.api.pnpSettings({ clear: ["position"] })), "btn btn-quiet");
     const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Centering step mm");
     const centerButton = button("Center nozzle", () => centerNozzle(), "btn btn-primary");
-    centerButton.title = "find the up camera's place and scale by moving the nozzle onto its crosshair";
+    centerButton.title = "find the bottom camera's place and scale by moving the nozzle onto its crosshair";
     const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
-    partButton.title = "over the up camera with a part on the nozzle: measure where it sits on the nozzle";
+    partButton.title = "over the bottom camera with a part on the nozzle: measure where it sits on the nozzle";
     const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
     const overButton = button("Nozzle over camera", () => nozzleOverCamera(), "btn");
-    overButton.title = "the nozzle over the up camera's place at the travel height, then down to Sharp at H";
+    overButton.title = "the nozzle over the bottom camera's place at the travel height, then down to Sharp at H";
     const routineLine = el("p", { class: "muted vision-routine" });
     const partLine = el("p", { class: "muted" });
     roots.nozzle.append(
@@ -639,7 +639,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             routineLine,
             partLine,
             el("p", { class: "muted hint" },
-                "Center nozzle rises to travel height, then comes down over the up camera to Sharp at H; step 0 keeps the scale."
+                "Center nozzle rises to travel height, then comes down over the bottom camera to Sharp at H; step 0 keeps the scale."
                 + " With the box ticked, Go to part places the held part's center (from Look at part), not the nozzle's."),
         ),
     );
@@ -753,7 +753,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     async function nozzleOverCamera(): Promise<void> {
         const pnp = ctx.store.get().pnp;
         if (!pnp?.position) {
-            ctx.toast("error", "the up camera's place is not known: center the nozzle over it, or type it");
+            ctx.toast("error", "the bottom camera's place is not known: center the nozzle over it, or type it");
             return;
         }
         // A goto answers nothing: true once it was taken.
@@ -1059,14 +1059,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         const busy = pnp?.routine?.state === "running";
         cameraBadge.textContent = busy ? "routine" : running ? "running" : "stopped";
         cameraBadge.setAttribute("data-camera", busy ? "finding mark" : running ? "running" : "stopped");
-        setLocked(startButton, running, "the up camera is running");
-        lockFor(stopButton, [!running, "the up camera is not running"], [busy, "a routine is under way: abort it first"]);
+        setLocked(startButton, running, "the bottom camera is running");
+        lockFor(stopButton, [!running, "the bottom camera is not running"], [busy, "a routine is under way: abort it first"]);
         const connected = state.snapshot.connected;
-        lockFor(centerButton, [!connected, "connect first"], [!running, "start the up camera first"], [busy, "a routine is under way"]);
-        lockFor(partButton, [!connected, "connect first"], [!running, "start the up camera first"], [busy, "a routine is under way"], [!pnp?.position || !(pnp.mm_per_px > 0), "center the nozzle over the up camera first"]);
+        lockFor(centerButton, [!connected, "connect first"], [!running, "start the bottom camera first"], [busy, "a routine is under way"]);
+        lockFor(partButton, [!connected, "connect first"], [!running, "start the bottom camera first"], [busy, "a routine is under way"], [!pnp?.position || !(pnp.mm_per_px > 0), "center the nozzle over the bottom camera first"]);
         setLocked(abortButton, !busy, "no routine under way");
         lockFor(forget, [!pnp?.position, "no place kept"], [busy, "a routine is under way"]);
-        lockFor(overButton, [!connected, "connect first"], [busy, "a routine is under way"], [!pnp?.position, "the up camera's place is not known yet"]);
+        lockFor(overButton, [!connected, "connect first"], [busy, "a routine is under way"], [!pnp?.position, "the bottom camera's place is not known yet"]);
         if (pnp) {
             cameraFields.follow(device, pnp.device);
             cameraFields.follow(size, pnp.size);
@@ -1103,8 +1103,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         lockFor(placeHere, [!linked, "connect the machine first"], [busy, "a routine is under way"]);
         lockFor(placeForget, [deviceState?.camera.measured !== true, "no place kept: the machine file's is used"], [busy, "a routine is under way"]);
-        lockFor(deviceCenter, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the up camera first"]);
-        lockFor(runout, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the up camera first"], [!(deviceState?.camera.mm_per_px && deviceState.camera.position), "center the nozzle over the up camera first"]);
+        lockFor(deviceCenter, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the bottom camera first"]);
+        lockFor(runout, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the bottom camera first"], [!(deviceState?.camera.mm_per_px && deviceState.camera.position), "center the nozzle over the bottom camera first"]);
         setLocked(deviceAbort, !moving, "no routine under way on the machine");
         deviceRoutineLine.textContent = pnp?.routine?.target === "gcode" ? pnpRoutineText(pnp) : "";
     }

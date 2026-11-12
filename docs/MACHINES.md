@@ -444,7 +444,7 @@ pattern = "T:\\s*(-?[0-9]+(?:\\.[0-9]+)?)"  # a group around the reading; OpenPn
 part_on = [40.0, 100.0]  # low and high with a part held; left out, read by hand only
 part_off = [0.0, 10.0]   # with the nozzle empty
 
-[up_camera]              # the PNP tab's up camera, when it is fixed to this machine
+[up_camera]              # the PNP tab's bottom camera, when it is fixed to this machine
 position = [150.0, 30.0] # the head's place with the nozzle over its picture's center, as designed; Center nozzle measures it
 z = -15                  # the height the nozzle tip is seen sharp at over it; left out, the safe height
 crop = 3.0               # mm from the picture's center a part is looked for; left out, pcbv's own reach
@@ -468,7 +468,7 @@ pitch = [4.0, 0.0]       # from one part to the next along the tape, or from col
 count = 50               # parts in it; 0 for one that presents every part at `at`
 columns = 0              # with row_pitch, a tray taken row by row
 rotation = 0             # the parts' angle as they sit in it
-# place_z, feed (lines before each pick), vision (looked at over the up camera), size,
+# place_z, feed (lines before each pick), vision (looked at over the bottom camera), size,
 # pocket (its shade to the top camera), marks and mark, crop
 ```
 

@@ -75,7 +75,7 @@ flowchart LR
         EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP
         MCP --> TOOLS2[tools, over HTTP]
         TOOLS2 -->|HTTP| BE
-        BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, the nozzle centered over the up camera, its runout, a part's offset, size and angle on it]
+        BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, the nozzle centered over the bottom camera, its runout, a part's offset, size and angle on it]
         PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines]
         OPI[page openpnp.ts: OpenPnP's machine.xml and a job read into a G-code machine file and references] -->|the file saved, references taken| BE
         OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
@@ -92,7 +92,7 @@ flowchart LR
         PV2 -->|JPEG snapshots over HTTP| VCAM[spinny-virtual-pnp's bottom and top cameras, drawn from the head's place]
         PV3 -->|JPEG snapshots over HTTP| VCAM
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
-        BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot with its smallest rectangle]
+        BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the bottom camera's frame and spot with its smallest rectangle]
         TOPC <-->|a third pcbv serve| PV3[pcb-vision pcbv serve: the top camera's frame and spot]
         PV --> VID[/dev/videoN on the head]
         PV -->|JPEG snapshots over HTTP, forwarded by relay-pi| UST[ustreamer on a bridge Pi: spinny-camera unit]

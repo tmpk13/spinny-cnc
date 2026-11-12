@@ -109,7 +109,7 @@ describe("the mock's G-code machine twin", () => {
     });
 });
 
-describe("trays, feeders told to advance, and the up camera in the twin", () => {
+describe("trays, feeders told to advance, and the bottom camera in the twin", () => {
     const TRAY = PROFILE.replace(
         'feed = "M600 N1"',
         'feed = ["M600 N1", "M400"]\n[[feeder]]\nid = "ic"\nmatch = "STM32"\nat = [50.0, 10.0, -3.0]\npitch = [10.0, 0.0]\n'
@@ -126,7 +126,7 @@ describe("trays, feeders told to advance, and the up camera in the twin", () => 
         const parts = [part("C1", "100n", "C_0402", 5, 6), part("U1", "STM32", "LQFP-32", 2, 3, 90)];
         const blind = planDevice(device, parts, fit, { ic: 4 }, null, "");
         expect(blind.blocks.map((block) => block.ref)).toEqual(["C1"]);
-        expect(blind.skipped[0]!.reason).toContain("wants the up camera");
+        expect(blind.skipped[0]!.reason).toContain("wants the bottom camera");
         const seen = planDevice(device, parts, fit, { ic: 4 }, null, "", true);
         const [c1, u1] = seen.blocks;
         expect(c1!.pick.slice(1, 3)).toEqual(["M600 N1", "M400"]);
@@ -208,7 +208,7 @@ describe("a G-code machine in the mock", () => {
     });
 });
 
-describe("the up camera on the mock's G-code machine", () => {
+describe("the bottom camera on the mock's G-code machine", () => {
     test("centers the nozzle over it, then each part marked for it is placed where its center lands", async () => {
         const backend = new MockBackend({ timers: false });
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});

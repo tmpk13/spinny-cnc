@@ -289,7 +289,7 @@ describe("the camera list", () => {
             const fps = root.querySelector('input[aria-label="Camera fps"]') as HTMLInputElement;
             expect([device.value, size.value, fps.value]).toEqual([MOCK_CAMERAS[1]!.device, "1280x720", "30"]);
             expect(store.get().pending["camera"]).toBe(1);
-            expect(size.title).toBe("Up Camera (mock) gives 1280x720 at 30 fps, 640x480 at 60 fps");
+            expect(size.title).toBe("Bottom Camera (mock) gives 1280x720 at 30 fps, 640x480 at 60 fps");
             // Start sends them first, then starts.
             click(root, "Start");
             await settle();
@@ -302,7 +302,7 @@ describe("the camera list", () => {
             // The up camera set to the stream: the list says whose it is.
             await backend.pnpSettings({ device: "http://localhost:2325/snapshot" });
             await ctx.refreshPnp();
-            expect(list.options[list.options.length - 1]?.textContent).toBe(cameraLabel(MOCK_CAMERAS[2]!, "up camera"));
+            expect(list.options[list.options.length - 1]?.textContent).toBe(cameraLabel(MOCK_CAMERAS[2]!, "bottom camera"));
             // A device typed in that is not attached is said to be so.
             device.value = "/dev/video7";
             device.dispatchEvent(new Event("input"));

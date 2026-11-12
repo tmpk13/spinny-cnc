@@ -359,7 +359,7 @@ def calibrate(moved_x: Point, moved_y: Point, step: float) -> tuple[float, float
     w2 = (moved_y[0], -moved_y[1])
     cross = w1[0] * w2[1] - w1[1] * w2[0]
     if math.hypot(*w1) < 1e-6 or math.hypot(*w2) < 1e-6 or abs(cross) < 1e-9:
-        raise ValueError("the spot did not move with the head: is the nozzle over the up camera?")
+        raise ValueError("the spot did not move with the head: is the nozzle over the bottom camera?")
     # Equal moves at right angles show as equal moves at right angles: a
     # picture that lagged a move, or a spot that is not the one the head
     # holds (or that stays put while the head moves), shows otherwise.
@@ -409,24 +409,24 @@ class UpCameraSettings(BaseModel):
 
     def check(self) -> None:
         if not self.device.strip():
-            raise ValueError("the up camera device must be named")
+            raise ValueError("the bottom camera device must be named")
         check_controls(self.controls)
         if not machine_files._CAMERA_SIZE.match(self.size):
-            raise ValueError("the up camera size must be WIDTHxHEIGHT")
+            raise ValueError("the bottom camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:
-            raise ValueError("the up camera fps must be 1 to 120")
+            raise ValueError("the bottom camera fps must be 1 to 120")
         if not self.pcbv.strip():
             raise ValueError("the pcbv program must be named")
         if self.nozzle_spot not in SHADES or self.part_spot not in SHADES:
             raise ValueError("the nozzle and part spots are dark or bright")
         if self.position is not None and any(not math.isfinite(v) or abs(v) > POSITION_LIMIT for v in self.position):
-            raise ValueError(f"the up camera position must be two numbers within {POSITION_LIMIT:g} mm")
+            raise ValueError(f"the bottom camera position must be two numbers within {POSITION_LIMIT:g} mm")
         if self.height is not None and not (math.isfinite(self.height) and abs(self.height) <= HEIGHT_LIMIT):
-            raise ValueError(f"the up camera height must be within {HEIGHT_LIMIT:g} mm")
+            raise ValueError(f"the bottom camera height must be within {HEIGHT_LIMIT:g} mm")
         if not (math.isfinite(self.mm_per_px) and 0.0 <= self.mm_per_px <= 1.0):
             raise ValueError("mm_per_px must be 0 to 1")
         if not (math.isfinite(self.roll) and abs(self.roll) <= 360.0):
-            raise ValueError("the up camera roll must be within 360 degrees")
+            raise ValueError("the bottom camera roll must be within 360 degrees")
 
 
 @dataclass
@@ -550,7 +550,7 @@ class MachineMover(Mover):
 
     def check(self) -> None:
         if not getattr(self.access.streamer, "cartesian", False):
-            raise ValueError("the up camera needs an X/Y machine ($cartesian=1): on the polar one only the rail crosses its picture")
+            raise ValueError("the bottom camera needs an X/Y machine ($cartesian=1): on the polar one only the rail crosses its picture")
 
     def begin(self) -> None:
         link = self.access.link
@@ -832,7 +832,7 @@ class UpCamera(PickCamera):
     machine: a routine is given the mover of the one connected and that one's
     calibration."""
 
-    label = "up camera"
+    label = "bottom camera"
     log_name = "up"
     key = "pnp"
     Settings = UpCameraSettings
@@ -895,7 +895,7 @@ class UpCamera(PickCamera):
         this machine's calibration places it."""
         start = self.place()
         if not start.measured:
-            raise ValueError("the nozzle is not centered over the up camera yet: center it first")
+            raise ValueError("the nozzle is not centered over the bottom camera yet: center it first")
         self._begin("part", PART_STEPS, mover, lambda progress: self._measure(mover, progress, start))
 
     def _over_camera(self, mover: Mover, progress: RoutineProgress | None, place: CameraPlace, angle: float = 0.0, head: Point | None = None) -> None:
@@ -921,7 +921,7 @@ class UpCamera(PickCamera):
         polarity = settings.nozzle_spot
         # The runout is the nozzle's own and outlasts a new center.
         seen = CameraPlace(place.position, place.height, place.mm_per_px, place.roll, place.mirror, place.runout)
-        spot = self._spot(mover, progress, polarity, seen, "no nozzle in the picture: jog it over the up camera and center again")
+        spot = self._spot(mover, progress, polarity, seen, "no nozzle in the picture: jog it over the bottom camera and center again")
         if step > 0.0 or seen.mm_per_px <= 0.0:
             self._step(progress, "scale")
             move = step if step > 0.0 else DEFAULT_STEP
@@ -950,7 +950,7 @@ class UpCamera(PickCamera):
         keep(seen)
         self._message(
             "info",
-            f"nozzle centered over the up camera at {mover.describe(seen.position)},"
+            f"nozzle centered over the bottom camera at {mover.describe(seen.position)},"
             f" {seen.mm_per_px * 1000.0:.1f} um per pixel, roll {seen.roll:+.2f} degrees{', mirrored' if seen.mirror else ''}",
         )
 
@@ -1024,7 +1024,7 @@ class UpCamera(PickCamera):
         if not mover.can_turn:
             raise ValueError("this machine does not turn its nozzle: the runout is measured on a G-code machine")
         if not place.measured:
-            raise ValueError("the nozzle is not centered over the up camera yet: center it first")
+            raise ValueError("the nozzle is not centered over the bottom camera yet: center it first")
         self._begin("runout", RUNOUT_STEPS, mover, lambda progress: self._runout(mover, progress, place, keep, rotation_cw))
 
     def _runout(self, mover: Mover, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool) -> None:

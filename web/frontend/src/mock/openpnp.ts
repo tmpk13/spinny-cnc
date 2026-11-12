@@ -725,7 +725,7 @@ export function deviceFit(pairs: [[number, number], [number, number]][], angle: 
     return { ...fit, marks: pairs.length };
 }
 
-export const VISION_NOTE = "; looked at over the up camera: placed where its center lands";
+export const VISION_NOTE = "; looked at over the bottom camera: placed where its center lands";
 export const POCKET_NOTE = "; the top camera looks at the pocket first: picked where the part is";
 export const MARKS_NOTE = "; the feeder's marks are found with the top camera first: its places follow them";
 
@@ -979,7 +979,7 @@ export function planDevice(
             continue;
         }
         if (feeder.vision && !visionReady) {
-            skipped.push({ ref: part.ref, reason: `feeder ${feeder.id} wants the up camera: center the nozzle over it first` });
+            skipped.push({ ref: part.ref, reason: `feeder ${feeder.id} wants the bottom camera: center the nozzle over it first` });
             continue;
         }
         if (feeder.at === null) {

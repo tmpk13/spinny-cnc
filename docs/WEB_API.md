@@ -693,7 +693,7 @@ when a job's board is loaded, through the job's `design`.
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/cameras` | the cameras attached, for the camera's or the up camera's `device` to be picked from: `{"cameras": [{"device": "/dev/v4l/by-id/usb-...-video-index0", "names": ["/dev/v4l/by-id/...", "/dev/v4l/by-path/...", "/dev/video0"], "name": "Integrated Camera", "kind": "v4l2", "modes": [{"size": "1280x720", "fps": 30.0}], "online": null}], "problems": []}`. `kind` `v4l2` is a camera on the backend's computer as `pcbv cameras --json` lists it (the nodes that capture MJPG or YUYV), named by its `/dev/v4l/by-id` link, or by `/dev/v4l/by-path` when a camera of the same name has no by-id link of its own (alike cameras without serial numbers share one); `stream` is a ustreamer answering `/state` on a loopback port (2325 and 2326, or the ports `SPINNY_CAMERA_PORTS` names, as relay-pi forwards them), its device `http://127.0.0.1:<port>/snapshot`, its one mode the stream's size and rate, `online` false while its camera gives no picture; `pcbv` is a pcbv serving on such a port (`socket://127.0.0.1:<port>`), one this backend's camera holds listed without being asked. `names` are every name that reaches the camera, so a device set by any of them is known as it; `modes` come largest first, each size once with the best rate of its formats. `problems` say why cameras could not be looked for (pcbv not built). A port is asked for 1.5 s at most |
+| `GET /api/cameras` | the cameras attached, for the camera's or the bottom camera's `device` to be picked from: `{"cameras": [{"device": "/dev/v4l/by-id/usb-...-video-index0", "names": ["/dev/v4l/by-id/...", "/dev/v4l/by-path/...", "/dev/video0"], "name": "Integrated Camera", "kind": "v4l2", "modes": [{"size": "1280x720", "fps": 30.0}], "online": null}], "problems": []}`. `kind` `v4l2` is a camera on the backend's computer as `pcbv cameras --json` lists it (the nodes that capture MJPG or YUYV), named by its `/dev/v4l/by-id` link, or by `/dev/v4l/by-path` when a camera of the same name has no by-id link of its own (alike cameras without serial numbers share one); `stream` is a ustreamer answering `/state` on a loopback port (2325 and 2326, or the ports `SPINNY_CAMERA_PORTS` names, as relay-pi forwards them), its device `http://127.0.0.1:<port>/snapshot`, its one mode the stream's size and rate, `online` false while its camera gives no picture; `pcbv` is a pcbv serving on such a port (`socket://127.0.0.1:<port>`), one this backend's camera holds listed without being asked. `names` are every name that reaches the camera, so a device set by any of them is known as it; `modes` come largest first, each size once with the best rate of its formats. `problems` say why cameras could not be looked for (pcbv not built). A port is asked for 1.5 s at most |
 | `GET /api/cameras/controls?camera=head` | a camera's V4L2 controls (`head`, `up`, or `top`, a G-code machine's) as `v4l2-ctl -d DEVICE --list-ctrls-menus` lists them now: `{"camera": "head", "device": "/dev/video0", "local": true, "note": null, "controls": [{"name": "brightness", "section": "User Controls", "kind": "int", "min": 0, "max": 255, "step": 1, "default": 128, "value": 140, "inactive": false, "kept": null}, {"name": "auto_exposure", "kind": "menu", ..., "items": [{"value": 1, "label": "Manual Mode"}, {"value": 3, "label": "Aperture Priority Mode"}]}], "kept": {"exposure_time_absolute": 300}}`. Only numbers (`int`), switches (`bool`) and menus (`menu`, `intmenu`) that can be set are listed; `inactive` ones do nothing while another (an automatic one) is on; `kept` is the value the camera keeps for it, set every time it starts. A device that is not a `/dev/` node (an HTTP camera, a bridge Pi's snapshots; a pcbv over TCP; a picture file) has none here: `local` false, `controls` empty, `note` says why. 502 when v4l2-ctl is not installed or fails |
 | `PUT /api/cameras/controls` | `{"camera": "head", "values": {"auto_exposure": 1, "exposure_time_absolute": 300, "gain": null}}`: each value set on the device now (automatic ones first, each on its own; the camera may be streaming) and kept in that camera's settings (`controls`), to be set again whenever it starts; `null` forgets a kept value. Answers the listing with `refused`, each control v4l2-ctl refused and why. 400 for a name that is not a control's or a value that is not whole |
 | `GET /api/camera` | the camera state (below) |
@@ -770,7 +770,7 @@ pose as before.
 ## Camera log
 
 With logging on, every look a camera routine takes keeps the picture the
-finder looked at: the head camera finding its mark, the up camera centering
+finder looked at: the head camera finding its mark, the bottom camera centering
 the nozzle, measuring its runout and looking at a part, the G-code
 device's top camera measuring its offset and finding fiducials, a
 feeder's marks and parts in their pockets, and a G-code machine's run
@@ -787,7 +787,7 @@ entry; the oldest go past 300 entries.
 | --- | --- |
 | `GET /api/camlog?limit=100&camera=up` | `{"enabled": false, "count": n, "entries": [entry, ...]}`, the newest first, of one camera (`head`, `up` or `top`, a G-code machine's) when named; 400 for another name |
 | `PUT /api/camlog` | `{"enabled": true}`: logging on or off, kept across restarts; answers as `GET` |
-| `POST /api/camlog/photo` | `{"camera": "head", "find": true}`: a photo now, kept whatever the switch says; with `find` the camera's finder looks first (the head camera for a dark mark, the up camera for a part of its polarity, the top camera for its mark's shade) and what it found is drawn; answers the entry; 409 while the camera is not running |
+| `POST /api/camlog/photo` | `{"camera": "head", "find": true}`: a photo now, kept whatever the switch says; with `find` the camera's finder looks first (the head camera for a dark mark, the bottom camera for a part of its polarity, the top camera for its mark's shade) and what it found is drawn; answers the entry; 409 while the camera is not running |
 | `GET /api/camlog/{name}` | a kept picture by its file name (`<id>.jpg`, `<id>.svg`, `<id>-pose.jpg`); 404 for any other name |
 | `DELETE /api/camlog` | forgets every entry and its pictures: `{"deleted": n}` |
 
@@ -812,18 +812,18 @@ probing or a goto is 409 while one is under way.
 
 | Route | Does |
 | --- | --- |
-| `GET /api/pnp` | the up camera state, below |
-| `PUT /api/pnp/settings` | `{"device": "/dev/video1", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "nozzle_spot": "dark", "part_spot": "dark", "position": [60.0, 20.0], "height": 2.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "clear": ["position", "height"]}`, any of them; the whole set is checked (400): the spots are `dark` or `bright`, the position within 2000 mm, the height within 100 mm, `mm_per_px` 0 to 1, the roll within 360 degrees; `clear` takes the position or the height back to `null`. A running up camera given another `device`, `size`, `fps` or `pcbv` starts again on them (409 while a routine runs; when the start fails, 502 with pcbv's reason, the camera stopped and the settings kept) |
+| `GET /api/pnp` | the bottom camera state, below |
+| `PUT /api/pnp/settings` | `{"device": "/dev/video1", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "nozzle_spot": "dark", "part_spot": "dark", "position": [60.0, 20.0], "height": 2.0, "mm_per_px": 0.01, "roll": 2.5, "mirror": true, "clear": ["position", "height"]}`, any of them; the whole set is checked (400): the spots are `dark` or `bright`, the position within 2000 mm, the height within 100 mm, `mm_per_px` 0 to 1, the roll within 360 degrees; `clear` takes the position or the height back to `null`. A running bottom camera given another `device`, `size`, `fps` or `pcbv` starts again on them (409 while a routine runs; when the start fails, 502 with pcbv's reason, the camera stopped and the settings kept) |
 | `POST /api/pnp/start`, `POST /api/pnp/stop` | starts or stops its pcbv (409 when already running, or stopping during a routine) |
 | `GET /api/pnp/frame.jpg?width=640&overlay=1` | its newest picture, as `GET /api/camera/frame.jpg` |
-| `POST /api/pnp/nozzle` | `{"step": 1.0}`: centers the nozzle over the up camera, on its own thread: the head rises to the travel height (else the milling clearance as an H) when lower, goes over the camera when its `position` is known (otherwise the nozzle must be in the picture already), goes to `height` when set; the spot nearest the picture's center of the `nozzle_spot` polarity is the nozzle; with `step` above 0 (to 10 mm), or with `mm_per_px` 0, the head moves `step` along +X and back and along +Y and back, and how the spot moved gives `mm_per_px`, `roll` and `mirror`; then the head is moved by the nozzle's distance from the center, up to four times, until it is within 0.02 mm, and `position` (and `height`, the H it is at) is saved. 400 with the camera stopped or on a polar machine, 409 unless Idle and free |
+| `POST /api/pnp/nozzle` | `{"step": 1.0}`: centers the nozzle over the bottom camera, on its own thread: the head rises to the travel height (else the milling clearance as an H) when lower, goes over the camera when its `position` is known (otherwise the nozzle must be in the picture already), goes to `height` when set; the spot nearest the picture's center of the `nozzle_spot` polarity is the nozzle; with `step` above 0 (to 10 mm), or with `mm_per_px` 0, the head moves `step` along +X and back and along +Y and back, and how the spot moved gives `mm_per_px`, `roll` and `mirror`; then the head is moved by the nozzle's distance from the center, up to four times, until it is within 0.02 mm, and `position` (and `height`, the H it is at) is saved. 400 with the camera stopped or on a polar machine, 409 unless Idle and free |
 | `POST /api/pnp/part` | looks at the part on the nozzle: over the camera as above, the `part_spot` spot nearest the center is the part, and `part_offset` is its center from the nozzle's in the machine's frame, with its length and width from the spot's axes; 400 until the nozzle has been centered |
 | `POST /api/pnp/look` | `{"spot": "nozzle"}` (or `part`): the spot of that setting's polarity nearest the picture's center, found once with no move, as the routines would take it: kept as the state's `look` for the page to draw; 409 with the camera stopped |
 | `POST /api/pnp/abort` | stops a routine as the camera's is stopped; 409 when none runs |
 | `GET /api/jobs/{id}/components` | `{"job", "components": [{"ref": "R1", "value": "10k", "footprint": "Resistor_SMD:R_0603_1608Metric", "side": "front", "x": 10.0, "y": -10.0, "rotation": 90.0, "pads": 2, "smd": true, "dnp": false}], "note": null}`: the footprints of the job's kept `.kicad_pcb` in the job's frame through its `design` (a move or a turn of the job moves them too), without those left out of position files, on the board only, or with no reference; for a job that keeps no board, none and the `note` says why |
 | `POST /api/pnp/goto` | `{"job": "a1b2", "ref": "R1", "correct": false}`: the nozzle over the part's place as a board goto (risen to the travel height first); with `correct`, the part's center as last seen on the nozzle goes over the place instead (400 when no part has been looked at); 404 for a part the job does not have |
 
-Up camera state:
+Bottom camera state:
 
 ```json
 {"running": true, "device": "/dev/video1", "size": "1280x720", "fps": 30, "pcbv": "pcbv",
@@ -843,7 +843,9 @@ reply as far as it was given: `x`, `y` (full size px), `area`, `major`,
 within (null for pcbv's own, a third of the picture's height). `look` is
 the last Look once: `{"found": true, "polarity": "dark", "radius": null,
 "dx", "dy", "x", "y", "area", "major", "minor", "angle", "contrast",
-"rect"}`, or `{"found": false, "polarity", "radius"}`, null before any.
+"rect"}`, or `{"found": false, "polarity", "radius"}`, null before any. `controls`
+(here, in the top camera's state and in the head camera's) is the V4L2
+values the camera keeps, set at each start (`/api/cameras/controls`).
 
 Every look a routine takes waits for a picture captured 0.25 s after it
 began (pcbv's `age_ms` tells when the newest one was), so a picture read
@@ -868,7 +870,7 @@ G-code machine connected, or with none connected the one last connected
 (else the only G-code machine file), and the backend keeps what it knows
 of each one by its id in `var/config.json` under `placing`: the board's
 turn and references per job, how many parts each feeder has given, the
-boards finished, the up camera's place and runout on it, and its top
+boards finished, the bottom camera's place and runout on it, and its top
 camera's settings. The board's place on the machine is fitted from
 references, a part of the job paired with where it is on the machine: one
 gives a shift, turned by the typed `angle`; two or more a turn and a
@@ -883,7 +885,7 @@ null).
 A run (placer.py) sends the init lines; with `fiducials` it finds the
 board's fiducials where the references put them and fits the board on
 them; then per part: the feeder's marks once, the pocket look, the pick,
-the vacuum read, the up camera's look, the place and the vacuum read once
+the vacuum read, the bottom camera's look, the place and the vacuum read once
 it let go. A pick that will not do (no part held, nothing on the nozzle,
 too far off, turned too far, the wrong size) is let go at `discard` or in
 its pocket and the next pocket tried, up to `pick_tries`; then the part
@@ -893,7 +895,7 @@ program from *plan* is the plan before the run; the run changes it where
 a camera or the vacuum says otherwise.
 
 Every request below that sends the machine lines answers 409 with no
-G-code machine connected, and while a placing run, an up camera routine
+G-code machine connected, and while a placing run, a bottom camera routine
 or a top camera routine moves it; one that only keeps something (a typed
 reference, the angle, a count) needs a G-code machine to keep it for.
 
@@ -909,24 +911,24 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/run/stop` | sends the file's `stop` at once and nothing after the line in flight |
 | `POST /api/pnp/goto` | `{"job", "ref", "camera": false}`: on a G-code machine, up to `safe_z` and the nozzle over the part's place, or with `camera` the top camera's picture center (by the measured offset, else the file's); run to its end and the place read |
 | `POST /api/pnp/park` | to `[motion] park` at the safe height, as a goto; 400 without one |
-| `POST /api/pnp/over-camera` | the lights on, then as a goto: across at `safe_z` and the nozzle turned to 0 over the up camera's place (measured, else the file's `[up_camera] position`), the height last (`[up_camera] z`, else `safe_z`) |
+| `POST /api/pnp/over-camera` | the lights on, then as a goto: across at `safe_z` and the nozzle turned to 0 over the bottom camera's place (measured, else the file's `[up_camera] position`), the height last (`[up_camera] z`, else `safe_z`) |
 | `POST /api/pnp/swap` | `{"to": "nozzle" \| "camera"}`: the head moved by the top camera's offset as a goto, so the nozzle goes over the point the camera looked at, or the camera over the nozzle's |
-| `PUT /api/pnp/camera` | `{"position": [x, y]}`, `{"here": true}` (the head's place now, the nozzle over the camera by eye) or `{"clear": true}` (the file's again): the up camera's place on the machine; its scale, roll and runout stay |
+| `PUT /api/pnp/camera` | `{"position": [x, y]}`, `{"here": true}` (the head's place now, the nozzle over the camera by eye) or `{"clear": true}` (the file's again): the bottom camera's place on the machine; its scale, roll and runout stay |
 | `POST /api/pnp/light` | `{"on": true}`: the file's `light_on` or `light_off` lines; 400 without them |
 | `POST /api/pnp/vacuum` | `{"on": true, "read": true}`, either: the vacuum switched by the file's pick or place lines, then the sensor read by its `[vacuum] read` lines: `{"reply": [...], ...state}`, the reading in `vacuum.reading`; 502 when the pattern finds none |
 | `POST /api/pnp/boards/reset` | the count of boards finished back to 0 |
 | `POST /api/pnp/bus/scan` | every address from 1 to `max_address` asked for its feeder's id: `{"feeders": [{"address": 3, "id": "0102...", "feeder": "c-100n" or null, "slot": true}], ...state}`, `slot` saying the file has a `[[slot]]` for that address; 400 without `[bus]` |
 | `POST /api/pnp/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the file lacks, 502 when the feeder does not answer or refuses |
 | `POST /api/pnp/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
-| `POST /api/pnp/nozzle` | on a G-code machine, the up camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the up camera state with `"target": "gcode"` |
-| `POST /api/pnp/runout` | over the up camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the up camera's routine |
+| `POST /api/pnp/nozzle` | on a G-code machine, the bottom camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the bottom camera state with `"target": "gcode"` |
+| `POST /api/pnp/runout` | over the bottom camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the bottom camera's routine |
 | `POST /api/pnp/fiducials` | `{"job"}`: the top camera finds the board's fiducials where the references put them; two or more replace the hand references (`by: fiducial`); fails when one is not within `within`, or they disagree with their fit by over 0.25 mm. Kind `fiducials` in `top.routine` |
 | `PUT /api/pnp/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again |
 | `POST /api/pnp/top/start`, `.../stop` | starts or stops its pcbv |
 | `GET /api/pnp/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
 | `POST /api/pnp/top/mark` | the nozzle's tip is over a mark: the head's place is kept as `mark_at` |
 | `POST /api/pnp/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the file's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
-| `POST /api/pnp/top/look` | the `mark_spot` spot nearest the picture's center found once, no move, kept as `top.look` (as the up camera's) |
+| `POST /api/pnp/top/look` | the `mark_spot` spot nearest the picture's center found once, no move, kept as `top.look` (as the bottom camera's) |
 | `POST /api/pnp/top/board` | `{"job": "a1b2"}`: pcbv looks for the job's board (front, masked) and the backend reads its poses into `top.board_look` (Board look, under Camera) until unloaded, the camera stopped or started again; `{"job": null}` unloads it. 400 with the camera stopped or a job without its board file |
 | `POST /api/pnp/top/search` | `{"box": [x0, y0, x1, y1]}`, machine X and Y for the picture's center, or `{}` for a square the board's diagonal on a side about where it is now: the head rises to the safe height, goes to `[top_camera] z`, and visits the box in camera-sized steps nearest first; pcbv is told to `reset` at each stop, and a stop is left when no lock comes within 2.5 s or after 5 s; ends `done` once enough looks agree (the picture's center put over the board's middle), `error` once every stop was looked at. Kind `search`, steps `lifting`, `stop 1` ... `stop N`. 400 as for the head camera's search |
 | `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found becomes the job's references: the two parts furthest apart (fiducials when there are two) where the estimate puts them, `by: "look"`, replacing earlier ones by look; 400 until the look has found this job's board |
@@ -991,7 +993,7 @@ connected; `url`, `lost`, `running`, `homed`, `position`, `light`,
 `vacuum`, `progress` and `log` are its link's. `position` follows the
 moves a camera routine makes as well. `top.board_look` is the top
 camera's board look (under Camera), `top.look` its last look once, as the
-up camera's.
+bottom camera's.
 
 ## Alignment
 
@@ -1084,7 +1086,7 @@ it does not watch then.
 | `message` | `{"level": "info" \| "error", "text": "..."}` |
 | `camera` | the camera state, whenever it changes: started or stopped, settings, a board loaded, a mark recorded, every step of the find routine; not for every picture, which the page asks for |
 | `align` | the alignment state (`GET /api/align`), whenever a mark is added, removed or applied |
-| `pnp` | the up camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
+| `pnp` | the bottom camera state (`GET /api/pnp`), whenever it changes: started or stopped, settings, every step of a routine |
 | `placing` | the placing state (`GET /api/pnp/placing`), whenever it changes: a G-code machine connected, every part of a placing run, a reference, a feeder count, its file tuned |
 | `markers` | `{"markers": [...]}` whenever the list is put |
 | `camlog` | the camera log state, as `GET /api/camlog` answers it with no query (the newest entries of every camera), after every change |

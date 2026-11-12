@@ -211,7 +211,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
         device,
         size,
         fps,
-        otherLabel: "up camera",
+        otherLabel: "bottom camera",
         otherDevice: (state) => state.pnp?.device ?? null,
         visible: () => visible(),
     });
