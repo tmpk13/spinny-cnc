@@ -32,6 +32,7 @@ its controller before each pick.
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
+| `web/backend` `virtual_pnp` | a virtual LumenPnP: its Marlin on a TCP socket (moves in time, M400, M410, the vacuum sensor, Photon feeders) and its two cameras drawn from the head's place, served as JPEG snapshots | `mise run virtual-pnp` |
 | `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
@@ -87,6 +88,9 @@ flowchart LR
         FBUS -->|the bus's send line, its reply read back| GD
         GD <-->|M485 packets carried on RS-485| PHO[Photon feeders in a LumenPnP's slots]
         GD <-->|USB serial or TCP, G-code| PPM[a pick and place machine: Marlin, Smoothieware, RepRapFirmware, Grbl, an Opulo LumenPnP]
+        GD <-->|TCP, G-code| VPNP[spinny-virtual-pnp: a LumenPnP's Marlin, its feeders and nozzle]
+        PV2 -->|JPEG snapshots over HTTP| VCAM[spinny-virtual-pnp's bottom and top cameras, drawn from the head's place]
+        PV3 -->|JPEG snapshots over HTTP| VCAM
         BE <-->|JSON lines over stdio or TCP| PV[pcb-vision pcbv serve: capture, board localizer, frame, spot]
         BE <-->|a second pcbv serve| PV2[pcb-vision pcbv serve: the up camera's frame and spot with its smallest rectangle]
         TOPC <-->|a third pcbv serve| PV3[pcb-vision pcbv serve: the top camera's frame and spot]

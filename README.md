@@ -16,6 +16,7 @@ page like the others.
 - `mise run web`: build the page and serve it with the backend at `http://localhost:8000`
 - `mise run dev`: the page from Bun's dev server with live reload
 - `mise run virtual`: the virtual firmware at `socket://127.0.0.1:2323`, as the polar laser
+- `mise run virtual-pnp`: a virtual LumenPnP at `socket://127.0.0.1:2327`, with its feeders and cameras ([trying the PNP tab](docs/OPERATING.md#a-virtual-lumenpnp))
 - `mise run flash`: build the board firmware and copy it to an SKR Pico in BOOTSEL mode
 - `mise run relay-pi -- pi@host`: forward a Pi's bridge to `socket://127.0.0.1:2324` here over ssh
 - `mise run cam -- cam/mill-3axis.toml board.kicad_pcb`: a design through a CAM profile, gcode in `var/out/`

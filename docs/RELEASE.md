@@ -74,11 +74,18 @@ bin/spinny-virtual --listen 127.0.0.1:2323 --fast
 bin/spinny-virtual --machine ~/.local/share/spinny/machines/cartesian-mill.toml
 ```
 
+`bin/spinny-virtual-pnp` is a LumenPnP pick and place machine the same
+way: connect *Virtual LumenPnP* from the top bar (its machine file,
+`virtual-pnp.toml`, is among the shipped ones) and give the cameras
+`http://127.0.0.1:2328/snapshot` and `http://127.0.0.1:2329/snapshot`
+([OPERATING.md](OPERATING.md#a-virtual-lumenpnp) in the repository).
+
 ### The other programs
 
 | Program | Does |
 | --- | --- |
 | `bin/spinny-bridge` | serves a controller's serial port over TCP, for a backend on another computer |
+| `bin/spinny-virtual-pnp` | a virtual LumenPnP: its Marlin on a TCP socket, its Photon feeders and its two cameras |
 | `bin/spinny-mcp` | the backend's tools for Claude Code or another MCP client (only in archives built with `--extras mcp`) |
 | `bin/spinny-carve` | the 3D kernel the CAM runs for STL models |
 | `bin/pcbv` | the camera program (only in archives built beside pcb-vision) |

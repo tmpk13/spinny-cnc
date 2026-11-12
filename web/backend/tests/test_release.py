@@ -44,7 +44,7 @@ def _scripts() -> dict[str, str]:
 
 def test_only_the_backend_and_the_bridge_get_launchers_in_a_plain_release():
     chosen = release.launched(_scripts(), [])
-    assert chosen == {"spinny-web": "spinny_web.app:main", "spinny-bridge": "spinny_web.bridge:main"}
+    assert chosen == {"spinny-web": "spinny_web.app:main", "spinny-bridge": "spinny_web.bridge:main", "spinny-virtual-pnp": "spinny_web.virtual_pnp:main"}
 
 
 def test_the_mcp_server_gets_a_launcher_only_with_its_package():

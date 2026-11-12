@@ -60,12 +60,13 @@ SOURCES = ["toolpath", "web", "carve", "firmware", "deploy", "docs/RELEASE.md", 
 SHIPPED = ["machines", "cam"]
 # The packages whose [project.scripts] the launchers come from.
 SCRIPTED = [REPO / "toolpath" / "pyproject.toml", REPO / "web" / "backend" / "pyproject.toml"]
-# The scripts a release has launchers for: the backend, and the serial
-# bridge for a computer beside the controller. The other scripts are
-# command line twins of what the page does (isolation, polar conversion,
-# centering, CAM to gcode) or setup aids for the grblHAL controller the
-# machine no longer runs (spinny-jog), and stay checkout tools.
-LAUNCHED = ("spinny-web", "spinny-bridge")
+# The scripts a release has launchers for: the backend, the serial bridge
+# for a computer beside the controller, and the virtual pick and place
+# machine to try the PNP tab with. The other scripts are command line
+# twins of what the page does (isolation, polar conversion, centering, CAM
+# to gcode) or setup aids for the grblHAL controller the machine no longer
+# runs (spinny-jog), and stay checkout tools.
+LAUNCHED = ("spinny-web", "spinny-bridge", "spinny-virtual-pnp")
 # Scripts launched only when the archive carries the extra they need.
 LAUNCHED_WITH = {"spinny-mcp": "mcp"}
 EXTRAS = ("auto", "mcp")

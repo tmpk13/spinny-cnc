@@ -29,6 +29,7 @@ mcp = ["mcp>=2"]
 spinny-web = "spinny_web.app:main"
 spinny-bridge = "spinny_web.bridge:main"
 spinny-mcp = "spinny_web.mcp_server:main"
+spinny-virtual-pnp = "spinny_web.virtual_pnp:main"
 
 [build-system]
 requires = ["hatchling"]

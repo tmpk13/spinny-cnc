@@ -88,7 +88,7 @@ def test_an_empty_file_is_the_firmware_at_its_defaults():
 def test_the_shipped_files_load_and_say_what_they_are():
     found = shipped()
     assert [m.id for m in found] == [
-        "cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser",
+        "cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser", "virtual-pnp",
     ]
     by_id = {m.id: m for m in found}
     assert by_id["polar-laser"].settings == FIRMWARE_DEFAULTS

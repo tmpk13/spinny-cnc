@@ -1,0 +1,156 @@
+# The virtual LumenPnP: `mise run virtual-pnp` (or bin/spinny-virtual-pnp
+# in a release) plays a LumenPnP's Marlin on socket://127.0.0.1:2327 and
+# serves its two cameras, so the PNP tab can be tried with no hardware.
+# Connect it from the top bar; give the cameras' devices as
+# http://127.0.0.1:2328/snapshot (bottom) and http://127.0.0.1:2329/snapshot
+# (top). Everything else is opulo-lumen-rev5.toml's, with the vacuum's
+# ranges set (the virtual sensor reads as Opulo's do) and three Photon
+# feeders in slots.
+#
+# The virtual nozzle picks a part wherever its tip comes down to Z 16.5 or
+# lower with the suction on (anywhere but over the bottom camera); every
+# part is 1.6 x 0.8 mm, its long side along X as it lies.
+name = "Virtual LumenPnP"
+description = "A virtual LumenPnP on socket://127.0.0.1:2327: mise run virtual-pnp"
+controller = "gcode"
+
+[port]
+url = "socket://127.0.0.1:2327"
+wait_ms = 0
+timeout = 60
+
+[gcode]
+init = [
+    "G21",
+    "G90",
+    "M204 T3500",
+    "M260 A112 B1 S1",
+    "M260 A109",
+    "M260 B48",
+    "M260 B27",
+    "M260 S1",
+    "M260 A112 B2 S1",
+    "M260 A109",
+    "M260 B48",
+    "M260 B27",
+    "M260 S1",
+]
+end = []
+move = "G1"
+x = "X"
+y = "Y"
+z = "Z"
+rotation = "A"
+rotation_cw = false
+wait = "M400"
+pick = ["M106 P1 S180", "M106"]   # VAC1's valve (fan 1) and the pump (fan 0)
+place = ["M107 P1", "M107"]
+dwell = "G4 P{ms}"
+home = "G28"                      # to X0 Y0 at the safe height
+position = "M114"
+stop = "M410"
+motors_on = "M17"
+motors_off = "M18"
+light_on = ["M150 P255 R255 U255 B255"]   # with the light off the pictures are dim
+light_off = ["M150 P0"]
+
+[motion]
+feed_xy = 6000
+feed_z = 3000
+safe_z = 31.5
+place_z = 14.0           # the virtual board's top, with the tip touching
+pick_dwell_ms = 200
+place_dwell_ms = 100
+pick_tries = 3
+park = [42.328, 411.916]
+
+[[controls.axes]]
+axis = "r"
+letter = "X"
+label = "X"
+
+[[controls.axes]]
+axis = "z"
+letter = "Y"
+label = "Y"
+
+[[controls.axes]]
+axis = "h"
+letter = "Z"
+label = "Nozzle height"
+steps = [0.1, 1, 10]
+buttons = ["N1 down", "N1 up"]
+zero = false
+note = "A seesaw: N1 goes down below 31.5 and N2 above it; 31.5 has both up"
+
+[[controls.axes]]
+axis = "a"
+letter = "A"
+label = "N1 turn"
+steps = [1, 10, 90]
+buttons = ["Turn -", "Turn +"]
+zero = false
+note = "Degrees, as Marlin counts them"
+
+[vacuum]
+read = ["M260 A112 B1 S1", "M260 A109 B6 S1", "M261 A109 B1 S2"]
+pattern = "^.*data:(?<Value>.*)"
+part_on = [220, 241]
+part_off = [248, 255]
+
+# Where the file puts the bottom camera; the virtual one sits a few tenths
+# off, which Center nozzle finds.
+[up_camera]
+position = [61.92, 219.82]
+z = 4.0
+max_offset = 1.0
+max_turn = 15
+size_tolerance = 0.3
+
+# The top camera's offset as designed; the virtual one sits a few tenths
+# off, which Measure offset finds from the dark mark at 150, 150.
+[top_camera]
+offset = [23.544, 65.188]
+fiducial = "bright"
+within = 2.0
+
+[bus]
+send = "M485 {packet}"
+reply = "rs485-reply: *(?<packet>[0-9A-Fa-f]*)"
+header = ["to", "from", "id", "length", "crc"]
+host = 0
+broadcast = 255
+max_address = 25
+tries = 3
+poll_ms = 50
+get_id = 1
+init = 2
+feed = 4
+status = 6
+find = 192
+ok = 0
+wrong_id = 1
+unreachable = 2
+uninitialized = 3
+busy = 4
+
+# The virtual bus's three Photon feeders, addresses 1 to 3.
+[[slot]]
+address = 1
+at = [100.0, 30.0, 13.0]
+
+[[slot]]
+address = 2
+at = [115.0, 30.0, 13.0]
+
+[[slot]]
+address = 3
+at = [130.0, 30.0, 13.0]
+
+# A feeder per part kind, as on the real machine: `bus_id` is the virtual
+# feeder's id that spinny-virtual-pnp prints (Scan bus shows it too).
+# [[feeder]]
+# id = "r-10k-0603"
+# match = "10k 0603"
+# bus_id = "5350494E4E59000000000001"
+# advance = 4

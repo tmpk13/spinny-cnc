@@ -27,10 +27,11 @@ spelled out), `polar-laser-focus` (the focus axis fitted),
 `cartesian-dispenser` (the mill's axes with a paste dispenser's
 plunger on the table's socket and a camera on the head), `k40` (a K40
 CO2 laser with the board in place of its M2 Nano, its connections in
-[K40.md](K40.md)), and two G-code pick and place machines:
+[K40.md](K40.md)), and three G-code pick and place machines:
 `openpnp-marlin` (Marlin as OpenPnP's GcodeDriver drives it, every key
-commented) and `opulo-lumen-rev5` (an Opulo LumenPnP with the Rev05
-board, from Opulo's stock OpenPnP setup).
+commented), `opulo-lumen-rev5` (an Opulo LumenPnP with the Rev05
+board, from Opulo's stock OpenPnP setup) and `virtual-pnp` (the LumenPnP
+that `mise run virtual-pnp` plays, [OPERATING.md](OPERATING.md#a-virtual-lumenpnp)).
 Copy the one nearest your machine, name it, and change what differs. A
 file that cannot be read is listed by the backend as a problem and shown
 on the page; the others still load.

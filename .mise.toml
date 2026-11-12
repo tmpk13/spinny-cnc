@@ -58,6 +58,10 @@ run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 
 description = "Virtual firmware on socket://127.0.0.1:2323 as the polar laser"
 run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/polar-laser.toml"
 
+[tasks.virtual-pnp]
+description = "A virtual LumenPnP for the PNP tab: its Marlin on socket://127.0.0.1:2327 (machines/virtual-pnp.toml), Photon feeders, cameras at http://127.0.0.1:2328/snapshot (bottom) and :2329 (top)"
+run = "uv run spinny-virtual-pnp --machine machines/virtual-pnp.toml"
+
 [tasks.virtual-mill]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the cartesian spindle machine over a tilted board"
 run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/cartesian-mill.toml --surface -1.5,0.01,-0.02"

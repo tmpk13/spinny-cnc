@@ -634,6 +634,45 @@ work. A run advances each feeder on the bus before its pick and waits for
 it; a feeder that does not answer leaves its part out. None of it has
 run on a LumenPnP yet: try *Scan bus* and *Feed* before a run.
 
+### A virtual LumenPnP
+
+`mise run virtual-pnp` (`bin/spinny-virtual-pnp` in a release) plays a
+LumenPnP with nothing attached, so the PNP tab can be tried end to end.
+It takes G-code on `socket://127.0.0.1:2327` as Opulo's Marlin does:
+moves take the time their feed gives them (`--fast 4` four times
+quicker), M400 waits for them, M410 stops the head where it is, M114
+reports, the ring light and the fans switch, and the vacuum sensor behind
+the I2C mux reads as a LumenPnP's: about 254 with the pump off, 251 with
+the nozzle open, 231 with a part on it. Three Photon feeders answer on
+the bus (addresses 1 to 3; the program prints their ids for `bus_id`).
+
+Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) from the top bar.
+Give the bottom (up) camera the device `http://127.0.0.1:2328/snapshot`
+and the top camera `http://127.0.0.1:2329/snapshot`, size 640x480 (or
+start the backend with `SPINNY_CAMERA_PORTS="2325 2326 2328 2329"` and
+pick them from the list). pcbv reads them as it reads a Pi's camera.
+
+- The nozzle picks a part wherever its tip comes down to Z 16.5 or lower
+  with the suction on (the pump and N1's valve), except over the bottom
+  camera, and lets it go where the suction stops. Every part is 1.6 by
+  0.8 mm, lying along X, picked a little off the tip and a little
+  turned. `--miss-every 3` makes every third pick come up empty.
+- The bottom camera shows the tip as a dark disk and a part on it as a
+  dark body; it sits a few tenths of a millimeter off the file's
+  `[up_camera] position`, at 20 um a pixel, turned 1.5 degrees and
+  mirrored, and the tip runs 36 um off its axis: *Center nozzle* and
+  *Measure runout* find these.
+- The top camera sees the bed, a dark mark at 150, 150 (`--mark X,Y`) for
+  *Nozzle on mark* and *Measure offset*, the parts let go, and a board
+  given with `--board board.kicad_pcb@X,Y[,ANGLE]` (its origin at X, Y,
+  turned ANGLE): its outline dark and its fiducials bright, for *Find
+  fiducials*. Its offset is a few tenths off the file's.
+- With the light off both pictures are dim.
+
+A spot is read from a picture taken after it was asked for: a snapshot
+camera asked a few times a second would otherwise show the head where it
+was before the move.
+
 ### The Auto tab
 
 The *Auto* tab is a conversation with a language model that works through
