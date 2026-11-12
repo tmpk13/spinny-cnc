@@ -104,6 +104,8 @@ export interface MockTopProfile {
     offset: [number, number] | null;
     fiducial: SpotPolarity;
     within: number;
+    /** A fiducial on the bed, as the nozzle's place over it: Home by fiducial finds it. */
+    home_fiducial: [number, number] | null;
 }
 
 export interface MockDevice {
@@ -394,8 +396,9 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
             offset: "offset" in looking ? (read.point(looking, "offset", "top_camera", 2, null) as [number, number]) : null,
             fiducial: read.shade(looking, "fiducial", "top_camera", "bright"),
             within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
+            home_fiducial: "home_fiducial" in looking ? (read.point(looking, "home_fiducial", "top_camera", 2, null) as [number, number]) : null,
         };
-        read.done(looking, "top_camera", ["z", "offset", "fiducial", "within"]);
+        read.done(looking, "top_camera", ["z", "offset", "fiducial", "within", "home_fiducial"]);
     }
     device.bus = null;
     const wire = read.table(top, "bus");
@@ -633,7 +636,15 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
                 part_off: device.vacuum.part_off ? [...device.vacuum.part_off] : null,
             }
             : null,
-        top: device.top ? { z: device.top.z, offset: device.top.offset ? [...device.top.offset] : null, fiducial: device.top.fiducial, within: device.top.within } : null,
+        top: device.top
+            ? {
+                z: device.top.z,
+                offset: device.top.offset ? [...device.top.offset] : null,
+                fiducial: device.top.fiducial,
+                within: device.top.within,
+                home_fiducial: device.top.home_fiducial ? [...device.top.home_fiducial] : null,
+            }
+            : null,
         feeders: device.feeders.map((f) => ({
             id: f.id,
             match: f.match,

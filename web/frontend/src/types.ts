@@ -1255,6 +1255,8 @@ export interface GcodeTopCamera {
     offset: [number, number] | null;
     fiducial: SpotPolarity;
     within: number;
+    /** A fiducial on the bed, as the nozzle's place over it, that Home by fiducial finds; missing or null: none. */
+    home_fiducial?: [number, number] | null;
 }
 
 /** A G-code machine's own tables as its file reads: port, dialect, heights, cameras, feeders. */

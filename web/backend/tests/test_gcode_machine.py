@@ -112,6 +112,7 @@ def board_job(client) -> str:
 
 def test_the_lumenpnp_file_reads_with_its_safe_height_and_pump_and_valve():
     lumen = parse(LUMEN.read_text(encoding="utf-8"), "opulo-lumen-rev5")
+    assert lumen.top is not None and lumen.top.home_fiducial == (60.91, 175.23)
     assert lumen.safe_z == 31.5 and lumen.move == "G1" and lumen.axes == ("X", "Y", "Z", "A")
     assert lumen.pick == ("M106 P1 S180", "M106") and lumen.place == ("M107 P1", "M107")
     assert lumen.light_on == ("M150 P255 R255 U255 B255",) and lumen.park == (42.328, 411.916)

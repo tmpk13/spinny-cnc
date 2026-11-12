@@ -135,6 +135,10 @@ leave = 2.0        # a jog leaving the camera with the tip down goes up to Z 31.
 offset = [23.544, 65.188]
 fiducial = "bright"
 within = 2.0
+# The head's homing fiducial in Opulo's machine.xml (37.366, 110.042 where
+# the top camera looks), as N1's place over it. Opulo's stock setup does
+# not home by it (visual homing None); Home by fiducial does on request.
+home_fiducial = [60.91, 175.23]
 
 # Opulo's Photon feeders on the LumenPnP's RS-485 bus, through Marlin's
 # M485: a packet goes out as hex and comes back in an rs485-reply line.

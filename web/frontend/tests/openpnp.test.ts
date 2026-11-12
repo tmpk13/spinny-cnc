@@ -49,6 +49,7 @@ const MACHINE = `<?xml version="1.0" encoding="UTF-8"?>
                </camera>
             </cameras>
             <park-location units="Millimeters" x="42.328" y="411.916" z="0.0" rotation="0.0"/>
+            <homing-fiducial-location units="Millimeters" x="37.366" y="110.042" z="0.0" rotation="0.0"/>
          </head>
       </heads>
       <feeders>
@@ -173,6 +174,8 @@ describe("reading an OpenPnP setup", () => {
         expect(value("up_camera")).toBe("X 61.92 Y 219.82, sharp at Z 4");
         expect(value("top_camera")).toBe("X 23.544 Y 65.188 from N1");
         expect(value("park")).toBe("X 42.328 Y 411.916");
+        // Where the top camera looks for it, less N1's offset: the nozzle's place over it.
+        expect(value("home_fiducial")).toBe("X 60.91 Y 175.23");
         expect(warnings).toEqual([]);
         // N2's Z is a mapped axis: its letters cannot be read.
         expect(machineItems(machine, "N2").warnings[0]).toContain("seesaw");
@@ -191,6 +194,7 @@ describe("reading an OpenPnP setup", () => {
         expect(device.vacuum?.part_on).toBeNull();
         expect(device.camera_position).toEqual([61.92, 219.82]);
         expect(device.top?.offset).toEqual([23.544, 65.188]);
+        expect(device.top?.home_fiducial).toEqual([60.91, 175.23]);
         expect(device.discard).toBeNull();
         // Place Z, never read, stays at the safe height until measured.
         expect(device.place_z).toBe(31.5);

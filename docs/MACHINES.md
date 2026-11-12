@@ -458,6 +458,7 @@ z = 0                    # the height the head looks from; left out, the safe he
 offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
 fiducial = "bright"      # how a fiducial looks to it
 within = 2.0             # mm from where it is expected that a fiducial, mark or part is looked for
+home_fiducial = [60.0, 170.0]  # a fiducial fixed on the bed, as the nozzle's place over it: Home by fiducial finds it with this camera; left out, none
 
 [[feeder]]               # a part is picked from the first one whose words its value and footprint all hold
 id = "r-10k-0603"

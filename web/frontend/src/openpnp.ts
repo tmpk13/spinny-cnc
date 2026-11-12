@@ -289,6 +289,8 @@ export interface OpenPnpMachine {
     actuators: Map<string, string>;
     park: Place | null;
     discard: Place | null;
+    /** The head's homing fiducial, where the top camera looks for it; null when the file has none (or all zeros). */
+    homeFiducial: Place | null;
     feeders: OpenPnpFeeder[];
 }
 
@@ -517,6 +519,10 @@ export function readMachine(text: string): OpenPnpMachine {
         cameras,
         actuators,
         park: placeOf(child(head, "park-location")),
+        homeFiducial: (() => {
+            const place = placeOf(child(head, "homing-fiducial-location"));
+            return place && (place.x !== 0 || place.y !== 0) ? place : null;
+        })(),
         discard: placeOf(child(machine, "discard-location")),
         feeders: kids(child(machine, "feeders"), "feeder").map((node) => feederOf(node, firstNozzle)),
         ...busOf(machine, driver, head),
@@ -557,6 +563,8 @@ export interface ProfileData {
     cameraPosition: [number, number] | null;
     cameraZ: number | null;
     topOffset: [number, number] | null;
+    /** The bed's homing fiducial as the nozzle's place over it. */
+    homeFiducial: [number, number] | null;
     feeders: ProfileFeeder[];
     /** The feeder bus's lines, and its slots' places. */
     bus: { send: string; reply: string } | null;
@@ -614,6 +622,7 @@ export function defaultProfile(name: string): ProfileData {
         cameraPosition: null,
         cameraZ: null,
         topOffset: null,
+        homeFiducial: null,
         feeders: [],
         bus: null,
         slots: [],
@@ -720,8 +729,14 @@ export function profileText(data: ProfileData): string {
             lines.push(`z = ${fixed(data.cameraZ)}`);
         }
     }
-    if (data.topOffset) {
-        lines.push("", "[top_camera]", `offset = ${pair(data.topOffset)}`);
+    if (data.topOffset || data.homeFiducial) {
+        lines.push("", "[top_camera]");
+        if (data.topOffset) {
+            lines.push(`offset = ${pair(data.topOffset)}`);
+        }
+        if (data.homeFiducial) {
+            lines.push(`home_fiducial = ${pair(data.homeFiducial)}`);
+        }
     }
     if (data.bus) {
         lines.push(
@@ -908,6 +923,15 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
     if (down && nozzle) {
         const camera: [number, number] = [down.place.x - offset.x, down.place.y - offset.y];
         push({ id: "top_camera", group: "Cameras", label: `${down.name} (the top camera)`, value: `X ${fixed(camera[0])} Y ${fixed(camera[1])} from ${nozzle.name}`, keep: true, apply: (data) => { data.topOffset = camera; } });
+    }
+    if (machine.homeFiducial && nozzle) {
+        // OpenPnP keeps it where the top camera looks; kept as the nozzle's place over it.
+        const fiducial: [number, number] = [machine.homeFiducial.x - offset.x, machine.homeFiducial.y - offset.y];
+        push({
+            id: "home_fiducial", group: "Cameras", label: "Homing fiducial", value: `X ${fixed(fiducial[0])} Y ${fixed(fiducial[1])}`, keep: true,
+            note: "Home by fiducial looks for it with the top camera",
+            apply: (data) => { data.homeFiducial = fiducial; },
+        });
     }
     if (machine.park) {
         const park: [number, number] = [machine.park.x - (down?.place.x ?? 0), machine.park.y - (down?.place.y ?? 0)];
