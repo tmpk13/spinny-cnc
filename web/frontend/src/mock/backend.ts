@@ -2875,8 +2875,9 @@ export class MockBackend implements Api, EventFeed {
                 stopped.push("the up camera routine");
             }
             await this.realtime("cancel");
+            stopped.push("motion");
             await (this.machine.milling() ? this.spindleOff() : this.laserOff());
-            stopped.push("motion and the output");
+            stopped.push("the output");
         }
         return { stopped, snapshot: this.snapshot() };
     }

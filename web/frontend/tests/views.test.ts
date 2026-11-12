@@ -679,7 +679,7 @@ describe("status bar", () => {
         findButton(root, "Stop").click();
         await settle();
         expect(calls.some((call) => call.name === "stopAll")).toBe(true);
-        expect(store.get().toasts.at(-1)?.text).toBe("stopped motion and the output");
+        expect(store.get().toasts.at(-1)?.text).toBe("stopped motion, the output");
     });
 });
 

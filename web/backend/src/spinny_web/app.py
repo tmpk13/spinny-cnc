@@ -1768,9 +1768,14 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     stopped.append(name)
             self._jog_target = None
             link.realtime(REALTIME_JOG_CANCEL)
-            link.request_ok("spindle off" if self.milling else "laser off")
+            stopped.append("motion")
+            try:
+                link.request_ok("spindle off" if self.milling else "laser off")
+                stopped.append("the output")
+            except CommandError:
+                # In an alarm the line is refused, and the output is off already.
+                pass
             link.status_now(1.0, routine=True)
-            stopped.append("motion and the output")
         return {"stopped": stopped, "snapshot": self.snapshot()}
 
     def command(self, line: str) -> dict:

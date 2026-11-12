@@ -239,7 +239,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     const holdBoard = (dx: number, dy: number) => (seconds: number): Promise<unknown> => {
         const rate = stepOf(dx !== 0 ? "x" : "y");
         const step = holdPiece(rate, seconds);
-        return ctx.api.jog({ kind: "board", dx: dx * step, dy: dy * step, feed: controls.feed ? rate * 60 : null });
+        const gcode = profileOf(ctx.store.get().snapshot).controller === "gcode";
+        return ctx.api.jog({ kind: "board", dx: dx * step, dy: dy * step, feed: gcode || controls.feed ? rate * 60 : null });
     };
     /** A held piece of a joint jog; an axis the feed does not apply to runs at its jog rate, and the cancel at the release stops it. */
     const holdAxis = (axis: AxisControl, sign: 1 | -1) => (seconds: number): Promise<unknown> => {

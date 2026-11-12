@@ -769,7 +769,7 @@ def test_the_big_stop_stops_a_run_or_cancels_motion_and_the_output(client, fake)
     # Nothing running: the jog is cancelled and the beam turned off.
     before = len(fake.received_lines)
     answer = client.post("/api/stop").json()
-    assert answer["stopped"] == ["motion and the output"]
+    assert answer["stopped"] == ["motion", "the output"]
     assert 0x85 in fake.realtime_bytes and "laser off" in fake.received_lines[before:]
     # A run is stopped as its own Stop does it.
     slow_run(client, fake)
