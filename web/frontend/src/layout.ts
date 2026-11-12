@@ -31,6 +31,8 @@ export interface PanelPrefs {
     hidden?: boolean;
     /** A fixed height in rem; the panel scrolls within it. */
     height?: number;
+    /** On the first panel of a block: its stacks sit side by side rather than one above another. */
+    row?: boolean;
 }
 
 export interface PageLayout {
@@ -131,6 +133,9 @@ function cleanPrefs(raw: unknown): PanelPrefs {
     }
     if (raw["hidden"] === true) {
         prefs.hidden = true;
+    }
+    if (raw["row"] === true) {
+        prefs.row = true;
     }
     const height = raw["height"];
     if (typeof height === "number" && Number.isFinite(height)) {
@@ -448,6 +453,54 @@ export function unstick(layout: PageLayout, id: string): PageLayout {
     const column = next.columns[place.column]!;
     const rest = column[place.block]!.splice(place.stack);
     column.splice(place.block + 1, 0, rest);
+    // The parted stacks are a block of their own, one above another.
+    for (const other of rest.flatMap((stack) => stack.ids)) {
+        clearRow(next, other);
+    }
+    return next;
+}
+
+function clearRow(layout: PageLayout, id: string): void {
+    const prefs = layout.panels[id];
+    if (prefs?.row) {
+        delete prefs.row;
+        if (Object.keys(prefs).length === 0) {
+            delete layout.panels[id];
+        }
+    }
+}
+
+/** Whether a block lays its stacks side by side: it has more than one, and its first panel says so. */
+export function blockIsRow(layout: PageLayout, block: Block): boolean {
+    const first = block[0]?.ids[0];
+    return block.length > 1 && first !== undefined && layout.panels[first]?.row === true;
+}
+
+/** Whether the panel's block lays its stacks side by side. */
+export function isRow(layout: PageLayout, id: string): boolean {
+    const place = locate(layout, id);
+    return place !== null && blockIsRow(layout, layout.columns[place.column]![place.block]!);
+}
+
+/**
+ * Lays the panel's block side by side (`on`) or one above another. The
+ * flag lives on the block's first panel; any other panel of the block
+ * loses it.
+ */
+export function setRow(layout: PageLayout, id: string, on: boolean): PageLayout {
+    const place = locate(layout, id);
+    if (!place) {
+        return layout;
+    }
+    const next = copy(layout);
+    const block = next.columns[place.column]![place.block]!;
+    for (const other of block.flatMap((stack) => stack.ids)) {
+        clearRow(next, other);
+    }
+    if (on && block.length > 1) {
+        const first = block[0]!.ids[0]!;
+        next.panels[first] = { ...next.panels[first], row: true };
+    }
     return next;
 }
 

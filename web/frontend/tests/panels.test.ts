@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { closeMenu } from "../src/menu.ts";
 import { initialState, Store, type AppState } from "../src/state.ts";
+import { mountPageSettings } from "../src/views/pagesettings.ts";
 import { LAYOUT_KEY, mountPanels, PRESETS_KEY, revealPanel } from "../src/views/panels.ts";
 import { mountTabs, parseTabPrefs, readPage, TABS_KEY, writeTabPrefs } from "../src/views/tabs.ts";
 
@@ -55,7 +56,7 @@ describe("the panels' heads", () => {
         const app = makeApp();
         mountPanels(app);
         const dro = app.querySelector("#p-dro .panel-head")!;
-        expect(Array.from(dro.children).map((node) => node.className)).toEqual(["panel-grip", "panel-chevron", "", "panel-menu-button", "badge"]);
+        expect(Array.from(dro.children).map((node) => node.className)).toEqual(["panel-grip", "panel-chevron", "", "panel-menu-button", "panel-scroll", "panel-scroll", "badge"]);
         // The bare h2 is wrapped in a head of its own, the h2 the same node.
         const laser = app.querySelector("#p-laser")!;
         expect(laser.firstElementChild?.classList.contains("panel-head")).toBe(true);
@@ -172,6 +173,86 @@ describe("the panel menu", () => {
         openMenuOf("p-laser");
         pick("Unstick from above");
         expect(app.querySelector("#p-laser")!.hasAttribute("data-join-up")).toBe(false);
+    });
+
+    test("a block of stuck panels lays them side by side and back, the cells in one row", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-laser");
+        pick("Stick to above");
+        openMenuOf("p-laser");
+        pick("Side by side");
+        const row = app.querySelector(".column > .panel-row")!;
+        expect(row).not.toBeNull();
+        expect(Array.from(row.querySelectorAll(".panel-row-cell > section.panel")).map((node) => node.id)).toEqual(["p-dro", "p-laser"]);
+        // Side by side, the panels are not joined, and the block is the column's first thing.
+        expect(app.querySelector("#p-dro")!.hasAttribute("data-join-down")).toBe(false);
+        expect(row.hasAttribute("data-first")).toBe(true);
+        expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!).jobs.panels).toEqual({ "p-dro": { row: true } });
+        openMenuOf("p-dro");
+        pick("One above another");
+        expect(app.querySelector(".panel-row")).toBeNull();
+        expect(ids(app.querySelector(".column")!)).toEqual(["p-dro", "p-laser", "p-steps"]);
+        expect(app.querySelector("#p-laser")!.hasAttribute("data-join-up")).toBe(true);
+    });
+
+    test("hidden panels show for a while, marked, and hide again", () => {
+        const app = makeApp();
+        const panels = mountPanels(app);
+        openMenuOf("p-dro");
+        pick("Hide");
+        panels.setPeeking(true);
+        const dro = app.querySelector("#p-dro")!;
+        expect(dro.hasAttribute("data-off")).toBe(false);
+        expect(dro.hasAttribute("data-peek")).toBe(true);
+        expect(panels.hiddenPanels().map((panel) => panel.id)).toEqual(["p-dro"]);
+        panels.setPeeking(false);
+        expect(dro.hasAttribute("data-off")).toBe(true);
+        // Peeking, its menu shows it for good.
+        panels.setPeeking(true);
+        openMenuOf("p-dro");
+        pick("Show for good");
+        expect(panels.hiddenPanels()).toEqual([]);
+    });
+
+    test("a panel held at a height shows its scroll buttons, fitted or dragged", () => {
+        const app = makeApp();
+        mountPanels(app);
+        const scrolls = Array.from(app.querySelectorAll<HTMLButtonElement>("#p-dro .panel-scroll"));
+        expect(scrolls.every((node) => node.hidden)).toBe(true);
+        openMenuOf("p-dro");
+        pick("Fit to screen");
+        expect(app.querySelector("#p-dro")!.hasAttribute("data-height")).toBe(true);
+        expect(scrolls.every((node) => !node.hidden)).toBe(true);
+        openMenuOf("p-dro");
+        pick("Free height");
+        expect(scrolls.every((node) => node.hidden)).toBe(true);
+    });
+
+    test("the bar's eye shows while a panel is hidden and toggles the peek; Done editing ends edit mode", () => {
+        const app = makeApp();
+        const panels = mountPanels(app);
+        const tools = document.createElement("div");
+        app.append(tools);
+        mountPageSettings(tools, panels);
+        const eye = tools.querySelector<HTMLButtonElement>(".tabs-peek")!;
+        expect(eye.hidden).toBe(true);
+        openMenuOf("p-dro");
+        pick("Hide");
+        expect(eye.hidden).toBe(false);
+        expect(eye.title).toContain("1 hidden panel");
+        eye.click();
+        expect(panels.peeking()).toBe(true);
+        expect(eye.getAttribute("aria-pressed")).toBe("true");
+        // Shown for good, nothing is hidden: the peek ends and the eye goes.
+        panels.showPanel("p-dro");
+        expect(panels.peeking()).toBe(false);
+        expect(eye.hidden).toBe(true);
+        panels.setEditing(true);
+        const done = tools.querySelector<HTMLButtonElement>(".tabs-done")!;
+        expect(done.textContent).toBe("Done editing");
+        done.click();
+        expect(panels.editing()).toBe(false);
     });
 
     test("a hidden panel is listed and shown again; reset puts a panel back home", () => {

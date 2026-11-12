@@ -4,13 +4,16 @@
 // edit mode that drags panels about, the page's panels put back as the
 // markup has them, and the panels hidden, each to show again. Beside the
 // gear, once a layout is kept, a pick of the layouts swaps them in one
-// step, and in edit mode a Done button ends it. Everything here is kept in
-// this browser.
+// step, and in edit mode a Done editing button ends it. An eye beside the
+// gear, while any panel is hidden, shows the hidden panels for a while
+// (marked as hidden) and hides them again; two arrows scroll the column
+// last pointed at to its top or its end. Everything here is kept in this
+// browser; the peek is not.
 
 import { el, labeled, replace, svgIcon } from "../dom.ts";
 import { DEFAULT_PRESET } from "../layout.ts";
 import { closeMenu } from "../menu.ts";
-import type { PanelsController } from "./panels.ts";
+import { TO_END, TO_TOP, type PanelsController } from "./panels.ts";
 import { onPage, PAGES, readTabPrefs, writeTabPrefs, type PageId, type TabPrefs } from "./tabs.ts";
 
 /** A gear with eight teeth and a hole, in a box 16 units square. */
@@ -29,6 +32,9 @@ function gearPath(): string {
     return `M${parts.join("L")}Z M${center + hole} ${center}A${hole} ${hole} 0 1 0 ${center - hole} ${center}A${hole} ${hole} 0 1 0 ${center + hole} ${center}Z`;
 }
 
+/** An eye: its outline and its pupil. */
+const EYE = "M0.8 8c1.9 -3.1 4.4 -4.7 7.2 -4.7s5.3 1.6 7.2 4.7c-1.9 3.1 -4.4 4.7 -7.2 4.7s-5.3 -1.6 -7.2 -4.7zM8 5.4a2.6 2.6 0 1 0 0.01 0z";
+
 /** The name the layout pick shows for a layout no name keeps. */
 const UNKEPT = "";
 
@@ -36,10 +42,19 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
     const gear = el("button", { type: "button", class: "tabs-gear", "aria-label": "Page settings", "aria-haspopup": "dialog", "aria-expanded": "false", title: "page settings" });
     gear.append(svgIcon(gearPath(), true));
     const quick = el("select", { class: "field tabs-layouts", "aria-label": "Panel layout", title: "the panel layout; pick a kept one to swap to it" }) as HTMLSelectElement;
-    const done = el("button", { type: "button", class: "btn btn-small btn-primary tabs-done", title: "stop editing the panels" }, "Done");
+    const done = el("button", { type: "button", class: "btn btn-small btn-primary tabs-done", title: "stop editing the panels" }, "Done editing");
+    const peek = el("button", { type: "button", class: "tabs-gear tabs-peek", "aria-label": "Show hidden panels", "aria-pressed": "false" });
+    peek.append(svgIcon(EYE, true));
+    peek.addEventListener("click", () => panels.setPeeking(!panels.peeking()));
+    const toTop = el("button", { type: "button", class: "tabs-gear", "aria-label": "Scroll to the top", title: "scroll the column last pointed at to its top" });
+    toTop.append(svgIcon(TO_TOP));
+    toTop.addEventListener("click", () => panels.scrollColumn("top"));
+    const toEnd = el("button", { type: "button", class: "tabs-gear", "aria-label": "Scroll to the end", title: "scroll the column last pointed at to its end" });
+    toEnd.append(svgIcon(TO_END));
+    toEnd.addEventListener("click", () => panels.scrollColumn("end"));
     const sheet = el("div", { class: "panel page-settings", role: "dialog", "aria-label": "Page settings" });
     sheet.hidden = true;
-    tools.append(quick, done, gear, sheet);
+    tools.append(quick, done, toTop, toEnd, peek, gear, sheet);
 
     /** Fills a layout pick: Default, the kept names, and a blank for a layout none keeps. */
     function fillLayouts(select: HTMLSelectElement): void {
@@ -59,6 +74,15 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
             fillLayouts(quick);
         }
         done.hidden = !panels.editing();
+        // The eye shows while a panel is hidden, or while it is pressed.
+        const hidden = panels.hiddenPanels().length;
+        if (hidden === 0 && panels.peeking()) {
+            panels.setPeeking(false);
+            return;
+        }
+        peek.hidden = hidden === 0;
+        peek.setAttribute("aria-pressed", String(panels.peeking()));
+        peek.title = panels.peeking() ? "hide the hidden panels again" : `show the ${hidden} hidden panel${hidden === 1 ? "" : "s"} for now`;
     }
 
     quick.addEventListener("change", () => {

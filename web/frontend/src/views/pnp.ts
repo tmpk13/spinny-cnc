@@ -7,7 +7,7 @@
 // the head, the top camera, the board's place on it, the feeders, and the
 // run. Its own setup steps lead through all of it.
 
-import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, setLocked, Tracked, writeStored } from "../dom.ts";
+import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, resizableBox, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -391,7 +391,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
             el("div", { class: "button-row" }, gotoButton, correctLabel, withCameraLabel),
             chosenLine,
             partsNote,
-            el("div", { class: "pnp-parts-box" }, table),
+            resizableBox(el("div", { class: "pnp-parts-box", title: "drag the lower right corner to size the list" }, table), "spinny.pnp.parts.height"),
         ),
     );
     jobPick.addEventListener("change", () => {

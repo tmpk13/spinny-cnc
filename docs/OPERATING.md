@@ -312,12 +312,17 @@ leaving the page with any asks first.
 Every panel's head has a fold button (the chevron before its name) and a
 menu (the dots after it, or a right click on the head): fold, hide, move
 up, down or to the next column, stack with the panel above or below,
-stick to the panel above, and reset. A stack shows one of its panels at
-a time under a row of tabs; panels stuck together are drawn as one block
-and move together. The Run panel stays at the foot of its column unless
-it is stuck or stacked. On the wide layout a handle under each panel
-holds it at a height (it then scrolls inside), and a handle between two
+stick to the panel above, lay stuck panels *Side by side* (and back *One
+above another*), *Fit to screen*, and reset. A stack shows one of its
+panels at a time under a row of tabs; panels stuck together are drawn as
+one block and move together, one above another or side by side (a phone
+shows them in one column either way). The Run panel stays at the foot of
+its column unless it is stuck or stacked. On the wide layout a handle
+under each panel holds it at a height (it then scrolls inside, with
+buttons in its head to its top and its end), and a handle between two
 columns sets their widths; a double click on either gives the size back.
+*Fit to screen* holds a panel at the height its column shows. The PNP
+parts list sizes by its lower right corner.
 
 The gear at the right end of the tab bar opens the page settings: the
 tab the page opens on, the tab bar folded to a thin strip that opens on
@@ -325,7 +330,11 @@ hover or a press, tabs kept out of the bar (they open from *More* at its
 end), the panel layouts kept by name, *Edit panels*, a reset of the page
 shown, and the hidden panels to show again. *Edit panels* puts a grip in
 every head: drag a panel to another place, or onto another panel to
-stack them, then press *Done* in the tab bar. A layout kept by name
+stack them, then press *Done editing* in the tab bar. While a panel is
+hidden an eye shows beside the gear: pressed, the hidden panels show for
+a while with a dashed edge (their menu has *Show for good*), and pressed
+again they hide. The two arrows beside it scroll the column last pointed
+at to its top or its end. A layout kept by name
 covers every page; *Default* is the page as shipped and cannot be saved
 over. Once one is kept, a pick beside the gear swaps layouts in one
 step. The Setup, Align, Camera and Job JSON panels keep their own fold,

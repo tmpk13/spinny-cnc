@@ -470,3 +470,32 @@ export function foldPanel(key: string, head: HTMLElement, body: HTMLElement, onT
     });
     return fold;
 }
+
+/**
+ * Lets the operator drag the bottom right corner of `box` to set its
+ * height (CSS resize), kept in this browser under `key` in rem. The
+ * height is read back from what the browser writes while a drag goes on
+ * (px), so nothing is stored until the box is sized by hand, and a
+ * stored height comes back as rem.
+ */
+export function resizableBox<T extends HTMLElement>(box: T, key: string): T {
+    box.classList.add("resizable-box");
+    const rem = (): number => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const stored = Number(readStored(key));
+    if (Number.isFinite(stored) && stored > 0) {
+        box.style.height = `${stored}rem`;
+    }
+    if (typeof ResizeObserver === "function") {
+        new ResizeObserver(() => {
+            const height = box.style.height;
+            // Only a height the browser set from a drag (px) is stored.
+            if (height.endsWith("px")) {
+                const value = Math.round((parseFloat(height) / rem()) * 4) / 4;
+                if (value > 0) {
+                    writeStored(key, String(value));
+                }
+            }
+        }).observe(box);
+    }
+    return box;
+}

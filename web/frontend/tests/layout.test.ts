@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    blockIsRow,
     bringToFront,
     canonicalLayout,
     canonicalLayouts,
@@ -8,6 +9,7 @@ import {
     DEFAULT_PRESET,
     defaultLayout,
     isDefault,
+    isRow,
     isStuck,
     locate,
     matchingPreset,
@@ -22,6 +24,7 @@ import {
     resetPanel,
     sameArrangement,
     setPrefs,
+    setRow,
     setWidths,
     stackNeighbor,
     stackOnto,
@@ -154,6 +157,29 @@ describe("moves", () => {
         stick(layout, "jog");
         setPrefs(layout, "jog", { hidden: true });
         expect(layout).toEqual(fresh());
+    });
+});
+
+describe("blocks side by side", () => {
+    test("a block of two stacks lays them side by side, and back one above another", () => {
+        const stuck = stick(fresh(), "laser");
+        expect(isRow(stuck, "laser")).toBe(false);
+        const row = setRow(stuck, "laser", true);
+        expect(isRow(row, "jog") && isRow(row, "laser")).toBe(true);
+        // The flag lives on the block's first panel.
+        expect(row.panels["jog"]).toEqual({ row: true });
+        expect(blockIsRow(row, row.columns[0]![1]!)).toBe(true);
+        expect(setRow(row, "jog", false).panels).toEqual({});
+    });
+
+    test("a panel alone is never a row, and a stack parted from a row is one above another", () => {
+        expect(setRow(fresh(), "jog", true).panels).toEqual({});
+        const row = setRow(stick(stick(fresh(), "laser"), "markers"), "laser", true);
+        const parted = unstick(row, "markers");
+        expect(isRow(parted, "jog")).toBe(true);
+        expect(isRow(parted, "markers")).toBe(false);
+        // A stored flag survives a reload.
+        expect(normalizeLayout(JSON.parse(JSON.stringify(row)), MARKUP).panels["jog"]).toEqual({ row: true });
     });
 });
 

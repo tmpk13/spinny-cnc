@@ -2,9 +2,14 @@
 // panel of every page, whatever its view, gets in its head a fold button
 // and a menu (its dots button, or a right click on the head): fold, hide,
 // move up, down or to the next column, stack with the panel above or
-// below, stick to the panel above, and reset. A stack shows one panel at a
-// time under a row of tabs, one per panel. Panels stuck together are drawn
-// as one block with no gap and move together. A handle under each panel
+// below, stick to the panel above, lay a block side by side, fit the
+// panel to the screen, and reset. A stack shows one panel at a time under
+// a row of tabs, one per panel. Panels stuck together are drawn as one
+// block with no gap and move together, or side by side in one row (a
+// wrapper around the block's stacks, which falls back to one column on a
+// narrow screen). A panel held at a height shows buttons in its head to
+// scroll to its top and its end. Hidden panels can be shown for a while
+// (peeking), marked as hidden, without being shown again for good. A handle under each panel
 // holds it at a height, its content scrolling within; a handle between two
 // columns sets their widths; a double click on either gives the size back
 // to the stylesheet. In edit mode each head has a grip that drags its
@@ -23,9 +28,11 @@
 
 import { el, readStored, svgIcon, writeStored } from "../dom.ts";
 import {
+    blockIsRow,
     bringToFront,
     canonicalLayouts,
     DEFAULT_PRESET,
+    isRow,
     isStuck,
     locate,
     matchingPreset,
@@ -40,6 +47,7 @@ import {
     resetPanel,
     sameArrangement,
     setPrefs,
+    setRow,
     setWidths,
     stackNeighbor,
     stackOnto,
@@ -71,6 +79,11 @@ export interface PanelsController {
     /** The panels the operator hid, on every page. */
     hiddenPanels(): { id: string; title: string; page: string }[];
     showPanel(id: string): void;
+    /** Whether the hidden panels show for now, marked as hidden. */
+    peeking(): boolean;
+    setPeeking(on: boolean): void;
+    /** Scrolls the column last pointed at or typed in (the page, on a narrow screen) to its top or its end. */
+    scrollColumn(edge: "top" | "end"): void;
     /** Hears every change of a layout, the edit mode or the presets. */
     onChange(listener: () => void): void;
     /**
@@ -93,6 +106,9 @@ interface PageView {
     strips: Map<string, HTMLElement>;
     /** A handle on each boundary between two columns. */
     handles: HTMLElement[];
+    /** The wrappers of blocks laid side by side, by the block's stacks; and each stack's cell in one, by its ids. */
+    rows: Map<string, HTMLElement>;
+    cells: Map<string, HTMLElement>;
 }
 
 interface PanelView {
@@ -110,6 +126,9 @@ interface PanelView {
     /** Whether its view hid it, and its name, as last drawn. */
     viewHidden: boolean;
     name: string;
+    /** In its head, shown while it is held at a height: to its top, to its end. */
+    toTop: HTMLButtonElement;
+    toEnd: HTMLButtonElement;
 }
 
 let controller: (PanelsController & { reveal(id: string): void }) | null = null;
@@ -143,6 +162,9 @@ function title(root: HTMLElement): string {
 
 /** Three dots in a row. */
 const DOTS = "M2 8a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M6.5 8a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M11 8a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0";
+/** An arrow up to a bar, and down to one: to the top, to the end. */
+export const TO_TOP = "M3 2.5h10v1.5h-10zM8 5l4.5 4.5l-1.1 1.1l-2.65 -2.65v5.55h-1.5v-5.55l-2.65 2.65l-1.1 -1.1z";
+export const TO_END = "M3 13.5h10v-1.5h-10zM8 11l4.5 -4.5l-1.1 -1.1l-2.65 2.65v-5.55h-1.5v5.55l-2.65 -2.65l-1.1 1.1z";
 /** Two columns of three dots: a grip. */
 const GRIP = "M5 3.5a1.25 1.25 0 1 0 0.01 0M11 3.5a1.25 1.25 0 1 0 0.01 0M5 8a1.25 1.25 0 1 0 0.01 0M11 8a1.25 1.25 0 1 0 0.01 0M5 12.5a1.25 1.25 0 1 0 0.01 0M11 12.5a1.25 1.25 0 1 0 0.01 0";
 
@@ -151,15 +173,20 @@ export function mountPanels(app: HTMLElement): PanelsController {
     const panels = new Map<string, PanelView>();
     const listeners: (() => void)[] = [];
     let editing = false;
+    let peeking = false;
+    // The column last pointed at or typed in: where the bar's scroll buttons act.
+    let lastColumn: HTMLElement | null = null;
 
     const stored = readObject(readStored(LAYOUT_KEY));
     for (const root of childrenOf(app, "main.page")) {
         const id = root.id.replace(/^page-/, "");
         const columns = childrenOf(root, ".column");
         const defaults = columns.map((column) => childrenOf(column, "section.panel[id]").map((panel) => panel.id));
-        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [] };
+        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map() };
         pages.set(id, page);
         for (const column of columns) {
+            column.addEventListener("pointerover", () => (lastColumn = column));
+            column.addEventListener("focusin", () => (lastColumn = column));
             for (const panel of childrenOf(column, "section.panel[id]")) {
                 panels.set(panel.id, decorate(panel, page));
             }
@@ -233,7 +260,13 @@ export function mountPanels(app: HTMLElement): PanelsController {
             chevron = el("button", { type: "button", class: "panel-chevron", "aria-label": `Fold ${name}`, "aria-expanded": "true" });
         }
         const resize = el("div", { class: "panel-resize", title: "drag to hold the panel at a height; double click to free it", "aria-hidden": "true" });
-        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name };
+        const toTop = el("button", { type: "button", class: "panel-scroll", "aria-label": `${name}: to the top`, title: "scroll to the top" });
+        toTop.append(svgIcon(TO_TOP));
+        const toEnd = el("button", { type: "button", class: "panel-scroll", "aria-label": `${name}: to the end`, title: "scroll to the end" });
+        toEnd.append(svgIcon(TO_END));
+        toTop.hidden = true;
+        toEnd.hidden = true;
+        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name, toTop, toEnd };
         place(panel);
 
         // In a summary a press would also open or close the disclosure.
@@ -246,6 +279,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
             openPanelMenu(panel, menuButton);
         });
         chevron?.addEventListener("click", () => setCollapsed(panel, !collapsedOf(panel)));
+        toTop.addEventListener("click", (event) => {
+            own(event);
+            root.scrollTo({ top: 0, behavior: "smooth" });
+        });
+        toEnd.addEventListener("click", (event) => {
+            own(event);
+            root.scrollTo({ top: root.scrollHeight, behavior: "smooth" });
+        });
         grip.addEventListener("click", own);
         grip.addEventListener("pointerdown", (event) => dragPanel(panel, event));
         head.addEventListener("contextmenu", (event) => {
@@ -291,9 +332,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const heading = childrenOf(head, "h2")[0];
         head.prepend(...[panel.grip, panel.chevron].filter((node): node is HTMLButtonElement => node !== null));
         if (heading) {
-            heading.after(panel.menuButton);
+            heading.after(panel.menuButton, panel.toTop, panel.toEnd);
         } else {
-            head.append(panel.menuButton);
+            head.append(panel.menuButton, panel.toTop, panel.toEnd);
         }
         head.classList.add("panel-head-tools");
     }
@@ -321,7 +362,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
     /** Whether the panel shows: its view has not hidden it (read as it is now) and neither has the operator. */
     function shown(id: string): boolean {
         const panel = panels.get(id);
-        return panel !== undefined && !panel.root.classList.contains("hidden") && prefsOf(panel).hidden !== true;
+        return panel !== undefined && !panel.root.classList.contains("hidden") && (prefsOf(panel).hidden !== true || peeking);
     }
 
     function applyPanel(panel: PanelView): void {
@@ -336,7 +377,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 panel.chevron.title = collapsed ? "unfold" : "fold to the head";
             }
         }
-        root.toggleAttribute("data-off", prefs.hidden === true);
+        root.toggleAttribute("data-off", prefs.hidden === true && !peeking);
+        root.toggleAttribute("data-peek", prefs.hidden === true && peeking);
         const height = !collapsed && prefs.height !== undefined ? prefs.height : null;
         root.toggleAttribute("data-height", height !== null);
         // Written only on a change: besides saving work, setting a style
@@ -347,6 +389,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
             root.style.height = want;
         }
         panel.resize.hidden = handleHidden(panel, collapsed);
+        // A panel held at a height scrolls within it: its ends are a press away.
+        panel.toTop.hidden = height === null;
+        panel.toEnd.hidden = height === null;
     }
 
     /**
@@ -358,7 +403,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
     function handleHidden(panel: PanelView, collapsed = collapsedOf(panel)): boolean {
         const { root } = panel;
         const docked = root.hasAttribute("data-dock") && !["data-join-up", "data-join-down", "data-stacked"].some((name) => root.hasAttribute(name));
-        return collapsed || !shown(panel.id) || root.hasAttribute("data-behind") || docked;
+        // Side by side, a handle the width of the column would not say whose height it sets.
+        const inRow = root.parentElement?.classList.contains("panel-row-cell") === true;
+        return collapsed || !shown(panel.id) || root.hasAttribute("data-behind") || docked || inRow;
     }
 
     // --- drawing a page --------------------------------------------------------
@@ -416,6 +463,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
             page.root.style.removeProperty("--cols");
         }
         const used = new Set<HTMLElement>();
+        const usedRows = new Set<HTMLElement>();
+        const usedCells = new Set<HTMLElement>();
         page.layout.columns.forEach((blocks, index) => {
             const column = page.columns[index];
             if (!column) {
@@ -426,26 +475,64 @@ export function mountPanels(app: HTMLElement): PanelsController {
             // What is drawn, in order, with its block, for the joins.
             const drawn: { node: HTMLElement; block: number }[] = [];
             blocks.forEach((block, blockIndex) => {
+                // Side by side, each stack is a cell of the block's row: its
+                // tabs over its panels; the row is drawn as one thing.
+                const row = blockIsRow(page.layout, block) && block.filter((stack) => stack.ids.some(shown)).length > 1;
+                const cells: HTMLElement[] = [];
                 for (const stack of block) {
                     const members = stack.ids.map((id) => panels.get(id)).filter((panel): panel is PanelView => panel !== undefined);
                     const visible = members.filter((panel) => shown(panel.id));
                     const front = visible.find((panel) => panel.id === stack.front) ?? visible[0];
+                    const into: HTMLElement[] = [];
                     if (front && visible.length > 1) {
                         const strip = stripFor(page, stack, visible, front);
                         used.add(strip);
-                        desired.push(strip);
-                        drawn.push({ node: strip, block: blockIndex });
+                        into.push(strip);
+                        if (!row) {
+                            drawn.push({ node: strip, block: blockIndex });
+                        }
                     }
                     for (const panel of members) {
-                        desired.push(panel.root);
+                        into.push(panel.root);
                         handles.push(panel.resize);
                         panel.root.toggleAttribute("data-behind", visible.includes(panel) && panel !== front);
                         panel.root.toggleAttribute("data-stacked", visible.length > 1 && panel === front);
                         applyPanel(panel);
-                        if (panel === front) {
+                        if (panel === front && !row) {
                             drawn.push({ node: panel.root, block: blockIndex });
                         }
                     }
+                    if (!row) {
+                        desired.push(...into);
+                        continue;
+                    }
+                    for (const node of into) {
+                        for (const name of ["data-join-up", "data-join-down", "data-first", "data-last"]) {
+                            node.removeAttribute(name);
+                        }
+                    }
+                    const key = stack.ids.join(" ");
+                    let cell = page.cells.get(key);
+                    if (!cell) {
+                        cell = el("div", { class: "panel-row-cell" });
+                        page.cells.set(key, cell);
+                    }
+                    usedCells.add(cell);
+                    reorder(cell, into);
+                    cell.hidden = visible.length === 0;
+                    cells.push(cell);
+                }
+                if (row) {
+                    const key = block.map((stack) => stack.ids.join(" ")).join("|");
+                    let wrapper = page.rows.get(key);
+                    if (!wrapper) {
+                        wrapper = el("div", { class: "panel-row" });
+                        page.rows.set(key, wrapper);
+                    }
+                    usedRows.add(wrapper);
+                    reorder(wrapper, cells);
+                    desired.push(wrapper);
+                    drawn.push({ node: wrapper, block: blockIndex });
                 }
             });
             reorder(column, [...desired, ...handles]);
@@ -472,6 +559,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
             if (!used.has(strip)) {
                 strip.remove();
                 page.strips.delete(key);
+            }
+        }
+        for (const [map, kept] of [[page.cells, usedCells], [page.rows, usedRows]] as const) {
+            for (const [key, node] of map) {
+                if (!kept.has(node)) {
+                    node.remove();
+                    map.delete(key);
+                }
             }
         }
         positionHandles(page);
@@ -518,7 +613,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const apply = (next: PageLayout): void => update(page, next);
         const entries: MenuEntry[] = [
             { label: collapsed ? "Unfold" : "Fold", run: () => setCollapsed(panel, !collapsed) },
-            { label: "Hide", run: () => apply(setPrefs(layout, id, { hidden: true })) },
+            prefs.hidden
+                ? { label: "Show for good", run: () => apply(setPrefs(layout, id, { hidden: undefined })) }
+                : { label: "Hide", run: () => apply(setPrefs(layout, id, { hidden: true })) },
             "-",
             { label: "Move up", run: () => apply(moveBlock(layout, id, -1, shown)), disabled: before ? undefined : "already at the top" },
             { label: "Move down", run: () => apply(moveBlock(layout, id, 1, shown)), disabled: after ? undefined : "already at the bottom" },
@@ -540,7 +637,12 @@ export function mountPanels(app: HTMLElement): PanelsController {
         entries.push(stuck
             ? { label: "Unstick from above", run: () => apply(unstick(layout, id)) }
             : { label: "Stick to above", run: () => apply(stick(layout, id, shown)), disabled: before ? undefined : "no panel above" });
+        if (blocks[where.block]!.length > 1) {
+            const row = isRow(layout, id);
+            entries.push({ label: row ? "One above another" : "Side by side", run: () => apply(setRow(layout, id, !row)) });
+        }
         entries.push("-");
+        entries.push({ label: "Fit to screen", run: () => apply(setPrefs(layout, id, { height: screenHeight(panel) })) });
         if (prefs.height !== undefined) {
             entries.push({ label: "Free height", run: () => apply(setPrefs(layout, id, { height: undefined })) });
         }
@@ -549,6 +651,21 @@ export function mountPanels(app: HTMLElement): PanelsController {
     }
 
     // --- sizes ----------------------------------------------------------------
+
+    /**
+     * The height, rem, at which a panel fills what its column shows (the
+     * window under the bars, on a narrow screen), less the gaps over and
+     * under it: the panel then scrolls within one screen.
+     */
+    function screenHeight(panel: PanelView): number {
+        const rem = remPx();
+        const column = panel.root.closest(".column") as HTMLElement | null;
+        const gap = parseFloat(getComputedStyle(panel.page.root).getPropertyValue("--gap")) || 0.75;
+        const room = wide() && column
+            ? column.clientHeight
+            : window.innerHeight - Math.max(0, panel.page.root.getBoundingClientRect().top);
+        return Math.round(((room / rem) - 2 * gap) * 4) / 4;
+    }
 
     /** Follows a drag from `event` until the pointer is let go; `move` hears the pointer's travel from where it went down. */
     function follow(event: PointerEvent, move: (dx: number, dy: number, at: PointerEvent) => void, done: (cancelled: boolean) => void): void {
@@ -847,6 +964,24 @@ export function mountPanels(app: HTMLElement): PanelsController {
             const panel = panels.get(id);
             if (panel) {
                 update(panel.page, setPrefs(panel.page.layout, id, { hidden: undefined }));
+            }
+        },
+        peeking: () => peeking,
+        setPeeking(on) {
+            peeking = on;
+            app.toggleAttribute("data-peek", on);
+            for (const page of pages.values()) {
+                render(page);
+            }
+            notify();
+        },
+        scrollColumn(edge) {
+            const page = [...pages.values()].find((entry) => entry.id === app.getAttribute("data-page"));
+            const column = wide() ? (lastColumn && page?.columns.includes(lastColumn) ? lastColumn : null) : null;
+            const targets: (HTMLElement | Window)[] = column ? [column] : wide() ? page?.columns ?? [] : [window];
+            for (const target of targets) {
+                const end = target instanceof Window ? document.documentElement.scrollHeight : target.scrollHeight;
+                target.scrollTo({ top: edge === "top" ? 0 : end, behavior: "smooth" });
             }
         },
         onChange(listener) {

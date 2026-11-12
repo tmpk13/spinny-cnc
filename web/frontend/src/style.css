@@ -137,6 +137,42 @@
     box-sizing: border-box;
 }
 
+/* Scroll bars wide enough to grab: the browser's full width with the
+   thumb drawn strong (Firefox), and where the scroll bar's parts can be
+   styled (Chromium, Safari: only while scrollbar-width and
+   scrollbar-color stay auto) wider still, the thumb inset from its
+   track's edges. */
+* {
+    scrollbar-color: var(--border-strong) transparent;
+}
+
+@supports selector(::-webkit-scrollbar) {
+    * {
+        scrollbar-color: auto;
+    }
+
+    ::-webkit-scrollbar {
+        width: 0.9rem;
+        height: 0.9rem;
+    }
+
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--border-strong);
+        background-clip: padding-box;
+        border: 0.2rem solid transparent;
+        border-radius: 0.45rem;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background-color: var(--muted);
+    }
+}
+
 html, body {
     margin: 0;
     padding: 0;
@@ -344,6 +380,16 @@ input[type="checkbox"] {
     height: 1.25rem;
 }
 
+.tabs-gear[hidden] {
+    display: none;
+}
+
+.tabs-peek[aria-pressed="true"] {
+    color: var(--on-fill);
+    background: var(--accent-fill);
+    border-color: var(--accent-fill);
+}
+
 /* Folded, the bar is a strip naming the page; hovering it, a press on it
    (a screen with no hover), or the keyboard's focus in it opens the bar
    over the top of the page. */
@@ -504,7 +550,6 @@ table.settings-list td {
    narrow for its four columns, rather than widening the page. */
 .settings-scroll {
     overflow-x: auto;
-    scrollbar-width: thin;
 }
 
 .settings-help {
@@ -588,8 +633,6 @@ table.settings-list td {
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
-        scrollbar-width: thin;
-        scrollbar-color: var(--border) transparent;
     }
 
     .column > .panel {
@@ -1541,8 +1584,6 @@ input.num.field.invalid {
     overflow: auto;
     border: thin solid var(--border);
     border-radius: var(--radius);
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
 }
 
 .job-list li {
@@ -1744,8 +1785,6 @@ table.groups input[type="checkbox"] {
    scrolls inside its box rather than widening the page. */
 .groups-scroll {
     overflow-x: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
 }
 
 table.groups input.num {
@@ -1922,8 +1961,6 @@ canvas.preview:active {
     padding: 0.5rem 0.65rem;
     white-space: pre-wrap;
     word-break: break-all;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
 }
 
 .console-line .dir {
@@ -2050,8 +2087,6 @@ dialog.confirm::backdrop {
 
 .hm-map {
     overflow-x: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
 }
 
 /* Cells sit apart by a hairline of the panel so neighbors never merge. */
@@ -2427,8 +2462,6 @@ table.cam-table input[type="checkbox"] {
 
 .align-marks-scroll {
     overflow-x: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
 }
 
 .align-marks {
@@ -2638,7 +2671,6 @@ table.cam-table input[type="checkbox"] {
     padding: 0.25rem 0 0.5rem;
     list-style: none;
     overflow-x: auto;
-    scrollbar-width: thin;
 }
 
 /* Each step takes an equal share of the row; a share too narrow for the
@@ -2759,9 +2791,19 @@ table.cam-table input[type="checkbox"] {
 /* PNP page: the parts list, the board drawing, the up camera and the nozzle. */
 .pnp-parts-box {
     max-height: 60vh;
+    min-height: 6rem;
     overflow: auto;
     border: thin solid var(--border);
     border-radius: var(--radius);
+}
+
+/* A box the operator sizes by its corner: once sized, no cap. */
+.resizable-box {
+    resize: vertical;
+}
+
+.resizable-box[style*="height"] {
+    max-height: none;
 }
 
 table.pnp-parts {
@@ -3367,8 +3409,6 @@ a.btn.disabled {
     border: thin solid var(--border);
     border-radius: var(--radius);
     background: var(--panel-2);
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
 }
 
 .auto-empty {
@@ -3620,6 +3660,75 @@ a.btn.disabled {
     border-bottom: none;
 }
 
+/* Hidden by the operator but shown for a while (the bar's eye): marked
+   with a dashed edge so it reads as hidden. */
+.panel[data-peek] {
+    border-style: dashed;
+    border-color: var(--border-strong);
+    opacity: 0.85;
+}
+
+/* A block laid side by side: each stack a cell, the cells sharing the
+   column's width. On a narrow screen the wrappers fall away and the
+   panels stack in one column as any others. */
+.panel-row {
+    display: flex;
+    align-items: stretch;
+    gap: var(--gap);
+}
+
+.panel-row-cell {
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: var(--gap);
+    min-width: 0;
+}
+
+.panel-row-cell[hidden] {
+    display: none;
+}
+
+.panel-row-cell > .panel {
+    flex: 1 1 auto;
+}
+
+@media (max-width: 63.99rem) {
+    .panel-row,
+    .panel-row-cell {
+        display: contents;
+    }
+}
+
+/* To the top and to the end of a panel held at a height. */
+.panel-scroll {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    color: var(--muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.panel-scroll[hidden] {
+    display: none;
+}
+
+.panel-scroll:hover {
+    color: var(--strong);
+    background: var(--btn);
+}
+
+.panel-scroll .icon {
+    width: 1rem;
+    height: 1rem;
+}
+
 /* Hidden by the operator, or a panel of a stack behind the one shown. */
 .panel:is([data-off], [data-behind]) {
     display: none !important;
@@ -3692,7 +3801,6 @@ a.btn.disabled {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-top: 0;
-    scrollbar-width: thin;
 }
 
 .page .panel[data-height] > .panel-head,
