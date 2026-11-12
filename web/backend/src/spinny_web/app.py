@@ -43,6 +43,7 @@ from . import __version__, calibration, center, update
 from .align import Alignment
 from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
+from .boardlook import BoardLook, BoardMover, PictureFrame, RestTracker, found_text, search, search_box, search_stops
 from .camera import Camera, CameraError, MachineAccess, pose_summary
 from .camlog import CAMERAS, CameraLog
 from .files import write_whole
@@ -510,6 +511,18 @@ class CameraFindBody(Finite):
     step: float = 2.0
 
 
+class BoardSearchBody(Finite):
+    # The box the picture's center searches, x0 y0 x1 y1 mm in the camera's
+    # machine frame (the board frame for the head camera, X and Y for a
+    # G-code machine's top camera); left out, a square the board's diagonal
+    # on a side about where the picture's center is now.
+    box: tuple[float, float, float, float] | None = None
+
+
+class BoardPlaceBody(Finite):
+    job: str
+
+
 class PnpSettingsBody(Finite):
     device: str | None = None
     size: str | None = None
@@ -740,6 +753,14 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
         self.top = TopCamera(self._placing_config, self._save_config, self.publish_placing, self.publish_message)
+        # The head and top cameras' looks for a board: pcbv's poses read
+        # while a board is loaded, into a place on the machine only enough
+        # of them agreeing call found; held off while a routine moves the
+        # head and reads them itself.
+        self.head_look = BoardLook(lambda: self.camera.client, self.publish_camera, paused=lambda: self.camera.routine_active)
+        self.top_look = BoardLook(lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active)
+        self._head_rest = RestTracker()
+        self._top_rest = RestTracker()
         # The pictures the cameras' routines looked at, kept while logging
         # is on, and photos taken by hand.
         self.camlog = CameraLog(
@@ -1150,6 +1171,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         return 1000 if isinstance(invert, (int, float)) and invert else 0
 
     def shutdown(self) -> None:
+        self.head_look.stop()
+        self.top_look.stop()
         self.camera.shutdown()
         self.pnp.shutdown()
         self.top.shutdown()
@@ -1180,7 +1203,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         """Refuses a request that would move the head under a camera
         routine moving it."""
         if self.camera.routine_active:
-            raise HTTPException(status_code=409, detail="the camera is finding the mark")
+            raise HTTPException(status_code=409, detail="a camera routine is moving the head")
         if self.pnp.routine_active:
             raise HTTPException(status_code=409, detail="the up camera routine is moving the head")
 
@@ -2865,7 +2888,52 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
     # --- the camera -----------------------------------------------------------------
 
     def camera_state(self) -> dict:
-        return self.camera.state(job_center=self._job_center)
+        if self.head_look.job is not None and self.head_look.job != self.camera.board_job:
+            # The camera stopped, or started again without the board.
+            self.head_look.stop()
+        return {**self.camera.state(job_center=self._job_center), "board_look": self.head_look.state()}
+
+    def _head_look_place(self, captured: float) -> PictureFrame | str:
+        """Where the head camera's picture lay on the board frame for a
+        frame taken at `captured`: the tool's point plus the offset, once
+        the machine has stood idle there for the settle time."""
+        link = self.link
+        status = link.status if link is not None else None
+        if status is None:
+            return "the machine is not connected: the head's place is not known"
+        board = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+        quiet = self._head_rest.see(board, moving=status.state != "Idle")
+        if quiet is None or captured < quiet:
+            return "the head is moving"
+        settings = self.camera.settings()
+        return PictureFrame((board[0] + settings.offset[0], board[1] + settings.offset[1]), settings.roll, False)
+
+    def _look_scale(self, client, measured: float) -> tuple[float, float, float]:
+        """A camera's picture size (full size px) and scale for a search:
+        the size pcbv reports, the scale measured, else pcbv's own from a
+        lock."""
+        try:
+            raw = client.pose()
+        except VisionError:
+            raw = {}
+        width, height = raw.get("width"), raw.get("height")
+        scale = measured if measured > 0.0 else raw.get("mm_per_px") if raw.get("state") == "locked" else 0.0
+        if not isinstance(width, (int, float)) or not isinstance(height, (int, float)) or width <= 0 or height <= 0:
+            raise ValueError("the camera has no picture yet: wait for one")
+        if not isinstance(scale, (int, float)) or scale <= 0.0:
+            raise ValueError("the camera's scale is not measured: measure it first, so the search knows how far its picture reaches")
+        return float(width), float(height), float(scale)
+
+    @staticmethod
+    def _board_size(job) -> tuple[tuple[float, float], float]:
+        """A job's middle (its outline's box, else its paths') and diagonal, in its frame."""
+        points = [point for path in job.outline for point in path]
+        if not points:
+            points = [point for group in job.groups for path in group.board_paths() for point in path]
+        if not points:
+            return (0.0, 0.0), 10.0
+        xs, ys = [p[0] for p in points], [p[1] for p in points]
+        return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0), max(math.hypot(max(xs) - min(xs), max(ys) - min(ys)), 1.0)
 
     def _job_center(self, raw: dict) -> list | None:
         """The picture's center in the loaded job's frame, from a pose."""
@@ -2899,6 +2967,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     def camera_stop(self) -> dict:
         self.camera.stop()
+        self.head_look.stop()
         return self.publish_camera()
 
     def camera_frame(self, width: int, overlay: bool) -> bytes:
@@ -2916,6 +2985,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     def camera_board(self, job_id: str | None) -> dict:
         if job_id is None:
+            self.head_look.stop()
             self.camera.load_board(None, None)
         else:
             job = self._job(job_id)
@@ -2923,7 +2993,53 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             if job.design is None or not job.design.board or path is None:
                 raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
             self.camera.load_board(job_id, str(path))
+            middle, _ = self._board_size(job)
+            self.head_look.start(job_id, job.design.board_to_job, middle, self._head_look_place)
         return self.publish_camera()
+
+    def camera_search(self, body: BoardSearchBody) -> dict:
+        """Moves the head camera over a box until enough looks agree on the
+        board loaded (boardlook.py), on the camera's routine thread, owning
+        the machine as the find routine does."""
+        if self.head_look.job is None or self.head_look.job != self.camera.board_job:
+            raise ValueError("no board loaded: press Look for board first")
+        job = self._job(self.head_look.job)
+        middle, diagonal = self._board_size(job)
+        settings = self.camera.settings()
+        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px)
+        offset = settings.offset
+        with self._owner_lock:
+            link = self._movable()
+            values = self._values(force=True)
+            status = link.status_now(1.0, routine=True)
+            access = MachineAccess(
+                link=link,
+                streamer=self.streamer(status),
+                lift=self.lift_height(),
+                has_focus_axis=bool(values.get("h_axis")),
+                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
+            )
+            tool = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+            here = (tool[0] + offset[0], tool[1] + offset[1])
+            box = body.box if body.box is not None else search_box(here, diagonal)
+            stops = search_stops(box, (width * scale, height * scale), here)
+            mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
+            look = self.head_look
+
+            def run(progress) -> None:
+                mover.begin()
+                mover.lift()
+                progress.step = "searching"
+
+                def on_stop(index: int, count: int) -> None:
+                    progress.done = index + 1
+                    self.publish_camera()
+
+                found = search(look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError)
+                self.publish_message("info", found_text(found, look.consensus))
+
+            self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
+        return self.camera_state()
 
     def camera_mark(self, body: CameraMarkBody) -> dict:
         """Records the tool's point as the mark, and cuts it with the tool
@@ -3098,6 +3214,14 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             raise CameraError("the camera is not running")
         if self.camera.board_job != job_id or job.design is None:
             raise CameraError("the camera is not looking for this job's board: load it first")
+        best = self.head_look.consensus.best if self.head_look.job == job_id and self.head_look.consensus.found else None
+        if best is not None:
+            # Enough looks agree: their median place and turn of the board,
+            # its middle in the job paired with where it is on the machine.
+            middle = self.head_look.consensus.middle
+            state = self.alignment.mark_camera(job, middle, best.center, best.rotation if self.camera.settings().side == "front" else None)
+            self.publish_align()
+            return state
         raw = self.camera.pose()
         if raw is None or raw.get("state") != "locked" or not isinstance(raw.get("center"), (list, tuple)):
             raise CameraError("the camera has no lock on the board: move it over the board and wait for one")
@@ -3978,6 +4102,10 @@ def create_app(
     def camera_find(body: CameraFindBody | None = None):
         return guarded(lambda: backend.camera_find((body or CameraFindBody()).step))
 
+    @app.post("/api/camera/search")
+    def camera_search(body: BoardSearchBody | None = None):
+        return guarded(lambda: backend.camera_search(body or BoardSearchBody()))
+
     @app.post("/api/camera/abort")
     def camera_abort():
         return guarded(backend.camera_abort)
@@ -4135,6 +4263,22 @@ def create_app(
     @app.post("/api/pnp/top/offset")
     def top_offset(body: TopOffsetBody | None = None):
         return guarded(lambda: backend.top_offset((body or TopOffsetBody()).step))
+
+    @app.post("/api/pnp/top/look")
+    def top_look():
+        return guarded(backend.top_look)
+
+    @app.post("/api/pnp/top/board")
+    def top_board(body: CameraBoardBody):
+        return guarded(lambda: backend.top_board(body.job))
+
+    @app.post("/api/pnp/top/search")
+    def top_search(body: BoardSearchBody | None = None):
+        return guarded(lambda: backend.top_search(body or BoardSearchBody()))
+
+    @app.post("/api/pnp/top/place")
+    def top_place(body: BoardPlaceBody):
+        return guarded(lambda: backend.top_place(body))
 
     @app.post("/api/pnp/top/abort")
     def top_abort():

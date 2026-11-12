@@ -700,7 +700,8 @@ when a job's board is loaded, through the job's `design`.
 | `POST /api/camera/stop` | stops it; 409 while the find routine runs. The state |
 | `GET /api/camera/frame.jpg?width=640&overlay=1` | the newest picture as JPEG, shrunk to at most `width` (160 to 4096; left out, 640), with the spots and the pose drawn on it when `overlay` is 1 and a crosshair at the center always; 404 when the camera is not running or has no frame yet, 502 when pcbv fails or another request has had it for over 1 s (`the camera is busy`). `Cache-Control: no-store`; the page asks again for every picture |
 | `GET /api/camera/pose` | the newest pose: `{"state": "locked" \| "coasting" \| "lost" \| "none" \| null, "center": [x, y], "angle_deg": 1.3, "mm_per_px": 0.021, "inliers": 171, "expected": 190, "rms_mm": 0.04, "spots": 190, "fps": 14.0, "age_ms": 40, "job_center": [x, y] or null}`; `null` state with the camera stopped, `none` with no board loaded, and the pose fields only on `locked`; `job_center` is the picture's center in the loaded job's frame |
-| `POST /api/camera/board` | `{"job": "a1b2"}`: pcbv looks for the job's board in the pictures (a `.kicad_pcb` upload only: 400 for a job without its board file; the camera's `side` and `finish` apply); `{"job": null}` unloads it. The state |
+| `POST /api/camera/board` | `{"job": "a1b2"}`: pcbv looks for the job's board in the pictures (a `.kicad_pcb` upload only: 400 for a job without its board file; the camera's `side` and `finish` apply), and the backend reads its poses into the state's `board_look` until it is unloaded or the camera stops (Board look, below); `{"job": null}` unloads it. The state |
+| `POST /api/camera/search` | `{"box": [x0, y0, x1, y1]}` (board frame mm, where the picture's center may go; left out, a square the board's diagonal on a side about where the picture's center is now): the head goes over the box in camera-sized steps until the board is found, on the camera's routine thread, owning the machine as the find routine does (`routine.kind` `search`, `done` the stop it is at of `total`). It ends `done` with the picture's center over the board's middle once enough looks agree, `error` (`no board found: ...`) once every stop was looked at, or `stopped` by `POST /api/camera/abort`. 400 with no board loaded, no picture yet, or no scale (`mm_per_px` 0 and no lock), or a box over 400 stops; 409 unless Idle and free |
 | `POST /api/camera/mark` | `{"depth": 0.1, "plunge": 30, "speed": 1000}`: makes a mark with the tool where it stands, to measure the camera against: a job of one drill named `camera mark` is stored and run from the tool's point (a spindle machine with the focus axis, 400 otherwise; `depth` 0.01 to 5 mm, `plunge` 1 to 1000 mm/min, `speed` the spindle's `S`, `s_max` when left out; 409 while a run or probing owns the machine), its progress coming as `progress` events, and the tool's board point is recorded as the mark. `{"here": true}` only records the tool's point, for a mark made by hand or a hole in the board. The state |
 | `POST /api/camera/find` | `{"step": 2.0}`: finds the mark in the picture and puts the picture's center on it, which measures the offset. On its own thread, owning the machine as probing does: the head lifts to the travel height (`travel`, else `clearance` taken as an H) when the machine has a focus axis and is lower, goes where the camera should see the mark (the mark less the offset in force), and the dark spot nearest the picture's center is taken for the mark (400 with no mark or no running camera, 409 unless Idle and free); with `step` above 0 (0 to 20 mm, default 2), or with `mm_per_px` 0, the head is moved `step` along +X and back, and how the spot moved in the picture gives `mm_per_px` and `roll`; then the head is moved by the spot's distance from the center, up to three times, until the spot is within 0.02 mm of it, and `offset` is the mark less the tool's point, saved in the settings. The routine's progress comes as `camera` events; a spot lost on the way ends it as `error` with the head where it stopped. The state |
 | `POST /api/camera/abort` | stops the find routine as a probing is stopped (hold, reset); 409 when none runs. The state |
@@ -725,7 +726,44 @@ the find routine's progress, `null` before any, with `step` one of
 found, its distance from the center in picture pixels and in mm, and
 `seconds` how long the routine has run.
 The pose is read from pcbv when the state is asked for; the page polls
-`GET /api/camera` while its camera panel shows.
+`GET /api/camera` while its camera panel shows. `routine.kind` is `find`
+or `search`. `board_look` is the board look, below.
+
+### Board look
+
+With a board loaded (the head camera's `POST /api/camera/board`, a
+G-code machine's top camera's `POST /api/pnp/top/board`), the backend
+reads pcbv's pose about five times a second. Each locked pose, taken
+with the head known to be at rest (the machine Idle at the place for
+0.25 s; on a G-code machine, the place last read or moved to, after the
+move's length at half the file's feed and 0.25 s), gives an estimate of
+where the board lies on the machine: the turn and shift that take the
+job's frame onto the machine's, fitted to the board points pcbv sees
+under the picture's center and corners against the machine points the
+camera's offset, roll, mirror and pcbv's scale put them at (a pose with
+no corners: its center and angle). The board is `found` once 5 estimates
+in a row lie within 0.5 mm (the board's middle) and 1 degree of the
+median of the newest 9; the estimate is the median of those that agree.
+A picture mirrored against the board is refused (`problem`).
+
+```json
+{"job": "a1b2", "looks": 42, "locked": 30, "pose": "locked", "agree": 5, "need": 5, "found": true,
+ "spread_mm": 0.08, "spread_deg": 0.12,
+ "estimate": {"rotation": 1.02, "shift": [40.1, 29.9], "center": [59.8, 45.3], "rms": 0.01},
+ "view": [[7.2, 22.3], [32.9, 22.1], [32.7, 7.7], [7.1, 7.9]], "seen": [20.0, 15.0], "problem": null}
+```
+
+`looks` counts the poses read, `locked` the ones that gave an estimate,
+`pose` the newest pose's state, `agree` how many of the newest estimates
+in a row agree; `estimate` (machine frame: the board frame for the head
+camera, X and Y for the top camera) is null until one agrees with the
+median. `view` is the newest locked picture's corners and `seen` its
+center in the job's frame (null while not locked); `problem` why the
+newest locked pose was not used (the head moving, the offset not
+known, a mirrored picture). With no board loaded, `{"job": null}`.
+`POST /api/align/capture` takes a found estimate (the board's middle, its
+place and turn) when the camera has one for that job, else the newest
+pose as before.
 
 ## Camera log
 
@@ -886,6 +924,10 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `GET /api/pnp/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
 | `POST /api/pnp/top/mark` | the nozzle's tip is over a mark: the head's place is kept as `mark_at` |
 | `POST /api/pnp/top/offset` | `{"step": 2.0}`: the head goes where the camera should see the mark (from `offset`, the file's guess, or where it stands), a step along X and along Y measure the picture, the mark is centered, and the offset is `mark_at` less the head's place. Kind `offset` |
+| `POST /api/pnp/top/look` | the `mark_spot` spot nearest the picture's center found once, no move, kept as `top.look` (as the up camera's) |
+| `POST /api/pnp/top/board` | `{"job": "a1b2"}`: pcbv looks for the job's board (front, masked) and the backend reads its poses into `top.board_look` (Board look, under Camera) until unloaded, the camera stopped or started again; `{"job": null}` unloads it. 400 with the camera stopped or a job without its board file |
+| `POST /api/pnp/top/search` | `{"box": [x0, y0, x1, y1]}`, machine X and Y for the picture's center, or `{}` for a square the board's diagonal on a side about where it is now: the head rises to the safe height, goes to `[top_camera] z`, and visits the box in camera-sized steps nearest first; pcbv is told to `reset` at each stop, and a stop is left when no lock comes within 2.5 s or after 5 s; ends `done` once enough looks agree (the picture's center put over the board's middle), `error` once every stop was looked at. Kind `search`, steps `lifting`, `stop 1` ... `stop N`. 400 as for the head camera's search |
+| `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found becomes the job's references: the two parts furthest apart (fiducials when there are two) where the estimate puts them, `by: "look"`, replacing earlier ones by look; 400 until the look has found this job's board |
 | `POST /api/pnp/top/abort` | ends the top camera's routine and sends the stop command |
 
 A feeder bus (`[bus]`) carries packets to smart feeders through the
@@ -925,7 +967,8 @@ Placing state:
  "top": {"running": true, "device": "/dev/video4", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "mark_spot": "dark",
          "mark_at": [120.0, 80.0], "offset": [35.0, -10.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": false,
          "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 15.0}, "routine": null,
-         "fiducials": {"job": "a1b2", "found": [{"ref": "FID1", "at": [100.0, 50.0]}], "fit": {"rotation": 0.6, "rms": 0.01}}},
+         "fiducials": {"job": "a1b2", "found": [{"ref": "FID1", "at": [100.0, 50.0]}], "fit": {"rotation": 0.6, "rms": 0.01}},
+         "look": null, "board_look": {"job": null}},
  "connected": true, "url": "/dev/ttyACM1", "lost": null, "running": false, "homed": true,
  "position": {"x": 100.0, "y": 50.0, "z": 0.0},
  "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"],
@@ -943,7 +986,10 @@ name and `document` its file's own tables read (as `GET
 feeds, `park`, `camera_position`, `camera_z`, `light`, `vacuum`, `top`,
 `feeders` and the rest. `connected` is true while that machine is the one
 connected; `url`, `lost`, `running`, `homed`, `position`, `light`,
-`vacuum`, `progress` and `log` are its link's.
+`vacuum`, `progress` and `log` are its link's. `position` follows the
+moves a camera routine makes as well. `top.board_look` is the top
+camera's board look (under Camera), `top.look` its last look once, as the
+up camera's.
 
 ## Alignment
 

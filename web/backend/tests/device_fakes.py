@@ -163,6 +163,83 @@ class DeviceTopCamera:
         self.running = False
 
 
+class SeenBoard:
+    """A board lying on a machine as pcbv would localize it: its outline's
+    box in the job's frame (x0, y0, x1, y1), the turn (degrees) and shift
+    that take the job's frame onto the machine's, and the design's shift
+    from the KiCad board frame (y down) to the job's."""
+
+    def __init__(self, box, rotation: float, shift, design_shift=(0.0, 0.0)) -> None:
+        self.box = box
+        self.rotation = rotation
+        self.shift = shift
+        self.design_shift = design_shift
+
+    def kicad(self, job):
+        return (job[0] - self.design_shift[0], -(job[1] - self.design_shift[1]))
+
+    def job_of(self, machine):
+        return turn((machine[0] - self.shift[0], machine[1] - self.shift[1]), -self.rotation)
+
+    def pose(self, center, roll: float, mirror: bool, scale: float, width: int, height: int, frame: int) -> dict:
+        """pcbv's pose of a picture whose center sees machine point `center`:
+        locked with the board's points under its center and corners while
+        the center is over the board, lost otherwise."""
+        from spinny_web.camera import picture_to_machine
+
+        def job_at(dx: float, dy: float):
+            off = picture_to_machine(dx, dy, scale, roll, mirror)
+            return self.job_of((center[0] + off[0], center[1] + off[1]))
+
+        seen = job_at(0.0, 0.0)
+        base = {"frame": frame, "age_ms": 0, "width": width, "height": height, "fps": 10.0, "spots": 40}
+        x0, y0, x1, y1 = self.box
+        if not (x0 <= seen[0] <= x1 and y0 <= seen[1] <= y1):
+            return {**base, "state": "lost"}
+        corners = [job_at(dx, dy) for dx, dy in ((-width / 2, -height / 2), (width / 2, -height / 2), (width / 2, height / 2), (-width / 2, height / 2))]
+        return {
+            **base,
+            "state": "locked",
+            "center": list(self.kicad(seen)),
+            "corners": [list(self.kicad(c)) for c in corners],
+            "angle_deg": roll - self.rotation,
+            "mm_per_px": scale,
+            "inliers": 30,
+            "expected": 32,
+            "rms_mm": 0.03,
+        }
+
+
+class BoardTopCamera(DeviceTopCamera):
+    """A top camera whose pcbv has a board to look for: its pose is the
+    `seen` board's from where the head stands; it takes a board's file,
+    a reset and a hello as pcbv does."""
+
+    def __init__(self, fake: FakeMarlin, offset, seen: SeenBoard, roll: float = 1.5, mirror: bool = False, scale: float = 0.02) -> None:
+        super().__init__(fake, offset, [], roll, mirror, scale)
+        self.seen = seen
+        self.loaded = None
+        self.frames = 0
+        self.asked: list[str] = []
+
+    def board(self, path, side="front", finish="masked"):
+        self.loaded = path
+        return {"features": 40} if path is not None else {"ok": True}
+
+    def request(self, cmd, timeout=None, **fields):
+        self.asked.append(cmd)
+        if cmd == "hello":
+            return {"version": "0.1.0", "camera": self.device, "board": self.loaded}
+        return {"ok": True}
+
+    def pose(self):
+        self.frames += 1
+        if self.loaded is None:
+            return {"state": "none", "frame": self.frames, "age_ms": 0, "width": 1280, "height": 720}
+        center = (self.fake.position[0] + self.offset[0], self.fake.position[1] + self.offset[1])
+        return self.seen.pose(center, self.roll, self.mirror, self.scale, 1280, 720, self.frames)
+
+
 def wait_for(check, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while not check():

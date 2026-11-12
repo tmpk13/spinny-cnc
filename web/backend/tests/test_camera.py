@@ -12,12 +12,15 @@ import threading
 import time
 
 import pytest
+from device_fakes import SeenBoard
 from fake_serial import FakeSerial, fake_opener
 from fastapi.testclient import TestClient
 
+from spinny_web import boardlook
 from spinny_web import camera as camera_module
 from spinny_web.app import Backend, create_app
 from spinny_web.camera import CameraSettings, picture_to_machine, scale_from_shift
+from spinny_web.jobs import Design, Group, Job
 from spinny_web.link import Link
 from spinny_web.vision import VisionClient, VisionError, find_pcbv
 
@@ -522,7 +525,7 @@ def test_a_find_without_the_mark_in_view_ends_as_an_error(client, fake):
     assert client.post("/api/camera/find", json={"step": 2.0}).status_code == 200
     time.sleep(0.05)
     response = client.post("/api/jog", json={"kind": "joint", "dr": 1.0})
-    assert response.status_code == 409 and "finding the mark" in response.json()["detail"]
+    assert response.status_code == 409 and "camera routine" in response.json()["detail"]
     assert client.post("/api/camera/find", json={"step": 2.0}).status_code == 409
     assert client.post("/api/camera/abort").status_code == 200
     state = wait_routine(client)
@@ -630,3 +633,73 @@ def test_a_machine_file_restarts_a_running_camera_on_its_device_and_a_failure_do
         state = client.get("/api/camera").json()
         assert state["running"] is False and state["pcbv"] == "no-such-pcbv-program"
         assert messages[-1][0] == "error" and "did not start again on /dev/video4" in messages[-1][1]
+
+
+class BoardStandIn:
+    """A head camera whose pcbv has a board to look for: its pose is the
+    `seen` board's from where the fake machine's tool stands plus the true
+    offset."""
+
+    def __init__(self, fake: FakeSerial, seen: SeenBoard, offset: tuple[float, float], roll: float, mm_per_px: float) -> None:
+        self.fake = fake
+        self.seen = seen
+        self.offset = offset
+        self.roll = roll
+        self.mm_per_px = mm_per_px
+        self.running = True
+        self.device = "/dev/video0"
+        self.loaded = None
+        self.frames = 0
+        self.asked: list[str] = []
+
+    def board(self, path, side="front", finish="masked"):
+        self.loaded = path
+        return {"features": 40}
+
+    def request(self, cmd, timeout=None, **fields):
+        self.asked.append(cmd)
+        return {"ok": True}
+
+    def pose(self):
+        self.frames += 1
+        if self.loaded is None:
+            return {"state": "none", "frame": self.frames, "age_ms": 0, "width": 1280, "height": 720}
+        center = (self.fake.joint[0] + self.offset[0], self.fake.z + self.offset[1])
+        return self.seen.pose(center, self.roll, False, self.mm_per_px, 1280, 720, self.frames)
+
+    def close(self):
+        self.running = False
+
+
+def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_place(client, fake, monkeypatch):
+    monkeypatch.setattr(boardlook, "LOCK_SECONDS", 0.15)
+    monkeypatch.setattr(boardlook, "STOP_SECONDS", 0.6)
+    monkeypatch.setattr(boardlook, "SAMPLE_SECONDS", 0.01)
+    job = Job(
+        name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        outline=[[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0), (0.0, 0.0)]],
+        design=Design(shift=(-100.0, -70.0), board=True),
+    )
+    client.backend.store.add(job)
+    client.backend.store.keep_board(job.id, b"(kicad_pcb)")
+    seen = SeenBoard((0.0, 0.0, 40.0, 30.0), 1.0, (40.0, 30.0), design_shift=(-100.0, -70.0))
+    stand_in = BoardStandIn(fake, seen, (12.5, -3.25), 0.0, 0.02)
+    client.backend.camera.client = stand_in
+    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02})
+    assert client.post("/api/camera/search", json={}).status_code == 400
+    response = client.post("/api/camera/board", json={"job": job.id})
+    assert response.status_code == 200, response.text
+    assert response.json()["board_look"]["job"] == job.id
+    response = client.post("/api/camera/search", json={"box": [45.0, 35.0, 75.0, 60.0]})
+    assert response.status_code == 200, response.text
+    state = wait_routine(client)
+    assert state["routine"]["state"] == "done" and state["routine"]["kind"] == "search", state["routine"]
+    middle = (40.0 + 20.0 * math.cos(math.radians(1.0)) - 15.0 * math.sin(math.radians(1.0)), 30.0 + 20.0 * math.sin(math.radians(1.0)) + 15.0 * math.cos(math.radians(1.0)))
+    look = state["board_look"]
+    assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01)
+    assert (fake.joint[0] + 12.5, fake.z - 3.25) == pytest.approx(middle, abs=0.01)
+    # A capture with the board found takes the agreed place and turn.
+    response = client.post("/api/align/capture", json={"job": job.id})
+    assert response.status_code == 200, response.text
+    mark = response.json()["marks"][-1]
+    assert mark["machine"] == pytest.approx(list(middle), abs=0.01) and mark["angle"] == pytest.approx(1.0, abs=0.01)

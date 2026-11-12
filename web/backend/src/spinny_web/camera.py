@@ -183,9 +183,12 @@ class RoutineProgress:
     error: str | None = None
     spot: Spot | None = None
     started: float = field(default_factory=time.monotonic, repr=False)
+    # Which routine: `find` (the mark) or `search` (the board).
+    kind: str = "find"
 
     def to_dict(self) -> dict:
         return {
+            "kind": self.kind,
             "state": self.state,
             "step": self.step,
             "done": self.done,
@@ -434,8 +437,50 @@ class Camera:
 
     def abort(self) -> None:
         if not self.routine_active:
-            raise CameraError("the camera is not finding the mark")
+            raise CameraError("the camera has no routine under way")
         self._abort.set()
+
+    def aborting(self) -> bool:
+        return self._abort.is_set()
+
+    def run_routine(self, kind: str, total: int, what: str, link: Link, body: Callable[[RoutineProgress], None]) -> None:
+        """Starts a routine of the camera's besides the find (the board
+        search) on the routine's thread; `what` names it when it fails,
+        `total` is its count of steps. The caller has checked that nothing
+        else owns the machine."""
+        if not self.client.running:
+            raise ValueError("the camera is not running: start it first")
+        with self._lock:
+            if self.routine_active:
+                raise CameraError("a camera routine is already under way")
+            self._abort.clear()
+            self._looks = 0
+            self.progress = RoutineProgress(step="lifting", total=total, kind=kind)
+            progress = self.progress
+            self._thread = threading.Thread(target=self._run_routine, args=(body, progress, what, link), name=f"camera-{kind}", daemon=True)
+            self._thread.start()
+        self._publish()
+
+    def _run_routine(self, body: Callable[[RoutineProgress], None], progress: RoutineProgress, what: str, link: Link) -> None:
+        try:
+            body(progress)
+            self._step(progress, "done", progress.total)
+            progress.state = DONE
+        except (LinkError, VisionError, CameraError, ValueError) as exc:
+            if self._abort.is_set():
+                progress.state = STOPPED
+                progress.error = "stopped"
+                self._halt(link)
+            else:
+                progress.state = ERROR
+                progress.error = str(exc)
+                self._message("error", f"{what} failed: {exc}")
+        except Exception as exc:
+            progress.state = ERROR
+            progress.error = repr(exc)
+            self._message("error", f"{what} failed: {exc!r}")
+        finally:
+            self._publish()
 
     def _find(self, access: MachineAccess, mark: Point, step: float, progress: RoutineProgress) -> None:
         link = access.link

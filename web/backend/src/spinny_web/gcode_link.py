@@ -527,6 +527,7 @@ class GcodeMover(Mover):
         self._command(move_xy(self.machine, (point[0], point[1])))
         self._wait()
         self._at[0], self._at[1] = float(point[0]), float(point[1])
+        self._keep()
 
     def lower(self, height: float) -> None:
         self._z(height)
@@ -542,6 +543,17 @@ class GcodeMover(Mover):
         self._command(move_z(self.machine, height))
         self._wait()
         self._at[2] = height
+        self._keep()
+
+    def _keep(self) -> None:
+        """The link's place follows the routine's moves, so what reads it
+        (the page's position, a camera's look for a board) sees the head
+        where the routine took it, not where it stood before."""
+        position = dict(self.link.position) if isinstance(self.link.position, dict) else {}
+        position["x"], position["y"] = round(float(self._at[0]), 4), round(float(self._at[1]), 4)
+        if self._at[2] is not None:
+            position["z"] = round(float(self._at[2]), 4)
+        self.link.position = position
 
     def _wait(self) -> None:
         if self.machine.wait:

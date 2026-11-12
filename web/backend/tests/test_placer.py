@@ -10,12 +10,13 @@ import re
 import time
 
 import pytest
-from device_fakes import DeviceTopCamera, DeviceUpCamera, FakeMarlin, LaggingUpCamera, turn, wait_for
+from device_fakes import BoardTopCamera, DeviceTopCamera, DeviceUpCamera, FakeMarlin, LaggingUpCamera, SeenBoard, turn, wait_for
 from fastapi.testclient import TestClient
 from gcode_rig import connect, gcode_file, rig_backend
 
 from spinny_laser.machines import MachineError
 from spinny_web.app import create_app
+from spinny_web import boardlook
 from spinny_web import camera as camera_module
 from spinny_web.camera import picture_to_machine
 from spinny_web.jobs import Design, Group, Job
@@ -552,3 +553,74 @@ def test_a_run_that_looks_with_the_top_camera_needs_it_running(client):
     assert response.status_code == 400 and "top camera is not running" in response.text
     response = client.post("/api/pnp/fiducials", json={"job": job_id})
     assert response.status_code == 400 and "offset is not measured" in response.text
+
+
+def outlined_job(client) -> str:
+    """A board job 40 by 30 mm in its frame, its KiCad file kept."""
+    job = Job(
+        name="outlined", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        outline=[[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0), (0.0, 0.0)]],
+        design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True),
+    )
+    client.backend.store.add(job)
+    client.backend.store.keep_board(job.id, BOARD.encode())
+    return job.id
+
+
+@pytest.fixture
+def quick_search(monkeypatch):
+    """The fakes lock at once: a stop is looked at for a moment only."""
+    monkeypatch.setattr(boardlook, "LOCK_SECONDS", 0.15)
+    monkeypatch.setattr(boardlook, "STOP_SECONDS", 0.6)
+    monkeypatch.setattr(boardlook, "SAMPLE_SECONDS", 0.01)
+
+
+def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client, quick_search):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.5)
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    assert client.post("/api/pnp/top/search", json={}).status_code == 400
+    response = client.post("/api/pnp/top/board", json={"job": job_id})
+    assert response.status_code == 200, response.text
+    assert camera.loaded is not None and response.json()["top"]["board_look"]["job"] == job_id
+    # The head far from the board: a box drawn over where it lies.
+    response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
+    assert response.status_code == 200, response.text
+    routine = routine_done(client, "/api/pnp/placing")
+    assert routine["state"] == "done", routine
+    look = client.get("/api/pnp/placing").json()["top"]["board_look"]
+    middle = (150.0 + 20.0 * math.cos(math.radians(2.0)) - 15.0 * math.sin(math.radians(2.0)), 80.0 + 20.0 * math.sin(math.radians(2.0)) + 15.0 * math.cos(math.radians(2.0)))
+    assert look["found"] is True and look["agree"] >= boardlook.NEED, look
+    assert look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01) and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
+    # It ended with the picture's center over the board's middle, and pcbv
+    # was told to search afresh at every stop.
+    assert (client.fake.position[0] + 34.0, client.fake.position[1] - 9.0) == pytest.approx(middle, abs=0.01)
+    assert "reset" in camera.asked
+    # The place found becomes the job's references: two parts, by look.
+    response = client.post("/api/pnp/top/place", json={"job": job_id})
+    assert response.status_code == 200, response.text
+    refs = [entry for entry in response.json()["references"] if entry["job"] == job_id]
+    assert len(refs) == 2 and {entry["by"] for entry in refs} == {"look"}
+    parts = {part["ref"]: part for part in client.get(f"/api/jobs/{job_id}/components").json()["components"]}
+    for entry in refs:
+        part = parts[entry["ref"]]
+        x, y = turn((part["x"], part["y"]), 2.0)
+        assert entry["at"] == pytest.approx([x + 150.0, y + 80.0], abs=0.01)
+    # Unloaded, the look is forgotten.
+    assert client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"] == {"job": None}
+
+
+def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client, quick_search):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 0.0, (500.0, 500.0), design_shift=(-100.0, -70.0))
+    client.backend.top.client = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=0.0)
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 0.0})
+    client.post("/api/pnp/top/board", json={"job": job_id})
+    assert client.post("/api/pnp/top/search", json={"box": [100.0, 30.0, 140.0, 60.0]}).status_code == 200
+    routine = routine_done(client, "/api/pnp/placing")
+    assert routine["state"] == "error" and "no board found" in routine["error"] and routine["total"] >= 6
+    assert client.post("/api/pnp/top/place", json={"job": job_id}).status_code == 400

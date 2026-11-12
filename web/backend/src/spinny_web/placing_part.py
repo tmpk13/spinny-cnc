@@ -23,16 +23,19 @@ from fastapi import HTTPException
 
 from spinny_laser.machines import GCODE
 
+from .boardlook import PictureFrame, found_text, search, search_box, search_stops
 from .feederbus import BusError, FeederBus, slot_place
 from .gcode_link import GcodeLinkError, GcodeMover
 from .kinematics import num
 from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, move_line, plan, safe_line
 from .placer import Placement, PlaceSetup, fiducial_fit
-from .pnp import CameraPlace
+from .pnp import CameraPlace, PnpError
 from .topcam import Found
 
 if TYPE_CHECKING:
     from .app import (
+        BoardPlaceBody,
+        BoardSearchBody,
         PnpAngleBody,
         PnpCameraBody,
         PnpFeederBody,
@@ -108,7 +111,7 @@ class PlacingPart:
             "taken": dict(config.get("taken", {})),
             "boards": int(config.get("boards", 0)) if isinstance(config.get("boards", 0), int) else 0,
             "camera": {**camera.to_dict(), "measured": isinstance(config.get("camera"), dict) and bool(config["camera"].get("position"))},
-            "top": self.top.state(),
+            "top": {**self.top.state(), "board_look": self.top_look.state()},
             **link,
             "connected": connected,
         }
@@ -217,6 +220,9 @@ class PlacingPart:
         try:
             self.top.update(body.model_dump(exclude={"clear"}, exclude_none=True), tuple(body.clear))
         finally:
+            # A camera started again on other settings has no board loaded.
+            if self.top_look.job is not None and not self._top_board_loaded():
+                self.top_look.stop()
             state = self.publish_placing()
         return state
 
@@ -224,11 +230,130 @@ class PlacingPart:
         try:
             self.top.start()
         finally:
+            self.top_look.stop()
             state = self.publish_placing()
         return state
 
     def top_stop(self) -> dict:
         self.top.stop()
+        self.top_look.stop()
+        return self.publish_placing()
+
+    def _top_board_loaded(self) -> bool:
+        """Whether the top camera's pcbv still holds a board."""
+        if not self.top.client.running:
+            return False
+        try:
+            return self.top.client.request("hello").get("board") is not None
+        except Exception:
+            return False
+
+    def top_board(self, job_id: str | None) -> dict:
+        """The job's board loaded into the top camera's pcbv, which looks
+        for it in every picture from then on (`top.look`); None unloads it."""
+        machine = self.placing_machine()
+        if job_id is None:
+            self.top_look.stop()
+            if self.top.client.running:
+                self.top.client.board(None)
+            return self.publish_placing()
+        if not self.top.client.running:
+            raise ValueError("the top camera is not running: start it first")
+        job = self._job(job_id)
+        path = self.store.board_path(job_id)
+        if job.design is None or not job.design.board or path is None:
+            raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
+        self.top_look.stop()
+        self.top.client.board(str(path), "front", "masked")
+        middle, _ = self._board_size(job)
+        # A place the head is seen at that changed is a move at about half
+        # the file's feed, its acceleration allowed for.
+        self._top_rest.speed = max(machine.feed_xy / 120.0, 1.0)
+        self.top_look.start(job_id, job.design.board_to_job, middle, self._top_look_place)
+        return self.publish_placing()
+
+    def _top_look_place(self, captured: float) -> PictureFrame | str:
+        """Where the top camera's picture lay on the machine for a frame
+        taken at `captured`: the head's place as last read or moved to,
+        plus the camera's offset, once the move there has had time to end."""
+        if self.gcode.running:
+            return "a placing run is moving the head"
+        position = self.gcode.position
+        here = (float(position["x"]), float(position["y"])) if isinstance(position, dict) and "x" in position and "y" in position else None
+        quiet = self._top_rest.see(here)
+        if quiet is None:
+            return "the head's place is not known: jog it, or read the position"
+        if captured < quiet:
+            return "the head is moving"
+        try:
+            offset = self._top_offset(self.placing_machine())
+        except (ValueError, LookupError, HTTPException):
+            return "the top camera's offset is not known: Measure offset first"
+        settings = self.top.settings()
+        return PictureFrame((here[0] + offset[0], here[1] + offset[1]), settings.roll, settings.mirror)
+
+    def top_search(self, body: BoardSearchBody) -> dict:
+        """Moves the top camera over a box until enough looks agree on the
+        board loaded (boardlook.py), on its routine thread."""
+        machine = self._placing_idle()
+        if self.top_look.job is None:
+            raise ValueError("no board loaded: press Look for board first")
+        job = self._job(self.top_look.job)
+        _, diagonal = self._board_size(job)
+        offset = self._top_offset(machine)
+        settings = self.top.settings()
+        width, height, scale = self._look_scale(self.top.client, settings.mm_per_px)
+        here = self._here(machine)
+        center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
+        box = body.box if body.box is not None else search_box(center, diagonal)
+        stops = search_stops(box, (width * scale, height * scale), center)
+        z = machine.top.z if machine.top is not None else None
+        mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
+        look = self.top_look
+        steps = ("lifting", *[f"stop {index + 1}" for index in range(len(stops))], "done")
+
+        def run(progress) -> None:
+            mover.begin()
+            self.top._step(progress, "lifting")
+            mover.lift()
+            if z is not None:
+                mover.lower(z)
+            found = search(
+                look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, settings.mirror),
+                mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError,
+            )
+            self.top._message("info", found_text(found, look.consensus))
+
+        self.top._begin("search", steps, mover, run)
+        return self.placing_state()
+
+    def top_place(self, body: BoardPlaceBody) -> dict:
+        """The board's place the top camera's look found kept as the job's
+        references: the two parts furthest apart (fiducials first) where
+        the found estimate puts them, by `look`; Find fiducials then
+        refines them."""
+        consensus = self.top_look.consensus
+        best = consensus.best
+        if self.top_look.job != body.job or best is None or not consensus.found:
+            raise ValueError("the top camera has not found this job's board: Look for board, then Search, until enough looks agree")
+        parts = self.job_parts(body.job)["components"]
+        if len(parts) < 2:
+            raise ValueError("the board needs two parts to take its place from")
+        fiducials = [part for part in parts if part.get("fiducial")]
+        pool = fiducials if len(fiducials) >= 2 else parts
+        pair = max(
+            ((a, b) for index, a in enumerate(pool) for b in pool[index + 1:]),
+            key=lambda ab: (ab[0]["x"] - ab[1]["x"]) ** 2 + (ab[0]["y"] - ab[1]["y"]) ** 2,
+        )
+        with self._config_lock:
+            config = self._placing_config()
+            refs = {part["ref"] for part in pair}
+            kept = [entry for entry in config.get("references", []) if not (entry.get("job") == body.job and (entry.get("ref") in refs or entry.get("by") == "look"))]
+            for part in pair:
+                at = best.apply((float(part["x"]), float(part["y"])))
+                kept.append({"job": body.job, "ref": part["ref"], "at": [round(at[0], 4), round(at[1], 4)], "by": "look"})
+            config["references"] = kept
+        self._save_config()
         return self.publish_placing()
 
     def top_frame(self, width: int, overlay: bool) -> bytes:
