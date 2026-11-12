@@ -172,6 +172,7 @@ import type {
     TopRoutine,
     TopSettings,
     TopState,
+    UpdateState,
     PlacingState,
     GotoRequest,
     Grid,
@@ -4175,6 +4176,67 @@ export class MockBackend implements Api, EventFeed {
         this.jobStore.set(built.job.id, built.job);
         this.order.push(built.job.id);
         return built;
+    }
+
+    // The mock plays an installed release, 0.1.0 for x86_64-linux, which
+    // GitHub has 0.2.0 newer than, as spinny_web.update answers: a check
+    // finds it, an update downloads, then is done at the next look.
+    private updating: UpdateState = {
+        kind: "release",
+        version: "0.1.0",
+        platform: "x86_64-linux",
+        root: "/opt/spinny/spinny-0.1.0-x86_64-linux",
+        link: "/opt/spinny/spinny",
+        latest: null,
+        status: null,
+        checked: null,
+        state: "idle",
+        done: 0,
+        total: 0,
+        error: null,
+        installed: null,
+        previous: null,
+    };
+
+    async updateState(): Promise<UpdateState> {
+        if (this.updating.state === "downloading") {
+            const name = this.updating.latest!.archive!.replace(/\.tar\.gz$/, "");
+            this.updating = { ...this.updating, state: "done", done: this.updating.total, installed: name, previous: "spinny-0.1.0-x86_64-linux" };
+        }
+        return { ...this.updating };
+    }
+
+    async updateCheck(): Promise<UpdateState> {
+        if (this.updating.kind === "checkout") {
+            throw new ApiError(400, "this is a checkout of the repository, not an installed release: it updates with git (git pull)");
+        }
+        if (this.updating.state === "downloading") {
+            throw new ApiError(400, "an update is under way");
+        }
+        const latest = { version: "0.2.0", tag: "v0.2.0", page: "https://github.com/tmpk13/spinny-cnc/releases/tag/v0.2.0", published: "2026-11-12T10:00:00Z", archive: "spinny-0.2.0-x86_64-linux.tar.gz", size: 48_000_000 };
+        this.updating = { ...this.updating, latest, status: "newer", checked: new Date().toISOString().slice(0, 19), error: null };
+        return { ...this.updating };
+    }
+
+    async updateInstall(): Promise<UpdateState> {
+        if (this.updating.kind === "checkout") {
+            throw new ApiError(400, "this is a checkout of the repository, not an installed release: it updates with git (git pull)");
+        }
+        if (this.updating.state === "downloading") {
+            throw new ApiError(400, "an update is under way");
+        }
+        if (this.updating.installed !== null) {
+            throw new ApiError(400, `${this.updating.installed} is installed beside this one: restart from ${this.updating.link}/bin/spinny-web to run it`);
+        }
+        const latest = this.updating.latest;
+        if (latest === null) {
+            throw new ApiError(400, "check for a release first");
+        }
+        if (this.updating.status !== "newer" && this.updating.status !== "other") {
+            throw new ApiError(400, `the latest release, ${latest.version}, is not newer than this one (${this.updating.version})`);
+        }
+        this.updating = { ...this.updating, state: "downloading", done: 0, total: latest.size, error: null };
+        return { ...this.updating };
     }
 
     async calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse> {

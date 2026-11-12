@@ -73,6 +73,7 @@ import type {
     TopSettings,
     TouchPlan,
     TouchRequest,
+    UpdateState,
     UploadOptions,
 } from "./types.ts";
 
@@ -157,6 +158,12 @@ export interface Api {
     centerJob(request: CenterRequest): Promise<CenterResponse>;
     /** A calibration test made into a job: the material test on a laser, the depth test on a mill. */
     calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse>;
+    /** The installed release and its update from GitHub. */
+    updateState(): Promise<UpdateState>;
+    /** Asks GitHub for the latest release. */
+    updateCheck(): Promise<UpdateState>;
+    /** Starts the update to the release last checked. */
+    updateInstall(): Promise<UpdateState>;
     jobs(): Promise<JobSummary[]>;
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
@@ -596,6 +603,18 @@ export class HttpApi implements Api {
 
     calibrateJob(request: CalibrateRequest): Promise<CalibrateResponse> {
         return this.request<CalibrateResponse>("POST", "/api/calibrate", request);
+    }
+
+    updateState(): Promise<UpdateState> {
+        return this.request<UpdateState>("GET", "/api/update");
+    }
+
+    updateCheck(): Promise<UpdateState> {
+        return this.request<UpdateState>("POST", "/api/update/check");
+    }
+
+    updateInstall(): Promise<UpdateState> {
+        return this.request<UpdateState>("POST", "/api/update/install");
     }
 
     async jobs(): Promise<JobSummary[]> {

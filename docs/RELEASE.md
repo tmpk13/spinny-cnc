@@ -55,7 +55,38 @@ directory before starting it, or copy single files from
 elsewhere.
 
 Upgrading is unpacking the new archive and running its `bin/spinny-web`;
-the home directory carries over.
+the home directory carries over. Or let the release update itself:
+
+### Updating from GitHub
+
+An installed release asks GitHub for the latest release of
+[tmpk13/spinny-cnc](https://github.com/tmpk13/spinny-cnc/releases) and
+installs it beside itself: on the Config page's *Version* panel (*Check*,
+then *Update*), or from the command line:
+
+```sh
+bin/spinny-web --check-update   # the version installed, the latest, and how they stand
+bin/spinny-web --update         # download, check, unpack beside this one, switch
+bin/spinny-web --rollback       # back to the release before the last update
+```
+
+An update downloads `spinny-<version>-<platform>.tar.gz` for this
+computer's platform (the `platform` line of `VERSION`), checks it against
+the release's `SHA256SUMS`, unpacks it next to the running release, and
+points the link `spinny` in that same directory at it in one step; the
+link `spinny.previous` names the release it replaced, which is left as it
+was. Nothing in the home directory is touched. The running backend keeps
+the code it started with: start the new one from the link,
+`spinny/bin/spinny-web` (after the first update, start from the link
+every time, and a service's `ExecStart` should name it). A rollback swaps
+the two links back. A version newer than the installed one is offered, and
+so is the released build of the same version over an untagged one
+(`0.2.0` over `0.2.0-g4a67b63`). The checksums come from the same release
+as the archive: they catch a broken download, not a forged release. A
+checkout of the repository is not updated this way; it updates with git.
+
+GitHub's API answers 60 requests an hour from one address without an
+account; a check is one request.
 
 ### Firmware
 
@@ -131,6 +162,25 @@ the packages, at the versions in `uv.lock`.
 
 - The version is the one in `web/backend/pyproject.toml`. When HEAD is
   not tagged `v<version>` the commit is added (`0.1.0-g4a67b63`).
+
+### Publishing one
+
+An installed release finds an update only in a published GitHub
+release of tmpk13/spinny-cnc (not a draft or a pre-release: the API's
+"latest" skips those) whose tag is `v<version>`, carrying as its files
+both archives and the `SHA256SUMS` beside them, as `dist/` has them.
+Bump the version in `web/backend/pyproject.toml`, commit, tag it
+`v<version>` (so the archives are named without a commit), run
+`mise run release`, then make the release on GitHub from that tag and
+upload `dist/spinny-<version>-x86_64-linux.tar.gz`,
+`dist/spinny-<version>-aarch64-linux.tar.gz` and `dist/SHA256SUMS`, or:
+
+```sh
+gh release create v<version> dist/spinny-<version>-*.tar.gz dist/SHA256SUMS
+```
+
+An archive left out is an update that platform does not find; a missing
+`SHA256SUMS` makes every update refuse.
 - The source is the working tree. Uncommitted changes to anything that
   goes in are refused unless `--allow-dirty`, which adds `-dirty` to the
   name. `machines/` and `cam/` always come from HEAD, so local

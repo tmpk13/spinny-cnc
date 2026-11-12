@@ -337,6 +337,8 @@ def bundle(
     lines = {
         **stamp,
         "target": target.triple,
+        # The archive's platform, which an installed release's update looks for.
+        "platform": target.platform,
         "python": urllib.parse.unquote(url.rsplit("/", 1)[1]).split("-")[1],
         "glibc": f"{floor[0]}.{floor[1]} or newer" if floor else "any",
         "programs": " ".join(sorted(program.name for program in programs)),

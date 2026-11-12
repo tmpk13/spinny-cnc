@@ -39,7 +39,7 @@ from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser.controls import default_controls
 
-from . import __version__, calibration, center
+from . import __version__, calibration, center, update
 from .align import Alignment
 from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
@@ -752,6 +752,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         # How often the head's place is read while the G-code machine is
         # left alone, s; 0 reads it only when a request needs it.
         self.gcode_poll_seconds = GCODE_POLL_SECONDS
+        # The release this backend runs from and its updates from GitHub
+        # (a checkout updates with git).
+        self.updater = update.Updater.here()
         # The marks that line a job up with the board.
         self.alignment = Alignment()
         self.rates = Rates()
@@ -3711,6 +3714,24 @@ def create_app(
     def calibrate_job(body: calibration.CalibrateRequest):
         return guarded(lambda: backend.calibrate_job(body))
 
+    def updating(call: Callable[[], dict]) -> dict:
+        try:
+            return call()
+        except update.UpdateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/update")
+    def update_state():
+        return backend.updater.snapshot()
+
+    @app.post("/api/update/check")
+    def update_check():
+        return updating(backend.updater.check)
+
+    @app.post("/api/update/install")
+    def update_install():
+        return updating(backend.updater.start)
+
     @app.get("/api/jobs")
     def list_jobs():
         return {"jobs": [job.summary() for job in backend.store.list()]}
@@ -4252,7 +4273,17 @@ def main(argv: list[str] | None = None) -> int:
         help="how much the backend writes to spinny.log in --data and to stderr (default: info, or SPINNY_LOG_LEVEL)",
     )
     parser.add_argument("--version", action="version", version=__version__)
+    updating = parser.add_mutually_exclusive_group()
+    updating.add_argument("--check-update", action="store_true", help="ask GitHub for the latest release and say how it stands against this one, then end")
+    updating.add_argument(
+        "--update",
+        action="store_true",
+        help="download the latest release for this platform, check it against its SHA256SUMS, unpack it beside this one and point the link `spinny` beside them at it, then end",
+    )
+    updating.add_argument("--rollback", action="store_true", help="point the link `spinny` back at the release before the last update, then end")
     args = parser.parse_args(argv)
+    if args.check_update or args.update or args.rollback:
+        return update.command("check" if args.check_update else "update" if args.update else "rollback")
     setup_log(args.data, level=args.log_level)
     log.info("spinny-web %s starting on %s:%d, files in %s", __version__, args.host, args.port, args.data)
     # A release's first start: the machine and CAM files it ships fill

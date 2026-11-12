@@ -12,6 +12,7 @@ import { mountAuto } from "./views/auto.ts";
 import { mountFocusBanner } from "./views/banner.ts";
 import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
+import { mountVersion } from "./views/version.ts";
 import { mountConsole } from "./views/console.ts";
 import { into, type Ctx } from "./views/context.ts";
 import { mountOpenPnpImport } from "./views/openpnpimport.ts";
@@ -329,6 +330,8 @@ function main(): void {
     // file can set, the file's value next to the board's.
     mountConfig(panel("machine-file"), ctx, panel("settings"));
     mountOpenPnpImport(panel("openpnp-import"), ctx);
+    // The release running and its update from GitHub.
+    mountVersion(panel("version"), ctx);
     mountToasts(panel("toasts"), ctx);
     // Last, once every view has drawn its panel's head: the layout layer
     // adds its controls to the heads and puts the panels where the

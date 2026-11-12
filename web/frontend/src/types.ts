@@ -756,6 +756,37 @@ export interface CalibrateRequest {
 
 export type CalibrateResponse = CenterResponse;
 
+/** The latest release GitHub lists: its version, its page, and the archive for this platform. */
+export interface ReleaseInfo {
+    version: string;
+    tag: string;
+    page: string;
+    published: string;
+    archive: string | null;
+    size: number;
+}
+
+/** The installed release and its updates from GitHub (a checkout updates with git). */
+export interface UpdateState {
+    kind: "release" | "checkout";
+    version: string;
+    platform: string | null;
+    /** The release's directory, and the link beside it that names the current release. */
+    root: string | null;
+    link: string | null;
+    latest: ReleaseInfo | null;
+    /** How the latest stands against this one: newer, same, older, or the same version from another build. */
+    status: "newer" | "same" | "older" | "other" | null;
+    checked: string | null;
+    state: "idle" | "downloading" | "unpacking" | "done" | "error";
+    done: number;
+    total: number;
+    error: string | null;
+    /** The release unpacked and linked, and the one it replaced, once an update is done. */
+    installed: string | null;
+    previous: string | null;
+}
+
 export type RunState = "running" | "hold" | "done" | "stopped" | "error";
 
 export interface Progress {
