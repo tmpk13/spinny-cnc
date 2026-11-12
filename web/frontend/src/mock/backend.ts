@@ -2871,7 +2871,7 @@ export class MockBackend implements Api, EventFeed {
                 stopped.push("the placing run");
             }
             if (this.deviceRoutine !== null) {
-                stopped.push("the up camera routine");
+                stopped.push("the bottom camera routine");
             }
             if (this.topSession !== null) {
                 stopped.push("the top camera routine");
@@ -2895,7 +2895,7 @@ export class MockBackend implements Api, EventFeed {
             }
             if (this.pnpSession) {
                 await this.pnpAbort();
-                stopped.push("the up camera routine");
+                stopped.push("the bottom camera routine");
             }
             await this.realtime("cancel");
             stopped.push("motion");

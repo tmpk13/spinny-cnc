@@ -188,7 +188,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
     const poseLine = el("p", { class: "muted vision-pose" }, poseText(null));
     const start = button("Start", () => startCamera(), "btn btn-primary");
     start.title = "start the camera with these settings";
-    const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn");
+    const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn", "stop the camera");
     stop.title = "stop the camera";
 
     // The settings: what the camera is read with, and how it sits against
@@ -215,8 +215,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
         otherDevice: (state) => state.pnp?.device ?? null,
         visible: () => visible(),
     });
-    const applySettings = button("Apply", () => apply(), "btn");
-    const applyMeasured = button("Apply", () => apply(), "btn");
+    const applySettings = button("Apply", () => apply(), "btn", "use these camera settings");
+    const applyMeasured = button("Apply", () => apply(), "btn", "use these values");
     // How many settings fields are typed in and not applied, beside each Apply.
     const pendingChips = [
         el("span", { class: "badge apply-state hidden", "data-apply": "pending" }),

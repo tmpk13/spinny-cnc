@@ -431,6 +431,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     role: "tab",
                     "aria-selected": String(panel === front),
                     "aria-controls": panel.id,
+                    title: `show ${title(panel.root)}`,
                 }, title(panel.root));
                 tab.addEventListener("click", () => update(page, bringToFront(page.layout, panel.id)));
                 tab.addEventListener("contextmenu", (event) => {

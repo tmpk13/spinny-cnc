@@ -608,7 +608,7 @@ across, from above or below, turns the nozzle on the way, and puts the
 height last, so the nozzle goes down only over where it is going; the
 line under the goto rows says what Go will move, from where to where, as
 soon as a field is typed in. With `leave` in the file's `[up_camera]`, a
-jog that takes the nozzle away from over the up camera with its tip off
+jog that takes the nozzle away from over the bottom camera with its tip off
 the safe height goes up to it first, while small jogs over the lens stay
 at the height they are at. The
 Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the

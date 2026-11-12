@@ -9,6 +9,7 @@
 //   blocks without being one of the stylesheet's flow boxes.
 // - Text keeps clear of the inner edge of the box drawn around it (a
 //   border on that side, or a background of its own).
+// - Every button shown says what it does on hover: a title.
 //
 // Run with `mise run test-layout`. Chromium is Playwright's build for the
 // pinned playwright-core, or CHROMIUM=/path/to/chrome. Under bun the
@@ -114,6 +115,20 @@ function stackFindings(): Finding[] {
                 findings.push({ kind: "gap", where, detail: `${items[i - 1]!.name} then ${items[i]!.name}: ${gap.toFixed(1)}px` });
             }
         }
+    }
+    return findings;
+}
+
+/** Buttons shown with no title to say what they do; runs in the browser. */
+function tipFindings(): Finding[] {
+    const findings: Finding[] = [];
+    for (const press of Array.from(document.querySelectorAll<HTMLElement>("button, [role=button]"))) {
+        if (press.getClientRects().length === 0 || press.getAttribute("title")) {
+            continue;
+        }
+        const panel = press.closest("section.panel")?.id ?? press.closest("header, nav")?.tagName.toLowerCase() ?? "page";
+        const text = (press.getAttribute("aria-label") ?? press.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 40);
+        findings.push({ kind: "tip", where: panel, detail: `"${text}" has no title` });
     }
     return findings;
 }
@@ -343,7 +358,7 @@ try {
             for (const id of state.pages) {
                 await tab(page, id);
                 await openDetails(page);
-                for (const finding of [...await page.evaluate(stackFindings), ...await page.evaluate(wallFindings)]) {
+                for (const finding of [...await page.evaluate(stackFindings), ...await page.evaluate(wallFindings), ...await page.evaluate(tipFindings)]) {
                     const key = `${finding.kind} ${finding.where}: ${finding.detail.replace(/-?[\d.]+px/g, "")}`;
                     if (!found.has(key)) {
                         found.set(key, `${finding.kind.padEnd(4)} ${finding.where}: ${finding.detail}  [${id}, ${state.name}, ${width}px]`);
@@ -361,5 +376,5 @@ try {
 for (const line of found.values()) {
     console.log(line);
 }
-console.log(found.size === 0 ? "spacing: ok" : `spacing: ${found.size} findings`);
+console.log(found.size === 0 ? "spacing and tooltips: ok" : `spacing and tooltips: ${found.size} findings`);
 process.exit(found.size === 0 ? 0 : 1);

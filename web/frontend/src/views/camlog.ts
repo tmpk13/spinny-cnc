@@ -37,7 +37,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
         enabled, " log every look (all cameras)");
     const photo = button("Photo", () => take(), "btn btn-small");
     photo.title = "keep a picture now, with what the finder sees";
-    const clear = button("Clear log", () => clearAll(), "btn btn-quiet btn-small");
+    const clear = button("Clear log", () => clearAll(), "btn btn-quiet btn-small", "forget the pictures kept");
     const count = el("span", { class: "muted camlog-count" });
     const gallery = el("ul", { class: "camlog-list" });
     root.append(el("div", { class: "camlog" },

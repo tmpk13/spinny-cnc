@@ -59,7 +59,7 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx): void {
     const angle = numberField({ step: 0.1, placeholder: "fitted", width: "6rem" });
     angle.setAttribute("aria-label", "Board turned on the machine");
     angle.title = "the board's turn on the machine, used with a single reference";
-    const clear = button("Clear", () => clearReferences(), "btn btn-quiet");
+    const clear = button("Clear", () => clearReferences(), "btn btn-quiet", "forget this board's references");
     const list = el("ul", { class: "device-references" });
     const fitLine = el("p", { class: "muted hint device-fit" });
     const findFiducials = button("Find fiducials", () => findFiducialsNow(), "btn");

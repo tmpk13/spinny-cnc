@@ -210,8 +210,8 @@ export function mountHead(root: HTMLElement, ctx: Ctx): void {
     const toCamera = button("Camera to nozzle spot", () => into(ctx, "placing", ctx.api.pnpSwap("camera")), "btn");
     toCamera.title = "the top camera over the point the nozzle is over";
     // The vacuum, switched by hand and read, to find the sensor's ranges.
-    const vacuumOn = button("Vacuum on", () => vacuum({ on: true }), "btn btn-quiet");
-    const vacuumOff = button("Vacuum off", () => vacuum({ on: false }), "btn btn-quiet");
+    const vacuumOn = button("Vacuum on", () => vacuum({ on: true }), "btn btn-quiet", "suck: the file's pick lines");
+    const vacuumOff = button("Vacuum off", () => vacuum({ on: false }), "btn btn-quiet", "let go: the file's place lines");
     const vacuumRead = button("Read vacuum", () => vacuum({ read: true }), "btn btn-quiet");
     vacuumRead.title = "read the vacuum sensor: with the nozzle open, then blocked, to set the ranges";
     const vacuumLine = el("span", { class: "muted mono" });

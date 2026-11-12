@@ -1782,7 +1782,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         if self.gcode.connected:
             if self.gcode.running:
                 stopped.append("the placing run")
-            for name, camera in (("the up camera routine", self.pnp), ("the top camera routine", self.top)):
+            for name, camera in (("the bottom camera routine", self.pnp), ("the top camera routine", self.top)):
                 if camera.routine_active:
                     stopped.append(name)
             self._gcode_realtime("reset")
@@ -1803,7 +1803,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             except ProberError:
                 pass
         if not stopped:
-            for name, camera in (("the camera routine", self.camera), ("the up camera routine", self.pnp)):
+            for name, camera in (("the camera routine", self.camera), ("the bottom camera routine", self.pnp)):
                 if camera.routine_active:
                     camera.abort()
                     stopped.append(name)

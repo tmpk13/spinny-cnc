@@ -516,7 +516,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     // --- the up camera ---
     const startButton = button("Start", () => startCamera(), "btn btn-primary");
     startButton.title = "start the bottom camera with these settings";
-    const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn");
+    const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn", "stop the bottom camera");
     const cameraBadge = el("span", { class: "badge" }, "stopped");
     const device = el("input", { type: "text", class: "field", "aria-label": "Bottom camera device", spellcheck: "false" }) as HTMLInputElement;
     const size = el("input", { type: "text", class: "field", "aria-label": "Bottom camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
@@ -532,7 +532,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         otherDevice: (state) => state.camera?.device ?? null,
         visible: () => visible(),
     });
-    const cameraApply = button("Apply", () => applySettings(), "btn");
+    const cameraApply = button("Apply", () => applySettings(), "btn", "use these camera settings");
     cameraApply.title = "send the fields marked as not applied";
     const lookSpot = el("select", { class: "field", "aria-label": "Spot to look for once" },
         el("option", { value: "nozzle" }, "nozzle spot"), el("option", { value: "part" }, "part spot")) as HTMLSelectElement;
@@ -561,7 +561,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     deviceCenter.title = "find where the bottom camera is and its picture's scale, roll and mirror, by moving the nozzle over it until it sits on the crosshair";
     const runout = button("Measure runout", () => into(ctx, "placing", ctx.api.pnpRunout()), "btn");
     runout.title = "turn the nozzle over the bottom camera to measure how far its tip runs off its turning axis";
-    const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
+    const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger", "stop the routine");
     const deviceCameraLine = el("p", { class: "muted" });
     const deviceRoutineLine = el("p", { class: "muted vision-routine" });
     const deviceCalibration = el("div", { class: "stack pnp-camera-device" },
@@ -608,16 +608,16 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     const roll = numberField({ step: 0.01, width: "6rem" });
     roll.setAttribute("aria-label", "Bottom camera roll");
     const mirror = el("input", { type: "checkbox", "aria-label": "Bottom camera mirrored" }) as HTMLInputElement;
-    const nozzleApply = button("Apply", () => applyMeasured(), "btn");
+    const nozzleApply = button("Apply", () => applyMeasured(), "btn", "use these values");
     const nozzleChip = el("span", { class: "badge apply-state hidden", "data-apply": "pending" });
-    const forget = button("Forget position", () => into(ctx, "pnp", ctx.api.pnpSettings({ clear: ["position"] })), "btn btn-quiet");
+    const forget = button("Forget position", () => into(ctx, "pnp", ctx.api.pnpSettings({ clear: ["position"] })), "btn btn-quiet", "forget where the camera is: centering finds it again");
     const step = numberField({ value: 1, min: 0, max: 10, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Centering step mm");
     const centerButton = button("Center nozzle", () => centerNozzle(), "btn btn-primary");
     centerButton.title = "find the bottom camera's place and scale by moving the nozzle onto its crosshair";
     const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
     partButton.title = "over the bottom camera with a part on the nozzle: measure where it sits on the nozzle";
-    const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger");
+    const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger", "stop the routine");
     const overButton = button("Nozzle over camera", () => nozzleOverCamera(), "btn");
     overButton.title = "the nozzle over the bottom camera's place at the travel height, then down to Sharp at H";
     const routineLine = el("p", { class: "muted vision-routine" });

@@ -45,8 +45,8 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
     planButton.title = "make the placement program from the references and the feeders and show it; nothing moves";
     const download = el("a", { class: "btn btn-quiet", download: "placement.gcode" }, "Download") as HTMLAnchorElement;
     download.title = "the planned program as a file";
-    const run = button("Run", () => runNow(), "btn btn-primary");
-    const stop = button("Stop", () => into(ctx, "placing", ctx.api.pnpRunStop()), "btn btn-danger");
+    const run = button("Run", () => runNow(), "btn btn-primary", "place the parts planned");
+    const stop = button("Stop", () => into(ctx, "placing", ctx.api.pnpRunStop()), "btn btn-danger", "stop placing");
     const runRest = button("Run the rest", () => runNow(true), "btn");
     runRest.title = "place the parts the last run did not, failed ones included";
     const recount = button("Count feeders again", () => recountFeeders(), "btn btn-quiet");
@@ -99,7 +99,7 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
     const windowBar = el("progress", { class: "device-run-bar", max: "1", value: "0" }) as HTMLProgressElement;
     const windowLog = el("div", { class: "device-steps", "aria-label": "Run window steps" });
     const showWindowLog = stickyLog(windowLog);
-    const windowStop = button("Stop", () => into(ctx, "placing", ctx.api.pnpRunStop()), "btn btn-danger");
+    const windowStop = button("Stop", () => into(ctx, "placing", ctx.api.pnpRunStop()), "btn btn-danger", "stop placing");
     const windowClose = button("Close", () => showWindow(false), "btn btn-quiet btn-small");
     const runWindow = el("div", { class: "run-window panel hidden", role: "dialog", "aria-label": "Run window" },
         el("div", { class: "panel-head run-window-head" }, el("h2", {}, "Placing"), windowClose),
