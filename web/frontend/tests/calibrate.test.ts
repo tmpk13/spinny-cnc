@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
-import { ladder } from "../src/mock/calibrate.ts";
+import { dotCenters, dotsSvg, filledDot, ladder } from "../src/mock/calibrate.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
 import { calibrateRequest } from "../src/views/calibrate.ts";
 import { mountJobs, showsFocus } from "../src/views/jobs.ts";
@@ -80,11 +80,13 @@ describe("calibration test", () => {
         const panel = root.querySelector(".calibrate-test")!;
         const which = panel.querySelector('select[aria-label="Test"]') as HTMLSelectElement;
         const shown = (element: Element): boolean => !element.classList.contains("hidden");
+        const offered = (): string[] => Array.from(which.options).map((option) => option.value);
         // No focus axis, no ladder to pick.
         store.set({ snapshot: { ...connected(), profile: { kinematics: "polar", tool: "laser", h_axis: false, r_max: 0, z_max: 0 } } });
-        expect(shown(which.closest("label")!)).toBe(false);
+        expect(offered()).toEqual(["material", "dots"]);
         store.set({ snapshot: connected() });
         expect(shown(which.closest("label")!)).toBe(true);
+        expect(offered()).toEqual(["material", "focus", "dots"]);
         which.value = "focus";
         which.dispatchEvent(new Event("change"));
         const steps = panel.querySelector('input[aria-label="focus steps"]') as HTMLInputElement;
@@ -114,5 +116,68 @@ describe("calibration test", () => {
         expect(showsFocus({ ...job, groups: job.groups.map((group) => ({ ...group, focus: null })) }, false, false)).toBe(false);
         expect(showsFocus(job, true, true)).toBe(false);
         root.remove();
+    });
+
+    test("the camera pattern's dots leave the top right one out and run every other row backwards", () => {
+        expect(dotCenters(3, 2, 2, [10, 20])).toEqual([[10, 20], [12, 20], [14, 20], [12, 22], [10, 22]]);
+        // The same numbers spinny_laser.calibrate gives (toolpath/tests/test_calibrate.py).
+        const dot = filledDot([0, 0], 0.6, 0.1);
+        expect(dot.length).toBe(57);
+        expect(dot.slice(0, 3)).toEqual([[0.25, 0], [0.231, 0.0957], [0.1768, 0.1768]]);
+        expect(dot.at(-1)).toEqual([0, 0]);
+        expect(() => dotCenters(1, 5, 2)).toThrow("the pattern has 2 to 100 dots a side");
+        expect(() => dotCenters(5, 5, 0.1)).toThrow("the dots' pitch must be 0.2 to 20 mm");
+        expect(() => dotCenters(100, 5, 20)).toThrow("the pattern must be at most 200 mm across");
+        const svg = dotsSvg(3, 2, 2, 0.6);
+        expect(svg.split("<circle").length - 1).toBe(5);
+        expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="22mm" viewBox="0 0 80 22">')).toBe(true);
+        expect(svg).toContain('<circle cx="5" cy="7" r="0.3"/>');
+        expect(calibrateRequest({ kind: "dots", fill: "1", columns: "9", rows: "6.5" })).toBe("rows must be a whole number");
+        expect(calibrateRequest({ kind: "dots", fill: "1", columns: "9", pitch: "1.5", diameter: "0.5" })).toEqual({ kind: "dots", columns: 9, pitch: 1.5, diameter: 0.5 });
+    });
+
+    test("a laser makes the camera pattern as one group of filled dots and offers its sheet", async () => {
+        const store = new Store<AppState>(initialState(true));
+        const backend = new MockBackend({ timers: false });
+        const ctx = createContext(backend, store);
+        const root = document.createElement("section");
+        document.body.append(root);
+        mountJobs(root, ctx, root);
+        const panel = root.querySelector(".calibrate-test")!;
+        const which = panel.querySelector('select[aria-label="Test"]') as HTMLSelectElement;
+        which.value = "dots";
+        which.dispatchEvent(new Event("change"));
+        const columns = panel.querySelector('.field-grid:not(.hidden) input[aria-label="columns"]') as HTMLInputElement;
+        expect(columns).not.toBeNull();
+        expect(panel.querySelector('.field-grid:not(.hidden) input[aria-label="power"]')).not.toBeNull();
+        columns.value = "5";
+        (panel.querySelector('.field-grid:not(.hidden) input[aria-label="rows"]') as HTMLInputElement).value = "4";
+        Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Make test job")!.click();
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        const job = store.get().job!;
+        expect(job.name).toBe("camera pattern");
+        expect(job.groups.length).toBe(1);
+        expect(job.groups[0]!.paths.length).toBe(19);
+        expect(panel.querySelector(".center-test-summary")?.textContent).toContain("camera pattern: 5 x 4 dots 2 mm apart (8 by 6 mm)");
+        const save = Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === "Save SVG");
+        expect(save?.title).toBe("The pattern at true size as a file, to print at 100%");
+        await expect(backend.calibrateJob({ kind: "dots", diameter: 0.05 }))
+            .rejects.toMatchObject({ status: 400, message: "a dot must be wider than the spot and narrower than the pitch" });
+        root.remove();
+    });
+
+    test("a mill's camera pattern is a plunge a dot at its depth", async () => {
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM0");
+        await backend.updateSettings({ values: { spindle: 1 } });
+        const made = await backend.calibrateJob({ kind: "dots", columns: 3, rows: 3, pitch: 1, depth: 0.05 });
+        const group = made.job.groups[0]!;
+        expect(group.depth).toBe(0.05);
+        expect(group.paths.every((path) => path.length === 1)).toBe(true);
+        expect(group.paths.length).toBe(8);
+        expect(made.svg?.split("<circle").length).toBe(9);
+        expect(made.summary[1]).toBe("one plunge each 0.05 mm deep, the tool's width across; plunge 30 mm/min, spindle S1000");
     });
 });

@@ -619,3 +619,27 @@ def test_a_laser_makes_a_material_test_and_a_mill_a_depth_test(client, fake):
     assert (first["depth"], first["paths"][0][0][1]) == (0.05, 0.0)
     assert backwards["summary"][0].startswith("depth test: 6 slots 0.05 to 0.3 mm deep") and backwards["summary"][0].endswith("shallowest at Y0")
     assert client.post("/api/calibrate", json={"kind": "material"}).status_code == 400
+
+
+def test_the_camera_pattern_is_filled_dots_on_a_laser_and_plunges_on_a_mill(client, fake):
+    connect(client)
+    made = client.post("/api/calibrate", json={"kind": "dots", "columns": 5, "rows": 4, "x": 1, "y": 2})
+    assert made.status_code == 200, made.text
+    result = made.json()
+    group = result["job"]["groups"][0]
+    assert result["job"]["name"] == "camera pattern" and len(result["job"]["groups"]) == 1
+    # Twenty dots, the top right one left out, each one path filled a spot apart.
+    assert len(group["paths"]) == 19 and len(group["paths"][0]) == 57 and group["paths"][0][-1] == [1.0, 2.0]
+    assert result["summary"][0] == "camera pattern: 5 x 4 dots 2 mm apart (8 by 6 mm), lower left at X1 Y2, the top right one left out"
+    assert result["svg"].count("<circle") == 19 and 'width="80mm"' in result["svg"]
+    refused = client.post("/api/calibrate", json={"kind": "dots", "diameter": 0.05})
+    assert refused.status_code == 400 and refused.json()["detail"] == "a dot must be wider than the spot and narrower than the pitch"
+    assert client.post("/api/calibrate", json={"kind": "dots", "columns": 1}).json()["detail"] == "the pattern has 2 to 100 dots a side"
+    # Other tests carry no sheet.
+    assert client.post("/api/calibrate", json={"kind": "material", "powers": [100, 100, 1], "speeds": [300, 300, 1]}).json()["svg"] is None
+    for line in ("$spindle=1", "$h_axis=1"):
+        assert client.post("/api/command", json={"line": line}).json()["lines"] == ["ok"]
+    milled = client.post("/api/calibrate", json={"kind": "dots", "columns": 3, "rows": 3, "pitch": 1, "depth": 0.05}).json()
+    group = milled["job"]["groups"][0]
+    assert group["depth"] == 0.05 and len(group["paths"]) == 8 and all(len(path) == 1 for path in group["paths"])
+    assert milled["summary"][1] == "one plunge each 0.05 mm deep, the tool's width across; plunge 30 mm/min, spindle S1000"

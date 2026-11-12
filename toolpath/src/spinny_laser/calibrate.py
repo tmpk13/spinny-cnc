@@ -18,6 +18,12 @@ The focus ladder is a laser's row of lines with a focus axis, each burnt
 with the head a step higher or lower than focus at one power and speed:
 the thinnest, sharpest line names the focus, and how fast the lines widen
 on either side how much a board's warp matters.
+
+The camera pattern is a grid of dots a known pitch apart, for measuring a
+camera's lens: a laser fills each dot (an IR or diode laser leaves a light
+mark on anodized aluminum), a mill plunges once for each, or it is
+printed from its SVG. The top right dot is left out, so a picture of it
+tells which way it lies, turned or mirrored.
 """
 
 from __future__ import annotations
@@ -37,6 +43,19 @@ MIN_PITCH = 0.01
 # machine can cut, and short of a build that takes the backend minutes and
 # a job file of hundreds of megabytes.
 MAX_POINTS = 200_000
+
+
+# The camera pattern: the most dots along a side, the pitch's bounds and
+# the widest it may be, mm; how far a dot's outline may stray from a
+# circle, mm; and the margin round it on the printed sheet, mm.
+MAX_DOTS = 100
+MIN_DOT_PITCH = 0.2
+MAX_DOT_PITCH = 20.0
+MAX_SPAN = 200.0
+DOT_TOLERANCE = 0.005
+SHEET_MARGIN = 5.0
+# The width the printed sheet's words take, mm.
+SHEET_TEXT = 70.0
 
 
 @dataclass
@@ -172,3 +191,104 @@ def focus_ladder(
             focus=step,
         ))
     return patches
+
+
+def dot_centers(columns: int, rows: int, pitch: float, origin: Point = (0.0, 0.0)) -> list[Point]:
+    """The camera pattern's dots, the lower left one at `origin`, row by row
+    from the bottom, every other row run backwards so the head goes the
+    shortest way; the top right one left out."""
+    if not (isinstance(columns, int) and isinstance(rows, int) and 2 <= columns <= MAX_DOTS and 2 <= rows <= MAX_DOTS):
+        raise ValueError(f"the pattern has 2 to {MAX_DOTS} dots a side")
+    if not MIN_DOT_PITCH <= pitch <= MAX_DOT_PITCH:
+        raise ValueError(f"the dots' pitch must be {MIN_DOT_PITCH:g} to {MAX_DOT_PITCH:g} mm")
+    if max(columns, rows) - 1 > MAX_SPAN / pitch + 1e-9:
+        raise ValueError(f"the pattern must be at most {MAX_SPAN:g} mm across")
+    centers = []
+    for row in range(rows):
+        for column in range(columns) if row % 2 == 0 else range(columns - 1, -1, -1):
+            if (row, column) != (rows - 1, columns - 1):
+                centers.append((round(origin[0] + column * pitch, 6), round(origin[1] + row * pitch, 6)))
+    return centers
+
+
+def _circle_sides(radius: float) -> int:
+    """Corners enough for a circle's chords to stay within DOT_TOLERANCE of it."""
+    if radius <= DOT_TOLERANCE:
+        return 8
+    return max(8, math.ceil(math.pi / math.acos(1.0 - DOT_TOLERANCE / radius)))
+
+
+def filled_dot(center: Point, diameter: float, spot: float) -> list[Point]:
+    """A laser's dot as one path: its outline half a spot inside the edge,
+    then a spiral a spot apart in to the middle."""
+    radius = diameter / 2.0 - spot / 2.0
+    sides = _circle_sides(radius)
+    cx, cy = center
+    points = [(cx + radius * math.cos(2.0 * math.pi * i / sides), cy + radius * math.sin(2.0 * math.pi * i / sides)) for i in range(sides + 1)]
+    turns = radius / spot
+    steps = max(1, math.ceil(turns * sides))
+    for i in range(1, steps + 1):
+        part = i / steps
+        angle = 2.0 * math.pi * turns * part
+        points.append((cx + radius * (1.0 - part) * math.cos(angle), cy + radius * (1.0 - part) * math.sin(angle)))
+    return [(round(x, 4), round(y, 4)) for x, y in points]
+
+
+def dots(columns: int, rows: int, pitch: float, diameter: float, spot: float, power: float, speed: float, origin: Point = (0.0, 0.0)) -> list[Patch]:
+    """The laser's camera pattern: every dot filled, all in one group."""
+    if not spot < diameter < pitch:
+        raise ValueError("a dot must be wider than the spot and narrower than the pitch")
+    if not MIN_PITCH <= spot:
+        raise ValueError(f"the spot must be at least {MIN_PITCH:g} mm")
+    centers = dot_centers(columns, rows, pitch, origin)
+    radius = diameter / 2.0 - spot / 2.0
+    sides = _circle_sides(radius)
+    points = len(centers) * (sides + 1 + max(1, math.ceil(radius / spot * sides)))
+    if points > MAX_POINTS:
+        raise ValueError(f"{len(centers)} dots of {diameter:g} mm filled {spot:g} mm apart are {points} points, more than {MAX_POINTS}: give fewer or smaller dots")
+    paths = [filled_dot(center, diameter, spot) for center in centers]
+    return [Patch(label="camera dots", power=power, speed=speed, paths=paths)]
+
+
+def drilled_dots(columns: int, rows: int, pitch: float, cut: float, spindle: float, feed: float, origin: Point = (0.0, 0.0)) -> list[Patch]:
+    """The mill's camera pattern: one plunge `cut` deep at every dot, the
+    tool's own width the dot's."""
+    if not cut > 0.0:
+        raise ValueError("the dots' depth must be above 0")
+    paths = [[center] for center in dot_centers(columns, rows, pitch, origin)]
+    return [Patch(label="camera dots", power=spindle, speed=feed, paths=paths, depth=cut)]
+
+
+def _mm(value: float) -> str:
+    """A length for the sheet: four decimals at most, no trailing zeros."""
+    text = f"{value:.4f}".rstrip("0").rstrip(".")
+    return "0" if text in ("", "-0") else text
+
+
+def dots_svg(columns: int, rows: int, pitch: float, diameter: float) -> str:
+    """The camera pattern as a sheet to print at 100%: black dots on white,
+    the top right one left out as on the machine, a 10 mm bar to check the
+    print's scale against, and what it is in words under it."""
+    centers = dot_centers(columns, rows, pitch)
+    span_x, span_y = (columns - 1) * pitch, (rows - 1) * pitch
+    width = max(span_x, SHEET_TEXT) + 2.0 * SHEET_MARGIN
+    bar_y = span_y + 2.0 * SHEET_MARGIN
+    height = bar_y + 10.0
+    words = (
+        f"{columns} x {rows} dots {_mm(pitch)} mm apart, {_mm(diameter)} mm across",
+        "the top right one left out; the bar is 10 mm: print at 100%",
+    )
+    lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{_mm(width)}mm" height="{_mm(height)}mm" viewBox="0 0 {_mm(width)} {_mm(height)}">',
+        f'<rect width="{_mm(width)}" height="{_mm(height)}" fill="#ffffff"/>',
+        '<g fill="#000000">',
+        *(f'<circle cx="{_mm(SHEET_MARGIN + x)}" cy="{_mm(SHEET_MARGIN + span_y - y)}" r="{_mm(diameter / 2.0)}"/>' for x, y in centers),
+        "</g>",
+        f'<path d="M {_mm(SHEET_MARGIN)} {_mm(bar_y)} h 10" stroke="#000000" stroke-width="0.3" fill="none"/>',
+        *(
+            f'<text x="{_mm(SHEET_MARGIN)}" y="{_mm(bar_y + 3.5 + 2.8 * i)}" font-family="sans-serif" font-size="2" fill="#000000">{line}</text>'
+            for i, line in enumerate(words)
+        ),
+        "</svg>",
+    ]
+    return "\n".join(lines) + "\n"

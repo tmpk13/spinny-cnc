@@ -132,3 +132,37 @@ column, shown with a focus axis or when a group has one): blank leaves the
 head where the run puts it. A run following the map by power holds the
 head still and refuses a group with a focus; a spindle or a dispenser
 refuses one too.
+
+## A camera's lens: the dot pattern
+
+*Calibration test* offers *camera pattern* on a laser and on a mill: a
+grid of dots a known pitch apart (21 by 15, 2 mm apart by default) as one
+group, for measuring how a camera's lens bends straight lines. A laser
+fills each dot (its outline, then a spiral a spot apart): on anodized
+aluminum an IR or diode laser at low power leaves a light dot on the dark
+surface, so run the material test on a corner of the same sheet first. A
+mill plunges once per dot, each as wide as the tool. The top right dot is
+left out, so a picture of the pattern says which way it lies, turned or
+mirrored. *Save SVG* gives the same grid as a sheet to print at 100%,
+with a 10 mm bar to check the printer's scale against.
+
+The pattern is made; measuring the distortion from it is not built yet.
+The cameras' routines read one spot at a time (pcbv's `spot` answers
+only the blob nearest the picture's center), and the backend carries no
+image library, so the measurement needs one of:
+
+- a pcbv request that lists every blob in the picture (center, area),
+  from which the backend fits the grid: the pitch is known, so a straight
+  fit of the inner dots gives the scale and roll, and how the outer dots
+  stray from it, growing with the distance from the center, gives the
+  radial terms (k1, k2) and the center of the distortion;
+- or a `.kicad_pcb` of the dots (each a fiducial footprint at its place)
+  loaded into pcbv's board localizer, whose residuals per feature are the
+  distortion at each dot once the localizer reports them;
+- or, with no change to pcbv, the machine as the ruler: one dot, moved by
+  the head to a grid of places across the picture, its found place
+  against the place the moves predict. That measures the same field
+  without the pattern, at the cost of a move and a look per point.
+
+The fitted terms would then turn every spot's pixel into a corrected one
+before the picture's scale is applied (`picture_to_machine`).

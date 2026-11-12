@@ -1,9 +1,11 @@
 """Calibration tests as jobs: a laser's material test (a grid of squares at
 a power and a speed each), its focus ladder (a row of lines a step above
-or below focus each, on a focus axis) and a mill's depth test (a row of
-slots a step deeper each), built from spinny_laser.calibrate. Every patch is a group, so
-the groups table names what each was cut with and a patch can be switched
-off or cut again on its own.
+or below focus each, on a focus axis), a mill's depth test (a row of
+slots a step deeper each), and the camera pattern for either (a grid of
+dots a known pitch apart, with the sheet to print it on as an SVG), built
+from spinny_laser.calibrate. Every patch is a group, so the groups table
+names what each was cut with and a patch can be switched off or cut again
+on its own.
 """
 
 from __future__ import annotations
@@ -17,13 +19,13 @@ from spinny_laser import calibrate
 from .jobs import DEFAULT_DEPTH, DEFAULT_PLUNGE, Finite, Group, Job, Offset, check_depth, check_focus, check_power, check_speed
 from .kinematics import Streamer
 
-MATERIAL, FOCUS = "material", "focus"
+MATERIAL, FOCUS, DOTS = "material", "focus", "dots"
 
 
 class CalibrateRequest(Finite):
     """A ladder is (first, last, steps), both ends included."""
 
-    kind: Literal["material", "depth", "focus"] = MATERIAL
+    kind: Literal["material", "depth", "focus", "dots"] = MATERIAL
     powers: tuple[float, float, int] = (100.0, 1000.0, 5)
     speeds: tuple[float, float, int] = (300.0, 1500.0, 5)
     size: float = Field(default=5.0, gt=0.0, le=calibrate.MAX_SIZE)
@@ -42,6 +44,13 @@ class CalibrateRequest(Finite):
     plunge: float = 30.0
     # The spindle's S for every slot.
     spindle: float = 1000.0
+    # The camera pattern: dots along X and Y, mm apart and across, and a
+    # mill's depth for each.
+    columns: int = 21
+    rows: int = 15
+    pitch: float = 2.0
+    diameter: float = 0.6
+    depth: float = 0.1
     # The lower left corner of the pattern, board mm.
     x: float = 0.0
     y: float = 0.0
@@ -54,6 +63,8 @@ class CalibrateResult(Finite):
     job: Job
     summary: list[str]
     notes: list[str]
+    # The camera pattern's sheet to print, an SVG at true size.
+    svg: str | None = None
 
 
 def build(request: CalibrateRequest, streamer: Streamer, milling: bool, focus_axis: bool | None = None) -> CalibrateResult:
@@ -105,6 +116,39 @@ def build(request: CalibrateRequest, streamer: Streamer, milling: bool, focus_ax
             "The thinnest, sharpest line is at focus; set the focus there (Focus here in the Height map panel, or jog H by the line's number) and run the ladder again with smaller steps to close in.",
         ]
         name = "focus ladder"
+    elif request.kind == DOTS:
+        span = f"{(request.columns - 1) * request.pitch:g} by {(request.rows - 1) * request.pitch:g} mm"
+        if milling:
+            check_depth(request.depth)
+            check_speed(request.feed, "feed")
+            check_speed(request.plunge, "plunge")
+            check_power(request.spindle, "spindle")
+            if not request.spindle > 0:
+                raise ValueError("a spindle needs a speed above 0")
+            patches = calibrate.drilled_dots(request.columns, request.rows, request.pitch, request.depth, request.spindle, request.feed, origin)
+            how = f"one plunge each {request.depth:g} mm deep, the tool's width across; plunge {request.plunge:g} mm/min, spindle S{request.spindle:g}"
+            mark = "Engrave it where the camera will look, on copper or aluminum, with a small bit: each dot is as wide as the tool."
+        else:
+            check_power(request.power)
+            check_speed(request.speed)
+            patches = calibrate.dots(request.columns, request.rows, request.pitch, request.diameter, request.spot, request.power, request.speed, origin)
+            how = f"{request.diameter:g} mm dots filled {request.spot:g} mm apart, power S{request.power:g}, speed {request.speed:g} mm/min"
+            mark = (
+                "Mark it where the camera will look: on anodized aluminum an IR or diode laser at low power leaves a light dot on the dark"
+                " surface; run the material test there first for the power."
+            )
+        summary = [
+            f"camera pattern: {request.columns} x {request.rows} dots {request.pitch:g} mm apart ({span}),"
+            f" lower left at X{request.x:g} Y{request.y:g}, the top right one left out",
+            how,
+        ]
+        notes = [
+            mark,
+            "Or save the SVG and print it at 100%: the 10 mm bar under the dots checks the print's scale.",
+            "The missing top right dot tells which way the pattern lies in a picture. Measuring the lens's distortion from it is not"
+            " built yet; docs/CALIBRATION.md says what it takes.",
+        ]
+        name = "camera pattern"
     else:
         if not milling:
             raise ValueError("the depth test is a mill's ($spindle=1): a laser takes the material test")
@@ -142,4 +186,5 @@ def build(request: CalibrateRequest, streamer: Streamer, milling: bool, focus_ax
     ]
     job = Job(name=name, source="calibrate", spot=request.spot, offset=Offset(x=request.x, y=request.y), groups=groups)
     job.refresh_stats(streamer)
-    return CalibrateResult(job=job, summary=summary, notes=notes)
+    svg = calibrate.dots_svg(request.columns, request.rows, request.pitch, request.diameter) if request.kind == DOTS else None
+    return CalibrateResult(job=job, summary=summary, notes=notes, svg=svg)

@@ -64,3 +64,39 @@ def test_the_focus_ladder_has_a_line_per_step_lowest_first():
     assert all(patch.power == 300.0 and patch.speed == 900.0 and patch.depth is None for patch in patches)
     with pytest.raises(ValueError, match="gap must be above 0"):
         calibrate.focus_ladder([0.0], 8.0, 0.0, 300.0, 900.0)
+
+
+def test_the_camera_dots_leave_the_top_right_one_out_and_snake_along_the_rows():
+    assert calibrate.dot_centers(3, 2, 2.0, (10.0, 20.0)) == [(10.0, 20.0), (12.0, 20.0), (14.0, 20.0), (12.0, 22.0), (10.0, 22.0)]
+    for args, message in (
+        ((1, 5, 2.0), "the pattern has 2 to 100 dots a side"),
+        ((5, 5, 0.1), "the dots' pitch must be 0.2 to 20 mm"),
+        ((100, 5, 20.0), "the pattern must be at most 200 mm across"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            calibrate.dot_centers(*args)
+
+
+def test_a_laser_dot_is_its_outline_then_a_spiral_in_to_its_middle():
+    # The same numbers the page's mock gives (web/frontend/tests/calibrate.test.ts).
+    dot = calibrate.filled_dot((0.0, 0.0), 0.6, 0.1)
+    assert len(dot) == 57 and dot[:3] == [(0.25, 0.0), (0.231, 0.0957), (0.1768, 0.1768)] and dot[-1] == (0.0, 0.0)
+    # The outline is a beam's half width inside the dot's edge and closed.
+    assert dot[16] == (0.25, 0.0)
+    assert all(abs((x * x + y * y) ** 0.5 - 0.25) < 1e-3 for x, y in dot[:17])
+    patches = calibrate.dots(4, 3, 1.0, 0.4, 0.1, 300.0, 600.0)
+    assert len(patches) == 1 and len(patches[0].paths) == 11 and patches[0].power == 300.0
+    with pytest.raises(ValueError, match="wider than the spot"):
+        calibrate.dots(4, 3, 1.0, 1.2, 0.1, 300.0, 600.0)
+    with pytest.raises(ValueError, match="more than 200000"):
+        calibrate.dots(100, 100, 2.0, 1.9, 0.01, 300.0, 600.0)
+
+
+def test_a_mill_s_dots_are_plunges_and_the_sheet_is_at_true_size():
+    patches = calibrate.drilled_dots(3, 3, 1.0, 0.05, 1000.0, 120.0)
+    assert patches[0].depth == 0.05 and all(len(path) == 1 for path in patches[0].paths) and len(patches[0].paths) == 8
+    svg = calibrate.dots_svg(3, 2, 2.0, 0.6)
+    assert svg.startswith('<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="22mm" viewBox="0 0 80 22">')
+    assert svg.count("<circle") == 5 and '<circle cx="5" cy="7" r="0.3"/>' in svg
+    assert '<path d="M 5 12 h 10"' in svg
+

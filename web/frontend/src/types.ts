@@ -718,12 +718,14 @@ export interface CenterResponse {
     job: Job;
     summary: string[];
     notes: string[];
+    /** The camera pattern's sheet to print, an SVG at true size; missing or null for every other test. */
+    svg?: string | null;
 }
 
 /** A calibration test; a ladder is [first, last, steps], both ends included, and what is left out takes the backend's default. */
 export interface CalibrateRequest {
-    /** A laser's grid of squares at a power and a speed each, its row of lines a step over focus each (on a focus axis), or a mill's row of slots a step deeper each. */
-    kind?: "material" | "depth" | "focus";
+    /** A laser's grid of squares at a power and a speed each, its row of lines a step over focus each (on a focus axis), a mill's row of slots a step deeper each, or the camera pattern: a grid of dots a known pitch apart. */
+    kind?: "material" | "depth" | "focus" | "dots";
     powers?: [number, number, number];
     speeds?: [number, number, number];
     size?: number;
@@ -741,6 +743,12 @@ export interface CalibrateRequest {
     focuses?: [number, number, number];
     power?: number;
     speed?: number;
+    /** The camera pattern: dots along X and Y, mm apart and across, and a mill's depth for each. */
+    columns?: number;
+    rows?: number;
+    pitch?: number;
+    diameter?: number;
+    depth?: number;
     /** The lower left corner, board mm. */
     x?: number;
     y?: number;
