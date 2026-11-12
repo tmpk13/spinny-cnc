@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mountConfig } from "../src/views/config.ts";
 import { mountConsole } from "../src/views/console.ts";
 import { mountJog } from "../src/views/jog.ts";
+import { mountConnection } from "../src/views/connection.ts";
 import { defaultPort, machineOfPort, mountStatusBar, portLabel } from "../src/views/statusbar.ts";
 import { findButton, settle, setup } from "./harness.ts";
 
@@ -13,7 +14,10 @@ import { findButton, settle, setup } from "./harness.ts";
 describe("a G-code machine in the top bar", () => {
     test("its port is named after its file, offered, and Connect opens it as that machine", async () => {
         const { store, ctx, root } = setup();
-        mountStatusBar(root, ctx);
+        const bar = document.createElement("header");
+        document.body.append(bar);
+        mountStatusBar(bar, ctx);
+        mountConnection(root, ctx);
         await ctx.refreshPorts();
         const ports = store.get().ports;
         const lumen = ports.find((port) => port.device === "/dev/ttyACM1")!;
@@ -31,8 +35,11 @@ describe("a G-code machine in the top bar", () => {
         const snapshot = store.get().snapshot;
         expect(snapshot.connected).toBe(true);
         expect(snapshot.profile?.controller).toBe("gcode");
-        expect(root.querySelector(".firmware")?.textContent).toContain("Marlin");
-        expect(root.querySelector(".badge.profile")?.textContent).toBe("Opulo LumenPnP (Rev05, Marlin)");
+        expect(bar.querySelector(".firmware")?.textContent).toContain("Marlin");
+        expect(bar.querySelector(".badge.profile")?.textContent).toBe("Opulo LumenPnP (Rev05, Marlin)");
+        // Remembered: a button switches back to it in one press.
+        expect(root.querySelector(".connection-recent button")?.textContent).toBe("Opulo LumenPnP (Rev05, Marlin)");
+        bar.remove();
     });
 });
 

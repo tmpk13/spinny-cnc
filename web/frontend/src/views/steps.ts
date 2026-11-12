@@ -41,7 +41,7 @@ export function stepStates(steps: Step[]): StepState[] {
 // --- the steps the setups share ---------------------------------------------
 
 export function connectStep(state: AppState): Step {
-    return { label: "Connect", done: state.snapshot.connected, hint: "Pick the port in the top bar and press Connect.", panel: "status" };
+    return { label: "Connect", done: state.snapshot.connected, hint: "Pick the port on the Connection tab and press Connect.", panel: "connection" };
 }
 
 export function jobStep(state: AppState): Step {

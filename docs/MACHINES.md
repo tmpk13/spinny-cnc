@@ -10,7 +10,7 @@ writes every firmware setting, so swapping files swaps machines. The same
 files start the virtual firmware, and give the gcode tools their defaults.
 A machine whose own controller takes G-code, a pick and place machine's
 Marlin, is a file here too ([G-code machines](#g-code-machines)): it is
-connected from the top bar and jogged, homed and stopped like the others.
+connected from the Connection tab and jogged, homed and stopped like the others.
 
 | Where | How |
 | --- | --- |
@@ -476,7 +476,7 @@ packets to smart feeders through the controller: its keys, and what a
 run does with them, are in [WEB_API.md](WEB_API.md#placing-with-a-g-code-machine),
 the LumenPnP file spelling out Opulo's Photon feeders.
 
-The top bar lists every serial port with the G-code machine whose file
+The Connection tab lists every serial port with the G-code machine whose file
 claims it (its `url` is the port's, or one of its `match` words is in
 the port's USB names), and a G-code machine whose `url` no port is
 listed under (a socket) as an entry of its own; Connect opens a claimed

@@ -23,6 +23,7 @@ import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
 import { mountMarkers } from "./views/markers.ts";
 import { mountMill } from "./views/mill.ts";
+import { mountConnection } from "./views/connection.ts";
 import { mountPageSettings } from "./views/pagesettings.ts";
 import { mountPanels } from "./views/panels.ts";
 import { mountPnp } from "./views/pnp.ts";
@@ -277,6 +278,7 @@ function main(): void {
         return node;
     };
     mountStatusBar(panel("status"), ctx);
+    mountConnection(panel("connection"), ctx);
     mountFocusBanner(panel("status"), ctx);
     const tabTools = mountTabs(panel("tabs"), store);
     mountSteps(panel("steps"), ctx);

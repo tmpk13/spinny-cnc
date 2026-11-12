@@ -4,10 +4,17 @@ From the first connection to a probed, compensated run. The wiring and the bring
 
 ## Connecting and first moves
 
-Open `http://localhost:8000`, connect to the board (or to
-`socket://127.0.0.1:2323` for the virtual firmware, or to
+Open `http://localhost:8000`, connect to the board on the *Connection*
+tab (or to `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
-relay-pi -- user@host`), jog the beam over the
+relay-pi -- user@host`). The top bar shows only the machine's state (a
+press on it opens the Connection tab) and the big *Stop*, always in view:
+it stops a run or probing the way their own Stop does, else ends a camera
+routine, cancels a jog or goto and turns the beam or spindle off; on a
+G-code machine it sends the file's stop. One machine is connected at a
+time; the Connection tab keeps a button for each machine connected lately
+(up to four), which switches to it in one press, letting the one
+connected go first. Then jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
@@ -498,7 +505,7 @@ driven yet.
 A pick and place machine whose own controller takes the G-code OpenPnP's
 GcodeDriver sends (Marlin, Smoothieware, RepRapFirmware, Grbl) is a
 machine file with `controller = "gcode"` ([MACHINES.md](MACHINES.md#g-code-machines)),
-used like the other machines: connected from the top bar, jogged and
+used like the other machines: connected from the Connection tab, jogged and
 homed in the Jog panel, read in the readout, sent lines in the Console,
 stopped with *Reset* or the jog cancel. `machines/opulo-lumen-rev5.toml`
 is an Opulo LumenPnP (Rev05 board, Opulo's Marlin) as Opulo's stock
@@ -511,7 +518,7 @@ has a box to keep or leave it, and the file shows as it will be saved. A
 job's placements become references for the board job picked on the PNP
 page. Its setup steps:
 
-1. Connect: the top bar names the machine's port after its file (the
+1. Connect: the Connection tab names the machine's port after its file (the
    LumenPnP's `MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode` port by its
    `[port] match = ["lumen"]`, another machine by its file's `url` or
    words); pick it and press *Connect*. The status bar shows the

@@ -18,6 +18,7 @@ import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedBootSettings, mountConfig } from "../src/views/config.ts";
 import { mountPreviewPanel } from "../src/views/previewpanel.ts";
+import { mountConnection, readRecent, rememberRecent, type Recent } from "../src/views/connection.ts";
 import { mountStatusBar } from "../src/views/statusbar.ts";
 import { mountToasts } from "../src/views/toasts.ts";
 
@@ -603,21 +604,62 @@ describe("jog", () => {
 });
 
 describe("status bar", () => {
-    test("ports, state badge and link", () => {
+    test("state badge, link and the big Stop; the ports are the Connection tab's", () => {
         const { store, ctx, root } = setup();
         mountStatusBar(root, ctx);
-        store.set({ ports: [{ url: "/dev/ttyACM0", description: "board" }] });
-        expect(root.querySelectorAll("option").length).toBe(2);
-        expect((root.querySelector("input.url") as HTMLInputElement).value).toBe("/dev/ttyACM0");
+        expect(root.querySelector("select")).toBeNull();
+        const stop = findButton(root, "Stop");
+        expect(stop.disabled).toBe(true);
         store.set({ snapshot: connected({ state: "Alarm", alarm: 1 }), link: "open" });
         const badge = root.querySelector(".badge.state")!;
         expect(badge.getAttribute("data-state")).toBe("Alarm");
         expect(badge.textContent).toBe("Alarm:1");
         expect(root.querySelector(".firmware")?.textContent).toBe("v0.1.0");
         expect(root.querySelector(".link")?.getAttribute("data-link")).toBe("open");
-        expect(Array.from(root.querySelectorAll("button")).some((b) => b.textContent === "Disconnect")).toBe(true);
+        expect(stop.disabled).toBe(false);
         store.set({ link: "closed" });
         expect(root.querySelector(".link")?.textContent).toBe("disconnected");
+    });
+
+    test("the big Stop stops what runs and says what it stopped", async () => {
+        const { store, ctx, root, api, calls } = setup();
+        mountStatusBar(root, ctx);
+        store.set({ snapshot: await api.connect("/dev/ttyACM0") });
+        findButton(root, "Stop").click();
+        await settle();
+        expect(calls.some((call) => call.name === "stopAll")).toBe(true);
+        expect(store.get().toasts.at(-1)?.text).toBe("stopped motion and the output");
+    });
+});
+
+describe("the Connection tab", () => {
+    test("ports, Connect and Disconnect, and a button per machine connected lately", async () => {
+        localStorage.removeItem("spinny.recent");
+        const { store, ctx, root } = setup();
+        mountConnection(root, ctx);
+        store.set({ ports: [{ url: "/dev/ttyACM0", description: "board" }] });
+        expect(root.querySelectorAll("option").length).toBe(2);
+        expect((root.querySelector("input.url") as HTMLInputElement).value).toBe("/dev/ttyACM0");
+        expect(root.querySelector(".connection-recent")?.classList.contains("hidden")).toBe(true);
+        findButton(root, "Connect").click();
+        await settle();
+        expect(store.get().snapshot.connected).toBe(true);
+        expect(findButton(root, "Disconnect")).toBeTruthy();
+        const recent = root.querySelector(".connection-recent button") as HTMLButtonElement;
+        expect(recent.textContent).toBe("board");
+        expect(recent.getAttribute("aria-pressed")).toBe("true");
+        localStorage.removeItem("spinny.recent");
+    });
+
+    test("the machines connected lately: newest first, one per url, at most four, read safely", () => {
+        const entry = (url: string): Recent => ({ url, machine: null, label: url });
+        let recent: Recent[] = [];
+        for (const url of ["a", "b", "c", "d", "e", "b"]) {
+            recent = rememberRecent(recent, entry(url));
+        }
+        expect(recent.map((item) => item.url)).toEqual(["b", "e", "d", "c"]);
+        expect(readRecent("not json")).toEqual([]);
+        expect(readRecent(JSON.stringify([{ url: "x", label: "X", machine: 3 }, { url: 5 }]))).toEqual([{ url: "x", machine: null, label: "X" }]);
     });
 });
 

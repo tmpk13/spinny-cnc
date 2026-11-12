@@ -244,7 +244,12 @@ input[type="checkbox"] {
 #app[data-page="cam"] > #page-jobs,
 #app[data-page="pnp"] > #page-jobs,
 #app[data-page="auto"] > #page-jobs,
-#app[data-page="config"] > #page-jobs {
+#app[data-page="config"] > #page-jobs,
+#app[data-page="connection"] > #page-jobs {
+    display: none;
+}
+
+#app:not([data-page="connection"]) > #page-connection {
     display: none;
 }
 
@@ -355,7 +360,8 @@ input[type="checkbox"] {
     font-size: 0.85rem;
 }
 
-.tabs-gear {
+.tabs-gear,
+.tabs-tool {
     display: inline-grid;
     place-items: center;
     width: 2.25rem;
@@ -369,18 +375,20 @@ input[type="checkbox"] {
 }
 
 .tabs-gear:hover,
+.tabs-tool:hover,
 .tabs-gear[aria-expanded="true"] {
     color: var(--strong);
     background: var(--btn);
     border-color: var(--border);
 }
 
-.tabs-gear .icon {
+.tabs-gear .icon,
+.tabs-tool .icon {
     width: 1.25rem;
     height: 1.25rem;
 }
 
-.tabs-gear[hidden] {
+.tabs-tool[hidden] {
     display: none;
 }
 
@@ -695,6 +703,11 @@ table.settings-list td {
     /* The CAM page: the profile on the left, its preview and its file on the right. */
     .cam-grid {
         grid-template-columns: minmax(0, 3fr) minmax(22rem, 2fr);
+    }
+
+    /* The Connection page: one column, as wide as its rows need. */
+    .connection-grid {
+        grid-template-columns: minmax(0, 48rem);
     }
 
     /* The Config page: the machine file on the left, the list of every key
@@ -1087,12 +1100,27 @@ input.num.field.invalid {
     background: radial-gradient(circle, var(--laser) 0 30%, transparent 34%);
 }
 
+/* The big Stop: at the bar's end, always in view. */
+.btn-stop {
+    min-width: 7rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* The state badge is a button to the Connection tab. */
+button.badge.state {
+    font-family: inherit;
+    line-height: inherit;
+    cursor: pointer;
+}
+
 .connection {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    flex: 1 1 28rem;
 }
 
 .connection select {
@@ -1119,18 +1147,7 @@ input.num.field.invalid {
     margin-left: auto;
 }
 
-/* On a phone the name and the machine state share the first line and
-   the port controls take the next. */
-@media (max-width: 48rem) {
-    .status {
-        order: 1;
-    }
 
-    .connection {
-        order: 2;
-        flex-basis: 100%;
-    }
-}
 
 .firmware {
     font-family: var(--mono);

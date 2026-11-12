@@ -188,7 +188,7 @@ function wallFindings(): Finding[] {
     return findings;
 }
 
-const PAGES = ["jobs", "plot", "cam", "pnp", "auto", "config"];
+const PAGES = ["jobs", "plot", "cam", "pnp", "auto", "config", "connection"];
 
 async function openDetails(page: Page): Promise<void> {
     await page.evaluate(() => document.querySelectorAll("details").forEach((d) => d.setAttribute("open", "")));
@@ -220,18 +220,24 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     { name: "empty", pages: PAGES, enter: async () => {} },
     {
         name: "connected, job picked, folds open", pages: PAGES, enter: async (page) => {
-            await tab(page, "jobs");
-            await page.click("#status button:has-text('Connect')");
+            await tab(page, "connection");
+            await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
+            await tab(page, "jobs");
             await page.locator(".job-list li .job-pick").first().click();
             await page.waitForTimeout(500);
         },
     },
     {
-        name: "placing with a G-code device", pages: ["pnp"], enter: async (page) => {
-            await tab(page, "pnp");
-            await page.locator("#pnp-parts select").first().selectOption("device");
+        name: "placing with a G-code machine", pages: ["pnp", "connection"], enter: async (page) => {
+            await tab(page, "connection");
+            await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
+            await page.locator("#connection select").selectOption({ index: await page.evaluate(() =>
+                Array.from(document.querySelectorAll("#connection select option")).findIndex((option) => option.textContent?.includes("LumenPnP"))) });
+            await page.click("#connection button:has-text('Connect')");
+            await page.waitForTimeout(500);
+            await tab(page, "pnp");
         },
     },
     {

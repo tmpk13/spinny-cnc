@@ -133,6 +133,12 @@ export interface Snapshot {
     position?: LastPosition | null;
 }
 
+/** What the big Stop stopped, in words, and the machine after it. */
+export interface StopAnswer {
+    stopped: string[];
+    snapshot: Snapshot;
+}
+
 /** The machine's last reported joints, with its state and when. */
 export interface LastPosition {
     r: number;

@@ -63,6 +63,7 @@ import type {
     ProbeSettings,
     Progress,
     RealtimeAction,
+    StopAnswer,
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
@@ -109,6 +110,8 @@ export interface Api {
     /** Homes the axes named (letters, each with an optional - or + for the end), or every axis with an endstop; answers when the home ends. */
     home(axes?: string): Promise<void>;
     realtime(action: RealtimeAction): Promise<void>;
+    /** The big Stop: a run or probing stopped, else a routine ended, motion cancelled and the output off; a G-code machine's own stop. */
+    stopAll(): Promise<StopAnswer>;
     command(line: string): Promise<string[]>;
 
     laser(power: number, ms: number): Promise<void>;
@@ -466,6 +469,10 @@ export class HttpApi implements Api {
 
     async realtime(action: RealtimeAction): Promise<void> {
         await this.request("POST", "/api/realtime", { action });
+    }
+
+    async stopAll(): Promise<StopAnswer> {
+        return this.request<StopAnswer>("POST", "/api/stop");
     }
 
     async command(line: string): Promise<string[]> {

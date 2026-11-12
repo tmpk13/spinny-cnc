@@ -763,6 +763,20 @@ def test_a_typed_hold_and_resume_are_the_runs(client, fake):
     assert client.post("/api/run/stop").status_code == 200
 
 
+def test_the_big_stop_stops_a_run_or_cancels_motion_and_the_output(client, fake):
+    assert client.post("/api/stop").status_code == 409
+    connect(client)
+    # Nothing running: the jog is cancelled and the beam turned off.
+    before = len(fake.received_lines)
+    answer = client.post("/api/stop").json()
+    assert answer["stopped"] == ["motion and the output"]
+    assert 0x85 in fake.realtime_bytes and "laser off" in fake.received_lines[before:]
+    # A run is stopped as its own Stop does it.
+    slow_run(client, fake)
+    assert client.post("/api/stop").json()["stopped"] == ["the run"]
+    assert client.get("/api/run").json()["state"] == "stopped"
+
+
 def test_moves_are_refused_while_a_run_owns_the_machine(client, fake):
     connect(client)
     slow_run(client, fake)

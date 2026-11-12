@@ -346,6 +346,13 @@ def test_a_jog_leaving_the_up_camera_goes_up_first_when_the_file_asks(tmp_path):
         assert sent(client, start) == ["M114", "G0 X71 F3000"]
 
 
+def test_the_big_stop_sends_the_files_stop(client):
+    connect(client, "rig")
+    start = len(client.fake.lines)
+    assert client.post("/api/stop").json()["stopped"] == ["the machine"]
+    assert sent(client, start)[0] == "M410"
+
+
 def test_without_leave_a_jog_never_rises(client):
     connect(client, "rig")
     client.post("/api/goto", json={"kind": "joint", "r": 60.0, "z": 200.0, "h": -4.0})

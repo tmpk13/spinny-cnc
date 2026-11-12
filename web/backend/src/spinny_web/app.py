@@ -1730,6 +1730,49 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             raise ValueError("action must be hold, resume, reset, cancel or status")
         return self.snapshot()
 
+    def stop_all(self) -> dict:
+        """The page's big Stop: whatever moves the machine or drives its
+        output stops, each the way its own Stop does it. A run or probing
+        is stopped with a hold, then a reset; otherwise a camera routine is
+        ended, a jog or goto cancelled, and the beam or spindle turned off.
+        A G-code machine gets its file's stop, which also ends a placing
+        run and the camera routines. `stopped` names what was stopped."""
+        stopped: list[str] = []
+        if self.gcode.connected:
+            if self.gcode.running:
+                stopped.append("the placing run")
+            for name, camera in (("the up camera routine", self.pnp), ("the top camera routine", self.top)):
+                if camera.routine_active:
+                    stopped.append(name)
+            self._gcode_realtime("reset")
+            stopped.append("the machine")
+            return {"stopped": stopped, "snapshot": self.snapshot()}
+        link = self.require_link()
+        if self.runner.active:
+            try:
+                self.runner.stop()
+                stopped.append("the run")
+            except RunnerError:
+                # It ended between the look and the stop.
+                pass
+        elif self.prober.active:
+            try:
+                self.prober.stop()
+                stopped.append("probing")
+            except ProberError:
+                pass
+        if not stopped:
+            for name, camera in (("the camera routine", self.camera), ("the up camera routine", self.pnp)):
+                if camera.routine_active:
+                    camera.abort()
+                    stopped.append(name)
+            self._jog_target = None
+            link.realtime(REALTIME_JOG_CANCEL)
+            link.request_ok("spindle off" if self.milling else "laser off")
+            link.status_now(1.0, routine=True)
+            stopped.append("motion and the output")
+        return {"stopped": stopped, "snapshot": self.snapshot()}
+
     def command(self, line: str) -> dict:
         if self.gcode.connected:
             return self._gcode_command(line)
@@ -3483,6 +3526,10 @@ def create_app(
     @app.post("/api/realtime")
     def realtime(body: RealtimeBody):
         return guarded(lambda: backend.realtime(body.action))
+
+    @app.post("/api/stop")
+    def stop_all():
+        return guarded(backend.stop_all)
 
     @app.post("/api/command")
     def command(body: CommandBody):

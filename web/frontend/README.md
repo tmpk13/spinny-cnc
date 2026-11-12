@@ -110,9 +110,10 @@ works with the machine connected (`gcodePlacing` in
 place with) the Head (`src/views/placing.ts`), Top camera, Board on the
 machine (`pnprefs.ts`), Feeders (`pnpfeeders.ts`) and Placing
 (`pnprun.ts`) panels, all on `AppState.placing`, take the nozzle panel's
-place. A G-code machine is connected from the top bar like any other: the
-ports carry the G-code machine file that claims them, and Connect passes
-it on (`machineOfPort` in `src/views/statusbar.ts`); its Jog panel and
+place. A G-code machine is connected from the Connection tab like any
+other: the ports carry the G-code machine file that claims them, and
+Connect passes it on (`machineOfPort` in `src/views/statusbar.ts`, used by
+`src/views/connection.ts`); its Jog panel and
 readout are the file's `[controls]`. Their use is in
 [pick and place](../../docs/OPERATING.md#pick-and-place) and
 [placing with a G-code machine](../../docs/OPERATING.md#placing-with-a-g-code-machine-openpnp-compatible).

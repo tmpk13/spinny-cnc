@@ -1,18 +1,21 @@
-// Connection selector, machine state, firmware version and the event link.
-// A port a G-code machine file claims (its url, or words in the port's USB
-// names) is named after that machine and opens as it: the same Connect
-// serves this project's board and a pick and place machine's own Marlin.
+// The top bar: the machine's state (a press opens the Connection tab, where
+// the port is picked), the kind of machine, its firmware, the event link,
+// and the big Stop. Also the port helpers the Connection tab uses: a port
+// a G-code machine file claims (its url, or words in the port's USB names)
+// is named after that machine and opens as it, so the same Connect serves
+// this project's board and a pick and place machine's own Marlin.
 
-import { button, el, readStored, replace, writeStored } from "../dom.ts";
+import { button, el, setLocked } from "../dom.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
 import { gcodePort } from "../ports.ts";
+import type { AppState } from "../state.ts";
 import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
+import { showPage } from "./tabs.ts";
 
 /** How often the ports are listed again while nothing is connected, ms: a controller plugged in shows up by itself. */
 export const PORT_POLL_MS = 10_000;
-const HIDE_SYSTEM_KEY = "spinny.hideSystemPorts";
 /** A report older than this, s, is a machine that has gone quiet; the link gives it up a little later. */
 export const STALE_SECONDS = 1.5;
 
@@ -51,32 +54,10 @@ export function portLabel(port: Port): string {
     return name ? `${machine}${name}  ${port.url}` : `${machine}${port.url}`;
 }
 
-function readHideSystem(): boolean {
-    const stored = readStored(HIDE_SYSTEM_KEY);
-    return stored === null ? true : stored === "1";
-}
-
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
-    let hideSystem = readHideSystem();
-    const hideBox = el("input", { type: "checkbox", class: "hide-system", "aria-label": "Hide system ports" }) as HTMLInputElement;
-    hideBox.checked = hideSystem;
-    const hideLabel = el("label", { class: "muted hide-system-label", title: "Hide built-in serial ports; they are never the controller" }, hideBox, " hide system ports");
-    hideBox.addEventListener("change", () => {
-        hideSystem = hideBox.checked;
-        writeStored(HIDE_SYSTEM_KEY, hideSystem ? "1" : "0");
-        renderPorts(ctx.store.get().ports);
-    });
-    const select = el("select", { class: "field", "aria-label": "Serial port" });
-    const urlInput = el("input", {
-        type: "text",
-        class: "field url",
-        placeholder: "/dev/ttyACM0 or socket://host:port",
-        "aria-label": "Port url",
-        autocomplete: "off",
-    });
-    const refresh = button("Ports", () => ctx.refreshPorts(), "btn btn-quiet");
-    const connect = button("Connect", () => toggle());
-    const stateBadge = el("span", { class: "badge state", "data-state": "none" }, "No link");
+    // The state, a press away from the Connection tab where the port is picked.
+    const stateBadge = el("button", { type: "button", class: "badge state", "data-state": "none", title: "the machine's state; press for the Connection tab" }, "No link");
+    stateBadge.addEventListener("click", () => showPage("connection"));
     const firmware = el("span", { class: "firmware muted" }, "");
     // Shown only for a machine that is not the polar laser.
     const profile = el("span", { class: "badge profile hidden" }, "");
@@ -84,83 +65,30 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const mapChip = el("span", { class: "badge map-use hidden" });
     const link = el("span", { class: "link", "data-link": "closed" }, "feed off");
     const mock = ctx.store.get().mock ? el("span", { class: "badge mock" }, "mock") : null;
+    // Whatever moves or burns stops: a run or probing as their Stop does,
+    // else a routine, a jog or a goto, and the beam or spindle; a G-code
+    // machine's own stop line.
+    const stop = button("Stop", () => stopAll(), "btn btn-danger btn-stop");
+    stop.title = "stop the machine: the run, probing, a routine, a jog or goto, the beam or spindle";
 
     root.append(
         el("div", { class: "brand" }, "Spinny Laser"),
-        el("div", { class: "connection" }, select, urlInput, refresh, connect, hideLabel),
         el("div", { class: "status" }, stateBadge, mapChip, profile, firmware, link, mock),
+        stop,
     );
 
-    select.addEventListener("change", () => {
-        urlInput.value = select.value;
-    });
-
-    async function toggle(): Promise<void> {
-        const snapshot = ctx.store.get().snapshot;
-        if (snapshot.connected) {
-            const next = await ctx.call(ctx.api.disconnect());
-            if (next) {
-                ctx.store.set({ snapshot: next });
-            }
-        } else {
-            const url = urlInput.value.trim() || select.value;
-            if (!url) {
-                ctx.toast("error", "pick a port or type a url");
-                return;
-            }
-            const next = await ctx.call(ctx.api.connect(url, machineOfPort(ctx.store.get().ports, url)));
-            if (next) {
-                ctx.store.set({ snapshot: next });
-                if (next.connected) {
-                    await ctx.refreshSettings();
-                }
-            }
+    async function stopAll(): Promise<void> {
+        const answer = await ctx.call(ctx.api.stopAll());
+        if (answer) {
+            ctx.store.set({ snapshot: answer.snapshot });
+            ctx.toast("info", `stopped ${answer.stopped.join(", ")}`);
         }
     }
 
-    function renderPorts(all: Port[]): void {
-        const ports = visiblePorts(all, hideSystem);
-        const current = select.value;
-        replace(
-            select,
-            el("option", { value: "" }, ports.length ? "port..." : "no ports"),
-            ...ports.map((port) => el("option", { value: port.url }, portLabel(port))),
-        );
-        if (ports.some((port) => port.url === current)) {
-            select.value = current;
-        }
-        const connected = ctx.store.get().snapshot.connected;
-        const offered = defaultPort(ports);
-        // The controller takes the field over from a built-in port it was
-        // given before anything better was listed, never from something typed.
-        const typed = urlInput.value !== "" && !all.some((port) => port.url === urlInput.value || port.device === urlInput.value);
-        const held = all.find((port) => port.url === urlInput.value || port.device === urlInput.value);
-        if (!connected && offered && !typed && (urlInput.value === "" || (held?.kind === "system" && offered.kind !== "system"))) {
-            urlInput.value = offered.url;
-            select.value = offered.url;
-        }
-    }
-
-    ctx.store.subscribe((state) => renderPorts(state.ports), ["ports"]);
-
-    // A controller plugged in later shows up without a press of Ports.
-    const poll = setInterval(() => {
-        if (!ctx.store.get().snapshot.connected && document.visibilityState !== "hidden") {
-            void ctx.refreshPorts();
-        }
-    }, PORT_POLL_MS);
-    window.addEventListener("pagehide", () => clearInterval(poll));
-
-    ctx.store.subscribe((state) => {
+    function render(state: AppState): void {
         const snapshot = state.snapshot;
         const machine = snapshot.machine;
-        connect.textContent = snapshot.connected ? "Disconnect" : "Connect";
-        connect.classList.toggle("btn-primary", !snapshot.connected);
-        urlInput.disabled = snapshot.connected;
-        select.disabled = snapshot.connected;
-        if (snapshot.connected && snapshot.url) {
-            urlInput.value = snapshot.url;
-        }
+        setLocked(stop, !snapshot.connected, "connect first");
         if (!snapshot.connected || !machine) {
             stateBadge.textContent = snapshot.connected ? "Connected" : "Disconnected";
             stateBadge.setAttribute("data-state", snapshot.connected ? "Idle" : "none");
@@ -181,5 +109,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";
         const progress = state.progress ?? snapshot.run;
         showMapUse(mapChip, runActive(progress) ? runMapUse(progress, isMilling(snapshot)) : null);
-    }, ["snapshot", "link", "progress"]);
+    }
+    ctx.store.subscribe(render, ["snapshot", "link", "progress"]);
+    render(ctx.store.get());
 }

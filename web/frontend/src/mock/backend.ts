@@ -219,6 +219,7 @@ import type {
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
+    StopAnswer,
     TouchAt,
     TouchMode,
     TouchPlan,
@@ -2837,6 +2838,47 @@ export class MockBackend implements Api, EventFeed {
                 this.line("rx", found);
             }
         });
+    }
+
+    /** The big Stop, as the backend's stop_all: the run or probing stopped, else routines ended, motion cancelled and the output off. */
+    async stopAll(): Promise<StopAnswer> {
+        const stopped: string[] = [];
+        if (this.gcodeId !== null) {
+            if (this.deviceSession !== null) {
+                stopped.push("the placing run");
+            }
+            if (this.deviceRoutine !== null) {
+                stopped.push("the up camera routine");
+            }
+            if (this.topSession !== null) {
+                stopped.push("the top camera routine");
+            }
+            await this.gcodeRealtime("reset");
+            stopped.push("the machine");
+            return { stopped, snapshot: this.snapshot() };
+        }
+        this.requireConnected();
+        if (this.session && (this.session.state === "running" || this.session.state === "hold")) {
+            await this.runStop();
+            stopped.push("the run");
+        } else if (this.probing) {
+            await this.probeStop();
+            stopped.push("probing");
+        }
+        if (stopped.length === 0) {
+            if (this.finding) {
+                await this.cameraAbort();
+                stopped.push("the camera routine");
+            }
+            if (this.pnpSession) {
+                await this.pnpAbort();
+                stopped.push("the up camera routine");
+            }
+            await this.realtime("cancel");
+            await (this.machine.milling() ? this.spindleOff() : this.laserOff());
+            stopped.push("motion and the output");
+        }
+        return { stopped, snapshot: this.snapshot() };
     }
 
     async realtime(action: RealtimeAction): Promise<void> {

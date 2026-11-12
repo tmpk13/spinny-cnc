@@ -18,7 +18,7 @@ import { readObject } from "../layout.ts";
 import { closeMenu, openMenu } from "../menu.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config";
+export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection";
 
 export const PAGES: { id: PageId; label: string }[] = [
     { id: "jobs", label: "Jobs" },
@@ -27,6 +27,7 @@ export const PAGES: { id: PageId; label: string }[] = [
     { id: "pnp", label: "PNP" },
     { id: "auto", label: "Auto" },
     { id: "config", label: "Config" },
+    { id: "connection", label: "Connection" },
 ];
 
 const PAGE_KEY = "spinny.page";

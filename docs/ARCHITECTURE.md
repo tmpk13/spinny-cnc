@@ -18,7 +18,7 @@ nozzle and sees where a part sits on it, and a board job's parts are read
 from its KiCad file. A pick and place machine whose own controller takes
 the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
 RepRapFirmware, Grbl) is a machine file with `controller = "gcode"`,
-connected in this one's place from the top bar: the backend talks to it a
+connected in this one's place from the Connection tab: the backend talks to it a
 line at a time and serves the page's jog, readout, goto, home, stop and
 console with it, its X, Y, Z and turn as the cartesian machine's joints,
 and places a board's parts with it, each next line made from what the up
@@ -54,7 +54,7 @@ flowchart LR
         BE --> LS[laser_sweep: gerber, isolation]
         BE --> PROBE[probing_part: Backend's probing methods: the map probed, a touch, focus here, the compensation a run follows]
         PROBE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
-        BE --> GCP[gcode_part: Backend's G-code machine: connected from the top bar, its jog, goto, position, home, stop, motors and console, its place read once a second]
+        BE --> GCP[gcode_part: Backend's G-code machine: connected from the Connection tab, its jog, goto, position, home, stop, motors and console, its place read once a second]
         GCP --> GD
         BE --> PLP[placing_part: Backend's placing with the G-code machine: references, the cameras' places, lights and vacuum, feeders, a run, kept per machine]
         PLP --> OPNP

@@ -110,6 +110,7 @@ false with its profile kept until the next connect.
 | `POST /api/motors` | `{"enabled": false}`; turning them off answers 409 while a run or probing owns the machine: the drivers share one enable line, so `disable` (and `$idle_ms`) lets go of the focus axis too, and a head that is not self-locking sinks unseen |
 | `POST /api/unlock` | |
 | `POST /api/home` | `{"axes": "R A-"}`: the joints to home as letters R, A, H, Z, each with an optional `-` or `+` for the end to seek; `{"axes": ""}` or `{}` homes every axis with an endstop. Answers when the home ends, with the state; 409 while a run or probing owns the machine, 400 for an axis without a switch, a home the firmware refuses or one that failed (then the machine is in `Alarm`). Takes the height map's focus offset back, as a position declaration does. The machine's `homed` is the letters of the joints homed since the position was last lost, or null on a machine with no endstop |
+| `POST /api/stop` | the page's big Stop: a run or probing stopped as their own stop does (a hold, then a reset); otherwise the head camera's and the up camera's routines ended, a jog or goto cancelled (0x85) and the beam or spindle turned off; on a G-code machine the file's stop, ending a placing run and the camera routines. Answers `{"stopped": [what was stopped, in words], "snapshot": ...}`; 409 with nothing connected |
 | `POST /api/realtime` | `{"action": "hold" \| "resume" \| "reset" \| "cancel" \| "status"}`; while a job runs, `hold` and `resume` are the run's own, and `reset` ends the run before the byte goes out; while a run is still being prepared, `hold` and `reset` cancel its start (and still go out) |
 | `POST /api/command` | `{"line": "cut R10 F300 S200"}` returns `{"lines": ["ok"]}`: what the command printed, then its answer; a line of `?`, `!` or `~` alone goes out as that realtime byte and returns `{"lines": []}`; status reports and `[MSG:...]` lines arrive as events, except that a bare `status` returns its report in `lines` (asked for with the `?` byte); a typed `laser off` or `spindle off` during a run stops the run (hold, then reset) and returns `{"lines": []}`, and while a run is still being prepared cancels its start and goes out as typed; `set`, `disable`, `$<name>=<value>`, `$load`, `$defaults` and `spindle S` answer 409 while a run or probing owns the machine (`spindle S` only while probing); an accepted `set`, or a `$` line that may rescale or turn the axes, takes the height map's focus offset back |
 
@@ -798,7 +799,7 @@ part), then `done`.
 A pick and place machine whose own controller takes the G-code OpenPnP's
 GcodeDriver sends (Marlin, Smoothieware, RepRapFirmware, Grbl) is a
 machine file with `controller = "gcode"` ([MACHINES.md](MACHINES.md#g-code-machines)
-says what it holds), connected from the top bar like any machine
+says what it holds), connected from the Connection tab like any machine
 (`POST /api/connect` above): a line at a time, each answered `ok`, a
 refusal `error...` or `!!` (an `ok` that follows a refusal is taken with
 it), Marlin's `busy:` keeping a slow line alive; the jog, goto, home,

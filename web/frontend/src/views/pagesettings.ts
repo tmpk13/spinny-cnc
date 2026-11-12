@@ -43,13 +43,13 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
     gear.append(svgIcon(gearPath(), true));
     const quick = el("select", { class: "field tabs-layouts", "aria-label": "Panel layout", title: "the panel layout; pick a kept one to swap to it" }) as HTMLSelectElement;
     const done = el("button", { type: "button", class: "btn btn-small btn-primary tabs-done", title: "stop editing the panels" }, "Done editing");
-    const peek = el("button", { type: "button", class: "tabs-gear tabs-peek", "aria-label": "Show hidden panels", "aria-pressed": "false" });
+    const peek = el("button", { type: "button", class: "tabs-tool tabs-peek", "aria-label": "Show hidden panels", "aria-pressed": "false" });
     peek.append(svgIcon(EYE, true));
     peek.addEventListener("click", () => panels.setPeeking(!panels.peeking()));
-    const toTop = el("button", { type: "button", class: "tabs-gear", "aria-label": "Scroll to the top", title: "scroll the column last pointed at to its top" });
+    const toTop = el("button", { type: "button", class: "tabs-tool", "aria-label": "Scroll to the top", title: "scroll the column last pointed at to its top" });
     toTop.append(svgIcon(TO_TOP));
     toTop.addEventListener("click", () => panels.scrollColumn("top"));
-    const toEnd = el("button", { type: "button", class: "tabs-gear", "aria-label": "Scroll to the end", title: "scroll the column last pointed at to its end" });
+    const toEnd = el("button", { type: "button", class: "tabs-tool", "aria-label": "Scroll to the end", title: "scroll the column last pointed at to its end" });
     toEnd.append(svgIcon(TO_END));
     toEnd.addEventListener("click", () => panels.scrollColumn("end"));
     const sheet = el("div", { class: "panel page-settings", role: "dialog", "aria-label": "Page settings" });
