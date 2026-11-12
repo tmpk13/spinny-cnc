@@ -7,6 +7,7 @@ mirror. The device itself is the virtual LumenPnP's Marlin
 from __future__ import annotations
 
 import math
+import threading
 import time
 
 from spinny_web.virtual_pnp import PhotonBus as FakePhotonBus
