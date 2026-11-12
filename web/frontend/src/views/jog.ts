@@ -7,11 +7,15 @@
 // joints there are, what they are called, how they step and whether the
 // feed applies is the machine file's; the panel only draws it, and draws
 // it again when the controls change. Escape cancels a jog or goto from
-// anywhere but a dialog while a machine is connected.
+// anywhere but a dialog while a machine is connected, and leaves a text
+// field, so the next arrow key jogs. In the head: Fine, which jogs every
+// bar by its smallest step (so does holding Shift with a jog key), and
+// Hold to move, under which a button or key held moves the axis until let
+// go, the step read as the distance per second.
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
-import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, replace, setLocked } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import { gotoPlanText, type PlanInput, type PlanWant } from "../gotoplan.ts";
 import { profileOf } from "../profile.ts";
@@ -65,6 +69,26 @@ export function anyOf(names: string[]): string {
     return `${names.slice(0, -1).join(", ")} and/or ${names[names.length - 1]}`;
 }
 
+/** How often a held jog sends its next piece, ms, and the longest a hold runs without a release, s. */
+export const HOLD_TICK_MS = 100;
+export const HOLD_LIMIT_S = 60;
+const SMOOTH_KEY = "spinny.jog.smooth";
+
+/** The smallest of a bar's step choices: what Fine jogs by. */
+export function fineStep(choices: number[]): number {
+    return Math.min(...choices);
+}
+
+/**
+ * The distance a held jog sends for `seconds` since its last piece, at
+ * `rate` per second: at least a tick's worth, so the first piece fills the
+ * queue, and at most three ticks', so a late tick does not lurch.
+ */
+export function holdPiece(rate: number, seconds: number): number {
+    const tick = HOLD_TICK_MS / 1000;
+    return rate * Math.min(3 * tick, Math.max(tick, seconds));
+}
+
 /** The travel height's bounds, mm: an H, so it may be below H 0. */
 export const TRAVEL_LIMIT = 100;
 
@@ -103,8 +127,26 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
     const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small");
+    cancelButton.title = "stop a jog or goto (Escape)";
+    // Fine: every bar jogs by its smallest step while pressed.
+    let fine = false;
+    const fineButton = button("Fine", () => {
+        fine = !fine;
+        fineButton.setAttribute("aria-pressed", String(fine));
+    }, "btn btn-quiet btn-small btn-toggle");
+    fineButton.setAttribute("aria-pressed", "false");
+    fineButton.title = "jog every axis by its smallest step; Shift with a jog key does the same";
+    // Hold to move: a button or key held moves until let go.
+    let smooth = readStored(SMOOTH_KEY) === "1";
+    const smoothButton = button("Hold to move", () => {
+        smooth = !smooth;
+        writeStored(SMOOTH_KEY, smooth ? "1" : "0");
+        smoothButton.setAttribute("aria-pressed", String(smooth));
+    }, "btn btn-quiet btn-small btn-toggle");
+    smoothButton.setAttribute("aria-pressed", String(smooth));
+    smoothButton.title = "hold a jog button or key to move until let go; the step is then the distance per second";
     const body = el("fieldset", { class: "panel-body" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "button-row" }, cancelButton)), body);
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "button-row" }, fineButton, smoothButton, cancelButton)), body);
 
     let controls: Controls = controlsOf(ctx.store.get());
     let drawn: Controls | null = null;
@@ -139,7 +181,98 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         const pick = picks.get(id);
         return pick !== undefined && choicesOf(axis).includes(pick) ? pick : startOf(axis);
     };
-    const stepOf = (id: BarId, axis?: AxisControl): number => typed.get(id) ?? pickOf(id, axis);
+    // Shift held with a jog key: the fine step for that jog.
+    let shiftJog = false;
+    const stepOf = (id: BarId, axis?: AxisControl): number => fine || shiftJog ? fineStep(choicesOf(axis)) : typed.get(id) ?? pickOf(id, axis);
+
+    // --- holding a jog -----------------------------------------------------
+    // While held, a piece of the move goes out every tick, as long as the
+    // time since the last one at the step per second, so the controller's
+    // queue holds about a tick of motion. Let go: no more pieces, and on
+    // this project's firmware the jog is cancelled, which stops what is
+    // queued at once; a G-code machine runs out its last piece.
+    let hold: { timer: ReturnType<typeof setInterval>; started: number } | null = null;
+    function startHold(piece: (seconds: number) => Promise<unknown>): void {
+        stopHold();
+        let busy = false;
+        let last = performance.now() - HOLD_TICK_MS;
+        const tick = (): void => {
+            if (hold === null || busy) {
+                return;
+            }
+            if (!ctx.store.get().snapshot.connected || (performance.now() - hold.started) / 1000 > HOLD_LIMIT_S) {
+                stopHold();
+                return;
+            }
+            const now = performance.now();
+            const seconds = (now - last) / 1000;
+            last = now;
+            busy = true;
+            piece(seconds).then(() => {
+                busy = false;
+            }, (error: unknown) => {
+                busy = false;
+                stopHold();
+                ctx.toast("error", error instanceof Error ? error.message : String(error));
+            });
+        };
+        hold = { timer: setInterval(tick, HOLD_TICK_MS), started: performance.now() };
+        tick();
+    }
+    function stopHold(): void {
+        if (hold === null) {
+            return;
+        }
+        clearInterval(hold.timer);
+        hold = null;
+        if (profileOf(ctx.store.get().snapshot).controller !== "gcode" && ctx.store.get().snapshot.connected) {
+            void cancel();
+        }
+    }
+    globalThis.addEventListener?.("blur", () => stopHold());
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+            stopHold();
+        }
+    });
+    /** A held piece of a board jog: the step per second, at that feed where the feed applies. */
+    const holdBoard = (dx: number, dy: number) => (seconds: number): Promise<unknown> => {
+        const rate = stepOf(dx !== 0 ? "x" : "y");
+        const step = holdPiece(rate, seconds);
+        return ctx.api.jog({ kind: "board", dx: dx * step, dy: dy * step, feed: controls.feed ? rate * 60 : null });
+    };
+    /** A held piece of a joint jog; an axis the feed does not apply to runs at its jog rate, and the cancel at the release stops it. */
+    const holdAxis = (axis: AxisControl, sign: 1 | -1) => (seconds: number): Promise<unknown> => {
+        const rate = stepOf(axis.axis, axis);
+        const gcode = profileOf(ctx.store.get().snapshot).controller === "gcode";
+        const feed = gcode || (axis.feed && controls.feed) ? rate * 60 : null;
+        return ctx.api.jog({ kind: "joint", [`d${axis.axis}`]: sign * holdPiece(rate, seconds), feed } as JogRequest);
+    };
+
+    /** A jog button that moves by a step when pressed, or while held under Hold to move. */
+    function jogButton(label: string, step: () => Promise<unknown>, piece: (seconds: number) => Promise<unknown>): HTMLButtonElement {
+        let held = false;
+        const press = button(label, () => {
+            // The click that ends a hold is not a step of its own.
+            if (held) {
+                held = false;
+                return undefined;
+            }
+            return step();
+        }, "btn btn-axis");
+        press.addEventListener("pointerdown", (event) => {
+            if (!smooth || event.button !== 0 || press.disabled) {
+                return;
+            }
+            held = true;
+            press.setPointerCapture?.(event.pointerId);
+            startHold(piece);
+        });
+        for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) {
+            press.addEventListener(name, () => stopHold());
+        }
+        return press;
+    }
 
     const jogBoard = (dx: number, dy: number): Promise<unknown> =>
         ctx.call(ctx.api.jog({ kind: "board", dx, dy, feed: controls.feed ? feed() : null }));
@@ -178,6 +311,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         axis: AxisControl | undefined,
         buttons: [string, string],
         onMove: (sign: 1 | -1) => Promise<unknown>,
+        onHold: (sign: 1 | -1) => (seconds: number) => Promise<unknown>,
         zero: HTMLButtonElement | null,
     ): HTMLDivElement {
         const format = (value: number): string => `${value} ${unit}`;
@@ -212,8 +346,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             ),
             el("div", { class: "axis-bar-steps" }, row, custom),
             el("div", { class: "axis-bar-buttons" },
-                button(buttons[0], () => onMove(-1), "btn btn-axis"),
-                button(buttons[1], () => onMove(1), "btn btn-axis"),
+                jogButton(buttons[0], () => onMove(-1), onHold(-1)),
+                jogButton(buttons[1], () => onMove(1), onHold(1)),
             ),
             zero,
         );
@@ -427,13 +561,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         const bars = el("div", { class: "axis-bars" });
         if (controls.pad) {
             bars.append(
-                bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), null),
-                bar("y", "Y", "Board Y", "Up and down arrow keys", "mm", undefined, ["Y-", "Y+"], (sign) => jogBoard(0, sign * stepOf("y")), null),
+                bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), (sign) => holdBoard(sign, 0), null),
+                bar("y", "Y", "Board Y", "Up and down arrow keys", "mm", undefined, ["Y-", "Y+"], (sign) => jogBoard(0, sign * stepOf("y")), (sign) => holdBoard(0, sign), null),
             );
         }
         for (const axis of controls.axes) {
             const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small") : null;
-            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, axis.buttons, (sign) => jogAxis(axis, sign), zero));
+            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, axis.buttons, (sign) => jogAxis(axis, sign), (sign) => holdAxis(axis, sign), zero));
         }
 
         const rows: HTMLElement[] = [];
@@ -500,8 +634,24 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
 
     // One key jog at a time: a held or hammered key must not queue up moves.
     let keyJog: Promise<unknown> | null = null;
+    // The key holding a jog under Hold to move: its release ends the hold.
+    let heldKey: string | null = null;
+    document.addEventListener("keyup", (event) => {
+        if (heldKey !== null && event.key.toLowerCase() === heldKey) {
+            heldKey = null;
+            stopHold();
+        }
+    });
     document.addEventListener("keydown", (event) => {
-        if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
+            return;
+        }
+        // A held key repeats: under Hold to move the hold goes on by
+        // itself, and otherwise one press is one jog.
+        if (event.repeat) {
+            if (heldKey !== null && event.key.toLowerCase() === heldKey) {
+                event.preventDefault();
+            }
             return;
         }
         // An open dialog answers every key, Escape included.
@@ -516,8 +666,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         // leaves the focus in the field it was typed in. With no machine
         // there is nothing to stop, and the key stays the field's.
         if (action === "cancel") {
+            // Escape also leaves a text field, so the next arrow key jogs.
+            const focused = document.activeElement;
+            if (inputHasFocus() && focused instanceof HTMLElement) {
+                focused.blur();
+            }
             if (ctx.store.get().snapshot.connected) {
                 event.preventDefault();
+                stopHold();
                 void cancel();
             }
             return;
@@ -528,11 +684,33 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             return;
         }
         event.preventDefault();
+        const axis = "axis" in action ? controlOf(controls, action.axis) : undefined;
+        if (smooth && ctx.store.get().snapshot.connected) {
+            heldKey = event.key.toLowerCase();
+            const fineNow = event.shiftKey;
+            const piece = "axis" in action
+                ? (axis ? holdAxis(axis, action.sign) : null)
+                : holdBoard(action.dx, action.dy);
+            if (piece) {
+                // Shift is read when the key goes down and kept for the
+                // hold: the piece reads its step before it returns.
+                startHold((seconds) => {
+                    shiftJog = fineNow;
+                    try {
+                        return piece(seconds);
+                    } finally {
+                        shiftJog = false;
+                    }
+                });
+            }
+            return;
+        }
         if (ctx.store.get().snapshot.connected && keyJog === null) {
-            const axis = "axis" in action ? controlOf(controls, action.axis) : undefined;
+            shiftJog = event.shiftKey;
             const move = "axis" in action
                 ? (axis ? jogAxis(axis, action.sign) : Promise.resolve())
                 : jogBoard(action.dx * stepOf("x"), action.dy * stepOf("y"));
+            shiftJog = false;
             keyJog = move.finally(() => {
                 keyJog = null;
             });

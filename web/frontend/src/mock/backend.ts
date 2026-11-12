@@ -7002,7 +7002,7 @@ export class MockBackend implements Api, EventFeed {
         for (const [name, value] of Object.entries(steps) as [AxisName, number][]) {
             target[name] = here[name] + value;
         }
-        const feed = request.feed !== undefined && request.feed !== null && (target.x !== undefined || target.y !== undefined) ? request.feed : null;
+        const feed = request.feed ?? null;
         // Leaving the up camera with the nozzle down near its lens goes up
         // first, when the file asks for it.
         if (liftsLeaving(device, here, target, this.deviceCameraPosition())) {

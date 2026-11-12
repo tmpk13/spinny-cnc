@@ -302,7 +302,9 @@ class GcodePart:
                 letter = machine.axes[AXIS_NAMES.index(missing[0])]
                 raise GcodeLinkError(f"'{machine.position}' answered no {letter}: it cannot be jogged from where it is")
             target = {name: here[name] + value for name, value in steps.items()}
-            feed = body.feed if body.feed is not None and set(target) & {"x", "y"} else None
+            # A feed given is the move's (a held jog matches its pieces to
+            # the time between them); none is the file's own for the axes.
+            feed = body.feed
             lines = [move_line(machine, target, feed)]
             # Leaving the up camera with the nozzle down near its lens goes
             # up first, when the file asks for it.

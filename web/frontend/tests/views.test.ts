@@ -13,7 +13,7 @@ import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { progressText } from "../src/views/run.ts";
 import { findButton } from "./harness.ts";
-import { anyOf, keyAction, mountJog } from "../src/views/jog.ts";
+import { anyOf, fineStep, holdPiece, HOLD_TICK_MS, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedBootSettings, mountConfig } from "../src/views/config.ts";
@@ -345,10 +345,10 @@ describe("jog", () => {
         click(root, "Center");
         await settle();
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", r: 0 });
-        expect(root.querySelector("button.btn-quiet")?.closest("fieldset")?.disabled).toBe(false);
+        expect(root.querySelector("fieldset button.btn-quiet")?.closest("fieldset")?.disabled).toBe(false);
         // The cancel button sits in the panel's head, outside the fieldset, and locks with it.
-        const cancel = root.querySelector(".panel-head button") as HTMLButtonElement;
-        expect(cancel.textContent).toBe("Cancel");
+        const cancel = Array.from(root.querySelectorAll<HTMLButtonElement>(".panel-head button")).find((b) => b.textContent === "Cancel")!;
+        expect(cancel).toBeTruthy();
         expect(cancel.disabled).toBe(false);
         store.set({ snapshot: { connected: false, url: null, firmware: null, machine: null, run: null } });
         expect(root.querySelector("fieldset")?.disabled).toBe(true);
@@ -551,15 +551,66 @@ describe("jog", () => {
         await settle();
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "board", x: 60, feed: null });
         expect(document.activeElement).toBe(x);
-        x.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        await settle();
-        expect(calls.some((c) => c.name === "jogCancel")).toBe(true);
-        // The field keeps its arrow keys.
+        // The field keeps its arrow keys while it has the focus.
         calls.length = 0;
         x.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
         await settle();
         expect(calls.some((c) => c.name === "jog")).toBe(false);
-        x.blur();
+        x.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jogCancel")).toBe(true);
+        // Escape left the field: the next arrow key jogs.
+        expect(document.activeElement).not.toBe(x);
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        await settle();
+        expect(calls.some((c) => c.name === "jog")).toBe(true);
+    });
+
+    test("Fine jogs by the smallest step, and so does Shift with a jog key", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true }));
+        await settle();
+        const small = Math.min(...defaultControls(POLAR_LASER).pad_steps);
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toMatchObject({ kind: "board", dx: small, dy: 0 });
+        calls.length = 0;
+        findButton(root, "Fine").click();
+        findButton(root, "X+").click();
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toMatchObject({ kind: "board", dx: small });
+        findButton(root, "Fine").click();
+    });
+
+    test("under Hold to move a held button sends pieces until let go, then the jog is cancelled", async () => {
+        localStorage.removeItem("spinny.jog.smooth");
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        findButton(root, "Hold to move").click();
+        const plus = findButton(root, "X+");
+        plus.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 1 }));
+        await new Promise((resolve) => setTimeout(resolve, 2.5 * HOLD_TICK_MS));
+        plus.dispatchEvent(new PointerEvent("pointerup", { button: 0, bubbles: true, pointerId: 1 }));
+        plus.click();
+        await settle();
+        const pieces = calls.filter((c) => c.name === "jog");
+        expect(pieces.length).toBeGreaterThanOrEqual(2);
+        expect((pieces[0]!.args[0] as { dx: number }).dx).toBeGreaterThan(0);
+        expect(calls.at(-1)?.name).toBe("jogCancel");
+        // The click that ended the hold was no step of its own.
+        expect(calls.filter((c) => c.name === "jog").length).toBe(pieces.length);
+        findButton(root, "Hold to move").click();
+        localStorage.removeItem("spinny.jog.smooth");
+    });
+
+    test("a held piece is a tick's worth at least and three ticks' at most", () => {
+        expect(holdPiece(10, 0)).toBeCloseTo(10 * HOLD_TICK_MS / 1000, 9);
+        expect(holdPiece(10, 0.15)).toBeCloseTo(1.5, 9);
+        expect(holdPiece(10, 5)).toBeCloseTo(30 * HOLD_TICK_MS / 1000, 9);
+        expect(fineStep([5, 0.1, 1])).toBe(0.1);
     });
 
     test("Escape in a field with no machine connected sends nothing and raises no error", async () => {

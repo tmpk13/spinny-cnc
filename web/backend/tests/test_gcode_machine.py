@@ -353,6 +353,13 @@ def test_the_big_stop_sends_the_files_stop(client):
     assert sent(client, start)[0] == "M410"
 
 
+def test_a_jog_with_a_feed_moves_at_it_on_any_axis(client):
+    connect(client, "rig")
+    start = len(client.fake.lines)
+    client.post("/api/jog", json={"kind": "joint", "dh": -0.5, "feed": 120})
+    assert sent(client, start) == ["M114", "G0 Z-0.5 F120"]
+
+
 def test_without_leave_a_jog_never_rises(client):
     connect(client, "rig")
     client.post("/api/goto", json={"kind": "joint", "r": 60.0, "z": 200.0, "h": -4.0})

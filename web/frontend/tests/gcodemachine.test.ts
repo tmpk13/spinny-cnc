@@ -83,6 +83,9 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         await mock.jog({ kind: "board", dx: 1, dy: -2, feed: 1200 });
         expect(await sentSince(mock, start)).toEqual(["M114", "G0 X102.5 Y48 F1200"]);
         start = await txCount(mock);
+        await mock.jog({ kind: "joint", dh: 0.5, feed: 120 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 Z0 F120"]);
+        start = await txCount(mock);
         await mock.jog({ kind: "joint", da: 15 });
         expect(await sentSince(mock, start)).toEqual(["M114", "G0 A15 F3000"]);
         await expect(mock.jog({ kind: "joint", dz: 0 })).rejects.toThrow("at least one axis");

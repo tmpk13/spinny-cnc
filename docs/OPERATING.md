@@ -20,7 +20,13 @@ with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
 per unit at low speed before the first job. Every axis is a bar in the
 jog panel, with its step choices and a field for any other step; *Cancel*
-in the panel's head, or Escape, stops a move. The *Config* tab holds the
+in the panel's head, or Escape, stops a move (Escape also leaves a text
+field, so the next arrow key jogs). *Fine* in the head jogs every bar by
+its smallest step, as Shift held with a jog key does. Under *Hold to
+move* a jog button or key held moves the axis until it is let go, the
+step read as the distance per second: the page sends a piece of the move
+every tenth of a second, and at the release this project's firmware
+cancels the jog at once, while a G-code machine runs out the last piece. The *Config* tab holds the
 machine files, where the pins are set too (the laser output, the probe
 and an optional tool output), and beside them the list of every key a
 file can set with the board's value next to the file's.
