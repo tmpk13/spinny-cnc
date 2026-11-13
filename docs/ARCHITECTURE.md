@@ -112,7 +112,7 @@ flowchart LR
         FIND --> V4L[v4l2-ctl: a camera's controls listed and set, kept per camera and set at each start]
         FIND -.-> VID
         FIND -.-> UST
-        MF[machines/*.toml: axes, pins, kinematics, tool, camera, the page's controls; a G-code machine's port, dialect, heights, cameras, feeders] <--> BE
+        MF[machines/*.toml: axes, pins, kinematics, tool, servos and the PCA9685, camera, the page's controls; a G-code machine's port, dialect, heights, cameras, feeders] <--> BE
         MF --> OPNP
         CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
         CF --> CLI[spinny-cam]
@@ -121,7 +121,8 @@ flowchart LR
     MF --> VIRT
     BE <-->|USB CDC or TCP, line protocol| CORE
     subgraph firmware
-        RP[rp2040: embassy, USB with an E15 lockup guard, step timer, laser or spindle PWM, tool output, probe and endstop inputs on settable pins, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, homing and endstop limits, spindle, a dispenser's plunger on A, tool output, machine]
+        RP[rp2040: embassy, USB with an E15 lockup guard, step timer, laser or spindle PWM, tool output, probe and endstop inputs on settable pins, servo PWM slices, TMC2209, flash] --> CORE[spinny-core: parser, settings, planner, stepper R A H Z, probe, homing and endstop limits, spindle, a dispenser's plunger on A, tool output, servo angles, machine]
+        RP --> PCA[pca task: a PCA9685 on I2C, set up at 50 Hz, servo channels written as their pulses change, found reset and set up again]
         VIRT[virtual: TCP server, virtual clock, board surface, endstops] --> CORE
     end
 ```

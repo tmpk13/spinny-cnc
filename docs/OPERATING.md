@@ -1153,6 +1153,32 @@ A home renumbers the axis, so the height map's focus offset is taken
 back as it is by a position set: tie the map again (*Probe here* or
 *Focus here*) before a compensated run.
 
+### Servos
+
+A servo the machine file fits (`[servo.1]` to `[servo.4]`, on a pin of
+the board or a channel of a PCA9685; [MACHINES.md](MACHINES.md#servos))
+gets a bar in the jog panel, below the axes: its number and name with
+the angle it holds, or *off* while it has no pulse; a button for each of
+its named positions; a field for any angle in its range with *Go*; and
+*Off*, which takes its pulse away so it stops holding and can be turned
+by hand. A move waits for whatever motion is queued before it, and is
+refused while a job runs, the board is probed or a camera routine moves
+the head. At the console, `servo N1 A90` moves servo 1, `servo N1 off`
+lets it go, and the status line's `S` field says where each one is
+([PROTOCOL.md](PROTOCOL.md#servos)).
+
+A servo stays where it is through a hold, a stop, a reset and a
+disconnect, and goes to its `start` angle at power on (none, and no
+pulse, unless the file gives one). The pins, the channels and the
+PCA9685's bus are read when the board starts, so after *Write to board*
+changes one, restart the board. The first time, set a servo's `min_us`
+and `max_us` with nothing attached to it, or with its arm free: a span
+wider than the servo's own drives it against its stop at the ends. With
+a PCA9685, the console says at boot whether the chip answers
+(`[MSG:servo pca9685 0x40 on GP0 GP1 ready]`, or `not answering,
+retrying`); the wiring and the supply are in
+[firmware/rp2040/README.md](../firmware/rp2040/README.md#servos).
+
 ### When the machine goes quiet
 
 The backend gives a machine up after 3 s without an answer to its status
