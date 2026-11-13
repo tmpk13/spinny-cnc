@@ -4,7 +4,7 @@ import { turned } from "../src/kinematics.ts";
 import { estimateOf, jobSize } from "../src/mock/boardlook.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
 import type { BoardGuess, BoardLook } from "../src/types.ts";
-import { cornersText, mountFindBoard, mountGuessGraph, pickedCamera, shownGuesses } from "../src/views/findboard.ts";
+import { cornersText, knownText, mountFindBoard, mountGuessGraph, pickedCamera, shownGuesses } from "../src/views/findboard.ts";
 import { click, findButton, runUntilIdle, settle, setup } from "./harness.ts";
 
 const TOP = '[top_camera]\nz = 0\noffset = [34.0, -9.0]\nfiducial = "bright"\nwithin = 2\n';
@@ -66,6 +66,17 @@ describe("the guesses' graph", () => {
         expect(cornersText({ ...two, job: "b2" }, "a1", name)).toBe("2 corners taken of other board: Clear corners, or take this board's");
         const edged = { ...two, points: [{ ...two.points[0]!, by: "edges" as const, angle: 2 }], rough: { ...two.rough, rotation: 2 } };
         expect(cornersText(edged, "a1", name)).toBe("bottom left by its edges at 100.00, 50.00; rough place: middle at 120.00, 65.00, turned 2.00 deg as its edges run");
+    });
+});
+
+describe("the place a search started from", () => {
+    test("says what said where the board was, how far it may be off, and whether pcbv took it", () => {
+        expect(knownText(null)).toBe("");
+        const known = { source: "corners" as const, rotation: 1, shift: [40, 30] as [number, number], center: [59.7, 45.3] as [number, number], within_mm: 2, within_deg: 3.27, guided: 4, unguided: 0 };
+        expect(knownText(known)).toBe("The search started from the corners taken: middle at 59.70, 45.30, turned 1.00 deg, within 2.0 mm and 3.3 deg;"
+            + " pcbv looked there first at 4 stops. It orders the search only: every place is checked the same.");
+        expect(knownText({ ...known, source: "job", within_deg: null, guided: 1 })).toContain("from the job's own place: middle at 59.70, 45.30, turned 1.00 deg, within 2.0 mm and any turn; pcbv looked there first at 1 stop.");
+        expect(knownText({ ...known, guided: 0, unguided: 3 })).toContain("pcbv could not take it at 3 stops (built before it could: build pcb-vision again)");
     });
 });
 
@@ -192,6 +203,22 @@ describe("the Find board panel", () => {
         expect(look?.guesses?.[0]?.probability).toBeGreaterThanOrEqual(0.5);
         expect(root.querySelectorAll(".find-column").length).toBe(look!.guesses!.length);
         expect(root.querySelector(".find-guesses tbody tr")?.textContent).toContain("found");
+        // Nothing said where the board was: no line. Searched again, it
+        // starts where the board was found, tells pcbv, and says so.
+        expect(look?.known).toBeNull();
+        expect(root.querySelector(".find-known")?.classList.contains("hidden")).toBe(true);
+        click(root, "Search");
+        await twice();
+        for (let t = 0; t < 60 && store.get().placing?.top?.routine?.state === "running"; t += 0.1) {
+            backend.step(0.1);
+            await ctx.refreshPlacing();
+        }
+        const again = store.get().placing?.top?.board_look;
+        expect(again?.found).toBe(true);
+        expect(again?.known?.source).toBe("found");
+        expect(again?.known?.center).toEqual(look!.estimate!.center);
+        expect(again?.known?.guided).toBe(1);
+        expect(root.querySelector(".find-known")?.textContent).toContain("The search started from where it was found before");
         click(root, "Use as board place");
         await twice();
         expect(store.get().placing?.references.filter((entry) => entry.job === job.id).map((entry) => entry.by)).toEqual(["look", "look"]);

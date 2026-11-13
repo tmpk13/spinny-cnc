@@ -9,7 +9,7 @@
 
 import { fitRigid } from "../align.ts";
 import { turned } from "../kinematics.ts";
-import type { Board, BoardCorners, BoardEstimate, BoardGuess, BoardLook, CornerName, Job } from "../types.ts";
+import type { Board, BoardCorners, BoardEstimate, BoardGuess, BoardKnown, BoardLook, CornerName, Job } from "../types.ts";
 import { round4 } from "./jobs.ts";
 import { jobBounds } from "./vision.ts";
 
@@ -35,6 +35,13 @@ export const SEARCH_STOP_SECONDS = 0.4;
 export const SEARCH_OVERLAP = 0.3;
 /** The most stops a box may take. */
 export const MAX_STOPS = 400;
+/** How far a known place may be off, as the backend's: one found before (mm, degrees), a corner's edges (degrees), the job's own place (mm, or this share of the diagonal, and degrees). */
+const KNOWN_MM = 2;
+const KNOWN_DEG = 3;
+const EDGE_DEG = 3;
+const JOB_MM = 5;
+const JOB_SHARE = 0.25;
+const JOB_DEG = 15;
 
 export type SearchBox = [number, number, number, number];
 
@@ -129,6 +136,45 @@ export function roughBox(job: Job, place: BoardEstimate, margin: number): Search
     return [Math.min(...xs) - margin, Math.min(...ys) - margin, Math.max(...xs) + margin, Math.max(...ys) + margin];
 }
 
+/** Where corners taken put the board, as the backend's corners_known; null with none. */
+export function cornersKnown(points: BoardCorners["points"], middle: Board, cornerMm: number, diagonal: number): BoardKnown | null {
+    const place = roughPlace(points, middle);
+    if (place === null) {
+        return null;
+    }
+    let withinDeg: number | null;
+    if (points.length >= 2) {
+        const span = Math.max(...points.flatMap((a) => points.map((b) => Math.hypot(a.machine[0] - b.machine[0], a.machine[1] - b.machine[1]))));
+        withinDeg = Math.max((Math.atan2(2 * cornerMm, Math.max(span, 1e-6)) * 180) / Math.PI, 1);
+    } else {
+        withinDeg = points[0]!.angle !== undefined ? EDGE_DEG : null;
+    }
+    return knownOf("corners", place, cornerMm + (points.length < 2 ? 0.1 * diagonal : 0), withinDeg);
+}
+
+/** A place found before as a known place, as the backend's found_known. */
+export function foundKnown(place: BoardEstimate): BoardKnown {
+    return knownOf("found", place, KNOWN_MM, KNOWN_DEG);
+}
+
+/** The job's own place on the machine as a known place, as the backend's job_known. */
+export function jobKnown(middle: Board, diagonal: number): BoardKnown {
+    return knownOf("job", { rotation: 0, shift: [0, 0], center: [round4(middle.x), round4(middle.y)], rms: 0 }, Math.max(JOB_MM, JOB_SHARE * diagonal), JOB_DEG);
+}
+
+function knownOf(source: BoardKnown["source"], place: BoardEstimate, withinMm: number, withinDeg: number | null): BoardKnown {
+    return {
+        source,
+        rotation: round4(place.rotation),
+        shift: [round4(place.shift[0]), round4(place.shift[1])],
+        center: [round4(place.center[0]), round4(place.center[1])],
+        within_mm: round4(withinMm),
+        within_deg: withinDeg === null ? null : round4(withinDeg),
+        guided: 0,
+        unguided: 0,
+    };
+}
+
 interface Guess {
     estimate: BoardEstimate;
     looks: number;
@@ -173,6 +219,9 @@ export class MockBoardLook {
     private sampled = 0;
     /** Corners of one job's board taken by hand, kept loaded or not, with that board's middle. */
     private corners: { job: string; middle: Board; points: BoardCorners["points"] } | null = null;
+    /** Where each job's board was found, a known place for its next search; and the place the newest search started from. */
+    private foundPlaces = new Map<string, BoardEstimate>();
+    known: BoardKnown | null = null;
     /** Mock time since the last pose read, s. */
     elapsed = 0;
 
@@ -191,6 +240,7 @@ export class MockBoardLook {
 
     /** A fresh look: a search starts over. */
     restart(): void {
+        this.known = null;
         this.looks = 0;
         this.locked = 0;
         this.pose = null;
@@ -255,12 +305,34 @@ export class MockBoardLook {
         this.see(locked, given, view, seen, problem, picture);
     }
 
-    /** Looks at once, as a stop that sees the board steadily gives them, until it is found or the history has been filled with them: whether it was found. */
+    /** Looks at once, as a stop that sees the board steadily gives them, until it is found or the history has been filled with them: whether it was found, kept as the place for the job's next search. */
     settle(estimate: BoardEstimate, view: [number, number][] | null, seen: [number, number] | null, picture: MachinePicture | null = null): boolean {
         for (let count = 0; count < LOOK_HISTORY + LOOK_NEED && !this.found; count++) {
             this.see(true, estimate, view, seen, null, picture);
         }
+        const best = this.best;
+        if (this.found && best !== null && this.job !== null) {
+            this.foundPlaces.set(this.job, best);
+        }
         return this.found;
+    }
+
+    /** Where this camera found a job's board, as a known place; null when it has not. */
+    foundKnown(job: string): BoardKnown | null {
+        const place = this.foundPlaces.get(job);
+        return place ? foundKnown(place) : null;
+    }
+
+    /** The search starts from `known`; each stop tells pcbv, which the mock's always takes. */
+    startFrom(known: BoardKnown | null): void {
+        this.known = known === null ? null : { ...known, shift: [...known.shift], center: [...known.center] };
+    }
+
+    /** A stop looked at with the known place told. */
+    guided(): void {
+        if (this.known !== null) {
+            this.known.guided += 1;
+        }
     }
 
     /** The picture's center was on a corner of the job's board when `machine` was read: kept in place of one of the same name; another job's are dropped. */
@@ -419,6 +491,7 @@ export class MockBoardLook {
             guesses: this.guesses.slice(0, LOOK_GUESSES).map((guess) => this.guessOf(guess, total)),
             more: Math.max(0, this.guesses.length - LOOK_GUESSES),
             corners,
+            known: this.known === null ? null : { ...this.known, shift: [...this.known.shift], center: [...this.known.center] },
         };
     }
 }

@@ -1707,6 +1707,18 @@ export interface BoardCorners {
     rough: BoardEstimate | null;
 }
 
+/** Where a search expected the board before it looked (spinny_web.boardlook.KnownPlace): what said so, the turn and shift it gives with the board's middle there, how far it may be off (no turn tolerance: the turn was not known), and at how many stops pcbv took it or could not. */
+export interface BoardKnown {
+    source: "corners" | "found" | "align" | "references" | "job";
+    rotation: number;
+    shift: [number, number];
+    center: [number, number];
+    within_mm: number;
+    within_deg: number | null;
+    guided: number;
+    unguided: number;
+}
+
 /** A camera's look for a board: the job loaded, the poses read and locked, how many looks agree on the most likely guess out of the needed, where it puts the board, the newest picture's corners and center in the job's frame, why the newest locked pose was not used, the guesses, and the corners taken by hand. */
 export interface BoardLook {
     job: string | null;
@@ -1740,6 +1752,8 @@ export interface BoardLook {
     view_rival?: number | null;
     /** The corners taken by hand, of this job's board or another's; null with none. */
     corners?: BoardCorners | null;
+    /** Where the newest search expected the board; null with no search or nothing known. */
+    known?: BoardKnown | null;
 }
 
 /** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */

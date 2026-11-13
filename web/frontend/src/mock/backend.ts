@@ -97,7 +97,9 @@ import {
     MockBoardLook,
     SEARCH_STOP_SECONDS,
     applyEstimate,
+    cornersKnown,
     estimateOf,
+    jobKnown,
     jobSize,
     onBoard,
     roughBox,
@@ -7776,11 +7778,15 @@ export class MockBackend implements Api, EventFeed {
         const tool = this.machine.headBoard();
         const here = { x: tool.x + this.cameraConfig.offset[0], y: tool.y + this.cameraConfig.offset[1] };
         const job = this.requireJob(jobId);
-        const { diagonal } = jobSize(job);
-        const around = this.cornersBox(this.headLook, job, lookTuning(this.cameraConfig).cornerMm);
+        const { diagonal, middle } = jobSize(job);
+        const cornerMm = lookTuning(this.cameraConfig).cornerMm;
+        const around = this.cornersBox(this.headLook, job, cornerMm);
+        // Where the board is known to be: the corners, a place found before,
+        // the job's own place (the mock keeps no Align fit for this).
+        const known = cornersKnown(this.headLook.cornersOf(job.id), middle, cornerMm, diagonal) ?? this.headLook.foundKnown(job.id) ?? jobKnown(middle, diagonal);
         let stops: Board[];
         try {
-            stops = searchStops(box ?? around ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * scale, height * scale], here);
+            stops = searchStops(box ?? around ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * scale, height * scale], { x: known.center[0], y: known.center[1] });
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
@@ -7788,6 +7794,7 @@ export class MockBackend implements Api, EventFeed {
         this.routine = progress;
         this.headSearch = { stops, index: 0, elapsed: 0, progress };
         this.headLook.restart();
+        this.headLook.startFrom(known);
         this.jogTracked = false;
         this.emitCamera();
         return this.cameraStateOf();
@@ -7852,6 +7859,7 @@ export class MockBackend implements Api, EventFeed {
                 end("error", "the machine refused a move of the search");
                 return;
             }
+            this.headLook.guided();
             if (this.headLookOnce()) {
                 const job = this.requireJob(this.headLook.job!);
                 const placement = this.placement!;
@@ -7906,16 +7914,22 @@ export class MockBackend implements Api, EventFeed {
         const head = this.deviceHere(device);
         const here = { x: head.x + offset[0], y: head.y + offset[1] };
         const job = this.requireJob(jobId);
-        const { diagonal } = jobSize(job);
-        const around = this.cornersBox(this.topBoardLook, job, lookTuning(this.topConfig).cornerMm);
+        const { diagonal, middle } = jobSize(job);
+        const cornerMm = lookTuning(this.topConfig).cornerMm;
+        const around = this.cornersBox(this.topBoardLook, job, cornerMm);
+        // Where the board is known to be: the corners, a place found before
+        // (the job's frame is not this machine's, and the mock keeps no fit
+        // of the references for this).
+        const known = cornersKnown(this.topBoardLook.cornersOf(job.id), middle, cornerMm, diagonal) ?? this.topBoardLook.foundKnown(job.id);
         let stops: Board[];
         try {
-            stops = searchStops(box ?? around ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * this.topConfig.mm_per_px, height * this.topConfig.mm_per_px], here);
+            stops = searchStops(box ?? around ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * this.topConfig.mm_per_px, height * this.topConfig.mm_per_px], known ? { x: known.center[0], y: known.center[1] } : here);
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
         this.topSearchStops = stops;
         this.topBoardLook.restart();
+        this.topBoardLook.startFrom(known);
         this.beginTop("search", ["lifting", ...stops.map((_, index) => `stop ${index + 1}`), "done"], device, jobId);
         return this.placingStateOf();
     }
@@ -7944,6 +7958,7 @@ export class MockBackend implements Api, EventFeed {
             progress.done = index + 1;
             progress.step = `stop ${index + 1}`;
             this.deviceLine(session.device, xyLine(session.device, stop.x - offset[0], stop.y - offset[1]));
+            this.topBoardLook.guided();
             if (this.topLookSample()) {
                 const estimate = this.offBy(this.topTruth(session.job!), offset[0] - TOP_TRUTH.offset[0], offset[1] - TOP_TRUTH.offset[1]);
                 const state = this.topBoardLook.state();

@@ -10,13 +10,15 @@
 // slider moves: the most likely guess is called found once it has enough
 // looks and reaches the line. Corners of the board taken by hand (the
 // picture's center put on each) rule out the guesses that put one elsewhere
-// and give a rough place of their own (boardlook.py on the backend).
+// and give a rough place of their own (boardlook.py on the backend). A
+// search starts where the board is known to be and tells pcbv so; a line
+// says what said where.
 
 import { CORNER_NAMES } from "../corners.ts";
 import { button, el, labeled, lockFor, numberField, readStored, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BoardCorners, BoardGuess, BoardLook, CornerName, RefineUse } from "../types.ts";
+import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, CornerName, RefineUse } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -109,6 +111,29 @@ export function cornersText(corners: BoardCorners | null | undefined, job: strin
             : `${taken}; ${place}, taken square: a second corner gives the turn`;
     }
     return `${taken}; ${place}, turned ${formatFixed(rough.rotation, 2)} deg, the corners within ${formatFixed(rough.rms, 2)} mm of it`;
+}
+
+/** What said where the board was before a search, as the page names it. */
+const KNOWN_SOURCES: Record<BoardKnown["source"], string> = {
+    corners: "the corners taken",
+    found: "where it was found before",
+    align: "the Align marks",
+    references: "the references",
+    job: "the job's own place",
+};
+
+/** Where the newest search expected the board, and whether pcbv was told; empty with none. */
+export function knownText(known: BoardKnown | null | undefined): string {
+    if (!known) {
+        return "";
+    }
+    const turn = known.within_deg === null ? "any turn" : `${formatFixed(known.within_deg, 1)} deg`;
+    const place = `The search started from ${KNOWN_SOURCES[known.source] ?? known.source}: middle at ${formatFixed(known.center[0], 2)}, ${formatFixed(known.center[1], 2)}, turned ${formatFixed(known.rotation, 2)} deg, within ${formatFixed(known.within_mm, 1)} mm and ${turn}`;
+    const told = known.guided > 0 ? `; pcbv looked there first at ${known.guided} ${known.guided === 1 ? "stop" : "stops"}` : "";
+    const refused = known.unguided > 0
+        ? `; pcbv could not take it at ${known.unguided} ${known.unguided === 1 ? "stop" : "stops"} (built before it could: build pcb-vision again)`
+        : "";
+    return `${place}${told}${refused}. It orders the search only: every place is checked the same.`;
 }
 
 let graphCount = 0;
@@ -291,10 +316,11 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const note = el("p", { class: "muted find-note" });
     const lookButton = button("Look for board", () => lookForBoard(), "btn", "load the selected job's board: the camera looks for it in every picture until Unload");
     const searchButton = button("Search", () => runSearch(), "btn",
-        "move the camera over the search box (Shift and a drag on its picture), else where the corners put the board, else the board's size about where it looks, until a guess is likely enough");
+        "move the camera over the search box (Shift and a drag on its picture), else where the corners put the board, else the board's size about where it looks, until a guess is likely enough; it starts where the board is known to be (corners, a place found before, the marks or references, the job's place) and tells pcbv to look there first");
     const placeButton = button("Use as board place", () => usePlace(), "btn");
     const unloadButton = button("Unload", () => unload(), "btn btn-quiet", "stop looking for the board");
     const lookLine = el("p", { class: "muted find-look" });
+    const knownLine = el("p", { class: "muted find-known" });
 
     // The threshold: dragged on the graph or slid, sent once let go.
     let dragged: number | null = null;
@@ -339,6 +365,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             note,
             el("div", { class: "button-row" }, lookButton, searchButton, placeButton, unloadButton),
             lookLine,
+            knownLine,
             el("h3", {}, "Guesses"),
             graph.root,
             el("div", { class: "button-row find-slider-row" }, labeled("Threshold", slider, "labeled inline"), sliderValue),
@@ -615,6 +642,8 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [busy, "a routine is under way"]);
         const name = look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null;
         lookLine.textContent = lookText(look, name) || "No board loaded: pick a board job and press Look for board.";
+        knownLine.textContent = look?.job ? knownText(look.known) : "";
+        knownLine.classList.toggle("hidden", knownLine.textContent === "");
 
         graph.render(look?.job ? look : null, threshold);
         if (dragged === null) {
