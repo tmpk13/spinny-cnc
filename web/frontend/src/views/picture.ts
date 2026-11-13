@@ -143,6 +143,33 @@ export function machineToPicturePoints(points: [number, number][], center: [numb
     });
 }
 
+/** A pick armed on a camera's picture, by the picture's key: the next click on that picture hands `take` the point of the full size picture clicked instead of doing nothing. */
+interface Pick {
+    label: string;
+    take: (point: [number, number]) => void;
+}
+
+const picks = new Map<string, Pick>();
+const pickWatchers = new Set<() => void>();
+
+/** Arms a pick on the picture of `key` (head, up, top): its next click is handed to `take`; `label` says what is picked. */
+export function armPick(key: string, label: string, take: (point: [number, number]) => void): void {
+    picks.set(key, { label, take });
+    pickWatchers.forEach((watch) => watch());
+}
+
+/** Takes an armed pick off the picture of `key`. */
+export function disarmPick(key: string): void {
+    if (picks.delete(key)) {
+        pickWatchers.forEach((watch) => watch());
+    }
+}
+
+/** What the picture of `key` waits to have picked; null when nothing. */
+export function armedPick(key: string): string | null {
+    return picks.get(key)?.label ?? null;
+}
+
 export interface PictureOptions {
     /** Names the picture's kept height, zoom and box: `head`, `up` or `top`. */
     key: string;
@@ -249,11 +276,24 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     clearBox.title = "forget the box: a search then covers the board's size about where the picture is";
     const growView = button("Add view", () => addView(), "btn btn-quiet btn-small");
     growView.title = "grow the search box to take in what the picture shows now (jog to the far corner and press again)";
+    const pickLine = el("span", { class: "muted picture-pick hidden" });
+    const cancelPick = button("Cancel", () => disarmPick(options.key), "btn btn-quiet btn-small");
+    cancelPick.title = "pick nothing";
+    const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
     const caption = el("div", { class: "button-row picture-caption" }, out, zoomLine, into, overlay);
+    /** The picture waits for a pick: a crosshair, and a line saying what for. */
+    const showPick = (): void => {
+        const label = armedPick(options.key);
+        stage.classList.toggle("picking", label !== null);
+        pickRow.classList.toggle("hidden", label === null);
+        pickLine.classList.toggle("hidden", label === null);
+        pickLine.textContent = label === null ? "" : `Click the picture where ${label}.`;
+    };
+    pickWatchers.add(showPick);
     if (options.boxes) {
         caption.append(growView, clearBox, boxLine);
     }
-    const root = el("figure", { class: "picture-view" }, box, grip, caption);
+    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, caption);
 
     // --- sizing ------------------------------------------------------------------
 
@@ -388,8 +428,14 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         }
         done.to = pictureAt(event.clientX, event.clientY);
         draw(ctx.store.get());
-        // A press that barely moved is a click: the double-click handles it.
+        // A press that barely moved is a click: an armed pick takes it,
+        // else the double-click handles it.
         if (Math.hypot(event.clientX - done.client[0], event.clientY - done.client[1]) < 4) {
+            const pick = picks.get(options.key);
+            if (pick) {
+                disarmPick(options.key);
+                pick.take(done.from);
+            }
             return;
         }
         const state = ctx.store.get();
@@ -571,6 +617,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         stop() {
             clearInterval(timer);
             observer?.disconnect();
+            pickWatchers.delete(showPick);
         },
     };
 }

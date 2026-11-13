@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, foundMarks, frameSize, reachMark } from "../src/views/camview.ts";
-import { dragMove, frameRequestWidth, growBox, machineToPicture, mountPicture, pictureToMachine, spotMarks } from "../src/views/picture.ts";
+import { armedPick, armPick, disarmPick, dragMove, frameRequestWidth, growBox, machineToPicture, mountPicture, pictureToMachine, spotMarks } from "../src/views/picture.ts";
 import { setup, settle } from "./harness.ts";
 
 describe("picture geometry", () => {
@@ -155,6 +155,33 @@ describe("the picture view", () => {
         expect(view.root.querySelector(".mark-box")).not.toBeNull();
         expect(moves).toHaveLength(1);
         view.setBox(null);
+        view.stop();
+    });
+
+    test("a pick armed on a picture takes its next click, and only that one", async () => {
+        const { view, stage, moves } = mounted();
+        const picked: [number, number][] = [];
+        armPick("test-true", "the pads show", (point) => picked.push(point));
+        expect(armedPick("test-true")).toBe("the pads show");
+        expect(stage.classList.contains("picking")).toBe(true);
+        expect(view.root.querySelector(".picture-pick")?.textContent).toBe("Click the picture where the pads show.");
+        pointer(stage, "pointerdown", 250, 125);
+        pointer(stage, "pointerup", 251, 125);
+        await settle();
+        // The click lands on the picture's center, 500, 250 of its 1000 by 500 px; nothing moves.
+        expect(picked).toEqual([[500, 250]]);
+        expect(moves).toHaveLength(0);
+        expect(armedPick("test-true")).toBeNull();
+        expect(stage.classList.contains("picking")).toBe(false);
+        pointer(stage, "pointerdown", 100, 100);
+        pointer(stage, "pointerup", 100, 100);
+        expect(picked).toHaveLength(1);
+        // Cancel takes a pick off.
+        armPick("test-true", "x", () => picked.push([0, 0]));
+        disarmPick("test-true");
+        pointer(stage, "pointerdown", 100, 100);
+        pointer(stage, "pointerup", 100, 100);
+        expect(picked).toHaveLength(1);
         view.stop();
     });
 

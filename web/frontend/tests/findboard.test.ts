@@ -64,6 +64,8 @@ describe("the guesses' graph", () => {
         expect(cornersText(two, "a1", name)).toBe("bottom left at 100.00, 50.00; bottom right at 140.00, 50.00; rough place: middle at 120.00, 65.00, turned 0.00 deg, the corners within 0.02 mm of it");
         expect(cornersText({ ...two, points: two.points.slice(0, 1) }, "a1", name)).toContain("taken square: a second corner gives the turn");
         expect(cornersText({ ...two, job: "b2" }, "a1", name)).toBe("2 corners taken of other board: Clear corners, or take this board's");
+        const edged = { ...two, points: [{ ...two.points[0]!, by: "edges" as const, angle: 2 }], rough: { ...two.rough, rotation: 2 } };
+        expect(cornersText(edged, "a1", name)).toBe("bottom left by its edges at 100.00, 50.00; rough place: middle at 120.00, 65.00, turned 2.00 deg as its edges run");
     });
 });
 
@@ -123,6 +125,34 @@ describe("the Find board panel", () => {
         await twice();
         expect(store.get().camera?.board_look?.corners).toBeNull();
         expect(findButton(root, "Clear corners").disabled).toBe(true);
+        // A blank board's corner by its edges: one corner, with its turn,
+        // is a whole rough place; then features centered make the marks.
+        corner.value = "bottom left";
+        expect(findButton(root, "Corner by edges").disabled).toBe(false);
+        click(root, "Corner by edges");
+        await twice();
+        const edged = store.get().camera?.board_look?.corners;
+        expect(edged?.points.map((point) => [point.corner, point.by])).toEqual([["bottom left", "edges"]]);
+        expect(root.querySelector(".find-corners")?.textContent).toContain("bottom left by its edges at");
+        expect(root.querySelector(".find-corners")?.textContent).toContain("as its edges run");
+        // Centering needs the camera's scale measured.
+        expect(findButton(root, "Center features").dataset["reason"]).toContain("scale is not measured");
+        store.set({ camera: await api.cameraSettings({ mm_per_px: 0.02 }) });
+        expect(findButton(root, "Center features").disabled).toBe(false);
+        click(root, "Center features");
+        await twice();
+        expect(calls.find((call) => call.name === "cameraRefine")?.args).toEqual([job.id, "auto", 3]);
+    });
+
+    test("the locks a guess came from show in the table, and an ambiguous place is said", () => {
+        const { ctx, root, store } = setup();
+        mountFindBoard(root, ctx, { page: "test-locks", boxes: { head: () => null, top: () => null } });
+        store.set({ camera: { ...(store.get().camera ?? {}), running: true, board_look: { job: "a1", need: 5, agree: 6, found: true, sessions: 2, sessions_needed: 2, rival: 0.86, ambiguous: true, guesses: [guess(0.9, { sessions: 2, rival: 0.86 })] } } as never });
+        const heads = Array.from(root.querySelectorAll(".find-guesses th")).map((node) => node.textContent);
+        expect(heads).toContain("Locks");
+        expect(root.querySelector(".find-guesses tbody td:nth-child(4)")?.textContent).toBe("2");
+        expect(root.querySelector(".find-look")?.textContent).toContain("from 2 of 2 independent locks");
+        expect(root.querySelector(".find-look")?.textContent).toContain("AMBIGUOUS: another place fit 86% as well");
     });
 
     test("with a G-code machine's top camera: picked by default, its board searched for and kept as references, by look or by corners", async () => {

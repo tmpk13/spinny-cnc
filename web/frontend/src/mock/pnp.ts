@@ -47,12 +47,23 @@ export const TOP_DEFAULTS: TopSettings = {
     mm_per_px: 0,
     roll: 0,
     mirror: false,
+    side: "front",
+    finish: "masked",
+    paste: false,
+    lens: null,
+    colors: {},
 };
 
 /** The top camera settings checked as the backend checks a PUT; throws with its words. */
 export function checkTopSettings(settings: TopSettings): void {
     if (typeof settings.device !== "string" || settings.device.trim() === "") {
         throw new Error("the top camera device must be named");
+    }
+    if (settings.side !== undefined && settings.side !== "front" && settings.side !== "back") {
+        throw new Error("the top camera side must be front or back");
+    }
+    if (settings.finish !== undefined && settings.finish !== "masked" && settings.finish !== "bare") {
+        throw new Error("the top camera finish must be masked or bare");
     }
     if (!CAMERA_SIZE.test(settings.size)) {
         throw new Error("the top camera size must be WIDTHxHEIGHT");

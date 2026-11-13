@@ -16,7 +16,7 @@ import { CORNER_NAMES } from "../corners.ts";
 import { button, el, labeled, lockFor, numberField, readStored, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BoardCorners, BoardGuess, BoardLook, CornerName } from "../types.ts";
+import type { BoardCorners, BoardGuess, BoardLook, CornerName, RefineUse } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -96,14 +96,17 @@ export function cornersText(corners: BoardCorners | null | undefined, job: strin
     if (corners.job !== job) {
         return `${corners.points.length === 1 ? "a corner" : `${corners.points.length} corners`} taken of ${name(corners.job)}: Clear corners, or take this board's`;
     }
-    const taken = corners.points.map((point) => `${point.corner} at ${formatFixed(point.machine[0], 2)}, ${formatFixed(point.machine[1], 2)}`).join("; ");
+    const taken = corners.points.map((point) => `${point.corner}${point.by === "edges" ? " by its edges" : ""} at ${formatFixed(point.machine[0], 2)}, ${formatFixed(point.machine[1], 2)}`).join("; ");
     const rough = corners.rough;
     if (!rough) {
         return taken;
     }
     const place = `rough place: middle at ${formatFixed(rough.center[0], 2)}, ${formatFixed(rough.center[1], 2)}`;
     if (corners.points.length === 1) {
-        return `${taken}; ${place}, taken square: a second corner gives the turn`;
+        const angle = corners.points[0]!.angle;
+        return angle !== undefined
+            ? `${taken}; ${place}, turned ${formatFixed(rough.rotation, 2)} deg as its edges run`
+            : `${taken}; ${place}, taken square: a second corner gives the turn`;
     }
     return `${taken}; ${place}, turned ${formatFixed(rough.rotation, 2)} deg, the corners within ${formatFixed(rough.rms, 2)} mm of it`;
 }
@@ -310,6 +313,17 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     corner.title = "the corner of the board the picture's center is on, as the board drawing shows it";
     corner.append(...CORNER_NAMES.map((name) => el("option", { value: name }, name)));
     const cornerButton = button("Corner here", () => takeCorner(), "btn", "the picture's center is on this corner of the board: keep where it is");
+    const edgeButton = button("Corner by edges", () => edgeCorner(), "btn",
+        "a blank board's corner is in the picture, the bed around it: find its two edges, keep where they meet and the board's turn");
+    // Centering features far apart once the board is found (head camera).
+    const use = el("select", { class: "field", "aria-label": "Features to center" },
+        el("option", { value: "auto" }, "fiducials, else holes, else pads"), el("option", { value: "fiducials" }, "fiducials"),
+        el("option", { value: "holes" }, "holes"), el("option", { value: "pads" }, "pads")) as HTMLSelectElement;
+    use.title = "which features the camera centers on";
+    const refineButton = button("Center features", () => refine(), "btn",
+        "center the camera on three features far apart where the place found puts them, and make them the Align marks: the board's turn from a long baseline");
+    const refineRow = el("div", { class: "button-row" }, labeled("Features", use, "labeled inline"), refineButton);
+    const refineHead = el("h3", {}, "Exact place by features");
     const clearButton = button("Clear corners", () => clearCorners(), "btn btn-quiet", "forget the corners taken");
     const within = numberField({ min: 0.1, max: 50, step: 0.5, width: "5rem" });
     within.setAttribute("aria-label", "Corners within mm");
@@ -331,8 +345,10 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             tableBox,
             more,
             el("h3", {}, "Rough place by corners"),
-            el("div", { class: "button-row" }, labeled("Corner", corner, "labeled inline"), cornerButton, clearButton, labeled("Within mm", within, "labeled inline")),
+            el("div", { class: "button-row" }, labeled("Corner", corner, "labeled inline"), cornerButton, edgeButton, clearButton, labeled("Within mm", within, "labeled inline")),
             cornersLine,
+            refineHead,
+            refineRow,
             el("p", { class: "muted hint" },
                 "Each column is a place the looks put the board, as tall as its share of the evidence (looks weighed by how well they matched);"
                 + " the most likely is found once it has enough looks and reaches the threshold line. Put the picture's center on a corner of the board"
@@ -453,6 +469,28 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         }
     }
 
+    async function edgeCorner(): Promise<void> {
+        const job = ctx.store.get().job;
+        if (!job) {
+            ctx.toast("error", "pick a board job first");
+            return;
+        }
+        const name = corner.value as CornerName;
+        if (chosen === "top") {
+            await into(ctx, "placing", ctx.api.topEdgeCorner(job.id, name));
+        } else {
+            await into(ctx, "camera", ctx.api.cameraEdgeCorner(job.id, name));
+        }
+    }
+
+    async function refine(): Promise<void> {
+        const job = ctx.store.get().job;
+        if (!job) {
+            return;
+        }
+        await into(ctx, "camera", ctx.api.cameraRefine(job.id, use.value as RefineUse, 3));
+    }
+
     async function clearCorners(): Promise<void> {
         if (chosen === "top") {
             await into(ctx, "placing", ctx.api.topCornersClear());
@@ -470,13 +508,15 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             return;
         }
         const corners = guesses.some((guess) => guess.corner_mm !== null);
-        const heads = ["#", "Share", "Looks", "Match", "Spread mm", ...(corners ? ["Corner mm"] : []), "Middle", "Turn deg", ""];
+        const locks = guesses.some((guess) => guess.sessions !== undefined);
+        const heads = ["#", "Share", "Looks", ...(locks ? ["Locks"] : []), "Match", "Spread mm", ...(corners ? ["Corner mm"] : []), "Middle", "Turn deg", ""];
         const rows = guesses.map((guess, index) => {
             const kind = guess.ruled_out ? "ruled out" : index === 0 && look?.found ? "found" : guess.probability >= threshold - 1e-9 ? "over" : "under";
             return el("tr", { class: `find-row ${kind.replace(" ", "-")}` },
                 el("td", {}, `${index + 1}`),
                 el("td", {}, guess.ruled_out ? `(${percent(guess.share)})` : percent(guess.probability)),
                 el("td", {}, `${guess.looks}`),
+                ...(locks ? [el("td", { title: "independent locks (pcbv searches) the looks came from" }, `${guess.sessions ?? "-"}`)] : []),
                 el("td", {}, guess.match !== undefined ? percent(guess.match) : "-"),
                 el("td", {}, formatFixed(guess.spread_mm, 2)),
                 ...(corners ? [el("td", {}, guess.corner_mm !== null ? formatFixed(guess.corner_mm, 2) : "-")] : []),
@@ -553,6 +593,26 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [!offsetKnown, "the top camera's offset is not measured: Measure offset first"],
             [busy, "a routine is under way"]);
         setLocked(clearButton, corners === null, "no corners taken");
+        lockFor(edgeButton,
+            [!job, "pick a board job first"],
+            [!running, `start the ${src.label.toLowerCase()} first`],
+            [!machineReady, "connect the machine first"],
+            [!machineFree, chosen === "top" ? "the machine is busy" : "the machine must be Idle"],
+            [!scaled, "the camera's scale is not measured"],
+            [!offsetKnown, "the top camera's offset is not measured: Measure offset first"],
+            [busy, "a routine is under way"]);
+        // Centering features is the head camera's: the top camera's Find fiducials does it on the PNP page.
+        const headOnly = chosen === "head";
+        refineRow.classList.toggle("hidden", !headOnly);
+        refineHead.classList.toggle("hidden", !headOnly);
+        lockFor(refineButton,
+            [!job, "pick a board job first"],
+            [!found && !ours, "the board is not found, and no corners of it are taken: Search, or take its corners"],
+            [!running, "start the head camera first"],
+            [!machineReady, "connect the machine first"],
+            [!machineFree, "the machine must be Idle"],
+            [!((state.camera?.mm_per_px ?? 0) > 0), "the camera's scale is not measured: Find mark first"],
+            [busy, "a routine is under way"]);
         const name = look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null;
         lookLine.textContent = lookText(look, name) || "No board loaded: pick a board job and press Look for board.";
 

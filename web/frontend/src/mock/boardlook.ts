@@ -100,11 +100,13 @@ export function unapplyEstimate(estimate: BoardEstimate, point: [number, number]
 }
 
 /** Where corners taken by hand put the board, as the backend's rough_place: two or more fit the turn, one keeps the board square. */
-export function roughPlace(points: { job: [number, number]; machine: [number, number] }[], middle: Board): BoardEstimate | null {
+export function roughPlace(points: { job: [number, number]; machine: [number, number]; angle?: number }[], middle: Board): BoardEstimate | null {
     if (points.length === 0) {
         return null;
     }
-    const fit = fitRigid(points.map((point) => ({ design: point.job, machine: point.machine })));
+    // One corner found by its edges carries the board's turn.
+    const angle = points.length === 1 ? points[0]!.angle ?? null : null;
+    const fit = fitRigid(points.map((point) => ({ design: point.job, machine: point.machine })), angle);
     const t = turned(middle, fit.rotation);
     return {
         rotation: round4(fit.rotation),
@@ -262,9 +264,13 @@ export class MockBoardLook {
     }
 
     /** The picture's center was on a corner of the job's board when `machine` was read: kept in place of one of the same name; another job's are dropped. */
-    addCorner(job: string, corner: CornerName, point: [number, number], machine: [number, number], middle: Board): void {
+    addCorner(job: string, corner: CornerName, point: [number, number], machine: [number, number], middle: Board, angle: number | null = null): void {
         const kept = this.corners !== null && this.corners.job === job ? this.corners.points.filter((entry) => entry.corner !== corner) : [];
-        this.corners = { job, middle, points: [...kept, { corner, job: [round4(point[0]), round4(point[1])], machine: [round4(machine[0]), round4(machine[1])] }] };
+        const taken: BoardCorners["points"][number] = { corner, job: [round4(point[0]), round4(point[1])], machine: [round4(machine[0]), round4(machine[1])], by: angle === null ? "hand" : "edges" };
+        if (angle !== null) {
+            taken.angle = round4(angle);
+        }
+        this.corners = { job, middle, points: [...kept, taken] };
     }
 
     clearCorners(): void {
@@ -386,7 +392,7 @@ export class MockBoardLook {
         const { threshold, cornerMm } = this.tuning();
         const corners: BoardCorners | null = this.corners === null || this.corners.points.length === 0 ? null : {
             job: this.corners.job,
-            points: this.corners.points.map((point) => ({ corner: point.corner, job: [...point.job], machine: [...point.machine] })),
+            points: this.corners.points.map((point) => ({ ...point, job: [...point.job] as [number, number], machine: [...point.machine] as [number, number] })),
             rough: roughPlace(this.corners.points, this.corners.middle),
         };
         if (this.job === null) {

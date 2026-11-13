@@ -10,13 +10,11 @@ import type {
     BusFeeder,
     CalibrateRequest,
     CalibrateResponse,
-    CameraPose,
     CameraControls,
+    CameraPose,
     CameraSettings,
     CamerasResponse,
     CameraState,
-    ControlledCamera,
-    CornerName,
     CamGcodeResponse,
     CamJobResponse,
     CamLogEntry,
@@ -27,11 +25,12 @@ import type {
     CamValue,
     CenterRequest,
     CenterResponse,
+    ColorItem,
     CommandResponse,
     Compensate,
     ComponentsResponse,
-    PlacingPlan,
-    PlacingState,
+    ControlledCamera,
+    CornerName,
     GotoRequest,
     HeightMap,
     HeightMapState,
@@ -40,6 +39,7 @@ import type {
     JobsResponse,
     JobSummary,
     JogRequest,
+    LensMeasured,
     LogFile,
     LoggedCamera,
     LogResponse,
@@ -55,6 +55,8 @@ import type {
     Mode,
     PadProbePlan,
     PadProbeRequest,
+    PlacingPlan,
+    PlacingState,
     PnpGotoRequest,
     PnpSettings,
     PnpState,
@@ -66,7 +68,7 @@ import type {
     ProbeSettings,
     Progress,
     RealtimeAction,
-    StopAnswer,
+    RefineUse,
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
@@ -75,6 +77,8 @@ import type {
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
+    SpotPolarity,
+    StopAnswer,
     TopSettings,
     TouchPlan,
     TouchRequest,
@@ -268,6 +272,16 @@ export interface Api {
     cameraCorner(jobId: string, corner: CornerName): Promise<CameraState>;
     /** The head camera's corners taken are forgotten. */
     cameraCornersClear(): Promise<CameraState>;
+    /** The head camera sees a corner of the job's blank board on the bed: where its edges meet is kept as that corner, with the board's turn. */
+    cameraEdgeCorner(jobId: string, corner: CornerName): Promise<CameraState>;
+    /** The head camera centers features far apart on the board found (fiducials, holes or pads) and makes them the job's camera marks in Align. */
+    cameraRefine(jobId: string, use: RefineUse, count: number): Promise<CameraState>;
+    /** A camera's lens measured from the dot grid in its picture now, kept and applied. */
+    cameraLens(camera: ControlledCamera, polarity: SpotPolarity, pitch: number): Promise<{ camera: ControlledCamera; measured: LensMeasured | null }>;
+    /** A camera's lens correction forgotten. */
+    cameraLensClear(camera: ControlledCamera): Promise<{ camera: ControlledCamera; measured: null }>;
+    /** A color read off a camera's picture at a point of the full size picture, kept for what it looks for; null point: the color forgotten. */
+    cameraColor(camera: ControlledCamera, item: ColorItem, point: [number, number] | null): Promise<{ camera: ControlledCamera; item: ColorItem; rgb: [number, number, number] | null }>;
     /** A camera's V4L2 controls as its device has them now, with the values it keeps. */
     cameraControls(camera: ControlledCamera): Promise<CameraControls>;
     /** Sets control values now and keeps them, to be set at each start; null forgets a kept one. */
@@ -365,6 +379,8 @@ export interface Api {
     topCorner(jobId: string, corner: CornerName): Promise<PlacingState>;
     /** The top camera's corners taken are forgotten. */
     topCornersClear(): Promise<PlacingState>;
+    /** The top camera sees a corner of the job's blank board on the bed: where its edges meet is kept as that corner, with the board's turn. */
+    topEdgeCorner(jobId: string, corner: CornerName): Promise<PlacingState>;
 
     /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
     autoSettings(): Promise<AutoSettings>;
@@ -901,6 +917,26 @@ export class HttpApi implements Api {
         return this.request<CameraState>("DELETE", "/api/camera/corners");
     }
 
+    cameraEdgeCorner(jobId: string, corner: CornerName): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/edge-corner", { job: jobId, corner });
+    }
+
+    cameraRefine(jobId: string, use: RefineUse, count: number): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/refine", { job: jobId, use, count });
+    }
+
+    cameraLens(camera: ControlledCamera, polarity: SpotPolarity, pitch: number): Promise<{ camera: ControlledCamera; measured: LensMeasured | null }> {
+        return this.request("POST", "/api/cameras/lens", { camera, polarity, pitch });
+    }
+
+    cameraLensClear(camera: ControlledCamera): Promise<{ camera: ControlledCamera; measured: null }> {
+        return this.request("DELETE", `/api/cameras/lens?camera=${encodeURIComponent(camera)}`);
+    }
+
+    cameraColor(camera: ControlledCamera, item: ColorItem, point: [number, number] | null): Promise<{ camera: ControlledCamera; item: ColorItem; rgb: [number, number, number] | null }> {
+        return this.request("POST", "/api/cameras/color", point === null ? { camera, item, clear: true } : { camera, item, x: point[0], y: point[1] });
+    }
+
     cameraControls(camera: ControlledCamera): Promise<CameraControls> {
         return this.request<CameraControls>("GET", `/api/cameras/controls?camera=${encodeURIComponent(camera)}`);
     }
@@ -1117,6 +1153,10 @@ export class HttpApi implements Api {
 
     topCornersClear(): Promise<PlacingState> {
         return this.request<PlacingState>("DELETE", "/api/pnp/top/corners");
+    }
+
+    topEdgeCorner(jobId: string, corner: CornerName): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/edge-corner", { job: jobId, corner });
     }
 
     autoSettings(): Promise<AutoSettings> {

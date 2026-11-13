@@ -1162,6 +1162,32 @@ export interface PnpSettings {
     roll: number;
     /** Looking up turns the picture over: the routine measures it. */
     mirror: boolean;
+    lens?: CameraLens | null;
+    colors?: CameraColors;
+}
+
+/** A camera's lens correction measured from a dot grid: two radial terms and the picture size they hold for. */
+export interface CameraLens {
+    k1: number;
+    k2: number;
+    width: number;
+    height: number;
+}
+
+/** Which features the head camera centers once the board is found: fiducials, else holes, else pads (auto), or one kind. */
+export type RefineUse = "auto" | "fiducials" | "holes" | "pads";
+
+/** What a camera can be told to look for by a color picked from its picture. */
+export type ColorItem = "spots" | "board" | "edges";
+export type CameraColors = Partial<Record<ColorItem, [number, number, number]>>;
+
+/** What a lens measurement found: the terms, the dots used and how far they fit, px, with and without the terms. */
+export interface LensMeasured extends CameraLens {
+    dots: number;
+    rms_px: number;
+    rms_before_px: number;
+    mm_per_px?: number;
+    worst_px?: number;
 }
 
 export type PnpStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "looking" | "turning" | "done";
@@ -1394,6 +1420,12 @@ export interface TopSettings {
     /** The look for a board: the least share of the evidence the most likely guess must hold, 0 to 1, and how far a guess may put a corner taken by hand from where it was taken, mm. */
     look_threshold?: number;
     corner_mm?: number;
+    /** The board as the top camera sees it: the side, whether solder mask hides its copper, whether it carries paste. */
+    side?: CameraSide;
+    finish?: CameraFinish;
+    paste?: boolean;
+    lens?: CameraLens | null;
+    colors?: CameraColors;
 }
 
 export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "fitting" | "done" | string;
@@ -1498,6 +1530,9 @@ export interface CameraSettings {
     /** The look for a board: the least share of the evidence the most likely guess must hold, 0 to 1, and how far a guess may put a corner taken by hand from where it was taken, mm. */
     look_threshold?: number;
     corner_mm?: number;
+    /** The lens correction measured from a dot grid, and the colors picked from the picture for what the camera looks for. */
+    lens?: CameraLens | null;
+    colors?: CameraColors;
 }
 
 /** A size a camera captures at, with the best rate it gives there. */
@@ -1624,6 +1659,9 @@ export interface BoardGuess extends BoardEstimate {
     spread_deg: number;
     ruled_out: boolean;
     corner_mm: number | null;
+    /** The independent locks (pcbv searches) its looks came from, and the strongest rival any of them had, as a share of that look's evidence. */
+    sessions?: number;
+    rival?: number;
     view: [number, number][] | null;
     seen: [number, number] | null;
 }
@@ -1634,7 +1672,7 @@ export type CornerName = "bottom left" | "bottom right" | "top right" | "top lef
 /** Corners of a job's board taken by hand: each corner in the job's frame and the machine point the picture's center was on, and where they put the board (one corner: not turned). */
 export interface BoardCorners {
     job: string;
-    points: { corner: CornerName; job: [number, number]; machine: [number, number] }[];
+    points: { corner: CornerName; job: [number, number]; machine: [number, number]; by?: "hand" | "edges"; angle?: number }[];
     rough: BoardEstimate | null;
 }
 
@@ -1661,6 +1699,14 @@ export interface BoardLook {
     /** The guesses, the most likely first, and how many more were not sent. */
     guesses?: BoardGuess[];
     more?: number;
+    /** The independent locks the most likely guess has and needs, and whether pcbv was asked to look afresh for another. */
+    sessions?: number;
+    sessions_needed?: number;
+    rechecking?: boolean;
+    /** The strongest rival of the most likely guess's looks (a share of a look's evidence), whether that makes the place ambiguous, and the newest pose's rival. */
+    rival?: number | null;
+    ambiguous?: boolean;
+    view_rival?: number | null;
     /** The corners taken by hand, of this job's board or another's; null with none. */
     corners?: BoardCorners | null;
 }
@@ -1737,7 +1783,7 @@ export interface MarkRequest {
 export type MarkSource = "tool" | "camera";
 
 /** What a mark's design point was taken from: a pad or a hole of the job, a point typed in, or the picture's center. */
-export type MarkKind = "pad" | "hole" | "point" | "center";
+export type MarkKind = "pad" | "hole" | "point" | "center" | "feature";
 
 /** A design point of the job paired with the board point the machine found it at. */
 export interface AlignMark {

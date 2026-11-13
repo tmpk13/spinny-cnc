@@ -13,6 +13,7 @@ import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import { mountCameraControls } from "./cameracontrols.ts";
+import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { mountCameraViews } from "./camview.ts";
@@ -601,6 +602,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     lookOnce.title = "find the spot once, with no move, and draw what was found over the picture: a wrong polarity or size shows before a routine trusts it";
     const lookLine = el("p", { class: "muted pnp-look-line" });
     const upControls = mountCameraControls(ctx, "up", "the bottom camera");
+    const upSight = mountCameraSight(ctx, { camera: "up", label: "the bottom camera", settings: (state) => state.pnp ?? null, running: (state) => state.pnp?.running === true });
     // The pictures the nozzle and part routines looked at, and photos by hand.
     const upLog = el("div", { class: "camlog-box" });
     mountCameraLog(upLog, ctx, "up");
@@ -651,6 +653,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             el("div", { class: "button-row" }, labeled("Look for", lookSpot, "labeled inline"), lookOnce),
             lookLine,
             upControls.root,
+            upSight.root,
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
             deviceCalibration,
             upLog,
@@ -1114,6 +1117,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     }
 
     function renderCamera(state: AppState): void {
+        upSight.render(state);
         const pnp = state.pnp;
         const running = pnp?.running === true;
         const busy = pnp?.routine?.state === "running";

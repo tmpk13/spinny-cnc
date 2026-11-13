@@ -152,80 +152,80 @@ import {
 } from "./vision.ts";
 import type { LinkStatus } from "../state.ts";
 import type {
-    BoardEstimate,
-    CornerName,
-    SearchCamera,
-    SearchLogState,
-    CameraControls,
-    ControlledCamera,
-    SpotLook,
     AlignFit,
     AlignMark,
+    AlignMarkRequest,
+    AlignState,
     AutoConversation,
     AutoSettings,
     AutoSettingsUpdate,
+    Board,
+    BoardEstimate,
     BusFeeder,
-    CamLogEntry,
-    CamLogState,
-    LoggedCamera,
-    SpotReply,
-    AlignMarkRequest,
-    AlignState,
+    CalibrateRequest,
+    CalibrateResponse,
+    CameraColors,
+    CameraControls,
+    CameraLens,
     CameraPose,
     CameraRoutine,
-    CamerasResponse,
     CameraSettings,
+    CamerasResponse,
     CameraState,
-    MarkRequest,
-    PadProbePlan,
-    PadProbeRequest,
-    RoutineStep,
-    Board,
     CamGcodeResponse,
     CamJobResponse,
+    CamLogEntry,
+    CamLogState,
     CamPath,
     CamProfileResponse,
     CamProfilesResponse,
     CamValue,
-    CalibrateRequest,
-    CalibrateResponse,
     CenterRequest,
     CenterResponse,
+    ColorItem,
     Compensate,
     Component,
     ComponentsResponse,
-    PlacingPlan,
-    PnpReference,
-    PlacingRun,
-    TopRoutine,
-    TopSettings,
-    TopState,
-    UpdateState,
-    PlacingState,
+    ControlledCamera,
+    CornerName,
     GotoRequest,
     Grid,
     Group,
     HeightMap,
     HeightMapState,
+    HolePoint,
     HostSettings,
     Job,
     JobPatch,
     JobSummary,
     JogRequest,
     Joint,
+    LensMeasured,
+    LoggedCamera,
     Machine,
     MachineCheck,
-    MachineFromBoard,
     MachineDocument,
+    MachineFromBoard,
     MachineProblem,
     MachineResponse,
     MachinesResponse,
     MachineState,
     MapMode,
+    Marker,
+    MarkRequest,
+    MillJobRequest,
+    MillOperation,
+    MillResponse,
     Mode,
+    PadProbePlan,
+    PadProbeRequest,
     PartOffset,
     Path,
+    PlacingPlan,
+    PlacingRun,
+    PlacingState,
     PnpGotoRequest,
+    PnpReference,
     PnpRoutine,
     PnpSettings,
     PnpState,
@@ -240,26 +240,32 @@ import type {
     Profile,
     Progress,
     RealtimeAction,
+    RefineUse,
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
+    RoutineStep,
     RunState,
+    SearchCamera,
+    SearchLogState,
     SettingSchema,
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
+    SpotLook,
+    SpotPolarity,
+    SpotReply,
     StopAnswer,
+    TopRoutine,
+    TopSettings,
+    TopState,
     TouchAt,
     TouchMode,
     TouchPlan,
     TouchRequest,
+    UpdateState,
     UploadOptions,
     WsEvent,
-    HolePoint,
-    Marker,
-    MillJobRequest,
-    MillOperation,
-    MillResponse,
 } from "../types.ts";
 import type { EventFeed } from "../ws.ts";
 
@@ -7971,6 +7977,123 @@ export class MockBackend implements Api, EventFeed {
         this.headLook.clearCorners();
         this.emitCamera();
         return this.cameraStateOf();
+    }
+
+    async cameraEdgeCorner(jobId: string, corner: CornerName): Promise<CameraState> {
+        // The mock's blank board shows its corner under the picture's
+        // center, its edges turned as the board lies.
+        await this.cameraCorner(jobId, corner);
+        const taken = this.headLook.cornersOf(jobId).find((entry) => entry.corner === corner)!;
+        const job = this.requireJob(jobId);
+        this.headLook.addCorner(job.id, corner, taken.job, taken.machine, jobSize(job).middle, this.placement?.rotation ?? 0);
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async topEdgeCorner(jobId: string, corner: CornerName): Promise<PlacingState> {
+        await this.topCorner(jobId, corner);
+        const taken = this.topBoardLook.cornersOf(jobId).find((entry) => entry.corner === corner)!;
+        const job = this.requireJob(jobId);
+        this.topBoardLook.addCorner(job.id, corner, taken.job, taken.machine, jobSize(job).middle, 0);
+        this.emitPlacing();
+        return this.placingStateOf();
+    }
+
+    async cameraRefine(jobId: string, use: RefineUse, count: number): Promise<CameraState> {
+        this.requireConnected();
+        const job = this.requireJob(jobId);
+        const look = this.headLook;
+        const place = look.job === job.id && look.found ? look.best : look.rough(job.id);
+        if (place === null) {
+            throw new ApiError(400, "the board's place is not known yet: Look for board and Search until it is found, or take its corners");
+        }
+        const pads = (job.pads ?? []).map((pad) => [pad[0], pad[1]] as [number, number]);
+        const features = use === "pads" ? pads : (job.holes ?? []).map((hole) => [hole[0], hole[1]] as [number, number]);
+        const pool = features.length >= 2 ? features : pads;
+        if (pool.length < 2) {
+            throw new ApiError(400, `the board has no two ${use === "auto" ? "features" : use} clear of the rest to center on`);
+        }
+        // The mock's features: the two furthest apart, then the furthest from those, centered where the place found puts them.
+        let pair: [number, number] = [0, 1];
+        let far = -1;
+        for (let i = 0; i < pool.length; i++) {
+            for (let j = i + 1; j < pool.length; j++) {
+                const d = Math.hypot(pool[i]![0] - pool[j]![0], pool[i]![1] - pool[j]![1]);
+                if (d > far) {
+                    far = d;
+                    pair = [i, j];
+                }
+            }
+        }
+        const taken = [pool[pair[0]]!, pool[pair[1]]!];
+        while (taken.length < Math.min(count, pool.length)) {
+            const next = pool.filter((p) => !taken.includes(p)).reduce((a, b) => (Math.min(...taken.map((t) => Math.hypot(a[0] - t[0], a[1] - t[1]))) >= Math.min(...taken.map((t) => Math.hypot(b[0] - t[0], b[1] - t[1]))) ? a : b));
+            taken.push(next);
+        }
+        this.takeMarksFor(job.id);
+        this.alignMarks = this.alignMarks.filter((mark) => mark.source !== "camera");
+        for (const point of taken) {
+            const at = applyEstimate(place, { x: point[0], y: point[1] });
+            this.alignMarks.push({ design: [point[0], point[1]], machine: [round4(at.x), round4(at.y)], source: "camera", kind: "feature", distance: 0, angle: null, residual: null });
+        }
+        this.refit();
+        this.emitAlign();
+        this.message("info", `${taken.length} features centered: their places are the job's camera marks in Align`);
+        return this.cameraStateOf();
+    }
+
+    /** A camera's settings dict, by its name in the controls' routes. */
+    private settingsOf(camera: ControlledCamera): { lens?: CameraLens | null; colors?: CameraColors } {
+        return camera === "head" ? this.cameraConfig : camera === "up" ? this.pnpConfig : this.topConfig;
+    }
+
+    private emitOf(camera: ControlledCamera): void {
+        if (camera === "head") {
+            this.emitCamera();
+        } else if (camera === "up") {
+            this.emitPnp();
+        } else {
+            this.emitPlacing();
+        }
+    }
+
+    async cameraLens(camera: ControlledCamera, polarity: SpotPolarity, pitch: number): Promise<{ camera: ControlledCamera; measured: LensMeasured | null }> {
+        this.controlledDevice(camera);
+        if (!(pitch >= 0.1 && pitch <= 50)) {
+            throw new ApiError(400, "the dots' pitch must be 0.1 to 50 mm");
+        }
+        const settings = this.settingsOf(camera);
+        const [width, height] = parseSize((settings as { size: string }).size);
+        // The mock's lens bends a little, the same every time.
+        const measured: LensMeasured = { k1: -0.031, k2: 0.004, width, height, dots: polarity === "dark" ? 168 : 152, rms_px: 0.08, rms_before_px: 1.42, mm_per_px: 0.02, worst_px: 0.21 };
+        settings.lens = { k1: measured.k1, k2: measured.k2, width, height };
+        this.message("info", `${camera} camera lens measured from ${measured.dots} dots: k1 ${measured.k1}, k2 ${measured.k2}; the dots fit within ${measured.rms_px} px rms, ${measured.rms_before_px} px without it`);
+        this.emitOf(camera);
+        return { camera, measured };
+    }
+
+    async cameraLensClear(camera: ControlledCamera): Promise<{ camera: ControlledCamera; measured: null }> {
+        this.controlledDevice(camera);
+        this.settingsOf(camera).lens = null;
+        this.emitOf(camera);
+        return { camera, measured: null };
+    }
+
+    async cameraColor(camera: ControlledCamera, item: ColorItem, point: [number, number] | null): Promise<{ camera: ControlledCamera; item: ColorItem; rgb: [number, number, number] | null }> {
+        this.controlledDevice(camera);
+        const settings = this.settingsOf(camera);
+        const colors: CameraColors = { ...(settings.colors ?? {}) };
+        let rgb: [number, number, number] | null = null;
+        if (point === null) {
+            delete colors[item];
+        } else {
+            // The mock's pictures: copper pads, a dark bed, light marks.
+            rgb = item === "edges" ? [52, 54, 60] : item === "board" ? [196, 128, 70] : [214, 210, 198];
+            colors[item] = rgb;
+        }
+        settings.colors = colors;
+        this.emitOf(camera);
+        return { camera, item, rgb };
     }
 
     /** A corner of the job's extent by its name, as the backend takes it of the outline's box. */

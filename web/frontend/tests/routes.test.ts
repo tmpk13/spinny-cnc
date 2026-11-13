@@ -280,3 +280,26 @@ describe("HttpApi camera look, search and control routes", () => {
         ]);
     });
 });
+
+describe("HttpApi board finding routes", () => {
+    test("edge corners, centering features, a lens and picked colors follow the contract", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.cameraEdgeCorner("j1", "top left");
+        await api.topEdgeCorner("j1", "bottom right");
+        await api.cameraRefine("j1", "holes", 3);
+        await api.cameraLens("top", "bright", 2);
+        await api.cameraLensClear("up");
+        await api.cameraColor("head", "board", [640, 360]);
+        await api.cameraColor("head", "board", null);
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["POST", "/api/camera/edge-corner", { job: "j1", corner: "top left" }],
+            ["POST", "/api/pnp/top/edge-corner", { job: "j1", corner: "bottom right" }],
+            ["POST", "/api/camera/refine", { job: "j1", use: "holes", count: 3 }],
+            ["POST", "/api/cameras/lens", { camera: "top", polarity: "bright", pitch: 2 }],
+            ["DELETE", "/api/cameras/lens?camera=up", null],
+            ["POST", "/api/cameras/color", { camera: "head", item: "board", x: 640, y: 360 }],
+            ["POST", "/api/cameras/color", { camera: "head", item: "board", clear: true }],
+        ]);
+    });
+});

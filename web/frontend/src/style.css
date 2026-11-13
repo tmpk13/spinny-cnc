@@ -3194,7 +3194,8 @@ table.pnp-parts tr.dnp td {
     cursor: grabbing;
 }
 
-.picture-stage.boxing {
+.picture-stage.boxing,
+.picture-stage.picking {
     cursor: crosshair;
 }
 
@@ -3251,6 +3252,20 @@ table.pnp-parts tr.dnp td {
 
 .picture-box-line {
     flex: 1 1 12rem;
+}
+
+/* A color picked from a camera's picture, as a small square of it. */
+.color-swatch {
+    display: inline-block;
+    width: 1.2em;
+    height: 1.2em;
+    border: 1px solid var(--border);
+    border-radius: 0.2em;
+    vertical-align: middle;
+}
+
+.color-swatch.none {
+    background: repeating-linear-gradient(45deg, transparent 0 0.2em, var(--border) 0.2em 0.3em);
 }
 
 /* A camera's controls, folded under its settings: a row a control. */

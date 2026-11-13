@@ -157,3 +157,31 @@ describe("looking for a board in the mock", () => {
         expect(far.note).toContain("HTTP");
     });
 });
+
+describe("a camera's lens and colors", () => {
+    test("the lens and the colors picked are said and kept through the mock", async () => {
+        const { lensText, rgbCss } = await import("../src/views/camerasight.ts");
+        expect(lensText(null)).toBe("No lens correction: points are taken as the picture shows them.");
+        expect(lensText({ k1: -0.031, k2: 0.004, width: 1280, height: 720 })).toBe("Lens corrected: k1 -0.0310, k2 0.0040, for 1280x720 pictures.");
+        expect(rgbCss([1, 2, 3])).toBe("rgb(1, 2, 3)");
+        const { MockBackend } = await import("../src/mock/backend.ts");
+        const backend = new MockBackend();
+        const measured = await backend.cameraLens("head", "dark", 2);
+        expect(measured.measured?.dots).toBeGreaterThan(0);
+        expect((await backend.camera()).lens?.k1).toBe(-0.031);
+        await backend.cameraColor("head", "spots", [10, 10]);
+        expect((await backend.camera()).colors?.spots).toEqual([214, 210, 198]);
+        await backend.cameraColor("head", "spots", null);
+        expect((await backend.camera()).colors).toEqual({});
+        await backend.cameraLensClear("head");
+        expect((await backend.camera()).lens).toBeNull();
+    });
+
+    test("the look says its independent locks and an ambiguous place", () => {
+        expect(lookText({ job: "a1", agree: 5, need: 5, found: true, sessions: 2, sessions_needed: 2, rival: 0.3, ambiguous: false, estimate: null }, "board"))
+            .toBe("board found: 5 looks agree from 2 of 2 independent locks");
+        expect(lookText({ job: "a1", looks: 9, locked: 6, agree: 6, need: 5, found: false, pose: "locked", sessions: 1, sessions_needed: 2, rechecking: true, rival: 0.9, ambiguous: true }, "board"))
+            .toContain("from 1 of 2 independent locks, looking afresh for another");
+        expect(lookText({ job: "a1", found: true, agree: 5, need: 5, rival: 0.9, ambiguous: true }, "board")).toContain("AMBIGUOUS: another place fit 90% as well");
+    });
+});

@@ -9,8 +9,9 @@
 import { button, el, labeled, lockFor, numberField, setLocked, Tracked, type TrackedField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { SpotPolarity, TopSettings } from "../types.ts";
+import type { CameraFinish, CameraSide, SpotPolarity, TopSettings } from "../types.ts";
 import { mountCameraControls } from "./cameracontrols.ts";
+import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { into, type Ctx } from "./context.ts";
@@ -29,6 +30,13 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     const fps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
     fps.setAttribute("aria-label", "Top camera fps");
     const markSpot = polaritySelect("Mark spot");
+    // The board as the top camera sees it, for its look for a board.
+    const side = el("select", { class: "field", "aria-label": "Top camera board side" }, el("option", { value: "front" }, "front"), el("option", { value: "back" }, "back")) as HTMLSelectElement;
+    side.title = "the side of the board the camera looks at";
+    const finish = el("select", { class: "field", "aria-label": "Top camera board finish" }, el("option", { value: "masked" }, "masked"), el("option", { value: "bare" }, "bare")) as HTMLSelectElement;
+    finish.title = "masked: solder mask hides the copper but the pads; bare: all the copper shows";
+    const paste = el("select", { class: "field", "aria-label": "Top camera board paste" }, el("option", { value: "false" }, "no paste"), el("option", { value: "true" }, "paste")) as HTMLSelectElement;
+    paste.title = "whether the board carries solder paste; the parts a run places are told to the camera as it places them";
     const pick = mountCameraPick(ctx, {
         device,
         size,
@@ -43,6 +51,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     lookOnce.title = "find the mark spot once, with no move, and draw what was found over the picture";
     const lookLine = el("p", { class: "muted pnp-look-line" });
     const controls = mountCameraControls(ctx, "top", "the top camera");
+    const sight = mountCameraSight(ctx, { camera: "top", label: "the top camera", settings: (state) => state.placing?.top ?? null, running: (state) => state.placing?.top?.running === true });
     const offsetLine = el("p", { class: "muted" });
     const markHere = button("Nozzle on mark", () => into(ctx, "placing", ctx.api.topMark()), "btn");
     markHere.title = "the nozzle's tip is on a mark: keep its place for Measure offset";
@@ -69,10 +78,14 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
                 labeled("Size", size),
                 labeled("fps", fps),
                 labeled("Mark spot", markSpot),
+                labeled("Side", side),
+                labeled("Finish", finish),
+                labeled("Paste", paste),
             ),
             el("div", { class: "button-row" }, apply, lookOnce),
             lookLine,
             controls.root,
+            sight.root,
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
             el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, homeFiducial, abort),
             routineLine,
@@ -81,7 +94,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     );
 
     // The fields: filled from the state unless edited since.
-    const fields: [TrackedField, keyof TopSettings][] = [[device, "device"], [size, "size"], [fps, "fps"], [markSpot, "mark_spot"]];
+    const fields: [TrackedField, keyof TopSettings][] = [[device, "device"], [size, "size"], [fps, "fps"], [markSpot, "mark_spot"], [side, "side"], [finish, "finish"], [paste, "paste"]];
     const tracked = new Tracked(fields.map(([field]) => field));
 
     function patchOf(): Partial<TopSettings> {
@@ -99,6 +112,15 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         }
         if (markSpot.value !== top?.mark_spot) {
             patch.mark_spot = markSpot.value as SpotPolarity;
+        }
+        if (top && side.value !== (top.side ?? "front")) {
+            patch.side = side.value as CameraSide;
+        }
+        if (top && finish.value !== (top.finish ?? "masked")) {
+            patch.finish = finish.value as CameraFinish;
+        }
+        if (top && (paste.value === "true") !== (top.paste ?? false)) {
+            patch.paste = paste.value === "true";
         }
         return patch;
     }
@@ -132,6 +154,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     }
 
     function render(state: AppState): void {
+        sight.render(state);
         const top = state.placing?.top ?? null;
         const connected = state.placing?.connected === true;
         const running = state.placing?.running === true;

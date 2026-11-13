@@ -16,6 +16,7 @@ import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
 import { mountCameraControls } from "./cameracontrols.ts";
+import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { boardMarks, foundMarks, frameSize, roughOf } from "./camview.ts";
@@ -99,13 +100,25 @@ export function lookText(look: BoardLook | null | undefined, name: string | null
     const place = estimate ? `; middle at ${formatFixed(estimate.center[0], 2)}, ${formatFixed(estimate.center[1], 2)}, turned ${formatFixed(estimate.rotation, 2)} deg` : "";
     const lead = look.guesses?.[0];
     const share = lead && !lead.ruled_out ? `, ${formatPercent(lead.probability)} of the evidence` : "";
+    const locks = look.sessions !== undefined && look.sessions_needed !== undefined
+        ? ` from ${look.sessions} of ${look.sessions_needed} independent locks${look.rechecking ? ", looking afresh for another" : ""}`
+        : "";
+    const ambiguous = ambiguityText(look);
     if (look.found) {
-        return `${what} found: ${look.agree ?? need} looks agree${spread}${share}${place}`;
+        return `${what} found: ${look.agree ?? need} looks agree${locks}${spread}${share}${place}${ambiguous}`;
     }
     const needs = look.threshold !== undefined && share !== "" ? ` (needs ${formatPercent(look.threshold)})` : "";
     const pose = look.pose ? look.pose : "no pose yet";
     const why = look.problem ? ` (${look.problem})` : "";
-    return `looking for ${what}: ${look.agree ?? 0} of ${need} looks agree${share}${needs}, ${look.locked ?? 0} of ${look.looks ?? 0} locked, now ${pose}${why}${place}`;
+    return `looking for ${what}: ${look.agree ?? 0} of ${need} looks agree${locks}${share}${needs}, ${look.locked ?? 0} of ${look.looks ?? 0} locked, now ${pose}${why}${place}${ambiguous}`;
+}
+
+/** What the look says of a rival place: the share of a look's evidence another place pcbv checked held, when it makes the place ambiguous; empty otherwise. */
+export function ambiguityText(look: BoardLook | null | undefined): string {
+    if (!look?.ambiguous || look.rival === null || look.rival === undefined) {
+        return "";
+    }
+    return `; AMBIGUOUS: another place fit ${formatPercent(look.rival)} as well (a repeated or symmetric pattern): check it from elsewhere on the board`;
 }
 
 /** The head camera's calibration, once its scale is measured: its roll from board +X, never mirrored. */
@@ -232,6 +245,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
     ];
 
     const controls = mountCameraControls(ctx, "head", "the head camera");
+    const sight = mountCameraSight(ctx, { camera: "head", label: "the head camera", settings: (state) => state.camera ?? null, running: (state) => state.camera?.running === true });
 
     // The camera offset routine: a mark made with the tool, found in the
     // picture, and the picture's center put on it.
@@ -266,6 +280,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
         ),
         el("div", { class: "button-row" }, applySettings, pendingChips[0]),
         controls.root,
+        sight.root,
         el("div", { class: "field-grid" },
             labeled("Offset x mm", offsetX),
             labeled("Offset y mm", offsetY),
@@ -427,6 +442,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
     const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
 
     function render(state: AppState): void {
+        sight.render(state);
         const camera = state.camera;
         const connected = state.snapshot.connected;
         const running = camera?.running ?? false;
