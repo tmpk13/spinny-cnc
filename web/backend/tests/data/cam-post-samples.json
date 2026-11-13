@@ -325,7 +325,8 @@
     "min_radius": 0.0,
     "limited_fraction": 0.0,
     "moves": 0
-   }
+   },
+   "icon": null
   },
   "written": {
    "text": "(twin [a] M3 S1: 6 operations through Twin bench)\n(board X/Y on X=x Y=y Z=depth A=setup)\nG21\nG90\nG94\nG17\nG0 Z4.000\nG0 A15.000\n(marks: 3 paths)\nM4 S0\nG0 Z3.000\nG0 X21.500 Y0.000\nG1 X31.500 F2000.000 S300\nG0 X21.500 Y-0.001\nG1 X26.500\nG1 Y5.000 F1000.000\nG0 X21.500 Y0.000\nG1 X31.500 F2000.000\nG0 X21.500 Y-0.001\nG1 X26.500\nG1 Y5.000 F1000.000\n(slot: 2 paths)\nG0 Z4.000\nM5\nM3 S12000\nG4 P1.5\nG0 X11.500 Y10.000\nG1 Z-0.150 F300.000\nG1 X16.500\nG1 Y12.000\nG0 Z4.000\nG0 X6.500 Y5.000\nG1 Z-0.150\nG0 Z4.000\nG0 X11.500 Y10.000\nG1 Z-0.300\nG1 X16.500\nG1 Y12.000\nG0 Z4.000\nG0 X6.500 Y5.000\nG1 Z-0.300\nG0 Z4.000\nM5\n(change the bit to drill and zero Z with it as before, then resume)\nM0\n(holes: 2 paths)\nM3 S8000\nG4 P1.5\nG0 X2.500 Y1.000\nG1 Z-1.800 F50.000\nG0 Z4.000\nG0 X3.500\nG1 Z-1.800\nG0 Z4.000\n(drawn: 1 paths)\nM5\nM4 S0\nG0 Z2.000\nG0 X51.500 Y50.000\nG1 X61.500 F600.000 S120\n(traced: 1 paths)\nG0 Z4.000\nG0 X71.500\nG1 X81.500 S50\nM5\n(change the bit to V bit and zero Z with it as before, then resume)\nM0\n(model: V bit: 2 paths)\nM3 S11000\nG4 P1.5\nG0 X1.500 Y0.000\nG0 Z1.000\nG1 Z-0.500 F300.000\nG1 X11.500\nG1 Y10.000 Z-1.000\nG0 Z2.000\nG0 X13.500\nG1 Z-0.200\nG0 Z4.000\nG0 X21.500 Y0.000\nG1 Z0.500\nG1 X22.500\nG0 Z4.000\nM5\nG0 X0.000 Y0.000 A0.000\nG0 Z10.000\nM5\nM2\n",
@@ -491,7 +492,8 @@
     "min_radius": 0.0,
     "limited_fraction": 0.0,
     "moves": 0
-   }
+   },
+   "icon": null
   },
   "written": {
    "text": "(Platine-\u00e9t\u00e9 1/2: 3 operations through Plain mill)\n(board X/Y on X=x Y=y Z=depth)\nG21\nG90\nG0 Z2.50\n(edge: 1 paths)\nM4 S9000.5\nG0 X0.00 Y0.00\nG1 Z-0.25 F60.00\nG1 X3.33 Y0.00 F250.00\nG1 Y7.12\nG0 Z2.50\n(mark: 1 paths)\nM5\nM3 S0\nG0 X1.00 Y1.00\nG1 X2.00 Y2.00 F900.00 S80\n(edge again: 1 paths)\nM5\nM4 S9000.5\nG0 X0.00 Y0.00\nG1 Z-0.25 F60.00\nG1 X1.00 F250.00\nG0 Z2.50\nM5\nM30\n",
@@ -599,7 +601,8 @@
     "min_radius": 0.0,
     "limited_fraction": 0.0,
     "moves": 0
-   }
+   },
+   "icon": null
   },
   "error": "the job has nothing enabled to cut: switch on a group"
  },
@@ -674,7 +677,8 @@
     "min_radius": 0.0,
     "limited_fraction": 0.0,
     "moves": 0
-   }
+   },
+   "icon": null
   },
   "error": "rail: a joint-space group has no board paths to write"
  },
@@ -738,7 +742,8 @@
     "min_radius": 0.0,
     "limited_fraction": 0.0,
     "moves": 0
-   }
+   },
+   "icon": null
   },
   "error": "slot: a spindle operation needs a depth axis in the profile"
  },
@@ -802,7 +807,8 @@
     "min_radius": 0.0,
     "limited_fraction": 0.0,
     "moves": 0
-   }
+   },
+   "icon": null
   },
   "error": "slot: a spindle needs a speed above 0"
  }
