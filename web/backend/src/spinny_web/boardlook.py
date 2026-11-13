@@ -177,14 +177,28 @@ def pose_estimate(raw: dict, frame: PictureFrame, to_job: Callable[[Point], Poin
 
 class Consensus:
     """The newest estimates, and whether enough of them in a row agree to
-    call the board found."""
+    call the board found. The thresholds are the module's unless given:
+    a search record's poses are replayed with others to see what they
+    would have called (searchreport.py)."""
 
-    def __init__(self, middle: Point = (0.0, 0.0)) -> None:
+    def __init__(
+        self,
+        middle: Point = (0.0, 0.0),
+        need: int | None = None,
+        agree_mm: float | None = None,
+        agree_deg: float | None = None,
+        window: int | None = None,
+    ) -> None:
         self.middle = middle
+        self.need = NEED if need is None else need
+        self.agree_mm = AGREE_MM if agree_mm is None else agree_mm
+        self.agree_deg = AGREE_DEG if agree_deg is None else agree_deg
+        # The window holds at least the run that calls the board found.
+        self.window = max(WINDOW if window is None else window, self.need)
         self.reset()
 
     def reset(self) -> None:
-        self.estimates: deque[Estimate] = deque(maxlen=WINDOW)
+        self.estimates: deque[Estimate] = deque(maxlen=self.window)
         # Poses read, and the locked ones that gave an estimate.
         self.looks = 0
         self.locked = 0
@@ -199,7 +213,7 @@ class Consensus:
 
     @property
     def found(self) -> bool:
-        return self.agree >= NEED
+        return self.agree >= self.need
 
     def see(self, state: str | None, estimate: Estimate | None, problem: str | None) -> None:
         """One pose read: its state, the estimate it gave (None when it gave
@@ -223,7 +237,7 @@ class Consensus:
         mx = statistics.median(e.center[0] for e in estimates)
         my = statistics.median(e.center[1] for e in estimates)
         mr = statistics.median(turns)
-        inside = [math.dist(e.center, (mx, my)) <= AGREE_MM and abs(r - mr) <= AGREE_DEG for e, r in zip(estimates, turns)]
+        inside = [math.dist(e.center, (mx, my)) <= self.agree_mm and abs(r - mr) <= self.agree_deg for e, r in zip(estimates, turns)]
         agree = 0
         for ok in reversed(inside):
             if not ok:
@@ -250,7 +264,7 @@ class Consensus:
             "locked": self.locked,
             "pose": self.last_state,
             "agree": self.agree,
-            "need": NEED,
+            "need": self.need,
             "found": self.found,
             "spread_mm": round(self.spread_mm, 4) if self.spread_mm is not None else None,
             "spread_deg": round(self.spread_deg, 4) if self.spread_deg is not None else None,
@@ -314,15 +328,25 @@ class BoardLook:
         self._end = threading.Event()
         self._changed = False
         self._published = 0.0
+        # The search record (searchlog.py) every pose read goes into: the
+        # look's own from the board's loading, or a search's while it
+        # runs; and the newest one's id, for the page.
+        self.record = None
+        self.last_record: str | None = None
+        self._record_lock = threading.Lock()
+        self._last_error: str | None = None
+        self._first_picture = False
 
     @property
     def client(self) -> VisionClient:
         return self._client()
 
-    def start(self, job_id: str, to_job: Callable[[Point], Point], middle: Point, place: PlaceOf) -> None:
+    def start(self, job_id: str, to_job: Callable[[Point], Point], middle: Point, place: PlaceOf, record=None) -> None:
         """The board of `job_id` is loaded in pcbv: its poses are read from
-        now on, into a consensus begun anew."""
+        now on, into a consensus begun anew, and into `record` (a look's
+        search record) until the board is found."""
         self.stop()
+        self.begin_record(record)
         with self._lock:
             self.job = job_id
             self._to_job = to_job
@@ -334,8 +358,31 @@ class BoardLook:
             self._thread = threading.Thread(target=self._watch, args=(end,), name="board-look", daemon=True)
             self._thread.start()
 
+    def begin_record(self, record) -> None:
+        """Poses go into `record` from now on; a record still open (the
+        look's own, as a search begins) ends as `searched`."""
+        self.end_record("searched")
+        with self._record_lock:
+            self.record = record
+            self._last_error = None
+            self._first_picture = True
+            if record is not None:
+                self.last_record = record.id
+
+    def end_record(self, result: str, only=None, **fields) -> None:
+        """Ends the record poses go into (only `only`, when given: a look's
+        own record ending as found must not end a search's that took its
+        place meanwhile), with the consensus as it stands and `fields`."""
+        with self._record_lock:
+            record = self.record
+            if record is None or (only is not None and record is not only):
+                return
+            self.record = None
+        record.close(result, consensus=self.consensus.to_dict(), **fields)
+
     def stop(self) -> None:
         """No board loaded any more: the watcher ends and the look is forgotten."""
+        self.end_record("unloaded")
         with self._lock:
             self._end.set()
             thread = self._thread
@@ -354,12 +401,14 @@ class BoardLook:
             self._frame = None
 
     def sample(self, place: PlaceOf | None = None) -> str:
-        """Reads pcbv's newest pose into the consensus: `used` when it gave
-        an estimate, `locked` when it was locked but could not be used,
-        `none` for a pose that is not locked, `same` for the frame read
-        before, `off` with no board or camera."""
+        """Reads pcbv's newest pose into the consensus, and into the record
+        when there is one: `used` when it gave an estimate, `locked` when
+        it was locked but could not be used, `none` for a pose that is not
+        locked, `same` for the frame read before, `off` with no board or
+        camera."""
         to_job = self._to_job
         place = place or self._place
+        record = self.record
         if self.job is None or to_job is None or place is None or not self.client.running:
             return "off"
         try:
@@ -367,17 +416,23 @@ class BoardLook:
         except VisionError as exc:
             if "no frame" not in str(exc):
                 log.warning("board look: %s", exc)
+            # The same failure again and again is said once.
+            if record is not None and str(exc) != self._last_error:
+                self._last_error = str(exc)
+                record.event("error", text=str(exc))
             return "off"
         received = time.monotonic()
         seq = raw.get("frame")
         if seq is not None and seq == self._frame:
             return "same"
         self._frame = seq
+        self._last_error = None
         age = raw.get("age_ms")
         captured = received - float(age) / 1000.0 if _number(age) else received
         state = raw.get("state")
         estimate: Estimate | None = None
         problem: str | None = None
+        where: PictureFrame | str | None = None
         if state == "locked":
             where = place(captured)
             if isinstance(where, str):
@@ -386,13 +441,32 @@ class BoardLook:
                 estimate, problem = pose_estimate(raw, where, to_job, self.consensus.middle, captured)
         self.consensus.see(state, estimate, problem)
         self._changed = True
-        if estimate is not None:
-            return "used"
-        return "locked" if state == "locked" else "none"
+        seen = "used" if estimate is not None else "locked" if state == "locked" else "none"
+        if record is not None:
+            record.event("pose", **pose_fields(record, raw, received, captured, where, estimate, problem, seen, self.consensus))
+            if record.kind == "look":
+                self._look_record(record)
+        return seen
+
+    def _look_record(self, record) -> None:
+        """A look's own record keeps a picture at its first pose and when
+        the board is found, and ends then, or once it is full."""
+        if self._first_picture:
+            # Tried once: a camera that gives no picture is not asked at every pose.
+            self._first_picture = False
+            record.picture(self.client, f"look-{record.pictures:03d}", why="first pose")
+        if self.consensus.found:
+            record.picture(self.client, f"look-{record.pictures:03d}", why="found")
+            best = self.consensus.best
+            self.end_record("found", only=record, estimate=best.to_dict() if best is not None else None)
+        elif record.full:
+            self.end_record("cut short", only=record, message="the record is full; the look goes on unrecorded")
 
     def state(self) -> dict:
         consensus = self.consensus
-        return {"job": self.job, **consensus.to_dict()} if self.job is not None else {"job": None}
+        if self.job is None:
+            return {"job": None}
+        return {"job": self.job, **consensus.to_dict(), "record": self.last_record}
 
     def publish(self, force: bool = False) -> None:
         """Tells the page of a change, at most every PUBLISH_SECONDS unless forced."""
@@ -440,11 +514,11 @@ def search_stops(box: Box, view: tuple[float, float], start: Point) -> list[Poin
     return stops
 
 
-def look_at_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception]) -> bool:
-    """Reads poses with the head at rest at one stop: true once the board
-    is found; false when no lock came within LOCK_SECONDS, or the stop's
-    time ran out. Only frames taken the camera's settle time after the
-    stop began are used."""
+def look_at_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception]) -> str:
+    """Reads poses with the head at rest at one stop: `found` once the
+    board is found; `no lock` when no lock came within LOCK_SECONDS,
+    `time up` when the stop's time ran out. Only frames taken the camera's
+    settle time after the stop began are used."""
     began = time.monotonic()
     trusted = began + camera_module.SETTLE_SECONDS
     locked = False
@@ -458,14 +532,14 @@ def look_at_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], boo
         seen = look.sample(place)
         look.publish()
         if look.consensus.found:
-            return True
+            return "found"
         if seen == "used":
             locked = True
         elapsed = time.monotonic() - began
         if elapsed >= STOP_SECONDS + camera_module.SETTLE_SECONDS:
-            return False
+            return "time up"
         if not locked and elapsed >= LOCK_SECONDS + camera_module.SETTLE_SECONDS:
-            return False
+            return "no lock"
         time.sleep(SAMPLE_SECONDS / 2.0)
 
 
@@ -478,31 +552,122 @@ def search(
     stopped: Callable[[], bool],
     on_stop: Callable[[int, int], None],
     error: type[Exception],
+    record=None,
 ) -> Estimate:
     """Moves the head (`mover`, already begun and at its looking height) so
     the picture's center visits each stop (the head at the stop less the
     camera's `offset`), looks at each, and ends found, with the picture's
     center over the board's middle and the estimate; or raises `error`
     once every stop was looked at. `frame_at` is the picture's place with
-    its center at a point."""
+    its center at a point. `record` (searchlog.py) gets every pose, each
+    stop's move, end and picture, and how the search ended."""
+    # The look's own record ends with the consensus it had, then the
+    # search starts one afresh.
+    look.begin_record(record)
     look.restart()
-    for index, stop in enumerate(stops):
-        on_stop(index, len(stops))
-        mover.go((stop[0] - offset[0], stop[1] - offset[1]))
+    visited = 0
+    covered = False
+
+    def visit(index: int, target: Point, middle: bool = False) -> str:
+        """The picture's center to `target`, the stop looked at: its result."""
+        head = (target[0] - offset[0], target[1] - offset[1])
+        if record is not None:
+            record.stop = index
+            record.event("stop", index=index, target=_rounded(target), head=_rounded(head), **({"middle": True} if middle else {}))
+        mover.go(head)
         _reset(look)
-        if look_at_stop(look, frame_at(stop), stopped, error):
-            best = look.consensus.best
-            assert best is not None
-            # The picture's center over the board's middle, looked at again
-            # from there: the board fills the picture, the estimate holds.
-            middle = best.center
-            mover.go((middle[0] - offset[0], middle[1] - offset[1]))
-            look_at_stop(look, frame_at(middle), stopped, error)
-            final = look.consensus.best or best
-            look.publish(force=True)
-            return final
-    look.publish(force=True)
-    raise error(f"no board found: {len(stops)} stops of the camera's picture looked at without {NEED} looks agreeing; a box over where the board lies, or the board's side and finish checked")
+        if record is not None:
+            record.event("arrived", index=index)
+        began = time.monotonic()
+        result = look_at_stop(look, frame_at(target), stopped, error)
+        if record is not None:
+            record.event("stop_end", index=index, result=result, seconds=round(time.monotonic() - began, 3))
+            record.picture(look.client, f"stop-{index:03d}", index=index)
+        return result
+
+    try:
+        for index, stop in enumerate(stops):
+            on_stop(index, len(stops))
+            visited = index + 1
+            if visit(index, stop) == "found":
+                best = look.consensus.best
+                assert best is not None
+                # The picture's center over the board's middle, looked at again
+                # from there: the board fills the picture, the estimate holds.
+                visit(len(stops), best.center, middle=True)
+                final = look.consensus.best or best
+                look.publish(force=True)
+                look.end_record("found", only=record, estimate=final.to_dict(), visited=visited, found_at=index)
+                return final
+        look.publish(force=True)
+        covered = True
+        raise error(f"no board found: {len(stops)} stops of the camera's picture looked at without {NEED} looks agreeing; a box over where the board lies, or the board's side and finish checked")
+    except BaseException as exc:
+        result = "not found" if covered else "stopped" if stopped() else "error"
+        look.end_record(result, only=record, message=str(exc) or type(exc).__name__, visited=visited)
+        raise
+
+
+def _rounded(point: Point) -> list[float]:
+    return [round(point[0], 4), round(point[1], 4)]
+
+
+def search_extra(box: Box, start: Point, stops: list[Point], view_width: float, view_height: float) -> dict:
+    """A search's box, the picture's center it started from, its stops and
+    the picture's size on the machine (mm), for its record."""
+    return {
+        "box": [round(value, 4) for value in box],
+        "start": _rounded(start),
+        "stops": [_rounded(stop) for stop in stops],
+        "view_mm": [round(view_width, 4), round(view_height, 4)],
+    }
+
+
+def settings_now() -> dict:
+    """The look's and the search's settings as they are now, for a record."""
+    return {
+        "agree_mm": AGREE_MM,
+        "agree_deg": AGREE_DEG,
+        "need": NEED,
+        "window": WINDOW,
+        "sample_s": SAMPLE_SECONDS,
+        "stop_s": STOP_SECONDS,
+        "lock_s": LOCK_SECONDS,
+        "settle_s": camera_module.SETTLE_SECONDS,
+        "overlap": OVERLAP,
+    }
+
+
+def pose_fields(record, raw: dict, received: float, captured: float, where, estimate: Estimate | None, problem: str | None, seen: str, consensus: Consensus) -> dict:
+    """A pose's line in a record: pcbv's whole reply (its protocol id left
+    out), when it was read and when its frame was taken (seconds from the
+    record's start), where the picture lay then or why that was not
+    known, the estimate or why there was none, and the consensus after."""
+    fields: dict = {
+        "frame": raw.get("frame"),
+        "state": raw.get("state"),
+        "seen": seen,
+        "read": record.since(received),
+        "captured": record.since(captured),
+        "pose": {key: value for key, value in raw.items() if key != "id"},
+    }
+    if isinstance(where, PictureFrame):
+        fields["place"] = {"center": _rounded(where.center), "roll": where.roll, "mirror": where.mirror}
+    elif isinstance(where, str):
+        fields["refused"] = where
+    if problem is not None and not isinstance(where, str):
+        fields["problem"] = problem
+    if estimate is not None:
+        fields["estimate"] = {**estimate.to_dict(), "seen": _rounded(estimate.seen) if estimate.seen is not None else None}
+    best = consensus.best
+    fields["consensus"] = {
+        "agree": consensus.agree,
+        "found": consensus.found,
+        "spread_mm": round(consensus.spread_mm, 4) if consensus.spread_mm is not None else None,
+        "spread_deg": round(consensus.spread_deg, 4) if consensus.spread_deg is not None else None,
+        "estimate": best.to_dict() if best is not None else None,
+    }
+    return fields
 
 
 def found_text(found: Estimate, consensus: Consensus) -> str:

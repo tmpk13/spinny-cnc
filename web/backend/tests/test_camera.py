@@ -667,6 +667,9 @@ class BoardStandIn:
         center = (self.fake.joint[0] + self.offset[0], self.fake.z + self.offset[1])
         return self.seen.pose(center, self.roll, False, self.mm_per_px, 1280, 720, self.frames)
 
+    def frame(self, width=None, overlay=False, quality=80):
+        return {"width": 1280, "height": 720, "frame": self.frames, "age_ms": 0}, b"\xff\xd8 head picture \xff\xd9"
+
     def close(self):
         self.running = False
 
@@ -698,6 +701,23 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     look = state["board_look"]
     assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01)
     assert (fake.joint[0] + 12.5, fake.z - 3.25) == pytest.approx(middle, abs=0.01)
+    # The search was recorded, and the look begun by loading the board
+    # ended as the search began.
+    records = client.get("/api/searchlog?camera=head").json()["records"]
+    search_record, look_record = records[0], records[1]
+    assert search_record["kind"] == "search" and search_record["result"] == "found" and search_record["job"] == job.id
+    assert look_record["kind"] == "look" and look_record["result"] == "searched"
+    assert look["record"] == search_record["id"]
+    shown = client.get(f"/api/searchlog/{search_record['id']}").json()
+    assert shown["record"]["picture"]["offset"] == [12.5, -3.25] and shown["record"]["board"]["copy"] == "board.kicad_pcb"
+    assert shown["summary"]["estimate"]["center"] == pytest.approx(list(middle), abs=0.01) and shown["summary"]["stops"]
+    page = client.get(f"/api/searchlog/{search_record['id']}/report")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html") and "Board search" in page.text
+    picture = client.get(f"/api/searchlog/{search_record['id']}/stop-000.jpg")
+    assert picture.status_code == 200 and picture.content == b"\xff\xd8 head picture \xff\xd9"
+    assert client.get(f"/api/searchlog/{search_record['id']}/..%2Frecord.json").status_code == 404
+    assert client.get("/api/searchlog/19990101-000000-000").status_code == 404
+    assert client.get("/api/searchlog?camera=up").status_code == 400
     # A capture with the board found takes the agreed place and turn.
     response = client.post("/api/align/capture", json={"job": job.id})
     assert response.status_code == 200, response.text

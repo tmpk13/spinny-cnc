@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { MockCameraLog, overlaySvg } from "../src/mock/camlog.ts";
-import { lookText, mountCameraLog } from "../src/views/camlog.ts";
-import type { CamLogEntry } from "../src/types.ts";
+import { MockSearchLog } from "../src/mock/searchlog.ts";
+import { lookText, mountCameraLog, searchText, SEARCHES_SHOWN } from "../src/views/camlog.ts";
+import type { CamLogEntry, SearchRecordLine } from "../src/types.ts";
 import { dialogButton, settle, setup } from "./harness.ts";
 
 async function settleMany(times = 6): Promise<void> {
@@ -93,6 +94,53 @@ describe("the camera log", () => {
         await settleMany();
         expect(root.querySelectorAll(".camlog-entry").length).toBe(5);
         expect(root.textContent).toContain("5 kept of this camera");
+        root.remove();
+    });
+
+    test("a search record says how far it went and how long it took", () => {
+        const line: SearchRecordLine = {
+            id: "20261112-153012-000", kind: "search", camera: "top", started: "2026-11-12T15:30:12.000", job: "j1", job_name: "board", board: "board.kicad_pcb",
+            result: "found", message: null, seconds: 41.25, stops: 24, visited: 7, poses: 187, pictures: 8, agree: 5, estimate: null,
+        };
+        expect(searchText(line)).toBe("7 of 24 stops, 187 poses, 41.3 s, board");
+        expect(searchText({ ...line, kind: "look", stops: null, visited: null, poses: 40, seconds: 3.21, job_name: null })).toBe("40 poses, 3.2 s");
+    });
+
+    test("the head and top cameras' panels list their newest search records with their pages; the bottom camera's has none", async () => {
+        const { store, ctx, root, api, backend } = setup();
+        await api.connect("/dev/ttyACM0");
+        const records = (backend as unknown as { searchRecords: MockSearchLog }).searchRecords;
+        mountCameraLog(root, ctx, "top");
+        await settleMany();
+        const lists = root.querySelectorAll(".camlog-list");
+        expect(lists.length).toBe(2);
+        const searches = lists[1] as HTMLElement;
+        // None yet: the list and its line are hidden.
+        expect(searches.hidden).toBe(true);
+        for (let i = 0; i < 6; i++) {
+            records.add({ camera: i === 5 ? "head" : "top", job: "j1", jobName: "board", result: i === 4 ? "not found" : "found", message: null, seconds: 12.34, stops: 9, visited: 3 + i, estimate: null });
+        }
+        store.set({ searchlog: await api.searchLog() });
+        await settleMany();
+        expect(searches.hidden).toBe(false);
+        const entries = searches.querySelectorAll(".camlog-entry");
+        expect(entries.length).toBe(SEARCHES_SHOWN);
+        // This camera's newest first, the head camera's left out; one not found is marked.
+        expect(entries[0]!.textContent).toContain("search: not found");
+        expect(entries[0]!.textContent).toContain("7 of 9 stops, 12.3 s, board");
+        expect(entries[0]!.classList.contains("missed")).toBe(true);
+        expect(entries[1]!.classList.contains("missed")).toBe(false);
+        const links = Array.from(entries[0]!.querySelectorAll("a"));
+        expect(links.map((a) => a.textContent)).toEqual(["report", "data"]);
+        expect(links[0]!.getAttribute("href")!.startsWith("data:text/html")).toBe(true);
+        expect(links[0]!.getAttribute("target")).toBe("_blank");
+        const bottom = document.createElement("div");
+        document.body.append(bottom);
+        mountCameraLog(bottom, ctx, "up");
+        await settleMany();
+        expect(bottom.querySelectorAll(".camlog-list").length).toBe(1);
+        expect(bottom.textContent).not.toContain("Board searches");
+        bottom.remove();
         root.remove();
     });
 });

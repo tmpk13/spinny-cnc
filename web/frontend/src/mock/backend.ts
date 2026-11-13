@@ -84,6 +84,7 @@ import {
     upPicturePoint,
 } from "./pnp.ts";
 import { MockCameraLog, svgUrl } from "./camlog.ts";
+import { MockSearchLog, mockRecordUrl } from "./searchlog.ts";
 import { LOOK_SAMPLE_SECONDS, MockBoardLook, SEARCH_STOP_SECONDS, applyEstimate, estimateOf, jobSize, onBoard, searchStops, type SearchBox } from "./boardlook.ts";
 import { MockAuto } from "./auto.ts";
 import { decodePacket, encodePacket, idBytes, slotPlace, type BusPacket } from "../feederbus.ts";
@@ -135,6 +136,8 @@ import {
 import type { LinkStatus } from "../state.ts";
 import type {
     BoardEstimate,
+    SearchCamera,
+    SearchLogState,
     CameraControls,
     ControlledCamera,
     SpotLook,
@@ -1986,6 +1989,8 @@ export class MockBackend implements Api, EventFeed {
     private finding: FindSession | null = null;
     /** The head and top cameras' looks for a board, the head camera's search under way, and the stops of the top camera's. */
     private readonly headLook = new MockBoardLook();
+    /** A line for each board search run to its end, as the backend's search records. */
+    private readonly searchRecords = new MockSearchLog();
     private readonly topBoardLook = new MockBoardLook();
     private headSearch: { stops: Board[]; index: number; elapsed: number; progress: CameraRoutine } | null = null;
     private topSearchStops: Board[] = [];
@@ -6718,6 +6723,24 @@ export class MockBackend implements Api, EventFeed {
         return this.cameraLog.files.get(name) ?? "";
     }
 
+    async searchLog(camera?: SearchCamera): Promise<SearchLogState> {
+        if (camera !== undefined && camera !== "head" && camera !== "top") {
+            throw new ApiError(400, `no camera ${camera} looks for boards: head or top`);
+        }
+        return this.searchRecords.state(camera);
+    }
+
+    searchLogUrl(id: string, name: string): string {
+        return mockRecordUrl(id, name);
+    }
+
+    /** A search that ended, kept as the backend keeps its record. */
+    private recordSearch(camera: SearchCamera, jobId: string, error: string | null, seconds: number, stops: number, visited: number, estimate: BoardEstimate | null): void {
+        const result = error === null ? "found" : error.startsWith("no board found") ? "not found" : "error";
+        this.searchRecords.add({ camera, job: jobId, jobName: this.requireJob(jobId).name, result, message: error, seconds, stops, visited, estimate });
+        this.emit({ type: "searchlog", data: this.searchRecords.state() });
+    }
+
     pnpFrameUrl(width: number, overlay: boolean): string {
         const size = frameWidth(width);
         return upFrameSvg({ nozzle: this.nozzleFromCamera(), holding: this.pnpHolding, size: this.pnpConfig.size, truth: UP_TRUTH }, size, overlay);
@@ -7672,6 +7695,10 @@ export class MockBackend implements Api, EventFeed {
             const progress = search.progress;
             const end = (state: CameraRoutine["state"], error: string | null): void => {
                 this.headSearch = null;
+                const jobId = this.headLook.job;
+                if (jobId !== null) {
+                    this.recordSearch("head", jobId, state === "done" ? null : error, search.index * SEARCH_STOP_SECONDS, search.stops.length, search.index, state === "done" ? this.headLook.state().estimate ?? null : null);
+                }
                 progress.state = state;
                 progress.error = error;
                 if (state === "done") {
@@ -7773,6 +7800,9 @@ export class MockBackend implements Api, EventFeed {
                 progress.state = "error";
                 progress.error = `no board found: ${stops.length} stops of the camera's picture looked at without enough looks agreeing; a box over where the board lies, or the board's side and finish checked`;
                 this.message("error", `looking for the board failed: ${progress.error}`);
+                if (session.job !== null) {
+                    this.recordSearch("top", session.job, progress.error, session.elapsed, stops.length, stops.length, null);
+                }
                 break;
             }
             const stop = stops[index]!;
@@ -7788,6 +7818,7 @@ export class MockBackend implements Api, EventFeed {
                 progress.state = "done";
                 progress.step = "done";
                 progress.done = progress.total;
+                this.recordSearch("top", session.job!, null, session.elapsed, stops.length, index + 1, this.topBoardLook.state().estimate ?? null);
                 this.message("info", `board found: its middle at ${formatFixed(estimate.center[0], 3)}, ${formatFixed(estimate.center[1], 3)} mm, turned ${formatFixed(estimate.rotation, 3)} degrees (mock)`);
             }
         }

@@ -325,6 +325,24 @@ async def _get_placement(api: ToolApi, args: dict) -> Any:
     return await api.get("/api/pnp/placing")
 
 
+async def _list_search_records(api: ToolApi, args: dict) -> Any:
+    params: dict = {"limit": args.get("limit", 20)}
+    if args.get("camera"):
+        params["camera"] = args["camera"]
+    return await api.get("/api/searchlog", params)
+
+
+async def _get_search_record(api: ToolApi, args: dict) -> Any:
+    answer = await api.get(f"/api/searchlog/{seg(args['record_id'])}")
+    if not isinstance(answer, dict):
+        return answer
+    # The summary is the reading; of the header only what it was looked
+    # with: the stops' list and the board map are long and add nothing.
+    header = answer.get("record") or {}
+    kept = ("id", "kind", "camera", "started", "job", "board", "picture", "settings", "pcbv", "box", "view_mm", "outcome")
+    return {"record": {key: header[key] for key in kept if key in header}, "summary": answer.get("summary")}
+
+
 # --- jobs ---------------------------------------------------------------------
 
 
@@ -662,6 +680,31 @@ def _tools() -> tuple[Tool, ...]:
             NO_ARGUMENTS,
             (Route(get, "/api/pnp/placing"),),
             _get_placement,
+            read_only=True,
+        ),
+        Tool(
+            "list_search_records",
+            "The cameras' recorded looks for a board and searches over a box, newest first: id, kind (look or"
+            " search), camera (head, or top on a G-code machine), job, result (found, not found, stopped, error;"
+            " a look also searched, unloaded or cut short), seconds, stops visited of the stops, poses read. Call"
+            " get_search_record with an id to see where one went wrong.",
+            obj({"camera": text("only this camera's records", enum=["head", "top"]), "limit": integer("how many, newest first", minimum=1, maximum=200)}),
+            (Route(get, "/api/searchlog"),),
+            _list_search_records,
+            read_only=True,
+        ),
+        Tool(
+            "get_search_record",
+            "What one recorded look or search says, to find why it was slow, never found the board or found it"
+            " wrong: each stop's place, move and look time and result, the poses used, refused and read there,"
+            " pcbv's medians (features paired of those expected, rms, ms a frame, spots, the look it used), how"
+            " much of the picture the board covered by where it was found (missed: a quarter or more and nothing"
+            " used), each estimate's distance from that place and the outliers, why poses were refused, pcbv's"
+            " errors; with the camera's offset, roll and scale and the search's settings. Where the board was found"
+            " is the truth here: a search that found nothing has no distances.",
+            obj({"record_id": text("the record's id, as list_search_records gives it")}, ("record_id",)),
+            (Route(get, "/api/searchlog/{record_id}"),),
+            _get_search_record,
             read_only=True,
         ),
         Tool(

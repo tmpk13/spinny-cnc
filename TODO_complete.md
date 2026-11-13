@@ -759,3 +759,8 @@
   where WebGL would be software) in a worker the page hands its canvases
   to, the head and text on a canvas over it; a 400,000 point job drags at
   60 frames a second on an Iris Xe and costs the page 0.1 ms a frame.
+- Search records (2026-11-12): every look for a board and every search
+  kept in `var/searchlog/` (poses, stops, a picture at each, the board
+  file, the outcome), listed in the camera panels with a report page, and
+  `mise run search-report` to measure them, try other consensus settings
+  on the same poses and give the pictures to another pcbv build.

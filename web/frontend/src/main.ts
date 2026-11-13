@@ -198,6 +198,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "camlog":
             store.set({ camlog: event.data });
             break;
+        case "searchlog":
+            store.set({ searchlog: event.data });
+            break;
         case "auto": {
             const before = store.get().auto;
             if (event.data.cleared) {

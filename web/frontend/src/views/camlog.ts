@@ -1,16 +1,42 @@
 // The camera log in a camera's panel: logging every look on or off (one
 // switch for every camera), a photo taken now with this camera, and the
 // newest pictures it kept, each as it was and with what its finder found
-// drawn on it, so a routine that went wrong can be seen look by look.
+// drawn on it, so a routine that went wrong can be seen look by look. The
+// head and top cameras also list their newest search records, kept by the
+// backend for every look for a board and every search whatever the switch
+// says, each a page of its stops, poses and pictures.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, replace, setLocked } from "../dom.ts";
 import type { AppState } from "../state.ts";
-import type { CamLogEntry, CamLogState, LoggedCamera } from "../types.ts";
+import type { CamLogEntry, CamLogState, LoggedCamera, SearchCamera, SearchLogState, SearchRecordLine } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 
 /** How many of a camera's newest pictures its panel shows. */
 export const SHOWN = 6;
+/** How many of a camera's newest search records its panel shows. */
+export const SEARCHES_SHOWN = 4;
+
+/** Results that say a search record went wrong, marked as a missed look is. */
+const WENT_WRONG = new Set(["not found", "error", "unfinished", "cut short"]);
+
+/** What a search record says, in a few words: how far it went and how long it took. */
+export function searchText(line: SearchRecordLine): string {
+    const parts: string[] = [];
+    if (line.kind === "search" && line.stops !== null) {
+        parts.push(`${line.visited ?? 0} of ${line.stops} stops`);
+    }
+    if (line.poses !== null) {
+        parts.push(`${line.poses} poses`);
+    }
+    if (line.seconds !== null) {
+        parts.push(`${line.seconds.toFixed(1)} s`);
+    }
+    if (line.job_name) {
+        parts.push(line.job_name);
+    }
+    return parts.join(", ");
+}
 
 /** What a look found, in a few words. */
 export function lookText(entry: CamLogEntry): string {
@@ -25,10 +51,10 @@ export function lookText(entry: CamLogEntry): string {
     return `found at dx ${sign(spot.dx)} dy ${sign(spot.dy)} px`;
 }
 
-/** When a picture was taken, as the time of day. */
-function timeOf(entry: CamLogEntry): string {
-    const at = entry.time.indexOf("T");
-    return at >= 0 ? entry.time.slice(at + 1, at + 9) : entry.time;
+/** A moment given as an ISO time, as the time of day. */
+function clockOf(time: string): string {
+    const at = time.indexOf("T");
+    return at >= 0 ? time.slice(at + 1, at + 9) : time;
 }
 
 export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera): void {
@@ -40,9 +66,16 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     const clear = button("Clear log", () => clearAll(), "btn btn-quiet btn-small", "forget the pictures kept");
     const count = el("span", { class: "muted camlog-count" });
     const gallery = el("ul", { class: "camlog-list" });
+    const searchHead = el("p", { class: "muted" }, "Board searches recorded, newest first: each a page of its stops, the poses read and the pictures.");
+    const searches = el("ul", { class: "camlog-list" });
+    searchHead.hidden = true;
+    searches.hidden = true;
+    // Only the cameras that look for a board have search records.
+    const searchable = camera === "head" || camera === "top";
     root.append(el("div", { class: "camlog" },
         el("div", { class: "button-row" }, toggle, photo, clear, count),
         gallery,
+        ...(searchable ? [searchHead, searches] : []),
     ));
 
     enabled.addEventListener("change", async () => {
@@ -104,7 +137,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
             el("a", { href: ctx.api.camLogFileUrl(entry.files.overlay), target: "_blank", rel: "noopener", class: "camlog-thumb" },
                 el("img", { src: ctx.api.camLogFileUrl(entry.files.overlay), alt: `${entry.routine}: ${entry.step}`, loading: "lazy" })),
             el("div", { class: "camlog-text" },
-                el("span", { class: "camlog-what" }, `${timeOf(entry)} ${entry.routine}: ${entry.step}`),
+                el("span", { class: "camlog-what" }, `${clockOf(entry.time)} ${entry.routine}: ${entry.step}`),
                 el("span", { class: "muted" }, `${entry.note ? `${entry.note}, ` : ""}${lookText(entry)}`),
                 el("span", { class: "camlog-links" }, link("photo", entry.files.photo), " ", link("with marks", entry.files.overlay), " ", link("pose", entry.files.pose)),
             ),
@@ -113,4 +146,38 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     ctx.store.subscribe(render, ["camlog"]);
     render(ctx.store.get());
     void into(ctx, "camlog", ctx.api.camLog());
+
+    // The search records, asked for by camera as the pictures are.
+    if (!searchable) {
+        return;
+    }
+    const searchCamera: SearchCamera = camera === "head" ? "head" : "top";
+    let ownSearches: SearchLogState | null = null;
+    let askingSearches = 0;
+
+    async function refreshSearches(): Promise<void> {
+        const ask = ++askingSearches;
+        const state = await ctx.call(ctx.api.searchLog(searchCamera));
+        if (state && ask === askingSearches) {
+            ownSearches = state;
+            drawSearches();
+        }
+    }
+
+    function drawSearches(): void {
+        const lines = ownSearches?.records ?? [];
+        searchHead.hidden = lines.length === 0;
+        searches.hidden = lines.length === 0;
+        replace(searches, ...lines.slice(0, SEARCHES_SHOWN).map((line) => el("li", { class: WENT_WRONG.has(line.result) ? "camlog-entry missed" : "camlog-entry" },
+            el("div", { class: "camlog-text" },
+                el("span", { class: "camlog-what" }, `${clockOf(line.started)} ${line.kind}: ${line.result}`),
+                el("span", { class: "muted" }, searchText(line) || (line.message ?? "")),
+                el("span", { class: "camlog-links" },
+                    el("a", { href: ctx.api.searchLogUrl(line.id, "report"), target: "_blank", rel: "noopener" }, "report"), " ",
+                    el("a", { href: ctx.api.searchLogUrl(line.id, "record.json"), target: "_blank", rel: "noopener" }, "data")),
+            ),
+        )));
+    }
+    ctx.store.subscribe(() => void refreshSearches(), ["searchlog"]);
+    void refreshSearches();
 }

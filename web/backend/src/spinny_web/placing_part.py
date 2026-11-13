@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 from spinny_laser.machines import GCODE
 
-from .boardlook import PictureFrame, found_text, search, search_box, search_stops
+from .boardlook import PictureFrame, found_text, search, search_box, search_extra, search_stops
 from .feederbus import BusError, FeederBus, slot_place
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
@@ -270,8 +270,23 @@ class PlacingPart:
         # A place the head is seen at that changed is a move at about half
         # the file's feed, its acceleration allowed for.
         self._top_rest.speed = max(machine.feed_xy / 120.0, 1.0)
-        self.top_look.start(job_id, job.design.board_to_job, middle, self._top_look_place)
+        record = self._board_record("look", "top", job, self.top.client, "front", "masked", self._top_picture(machine))
+        self.top_look.start(job_id, job.design.board_to_job, middle, self._top_look_place, record)
         return self.publish_placing()
+
+    def _top_picture(self, machine: GcodeMachine) -> dict:
+        """The top camera's place and scale, for a search record; its
+        offset None while not measured."""
+        settings = self.top.settings()
+        try:
+            offset = list(self._top_offset(machine))
+        except (ValueError, LookupError, HTTPException):
+            offset = None
+        return {
+            "offset": offset, "roll": settings.roll, "mirror": settings.mirror,
+            "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv,
+            "machine": machine.name,
+        }
 
     def _top_look_place(self, captured: float) -> PictureFrame | str:
         """Where the top camera's picture lay on the machine for a frame
@@ -319,9 +334,14 @@ class PlacingPart:
             mover.lift()
             if z is not None:
                 mover.lower(z)
+            record = self._board_record(
+                "search", "top", job, self.top.client, "front", "masked",
+                {**self._top_picture(machine), "width": width, "height": height, "mm_per_px_used": scale, "z": z},
+                search_extra(box, center, stops, width * scale, height * scale),
+            )
             found = search(
                 look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, settings.mirror),
-                mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError,
+                mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
             )
             self.top._message("info", found_text(found, look.consensus))
 

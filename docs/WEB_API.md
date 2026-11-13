@@ -752,7 +752,8 @@ A picture mirrored against the board is refused (`problem`).
 {"job": "a1b2", "looks": 42, "locked": 30, "pose": "locked", "agree": 5, "need": 5, "found": true,
  "spread_mm": 0.08, "spread_deg": 0.12,
  "estimate": {"rotation": 1.02, "shift": [40.1, 29.9], "center": [59.8, 45.3], "rms": 0.01},
- "view": [[7.2, 22.3], [32.9, 22.1], [32.7, 7.7], [7.1, 7.9]], "seen": [20.0, 15.0], "problem": null}
+ "view": [[7.2, 22.3], [32.9, 22.1], [32.7, 7.7], [7.1, 7.9]], "seen": [20.0, 15.0], "problem": null,
+ "record": "20261112-153012-000"}
 ```
 
 `looks` counts the poses read, `locked` the ones that gave an estimate,
@@ -762,7 +763,9 @@ camera, X and Y for the top camera) is null until one agrees with the
 median. `view` is the newest locked picture's corners and `seen` its
 center in the job's frame (null while not locked); `problem` why the
 newest locked pose was not used (the head moving, the offset not
-known, a mirrored picture). With no board loaded, `{"job": null}`.
+known, a mirrored picture). `record` is the id of the newest search
+record of this look or its search (Search records, below). With no board
+loaded, `{"job": null}`.
 `POST /api/align/capture` takes a found estimate (the board's middle, its
 place and turn) when the camera has one for that job, else the newest
 pose as before.
@@ -797,6 +800,45 @@ An entry: `{"id": "20261105-101500-003", "time", "camera": "up", "routine":
 "y", "dx", "dy", "area", "major", "minor", "contrast"} or null, "files":
 {"photo", "overlay", "pose"}}`. A `camlog` event carries the state after
 every change.
+
+## Search records
+
+Every look for a board (from *Look for board* until enough looks agree,
+the board is unloaded, a search starts or 3000 lines were written) and
+every search over a box is recorded, whatever the camera log's switch
+says, by the head camera and a G-code machine's top camera alike. A
+record is a folder in `var/searchlog/` named by its id: `record.json`
+(what was looked for and how: the camera's offset, roll, mirror and
+scale, the board file and the side and finish pcbv was told, the
+board's outline box and middle in the job's frame and the map from KiCad
+board points into it, a search's box and stops, the settings; and once
+it ended, `outcome`), `events.jsonl` (one line each, `t` seconds from
+the start: every pose read with pcbv's whole reply, where the picture lay
+or why that was not known, the estimate or why none, the consensus
+after it; each `stop`, `arrived` and `stop_end`; each `picture`), a JPEG
+of the picture at each stop once its looks are done (`stop-NNN.jpg`; a
+look keeps `look-NNN.jpg` at its first pose and when found) and
+`board.kicad_pcb`, the board file as pcbv had it. The oldest go past 60
+records or 200 MB together, never one still being written; a record
+keeps at most 150 pictures. `mise run search-report` reads them on the
+command line (`spinny_web.searchreport`).
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/searchlog?limit=20&camera=top` | `{"count": n, "records": [line, ...]}`, the newest first, of one camera (`head` or `top`) when named; 400 for another name |
+| `GET /api/searchlog/{id}` | `{"record": record.json, "summary": ...}`: what the report makes of it (each stop's move, look, poses used, refused and read, pcbv's medians, how much of the picture the board covered, the misses, the estimates against where the board was found, the outliers); 404 for an id not kept |
+| `GET /api/searchlog/{id}/report` | the record as an HTML page: the stops on the machine, the poses along the time, the stops' table, the outliers, what other consensus settings would have called on the same poses, the pictures |
+| `GET /api/searchlog/{id}/{name}` | a file of the record: `record.json`, `events.jsonl`, `board.kicad_pcb`, `stop-NNN.jpg`, `look-NNN.jpg`; 404 for any other name |
+| `DELETE /api/searchlog` | removes every record not being written: `{"deleted": n}` |
+
+A line: `{"id": "20261112-153012-000", "kind": "search" | "look",
+"camera": "top", "started", "job", "job_name", "board", "result",
+"message", "seconds", "stops", "visited", "poses", "pictures", "agree",
+"estimate"}`. `result` is `found`, `not found`, `stopped` or `error` for a
+search; `found`, `searched` (a search took over), `unloaded` or `cut
+short` for a look; `running` while written and `unfinished` for one the
+backend never ended. A `searchlog` event carries `GET /api/searchlog`'s
+answer when a record begins or ends.
 
 ## Pick and place
 
@@ -1091,4 +1133,5 @@ it does not watch then.
 | `placing` | the placing state (`GET /api/pnp/placing`), whenever it changes: a G-code machine connected, every part of a placing run, a reference, a feeder count, its file tuned |
 | `markers` | `{"markers": [...]}` whenever the list is put |
 | `camlog` | the camera log state, as `GET /api/camlog` answers it with no query (the newest entries of every camera), after every change |
+| `searchlog` | the search records, as `GET /api/searchlog` answers it with no query, when a record begins or ends |
 | `auto` | `{"entry": entry or null, "busy": true, "cleared": false}`: an entry of the Auto conversation added or changed, or none when only `busy` changed (a turn ended); `cleared` when the conversation was cleared. An answer being written is sent at most ten times a second, its whole text so far each time, and once more when it is done |

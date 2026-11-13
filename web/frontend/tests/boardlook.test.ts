@@ -87,12 +87,23 @@ describe("looking for a board in the mock", () => {
         const placed = await backend.topPlace(job.id);
         const refs = placed.references.filter((entry) => entry.job === job.id);
         expect(refs.map((entry) => entry.by)).toEqual(["look", "look"]);
+        // Kept as a search record, as the backend keeps one.
+        const found = (await backend.searchLog("top")).records[0]!;
+        expect(found).toMatchObject({ kind: "search", camera: "top", job: job.id, result: "found" });
+        expect(found.visited).toBeGreaterThanOrEqual(1);
+        expect(found.estimate?.center[0]).toBeCloseTo(mx, 3);
         // A box away from the board: covered, not found.
         await backend.topSearch([mx + 300, my + 300, mx + 340, my + 340]);
         await until(backend, async () => (await backend.placingState()).top?.routine?.state !== "running");
         const missed = (await backend.placingState()).top!.routine!;
         expect(missed.state).toBe("error");
         expect(missed.error).toContain("no board found");
+        const recorded = await backend.searchLog("top");
+        expect(recorded.count).toBe(2);
+        expect(recorded.records[0]).toMatchObject({ result: "not found", message: missed.error });
+        expect(recorded.records[0]!.visited).toBe(recorded.records[0]!.stops);
+        expect((await backend.searchLog("head")).count).toBe(0);
+        await expect(backend.searchLog("up" as "head")).rejects.toMatchObject({ status: 400 });
         // A look once finds the mark spot and keeps its shape.
         const looked = (await backend.topLook()).top!.look!;
         expect(looked).toMatchObject({ found: true, polarity: "dark", dx: 75, dy: -50, major: 100 });

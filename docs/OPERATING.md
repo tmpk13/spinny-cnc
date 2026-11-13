@@ -520,6 +520,25 @@ nozzle, looking at a part, a G-code machine's run), each as it was and with
 what the finder found drawn on it, so a routine that went wrong can be
 followed look by look; *Photo* keeps one now with what the finder sees.
 
+Every look for a board and every search is recorded, switch or not: the
+poses pcbv gave and why each was used or not, each stop's move and look,
+a picture at each stop, and how it ended. The head and top cameras' logs
+list the newest; *report* opens a page with the stops drawn over the box,
+the poses along the time, each stop's numbers (the stops where the board
+filled a good part of the picture and nothing locked are marked missed),
+how far each estimate lay from where the board was found, what other
+settings would have called on the same poses, and the pictures.
+`mise run search-report -- list` and `-- show ID` give the same on the
+command line; `--truth X,Y,DEG` measures the estimates against a place
+from fiducials or a ruler (needed for a search that found nothing), and
+`--pcbv PROGRAM` gives each picture to that pcbv build again, to see
+whether a change to pcbv locks where the recorded one did not.
+`-- sweep` does both over every record kept: for each setting, in how
+many searches it would have found the board, how often wrongly and after
+how many poses, and with `--pcbv` the stops a pcbv build loses or gains
+against what was recorded. The records are folders in `var/searchlog/`: [WEB_API.md](WEB_API.md#search-records)
+says what each holds.
+
 A camera plugged into a Pi that is a bridge is streamed from there
 ([ARCHITECTURE.md](ARCHITECTURE.md#controller-on-a-raspberry-pi) says
 how, and why a picture at a time): deploy with
@@ -797,7 +816,9 @@ list of them, a Plot job's list replaced in place), markers, the pick and
 place machine's references and plans, and CAM jobs are made and changed;
 `delete_job` takes a job out, which its description keeps to a job the
 operator asks to delete or one the model made by mistake; the state, the machine
-files (G-code machines' among them) and the CAM profiles are read. No tool
+files (G-code machines' among them), the CAM profiles and the cameras'
+recorded board searches are read, so a model can say where a search went
+wrong. No tool
 connects or disconnects the machine, jogs it or sends it anywhere, homes
 it, runs, holds, resumes or stops a job, lights the laser, starts the
 spindle, probes, starts a camera routine, moves the pick and place

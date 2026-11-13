@@ -102,6 +102,7 @@ flowchart LR
         BE --> LOOK[boardlook: the head and top cameras' poses read into where the board lies, found once enough agree; the search over a box]
         LOOK --> PV
         LOOK --> PV3
+        LOOK --> SLOG[searchlog: every look and search recorded in var/searchlog: poses, stops, a picture at each, the board file, the outcome; searchreport and spinny-search read them back]
         FIND --> V4L[v4l2-ctl: a camera's controls listed and set, kept per camera and set at each start]
         FIND -.-> VID
         FIND -.-> UST

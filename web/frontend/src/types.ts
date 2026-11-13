@@ -985,6 +985,7 @@ export type WsEvent =
     | { type: "placing"; data: PlacingState }
     | { type: "markers"; data: MarkersResponse }
     | { type: "camlog"; data: CamLogState }
+    | { type: "searchlog"; data: SearchLogState }
     | { type: "auto"; data: AutoEvent };
 
 // --- The Auto tab ----------------------------------------------------------------
@@ -1104,6 +1105,39 @@ export interface CamLogState {
     count: number;
     /** The newest first. */
     entries: CamLogEntry[];
+}
+
+/** The cameras that look for a board: the head camera and a G-code machine's top camera. */
+export type SearchCamera = "head" | "top";
+
+/** One search record's line (spinny_web.searchlog): a look for a board, or a search over a box, kept as it went. */
+export interface SearchRecordLine {
+    /** Sorts by time: the second it began and a count within it. */
+    id: string;
+    kind: "search" | "look";
+    camera: SearchCamera;
+    started: string;
+    job: string | null;
+    job_name: string | null;
+    board: string | null;
+    /** found, not found, stopped, error, searched, unloaded, cut short; running while written, unfinished when the backend stopped first. */
+    result: string;
+    message: string | null;
+    seconds: number | null;
+    /** A search's stops, and how many it went to. */
+    stops: number | null;
+    visited: number | null;
+    poses: number | null;
+    pictures: number | null;
+    agree: number | null;
+    estimate: BoardEstimate | null;
+}
+
+export interface SearchLogState {
+    /** Records kept, of the camera asked for when one was. */
+    count: number;
+    /** The newest first. */
+    records: SearchRecordLine[];
 }
 
 // --- Pick and place -----------------------------------------------------------
@@ -1581,6 +1615,8 @@ export interface BoardLook {
     view?: [number, number][] | null;
     seen?: [number, number] | null;
     problem?: string | null;
+    /** The id of the newest search record of this look or its search (spinny_web.searchlog). */
+    record?: string | null;
 }
 
 /** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */

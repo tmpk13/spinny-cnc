@@ -69,6 +69,8 @@ import type {
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
+    SearchCamera,
+    SearchLogState,
     SettingsResponse,
     SettingsUpdate,
     Snapshot,
@@ -247,6 +249,10 @@ export interface Api {
     clearCamLog(): Promise<number>;
     /** A logged picture as an image source. */
     camLogFileUrl(name: string): string;
+    /** The newest search records of the cameras' looks for a board, of one camera when named. */
+    searchLog(camera?: SearchCamera): Promise<SearchLogState>;
+    /** A search record's page (`report`) or one of its files, by name. */
+    searchLogUrl(id: string, name: string): string;
     cameraPose(): Promise<CameraPose>;
     /** pcbv looks for the job's board in the pictures; null unloads it. */
     cameraBoard(jobId: string | null): Promise<CameraState>;
@@ -701,6 +707,14 @@ export class HttpApi implements Api {
 
     camLogFileUrl(name: string): string {
         return `${this.base}/api/camlog/${encodeURIComponent(name)}`;
+    }
+
+    searchLog(camera?: SearchCamera): Promise<SearchLogState> {
+        return this.request<SearchLogState>("GET", camera ? `/api/searchlog?camera=${camera}` : "/api/searchlog");
+    }
+
+    searchLogUrl(id: string, name: string): string {
+        return `${this.base}/api/searchlog/${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
     }
 
     async markers(): Promise<Marker[]> {

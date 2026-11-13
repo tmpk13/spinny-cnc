@@ -648,3 +648,10 @@ def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client
     routine = routine_done(client, "/api/pnp/placing")
     assert routine["state"] == "error" and "no board found" in routine["error"] and routine["total"] >= 6
     assert client.post("/api/pnp/top/place", json={"job": job_id}).status_code == 400
+    # Recorded as not found, every stop visited; this camera gives no
+    # pictures, which the record says and goes on.
+    record = client.get("/api/searchlog?camera=top").json()["records"][0]
+    assert record["kind"] == "search" and record["result"] == "not found" and record["visited"] == record["stops"]
+    assert f"{record['stops']} stops" in routine["error"] and record["message"] == routine["error"]
+    summary = client.get(f"/api/searchlog/{record['id']}").json()["summary"]
+    assert len(summary["stops"]) == record["stops"] and summary["pictures"] == [] and summary["truth"] is None

@@ -43,9 +43,11 @@ from . import __version__, calibration, center, update
 from .align import Alignment
 from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
-from .boardlook import BoardLook, BoardMover, PictureFrame, RestTracker, found_text, search, search_box, search_stops
+from .boardlook import BoardLook, BoardMover, PictureFrame, RestTracker, found_text, search, search_box, search_extra, search_stops, settings_now
 from .camera import Camera, CameraError, MachineAccess, pose_summary
 from .camlog import CAMERAS, CameraLog
+from .searchlog import SearchLog, SearchRecord, affine_of
+from . import searchreport
 from .files import write_whole
 from .cameras import ControlsError, controls_note, list_controls, set_controls
 from .cameras import detect as detect_cameras
@@ -780,6 +782,12 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.camera.camlog = self.camlog
         self.pnp.camlog = self.camlog
         self.top.camlog = self.camlog
+        # Every look for a board and every search over a box, recorded
+        # whatever the camera log's switch says, to be gone through later.
+        self.searchlog = SearchLog(
+            self.config_path.parent / "searchlog",
+            publish=lambda state: self.broadcast.publish_threadsafe({"type": "searchlog", **state}),
+        )
         # The link to a machine whose own controller takes G-code, open in
         # place of `link` while one is connected, and the machine file it
         # was opened as.
@@ -2601,6 +2609,29 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
     def clear_camlog(self) -> dict:
         return {"deleted": self.camlog.clear()}
 
+    def searchlog_state(self, limit: int = 20, camera: str | None = None) -> dict:
+        if camera is not None and camera not in ("head", "top"):
+            raise ValueError(f"no camera {camera!r} looks for boards: head or top")
+        return self.searchlog.state(limit, camera)
+
+    def _search_record(self, record_id: str) -> searchreport.Record:
+        folder = self.searchlog.folder_of(record_id)
+        if folder is None:
+            raise NotFound(f"no search record {record_id}")
+        return searchreport.load(folder)
+
+    def searchlog_record(self, record_id: str) -> dict:
+        """A search record's header and what searchreport makes of it."""
+        record = self._search_record(record_id)
+        return {"record": record.header, "summary": searchreport.summarize(record)}
+
+    def searchlog_report(self, record_id: str) -> str:
+        """A search record as a page, its pictures by their names beside it."""
+        return searchreport.html(self._search_record(record_id))
+
+    def clear_searchlog(self) -> dict:
+        return {"deleted": self.searchlog.clear()}
+
     def combine_jobs(self, ids: list[str], name: str | None = None) -> Job:
         """A new job of the jobs named, cut in that order, stored."""
         jobs = []
@@ -2934,15 +2965,53 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         return float(width), float(height), float(scale)
 
     @staticmethod
-    def _board_size(job) -> tuple[tuple[float, float], float]:
-        """A job's middle (its outline's box, else its paths') and diagonal, in its frame."""
+    def _board_box(job) -> tuple[float, float, float, float] | None:
+        """A job's outline's box (else its paths'), x0 y0 x1 y1 in its frame; None with neither."""
         points = [point for path in job.outline for point in path]
         if not points:
             points = [point for group in job.groups for path in group.board_paths() for point in path]
         if not points:
-            return (0.0, 0.0), 10.0
+            return None
         xs, ys = [p[0] for p in points], [p[1] for p in points]
-        return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0), max(math.hypot(max(xs) - min(xs), max(ys) - min(ys)), 1.0)
+        return (min(xs), min(ys), max(xs), max(ys))
+
+    @staticmethod
+    def _board_size(job) -> tuple[tuple[float, float], float]:
+        """A job's middle (its outline's box, else its paths') and diagonal, in its frame."""
+        box = Backend._board_box(job)
+        if box is None:
+            return (0.0, 0.0), 10.0
+        x0, y0, x1, y1 = box
+        return ((x0 + x1) / 2.0, (y0 + y1) / 2.0), max(math.hypot(x1 - x0, y1 - y0), 1.0)
+
+    def _board_record(self, kind: str, camera: str, job, client, side: str, finish: str, picture: dict, extra: dict | None = None) -> SearchRecord | None:
+        """A search record begun (searchlog.py) of `camera`'s look for a
+        job's board (`look`) or its search over a box (`search`): what was
+        looked for and how, `picture` the camera's place and scale and
+        `extra` the search's box and stops; None when none could be begun,
+        which nothing stops for."""
+        try:
+            middle, _ = self._board_size(job)
+            box = self._board_box(job)
+            try:
+                hello = {key: value for key, value in client.request("hello").items() if key != "id"}
+            except Exception:  # pcbv's version is nice to have, never needed
+                hello = None
+            header = {
+                "job": {"id": job.id, "name": job.name},
+                "board": {"file": job.recipe.file if job.recipe is not None else None, "side": side, "finish": finish},
+                "board_to_job": affine_of(job.design.board_to_job),
+                "middle": [middle[0], middle[1]],
+                "outline_box": list(box) if box is not None else None,
+                "picture": picture,
+                "settings": settings_now(),
+                "pcbv": hello,
+                **(extra or {}),
+            }
+            return self.searchlog.begin(kind, camera, header, self.store.board_path(job.id))
+        except Exception as exc:  # a record never stops a look or a search
+            log.warning("search record not begun: %r", exc)
+            return None
 
     def _job_center(self, raw: dict) -> list | None:
         """The picture's center in the loaded job's frame, from a pose."""
@@ -3048,8 +3117,19 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
             self.camera.load_board(job_id, str(path))
             middle, _ = self._board_size(job)
-            self.head_look.start(job_id, job.design.board_to_job, middle, self._head_look_place)
+            self.head_look.stop()
+            record = self._board_record("look", "head", job, self.camera.client, *self._head_board_settings())
+            self.head_look.start(job_id, job.design.board_to_job, middle, self._head_look_place, record)
         return self.publish_camera()
+
+    def _head_board_settings(self) -> tuple[str, str, dict]:
+        """The head camera's side, finish and picture, for a search record."""
+        settings = self.camera.settings()
+        picture = {
+            "offset": list(settings.offset), "roll": settings.roll, "mirror": False,
+            "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv,
+        }
+        return settings.side, settings.finish, picture
 
     def camera_search(self, body: BoardSearchBody) -> dict:
         """Moves the head camera over a box until enough looks agree on the
@@ -3089,7 +3169,13 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     progress.done = index + 1
                     self.publish_camera()
 
-                found = search(look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError)
+                side, finish, picture = self._head_board_settings()
+                record = self._board_record(
+                    "search", "head", job, self.camera.client, side, finish,
+                    {**picture, "width": width, "height": height, "mm_per_px_used": scale},
+                    search_extra(box, here, stops, width * scale, height * scale),
+                )
+                found = search(look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record)
                 self.publish_message("info", found_text(found, look.consensus))
 
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
@@ -4151,6 +4237,36 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such picture")
         media = "image/svg+xml" if name.endswith(".svg") else "image/jpeg"
         return Response(content=path.read_bytes(), media_type=media, headers={"Cache-Control": "max-age=3600"})
+
+    # --- the search records ---
+
+    @app.get("/api/searchlog")
+    def searchlog_state(limit: int = 20, camera: str | None = None):
+        return guarded(lambda: backend.searchlog_state(limit, camera))
+
+    @app.delete("/api/searchlog")
+    def searchlog_clear():
+        return guarded(backend.clear_searchlog)
+
+    @app.get("/api/searchlog/{record_id}")
+    def searchlog_record(record_id: str):
+        return guarded(lambda: backend.searchlog_record(record_id))
+
+    @app.get("/api/searchlog/{record_id}/report")
+    def searchlog_report(record_id: str):
+        page = guarded(lambda: backend.searchlog_report(record_id))
+        return Response(content=page, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/searchlog/{record_id}/{name}")
+    def searchlog_file(record_id: str, name: str):
+        path = backend.searchlog.path_of(record_id, name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="no such file in the record")
+        if name.endswith(".jpg"):
+            return Response(content=path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+        media = "application/json" if name.endswith(".json") else "text/plain; charset=utf-8"
+        # The header and the lines grow while a record is written.
+        return Response(content=path.read_bytes(), media_type=media, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/camera/board")
     def camera_board(body: CameraBoardBody):

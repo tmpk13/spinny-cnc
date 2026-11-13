@@ -36,6 +36,18 @@ describe("HttpApi camera list route", () => {
     });
 });
 
+describe("HttpApi search record routes", () => {
+    test("the records are asked for by camera, and a record's page and files by name", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.searchLog();
+        await api.searchLog("top");
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([["GET", "/api/searchlog", null], ["GET", "/api/searchlog?camera=top", null]]);
+        expect(api.searchLogUrl("20261112-153012-000", "report")).toBe("http://host/api/searchlog/20261112-153012-000/report");
+        expect(api.searchLogUrl("20261112-153012-000", "stop-003.jpg")).toBe("http://host/api/searchlog/20261112-153012-000/stop-003.jpg");
+    });
+});
+
 describe("HttpApi pick and place routes", () => {
     test("methods, paths and bodies follow the contract", async () => {
         const { calls, fetchFn } = fakeFetch();

@@ -30,6 +30,7 @@ spinny-web = "spinny_web.app:main"
 spinny-bridge = "spinny_web.bridge:main"
 spinny-mcp = "spinny_web.mcp_server:main"
 spinny-virtual-pnp = "spinny_web.virtual_pnp:main"
+spinny-search = "spinny_web.searchreport:main"
 
 [build-system]
 requires = ["hatchling"]
