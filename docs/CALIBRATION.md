@@ -146,23 +146,12 @@ left out, so a picture of the pattern says which way it lies, turned or
 mirrored. *Save SVG* gives the same grid as a sheet to print at 100%,
 with a 10 mm bar to check the printer's scale against.
 
-The pattern is made; measuring the distortion from it is not built yet.
-The cameras' routines read one spot at a time (pcbv's `spot` answers
-only the blob nearest the picture's center), and the backend carries no
-image library, so the measurement needs one of:
-
-- a pcbv request that lists every blob in the picture (center, area),
-  from which the backend fits the grid: the pitch is known, so a straight
-  fit of the inner dots gives the scale and roll, and how the outer dots
-  stray from it, growing with the distance from the center, gives the
-  radial terms (k1, k2) and the center of the distortion;
-- or a `.kicad_pcb` of the dots (each a fiducial footprint at its place)
-  loaded into pcbv's board localizer, whose residuals per feature are the
-  distortion at each dot once the localizer reports them;
-- or, with no change to pcbv, the machine as the ruler: one dot, moved by
-  the head to a grid of places across the picture, its found place
-  against the place the moves predict. That measures the same field
-  without the pattern, at the cost of a move and a look per point.
-
-The fitted terms would then turn every spot's pixel into a corrected one
-before the picture's scale is applied (`picture_to_machine`).
+To measure the lens, put the camera over the pattern so the dots fill
+its picture and press *Measure lens* in the camera's *Lens and colors*
+fold (dark dots for the printed sheet, bright for the laser's): pcbv finds
+the dots, indexes them into the grid, and fits two radial terms (k1, k2)
+that straighten it; the message gives how far the dots lie from a
+straight grid with and without them. The terms are kept per camera and
+sent to pcbv at every start, which then corrects every point it reports
+(spots, poses, edges) for pictures of the size measured; *Clear lens*
+forgets them. The pattern's turn and mirror do not matter here.

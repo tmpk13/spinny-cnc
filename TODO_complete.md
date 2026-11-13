@@ -773,3 +773,12 @@
   from corners taken by hand, which rules out guesses that put a corner
   elsewhere, narrows the search and is kept as the board's place when
   nothing is found.
+- Board looks send the camera's scale (a fifth either way); pcbv takes it per full size pixel.
+- A board is found only from two independent pcbv locks, and a search's middle look is a check that must agree.
+- Head camera centers fiducials, holes or pads far apart after the board is found; they become the Align marks.
+- Top camera: side, finish and paste settings; a placing run tells pcbv the parts as they are placed.
+- Lens calibration from the dot pattern: Measure lens per camera, applied by pcbv to every point.
+- A blank board's corner and turn found by its edges against the bed (Corner by edges).
+- pcbv reports each lock's rival; the page says when a board is ambiguous.
+- Round and size checks for fiducials (roundness, fill, square), and pcbv's sub-pixel spot center.
+- Color picker: a color picked from a camera's picture for spots, board pads or edges.

@@ -507,9 +507,18 @@ where the board lies on the machine. Looks that agree (within half a
 millimeter and a degree) make one guess, and each guess is a column in
 the panel's graph, as tall as its share of the evidence: its looks, each
 counted by how well pcbv matched it. The board is *found* once the most
-likely guess has five looks or more and reaches the threshold line (half
-the evidence unless moved; drag the line, press the graph at a height or
-use the slider under it; each camera keeps its own). The badge turns from
+likely guess has five looks or more, from two independent locks (frames
+pcbv tracks from one lock are one look at the picture: a lock its search
+found again, after the pose was cleared or at another stop, is a second),
+and reaches the threshold line (half the evidence unless moved; drag the
+line, press the graph at a height or use the slider under it; each camera
+keeps its own). A guess that has all but the second lock has pcbv clear
+its pose and search the same picture afresh; the line under the buttons
+says *looking afresh for another*, and the table's *Locks* column counts
+them. When pcbv's search saw another place fit nearly as well (a repeated
+row of pads, a symmetric cluster), the line says *AMBIGUOUS*: check the
+place from elsewhere on the board. The camera's measured scale is sent
+with the board, so pcbv never locks at another scale. The badge turns from
 *looking* to *found*, the line under the buttons says how many looks agree
 and why a look was not used (the head moving, say), and the table under
 the graph gives each guess's numbers. A column under the line is grey,
@@ -524,8 +533,12 @@ as the job's references (two parts far apart; *Find fiducials* then makes
 them exact), with the head camera as marks in the Align panel.
 
 *Search* moves the camera over a box in steps of its picture until the
-board is found, then puts the picture's center over the board's middle;
-it ends by itself (found, or every step looked at) or with *Abort*. Draw
+board is found, then checks it: the picture's center goes over the
+board's middle (or the part of the board with the most pads and holes in
+view) and the looks there, searched afresh, must agree with the place
+found; a check that disagrees or sees nothing sends the search on (three
+checks at most). It ends by itself (found and checked, or every step
+looked at) or with *Abort*. Draw
 the box with Shift and a drag on the picture; *Add view* grows it to take
 in what the picture shows now (jog to one corner, draw, jog to the other,
 *Add view*), and *Clear box* forgets it. With no box it searches where the
@@ -542,6 +555,37 @@ corners narrow a search to the board, *Use as board place* takes their
 place when nothing is found, and a guess that puts a corner further than
 *Within* (2 mm unless set) from where it was taken is ruled out: a look a
 pitch off cannot then be called found.
+
+A blank board (copper clad, nothing on it yet, for a first operation)
+has nothing pcbv can match, but its edges show against the bed: put the
+picture about one of its corners, the bed around it in view, pick the
+corner and press *Corner by edges*. The two edges found give the corner
+exactly and the board's turn, so one corner is a whole place (*Use as
+board place*, then *Apply* in Align puts the job on the blank). When the
+board and the bed are close in shade, pick the edges' color (below).
+
+*Center features* (head camera, once the board is found or its corners
+taken) centers the camera on three features far apart where the place
+puts them: fiducials, else drilled holes, else pads (or the kind picked),
+only ones standing clear of every other. They become the job's camera
+marks in Align, so the board's turn comes from a long baseline rather
+than from the camera's roll over one picture's few millimeters. A round
+feature must look round and of its size: a ring, a square pad or a spot
+of the wrong size stops it with why.
+
+*Lens and colors*, folded under each camera's settings: *Measure lens*,
+with the calibration test's camera pattern (dark dots printed, or bright
+ones a laser marked) filling the picture, measures how the lens bends it
+and corrects every point pcbv reports from then on (kept, sent at every
+start; *Clear lens* forgets it). *Pick* beside *Spots*, *Board pads* or
+*Edges*, then a click on the camera's picture, keeps that color for what
+the camera looks for: marks and fiducials, the board's pads, or a blank
+board against the bed are then found by color instead of light or dark
+(copper on bare FR4, which is as bright as the board, shows by its hue).
+
+The top camera's *Side*, *Finish* and *Paste* say how the board looks to
+it; a placing run tells it each part as it is placed, so the board is
+still found with parts on it.
 
 Both camera panels have the camera log: *log every look* keeps every
 picture the cameras' routines look at (finding the mark, centering the
