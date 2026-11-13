@@ -3663,7 +3663,8 @@ table.pnp-parts tr.dnp td {
 }
 
 /* The parts KiCad keeps out of the position files, muted, each with the
-   box that picks it to be placed, and the parts filter's row. */
+   box that picks it to be placed; the parts filter's row; and the Board
+   panel's search, which lights the parts it matches and dims the rest. */
 table.pnp-parts tr.kept-out td {
     color: var(--muted);
 }
@@ -3682,13 +3683,48 @@ table.pnp-parts tr.kept-out td {
     min-width: 0;
 }
 
+.pnp-filter .labeled-text {
+    white-space: nowrap;
+}
+
 .pnp-filter-pattern {
     flex: 1 1 auto;
     min-width: 0;
 }
 
+.pnp-search .pnp-search-field {
+    flex: 1 1 8rem;
+    min-width: 0;
+}
+
+.pnp-search .choice-row {
+    flex: 0 0 auto;
+}
+
+.pnp-search-count {
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
 .pnp-board .pnp-part.kept-out circle {
     fill: var(--muted);
+}
+
+.pnp-board .pnp-part.match circle {
+    fill: var(--orange);
+}
+
+.pnp-board .pnp-part.match text {
+    fill: var(--strong);
+    font-weight: 700;
+}
+
+.pnp-board .pnp-part.selected.match circle {
+    fill: var(--magenta);
+}
+
+.pnp-board .pnp-part.dim {
+    opacity: 0.25;
 }
 
 /* The parts table: sorted by a column pressed, grouped by value and footprint. */

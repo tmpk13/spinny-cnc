@@ -21,6 +21,7 @@ import { into, type Ctx } from "./context.ts";
 import { mountFindBoard, shownGuesses } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
 import { keptOut, mountPartsFilter, pickedToPlace, readShowKeptOut, setPickedToPlace, shownParts, writeShowKeptOut } from "./partsfilter.ts";
+import { mountBoardSearch } from "./partsearch.ts";
 import { mountPnpFeeders } from "./pnpfeeders.ts";
 import { mountPnpRefs } from "./pnprefs.ts";
 import { mountPnpRun } from "./pnprun.ts";
@@ -219,7 +220,8 @@ export const DOT_REM = 0.22;
 /**
  * Which labels to keep so none overlaps another: each one's box on the
  * screen (its anchor in the middle of its bottom edge, `width` and
- * `height` px), the first ones kept first (the part picked comes first).
+ * `height` px), the first ones kept first (the part picked comes first,
+ * then the ones a search lights).
  */
 export function uncrowded(labels: { x: number; y: number; width: number; height: number }[]): boolean[] {
     const kept: { x0: number; y0: number; x1: number; y1: number }[] = [];
@@ -242,7 +244,7 @@ export function fitLabels(root: SVGElement, box: Box, view: Box, unit: number, r
     const font = LABEL_REM * rem * unit;
     const dot = DOT_REM * rem * unit;
     const sy = (y: number): number => box.y1 - y;
-    const labels: { node: SVGElement; x: number; y: number; width: number; height: number; first: boolean }[] = [];
+    const labels: { node: SVGElement; x: number; y: number; width: number; height: number; rank: number }[] = [];
     for (const group of Array.from(root.querySelectorAll<SVGElement>(".pnp-part"))) {
         const circle = group.querySelector("circle");
         const text = group.querySelector("text");
@@ -260,9 +262,10 @@ export function fitLabels(root: SVGElement, box: Box, view: Box, unit: number, r
         const y = (cy - dot * 2.2 - (sy(view.y1))) / unit;
         const inside = cx + box.x0 >= view.x0 && cx + box.x0 <= view.x1 && sy(cy) >= view.y0 && sy(cy) <= view.y1;
         const length = (text.textContent ?? "").length;
-        labels.push({ node: text, x: inside ? x : -1e9, y: inside ? y : -1e9, width: length * LABEL_REM * rem * 0.62, height: LABEL_REM * rem, first: chosen });
+        const rank = chosen ? 2 : group.classList.contains("match") ? 1 : 0;
+        labels.push({ node: text, x: inside ? x : -1e9, y: inside ? y : -1e9, width: length * LABEL_REM * rem * 0.62, height: LABEL_REM * rem, rank });
     }
-    const order = labels.map((_, index) => index).sort((a, b) => Number(labels[b]!.first) - Number(labels[a]!.first));
+    const order = labels.map((_, index) => index).sort((a, b) => labels[b]!.rank - labels[a]!.rank);
     const keep = uncrowded(order.map((index) => labels[index]!));
     order.forEach((index, at) => labels[index]!.node.classList.toggle("crowded", !keep[at]));
     for (const mark of Array.from(root.querySelectorAll<SVGElement>(".pnp-head, .pnp-camera-mark, .pnp-look"))) {
@@ -375,6 +378,16 @@ export function clampBox(view: Box, limit: Box): Box {
     const x0 = Math.min(Math.max(view.x0, limit.x0), Math.max(limit.x0, limit.x1 - width));
     const y0 = Math.min(Math.max(view.y0, limit.y0), Math.max(limit.y0, limit.y1 - height));
     return { x0, y0, x1: x0 + width, y1: y0 + height };
+}
+
+/** The view with a point in it: unchanged when the point is well inside, else as large and centered on it, kept within `limit`. */
+export function viewOn(view: Box, x: number, y: number, limit: Box): Box {
+    const width = view.x1 - view.x0;
+    const height = view.y1 - view.y0;
+    if (x >= view.x0 + width * 0.1 && x <= view.x1 - width * 0.1 && y >= view.y0 + height * 0.1 && y <= view.y1 - height * 0.1) {
+        return view;
+    }
+    return clampBox({ x0: x - width / 2, y0: y - height / 2, x1: x + width / 2, y1: y + height / 2 }, limit);
 }
 
 /** One line on the last Look once: what it looked for and what it found, px from the center and its size. */
@@ -583,9 +596,20 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const drawing = el("div", { class: "pnp-drawing" });
     const fit = button("Fit", () => resetView(), "btn btn-quiet btn-small");
     fit.title = "the whole board again";
+    const boardSearch = mountBoardSearch({
+        parts: () => sideParts(ctx.store.get()),
+        onPick: (ref) => {
+            choose(ref);
+            bringIntoView(ref);
+        },
+        onChange: () => {
+            markSearch();
+            fitDrawing();
+        },
+    });
     roots.board.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Board"), fit),
-        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back, grey ones dnp or kept out of the position files."
+        el("div", { class: "panel-body" }, boardSearch.root, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back, grey ones dnp or kept out of the position files."
             + " An outline is where a guess of the Find board panel says the camera's picture lies on the board, labeled with its share (dashed: the most likely, under the threshold); a ring is a corner taken.")),
     );
 
@@ -898,6 +922,38 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         renderAll();
     }
 
+    /** Picks a part, whether or not it was picked before. */
+    function choose(ref: string): void {
+        if (selected !== ref) {
+            pick(ref);
+        }
+    }
+
+    /** The drawing moved to show a part when it is out of view; the zoom stays. */
+    function bringIntoView(ref: string): void {
+        const part = sideParts(ctx.store.get()).find((entry) => entry.ref === ref);
+        if (part && drawn && view) {
+            const next = viewOn(view, part.x, part.y, drawn.box);
+            if (next !== view) {
+                setView(next);
+            }
+        }
+    }
+
+    /** The parts a search matches lit on the drawing, the rest dimmed, while letters are typed. */
+    function markSearch(): void {
+        if (!drawn) {
+            return;
+        }
+        const searching = boardSearch.active();
+        const lit = new Set(boardSearch.matches());
+        for (const group of Array.from(drawn.root.querySelectorAll<SVGElement>(".pnp-part"))) {
+            const match = lit.has(group.getAttribute("data-ref") ?? "");
+            group.classList.toggle("match", searching && match);
+            group.classList.toggle("dim", searching && !match);
+        }
+    }
+
     function partsOf(state: AppState): Component[] {
         return state.components !== null && state.components.job === state.job?.id ? state.components.components : [];
     }
@@ -1071,6 +1127,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, showKeptOut.checked, loading]);
         if (key !== boardKey) {
             boardKey = key;
+            boardSearch.refresh();
             const before = drawn?.box ?? null;
             drawn = boardSvg({ job: state.job, parts, selected, camera }, pick);
             replace(drawing, drawn?.root ?? el("p", { class: `muted${loading ? " loading" : ""}` }, loading ? "Loading the board..." : "Nothing to draw: pick a board job."));
@@ -1089,6 +1146,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             const camera = find.camera(state);
             const look = camera === "top" ? state.placing?.top?.board_look : state.camera?.board_look;
             placeLookView(drawn.root, drawn.box, look, camera === "top" ? "top camera" : "head camera", find.threshold(state), job);
+            markSearch();
             fitDrawing();
         }
     }

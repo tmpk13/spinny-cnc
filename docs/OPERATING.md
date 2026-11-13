@@ -705,7 +705,10 @@ through it:
    next time, when the routine goes there by itself.
 3. Pick a board job uploaded as a `.kicad_pcb`: its footprints are listed
    and drawn on the board with the head and the bottom camera; a press on a
-   row or a dot picks one.
+   row or a dot picks one. The search above the drawing finds a part by a
+   few letters of its reference or, with *Value*, its value: the matches
+   are lit and the rest dimmed, and Enter (Shift+Enter back) or the arrow
+   keys step through them, picking each and bringing it into view.
    Footprints KiCad keeps out of the position files (its test point pads,
    mounting holes, net ties) are listed grey as *kept out*; the *kept out*
    box hides them, and a placing run leaves them out unless their *place*
