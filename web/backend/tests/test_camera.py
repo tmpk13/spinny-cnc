@@ -764,3 +764,48 @@ def test_head_camera_corners_make_alignment_marks_and_its_look_settings_are_chec
     assert client.put("/api/camera/settings", json={"look_threshold": -0.1}).status_code == 400
     look = client.put("/api/camera/settings", json={"look_threshold": 0.7, "corner_mm": 4.0}).json()["board_look"]
     assert look["threshold"] == 0.7 and look["corner_mm"] == 4.0
+
+
+class LensStandIn:
+    """pcbv's calibrate and lens requests: a grid measured once, the lens
+    given kept."""
+
+    running = True
+    device = "/dev/video0"
+
+    def __init__(self) -> None:
+        self.lenses: list = []
+
+    def calibrate(self, polarity="dark", pitch=2.0):
+        self.asked = (polarity, pitch)
+        return {"id": 3, "k1": -0.08, "k2": 0.02, "width": 1280, "height": 720, "dots": 180, "rms_px": 0.07, "rms_before_px": 3.7, "mm_per_px": 0.021}
+
+    def lens(self, lens):
+        self.lenses.append(lens)
+        return {"ok": True}
+
+    def pose(self):
+        return {"state": "none", "frame": 1, "age_ms": 0, "width": 1280, "height": 720}
+
+    def close(self):
+        self.running = False
+
+
+def test_a_cameras_lens_is_measured_from_a_dot_grid_kept_and_sent_and_forgotten(client):
+    stand_in = LensStandIn()
+    client.backend.camera.client = stand_in
+    response = client.post("/api/cameras/lens", json={"camera": "head", "polarity": "bright", "pitch": 2.0})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["measured"]["dots"] == 180 and "id" not in body["measured"]
+    lens = {"k1": -0.08, "k2": 0.02, "width": 1280, "height": 720}
+    assert stand_in.asked == ("bright", 2.0) and stand_in.lenses == [lens] and body["state"]["lens"] == lens
+    assert client.backend.camera.settings().lens == lens
+    assert client.post("/api/cameras/lens", json={"camera": "head", "pitch": 0.0}).status_code == 400
+    response = client.delete("/api/cameras/lens?camera=head")
+    assert response.status_code == 200 and stand_in.lenses[-1] is None and response.json()["state"]["lens"] is None
+    # Terms pcbv could not take are refused before they are kept.
+    with pytest.raises(ValueError):
+        client.backend.camera.set_lens({"k1": 2.0, "k2": 0.0, "width": 1280, "height": 720})
+    stand_in.running = False
+    assert client.post("/api/cameras/lens", json={"camera": "head"}).status_code == 400

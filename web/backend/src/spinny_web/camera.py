@@ -31,7 +31,7 @@ from .cameras import apply_kept, check_controls
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError, idle_status, settle
 from .log import log
-from .vision import VisionClient, VisionError, scale_range
+from .vision import VisionClient, VisionError, check_lens, scale_range
 
 Point = tuple[float, float]
 RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
@@ -101,11 +101,15 @@ class CameraSettings(BaseModel):
     # the corners' tolerance (mm).
     look_threshold: float = LOOK_THRESHOLD
     corner_mm: float = CORNER_MM
+    # The lens correction measured from a dot grid (k1, k2 and the picture
+    # size), sent to pcbv at every start; None for none.
+    lens: dict[str, float] | None = None
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the camera device must be named")
         check_controls(self.controls)
+        check_lens(self.lens)
         check_look(self.look_threshold, self.corner_mm)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the camera size must be WIDTHxHEIGHT")
@@ -369,6 +373,22 @@ class Camera:
         refused = apply_kept(settings.device, settings.controls)
         if refused:
             self._message("error", f"the camera's controls were not all set: {refused}")
+        if settings.lens is not None:
+            try:
+                self.client.lens(settings.lens)
+            except VisionError as exc:
+                self._message("error", f"the camera's lens correction was not taken: {exc}")
+
+    def set_lens(self, lens: dict | None) -> CameraSettings:
+        """Keeps a lens correction (None: none) and gives it to a running
+        pcbv; refused when pcbv refuses it."""
+        settings = CameraSettings.model_validate({**self.settings().model_dump(), "lens": lens})
+        settings.check()
+        if self.client.running:
+            self.client.lens(lens)
+        self.config["camera"] = settings.model_dump()
+        self._save()
+        return settings
 
     def stop(self) -> None:
         if self.routine_active:

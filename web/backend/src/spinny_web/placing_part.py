@@ -322,7 +322,7 @@ class PlacingPart:
             offset = None
         return {
             "offset": offset, "roll": settings.roll, "mirror": settings.mirror,
-            "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv,
+            "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv, "lens": settings.lens,
             "machine": machine.name,
         }
 

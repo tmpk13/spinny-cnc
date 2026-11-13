@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import queue
 import shutil
@@ -76,6 +77,31 @@ def board_fields(
     if placed:
         fields["placed"] = list(placed)
     return fields
+
+
+LENS_KEYS = ("k1", "k2", "width", "height")
+
+
+def check_lens(lens: dict | None) -> None:
+    """A camera's lens correction as pcbv takes it: two radial terms within
+    1 either way, and the picture size (px) they were measured at."""
+    if lens is None:
+        return
+    if not isinstance(lens, dict) or set(lens) != set(LENS_KEYS):
+        raise ValueError("a lens is k1, k2, width and height")
+    for key in ("k1", "k2"):
+        value = lens[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > 1.0:
+            raise ValueError(f"the lens' {key} must be a number within 1 either way")
+    for key in ("width", "height"):
+        value = lens[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value) or not 1 <= value <= 20000:
+            raise ValueError(f"the lens' {key} must be a whole number of pixels")
+
+
+def lens_of(reply: dict) -> dict:
+    """The lens correction a `calibrate` reply measured, as kept and sent."""
+    return {"k1": float(reply["k1"]), "k2": float(reply["k2"]), "width": int(reply["width"]), "height": int(reply["height"])}
 
 
 def board_record_fields(board: dict) -> dict:
@@ -339,6 +365,18 @@ class VisionClient:
         if path is None:
             return self.request("board", path=None)
         return self.request("board", timeout=LOAD_SECONDS, **board_fields(path, side, finish, scale, paste, placed))
+
+    def lens(self, lens: dict | None) -> dict:
+        """pcbv corrects every point of a picture of the lens' size by its
+        terms from now on (`check_lens`); None takes the correction away."""
+        if lens is None:
+            return self.request("lens")
+        return self.request("lens", **{key: lens[key] for key in LENS_KEYS})
+
+    def calibrate(self, polarity: str = "dark", pitch: float = 2.0) -> dict:
+        """The lens measured from a picture of a dot grid `pitch` mm apart
+        in the newest frame, not applied (pcbv's `calibrate`)."""
+        return self.request("calibrate", timeout=LOAD_SECONDS, polarity=polarity, pitch=float(pitch))
 
     def assembly(self, paste: bool | None = None, placed: list[str] | None = None) -> dict:
         """The paste or parts on the board loaded changed (None keeps

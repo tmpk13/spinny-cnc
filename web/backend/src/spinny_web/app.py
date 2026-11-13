@@ -145,7 +145,7 @@ from .prober import Prober, ProberError
 from .resume import PositionStore, ResumeStore
 from .runner import DONE, HOLD, RUNNING, Runner, RunnerError, halt
 from .tools import ToolBox
-from .vision import VisionError, board_record_fields
+from .vision import VisionError, board_record_fields, lens_of
 
 # The runtime files (jobs, config, height map) and the machine and CAM
 # files: the repository's var/, machines/ and cam/ in a checkout, else the
@@ -549,6 +549,15 @@ class BoardCornerBody(Finite):
     # box, by name (boardlook.CORNERS).
     job: str
     corner: str
+
+
+class CameraLensBody(Finite):
+    # Which camera: the head camera, the up camera, or a G-code machine's top camera.
+    camera: Literal["head", "up", "top"]
+    # The dots of the grid in the picture: dark on light (a printed sheet)
+    # or bright on dark (a laser on anodized aluminum), and their pitch, mm.
+    polarity: Literal["dark", "bright"] = "dark"
+    pitch: float = 2.0
 
 
 class CameraControlsBody(Finite):
@@ -3133,6 +3142,30 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.placing_machine()
         return self.top, self.publish_placing
 
+    def camera_lens(self, body: CameraLensBody) -> dict:
+        """The camera's lens measured from the dot grid in its picture now
+        (pcbv's calibrate), kept and applied from then on; what was
+        measured, and the fit's residual before and after."""
+        owner, publish = self._controlled(body.camera)
+        if not owner.client.running:
+            raise ValueError("the camera is not running: start it first")
+        if not (math.isfinite(body.pitch) and 0.1 <= body.pitch <= 50.0):
+            raise ValueError("the dots' pitch must be 0.1 to 50 mm")
+        reply = {key: value for key, value in owner.client.calibrate(body.polarity, body.pitch).items() if key != "id"}
+        owner.set_lens(lens_of(reply))
+        self.publish_message(
+            "info",
+            f"{body.camera} camera lens measured from {reply.get('dots')} dots: k1 {reply.get('k1', 0.0):+.4f}, k2 {reply.get('k2', 0.0):+.4f};"
+            f" the dots fit within {reply.get('rms_px', 0.0):.2f} px rms, {reply.get('rms_before_px', 0.0):.2f} px without it",
+        )
+        return {"camera": body.camera, "measured": reply, "state": publish()}
+
+    def camera_lens_clear(self, camera: str) -> dict:
+        """The camera's lens correction forgotten."""
+        owner, publish = self._controlled(camera)
+        owner.set_lens(None)
+        return {"camera": camera, "measured": None, "state": publish()}
+
     def camera_controls(self, camera: str) -> dict:
         """A camera's V4L2 controls as its device has them now, each with
         the value kept for it (set at every start), or why it has none."""
@@ -3221,7 +3254,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         settings = self.camera.settings()
         return {
             "offset": list(settings.offset), "roll": settings.roll, "mirror": False,
-            "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv,
+            "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv, "lens": settings.lens,
         }
 
     def camera_search(self, body: BoardSearchBody) -> dict:
@@ -4294,6 +4327,14 @@ def create_app(
     @app.get("/api/cameras/controls")
     def camera_controls(camera: Literal["head", "up", "top"] = "head"):
         return guarded(lambda: backend.camera_controls(camera))
+
+    @app.post("/api/cameras/lens")
+    def camera_lens(body: CameraLensBody):
+        return guarded(lambda: backend.camera_lens(body))
+
+    @app.delete("/api/cameras/lens")
+    def camera_lens_clear(camera: Literal["head", "up", "top"] = "head"):
+        return guarded(lambda: backend.camera_lens_clear(camera))
 
     @app.put("/api/cameras/controls")
     def camera_controls_set(body: CameraControlsBody):
